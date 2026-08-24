@@ -2,9 +2,11 @@
  * Authentication modal component with Chakra UI
  */
 import React, { useState } from "react";
+import { Box } from "@chakra-ui/react";
 import { useAuth } from "../../hooks/useAuth";
 import LoginForm from "./LoginForm";
 import RegisterForm from "./RegisterForm";
+import AdopterLogo from "../common/AdopterLogo";
 import StandardModal from "../common/StandardModal";
 
 interface AuthModalProps {
@@ -69,6 +71,9 @@ const AuthModal: React.FC<AuthModalProps> = ({
       contentProps={{ zIndex: 1500 }}
       footer={undefined}
     >
+      <Box textAlign="center" mb={4}>
+        <AdopterLogo maxH="56px" maxW="220px" mx="auto" />
+      </Box>
       {mode === "login" ? (
         <LoginForm
           onSuccess={handleSuccess}

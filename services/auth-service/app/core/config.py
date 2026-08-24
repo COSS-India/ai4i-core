@@ -132,7 +132,7 @@ class AuthSettings(BaseSettings):
     # stays the single source of truth for which env vars this service expects.
     email_provider: str = "smtp"
     email_from: Optional[str] = None
-    email_from_name: str = "AI4I Platform"
+    email_from_name: str = "AI Switch"
     email_reply_to: Optional[str] = None
     email_extra_headers: Optional[str] = None
     smtp_host: Optional[str] = None
@@ -141,6 +141,10 @@ class AuthSettings(BaseSettings):
     smtp_password: Optional[SecretStr] = None
     smtp_use_tls: bool = True
     smtp_timeout: int = 30
+    # Product name used in email subject/body copy. Independent of the SMTP
+    # From display name (EMAIL_FROM_NAME, read by ai4i_core EmailSettings) so
+    # EMAIL_FROM_NAME="COSS Support" does not become "Welcome to COSS Support".
+    platform_name: str = "AI Switch"
     setup_link_base_url: Optional[str] = None
     verify_link_base_url: Optional[str] = None
     reset_link_base_url: Optional[str] = None
@@ -193,6 +197,19 @@ class AuthSettings(BaseSettings):
     def get_rs256_key_path(self) -> Path:
         return Path(self.rs256_key_directory)
 
+    def get_platform_name(self) -> str:
+        """Product name for email subject/body copy. Falls back to AI Switch."""
+        return (self.platform_name or "").strip() or "AI Switch"
+
+    def resolve_smtp_from_name(self, email_from_name: str) -> str:
+        """SMTP From display name: explicit EMAIL_FROM_NAME, else platform name.
+
+        AuthSettings.email_from_name is only a documented mirror — the provider
+        is built from ai4i_core EmailSettings, so callers must pass that value
+        in and apply this result when constructing the client.
+        """
+        return (email_from_name or "").strip() or self.get_platform_name()
+
     @field_validator("access_token_expire_minutes", "reset_token_expire_minutes")
     @classmethod
     def validate_token_expire_minutes_positive(cls, v: int) -> int:
@@ -225,12 +242,3 @@ from app.core import pii_crypto  # noqa: E402
 pii_crypto.configure_key(
     settings.pii_encryption_key.get_secret_value() if settings.pii_encryption_key else None
 )
-
-
-# ── Role IDs (must match the seeded values in roles table) ───────────
-class RoleId:
-    ADMIN = 1
-    MODERATOR = 2
-    GUEST = 3
-    USER = 4
-    TENANT_ADMIN = 5

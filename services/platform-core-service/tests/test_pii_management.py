@@ -140,6 +140,9 @@ class _NewDomainRequest(_BaseModel):
     domain_id: str = ""
     description: str = ""
 
+class _StatusResponse(_BaseModel):
+    status: str = ""
+
 class _TenantDomainDeleteRequest(_BaseModel):
     tenant_id: str = ""
 
@@ -152,16 +155,23 @@ class _TenantDomainUpsertRequest(_BaseModel):
     tenant_id: str = ""
     domain_id: str = ""
 
+class _TenantDomainUpsertResponse(_BaseModel):
+    status: str = ""
+    tenant_id: str = ""
+    domain_id: str = ""
+
 _admin_schema_stub = _stub_module("app.schemas.pii_management.admin")
-_admin_schema_stub.AuditLogEntry             = _AuditLogEntry
-_admin_schema_stub.BulkActivateRequest       = _BulkActivateRequest
-_admin_schema_stub.DeployRequest             = _DeployRequest
-_admin_schema_stub.GenerateRegexRequest      = _GenerateRegexRequest
-_admin_schema_stub.GenerateRegexResponse     = _GenerateRegexResponse
-_admin_schema_stub.NewDomainRequest          = _NewDomainRequest
-_admin_schema_stub.TenantDomainDeleteRequest = _TenantDomainDeleteRequest
-_admin_schema_stub.TenantDomainEntry         = _TenantDomainEntry
-_admin_schema_stub.TenantDomainUpsertRequest = _TenantDomainUpsertRequest
+_admin_schema_stub.AuditLogEntry               = _AuditLogEntry
+_admin_schema_stub.BulkActivateRequest         = _BulkActivateRequest
+_admin_schema_stub.DeployRequest               = _DeployRequest
+_admin_schema_stub.GenerateRegexRequest        = _GenerateRegexRequest
+_admin_schema_stub.GenerateRegexResponse       = _GenerateRegexResponse
+_admin_schema_stub.NewDomainRequest            = _NewDomainRequest
+_admin_schema_stub.StatusResponse              = _StatusResponse
+_admin_schema_stub.TenantDomainDeleteRequest   = _TenantDomainDeleteRequest
+_admin_schema_stub.TenantDomainEntry           = _TenantDomainEntry
+_admin_schema_stub.TenantDomainUpsertRequest   = _TenantDomainUpsertRequest
+_admin_schema_stub.TenantDomainUpsertResponse  = _TenantDomainUpsertResponse
 
 
 # ---------------------------------------------------------------------------
@@ -1294,7 +1304,13 @@ class TestPiiRoutes:
 
         resp = test_client.get("/pii/policy/nonexistent")
         assert resp.status_code == 200
-        assert resp.json() == {}
+        # get_policy is now wrapped in PolicyResponse (for Swagger docs), so
+        # the bare {} the service returns on a cache miss comes back with
+        # its declared defaults filled in rather than as a literal {} —
+        # still "no policy", just explicit. The frontend already treats a
+        # missing `rules` key defensively (Array.isArray(...) ? ... : []),
+        # so an actual [] here is unaffected either way.
+        assert resp.json() == {"meta": None, "rules": []}
 
     # ── POST /pii/redact ────────────────────────────────────────────────────
 

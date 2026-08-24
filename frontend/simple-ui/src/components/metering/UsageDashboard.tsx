@@ -29,13 +29,11 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
     setTopN,
     scopeTenantId,
     setScopeTenantId,
-    // UNDO: setTenantHeatmapServices,
     isTenantView,
     previewTenants,
     tenantOrganisationById,
     overview,
     tenantQuery,
-    serviceQuery,
     modelQuery,
     isLoading,
     isRefreshing,
@@ -104,7 +102,6 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
           subTab={subTab}
           overview={overview}
           requestVolumeSection={requestVolumeSection}
-          serviceQuery={serviceQuery}
           modelQuery={modelQuery}
           parseQueryError={parseQueryError}
           tenantId={effectiveTenantId}
@@ -121,9 +118,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
           requestVolumeSection={requestVolumeSection}
           topN={topN}
           onTopNChange={setTopN}
-          // UNDO: onHeatmapServicesChange={setTenantHeatmapServices}
           tenantQuery={tenantQuery}
-          serviceQuery={serviceQuery}
           modelQuery={modelQuery}
           parseQueryError={parseQueryError}
           scopeTenantId={scopeTenantId}

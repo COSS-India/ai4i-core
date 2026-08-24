@@ -1,7 +1,7 @@
 /**
  * Platform-core API types (models & services).
  * Shapes mirror services/platform-core-service/app/schemas/*.py (camelCase contract).
- * Model Registry fields follow ULCA model-schema.yml (AI4IDS-2478).
+ * Model Registry fields follow ULCA model-schema.yml.
  */
 
 // ── Shared building blocks ──
@@ -435,7 +435,7 @@ export type Service = ServiceListItem & ServiceLegacyFields;
 
 export interface ServiceCreateRequest {
   name: string;
-  serviceDescription?: string;
+  description: string;
   hardwareDescription: string;
   modelId: string;
   modelVersion: string;

@@ -32,11 +32,13 @@ import {
   IoPricetagOutline,
 } from "react-icons/io5";
 import ContentLayout from "../components/common/ContentLayout";
+import AdopterLogo from "../components/common/AdopterLogo";
 import { getServiceDescription, getServiceTitle, type ServiceId } from "../config/serviceMetadata";
 import { useAuth } from "../hooks/useAuth";
 import DoubleMicrophoneIcon from "../components/common/DoubleMicrophoneIcon";
 import { useGuestServices } from "../hooks/useGuestServices";
 import { useInferenceTypes } from "../hooks/useInferenceTypes";
+import { getPlatformName } from "../config/runtimeConfig";
 
 const safeColorMap:any = {
   asr: { // Coral → Pastel Coral
@@ -146,7 +148,7 @@ const getColor = (service: { id?: string; color?: string }, shade: 50 | 300 | 40
   return shade === 50 ? "#F7FAFC" : shade === 300 ? "#CBD5E1" : shade === 400 ? "#A0AEC0" : "#1A202C";
 };
 
-/** AI4IDS-2688: anonymous users may try LLM without signing in. */
+/** Anonymous users may try LLM without signing in. */
 const ANONYMOUS_ALLOWED_SERVICE_IDS = new Set<ServiceId>(["llm"]);
 
 const HomePage: React.FC = () => {
@@ -210,7 +212,7 @@ const HomePage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>AI4Inclusion Console</title>
+        <title>{getPlatformName()}</title>
         <meta
           name="description"
           content="Test LLM models with a modern web interface"
@@ -221,6 +223,7 @@ const HomePage: React.FC = () => {
         <VStack spacing={10} w="full" align="center" alignSelf="stretch">
           {/* Hero Section */}
           <Box textAlign="center" w="full">
+            <AdopterLogo maxH="72px" maxW="280px" mx="auto" mb={4} />
             <Heading size="lg" fontWeight="bold" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
               AI Accessibility Studio
             </Heading>
@@ -231,7 +234,7 @@ const HomePage: React.FC = () => {
             </Text>
           </Box>
 
-          {/* Anonymous User Info Alert — AI4IDS-2688 */}
+          {/* Anonymous User Info Alert */}
           {!isLoading && !isAuthenticated && (
             <Alert
               status="info"

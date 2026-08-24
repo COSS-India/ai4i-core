@@ -20,6 +20,7 @@ import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import { useAuth } from "../hooks/useAuth";
 import CreateApiKeyTab from "../components/profile/CreateApiKeyTab";
 import ApiKeyManagementTab from "../components/profile/ApiKeyManagementTab";
+import { getPlatformName } from "../config/runtimeConfig";
 const ApiKeyManagementPage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
@@ -86,7 +87,7 @@ const ApiKeyManagementPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Manage API - AI4I Platform</title>
+        <title>{`Manage API - ${getPlatformName()}`}</title>
         <meta name="description" content="Create and manage API keys" />
       </Head>
 

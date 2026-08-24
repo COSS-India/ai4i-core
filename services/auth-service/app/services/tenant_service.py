@@ -28,7 +28,8 @@ from app.core.exceptions import (
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.role_name import RoleName, role_name_to_str
+from app.core.constants import RoleName
+from app.utils.common import role_name_to_str
 from app.models.tenant import Tenant, TenantStatus
 from app.models.tenant_plan import TenantPlan
 from app.models.user import User, CreationType
@@ -111,9 +112,6 @@ async def _assign_plan_to_tenant(tenant_id: int, plan_id: UUID, db: AsyncSession
     except Exception as e:
         await db.rollback()
         logger.exception("TenantPlan DB insert failed for tenant %s: %s", tenant_id, e)
-
-
-_TENANT_ASSIGNABLE_ROLES: tuple[RoleName, ...] = (RoleName.USER, RoleName.TENANT_ADMIN)
 
 
 def _assert_tenant_active_for_user_deactivation(
@@ -247,28 +245,10 @@ class TenantService:
                 },
             )
 
-    @staticmethod
-    def resolve_tenant_user_role(roles: list[str]) -> TenantUserRole:
-        if RoleName.TENANT_ADMIN.value in roles:
-            return TenantUserRole.TENANT_ADMIN
-        return TenantUserRole.USER
-
     async def _set_tenant_user_role(
         self, user_id: UUID, role: TenantUserRole | RoleName | str, *, commit: bool = True
     ) -> None:
-        """Ensure the user has exactly one tenant-assignable role (USER or TENANT ADMIN).
-
-        ``commit=False`` leaves role changes in the open transaction so the caller
-        can commit once with other updates (e.g. ``update_tenant_user`` →
-        ``save_and_refresh`` on the user row).
-        """
         target = role.value if isinstance(role, TenantUserRole) else role_name_to_str(role)
-        await self._roles.ensure_role_exists(target)
-        current = await self._roles.get_user_roles(user_id)
-        for assignable in _TENANT_ASSIGNABLE_ROLES:
-            key = role_name_to_str(assignable)
-            if key in current and key != target:
-                await self._roles.remove_role(user_id, assignable, commit=commit)
         await self._roles.assign_role(user_id, target, commit=commit)
 
     async def build_tenant_user_response(
@@ -298,13 +278,13 @@ class TenantService:
         activated_ids = await self._credentials.user_ids_with_credentials(user_ids)
         responses: list[dict] = []
         for user in users:
-            role = self.resolve_tenant_user_role(roles_by_user.get(user.id, []))
+            # role = self.resolve_tenant_user_role(roles_by_user.get(user.id, []))
             base = to_response(user, UserListResponse)
             responses.append(
                 mask_pii_in_dict(
                     TenantUserResponse(
                         **base,
-                        role=role,
+                        roles=roles_by_user.get(user.id, []),
                         is_tenant_active=user.is_tenant_active,
                         is_activated=user.id in activated_ids,
                     ).model_dump(mode="json", by_alias=True),
@@ -509,13 +489,10 @@ class TenantService:
         offset: int,
         limit: int,
         status_filter: Optional[TenantStatus],
+        *,
+        is_admin: bool = False,
     ) -> list[Tenant]:
-        # Only ADMIN may list all tenants. MODERATOR and TENANT ADMIN both hold
-        # the gateway-level tenant.read permission (needed for GET by ID and
-        # tenant-user endpoints), so they reach this method — but listing every
-        # tenant in the system is an admin-only operation.
-        roles = await self._roles.get_user_roles(current_user.id)
-        if RoleName.ADMIN.value not in roles:
+        if not is_admin:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
@@ -526,11 +503,10 @@ class TenantService:
         return await self._tenants.list_all(offset=offset, limit=limit, status=status_filter)
 
     async def get_tenant(
-        self, current_user: User, tenant_id: int, *, unmask: bool = False
+        self, current_user: User, tenant_id: int, *, unmask: bool = False, is_admin: bool = False
     ) -> Tenant:
-        await self.enforce_scope(current_user, tenant_id)
-        # Revealing cleartext PII is limited to the roles that can edit the
-        # tenant; masked reads stay open to anyone with tenant.read scope.
+        if not is_admin:
+            await self.enforce_scope(current_user, tenant_id)
         if unmask:
             await self._assert_can_reveal_pii(current_user)
         return await self._load_tenant_or_404(tenant_id)
@@ -907,6 +883,16 @@ class TenantService:
         await self._deny_moderator(current_user)
         tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
+        if body.is_active is False and target.id == current_user.id:
+            caller_roles = await self._roles.get_user_roles(current_user.id)
+            if RoleName.TENANT_ADMIN.value in caller_roles:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "SELF_DEACTIVATION_FORBIDDEN",
+                        "message": "Tenant admins cannot deactivate their own account.",
+                    },
+                )
         payload = {"is_active": body.is_active, "updated_by": current_user.id}
         _assert_tenant_active_for_user_deactivation(tenant, payload)
 

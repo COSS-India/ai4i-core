@@ -81,6 +81,7 @@ import {
   ViewIcon,
 } from "@chakra-ui/icons";
 import { useAuth } from "../../hooks/useAuth";
+import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 import ConfirmDialog from "../common/ConfirmDialog";
 import ConsentCheckbox, {
@@ -95,6 +96,9 @@ import TenantUserRoleBadges from "../common/TenantUserRoleBadges";
 import TierSelect from "./TierSelect";
 import { TENANT_USER_ROLE_OPTIONS } from "./types";
 import {
+  INSTITUTION,
+  INSTITUTIONS,
+  INSTITUTION_ARTICLE,
   TENANT,
   TENANT_STATUS_LIST,
   TENANT_USER_STATUS_LIST,
@@ -104,33 +108,25 @@ import {
   isTenantStatus,
   resolveTenantUserDisplayStatus,
 } from "../../config/constants";
+import { replaceTenantCopy } from "../../utils/replaceTenantCopy";
 import { EMAIL_AVAILABLE_MSG } from "../../utils/tenantEmailValidation";
 import {
   DEFAULT_ORG_USER_FORM_ROLE_OPTIONS,
+  formatPlatformRoleLabel,
   isDefaultTenant,
 } from "../../utils/defaultTenant";
+import {
+  addDaysToDateInputValue,
+  dateInputToStartOfDayIso,
+  dateInputToEndOfDayIso,
+} from "../../utils/helpers";
 import type { TenantUserView, TenantView } from "../../types/tenant";
 
 const BUDGET_MAX_INTEGER_DIGITS = 7;
 
 /** Shown when assigning/reassigning a tier that has no mapped services. */
 const TIER_NO_SERVICES_MSG =
-  "This Tier has no services mapped. Please map at least one service before assigning to a tenant.";
-
-/**
- * Convert an `<input type="date">` value (YYYY-MM-DD) to an ISO timestamp.
- * Uses local calendar day bounds so "Effective To = today" stays active
- * through the end of that day (not midnight UTC, which expires immediately).
- */
-function dateInputToStartOfDayIso(dateStr: string): string {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  return new Date(y, m - 1, d, 0, 0, 0, 0).toISOString();
-}
-
-function dateInputToEndOfDayIso(dateStr: string): string {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  return new Date(y, m - 1, d, 23, 59, 59, 999).toISOString();
-}
+  `This Tier has no services mapped. Please map at least one service before assigning to ${INSTITUTION_ARTICLE} ${INSTITUTION.toLowerCase()}.`;
 
 function clampBudgetInput(raw: string): string {
   const dotIndex = raw.indexOf(".");
@@ -187,6 +183,9 @@ export default function TenantManagementTab({
   const tm = useTenantManagement({ user });
 
   const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
+  const { taskTypeNames } = useInferenceTypes();
+  const enabledTaskTypesParam =
+    taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
   const userListTenantStatus = tm.activeUserListTenant?.status ?? null;
 
   const resolveUserDisplayStatus = (u: TenantUserView) =>
@@ -243,11 +242,12 @@ export default function TenantManagementTab({
   });
   const tierOptions = tiersQuery.data?.data ?? [];
 
-  // Shared with Tier Management so service↔tier mappings stay consistent.
-  // Used to block assigning a tier that has no services mapped.
+  // Shared with Tier Management so service↔tier mappings stay consistent
+  // (same taskTypes filter + cache key as useTierManagement).
   const servicesForTiersQuery = useQuery({
-    queryKey: ["services-for-tiers"],
-    queryFn: () => fetchAllServicesMatchingFilters({}),
+    queryKey: ["services-for-tiers", enabledTaskTypesParam ?? "all"],
+    queryFn: () =>
+      fetchAllServicesMatchingFilters({ taskTypes: enabledTaskTypesParam }),
     staleTime: 60_000,
     enabled: isAdmin && (isAssignTierOpen || isViewTierOpen),
   });
@@ -320,7 +320,7 @@ export default function TenantManagementTab({
       return [
         {
           value: current,
-          label: current === "ADMIN" ? "Admin" : current,
+          label: formatPlatformRoleLabel(current),
         },
         ...DEFAULT_ORG_USER_FORM_ROLE_OPTIONS,
       ];
@@ -398,7 +398,7 @@ export default function TenantManagementTab({
         duration: 4000,
         isClosable: true,
       });
-      queryClient.invalidateQueries({ queryKey: ["tenant-tiers"] });
+      await queryClient.refetchQueries({ queryKey: ["tenant-tiers"] });
       handleCloseManagePlan();
     } catch (err: any) {
       const detail = err?.response?.data?.detail;
@@ -474,6 +474,10 @@ export default function TenantManagementTab({
       return;
     }
 
+    if (assignEffectiveFrom < new Date().toISOString().slice(0, 10)) {
+      setAssignTierError("Effective From cannot be in the past.");
+      return;
+    }
     if (assignEffectiveFrom === assignEffectiveTo) {
       setAssignTierError(
         "Effective From and Effective To cannot be the same date.",
@@ -497,7 +501,7 @@ export default function TenantManagementTab({
         effective_from: effectiveFromIso,
         effective_to: effectiveToIso,
       });
-      queryClient.invalidateQueries({ queryKey: ["tenant-tiers"] });
+      await queryClient.refetchQueries({ queryKey: ["tenant-tiers"] });
       toast({
         title: "Tier assigned",
         description: `Tier assigned to "${assignTierTenant.organisation}" successfully.`,
@@ -527,10 +531,10 @@ export default function TenantManagementTab({
       // Map overlapping-period 409 into a clearer failure (not a success-sounding state).
       if (/already has a tier assignment overlapping/i.test(messageStr)) {
         setAssignTierError(
-          "This tenant already has a tier assignment for the selected date range. Choose different dates or manage the existing assignment.",
+          `This ${INSTITUTION.toLowerCase()} already has a tier assignment for the selected date range. Choose different dates or manage the existing assignment.`,
         );
       } else {
-        setAssignTierError(messageStr);
+        setAssignTierError(replaceTenantCopy(messageStr));
       }
     } finally {
       setIsAssigning(false);
@@ -561,7 +565,7 @@ export default function TenantManagementTab({
         isClosable: true,
       });
 
-      queryClient.invalidateQueries({
+      await queryClient.refetchQueries({
         queryKey: ["tenant-tiers"],
       });
     } catch (err: any) {
@@ -607,7 +611,7 @@ export default function TenantManagementTab({
     return [
       {
         id: "organisation",
-        header: "Tenant",
+        header: INSTITUTION,
         thProps: { w: "420px", maxW: "420px" },
         tdProps: { maxW: "420px" },
         cell: (t) => (
@@ -703,7 +707,7 @@ export default function TenantManagementTab({
       { id: "full_name", header: "Full Name", cell: (u) => dash(u.full_name) },
       {
         id: "roles",
-        header: "Role",
+        header: "Roles",
         cell: (u) => <TenantUserRoleBadges role={u.role} roles={u.roles} />,
       },
       {
@@ -761,7 +765,7 @@ export default function TenantManagementTab({
       <Card>
         <CardHeader>
           <HStack justify="space-between" align="center">
-            <Heading size="md">Tenants</Heading>
+            <Heading size="md">{INSTITUTIONS}</Heading>
             <HStack>
               <Button
                 leftIcon={<FiPlus />}
@@ -769,7 +773,7 @@ export default function TenantManagementTab({
                 colorScheme="blue"
                 onClick={tm.openTenantModal}
               >
-                Create Tenant
+                Create {INSTITUTION}
               </Button>
             </HStack>
           </HStack>
@@ -781,8 +785,8 @@ export default function TenantManagementTab({
             getRowKey={(t) => t.tenant_id}
             onRowClick={tm.handleViewTenant}
             isLoading={tm.isLoadingTenants}
-            emptyMessage="No tenants found."
-            noResultsMessage="No tenants match the current filters."
+            emptyMessage={`No ${INSTITUTIONS.toLowerCase()} found.`}
+            noResultsMessage={`No ${INSTITUTIONS.toLowerCase()} match the current filters.`}
             unfilteredCount={tm.tenants.length}
             hasActiveFilters={
               tm.tenantFilterStatus !== "all" || tm.tenantSearch.trim() !== ""
@@ -794,7 +798,7 @@ export default function TenantManagementTab({
             filters={
               <>
                 <TableSearchField
-                  placeholder="Search by organisation or tenant ID"
+                  placeholder={`Search by organisation or ${INSTITUTION.toLowerCase()} ID`}
                   value={tm.tenantSearch}
                   onChange={tm.setTenantSearch}
                 />
@@ -825,7 +829,7 @@ export default function TenantManagementTab({
       <Card>
         <CardHeader>
           <HStack justify="space-between" align="center">
-            <Heading size="md">Tenant Users</Heading>
+            <Heading size="md">{INSTITUTION} Users</Heading>
             <HStack>
               <Button
                 leftIcon={<FiUserPlus />}
@@ -852,7 +856,7 @@ export default function TenantManagementTab({
         getRowKey={(u) => u.user_id}
         onRowClick={tm.handleViewUser}
         isLoading={tm.isLoadingTenantUsers}
-        emptyMessage="No users in this tenant."
+        emptyMessage={`No users in this ${INSTITUTION.toLowerCase()}.`}
         noResultsMessage="No users match the current filters."
         unfilteredCount={tm.tenantUsers.length}
         hasActiveFilters={
@@ -1029,7 +1033,7 @@ export default function TenantManagementTab({
                 )}
                 <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
                   <Box>
-                    <Text fontWeight="semibold">Tenant ID</Text>
+                    <Text fontWeight="semibold">{INSTITUTION} ID</Text>
                     <Text fontFamily="mono">{t.tenant_id}</Text>
                   </Box>
                   <Box>
@@ -1237,7 +1241,7 @@ export default function TenantManagementTab({
     return (
       <HStack spacing={2}>
         <IconButton
-          aria-label="View tenant"
+          aria-label={`View ${INSTITUTION.toLowerCase()}`}
           icon={<ViewIcon />}
           size="sm"
           variant="ghost"
@@ -1249,7 +1253,7 @@ export default function TenantManagementTab({
           }}
         />
         <IconButton
-          aria-label="Edit tenant"
+          aria-label={`Edit ${INSTITUTION.toLowerCase()}`}
           icon={<EditIcon />}
           size="sm"
           variant="ghost"
@@ -1319,7 +1323,7 @@ export default function TenantManagementTab({
           </Tooltip>
         )}
 
-        {renderOverflowActionMenu(items, stopRowClick, "Tenant actions")}
+        {renderOverflowActionMenu(items, stopRowClick, `${INSTITUTION} actions`)}
       </HStack>
     );
   }
@@ -1439,7 +1443,7 @@ export default function TenantManagementTab({
       >
         <ModalOverlay />
         <ModalContent>
-          <ModalHeader>Create Tenant</ModalHeader>
+          <ModalHeader>Create {INSTITUTION}</ModalHeader>
           <ModalCloseButton />
           <ModalBody>
             <VStack spacing={3} align="stretch">
@@ -1558,7 +1562,7 @@ export default function TenantManagementTab({
       >
         <ModalOverlay />
         <ModalContent>
-          <ModalHeader>Edit Tenant</ModalHeader>
+          <ModalHeader>Edit {INSTITUTION}</ModalHeader>
           <ModalCloseButton />
           <ModalBody>
             <VStack spacing={3} align="stretch">
@@ -1682,7 +1686,7 @@ export default function TenantManagementTab({
       <Modal isOpen={tm.isUserModalOpen} onClose={tm.closeUserModal} size="md">
         <ModalOverlay />
         <ModalContent>
-          <ModalHeader>Add Tenant User</ModalHeader>
+          <ModalHeader>Add {INSTITUTION} User</ModalHeader>
           <ModalCloseButton />
           <ModalBody>
             <VStack spacing={3} align="stretch">
@@ -1691,7 +1695,7 @@ export default function TenantManagementTab({
                   isRequired
                   isInvalid={Boolean(tm.userFormErrors.tenant_id)}
                 >
-                  <FormLabel>Tenant</FormLabel>
+                  <FormLabel>{INSTITUTION}</FormLabel>
                   <Input
                     value={tm.getLockedUserFormTenantLabel()}
                     isReadOnly
@@ -1709,12 +1713,12 @@ export default function TenantManagementTab({
                   isRequired
                   isInvalid={Boolean(tm.userFormErrors.tenant_id)}
                 >
-                  <FormLabel>Tenant</FormLabel>
+                  <FormLabel>{INSTITUTION}</FormLabel>
                   <Select
                     value={tm.userForm.tenant_id}
                     onChange={(e) => tm.setUserFormTenantId(e.target.value)}
                   >
-                    <option value="">Select a tenant…</option>
+                    <option value="">Select {INSTITUTION_ARTICLE} {INSTITUTION.toLowerCase()}…</option>
                     {tm.tenants.map((t) => (
                       <option key={t.tenant_id} value={t.tenant_id}>
                         {t.organisation}
@@ -1882,7 +1886,7 @@ export default function TenantManagementTab({
                 <FormLabel>Role</FormLabel>
                 <Select
                   value={tm.editUserForm.role}
-                  isDisabled={!tm.editUserRolesLoaded}
+                  isDisabled={!tm.editUserRolesLoaded || tm.isEditUserOnlyAdmin}
                   onChange={(e) =>
                     tm.setEditUserForm({
                       ...tm.editUserForm,
@@ -1899,6 +1903,12 @@ export default function TenantManagementTab({
                 {!tm.editUserRolesLoaded && (
                   <FormHelperText>
                     Roles could not be loaded; role changes are disabled.
+                  </FormHelperText>
+                )}
+                {tm.isEditUserOnlyAdmin && (
+                  <FormHelperText>
+                    You are the only Admin in the default organisation and
+                    cannot change your role.
                   </FormHelperText>
                 )}
               </FormControl>
@@ -2015,7 +2025,7 @@ export default function TenantManagementTab({
     newStatus: string,
   ): string | null {
     if (isTenantStatus(newStatus, TENANT.STATUS.SUSPENDED)) {
-      return "API keys become Inactive. Reactivating the tenant restores the same keys to Active.";
+      return `API keys become Inactive. Reactivating the ${INSTITUTION.toLowerCase()} restores the same keys to Active.`;
     }
     if (isTenantStatus(newStatus, TENANT.STATUS.DEACTIVATED)) {
       return "API keys are Revoked. After reactivation, an admin must create a new key.";
@@ -2038,7 +2048,7 @@ export default function TenantManagementTab({
   function renderStatusConfirmDialog() {
     const target = tm.statusUpdateTarget;
     const isOpen = tm.isStatusDialogOpen && Boolean(target);
-    const targetLabel = target?.type === "tenant" ? "tenant" : "user";
+    const targetLabel = target?.type === "tenant" ? INSTITUTION.toLowerCase() : "user";
     const statusLabel = formatStatusConfirmLabel(
       target?.type,
       tm.statusUpdateNewStatus,
@@ -2107,6 +2117,14 @@ export default function TenantManagementTab({
       !selectedTierHasNoServices &&
       !servicesForTiersQuery.isLoading &&
       !servicesForTiersQuery.isError;
+    const today = new Date().toISOString().slice(0, 10);
+    const effectiveFromMinDate = today;
+    const effectiveToMinDate = assignEffectiveFrom
+      ? (() => {
+          const dayAfterFrom = addDaysToDateInputValue(assignEffectiveFrom, 1);
+          return dayAfterFrom > today ? dayAfterFrom : today;
+        })()
+      : today;
     return (
       <Modal
         isOpen={isAssignTierOpen}
@@ -2184,6 +2202,7 @@ export default function TenantManagementTab({
                     type="date"
                     size="sm"
                     value={assignEffectiveFrom}
+                    min={effectiveFromMinDate}
                     onChange={(e) => setAssignEffectiveFrom(e.target.value)}
                     isDisabled={isAssigning}
                   />
@@ -2196,7 +2215,7 @@ export default function TenantManagementTab({
                     type="date"
                     size="sm"
                     value={assignEffectiveTo}
-                    min={assignEffectiveFrom}
+                    min={effectiveToMinDate}
                     onChange={(e) => setAssignEffectiveTo(e.target.value)}
                     isDisabled={isAssigning}
                   />

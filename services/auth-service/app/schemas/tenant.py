@@ -13,7 +13,9 @@ from pydantic import AliasChoices, EmailStr, Field, StrictBool, field_serializer
 
 from app.models.user import CreationType
 from app.schemas.base import BaseSchema
+from app.schemas.common import MessageData, SuccessResponse
 from app.models.tenant import TenantStatus
+from app.core.constants import RoleName
 
 # Invisible Unicode characters that str.strip() does not remove:
 # soft hyphen, zero-width space/non-joiner/joiner, LTR/RTL marks,
@@ -108,8 +110,11 @@ def _normalize_phone(v: Any, *, validate_e164: bool) -> Optional[str]:
 class TenantUserRole(str, Enum):
     """Roles assignable to users provisioned under a tenant."""
 
-    USER = "USER"
-    TENANT_ADMIN = "TENANT ADMIN"
+    USER = RoleName.USER.value
+    TENANT_ADMIN = RoleName.TENANT_ADMIN.value
+    USAGE_VIEWER = RoleName.USAGE_VIEWER.value
+    MODERATOR = RoleName.MODERATOR.value
+
 
 
 class TenantCreate(BaseSchema):
@@ -271,7 +276,7 @@ class TenantUserResponse(BaseSchema):
     # ORM exposes ``id``; API responses use ``user_id`` (field name).
     user_id: UUID = Field(validation_alias=AliasChoices("id", "user_id"))
     username: str
-    email: EmailStr
+    email: str
     phone_number: Optional[str] = None
     full_name: Optional[str] = None
     is_active: bool
@@ -285,4 +290,93 @@ class TenantUserResponse(BaseSchema):
     # from one who never set a password (Pending Activation).
     is_activated: Optional[bool] = None
     creation_type: Optional[CreationType] = None
-    role: TenantUserRole
+    roles: list[str]
+
+
+class TenantPlanData(BaseSchema):
+    tenant_id: str
+    tenant_name: str
+    plan_id: str
+    plan_name: Optional[str] = None
+    tier: Optional[str] = None
+    plan_cost: Optional[float] = None
+    quota_config: dict[str, Any] = Field(default_factory=dict)
+    rate_limit_config: dict[str, Any] = Field(default_factory=dict)
+    allowed_services: list[Any] = Field(default_factory=list)
+
+
+class DeleteTenantUserData(BaseSchema):
+    user_id: str
+    deleted: bool
+
+
+class CreateTenantResponse(SuccessResponse):
+    """POST /auth/tenants"""
+
+    data: TenantResponse
+
+
+class ListTenantsResponse(SuccessResponse):
+    """GET /auth/tenants"""
+
+    data: list[TenantResponse]
+
+
+class GetTenantResponse(SuccessResponse):
+    """GET /auth/tenants/{tenant_id}"""
+
+    data: TenantResponse
+
+
+class UpdateTenantResponse(SuccessResponse):
+    """PATCH /auth/tenants/{tenant_id}"""
+
+    data: TenantResponse
+
+
+class UpdateTenantStatusResponse(SuccessResponse):
+    """PATCH /auth/tenants/{tenant_id}/status"""
+
+    data: TenantResponse
+
+
+class GetTenantPlanResponse(SuccessResponse):
+    """GET /auth/tenants/{tenant_id}/plan"""
+
+    data: TenantPlanData
+
+
+class ListTenantUsersResponse(SuccessResponse):
+    """GET /auth/tenants/{tenant_id}/users"""
+
+    data: list[TenantUserResponse]
+
+
+class CreateTenantUserResponse(SuccessResponse):
+    """POST /auth/tenants/{tenant_id}/users"""
+
+    data: TenantUserCreateResponse
+
+
+class UpdateTenantUserStatusResponse(SuccessResponse):
+    """PATCH /auth/tenants/{tenant_id}/users/{user_id}/status"""
+
+    data: TenantUserResponse
+
+
+class ResendTenantUserSetupLinkResponse(SuccessResponse):
+    """POST /auth/tenants/{tenant_id}/users/{user_id}/resend-setup-link"""
+
+    data: MessageData
+
+
+class UpdateTenantUserResponse(SuccessResponse):
+    """PATCH /auth/tenants/{tenant_id}/users/{user_id}"""
+
+    data: TenantUserResponse
+
+
+class DeleteTenantUserResponse(SuccessResponse):
+    """DELETE /auth/tenants/{tenant_id}/users/{user_id}"""
+
+    data: DeleteTenantUserData

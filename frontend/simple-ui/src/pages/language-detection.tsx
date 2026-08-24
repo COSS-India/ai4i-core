@@ -23,6 +23,7 @@ import {
 import { parseLanguagePredictions } from "../types/inference";
 import { parseError } from "../utils/errorHandler";
 import { showToast } from "../utils/toast";
+import { getPlatformName } from "../config/runtimeConfig";
 
 const pageDefaults = getServicePageDefaults("language-detection");
 
@@ -112,7 +113,7 @@ const LanguageDetectionPage: React.FC = () => {
   return (
     <ServicePageLayout
       serviceId="language-detection"
-      headTitle="Text Language Detection | AI4Inclusion Console"
+      headTitle={`Text Language Detection | ${getPlatformName()}`}
       headDescription="Test Text Language Detection to identify the language and script of any text input."
       requestPanel={
         <RequestContainer

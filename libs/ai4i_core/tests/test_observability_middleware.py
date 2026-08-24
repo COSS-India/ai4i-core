@@ -81,17 +81,51 @@ class TestSetMetricLabels:
         set_metric_labels(request, model="gemma")
         assert request.state.model == "gemma"
 
+    def test_sets_model_id_label(self):
+        """model_id (Model Registry identity) is a distinct dimension from
+        model (the upstream-echoed model name) — see MetricsCollector."""
+        request = SimpleNamespace(state=SimpleNamespace())
+        set_metric_labels(request, model_id="hash-gemma-v1")
+        assert request.state.model_id == "hash-gemma-v1"
+
     def test_defaults_empty(self):
         request = SimpleNamespace(state=SimpleNamespace())
         set_metric_labels(request)
         assert request.state.source_lang == ""
         assert request.state.target_lang == ""
         assert request.state.model == ""
+        assert request.state.model_id == ""
 
     def test_does_not_touch_billed_quantities(self):
         request = SimpleNamespace(state=SimpleNamespace())
         set_metric_labels(request, source_lang="en")
         assert not hasattr(request.state, "billed_input")
+
+    def test_second_call_does_not_clobber_field_it_omits(self):
+        """Regression: model_id is typically set EARLY (as soon as the
+        service resolves, before a handler runs), then source_lang/
+        target_lang are set in a SECOND, later call once they're known. That
+        second call must not reset model_id back to "" just because it
+        doesn't repeat it — otherwise a request that fails/raises between
+        the two calls (e.g. an upstream 502) would end up with no model_id
+        on its metrics, since the failure path never reaches a call that
+        DOES repeat it."""
+        request = SimpleNamespace(state=SimpleNamespace())
+        set_metric_labels(request, model_id="hash-gemma-v1")
+        set_metric_labels(request, source_lang="en", target_lang="hi")
+
+        assert request.state.model_id == "hash-gemma-v1"
+        assert request.state.source_lang == "en"
+        assert request.state.target_lang == "hi"
+
+    def test_explicit_empty_string_does_overwrite(self):
+        """Distinguish "field omitted" (leave as-is) from "field explicitly
+        set to empty" (a caller that genuinely wants to clear/reset it)."""
+        request = SimpleNamespace(state=SimpleNamespace())
+        set_metric_labels(request, model_id="hash-gemma-v1")
+        set_metric_labels(request, model_id="")
+
+        assert request.state.model_id == ""
 
 
 class TestRecordMetricsFailurePath:
@@ -100,7 +134,7 @@ class TestRecordMetricsFailurePath:
         mw = _middleware()
         await mw._record_metrics(
             path="/api/v1/nmt/inference", method="POST",
-            service_type="translation", tenant="t1", service_id="s1",
+            service_type="translation", tenant="t1", tenant_id="", service_id="s1",
             status_code=502, duration=0.1,
             billed_input=999, billed_output=0,
         )
@@ -115,7 +149,7 @@ class TestRecordMetricsFailurePath:
         mw = _middleware()
         await mw._record_metrics(
             path="/api/v1/nmt/inference", method="POST",
-            service_type="translation", tenant="t1", service_id="s1",
+            service_type="translation", tenant="t1", tenant_id="", service_id="s1",
             status_code=200, duration=0.1,
             billed_input=None, billed_output=None,
         )
@@ -128,8 +162,8 @@ class TestLLMMetrics:
         mw = _middleware()
         await mw._record_metrics(
             path="/api/v1/chat", method="POST", service_type="llm",
-            tenant="t1", service_id="s1", status_code=200, duration=0.2,
-            billed_input=10, billed_output=20, model="gemma",
+            tenant="t1", tenant_id="", service_id="s1", status_code=200, duration=0.2,
+            billed_input=10, billed_output=20, model="gemma", model_id="hash-gemma-v1",
         )
         mw.metrics_collector.track_llm_tokens.assert_called_once()
         _, kwargs = mw.metrics_collector.track_llm_tokens.call_args
@@ -137,13 +171,18 @@ class TestLLMMetrics:
         assert kwargs["completion_tokens"] == 20
         assert kwargs["total_tokens"] == 30
         assert kwargs["model"] == "gemma"
+        assert kwargs["model_id"] == "hash-gemma-v1"
+
+        mw.metrics_collector.track_request.assert_called_once()
+        _, request_kwargs = mw.metrics_collector.track_request.call_args
+        assert request_kwargs["model_id"] == "hash-gemma-v1"
 
     @pytest.mark.asyncio
     async def test_llm_skips_when_both_zero(self):
         mw = _middleware()
         await mw._record_metrics(
             path="/api/v1/chat", method="POST",
-            service_type="llm", tenant="t1", service_id="s1",
+            service_type="llm", tenant="t1", tenant_id="", service_id="s1",
             status_code=200, duration=0.2,
             billed_input=0, billed_output=0,
         )
@@ -160,14 +199,14 @@ class TestValuesComeFromState:
         mw = _middleware()
         await mw._record_metrics(
             path="/api/v1/nmt/inference", method="POST",
-            service_type="translation", tenant="t1", service_id="s1",
+            service_type="translation", tenant="t1", tenant_id="", service_id="s1",
             status_code=200, duration=0.1,
             billed_input=10, billed_output=0,
             source_lang="en", target_lang="hi",
         )
         mw.metrics_collector.track_nmt_characters.assert_called_once_with(
             source_lang="en", target_lang="hi", characters=10,
-            tenant="t1", service_id="s1",
+            tenant="t1", tenant_id="", service_id="s1", auth_type="",
         )
 
     @pytest.mark.asyncio
@@ -175,7 +214,7 @@ class TestValuesComeFromState:
         mw = _middleware()
         await mw._record_metrics(
             path="/api/v1/nmt/inference", method="POST",
-            service_type="translation", tenant="t1", service_id="state-service-id",
+            service_type="translation", tenant="t1", tenant_id="", service_id="state-service-id",
             status_code=200, duration=0.1,
             billed_input=10, billed_output=0,
             source_lang="en", target_lang="hi",
@@ -194,7 +233,7 @@ class TestPerServiceUnitDispatch:
             tenant="t1", service_id="s1",
         )
         mw.metrics_collector.track_ocr_characters.assert_called_once_with(
-            characters=3, tenant="t1", service_id="s1",
+            characters=3, tenant="t1", tenant_id="", service_id="s1", auth_type="",
         )
 
     def test_ner_emits_billed_character_count_not_word_count(self):
@@ -205,7 +244,7 @@ class TestPerServiceUnitDispatch:
             tenant="t1", service_id="s1",
         )
         mw.metrics_collector.track_ner_tokens.assert_called_once_with(
-            tokens=42, tenant="t1", service_id="s1",
+            tokens=42, tenant="t1", tenant_id="", service_id="s1", auth_type="",
         )
 
     @pytest.mark.parametrize("service_type,tracker", [
@@ -235,7 +274,7 @@ class TestPerServiceUnitDispatch:
             target_lang="", tenant="t1", service_id="s1",
         )
         mw.metrics_collector.track_tts_characters.assert_called_once_with(
-            language="hi", characters=777, tenant="t1", service_id="s1",
+            language="hi", characters=777, tenant="t1", tenant_id="", service_id="s1", auth_type="",
         )
 
 

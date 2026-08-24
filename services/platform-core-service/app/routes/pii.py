@@ -43,11 +43,13 @@ from app.schemas.pii_management.admin import (
     GenerateRegexRequest,
     GenerateRegexResponse,
     NewDomainRequest,
+    StatusResponse,
     TenantDomainDeleteRequest,
     TenantDomainEntry,
     TenantDomainUpsertRequest,
+    TenantDomainUpsertResponse,
 )
-from app.schemas.pii_management.policy import DomainSummary
+from app.schemas.pii_management.policy import DomainListResponse, DomainSummary, PolicyResponse
 from app.schemas.pii_management.redaction import RedactionRequest, RedactionResponse
 
 logger = logging.getLogger(__name__)
@@ -74,13 +76,13 @@ router = APIRouter(prefix="/pii")
 
 # ── Public endpoints ───────────────────────────────────────────────────────
 
-@_public_router.get("/domains", response_model=List[str])
+@_public_router.get("/domains", response_model=DomainListResponse)
 async def get_domains(policy_sync=Depends(_get_policy_sync)):
     """List active PII domains."""
     return policy_sync.list_active_domains()
 
 
-@_public_router.get("/policy/{domain}")
+@_public_router.get("/policy/{domain}", response_model=PolicyResponse)
 async def get_policy(domain: str, policy_sync=Depends(_get_policy_sync)):
     """Return the policy JSON for a domain."""
     return policy_sync.get_policy(domain) or {}
@@ -126,6 +128,7 @@ async def redact_text(
 
 @_admin_router.get("/all-domains", response_model=List[DomainSummary])
 async def get_all_domains(db: AsyncSession = Depends(get_pii_db)):
+    """List every PII domain (active and inactive) with its description."""
     repo = PolicyRepository(db)
     rows = await repo.get_all()
     return [
@@ -141,11 +144,12 @@ async def get_all_domains(db: AsyncSession = Depends(get_pii_db)):
     ]
 
 
-@_admin_router.post("/domain", status_code=201)
+@_admin_router.post("/domain", status_code=201, response_model=StatusResponse)
 async def create_domain(
     req: NewDomainRequest,
     db: AsyncSession = Depends(get_pii_db),
 ):
+    """Create a new PII domain policy."""
     repo = PolicyRepository(db)
     existing = await repo.get_by_id(req.domain_id)
     if existing:
@@ -154,12 +158,13 @@ async def create_domain(
     return {"status": "success"}
 
 
-@_admin_router.post("/deploy")
+@_admin_router.post("/deploy", response_model=StatusResponse)
 async def deploy(
     req: DeployRequest,
     request: Request,
     db: AsyncSession = Depends(get_pii_db),
 ):
+    """Replace a domain's detection rules and broadcast a policy-cache refresh."""
     repo = PolicyRepository(db)
     updated = await repo.update_rules(req.domain_id, req.rules)
     if not updated:
@@ -171,12 +176,13 @@ async def deploy(
     return {"status": "saved"}
 
 
-@_admin_router.post("/activate-domains")
+@_admin_router.post("/activate-domains", response_model=StatusResponse)
 async def activate_domains(
     req: BulkActivateRequest,
     request: Request,
     db: AsyncSession = Depends(get_pii_db),
 ):
+    """Bulk-activate PII domains and broadcast a policy-cache refresh."""
     repo = PolicyRepository(db)
     await repo.set_active_bulk(req.domain_ids)
     redis = getattr(request.app.state, "redis_client", None)
@@ -211,18 +217,20 @@ async def generate_regex(req: GenerateRegexRequest):
 
 @_admin_router.get("/tenant-domains", response_model=List[TenantDomainEntry])
 async def list_tenant_domain_mappings(db: AsyncSession = Depends(get_pii_db)):
+    """List every tenant → PII domain mapping."""
     repo = TenantMapRepository(db)
     rows = await repo.get_all()
     return [TenantDomainEntry(tenant_id=r.tenant_id, domain_id=r.domain_id, updated_at=r.updated_at)
             for r in rows]
 
 
-@_admin_router.post("/tenant-domain")
+@_admin_router.post("/tenant-domain", response_model=TenantDomainUpsertResponse)
 async def upsert_tenant_domain(
     req: TenantDomainUpsertRequest,
     request: Request,
     db: AsyncSession = Depends(get_pii_db),
 ):
+    """Create or update a tenant's PII domain mapping."""
     tid, did = req.tenant_id.strip(), req.domain_id.strip()
     if not tid or not did:
         raise HTTPException(400, "tenant_id and domain_id are required.")
@@ -247,12 +255,13 @@ async def upsert_tenant_domain(
     return {"status": "success", "tenant_id": tid, "domain_id": did}
 
 
-@_admin_router.post("/tenant-domain/delete")
+@_admin_router.post("/tenant-domain/delete", response_model=StatusResponse)
 async def delete_tenant_domain(
     req: TenantDomainDeleteRequest,
     request: Request,
     db: AsyncSession = Depends(get_pii_db),
 ):
+    """Remove a tenant's PII domain mapping."""
     tid = req.tenant_id.strip()
     if not tid:
         raise HTTPException(400, "tenant_id is required.")
@@ -277,6 +286,7 @@ async def list_audit_logs(
     limit: int = Query(default=50, ge=1, le=500),
     db: AsyncSession = Depends(get_pii_db),
 ):
+    """List the most recent PII redaction audit log entries."""
     repo = AuditLogRepository(db)
     rows = await repo.list_recent(limit)
     return [

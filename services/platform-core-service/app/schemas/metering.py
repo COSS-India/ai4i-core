@@ -114,7 +114,8 @@ class ServiceSummary(BaseModel):
 class ServiceModelRow(BaseModel):
     service_id: str                     # raw value the client sent in the OpenAI `model` field; the grouping key
     name: str                           # mm_services.name, falls back to service_id when unresolved
-    model_name: Optional[str] = None    # mm_services.model_id — the actual model behind the service; informational only
+    model_id: Optional[str] = None      # mm_models.model_id — stable (name, version) hash; the model-level grouping key (FE: group rows by this, not model_name)
+    model_name: Optional[str] = None    # mm_models.name — the actual model behind the service; display only, not an identity
     requests: int
     native_units: float = 0.0
     native_unit_suffix: str = "tokens"
@@ -123,7 +124,11 @@ class ServiceModelRow(BaseModel):
 
 
 class MostUsedModel(BaseModel):
+    """Model-level (not service-level) — ``requests`` is the sum across every
+    service backed by this model. ``service_id`` is omitted (None) since a
+    model can be fronted by more than one service."""
     service_id: Optional[str] = None
+    model_id: Optional[str] = None
     name: Optional[str] = None
     requests: int = 0
 
@@ -134,8 +139,27 @@ class HighestFailureModel(BaseModel):
     failure_rate_pct: float = 0.0
 
 
+class TopModelRow(BaseModel):
+    """One row of the model-level consumption ranking (AI4IDS-2790).
+
+    ``consumption_pct`` is this model's share of total requests in the
+    window; when more than one service backs the model, it's the AVERAGE of
+    those services' individual consumption % (per AC), not the sum.
+    ``requests`` is the SUM of requests across the model's service(s).
+    """
+    rank: int
+    model_id: str
+    model_name: str
+    consumption_pct: float
+    requests: int
+    formatted_requests: str
+
+
 class ModelConsumptionSummary(BaseModel):
     """Model Consumption KPI cards (computed over services with traffic)."""
+    total_models: Optional[int] = None      # count of registered LLM model VERSIONS (mm_models, task_types=llm); see note in metering_service.registry_model_count
+    active_models: Optional[int] = None     # distinct model_ids among model_totals with traffic in the window — matches top_models' own grain
+    overall_success_rate_pct: Optional[float] = None  # plain average of success_pct across services with traffic — unweighted by request volume
     most_used: Optional[MostUsedModel] = None
     highest_failure_rate: Optional[HighestFailureModel] = None
 
@@ -172,6 +196,13 @@ class ServiceConsumptionResponse(BaseModel):
 class ModelConsumptionResponse(BaseModel):
     scope: Scope
     summary: Optional[ModelConsumptionSummary] = None
+    top_models: list[TopModelRow] = []   # ranked by consumption_pct desc; FE slices to Top 5 / Top 10
+    # Denominator for top_models[].consumption_pct — sum of requests across
+    # services with a RESOLVED model_name only. NOT the full window's total
+    # requests (that also includes traffic from services whose model lookup
+    # failed) — render this alongside consumption_pct, not some other total,
+    # or the percentages won't add up against what's displayed next to them.
+    top_models_total_requests: int = 0
     breakdown: list[ServiceModelRow]
     degraded: bool = False
     generated_at: str

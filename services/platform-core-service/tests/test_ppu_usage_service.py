@@ -185,6 +185,114 @@ class TestGetSummary:
         total_pct = sum(i.percentage for i in result.spendByModelTaskType)
         assert abs(total_pct - 100.0) < 0.2
 
+    @pytest.mark.asyncio
+    async def test_allocated_and_remaining_budget_summed_across_tenants(self):
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[_tier_row(tenant_id="t1"), _tier_row(tenant_id="t2")],
+            get_tenant_tier_usage_breakdown=[
+                _usage_row(tenant_id="t1", total_cost=Decimal("50")),
+                _usage_row(tenant_id="t2", total_cost=Decimal("30")),
+            ],
+            get_tenant_budgets=_budgets(
+                _budget_row(tenant_id="t1", budget_limit=Decimal("1000"), available_balance=Decimal("700")),
+                _budget_row(tenant_id="t2", budget_limit=Decimal("500"), available_balance=Decimal("200")),
+            ),
+            get_total_cost_for_month=0.0,
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_summary("2026-06")
+
+        assert result.totalAllocatedBudget == 1500.0
+        assert result.totalRemainingBudget == 900.0
+
+    @pytest.mark.asyncio
+    async def test_tenant_with_no_budget_row_excluded_from_budget_totals(self):
+        """Same "unknown limit != 0" treatment as budgetExceededTenants — a tenant
+        with no assignment row on file must not contribute a 0 to either total."""
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[_tier_row()],
+            get_tenant_tier_usage_breakdown=[_usage_row()],
+            get_tenant_budgets=_budgets(),  # no row for t1
+            get_total_cost_for_month=0.0,
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_summary("2026-06")
+
+        assert result.totalAllocatedBudget == 0.0
+        assert result.totalRemainingBudget == 0.0
+
+    @pytest.mark.asyncio
+    async def test_spend_item_allocated_summed_across_tenants_current_tier(self):
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[_tier_row(tenant_id="t1"), _tier_row(tenant_id="t2", tier_id="2")],
+            get_tenant_tier_usage_breakdown=[
+                _usage_row(tenant_id="t1", tier_id="1", total_units=100.0, quota_snap=200.0),
+                _usage_row(tenant_id="t2", tier_id="2", total_units=50.0, quota_snap=300.0),
+            ],
+            get_tenant_budgets=_budgets(),
+            get_total_cost_for_month=0.0,
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_summary("2026-06")
+
+        llm_item = next(i for i in result.spendByModelTaskType if i.modelTaskType == "llm")
+        assert llm_item.consumption == 150.0
+        assert llm_item.allocated == 500.0
+
+    @pytest.mark.asyncio
+    async def test_spend_item_allocated_null_when_no_quota_snapshot(self):
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[_tier_row()],
+            get_tenant_tier_usage_breakdown=[_usage_row(quota_snap=None)],
+            get_tenant_budgets=_budgets(),
+            get_total_cost_for_month=0.0,
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_summary("2026-06")
+
+        assert result.spendByModelTaskType[0].allocated is None
+
+    @pytest.mark.asyncio
+    async def test_spend_item_allocated_populated_independently_per_task_type(self):
+        """Unlike a single flat total (which can only ever hold one unit), each
+        SpendItem carries its own allocated figure — LLM and ASR can both show
+        allocated at once, in their own units, on the same unfiltered call."""
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[_tier_row()],
+            get_tenant_tier_usage_breakdown=[
+                _usage_row(inference_name="llm", total_units=100.0, total_cost=Decimal("30"), quota_snap=200.0),
+                _usage_row(inference_name="asr", total_units=10.0, total_cost=Decimal("20"), quota_snap=50.0),
+            ],
+            get_tenant_budgets=_budgets(),
+            get_total_cost_for_month=0.0,
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_summary("2026-06")
+
+        by_type = {i.modelTaskType: i for i in result.spendByModelTaskType}
+        assert by_type["llm"].allocated == 200.0
+        assert by_type["asr"].allocated == 50.0
+
+    @pytest.mark.asyncio
+    async def test_spend_item_allocated_excludes_quota_from_non_current_tier(self):
+        """Quota isn't cumulative across tiers a tenant held mid-period — only the
+        row matching the tenant's CURRENT (end-of-period) tier counts toward
+        allocated, though consumption still sums across every tier they used."""
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[_tier_row(tier_id="2")],  # current tier is "2"
+            get_tenant_tier_usage_breakdown=[
+                _usage_row(tier_id="1", total_units=100.0, quota_snap=500.0),  # old tier, excluded
+                _usage_row(tier_id="2", total_units=50.0, quota_snap=100.0),  # current tier, counted
+            ],
+            get_tenant_budgets=_budgets(),
+            get_total_cost_for_month=0.0,
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_summary("2026-06")
+
+        assert result.spendByModelTaskType[0].consumption == 150.0
+        assert result.spendByModelTaskType[0].allocated == 100.0
+
 
 class TestGetSummaryFiltered:
     """get_summary(tier_id=<id>) must keep using full tenant resolution for the prior
@@ -551,9 +659,26 @@ class TestGetTenantDetail:
         assert result.tierId == "2"
         # still a zero-usage item otherwise — only tier/tierId change
         assert result.spend == 0.0
-        assert result.budget.limit == 0.0
         assert result.usage.taskTypeCount == 0
         assert result.tierBreakdown == []
+
+    @pytest.mark.asyncio
+    async def test_zero_usage_with_live_budget_shows_real_allocated_and_remaining(self):
+        """A tenant with a live assignment but no usage yet this period has a real
+        allocated/remaining budget — budget.limit/remaining must not collapse to 0
+        just because there's no usage to build a hierarchical item from (previously
+        it did, even with a real budget_limit/available_balance on file)."""
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[],
+            get_tenant_budgets=_budgets(
+                _budget_row(tenant_id="t1", budget_limit=Decimal("1000"), available_balance=Decimal("700"))
+            ),
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
+
+        assert result.budget.limit == 1000.0
+        assert result.budget.remaining == 700.0
 
     @pytest.mark.asyncio
     async def test_returns_zero_value_item_when_tenant_exists_but_unassigned(self):

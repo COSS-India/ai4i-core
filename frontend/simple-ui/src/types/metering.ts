@@ -130,33 +130,6 @@ export interface TenantConsumptionResponse extends MeteringResponseMeta {
   request_volume?: MeteringGraph | null;
 }
 
-export interface ServiceConsumptionSummary {
-  active_services?: number;
-  most_used?: { service: string; requests: number } | null;
-  highest_failure_rate?: { service: string; failure_rate_pct: number } | null;
-}
-
-export interface ServiceRow {
-  service: string;
-  metering_unit?: string;
-  requests: number;
-  percentage?: number;
-  native_units?: number | null;
-  native_unit_suffix: string;
-  success_pct: number;
-  failure_rate_pct?: number;
-  failed?: number;
-  vs_prev_period_pct?: number | null;
-}
-
-export interface ServiceConsumptionResponse extends MeteringResponseMeta {
-  scope: MeteringScope;
-  summary?: ServiceConsumptionSummary | null;
-  service_breakdown: ServiceRow[];
-  throughput?: ThroughputData;
-  request_volume?: MeteringGraph | null;
-}
-
 /** Per-service LLM row from GET /metering/model-consumption (no roll-up by model_name). */
 export interface ModelConsumptionRow {
   service_id: string;
@@ -169,13 +142,28 @@ export interface ModelConsumptionRow {
   failure_rate_pct: number;
 }
 
+/** Model-level ranking row from GET /metering/model-consumption (`top_models`). */
+export interface TopModelRow {
+  rank: number;
+  model_name: string;
+  consumption_pct: number;
+  requests: number;
+  formatted_requests: string;
+}
+
+export type ModelTopN = 5 | 10;
+
 export interface ModelConsumptionSummary {
+  /** Registered LLM model VERSIONS in the Registry (task_types=llm; platform-wide, not tenant-scoped). */
+  total_models?: number | null;
+  /** Distinct model_ids among model_totals with traffic in-window — same version grain as total_models. */
+  active_models?: number | null;
   most_used?: {
     service_id?: string | null;
     name?: string | null;
     requests: number;
   } | null;
-  /** Request-weighted success across all models with traffic. */
+  /** Request-weighted success across all services with traffic. */
   overall_success_rate_pct?: number | null;
 }
 
@@ -183,5 +171,8 @@ export interface ModelConsumptionSummary {
 export interface ModelConsumptionResponse extends MeteringResponseMeta {
   scope: MeteringScope;
   summary?: ModelConsumptionSummary | null;
+  top_models?: TopModelRow[];
+  /** Denominator for `top_models[].consumption_pct` (resolved-model traffic only). */
+  top_models_total_requests?: number;
   breakdown: ModelConsumptionRow[];
 }

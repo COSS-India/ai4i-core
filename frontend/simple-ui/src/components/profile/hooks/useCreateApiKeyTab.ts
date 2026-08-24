@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { showError } from "../../../utils/errorHandler";
 import { showToast } from "../../../utils/toast";
+import { INSTITUTION } from "../../../config/constants";
 import authService from "../../../services/authService";
 import type { Permission } from "../../../types/auth";
 import { useInferenceTypes } from "../../../hooks/useInferenceTypes";
@@ -126,7 +127,7 @@ export function useCreateApiKeyTab({
         showToast({
           type: "error",
           message:
-            "API key cannot be created: no tier is assigned to this tenant. Assign a tier that has at least one service mapped, then try again.",
+            `API key cannot be created: no tier is assigned to this ${INSTITUTION.toLowerCase()}. Assign a tier that has at least one service mapped, then try again.`,
         });
       } else {
         showError(error);

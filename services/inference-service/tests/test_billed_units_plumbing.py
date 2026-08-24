@@ -115,6 +115,85 @@ async def test_service_id_mirrored_onto_request_state():
 
 
 @pytest.mark.asyncio
+async def test_model_id_mirrored_onto_request_state():
+    """model_id (the Model Registry identity resolved via MMS, in
+    service_info["model_id"]) must reach request.state so
+    ObservabilityMiddleware can label
+    telemetry_obsv_requests_total/_duration_seconds with it."""
+    orch = _make_orchestrator()
+    task_service = _make_task_service(billed_input=1)
+
+    fake_request = SimpleNamespace(
+        url=SimpleNamespace(path="/api/v1/nmt/inference"),
+        method="POST",
+        headers={},
+        state=SimpleNamespace(),
+    )
+
+    with patch.object(orch, "_validate_task_type"), \
+         patch.object(orch, "_resolve_service_and_model",
+                      new=AsyncMock(return_value={"tier_ids": [], "model_id": "hash-gemma-v1"})), \
+         patch.object(orch, "_get_task_service", return_value=task_service):
+        await orch.route_inference(payload={"task_type": "NMT"}, request=fake_request)
+
+    assert fake_request.state.model_id == "hash-gemma-v1"
+
+
+@pytest.mark.asyncio
+async def test_model_id_survives_task_service_process_failure():
+    """Regression: model_id must be set as soon as the service resolves —
+    BEFORE task_service.process() runs — not bundled into the later
+    set_metric_labels() call alongside source_lang/target_lang (which are
+    only known AFTER process() succeeds). Observed in production as
+    telemetry_obsv_requests_total series with status_code=502 (an upstream
+    failure) carrying no model_id label at all, because the old code only
+    ever set it on the success path. service_id was already immune to this
+    (set eagerly); model_id must be too."""
+    orch = _make_orchestrator()
+    task_service = MagicMock()
+    task_service.process = AsyncMock(side_effect=RuntimeError("upstream 502"))
+
+    fake_request = SimpleNamespace(
+        url=SimpleNamespace(path="/api/v1/nmt/inference"),
+        method="POST",
+        headers={},
+        state=SimpleNamespace(),
+    )
+
+    with patch.object(orch, "_validate_task_type"), \
+         patch.object(orch, "_resolve_service_and_model",
+                      new=AsyncMock(return_value={"tier_ids": [], "model_id": "hash-gemma-v1"})), \
+         patch.object(orch, "_get_task_service", return_value=task_service):
+        with pytest.raises(RuntimeError):
+            await orch.route_inference(payload={"task_type": "NMT"}, request=fake_request)
+
+    # process() raised before the later set_metric_labels() call — model_id
+    # must still be on request.state from the early set.
+    assert fake_request.state.model_id == "hash-gemma-v1"
+    assert fake_request.state.service_id == ""  # resolve_service_and_model didn't return one
+
+
+@pytest.mark.asyncio
+async def test_missing_model_id_defaults_to_empty_string():
+    orch = _make_orchestrator()
+    task_service = _make_task_service(billed_input=1)
+
+    fake_request = SimpleNamespace(
+        url=SimpleNamespace(path="/api/v1/nmt/inference"),
+        method="POST",
+        headers={},
+        state=SimpleNamespace(),
+    )
+
+    with patch.object(orch, "_validate_task_type"), \
+         patch.object(orch, "_resolve_service_and_model", new=AsyncMock(return_value={"tier_ids": []})), \
+         patch.object(orch, "_get_task_service", return_value=task_service):
+        await orch.route_inference(payload={"task_type": "NMT"}, request=fake_request)
+
+    assert fake_request.state.model_id == ""
+
+
+@pytest.mark.asyncio
 async def test_no_request_object_skips_state_mirroring_without_error():
     """Internal callers that don't pass a Request (no HTTP context) must not
     crash trying to set request.state on None."""

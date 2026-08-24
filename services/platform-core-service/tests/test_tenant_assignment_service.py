@@ -15,15 +15,21 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.schemas.pay_per_use.tenant_assignment import TierAssignRequest, TierReassignRequest
+from app.schemas.pay_per_use.tenant_assignment import (
+    ReviseBudgetRequest,
+    TierAssignRequest,
+    TierReassignRequest,
+)
 from app.services.pay_per_use import tenant_assignment_service as svc
 
 
-def _exec_result(scalar_one_or_none=None, scalars_first=None):
+def _exec_result(scalar_one_or_none=None, scalars_first=None, scalar_one=None):
     """Build a mock SQLAlchemy execute() result supporting the accessor the
-    caller happens to use (scalar_one_or_none() or scalars().first())."""
+    caller happens to use (scalar_one_or_none(), scalars().first(), or
+    scalar_one() — the raw-SQL UPDATE...RETURNING path in revise_budget)."""
     result = MagicMock()
     result.scalar_one_or_none = MagicMock(return_value=scalar_one_or_none)
+    result.scalar_one = MagicMock(return_value=scalar_one)
     scalars_mock = MagicMock()
     scalars_mock.first = MagicMock(return_value=scalars_first)
     result.scalars = MagicMock(return_value=scalars_mock)
@@ -214,6 +220,165 @@ class TestReassignTier:
         assert exc.value.status_code == 404
 
 
+@pytest.mark.asyncio
+class TestReviseBudget:
+    """AI4IDS-2794: action='top-up' must reject a resulting budget_limit that
+    would overflow the NUMERIC(15, 8) budget_limit/available_balance columns,
+    with a 422 instead of a DB numeric-overflow 500. All other revise_budget
+    branches are covered here too, since none of them had tests before."""
+
+    def _body(self, action, amount, tenant_id="1"):
+        return ReviseBudgetRequest(tenant_id=tenant_id, action=action, amount=Decimal(amount))
+
+    async def test_top_up_happy_path_adds_to_both_budget_and_balance(self):
+        current = _assignment(tier_id=uuid4(), budget=Decimal("100"), balance=Decimal("40"))
+        db = _make_db([
+            _exec_result(scalar_one_or_none=current),          # lock active assignment
+            _exec_result(scalar_one=current.updated_at),       # UPDATE ... RETURNING updated_at
+        ])
+        auth_db = _make_auth_db(_tenant_row("ACTIVE"))
+
+        result = await svc.revise_budget(
+            self._body("top-up", "30"), db, auth_db,
+            auth_service_url="", http_client=MagicMock(), user_id="admin",
+        )
+
+        assert result.budget_limit == Decimal("130")
+        assert result.available_balance == Decimal("70")
+        db.commit.assert_awaited_once()
+
+    async def test_top_up_on_already_overspent_tenant_still_succeeds(self):
+        """Docstring guarantee: top-up never applies the below-spend check —
+        an over-spent tenant (negative available_balance) can still be topped up."""
+        current = _assignment(tier_id=uuid4(), budget=Decimal("100"), balance=Decimal("-20"))
+        db = _make_db([
+            _exec_result(scalar_one_or_none=current),
+            _exec_result(scalar_one=current.updated_at),
+        ])
+        auth_db = _make_auth_db(_tenant_row("ACTIVE"))
+
+        result = await svc.revise_budget(
+            self._body("top-up", "50"), db, auth_db,
+            auth_service_url="", http_client=MagicMock(), user_id="admin",
+        )
+
+        assert result.budget_limit == Decimal("150")
+        assert result.available_balance == Decimal("30")
+
+    async def test_top_up_reaching_max_budget_limit_exactly_succeeds(self):
+        current = _assignment(
+            tier_id=uuid4(),
+            budget=Decimal("9999999.00000000"),
+            balance=Decimal("9999999.00000000"),
+        )
+        db = _make_db([
+            _exec_result(scalar_one_or_none=current),
+            _exec_result(scalar_one=current.updated_at),
+        ])
+        auth_db = _make_auth_db(_tenant_row("ACTIVE"))
+
+        result = await svc.revise_budget(
+            self._body("top-up", "0.99999999"), db, auth_db,
+            auth_service_url="", http_client=MagicMock(), user_id="admin",
+        )
+
+        assert result.budget_limit == svc.MAX_BUDGET_LIMIT
+
+    async def test_top_up_exceeding_max_budget_limit_is_rejected(self):
+        current = _assignment(
+            tier_id=uuid4(),
+            budget=svc.MAX_BUDGET_LIMIT,
+            balance=svc.MAX_BUDGET_LIMIT,
+        )
+        db = _make_db([
+            _exec_result(scalar_one_or_none=current),  # lock succeeds; UPDATE must never run
+        ])
+        auth_db = _make_auth_db(_tenant_row("ACTIVE"))
+
+        with pytest.raises(HTTPException) as exc:
+            await svc.revise_budget(
+                self._body("top-up", "0.00000001"), db, auth_db,
+                auth_service_url="", http_client=MagicMock(), user_id="admin",
+            )
+
+        assert exc.value.status_code == 422
+        assert db.execute.await_count == 1
+        db.commit.assert_not_awaited()
+
+    async def test_top_down_happy_path_subtracts_from_both(self):
+        current = _assignment(tier_id=uuid4(), budget=Decimal("100"), balance=Decimal("40"))
+        db = _make_db([
+            _exec_result(scalar_one_or_none=current),
+            _exec_result(scalar_one=current.updated_at),
+        ])
+        auth_db = _make_auth_db(_tenant_row("ACTIVE"))
+
+        result = await svc.revise_budget(
+            self._body("top-down", "30"), db, auth_db,
+            auth_service_url="", http_client=MagicMock(), user_id="admin",
+        )
+
+        assert result.budget_limit == Decimal("70")
+        assert result.available_balance == Decimal("10")
+
+    async def test_top_down_below_zero_is_rejected(self):
+        current = _assignment(tier_id=uuid4(), budget=Decimal("100"), balance=Decimal("40"))
+        db = _make_db([_exec_result(scalar_one_or_none=current)])
+        auth_db = _make_auth_db(_tenant_row("ACTIVE"))
+
+        with pytest.raises(HTTPException) as exc:
+            await svc.revise_budget(
+                self._body("top-down", "150"), db, auth_db,
+                auth_service_url="", http_client=MagicMock(), user_id="admin",
+            )
+
+        assert exc.value.status_code == 422
+        db.commit.assert_not_awaited()
+
+    async def test_top_down_below_cumulative_spend_is_conflict(self):
+        # consumed = budget_limit - available_balance = 100 - 40 = 60
+        current = _assignment(tier_id=uuid4(), budget=Decimal("100"), balance=Decimal("40"))
+        db = _make_db([_exec_result(scalar_one_or_none=current)])
+        auth_db = _make_auth_db(_tenant_row("ACTIVE"))
+
+        with pytest.raises(HTTPException) as exc:
+            await svc.revise_budget(
+                self._body("top-down", "50"), db, auth_db,  # new_budget=50 < consumed=60
+                auth_service_url="", http_client=MagicMock(), user_id="admin",
+            )
+
+        assert exc.value.status_code == 409
+        db.commit.assert_not_awaited()
+
+    async def test_inactive_tenant_is_rejected_before_any_db_lookup(self):
+        db = _make_db([])
+        auth_db = _make_auth_db(_tenant_row("SUSPENDED"))
+
+        with pytest.raises(HTTPException) as exc:
+            await svc.revise_budget(
+                self._body("top-up", "10"), db, auth_db,
+                auth_service_url="", http_client=MagicMock(), user_id="admin",
+            )
+
+        assert exc.value.status_code == 422
+        db.execute.assert_not_awaited()
+
+    async def test_no_active_assignment_is_not_found(self):
+        db = _make_db([
+            _exec_result(scalar_one_or_none=None),  # first lookup
+            _exec_result(scalar_one_or_none=None),  # _lock_active_assignment's built-in retry
+        ])
+        auth_db = _make_auth_db(_tenant_row("ACTIVE"))
+
+        with pytest.raises(HTTPException) as exc:
+            await svc.revise_budget(
+                self._body("top-up", "10"), db, auth_db,
+                auth_service_url="", http_client=MagicMock(), user_id="admin",
+            )
+
+        assert exc.value.status_code == 404
+
+
 class TestTierAssignRequestValidation:
     """AI4IDS-2216 / budget precision ticket: budget=0 must be rejected (422)."""
 
@@ -238,6 +403,64 @@ class TestTierAssignRequestValidation:
     def test_positive_budget_is_accepted(self):
         request = TierAssignRequest(**self._kwargs(Decimal("100")))
         assert request.budget == Decimal("100")
+
+    def test_naive_effective_from_is_rejected(self):
+        kwargs = self._kwargs(Decimal("100"))
+        kwargs["effective_from"] = datetime.now()
+        with pytest.raises(ValidationError):
+            TierAssignRequest(**kwargs)
+
+    def test_naive_effective_to_is_rejected(self):
+        kwargs = self._kwargs(Decimal("100"))
+        kwargs["effective_to"] = datetime.now() + timedelta(days=30)
+        with pytest.raises(ValidationError):
+            TierAssignRequest(**kwargs)
+
+
+@pytest.mark.asyncio
+class TestAssignTierEffectiveFromValidation:
+    """AI4IDS-2783: assign_tier must reject past dates but allow today, in UTC day terms."""
+
+    def _request(self, effective_from):
+        return TierAssignRequest(
+            tenant_id="1",
+            tier_id=str(uuid4()),
+            budget=Decimal("100"),
+            effective_from=effective_from,
+            effective_to=effective_from + timedelta(days=30),
+        )
+
+    async def test_yesterday_is_rejected(self):
+        db = _make_db([
+            _exec_result(scalar_one_or_none=_tier()),
+        ])
+        auth_db = _make_auth_db(_tenant_row("ACTIVE"))
+        yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+
+        with pytest.raises(HTTPException) as exc:
+            await svc.assign_tier(self._request(yesterday), db, auth_db, user_id="admin")
+
+        assert exc.value.status_code == 422
+        assert "past" in exc.value.detail
+
+    async def test_today_start_of_day_is_accepted(self):
+        tier = _tier()
+        db = _make_db([
+            _exec_result(scalar_one_or_none=tier),
+            _exec_result(scalars_first=None),  # no overlap
+        ])
+        auth_db = _make_auth_db(_tenant_row("ACTIVE"))
+        today_utc_start = datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+
+        result = await svc.assign_tier(
+            self._request(today_utc_start), db, auth_db, user_id="admin"
+        )
+
+        assert result.tier_id == str(tier.id)
+        db.add.assert_called_once()
+        db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio

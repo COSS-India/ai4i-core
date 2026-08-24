@@ -1,0 +1,55 @@
+/// <reference types="jest" />
+
+import {
+  ADOPTER_ADMIN_GUIDE_HREF,
+  INSTITUTION_ADMIN_GUIDE_HREF,
+  canSeeOnboardingGuide,
+  getOnboardingGuideHref,
+} from "../../src/config/onboardingGuide";
+
+describe("canSeeOnboardingGuide", () => {
+  it.each([
+    { roles: ["ADMIN"] },
+    { roles: ["TENANT ADMIN"] },
+    { roles: ["TENANT_ADMIN"] },
+    { roles: ["ADMIN", "MODERATOR"] },
+    { roles: ["TENANT ADMIN", "MODERATOR"] },
+    { roles: ["TENANT ADMIN", "USER"] },
+  ])("is true for $roles", ({ roles }) => {
+    expect(canSeeOnboardingGuide(roles)).toBe(true);
+  });
+
+  it.each([
+    { roles: undefined },
+    { roles: [] as string[] },
+    { roles: ["MODERATOR"] },
+    { roles: ["USER"] },
+    { roles: ["GUEST"] },
+    { roles: ["USAGE VIEWER"] },
+    { roles: ["USAGE_VIEWER"] },
+  ])("is false for $roles", ({ roles }) => {
+    expect(canSeeOnboardingGuide(roles)).toBe(false);
+  });
+});
+
+describe("getOnboardingGuideHref", () => {
+  it.each([
+    { roles: ["ADMIN"] },
+    { roles: ["MODERATOR"] },
+    { roles: ["admin"] },
+    { roles: ["ADMIN", "TENANT ADMIN"] },
+  ])("routes $roles to the Adopter Admin guide", ({ roles }) => {
+    expect(getOnboardingGuideHref(roles)).toBe(ADOPTER_ADMIN_GUIDE_HREF);
+  });
+
+  it.each([
+    { roles: ["TENANT ADMIN"] },
+    { roles: ["TENANT_ADMIN"] },
+    { roles: ["USER"] },
+    { roles: ["USAGE VIEWER"] },
+    { roles: undefined },
+    { roles: [] as string[] },
+  ])("routes $roles to the Institution Admin guide", ({ roles }) => {
+    expect(getOnboardingGuideHref(roles)).toBe(INSTITUTION_ADMIN_GUIDE_HREF);
+  });
+});

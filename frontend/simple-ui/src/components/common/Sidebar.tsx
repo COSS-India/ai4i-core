@@ -7,7 +7,6 @@ import {
   Divider,
   Heading,
   Icon,
-  Image,
   Text,
   useColorModeValue,
   VStack,
@@ -32,13 +31,13 @@ import {
   IoAppsOutline,
   IoChevronDownOutline,
   IoPulseOutline,
-  // AI4IDS-2604 / AI4IDS-2605: restore with Alerts / PII Guardrail nav items
+  // Restore with Alerts / PII Guardrail nav items
   // IoNotificationsOutline,
   // IoShieldCheckmarkOutline,
   IoFolderOpenOutline,
   IoStatsChartOutline,
 } from "react-icons/io5";
-import { MODEL_TASK_TYPE_NAV_LABEL, TABS } from "../../config/constants";
+import { INSTITUTION, MODEL_TASK_TYPE_NAV_LABEL, TABS } from "../../config/constants";
 import { getServiceTitle } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
 import { useGuestServices } from "../../hooks/useGuestServices";
@@ -46,7 +45,13 @@ import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { getTenantIdFromToken } from "../../utils/helpers";
 import { getUsageDashboardOverviewPath } from "../../utils/navigation";
-import { canAccessServicesManagement, canAccessUsageDashboard } from "../../utils/rbac";
+import {
+  canAccessServicesManagement,
+  canAccessUsageDashboard,
+  canSeeServiceCards,
+  isUsageDashboardOnlyUser,
+} from "../../utils/rbac";
+import AdopterLogo from "./AdopterLogo";
 import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
 
 const safeColorMap = {
@@ -158,14 +163,14 @@ const safeColorMap = {
     400: "#AB47BC",
     600: "#8E24AA",
   },
-  // AI4IDS-2604: Alerts Management removed from UI — uncomment to restore
+  // Alerts Management removed from UI — uncomment to restore
   // [TABS.alertsManagement]: { // Amber/Yellow → Pastel Amber
   //   50:  "#FFF8E1",
   //   300: "#FFD54F",
   //   400: "#FFCA28",
   //   600: "#F9A825",
   // },
-  // AI4IDS-2605: PII Guardrail removed from UI — uncomment to restore
+  // PII Guardrail removed from UI — uncomment to restore
   // [TABS.piiManagement]: {
   //   50:  "#E8EAF6",
   //   300: "#9FA8DA",
@@ -245,7 +250,7 @@ const topNavItems: NavItem[] = [
   },
   {
     id: TABS.tenantManagement,
-    label: "Tenant Management",
+    label: `${INSTITUTION} Management`,
     path: `/${TABS.tenantManagement}`,
     icon: IoPeopleOutline,
     iconSize: 10,
@@ -290,7 +295,7 @@ const topNavItems: NavItem[] = [
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
   },
-  // AI4IDS-2604: Alerts Management removed from UI — uncomment to restore
+  // Alerts Management removed from UI — uncomment to restore
   // {
   //   id: TABS.alertsManagement,
   //   label: "Alerts Management",
@@ -300,7 +305,7 @@ const topNavItems: NavItem[] = [
   //   iconColor: "", // Will be computed from safeColorMap
   //   requiresAuth: true,
   // },
-  // AI4IDS-2605: PII Guardrail removed from UI — uncomment to restore
+  // PII Guardrail removed from UI — uncomment to restore
   // {
   //   id: TABS.piiManagement,
   //   label: "PII Guardrail",
@@ -366,7 +371,7 @@ const baseNavItems: NavItem[] = [
     icon: IoSparklesOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: false, // AI4IDS-2688: anonymous try-it
+    requiresAuth: false, // anonymous try-it
   },
   {
     id: TABS.pipeline,
@@ -453,6 +458,10 @@ interface TopNavFilterContext {
 }
 
 function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean {
+  if (isUsageDashboardOnlyUser(ctx.userRoles)) {
+    return itemId === TABS.usageDashboard;
+  }
+
   switch (itemId) {
     case TABS.home:
       return true;
@@ -471,10 +480,10 @@ function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean 
       return !ctx.isUser && !ctx.isGuest && Boolean(ctx.tenantId || ctx.isAdmin);
     case TABS.usageDashboard:
       return canAccessUsageDashboard(ctx.userRoles);
-    // AI4IDS-2604: Alerts Management removed from UI — uncomment to restore
+    // Alerts Management removed from UI — uncomment to restore
     // case TABS.alertsManagement:
     //   return ctx.isAdmin;
-    // AI4IDS-2605: PII Guardrail removed from UI — uncomment to restore
+    // PII Guardrail removed from UI — uncomment to restore
     // case TABS.piiManagement:
     //   return ctx.isAdmin || ctx.isTenantAdmin;
     case TABS.tierManagement:
@@ -503,6 +512,8 @@ const Sidebar: React.FC = () => {
   // Check if user is TENANT ADMIN
   const isTenantAdmin = user?.roles?.some((role) => (role ?? "").trim().toUpperCase() === 'TENANT ADMIN') || false;
 
+  const showServiceCards = canSeeServiceCards(user?.roles);
+
   // Show Tenant Management to admins and tenant admins
   const showTenantManagement = isAdmin || isTenantAdmin;
 
@@ -528,8 +539,10 @@ const Sidebar: React.FC = () => {
   );
 
   const serviceItems = useMemo(
-    () =>
-      baseNavItems.filter((item) => {
+    () => {
+      if (!showServiceCards) return [];
+
+      return baseNavItems.filter((item) => {
         // Guest allowlist — guests only.
         if (isGuestFromAccess || isGuest) {
           if (guestServicesLoading) return false;
@@ -541,8 +554,10 @@ const Sidebar: React.FC = () => {
         if (inferenceTypesLoading && enabledServiceIds.size === 0) return false;
         if (!enabledServiceIds.has(item.id)) return false;
         return true;
-      }),
+      });
+    },
     [
+      showServiceCards,
       allowedServiceIds,
       guestServicesLoading,
       isGuest,
@@ -640,11 +655,8 @@ const Sidebar: React.FC = () => {
             alignItems="center"
             justifyContent="center"
           >
-            <Image
-              src="/AI4Inclusion_Logo.svg"
-              alt="AI4Inclusion Logo"
+            <AdopterLogo
               boxSize={isExpanded ? 16 : 10}
-              objectFit="contain"
               transition="all 0.2s ease"
             />
           </Box>
@@ -703,103 +715,107 @@ const Sidebar: React.FC = () => {
           })}
         </VStack>
 
-        <Divider />
+        {/* Services Section — hidden for roles without service-card access */}
+        {showServiceCards && (
+          <>
+            <Divider />
 
-        {/* Services Section */}
-        <VStack spacing={2} w="full" align="stretch" flex={1}>
-          {/* Services Header */}
-          <Box onMouseEnter={handleServicesSectionMouseEnter} onMouseLeave={handleServicesSectionMouseLeave}>
-            <Button
-              variant="ghost"
-              size="sm"
-              h="3rem"
-              minH="3rem"
-              w="full"
-              justifyContent={isExpanded ? "flex-start" : "center"}
-              leftIcon={
-                isExpanded ? (
-                  <Icon as={IoAppsOutline} boxSize={5} color="gray.600" />
-                ) : undefined
-              }
-              rightIcon={
-                isExpanded ? (
-                  <Icon
-                    as={IoChevronDownOutline}
-                    boxSize={4}
-                    color="gray.600"
-                    transform={isServicesExpanded ? "rotate(180deg)" : "rotate(0deg)"}
-                    transition="transform 0.2s"
-                  />
-                ) : undefined
-              }
-              bg="transparent"
-              color="gray.700"
-              _hover={{
-                bg: hoverBgColor,
-                transform: "translateY(-1px)",
-              }}
-              transition="all 0.2s"
-              px={isExpanded ? 3 : 0}
-              onClick={toggleServicesExpanded}
-            >
-              {isExpanded ? (
-                <Heading size="sm" color="gray.800" fontWeight="medium">
-                  {MODEL_TASK_TYPE_NAV_LABEL}
-                </Heading>
-              ) : (
-                <Icon as={IoAppsOutline} boxSize={6} color="gray.600" />
-              )}
-            </Button>
-          </Box>
-
-          {/* Services List */}
-          <Collapse in={isExpanded && isServicesExpanded} animateOpacity style={{ paddingTop: "10px" }}>
-            <VStack spacing={1} w="full" align="stretch" pl={isExpanded ? 4 : 0}>
-              {serviceItems.map((item) => {
-                const isActive = router.pathname === item.path;
-                const requiresAuth = item.requiresAuth ?? false;
-
-                return (
-                  <Button
-                    key={item.id}
-                    variant="ghost"
-                    size="sm"
-                    h="2.5rem"
-                    minH="2.5rem"
-                    w="full"
-                    justifyContent="flex-start"
-                    leftIcon={
+            <VStack spacing={2} w="full" align="stretch" flex={1}>
+              {/* Services Header */}
+              <Box onMouseEnter={handleServicesSectionMouseEnter} onMouseLeave={handleServicesSectionMouseLeave}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  h="3rem"
+                  minH="3rem"
+                  w="full"
+                  justifyContent={isExpanded ? "flex-start" : "center"}
+                  leftIcon={
+                    isExpanded ? (
+                      <Icon as={IoAppsOutline} boxSize={5} color="gray.600" />
+                    ) : undefined
+                  }
+                  rightIcon={
+                    isExpanded ? (
                       <Icon
-                        as={item.icon}
+                        as={IoChevronDownOutline}
                         boxSize={4}
-                        color={getColor(item.id, 600)}
+                        color="gray.600"
+                        transform={isServicesExpanded ? "rotate(180deg)" : "rotate(0deg)"}
+                        transition="transform 0.2s"
                       />
-                    }
-                    bg={isActive ? "gray.200" : "transparent"}
-                    color={isActive ? "gray.800" : "gray.700"}
-                    boxShadow={isActive ? "sm" : "none"}
-                    borderLeft={isActive ? "3px solid" : "3px solid transparent"}
-                    borderLeftColor={isActive ? getColor(item.id, 600) : "transparent"}
-                    borderRadius="md"
-                    onClick={(e) => onServiceNavClick(e, item.path, requiresAuth)}
-                    _hover={{
-                      bg: isActive ? "gray.200" : hoverBgColor,
-                      transform: "translateY(-1px)",
-                      borderLeftColor: getColor(item.id, 600),
-                      borderLeft: "3px solid",
-                    }}
-                    transition="all 0.2s"
-                    px={1}
-                  >
-                    <Text fontSize="sm" color="gray.800" fontWeight="medium" whiteSpace="pre-line">
-                      {item.label}
-                    </Text>
-                  </Button>
-                );
-              })}
+                    ) : undefined
+                  }
+                  bg="transparent"
+                  color="gray.700"
+                  _hover={{
+                    bg: hoverBgColor,
+                    transform: "translateY(-1px)",
+                  }}
+                  transition="all 0.2s"
+                  px={isExpanded ? 3 : 0}
+                  onClick={toggleServicesExpanded}
+                >
+                  {isExpanded ? (
+                    <Heading size="sm" color="gray.800" fontWeight="medium">
+                      {MODEL_TASK_TYPE_NAV_LABEL}
+                    </Heading>
+                  ) : (
+                    <Icon as={IoAppsOutline} boxSize={6} color="gray.600" />
+                  )}
+                </Button>
+              </Box>
+
+              {/* Services List */}
+              <Collapse in={isExpanded && isServicesExpanded} animateOpacity style={{ paddingTop: "10px" }}>
+                <VStack spacing={1} w="full" align="stretch" pl={isExpanded ? 4 : 0}>
+                  {serviceItems.map((item) => {
+                    const isActive = router.pathname === item.path;
+                    const requiresAuth = item.requiresAuth ?? false;
+
+                    return (
+                      <Button
+                        key={item.id}
+                        variant="ghost"
+                        size="sm"
+                        h="2.5rem"
+                        minH="2.5rem"
+                        w="full"
+                        justifyContent="flex-start"
+                        leftIcon={
+                          <Icon
+                            as={item.icon}
+                            boxSize={4}
+                            color={getColor(item.id, 600)}
+                          />
+                        }
+                        bg={isActive ? "gray.200" : "transparent"}
+                        color={isActive ? "gray.800" : "gray.700"}
+                        boxShadow={isActive ? "sm" : "none"}
+                        borderLeft={isActive ? "3px solid" : "3px solid transparent"}
+                        borderLeftColor={isActive ? getColor(item.id, 600) : "transparent"}
+                        borderRadius="md"
+                        onClick={(e) => onServiceNavClick(e, item.path, requiresAuth)}
+                        _hover={{
+                          bg: isActive ? "gray.200" : hoverBgColor,
+                          transform: "translateY(-1px)",
+                          borderLeftColor: getColor(item.id, 600),
+                          borderLeft: "3px solid",
+                        }}
+                        transition="all 0.2s"
+                        px={1}
+                      >
+                        <Text fontSize="sm" color="gray.800" fontWeight="medium" whiteSpace="pre-line">
+                          {item.label}
+                        </Text>
+                      </Button>
+                    );
+                  })}
+                </VStack>
+              </Collapse>
             </VStack>
-          </Collapse>
-        </VStack>
+          </>
+        )}
       </VStack>
     </Box>
   );

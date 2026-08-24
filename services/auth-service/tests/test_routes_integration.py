@@ -147,7 +147,7 @@ class TestTenantAdminRoleRemoval:
     async def test_tenant_admin_remove_role_within_tenant(self, role_name):
         from unittest.mock import AsyncMock, MagicMock, patch
         from app.dependencies.tenant_scope import enforce_target_user_same_tenant
-        from app.models.role_name import RoleName
+        from app.core.constants import RoleName
 
         caller = self._make_user(tenant_id=1)
         target = self._make_user(tenant_id=1)
@@ -169,7 +169,7 @@ class TestTenantAdminRoleRemoval:
         from unittest.mock import AsyncMock, MagicMock, patch
         from fastapi import HTTPException
         from app.dependencies.tenant_scope import enforce_target_user_same_tenant
-        from app.models.role_name import RoleName
+        from app.core.constants import RoleName
 
         caller = self._make_user(tenant_id=1)
         target = self._make_user(tenant_id=2)  # different tenant
@@ -188,3 +188,63 @@ class TestTenantAdminRoleRemoval:
 
         assert exc_info.value.status_code == 403
         assert exc_info.value.detail["code"] == "TENANT_FORBIDDEN"
+
+
+class TestGetUserRolesAccess:
+    """GET /auth/roles/user/{user_id}: MODERATOR blocked; ADMIN bypasses tenant scope."""
+
+    def _make_user(self, tenant_id: int):
+        from uuid import uuid4
+        from app.models.user import User
+        return User(id=uuid4(), email="u@example.com", username="u", tenant_id=tenant_id)
+
+    def _mock_request(self):
+        from unittest.mock import MagicMock
+        req = MagicMock()
+        req.state.tenant_id = None
+        return req
+
+    @pytest.mark.asyncio
+    async def test_moderator_gets_403(self):
+        import inspect
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from app.core.exceptions import InsufficientPermissionsError
+        from app.core.constants import RoleName
+        from app.routes.role import get_user_roles
+
+        moderator = self._make_user(tenant_id=1)
+
+        # Read the dependency the route actually declares so re-adding MODERATOR
+        # to require_any_role in the route would make this test pass correctly.
+        dep = inspect.signature(get_user_roles).parameters["_admin"].default.dependency
+
+        with patch("app.dependencies.permissions.RoleRepository") as MockRoleRepo:
+            MockRoleRepo.return_value.get_user_roles = AsyncMock(return_value=[RoleName.MODERATOR.value])
+
+            with pytest.raises(InsufficientPermissionsError):
+                await dep(request=self._mock_request(), current_user=moderator, db=MagicMock())
+
+    @pytest.mark.asyncio
+    async def test_admin_bypasses_cross_tenant_check(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from app.core.constants import RoleName
+        from app.routes.role import get_user_roles
+
+        caller = self._make_user(tenant_id=1)
+        target = self._make_user(tenant_id=2)
+
+        mock_svc = MagicMock()
+        mock_svc.get_user_roles = AsyncMock(return_value=[RoleName.ADMIN.value])
+
+        with patch("app.dependencies.tenant_scope.RoleRepository") as MockRoleRepo, \
+             patch("app.dependencies.tenant_scope.UserRepository") as MockUserRepo:
+            MockRoleRepo.return_value.get_user_roles = AsyncMock(return_value=[RoleName.ADMIN.value])
+            MockUserRepo.return_value.get_by_id = AsyncMock(return_value=target)
+
+            # Must not raise — ADMIN bypasses tenant scope for cross-tenant target.
+            # Calls the route function directly so the real bypass_roles literal on
+            # line 82 runs. Without the trailing comma, RoleName.ADMIN iterates as
+            # individual characters so the bypass fails and ADMIN gets 403 TENANT_FORBIDDEN.
+            await get_user_roles(
+                self._mock_request(), target.id, _admin=caller, svc=mock_svc, db=MagicMock()
+            )

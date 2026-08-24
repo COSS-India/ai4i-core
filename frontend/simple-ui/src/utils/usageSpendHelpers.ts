@@ -1,6 +1,7 @@
 import { METERING } from "../config/meteringConstants";
 import { meteringColorAt } from "./meteringColors";
 import type {
+  SpendByTaskType,
   TenantTierBreakdown,
   TenantUsageAggregate,
   TenantUsageDetail,
@@ -74,6 +75,30 @@ export function formatSpendMoney(n: number, currency = "INR"): string {
   }
 }
 
+const UNIT_SHORT_LABEL: Record<string, string> = {
+  tokens: "tokens",
+  characters: "chars",
+  audio_minutes: "min",
+  minutes: "min",
+  images: "imgs",
+  requests: "reqs",
+};
+
+export function shortUnitLabel(unit: string): string {
+  const u = (unit || "").trim().toLowerCase();
+  return UNIT_SHORT_LABEL[u] ?? (unit || "").trim();
+}
+
+function compactCount(n: number): string {
+  const abs = Math.abs(n);
+  const scaled = (div: number, suffix: string) =>
+    `${(n / div).toFixed(1).replace(/\.0$/, "")}${suffix}`;
+  if (abs >= 999.95e6) return scaled(1e9, "B");
+  if (abs >= 999.95e3) return scaled(1e6, "M");
+  if (abs >= 999.5) return scaled(1e3, "K");
+  return String(Math.round(n));
+}
+
 export function formatSpendUnit(n: number, unit: string): string {
   const u = (unit || "").toLowerCase();
   if (u === "tokens" || u === "characters") {
@@ -83,6 +108,56 @@ export function formatSpendUnit(n: number, unit: string): string {
   }
   if (u === "minutes") return `${Math.round(n).toLocaleString("en-IN")} min`;
   return `${Math.round(n).toLocaleString("en-IN")} ${unit || ""}`.trim();
+}
+
+export function formatSpendUnitCompact(n: number, unit: string): string {
+  return `${compactCount(n)} ${shortUnitLabel(unit)}`.trim();
+}
+
+/** Exact locale-grouped figure — recovers what `formatSpendUnitCompact` rounds away. */
+export function formatSpendUnitExact(n: number, unit: string): string {
+  return `${Math.round(n).toLocaleString("en-IN")} ${shortUnitLabel(unit)}`.trim();
+}
+
+export interface SpendTokenTotals {
+  unit: string;
+  tokensAllocated: number | null;
+  tokensUsed: number | null;
+  tokensRemaining: number | null;
+}
+
+/** Mixed-unit scope has no meaningful total; every figure dashes out. */
+const NO_TOKEN_TOTALS: SpendTokenTotals = {
+  unit: "",
+  tokensAllocated: null,
+  tokensUsed: null,
+  tokensRemaining: null,
+};
+
+/**
+ * Totals only when every row shares one unit. Task types are metered in tokens,
+ * audio_minutes, characters, images or requests (inference_types.yaml), so summing
+ * across a mixed set would print an arbitrary row's unit over an incoherent number.
+ * Per-type figures remain on the rows themselves.
+ */
+export function summarizeSpendTokens(rows: SpendByTaskType[]): SpendTokenTotals {
+  const units = new Set(rows.map((r) => (r.unit || "").trim().toLowerCase()).filter(Boolean));
+  if (units.size !== 1) return NO_TOKEN_TOTALS;
+
+  const withAllocated = rows.filter((r) => r.allocated != null);
+  const remainingPerRow = rows.map((r) => {
+    if (r.remaining != null) return r.remaining;
+    return r.allocated != null ? r.allocated - r.consumption : null;
+  });
+  const withRemaining = remainingPerRow.filter((r): r is number => r != null);
+  return {
+    unit: rows.find((r) => r.unit)?.unit ?? "",
+    tokensUsed: rows.reduce((s, r) => s + (r.consumption ?? 0), 0),
+    tokensAllocated: withAllocated.length
+      ? withAllocated.reduce((s, r) => s + (r.allocated ?? 0), 0)
+      : null,
+    tokensRemaining: withRemaining.length ? withRemaining.reduce((s, r) => s + r, 0) : null,
+  };
 }
 
 export function spendBarColor(pct: number): string {
@@ -110,26 +185,6 @@ export function tenantAvatarBg(name: string): string {
 export function taskTypeColor(taskType: string, index: number): string {
   const key = taskType.trim().toLowerCase() as TaskTypeColorKey;
   return METERING.COLORS.TASK_TYPE[key] ?? meteringColorAt(index);
-}
-
-/** Client-side tier/task-type filter for a single tenant's breakdown (no server round-trip). */
-export function filterTierBreakdown(
-  tierBreakdown: TenantTierBreakdown[],
-  filterTierId: string,
-  filterTaskType: string,
-): TenantTierBreakdown[] {
-  const normalizedTaskType = filterTaskType.trim().toLowerCase();
-  return tierBreakdown
-    .filter((tier) => !filterTierId || tier.tierId === filterTierId)
-    .map((tier) => ({
-      ...tier,
-      taskTypes: normalizedTaskType
-        ? (tier.taskTypes ?? []).filter(
-            (t) => t.taskType.trim().toLowerCase() === normalizedTaskType,
-          )
-        : tier.taskTypes,
-    }))
-    .filter((tier) => (tier.taskTypes ?? []).length > 0);
 }
 
 /** Flat task list aggregated across tiers (quota from last tier write). */
@@ -166,6 +221,8 @@ export function summaryFromDetail(detail: TenantUsageDetail): UsageSummaryRespon
     modelTaskType: i.taskType,
     unit: i.unit,
     consumption: i.consumed,
+    allocated: i.quotaLimit ?? null,
+    remaining: i.remaining ?? null,
     spend: i.spend,
     percentage: 0,
   }));
@@ -182,6 +239,8 @@ export function summaryFromDetail(detail: TenantUsageDetail): UsageSummaryRespon
       ...i,
       percentage: total > 0 ? Number(((i.spend / total) * 100).toFixed(1)) : 0,
     })),
+    totalAllocatedBudget: detail.budget.limit,
+    totalRemainingBudget: detail.budget.remaining,
   };
 }
 

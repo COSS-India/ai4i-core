@@ -1,11 +1,12 @@
 """Metering business logic — PromQL construction, Prometheus calls, result shaping."""
 import asyncio
 import logging
-from typing import Optional
+from typing import Optional, Union
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.model_management.model_repository import ModelRepository
 from app.repositories.model_management.service_repository import ServiceRepository
 from app.utils.prometheus_client import PrometheusClient
 from app.utils.metering_promql_builder import (
@@ -15,6 +16,8 @@ from app.utils.metering_promql_builder import (
     LLM_CHAT_ENDPOINT_REGEX,
     ENDPOINT_TO_TASK,
     PROMETHEUS_API_PATH_LABEL,
+    API_KEY_AUTH_TYPE,
+    api_key_auth_type_selector,
     build_base_selectors,
     build_task_type_selector,
     escape_label_value,
@@ -26,6 +29,22 @@ logger = logging.getLogger(__name__)
 
 _METRIC = "telemetry_obsv_requests_total"
 
+class _Unset:
+    """Sentinel type distinguishing "caller didn't pass valid_names" from an
+    explicit `None` (a legitimate "auth DB was unavailable" value returned
+    by _fetch_valid_tenant_ids) — see MeteringService.active_tenants. Its
+    own type — rather than a bare ``object()`` typed as ``Any`` — lets the
+    parameter annotation say what's actually accepted: a set, None, or this
+    sentinel."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<UNSET>"
+
+
+_UNSET = _Unset()
+
 
 class MeteringService:
     def __init__(
@@ -33,10 +52,12 @@ class MeteringService:
         client: PrometheusClient,
         auth_db: Optional[AsyncSession] = None,
         service_repo: Optional[ServiceRepository] = None,
+        model_repo: Optional[ModelRepository] = None,
     ) -> None:
         self._client = client
         self._auth_db = auth_db
         self._service_repo = service_repo
+        self._model_repo = model_repo
 
     # ── public methods ──────────────────────────────────────────────────────
 
@@ -47,13 +68,20 @@ class MeteringService:
         service_id: Optional[str],
         time_range: Optional[str],
         task_types: Optional[list[str]] = None,
+        tenant_id: Optional[str] = None,
+        auth_type: Optional[str] = None,
     ) -> dict:
+        """KNOWN CUTOVER GAP when ``tenant_id`` is given (this is the
+        single-tenant-scoped Overview view): see build_base_selectors'
+        docstring — accepted, not fixed here, tracked in the ticket."""
         task_sel = build_task_type_selector(task_types)
         extra = [task_sel] if task_sel else None
         success_extra = [task_sel, 'status_code=~"2.."'] if task_sel else ['status_code=~"2.."']
-        label_str = build_base_selectors(inference_only, tenant, service_id, extra=extra)
+        label_str = build_base_selectors(
+            inference_only, tenant, service_id, extra=extra, tenant_id=tenant_id, auth_type=auth_type
+        )
         success_label_str = build_base_selectors(
-            inference_only, tenant, service_id, extra=success_extra
+            inference_only, tenant, service_id, extra=success_extra, tenant_id=tenant_id, auth_type=auth_type
         )
         base = f"{_METRIC}{label_str}"
         success_base = f"{_METRIC}{success_label_str}"
@@ -184,36 +212,79 @@ class MeteringService:
             },
         }
 
-    async def active_tenants(self, time_range: Optional[str]) -> dict:
+    async def active_tenants(
+        self, time_range: Optional[str], valid_names: Union[set, None, _Unset] = _UNSET
+    ) -> dict:
         """
-        ROLLOUT NOTE: the ``tenant`` label switched from the numeric tenant id
-        to the organisation name (see ObservabilityMiddleware). Existing
-        Prometheus series from before the cutover still carry the id, which
-        never matches ``valid_names`` (current organisation names) below, so
-        any query window spanning the cutover undercounts — pre-cutover,
-        id-labelled series are dropped even though real traffic occurred.
-        This self-heals as pre-cutover series age out of the window (1h/24h
-        clear within a day; 7d/30d take up to 7/30 days). There is no
-        after-the-fact fix: Prometheus relabeling only applies at scrape time
-        to a target's own labels, it cannot rewrite already-stored series to
-        translate an id to the org name it corresponded to at write time.
+        Groups by ``tenant_id`` (immutable) primarily, not ``tenant`` (the
+        organisation name) — a tenant rename changes the name label on new
+        series but never the id. The PromQL groups by BOTH labels (see
+        _by_tenant_promql) so a pre-cutover row (empty tenant_id) still
+        carries a usable name instead of being dropped; _merge_tenant_rows
+        then re-merges rows sharing a real tenant_id back into one entry, so
+        a same-window rename still shows as one continuous tenant rather
+        than splitting. See ObservabilityMiddleware for how both labels are
+        set.
+
+        `valid_names`: pass a pre-fetched set of currently-ACTIVE tenant ids
+        (or None, meaning "auth DB was unavailable, don't filter") when
+        calling this for multiple windows in the same request — see
+        `overview_tenant_data`. self._auth_db is a single AsyncSession and is
+        NOT safe for concurrent use (same constraint as tenant_count()), so
+        gathering several `active_tenants()` calls together while each
+        independently fetches its own valid ids via `_fetch_valid_tenant_ids()`
+        intermittently raises `sqlalchemy.exc.InvalidRequestError: This
+        session is provisioning a new connection`.
+
+        Left unset (the default), this fetches the valid-id set internally
+        AND resolves each row's tenant_id to its current organisation name
+        via `_resolve_tenant_names` — safe for a single, standalone call to
+        this method. When `valid_names` is explicitly passed (set or None),
+        name resolution is skipped too (the raw `tenant` Prometheus label is
+        shown instead): `overview_tenant_data` fires several of these calls
+        concurrently sharing one pre-fetched set, and a per-call name
+        resolution query would touch the single AsyncSession concurrently —
+        the exact bug this parameter exists to avoid. That caller only reads
+        this method's `count` anyway, so the resolved display list is a
+        bonus reserved for standalone (unset) calls.
         """
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, auth_type=API_KEY_AUTH_TYPE)}"
         promql = self._by_tenant_promql(metric, time_range, filter_zero=True)
-        prom_results, valid_names = await asyncio.gather(
-            self._client.query(promql),
-            self._fetch_valid_tenant_names(),
+        resolve_names = valid_names is _UNSET
+        if valid_names is _UNSET:
+            prom_results, valid_names = await asyncio.gather(
+                self._client.query(promql),
+                self._fetch_valid_tenant_ids(),
+            )
+        else:
+            prom_results = await self._client.query(promql)
+        # Filter Prometheus results to only tenants that are currently ACTIVE
+        # in the DB. Without this, deleted tenants (or tenants that are no
+        # longer ACTIVE) whose Prometheus series are still within the
+        # retention window inflate the count. Only a non-empty tenant_id can
+        # be checked this way — a pre-cutover row (empty tenant_id) can't be
+        # validated against the DB, so it's kept rather than dropped: losing
+        # 30d of every tenant's history right after deploy is worse than
+        # occasionally keeping a stale/deleted tenant's last pre-cutover
+        # traffic for that same window (it ages out of the window on its
+        # own, same tradeoff documented on `model_breakdown`).
+        rows = [
+            r for r in prom_results
+            if valid_names is None
+            or not r["metric"].get("tenant_id")
+            or r["metric"].get("tenant_id") in valid_names
+        ]
+        merged = self._merge_tenant_rows(rows)
+        names = (
+            await self._resolve_tenant_names({m["tenant_id"] for m in merged if m["tenant_id"]})
+            if resolve_names else {}
         )
-        # Filter Prometheus results to only tenants that currently exist in the
-        # DB. Without this, deleted tenants whose Prometheus series are still
-        # within the retention window inflate 7d/30d counts after a DB flush.
         tenants = [
             {
-                "tenant": r["metric"].get("tenant", "unknown"),
-                "request_count": int(float(r["value"][1])),
+                "tenant": names.get(m["tenant_id"], "") or m["tenant"] or "unknown",
+                "request_count": int(m["value"]),
             }
-            for r in prom_results
-            if valid_names is None or r["metric"].get("tenant") in valid_names
+            for m in merged
         ]
         return {
             "active_tenants": tenants,
@@ -227,36 +298,53 @@ class MeteringService:
 
         Used as the denominator for avg_requests_per_tenant's vs-previous trend.
         Returns None when there's no bounded window (e.g. time_range='all').
+
+        Counts DISTINCT REAL TENANTS the same way active_tenants does — group
+        by (tenant_id, tenant), then _merge_tenant_rows — not a raw
+        count(sum by(tenant_id)), which would merge every different
+        pre-cutover tenant (they all share an empty tenant_id) into a single
+        group and undercount, inflating the vs-previous trend (and, via
+        avg_per_active_tenant_previous, the reported average requests per
+        tenant too).
         """
         window = TIME_RANGES.get(time_range or "all")
         if not window:
             return None
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
-        promql = f"count(sum by(tenant)(increase({metric}[{window}] offset {window}) > 0))"
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, auth_type=API_KEY_AUTH_TYPE)}"
+        promql = f"sum by(tenant_id, tenant)(increase({metric}[{window}] offset {window}) > 0)"
         try:
-            return int(round(float(await self._client.scalar(promql))))
+            rows = await self._client.query(promql)
+            return len(self._merge_tenant_rows(rows))
         except Exception:
             return None
 
     async def avg_per_active_tenant_previous(
-        self, time_range: Optional[str], tenant: Optional[str] = None
+        self, time_range: Optional[str], tenant: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> Optional[int]:
         """Avg requests per active tenant in the PREVIOUS window (offset by one
         window) — same offset pattern as request_total's prev counts. Drives the
-        Avg-Requests-Per-Tenant trend. None when unbounded or no prior activity."""
+        Avg-Requests-Per-Tenant trend. None when unbounded or no prior activity.
+
+        KNOWN CUTOVER GAP when ``tenant_id`` is given: see
+        build_base_selectors' docstring — accepted, not fixed here, tracked
+        in the ticket."""
         window = TIME_RANGES.get(time_range or "all")
         if not window:
             return None
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant)}"
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant, tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE)}"
         total_q = f"sum(increase({metric}[{window}] offset {window}))"
-        active_q = f"count(sum by(tenant)(increase({metric}[{window}] offset {window}) > 0))"
+        # See active_tenants_count_previous — same (tenant_id, tenant) +
+        # _merge_tenant_rows treatment, so this doesn't undercount active
+        # tenants (and inflate the resulting average) whenever several
+        # different pre-cutover tenants share an empty tenant_id.
+        active_q = f"sum by(tenant_id, tenant)(increase({metric}[{window}] offset {window}) > 0)"
         try:
-            total, active = await asyncio.gather(
-                self._client.scalar(total_q), self._client.scalar(active_q)
+            total, active_rows = await asyncio.gather(
+                self._client.scalar(total_q), self._client.query(active_q)
             )
-            if total is None or active is None:
-                return None  # no prior-window data — not an error
-            total_v, active_v = float(total), float(active)
+            active_v = len(self._merge_tenant_rows(active_rows))
+            total_v = float(total)
             return round(total_v / active_v) if active_v > 0 else None
         except Exception:
             logger.warning("avg_per_active_tenant_previous: Prometheus query failed", exc_info=True)
@@ -288,22 +376,70 @@ class MeteringService:
                 "auth_db_available": False,
             }
 
+    async def overview_tenant_data(
+        self, time_ranges: list[str]
+    ) -> tuple[dict, dict[str, dict]]:
+        """Fetch `tenant_count()` plus `active_tenants()` for several windows
+        (the Overview tab needs 24h/7d/30d) in one call, respecting the
+        constraint that `self._auth_db` — a single AsyncSession — is NOT
+        safe for concurrent use (see `tenant_count()`'s comment).
+
+        `tenant_count()`'s 2 queries and the ONE valid-tenant-names fetch
+        shared across every window all run sequentially first (each already
+        catches its own DB errors internally and never raises, so this can't
+        regress a caller's degraded-response handling); only then are the
+        per-window Prometheus queries fired concurrently via
+        `active_tenants(tr, valid_names=...)`. Calling `active_tenants()`
+        directly, once per window, inside the SAME outer `asyncio.gather` as
+        `tenant_count()` (as the /overview route used to) intermittently
+        raises `sqlalchemy.exc.InvalidRequestError: This session is
+        provisioning a new connection; concurrent operations are not
+        permitted` — multiple tasks each trying to run their own
+        `self._auth_db.execute()` at the same time.
+
+        The per-window gather uses `return_exceptions=True`: unlike
+        tenant_count()/the valid-names fetch, active_tenants() does NOT
+        catch a Prometheus query failure internally (it can genuinely
+        raise), so without this a single bad window would propagate out of
+        this method entirely — the caller (routes/metering.py) never gets a
+        chance to run it through `_partition_results` and degrade
+        gracefully; /overview would 500 instead.
+
+        Returns (tenant_count_result, {time_range: active_tenants_result_or_exception}).
+        """
+        tc = await self.tenant_count()
+        valid_names = await self._fetch_valid_tenant_ids()
+        active_results = await asyncio.gather(
+            *(self.active_tenants(tr, valid_names=valid_names) for tr in time_ranges),
+            return_exceptions=True,
+        )
+        return tc, dict(zip(time_ranges, active_results))
+
     async def usage_concentration(
         self, limit: int, time_range: Optional[str], task_types: Optional[list[str]] = None,
     ) -> dict:
         task_sel = build_task_type_selector(task_types)
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True, extra=[task_sel] if task_sel else None)}"
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, extra=[task_sel] if task_sel else None, auth_type=API_KEY_AUTH_TYPE)}"
         promql = self._by_tenant_promql(metric, time_range, filter_zero=False)
         results = await self._client.query(promql)
+        rows = [r for r in results if float(r["value"][1]) > 0]
+        # A tenant renamed WITHIN this window produces two rows sharing one
+        # tenant_id but different tenant labels (see _by_tenant_promql's
+        # `by(tenant_id, tenant)`) — merge them back into one row so the
+        # rename doesn't split the tenant's traffic. Pre-cutover rows (empty
+        # tenant_id) have nothing else to merge by, so they're kept as their
+        # own entry under whatever name they carried, instead of being
+        # dropped or collapsing into one "unknown" bucket.
+        merged = self._merge_tenant_rows(rows)
+        names = await self._resolve_tenant_names({m["tenant_id"] for m in merged if m["tenant_id"]})
 
         all_tenants = sorted(
             [
                 {
-                    "tenant": r["metric"].get("tenant", "unknown"),
-                    "requests": max(1, round(float(r["value"][1]))),
+                    "tenant": names.get(m["tenant_id"], "") or m["tenant"] or "unknown",
+                    "requests": max(1, round(m["value"])),
                 }
-                for r in results
-                if float(r["value"][1]) > 0
+                for m in merged
             ],
             key=lambda t: t["requests"],
             reverse=True,
@@ -339,17 +475,31 @@ class MeteringService:
     async def service_breakdown(
         self, tenant: Optional[str], time_range: Optional[str],
         service_filter: Optional[list[str]] = None,
+        tenant_id: Optional[str] = None,
     ) -> dict:
         """Per-service stats: requests, native units, success %, failed, vs prev period.
 
         Fires all Prometheus queries in a single asyncio.gather:
           - 4–5 endpoint-grouped queries for request counts / prev period
           - 1 scalar query per service that has a dedicated native-unit metric
+
+        KNOWN CUTOVER GAP when ``tenant_id`` is given: see
+        build_base_selectors' docstring — accepted, not fixed here, tracked
+        in the ticket.
         """
         # Use the broader regex so /api/v1/chat (LLM) is included alongside
         # the standard /api/v1/{task}/inference endpoints.
         _ep = f'{PROMETHEUS_API_PATH_LABEL}=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
-        _base = _ep + ',tenant!="unknown"' + (f',tenant="{escape_label_value(tenant)}"' if tenant else "")
+        # tenant_id (immutable) is preferred over tenant (the organisation
+        # name) so this survives a tenant rename — see build_base_selectors.
+        _tenant_part = (
+            f',tenant_id="{escape_label_value(tenant_id)}"' if tenant_id
+            else (f',tenant="{escape_label_value(tenant)}"' if tenant else "")
+        )
+        _base = (
+            _ep + ',tenant!="unknown"' + _tenant_part
+            + ',' + api_key_auth_type_selector()
+        )
         base_sel    = "{" + _base + "}"
         success_sel = "{" + _base + ',status_code=~"2.."' + "}"
 
@@ -359,7 +509,9 @@ class MeteringService:
             self._client.query(self._service_breakdown_by_ep_promql(base_sel, window)),     # 0 total
             self._client.query(self._service_breakdown_by_ep_promql(success_sel, window)),  # 1 success
         ]
-        native_tasks, native_coros = self._native_unit_queries(tenant, time_range, service_filter)
+        native_tasks, native_coros = self._native_unit_queries(
+            tenant, time_range, service_filter, tenant_id=tenant_id
+        )
 
         raw = await asyncio.gather(*fixed_queries, *native_coros, return_exceptions=True)
 
@@ -372,44 +524,103 @@ class MeteringService:
             "filters": {"tenant": tenant, "time_range": time_range or "all"},
         }
 
-    async def model_breakdown(self, tenant: Optional[str], time_range: Optional[str]) -> dict:
-        """Per-service LLM usage: requests, tokens, success %, grouped by
-        `service_id` — the tenant-facing service the client called (the
-        OpenAI `model` field as sent), NOT the `model` Prometheus label.
+    async def model_breakdown(
+        self, tenant: Optional[str], time_range: Optional[str],
+        tenant_id: Optional[str] = None,
+    ) -> dict:
+        """LLM usage grouped by BOTH `service_id` (the tenant-facing service
+        the client called — the OpenAI `model` field as sent) AND `model_id`
+        (the Registry's stable identity for the model actually behind that
+        service, stamped server-side by inference-service at MMS-resolution
+        time — see ai4i-core 1.0.18's `MetricsCollector` — NOT derived from
+        anything the client sends). One PromQL pass, `by (service_id,
+        model_id)`, so both dimensions come from the same series: `services`
+        below is the per-service breakdown (one row per service_id, for the
+        "service" column), and the model-level rollup consumed by
+        `model_consumption_ranking`/`model_consumption_kpis` is computed
+        independently from the same raw rows, collapsed by `model_id` alone
+        — see the second ROLLOUT NOTE below for why that's deliberately NOT
+        just "re-aggregate the (ghost-filtered) `services` list".
 
-        The `model` label (the real upstream model echoed back by the
-        inference engine) is intentionally not grouped or filtered on here:
-        one service maps to exactly one model, but many services can share
-        the same underlying model, so grouping by model would merge
-        distinct services' traffic and destroy tenant attribution. See
-        model-consumption-api-highlevel-design.md §1/§5. Each row's
-        `model_name` (informational only) is resolved via a batched
-        mm_services -> mm_models DB lookup (mm_services.model_id is an
-        opaque hash, not a display name — see
-        ServiceRepository.get_names_and_models_by_service_ids), not from
-        Prometheus — the `model` label is absent on failed requests and can
-        differ between the buffered and streaming response paths for the
-        same service.
+        The `model` label (the upstream inference engine's own echoed model
+        name — absent on failures, can differ between the buffered/streaming
+        paths) is intentionally never grouped or filtered on; `model_name`
+        below is always the Registry's name for `model_id`, not this label.
 
         Fires 3 queries in one asyncio.gather: total requests, successful
-        requests, and tokens processed — each grouped by `service_id`.
+        requests, and tokens processed — each grouped by `(service_id,
+        model_id)`.
+
+        ROLLOUT NOTE (service-level ghosts): per-service rows are
+        cross-checked against the Service Registry (mm_services) via
+        ServiceRepository.get_names_and_models_by_service_ids, and a
+        `service_id` whose model row is entirely absent from mm_models is
+        dropped from `services` — a DEPRECATED model is NOT a ghost (it's
+        still live and can still be serving traffic; see that method's
+        docstring), only a hard-deleted one is. Two different populations
+        land here: `service_id` is the client-supplied `model` string, set
+        before MMS resolution, so a request for a service that was deleted,
+        OR one that never existed (a typo, a stale integration still
+        pointing at an old id — the `llm`/`llm/default` cases) both emit
+        Prometheus series but neither has a current registry row. We can't
+        tell those apart here, so both are dropped from the per-service
+        breakdown. The check is skipped (all ids kept, name falls back to
+        the raw id) only when the registry lookup itself is unavailable or
+        errors — we can't tell "deleted" from "DB unreachable" in that
+        case. Suppressed ids are logged so a delete-induced drop is
+        traceable.
+
+        ROLLOUT NOTE (model-level totals are NOT a re-aggregation of
+        `services`): a model's own requests/success/tokens are collapsed
+        directly from the raw `(service_id, model_id)` rows and validated
+        against the Registry by `model_id` alone (ModelRepository.
+        get_model_names — same "absent row = ghost, DEPRECATED is not"
+        rule) — deliberately NOT derived by summing the
+        (service-existence-filtered) `services` list above. If a
+        contributing service is later deleted while its model row still
+        exists, the model's total must not silently shrink just because one
+        of several services feeding it disappeared — that's real traffic
+        the model actually served. The consequence: `services` (the flat
+        per-service breakdown) can sum to LESS than its parent model's own
+        total for as long as that deleted service's old series remain in
+        the query window — the same "won't add up exactly, self-heals as
+        old series age out" tradeoff `active_tenants` documents for the
+        tenant-id -> org-name cutover.
+
+        Each per-service row's own `model_id` is read straight from the
+        Prometheus label when present (the new source of truth), falling
+        back to the DB-joined value from `get_names_and_models_by_service_ids`
+        only when no row for that service_id carried a non-empty `model_id`
+        yet — i.e. a legacy pre-upgrade series (recorded before ai4i-core
+        1.0.18 started stamping this label) or a resolution failure. This
+        self-heals as pre-upgrade series age out of the window; there's no
+        after-the-fact fix, same reasoning as the tenant-id cutover.
         """
         base_sel = build_base_selectors(
-            inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX
+            inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX,
+            tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE,
         )
         success_sel = build_base_selectors(
             inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX,
-            extra=['status_code=~"2.."'],
+            extra=['status_code=~"2.."'], tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE,
         )
-        tokens_parts = ['token_type="total"', 'tenant!="unknown"']
-        if tenant:
+        # telemetry_obsv_llm_tokens_processed_sum now carries tenant_id
+        # alongside tenant (see metrics.py) — prefer it, same precedence as
+        # build_base_selectors/_native_unit_queries, so tokens stay
+        # continuous across a rename instead of resetting next to request
+        # counts (from base_sel/success_sel above) that stay continuous.
+        tokens_parts = ['token_type="total"', 'tenant!="unknown"', api_key_auth_type_selector()]
+        if tenant_id:
+            tokens_parts.append(f'tenant_id="{escape_label_value(tenant_id)}"')
+        elif tenant:
             tokens_parts.append(f'tenant="{escape_label_value(tenant)}"')
         tokens_sel = "{" + ",".join(tokens_parts) + "}"
 
-        total_q = sum_over_window_by(f"{_METRIC}{base_sel}", "service_id", time_range)
-        success_q = sum_over_window_by(f"{_METRIC}{success_sel}", "service_id", time_range)
+        group_by = "service_id, model_id"
+        total_q = sum_over_window_by(f"{_METRIC}{base_sel}", group_by, time_range)
+        success_q = sum_over_window_by(f"{_METRIC}{success_sel}", group_by, time_range)
         tokens_q = sum_over_window_by(
-            f"telemetry_obsv_llm_tokens_processed_sum{tokens_sel}", "service_id", time_range
+            f"telemetry_obsv_llm_tokens_processed_sum{tokens_sel}", group_by, time_range
         )
 
         raw = await asyncio.gather(
@@ -422,30 +633,66 @@ class MeteringService:
         def _safe_list(r):
             return r if not isinstance(r, Exception) else []
 
-        totals = self._label_dict(_safe_list(raw[0]), "service_id")
-        successes = self._label_dict(_safe_list(raw[1]), "service_id")
-        tokens = self._label_dict(_safe_list(raw[2]), "service_id")
+        total_rows = _safe_list(raw[0])
+        success_rows = _safe_list(raw[1])
+        tokens_rows = _safe_list(raw[2])
+
+        # ── Per-service view (collapses across model_id — see class docstring
+        # on why a service_id can transiently carry more than one model_id
+        # label value; the per-service TOTAL must not fragment because of it).
+        totals = self._label_dict(total_rows, "service_id")
+        successes = self._label_dict(success_rows, "service_id")
+        tokens = self._label_dict(tokens_rows, "service_id")
 
         # "" means the client sent no `model` field at all — not a real service.
         service_ids = {s for s in (set(totals) | set(successes) | set(tokens)) if s != ""}
 
-        names_and_models: dict = {}
+        # Representative model_id per service_id, straight from Prometheus —
+        # first non-empty value seen wins (a service's model_id is an
+        # immutable FK, so in steady state there's only ever one; see the
+        # ROLLOUT NOTE above for the transitional exception).
+        prom_model_id: dict = {}
+        for r in (*total_rows, *success_rows, *tokens_rows):
+            sid = r["metric"].get("service_id", "")
+            mid = r["metric"].get("model_id", "") or ""
+            if sid and mid and sid not in prom_model_id:
+                prom_model_id[sid] = mid
+
+        svc_info: dict = {}
+        registry_checked = False
         if self._service_repo is not None and service_ids:
             try:
-                names_and_models = await self._service_repo.get_names_and_models_by_service_ids(
+                svc_info = await self._service_repo.get_names_and_models_by_service_ids(
                     list(service_ids)
                 )
+                registry_checked = True
             except Exception:
                 logger.warning("model_breakdown: service name/model lookup failed", exc_info=True)
 
+        # service_id with no current row at all in mm_models (a DEPRECATED
+        # model still has a row, so it's not a ghost — see the service-level
+        # ROLLOUT NOTE above). Only computed when the registry lookup
+        # actually ran — if it's unavailable/failed we can't tell "deleted"
+        # from "DB down", so nothing is dropped.
+        ghosts = (service_ids - svc_info.keys()) if registry_checked else set()
+        if ghosts:
+            logger.info(
+                "model_breakdown: dropped %d unregistered service_id(s): %s",
+                len(ghosts), sorted(ghosts),
+            )
+
         services = []
         for service_id in service_ids:
+            if service_id in ghosts:
+                continue
             total_v = totals.get(service_id, 0)
             success_v = successes.get(service_id, 0)
-            name, model_name = names_and_models.get(service_id, (service_id, None))
+            name, db_model_id, model_name = svc_info.get(service_id, (service_id, None, None))
+            model_id = prom_model_id.get(service_id) or db_model_id
             services.append({
                 "service_id": service_id,
                 "name": name,
+                "model_id": model_id,
                 "model_name": model_name,
                 "requests": total_v,
                 "native_units": float(tokens.get(service_id, 0)),
@@ -454,26 +701,284 @@ class MeteringService:
 
         services.sort(key=lambda s: s["requests"], reverse=True)
 
+        # ── Model-level view (collapses across service_id) — the
+        # authoritative source for model_consumption_ranking/kpis; see the
+        # model-level ROLLOUT NOTE above for why this is independent of the
+        # service-existence filtering `services` above went through.
+        #
+        # Grouped by EFFECTIVE model_id, resolved PER service_id (reusing
+        # prom_model_id, computed above) — Prometheus label first, falling
+        # back to the DB-joined value from svc_info — same precedence AND
+        # same granularity the per-service view already applies at line
+        # ~612 (`prom_model_id.get(service_id) or db_model_id`). Resolving
+        # per ROW instead (i.e. only from that row's own label) would let a
+        # service with some labeled and some unlabeled rows split across
+        # two model_totals entries whenever the label and the DB FK
+        # disagree during the rollout window, while `services` still shows
+        # it as one — this keeps the two views in agreement. Without the
+        # fallback at all, any series recorded before a service's model_id
+        # label existed (pre-ai4i-core-1.0.18, or before that service's
+        # traffic was first labeled) groups under the empty-string bucket
+        # and is silently excluded from model_totals entirely, even though
+        # the exact same service resolves fine in `services` via svc_info —
+        # real traffic in the per-service breakdown vanishing completely
+        # from the Model Consumption chart.
+        def _effective_model_id(row: dict) -> str:
+            sid = row["metric"].get("service_id", "")
+            _, db_model_id, _ = svc_info.get(sid, (None, None, None))
+            return prom_model_id.get(sid) or db_model_id or ""
+
+        model_totals_raw = self._label_dict(total_rows, _effective_model_id)
+        model_successes_raw = self._label_dict(success_rows, _effective_model_id)
+        model_tokens_raw = self._label_dict(tokens_rows, _effective_model_id)
+        model_ids = {
+            m for m in (set(model_totals_raw) | set(model_successes_raw) | set(model_tokens_raw))
+            if m != ""
+        }
+
+        model_names: dict = {}
+        model_registry_checked = False
+        if self._model_repo is not None and model_ids:
+            try:
+                model_names = await self._model_repo.get_model_names(
+                    list(model_ids), task_types=["llm"]
+                )
+                model_registry_checked = True
+            except Exception:
+                logger.warning("model_breakdown: model registry lookup failed", exc_info=True)
+
+        # model_id with no current Registry row UNDER task_types=["llm"] — a
+        # DEPRECATED model still has a row (see get_model_names) so it's not
+        # a ghost on that basis, only a hard-deleted/stale/never-existent id,
+        # OR one registered under a different task type, is. That second
+        # case matters here specifically: without the llm filter, a model_id
+        # tagged e.g. "asr" in the Registry but actually serving /chat
+        # traffic (a Registry data error, not a deletion) would land in
+        # active_models without ever counting toward registry_model_count's
+        # total_models — this filter keeps both KPIs scoped to the same
+        # population. An empty-model_id row (e.g. a pre-upgrade series with
+        # no label at all) was already excluded by the `!= ""` filter above
+        # and never reaches here.
+        #
+        # Skipped (nothing dropped) only when the registry lookup itself is
+        # unavailable — same graceful-degradation choice `services` above
+        # makes for service_id ghosts. This is the one remaining way
+        # `active_models` can exceed `total_models` post-fix: a transient
+        # DB error here doesn't also fail registry_model_count's separate
+        # query, so the two can momentarily disagree. Accepted, not fixed —
+        # matches the existing "can't tell deleted from DB down" policy
+        # applied everywhere else in this method.
+        model_ghosts = (model_ids - model_names.keys()) if model_registry_checked else set()
+        if model_ghosts:
+            logger.info(
+                "model_breakdown: dropped %d unregistered model_id(s): %s",
+                len(model_ghosts), sorted(model_ghosts),
+            )
+
+        model_totals = []
+        for model_id in model_ids:
+            if model_id in model_ghosts:
+                continue
+            total_v = model_totals_raw.get(model_id, 0)
+            success_v = model_successes_raw.get(model_id, 0)
+            model_totals.append({
+                "model_id": model_id,
+                "model_name": model_names.get(model_id, model_id),
+                "requests": total_v,
+                "native_units": float(model_tokens_raw.get(model_id, 0)),
+                "success_pct": round(success_v / total_v * 100, 2) if total_v else 0.0,
+            })
+
         return {
             "services": services,
+            "model_totals": model_totals,
             "filters": {"tenant": tenant, "time_range": time_range or "all"},
         }
 
+    async def registry_model_count(self) -> Optional[int]:
+        """Count of registered LLM model VERSIONS (`mm_models` rows with
+        task.type == "llm") — ACTIVE and DEPRECATED both count (a deprecated
+        version is still "in the Registry", just not the currently-
+        recommended one to use).
+
+        Scoped to task_types=["llm"] to match model_breakdown's own universe
+        (model_totals/model_consumption only ever cover LLM traffic — see
+        model_breakdown's LLM_CHAT_ENDPOINT_REGEX), and identity is model_id
+        (one row per version) to match model_totals' own grain, NOT distinct
+        model name — a model with 3 concurrently-registered versions counts
+        as 3 here, same as it does in the DEFAULT (no `include_deprecated`
+        override) `/api/v1/models?task_types=llm` call's `meta.total` (see
+        ModelRepository.count_models). NOT guaranteed to match every call to
+        that endpoint: ModelService.list_models never forwards its own
+        `include_deprecated` param to `count_models`, so `?task_types=llm&
+        include_deprecated=false` already returns an `items` list narrower
+        than its own `meta.total` — a pre-existing, separate bug this
+        method's parity claim inherits rather than causes.
+
+        This keeps `total_models` and `model_consumption_kpis`'s
+        `active_models` (also model_id-grained and llm-scoped — see
+        get_model_names' `task_types` param and that KPI method's
+        docstring) counting the same population MOST of the time — not
+        guaranteed: a registry-lookup failure inside model_breakdown leaves
+        model_totals' ghosts unfiltered (see model_breakdown's comment on
+        `model_ghosts`), which is the one path where `active_models` can
+        still exceed this count even after the llm-scoping here.
+
+        Not tenant-scoped: ``mm_models`` has no tenant column — the Registry is
+        a shared catalog, not partitioned per institution — so this value is
+        the same platform-wide regardless of the caller's tenant_id. Returns
+        None (never raises) when the DB is unavailable, same pattern as
+        tenant_count(), so a Registry lookup failure degrades this one summary
+        field instead of the whole response.
+        """
+        if self._model_repo is None:
+            return None
+        try:
+            return await self._model_repo.count_models(task_types=["llm"])
+        except Exception:
+            logger.warning("registry_model_count: DB query failed", exc_info=True)
+            return None
+
+    @staticmethod
+    def model_consumption_ranking(
+        model_totals: list[dict], limit: int
+    ) -> tuple[Optional[dict], list[dict], int]:
+        """Rank `model_breakdown`'s already-grouped `model_totals` for the
+        Model Consumption summary's `most_used` KPI and the `top_models`
+        ranking (AI4IDS-2790).
+
+        Takes `model_totals` (one row per `model_id`, already collapsed
+        across every contributing service_id and Registry-validated by
+        `model_breakdown` — see its ROLLOUT NOTEs) rather than the flat
+        per-service `services` list: grouping now happens at the Prometheus
+        query itself (`by (service_id, model_id)`), not here, so a model's
+        total is never short-changed by a per-service existence filter this
+        function has no visibility into.
+
+        `grand_total` here IS the full sum across `model_totals` — unlike
+        the old service-level grouping, there's no separate "unresolved"
+        bucket to exclude: `model_breakdown` never emits a `model_totals`
+        entry it hasn't already validated against the Registry. Callers
+        must still surface this `grand_total` (not some other "total
+        requests" figure) alongside `consumption_pct`, or the percentages
+        won't add up against whatever total gets displayed next to them.
+
+        consumption_pct per model = this model's total requests / grand_total
+        * 100 — its SHARE of total requests. `most_used` and `top_models[0]`
+        always name the same model, since both rank on total requests
+        (dividing by the same grand_total preserves order).
+
+        Returns (most_used, ranked, grand_total) — most_used/ranked are
+        None/[] when there's no traffic at all; grand_total is always an int
+        (0 in that case).
+        """
+        active = [m for m in model_totals if m["requests"] > 0]
+        grand_total = sum(m["requests"] for m in active)
+        if not active or not grand_total:
+            return None, [], 0
+
+        ranked = sorted(
+            (
+                {
+                    "model_id": m["model_id"],
+                    "model_name": m["model_name"],
+                    "requests": m["requests"],
+                    "consumption_pct": round(m["requests"] / grand_total * 100, 2),
+                }
+                for m in active
+            ),
+            key=lambda m: m["requests"],
+            reverse=True,
+        )
+
+        most_used = ranked[0]
+
+        top = [
+            {**m, "rank": idx + 1, "formatted_requests": MeteringService._format_count(m["requests"])}
+            for idx, m in enumerate(ranked[:limit])
+        ]
+        return most_used, top, grand_total
+
+    @staticmethod
+    def model_consumption_kpis(services: list[dict], model_totals: list[dict]) -> dict:
+        """Scalar KPIs for the Model Consumption summary (AI4IDS-2790):
+
+        - `active_models`: count of DISTINCT `model_id`s among `model_totals`
+          entries with traffic (`requests > 0`) — matches `model_totals`/
+          `top_models`' own grain (one row per `model_id` — see
+          `model_breakdown`) AND `registry_model_count`'s grain (also
+          model_id-based, see its docstring), so `active_models` stays a
+          subset of `total_models` in the common case, and agrees with the
+          row count in the visible `top_models` breakdown when that list
+          isn't truncated by the caller's `limit`. NOT an absolute
+          guarantee — see registry_model_count's docstring and
+          model_breakdown's `model_ghosts` comment for the one remaining
+          path (a registry-lookup failure inside model_breakdown) where
+          `active_models` can still exceed `total_models`. Two concurrently-ACTIVE
+          versions of the same model name both receiving traffic count as
+          TWO active models here, matching the two separate rows they
+          produce in `model_totals`/`top_models` — deliberately not
+          collapsed to one, unlike the old name-based identity this
+          replaced. Always an int; 0 (not None) when there's no traffic at
+          all — 0 is itself a real, meaningful answer ("no models were
+          active"), unlike `overall_success_rate_pct`, which is genuinely
+          undefined with no data to average.
+        - `overall_success_rate_pct`: REQUEST-WEIGHTED success rate — sum(
+          requests * success_pct) / sum(requests) over `services` (not
+          `model_totals`) — matching the FE's existing (previously dormant)
+          fallback formula, so this field doesn't silently change what the
+          dashboard already shows once populated. Deliberately the WIDER,
+          service-level population: includes every service with traffic,
+          even one whose model lookup failed, since success/failure is a
+          traffic-health signal independent of whether the model behind it
+          was identifiable. None when there's no traffic to average over.
+        - `worst`: the active service with the highest failure rate — raw
+          dict, consumed by the caller to build `highest_failure_rate`
+          (which stays service-level, not aggregated to model-level). None
+          when there's no traffic.
+        """
+        active_models = len({
+            m["model_id"] for m in model_totals if m["requests"] > 0
+        })
+
+        active_services = [s for s in services if s["requests"] > 0]
+        total_requests = sum(s["requests"] for s in active_services)
+        overall_success_rate_pct = (
+            round(sum(s["requests"] * s["success_pct"] for s in active_services) / total_requests, 2)
+            if total_requests else None
+        )
+        worst = max(active_services, key=lambda s: 100 - s["success_pct"]) if active_services else None
+        return {
+            "active_models": active_models,
+            "overall_success_rate_pct": overall_success_rate_pct,
+            "worst": worst,
+        }
+
     async def tenant_ranking(
-        self, limit: int, time_range: Optional[str], tenant: Optional[str] = None
+        self, limit: int, time_range: Optional[str], tenant: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> dict:
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant)}"
+        """KNOWN CUTOVER GAP when ``tenant_id`` is given (scoping the ranking
+        to one tenant): see build_base_selectors' docstring — accepted, not
+        fixed here, tracked in the ticket. Unscoped (no tenant_id) calls are
+        unaffected — they already recover pre-cutover data via the
+        (tenant_id, tenant) group-by + _merge_tenant_rows."""
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant, tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE)}"
         promql = self._tenant_delta_promql(metric, time_range)
         results = await self._client.query(promql)
+        rows = [r for r in results if float(r["value"][1]) > 0]
+        # See usage_concentration's comment above — same merge-back-by-id,
+        # fall-back-to-name-when-empty reasoning applies here.
+        merged = self._merge_tenant_rows(rows)
+        names = await self._resolve_tenant_names({m["tenant_id"] for m in merged if m["tenant_id"]})
 
         all_tenants = sorted(
             [
                 {
-                    "tenant": r["metric"].get("tenant", "unknown"),
-                    "requests": max(1, round(float(r["value"][1]))),
+                    "tenant": names.get(m["tenant_id"], "") or m["tenant"] or "unknown",
+                    "requests": max(1, round(m["value"])),
                 }
-                for r in results
-                if float(r["value"][1]) > 0
+                for m in merged
             ],
             key=lambda t: t["requests"],
             reverse=True,
@@ -523,29 +1028,57 @@ class MeteringService:
     @classmethod
     def _accumulate_tenant_task_counts(
         cls, results: list, active_services: list[str]
-    ) -> dict[str, dict[str, int]]:
-        """(tenant, task) -> request count, from a sum-by(tenant,endpoint) query result."""
-        tenant_task: dict[str, dict[str, int]] = {}
+    ) -> dict[str, dict]:
+        """merge_key -> {"tenant_id", "tenant", "tasks": {task: count}}, from a
+        sum-by(tenant_id, tenant, endpoint) query result.
+
+        merge_key is tenant_id when present, so a same-window rename (which
+        produces rows sharing one tenant_id but different tenant labels)
+        buckets into ONE entry instead of splitting across two. For a row
+        with no tenant_id, a first pass over `results` learns tenant_id from
+        any OTHER row sharing its tenant name (see _merge_tenant_rows for the
+        full reasoning) — this is what keeps a tenant whose traffic spans
+        the pre/post-cutover boundary as one bucket instead of two. Only
+        when no id can be found for the name at all does it fall back to a
+        name-only bucket, so genuinely unresolvable pre-cutover rows are
+        still kept and shown under their own name instead of being dropped
+        or collapsing into one "unknown" pseudo-tenant that could out-rank a
+        real one."""
+        id_by_name: dict[str, str] = {}
+        for r in results:
+            tid = r["metric"].get("tenant_id", "")
+            name = r["metric"].get("tenant", "")
+            if tid and name:
+                id_by_name[name] = tid
+
+        tenant_task: dict[str, dict] = {}
         for r in results:
             ep = r["metric"].get(PROMETHEUS_API_PATH_LABEL, "")
-            tenant_label = r["metric"].get("tenant", "unknown")
+            tenant_id_label = r["metric"].get("tenant_id", "")
+            tenant_label = r["metric"].get("tenant", "")
             task = cls._resolve_task_key(ep)
             if task not in active_services:
                 continue
             v = max(0, round(float(r["value"][1])))
             if v <= 0:
                 continue
-            bucket = tenant_task.setdefault(tenant_label, {})
-            bucket[task] = bucket.get(task, 0) + v
+            resolved_id = tenant_id_label or id_by_name.get(tenant_label, "")
+            key = resolved_id or f"name:{tenant_label}"
+            bucket = tenant_task.setdefault(
+                key, {"tenant_id": resolved_id, "tenant": tenant_label, "tasks": {}}
+            )
+            if tenant_label:
+                bucket["tenant"] = tenant_label
+            bucket["tasks"][task] = bucket["tasks"].get(task, 0) + v
         return tenant_task
 
     @staticmethod
     def _rank_tenants_by_total(
-        tenant_task: dict[str, dict[str, int]]
-    ) -> list[tuple[str, int, dict[str, int]]]:
-        """(tenant, total, tasks) sorted by total descending."""
+        tenant_task: dict[str, dict]
+    ) -> list[tuple[dict, int]]:
+        """(bucket, total) sorted by total descending."""
         return sorted(
-            [(t, sum(tasks.values()), tasks) for t, tasks in tenant_task.items()],
+            [(bucket, sum(bucket["tasks"].values())) for bucket in tenant_task.values()],
             key=lambda x: x[1],
             reverse=True,
         )
@@ -584,40 +1117,62 @@ class MeteringService:
         time_range: Optional[str],
         services: Optional[list[str]],
         tenant: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> dict:
         """Heatmap matrix: top-N tenants × per-service request counts.
 
-        Uses a single sum by(tenant, exported_endpoint) query with offset subtraction
-        (same approach as service_breakdown) to avoid increase() extrapolation errors.
-        When ``tenant`` is given, the matrix is scoped to that single tenant.
+        Uses a single sum by(tenant_id, tenant, exported_endpoint) query with
+        offset subtraction (same approach as service_breakdown) to avoid
+        increase() extrapolation errors. ``tenant`` rides alongside
+        ``tenant_id`` in the group-by so a pre-cutover row (empty tenant_id)
+        still carries a usable name; _accumulate_tenant_task_counts then
+        re-buckets by tenant_id (falling back to name only when empty) so a
+        same-window rename doesn't split a tenant's traffic across two
+        buckets. When ``tenant_id`` (or ``tenant``) is given, the matrix is
+        scoped to that single tenant.
+
+        KNOWN CUTOVER GAP when ``tenant_id`` (or ``tenant``) scopes the
+        matrix to one tenant: see build_base_selectors' docstring —
+        accepted, not fixed here, tracked in the ticket. The unscoped
+        top-N matrix (no tenant_id/tenant filter) is unaffected.
         """
         active_services = services or list(SERVICE_BREAKDOWN_CONFIG)
 
         _ep = f'{PROMETHEUS_API_PATH_LABEL}=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
-        _tenant_sel = f',tenant="{escape_label_value(tenant)}"' if tenant else ''
-        base_sel = '{' + _ep + ',tenant!="unknown"' + _tenant_sel + '}'
+        _tenant_part = (
+            f',tenant_id="{escape_label_value(tenant_id)}"' if tenant_id
+            else (f',tenant="{escape_label_value(tenant)}"' if tenant else '')
+        )
+        base_sel = '{' + _ep + ',tenant!="unknown"' + _tenant_part + ',' + api_key_auth_type_selector() + '}'
         metric = f"{_METRIC}{base_sel}"
         window = TIME_RANGES.get(time_range or "all")
 
         if window:
             promql = (
-                f"sum by(tenant, {PROMETHEUS_API_PATH_LABEL}) ("
+                f"sum by(tenant_id, tenant, {PROMETHEUS_API_PATH_LABEL}) ("
                 f"({metric} unless {metric} offset {window})"
                 f" or (increase({metric}[{window}]) > 0)"
                 f") > 0"
             )
         else:
-            promql = f"sum by(tenant, {PROMETHEUS_API_PATH_LABEL}) ({metric}) > 0"
+            promql = f"sum by(tenant_id, tenant, {PROMETHEUS_API_PATH_LABEL}) ({metric}) > 0"
 
         results = await self._client.query(promql)
         tenant_task = self._accumulate_tenant_task_counts(results, active_services)
         ranked = self._rank_tenants_by_total(tenant_task)
-        grand_total = sum(r[1] for r in ranked)
+        grand_total = sum(total for _, total in ranked)
         top = ranked[:limit]
+        names = await self._resolve_tenant_names(
+            {bucket["tenant_id"] for bucket, _ in top if bucket["tenant_id"]}
+        )
 
         rows = [
-            self._heatmap_row(idx + 1, tenant_label, total, tasks, active_services, grand_total)
-            for idx, (tenant_label, total, tasks) in enumerate(top)
+            self._heatmap_row(
+                idx + 1,
+                names.get(bucket["tenant_id"], "") or bucket["tenant"] or bucket["tenant_id"] or "unknown",
+                total, bucket["tasks"], active_services, grand_total,
+            )
+            for idx, (bucket, total) in enumerate(top)
         ]
 
         return {
@@ -664,13 +1219,25 @@ class MeteringService:
     def _native_unit_queries(
         self, tenant: Optional[str], time_range: Optional[str],
         service_filter: Optional[list[str]] = None,
+        tenant_id: Optional[str] = None,
     ) -> tuple[list[str], list]:
         """Per-service native-unit scalar query coroutines — one per task
         that has a real Prometheus Histogram _sum metric (SERVICE_BREAKDOWN_CONFIG).
 
         service_filter (the frontend's enabled-task-type allowlist), when
         given, skips the native-unit query entirely for excluded tasks —
-        a query-level reduction, not just a display-level one."""
+        a query-level reduction, not just a display-level one.
+
+        These native-unit metrics (tts/nmt/asr/... characters/minutes) now
+        carry a ``tenant_id`` label alongside ``tenant`` (see metrics.py) —
+        ``tenant_id`` is preferred over ``tenant`` when given, same
+        precedence as build_base_selectors, so this stays correct across a
+        tenant rename instead of silently returning platform-wide numbers.
+
+        KNOWN CUTOVER GAP when ``tenant_id`` is given: see
+        build_base_selectors' docstring — accepted, not fixed here, tracked
+        in the ticket.
+        """
         native_tasks: list[str] = []
         native_coros = []
         for task, cfg in SERVICE_BREAKDOWN_CONFIG.items():
@@ -680,7 +1247,13 @@ class MeteringService:
             if not native_metric:
                 continue
             extra = cfg.get("native_extra_labels") or []
-            parts = [f'tenant="{escape_label_value(tenant)}"'] if tenant else []
+            if tenant_id:
+                parts = [f'tenant_id="{escape_label_value(tenant_id)}"']
+            elif tenant:
+                parts = [f'tenant="{escape_label_value(tenant)}"']
+            else:
+                parts = []
+            parts.append(api_key_auth_type_selector())
             parts.extend(extra)
             sel = "{" + ",".join(parts) + "}" if parts else ""
             # Use increase()-based counting (via sum_over_window), NOT a raw
@@ -759,12 +1332,21 @@ class MeteringService:
         return out
 
     @staticmethod
-    def _label_dict(results: list, label: str) -> dict:
-        """Map a label's value -> rounded sum from a `sum by(<label>)` result vector."""
+    def _label_dict(results: list, key) -> dict:
+        """Map a resolved key -> rounded sum from a `sum by(...)` result vector.
+
+        `key` is either a Prometheus label name (str) — extracted via
+        `metric.get(key, "")` — or a callable `row -> str` for a key that
+        isn't a single literal label (e.g. model_breakdown's effective-
+        model_id fallback, which needs more than one label on the row to
+        resolve). Keeping the rounding/summing loop here in one place, used
+        by both forms, avoids that logic drifting between two copies.
+        """
+        resolve = key if callable(key) else (lambda r: r["metric"].get(key, ""))
         out: dict = {}
         for r in results:
-            key = r["metric"].get(label, "")
-            out[key] = out.get(key, 0) + round(float(r["value"][1]))
+            k = resolve(r)
+            out[k] = out.get(k, 0) + round(float(r["value"][1]))
         return out
 
     @staticmethod
@@ -780,11 +1362,16 @@ class MeteringService:
 
     @staticmethod
     def _tenant_delta_promql(metric: str, time_range: Optional[str]) -> str:
+        # Groups by tenant (the name) alongside tenant_id so a pre-cutover
+        # row (empty tenant_id) still carries a usable name instead of being
+        # merged into one anonymous bucket — see _merge_tenant_rows, which
+        # re-merges same-tenant_id rows so a same-window rename (which now
+        # produces two rows sharing one tenant_id) doesn't split back apart.
         window = TIME_RANGES.get(time_range or "all")
         if not window:
-            return f"sum by(tenant) ({metric}) > 0"
+            return f"sum by(tenant_id, tenant) ({metric}) > 0"
         return (
-            f"sum by(tenant) ("
+            f"sum by(tenant_id, tenant) ("
             f"({metric} unless {metric} offset {window})"
             f" or (increase({metric}[{window}]) > 0)"
             f") > 0"
@@ -792,31 +1379,115 @@ class MeteringService:
 
     @staticmethod
     def _by_tenant_promql(metric: str, time_range: Optional[str], filter_zero: bool) -> str:
+        # See _tenant_delta_promql above for why `tenant` rides alongside
+        # `tenant_id` in the group-by.
         window = TIME_RANGES.get(time_range or "all")
         if window:
             return (
-                f"sum by(tenant) ("
+                f"sum by(tenant_id, tenant) ("
                 f"({metric} unless {metric} offset {window})"
                 f" or (increase({metric}[{window}]) > 0)"
                 f") > 0"
             )
-        base = f"sum by(tenant) ({metric})"
+        base = f"sum by(tenant_id, tenant) ({metric})"
         return f"{base} > 0" if filter_zero else base
 
-    async def _fetch_valid_tenant_names(self) -> Optional[set]:
-        """Return the set of currently-valid tenant organisation names from the auth DB.
+    @staticmethod
+    def _merge_tenant_rows(rows: list) -> list[dict]:
+        """Re-merge Prometheus rows already grouped by (tenant_id, tenant)
+        back into one entry per real tenant.
 
-        The Prometheus ``tenant`` label carries the organisation name (see
-        ai4i_core.observability.middleware), so filtering against still-valid
-        tenants must match on that same value. Returns None when the auth DB
-        is unavailable so callers fall back to unfiltered Prometheus results
-        rather than returning an empty count.
+        _by_tenant_promql/_tenant_delta_promql group by BOTH labels so a
+        pre-cutover row (empty tenant_id) still carries a usable tenant name
+        instead of being dropped. That means the SAME active tenant produces
+        two rows for as long as its traffic spans the cutover: an old row
+        with no tenant_id, and a new one with it — both carrying the same
+        ``tenant`` name. A first pass learns tenant_id from whichever rows
+        already have one (name -> id), so the second pass can fold a
+        no-id row into that same tenant's bucket by matching its name,
+        instead of keying it "name:<x>" and creating a second, unmergeable
+        entry for a tenant that already has an id. (A tenant renamed AND
+        spanning the cutover — no id-bearing row shares its old name — still
+        can't be unified this way; that's a real, accepted gap, not this
+        function's bug, since there's no rename history to match on. It's
+        also the same rare-overlap assumption that a name uniquely
+        identifies one tenant relies on: two distinct tenants that happen to
+        share an org name would incorrectly fold together here.)
+        """
+        # Pass 1: which tenant_id does each name currently belong to?
+        id_by_name: dict[str, str] = {}
+        for r in rows:
+            tid = r["metric"].get("tenant_id", "")
+            name = r["metric"].get("tenant", "")
+            if tid and name:
+                id_by_name[name] = tid
+
+        # Pass 2: merge, resolving a missing tenant_id via the name lookup
+        # above before falling back to a name-only bucket.
+        merged: dict[str, dict] = {}
+        for r in rows:
+            tid = r["metric"].get("tenant_id", "")
+            name = r["metric"].get("tenant", "")
+            resolved_id = tid or id_by_name.get(name, "")
+            key = resolved_id or f"name:{name}"
+            value = float(r["value"][1])
+            entry = merged.get(key)
+            if entry is None:
+                merged[key] = {"tenant_id": resolved_id, "tenant": name, "value": value}
+            else:
+                entry["value"] += value
+                if name:
+                    entry["tenant"] = name
+        return list(merged.values())
+
+    async def _fetch_valid_tenant_ids(self) -> Optional[set]:
+        """Return the set of currently-ACTIVE tenant ids (as strings) from the auth DB.
+
+        Prometheus results are grouped/filtered by ``tenant_id`` (immutable —
+        see ai4i_core.observability.middleware), so validity must be checked
+        against that same value rather than the organisation name, which
+        changes on a rename. Restricted to status='ACTIVE' so PENDING/
+        SUSPENDED/DEACTIVATED tenants — who can't currently authenticate (see
+        APIKeyService.user_may_use_api_keys) but may still have in-window
+        Prometheus series from before their status changed — don't inflate
+        the Active Tenants count on the Usage Dashboard.
+        Returns None when the auth DB is unavailable so callers fall back to
+        unfiltered Prometheus results rather than returning an empty count.
         """
         if self._auth_db is None:
             return None
         try:
-            rows = await self._auth_db.execute(text("SELECT organisation FROM tenants"))
-            return {r[0] for r in rows.all()}
+            rows = await self._auth_db.execute(
+                text("SELECT id FROM tenants WHERE status = 'ACTIVE'")
+            )
+            return {str(r[0]) for r in rows.all()}
         except Exception:
-            logger.warning("_fetch_valid_tenant_names: auth DB query failed", exc_info=True)
+            logger.warning("_fetch_valid_tenant_ids: auth DB query failed", exc_info=True)
             return None
+
+    async def _resolve_tenant_names(self, tenant_ids: set) -> dict:
+        """Batch-resolve tenant_id -> current organisation name for display.
+
+        Prometheus results are grouped by tenant_id so counts stay correct
+        across a rename (see _by_tenant_promql/_tenant_delta_promql); this
+        fills in whatever the organisation is named *right now* for the UI,
+        rather than showing the raw id. Empty/falsy ids (series from before
+        the tenant_id label existed, or "unknown") and non-numeric ids
+        (auth-service tolerates non-numeric tenant ids elsewhere) are
+        skipped rather than passed to int(), so one bad id can't fail the
+        whole batch. Returns {} (never None) on a DB miss so callers can
+        always call .get() safely — the raw id/label is still shown as a
+        fallback, just not the name.
+        """
+        ids = {tid for tid in tenant_ids if tid and tid.isdigit()}
+        if self._auth_db is None or not ids:
+            return {}
+        try:
+            rows = await self._auth_db.execute(
+                text("SELECT id, organisation FROM tenants WHERE id = ANY(:ids)"),
+                {"ids": [int(tid) for tid in ids]},
+            )
+            return {str(r[0]): r[1] for r in rows.all()}
+        except Exception:
+            logger.warning("_resolve_tenant_names: auth DB query failed", exc_info=True)
+            return {}

@@ -32,6 +32,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { showToast } from "../../utils/toast";
+import { INSTITUTION, INSTITUTIONS } from "../../config/constants";
 import { DeleteIcon, EditIcon } from "@chakra-ui/icons";
 import { piiService } from "../../services/piiService";
 import { useAdminTableSurface } from "../common/TableControls";
@@ -187,7 +188,7 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
   const handleSaveTenantMapping = async () => {
     const tid = newMapTenantId.trim();
     if (!tid || !newMapDomainId) {
-      showToast({ type: "warning", message: "Enter tenant ID and choose a domain" });
+      showToast({ type: "warning", message: `Enter ${INSTITUTION.toLowerCase()} ID and choose a domain` });
       return;
     }
     try {
@@ -204,7 +205,7 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
   };
 
   const handleDeleteTenantMapping = async (tenantId: string, onSuccess?: () => void) => {
-    if (typeof window !== "undefined" && !window.confirm(`Remove mapping for tenant "${tenantId}"?`))
+    if (typeof window !== "undefined" && !window.confirm(`Remove mapping for ${INSTITUTION.toLowerCase()} "${tenantId}"?`))
       return;
     try {
       await piiService.deleteTenantDomainMapping(tenantId);
@@ -431,14 +432,14 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
     () => [
       {
         id: "tenant",
-        header: "Tenant ID",
+        header: `${INSTITUTION} ID`,
         sortable: {
-          label: "Tenant ID",
+          label: `${INSTITUTION} ID`,
           direction: mappingSortDirection,
           onAsc: () => setMappingSortDirection("asc"),
           onDesc: () => setMappingSortDirection("desc"),
-          ascAriaLabel: "Sort mappings by tenant ascending",
-          descAriaLabel: "Sort mappings by tenant descending",
+          ascAriaLabel: `Sort mappings by ${INSTITUTION.toLowerCase()} ascending`,
+          descAriaLabel: `Sort mappings by ${INSTITUTION.toLowerCase()} descending`,
         },
         cell: (row) => (
           <Text fontFamily="mono" fontSize="xs">
@@ -520,7 +521,7 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
       },
       {
         id: "tenant",
-        header: "Tenant",
+        header: INSTITUTION,
         cell: (row) => (
           <Text fontFamily="mono" fontSize="xs">
             {row.tenant_id || "—"}
@@ -821,14 +822,14 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
                 <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
                   <CardBody>
                     <Text fontSize="xs" fontWeight="bold" color={mutedText} textTransform="uppercase" letterSpacing="wider" borderBottomWidth="1px" borderColor={borderColor} pb={2} mb={4}>
-                      Tenant to Domain Mapping
+                      {INSTITUTION} to Domain Mapping
                     </Text>
                     <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3} mb={4}>
                       <FormControl>
-                        <FormLabel fontSize="xs">Tenant ID</FormLabel>
+                        <FormLabel fontSize="xs">{INSTITUTION} ID</FormLabel>
                         <Input
                           size="sm"
-                          placeholder="tenant uuid/slug"
+                          placeholder={`${INSTITUTION.toLowerCase()} uuid/slug`}
                           value={newMapTenantId}
                           onChange={(e) => setNewMapTenantId(e.target.value)}
                           bg={cardBg}
@@ -886,7 +887,7 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
                             label="Search"
                             value={mappingSearch}
                             onChange={setMappingSearch}
-                            placeholder="Search tenant or domain…"
+                            placeholder={`Search ${INSTITUTION.toLowerCase()} or domain…`}
                           />
                           <TableSelectField
                             label="Domain"
@@ -994,7 +995,7 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
                           label="Search"
                           value={auditSearch}
                           onChange={setAuditSearch}
-                          placeholder="Search trace / tenant / domain / target…"
+                          placeholder={`Search trace / ${INSTITUTION.toLowerCase()} / domain / target…`}
                           formControlProps={{ w: { base: "full", md: "360px" } }}
                         />
                         <TableSelectField
@@ -1010,11 +1011,11 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
                           ))}
                         </TableSelectField>
                         <TableSelectField
-                          label="Tenant"
+                          label={INSTITUTION}
                           value={auditTenantFilter}
                           onChange={setAuditTenantFilter}
                         >
-                          <option value="all">All tenants</option>
+                          <option value="all">All {INSTITUTIONS.toLowerCase()}</option>
                           {auditTenantOptions.map((id) => (
                             <option key={id} value={id}>
                               {id}
@@ -1241,7 +1242,7 @@ function PiiMappingDetailModal({
     <StandardModal
       isOpen={isOpen}
       onClose={onClose}
-      title="Tenant mapping details"
+      title={`${INSTITUTION} mapping details`}
       size="lg"
       footer={
         <HStack justify="flex-end" w="full">
@@ -1269,7 +1270,7 @@ function PiiMappingDetailModal({
           </Text>
           <Box>
             <Text fontSize="sm" fontWeight="semibold" mb={1}>
-              Tenant ID
+              {INSTITUTION} ID
             </Text>
             <Text fontSize="sm" fontFamily="mono">
               {mapping.tenant_id}

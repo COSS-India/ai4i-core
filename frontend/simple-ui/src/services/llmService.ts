@@ -17,7 +17,7 @@ import { getAnonymousSessionId, isAnonymousUser } from '../utils/anonymousSessio
 export const AGRINET_MODEL = 'agrinet-model';
 
 export const LLM_CHAT_DEFAULT_SOURCE_LANGUAGE = 'en';
-export const LLM_CHAT_DEFAULT_TARGET_LANGUAGE = 'hi';
+export const LLM_CHAT_DEFAULT_TARGET_LANGUAGE = '';
 
 export interface LLMServiceDetailsResponse {
   service_id: string;
@@ -172,7 +172,7 @@ function parseChatCompletionResponse(
 }
 
 /**
- * AI4IDS-2688 / AI4IDS-2704: Anonymous try-it list — one service.
+ * Anonymous try-it list — one service.
  * Prefer `isTryItDefault`; else lowest service_id (previous deterministic pick).
  * GET /services/try-it-service-list?task_types=llm
  */
@@ -199,7 +199,7 @@ async function listAuthenticatedLLMServices(): Promise<LLMServiceDetailsResponse
 
 /**
  * List available LLM services from the registry.
- * Anonymous: try-it service list (AI4IDS-2688).
+ * Anonymous: try-it service list.
  * Authenticated: published LLM services.
  */
 export const listLLMServices = async (): Promise<LLMServiceDetailsResponse[]> => {

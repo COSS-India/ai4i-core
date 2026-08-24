@@ -12,6 +12,7 @@ import {
 import OCRImageUploadInput from "../components/service-page/inputs/OCRImageUploadInput";
 import { getServicePageDefaults } from "../config/servicePageConfig";
 import { useOCRPage } from "../hooks/useOCRPage";
+import { getPlatformName } from "../config/runtimeConfig";
 
 const pageDefaults = getServicePageDefaults("ocr");
 
@@ -22,7 +23,7 @@ const OCRPage: React.FC = () => {
   return (
     <ServicePageLayout
       serviceId="ocr"
-      headTitle="OCR - Optical Character Recognition | AI4Inclusion Console"
+      headTitle={`OCR - Optical Character Recognition | ${getPlatformName()}`}
       headDescription="Test OCR to extract text from images"
       requestPanel={
         <RequestContainer

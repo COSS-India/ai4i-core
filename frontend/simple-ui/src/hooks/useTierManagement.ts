@@ -13,6 +13,7 @@ import {
   type Tier,
 } from "../services/tierManagementService";
 import { listTenants } from "../services/tenantService";
+import { INSTITUTION } from "../config/constants";
 import { fetchAllServicesMatchingFilters } from "../services/servicesManagementService";
 import { useInferenceTypes } from "./useInferenceTypes";
 import { generateUUID } from "../utils/uuid";
@@ -169,7 +170,7 @@ export function useTierManagement() {
         tenantId: String(a.tenant_id),
         organisation:
           tenantById.get(String(a.tenant_id))?.organisation ??
-          `Tenant ${a.tenant_id}`,
+          `${INSTITUTION} ${a.tenant_id}`,
         budgetLimit: a.budget_limit,
         availableBalance: a.available_balance,
         effectiveFrom: a.effective_from,
@@ -183,9 +184,12 @@ export function useTierManagement() {
 
   // Services carry their tier mapping as an array of tier UUIDs (tierIds).
   // There's no server-side tier filter, so fetch all services and filter here.
+  const enabledTaskTypesParam =
+    taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
   const servicesQuery = useQuery({
-    queryKey: ["services-for-tiers"],
-    queryFn: () => fetchAllServicesMatchingFilters({}),
+    queryKey: ["services-for-tiers", enabledTaskTypesParam ?? "all"],
+    queryFn: () =>
+      fetchAllServicesMatchingFilters({ taskTypes: enabledTaskTypesParam }),
     staleTime: 60 * 1000,
     enabled: !!viewTierId,
   });

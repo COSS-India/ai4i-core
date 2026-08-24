@@ -13,7 +13,7 @@ from fastapi import BackgroundTasks
 
 from app.core.config import settings
 from app.core.constants import TokenType
-from app.models.role_name import RoleName
+from app.core.constants import RoleName
 from app.core.exceptions import (
     AuthorizationError,
     DuplicateEntityError,
@@ -39,7 +39,7 @@ from app.repositories.refresh_token_repository import RefreshTokenRepository
 from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationRepository
-from app.schemas.auth import ChangePasswordResponse, LoginResponse, TokenRefreshResponse
+from app.schemas.auth import ChangePasswordResponse, LoginResponse, RefreshTokenResponse
 from app.services.auth_email_templates import (
     render_password_changed,
     render_password_reset,
@@ -469,7 +469,7 @@ class AuthService:
 
     # ── Refresh ──
 
-    async def refresh_token(self, refresh_token_str: str) -> TokenRefreshResponse:
+    async def refresh_token(self, refresh_token_str: str) -> RefreshTokenResponse:
         """Validate a refresh token via DB and issue a new access token.
 
         Optimized: Uses lightweight is_active check instead of full user fetch.
@@ -499,7 +499,7 @@ class AuthService:
             permission_ids=permission_ids,
         )
 
-        return TokenRefreshResponse(
+        return RefreshTokenResponse(
             access_token=access_token,
             token_type="bearer",
             expires_in=settings.access_token_expire_minutes * 60,

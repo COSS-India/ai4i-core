@@ -103,6 +103,16 @@ const nextConfig = {
   // Do not expose X-Powered-By: Next.js to reduce fingerprinting
   poweredByHeader: false,
 
+  async redirects() {
+    return [
+      {
+        source: '/tenant-management',
+        destination: '/institution-management',
+        permanent: true,
+      },
+    ];
+  },
+
   async headers() {
     const headers = [...getSecurityHeaders()];
 
@@ -118,6 +128,13 @@ const nextConfig = {
       {
         source: '/:path*',
         headers,
+      },
+      {
+        // Guide HTML must open as a viewable page, not a download.
+        source: '/onboarding-guide/:guide.html',
+        headers: [
+          { key: 'Content-Disposition', value: 'inline' },
+        ],
       },
     ];
   },

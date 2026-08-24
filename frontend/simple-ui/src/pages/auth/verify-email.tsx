@@ -25,6 +25,7 @@ import Link from "next/link";
 import { useRouter } from "next/router";
 import React, { useEffect, useRef, useState } from "react";
 import { authService } from "../../services/authService";
+import { getPlatformName } from "../../config/runtimeConfig";
 
 type Phase =
   | { kind: "loading" }
@@ -81,7 +82,7 @@ const VerifyEmailPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Verify your email — AI4I Platform</title>
+        <title>{`Verify your email — ${getPlatformName()}`}</title>
       </Head>
       <Box minH="100vh" bg={pageBg} py={{ base: 8, md: 16 }}>
         <Container maxW="md">

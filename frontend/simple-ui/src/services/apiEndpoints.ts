@@ -219,7 +219,6 @@ export const apiEndpoints = {
     base: `${API_V1}/metering`,
     overview: `${API_V1}/metering/overview`,
     tenantConsumption: `${API_V1}/metering/tenant-consumption`,
-    serviceConsumption: `${API_V1}/metering/service-consumption`,
     modelConsumption: `${API_V1}/metering/model-consumption`,
   },
 

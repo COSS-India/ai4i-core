@@ -38,10 +38,11 @@ from app.schemas.metering import (
     ServiceSummary,
     TenantConsumptionResponse,
     TenantRow,
+    TopModelRow,
     UsageConcentration,
 )
 from app.services.metering_service import MeteringService
-from app.utils.metering_promql_builder import SERVICE_BREAKDOWN_CONFIG, WINDOW_STEP
+from app.utils.metering_promql_builder import API_KEY_AUTH_TYPE, SERVICE_BREAKDOWN_CONFIG, WINDOW_STEP
 
 logger = logging.getLogger(__name__)
 
@@ -351,8 +352,9 @@ def _platform_adoption_block(
 
 
 def _usage_concentration_block(is_admin: bool, conc: Optional[dict]) -> Optional[UsageConcentration]:
-    """``tenant`` IS the organisation name (the Prometheus label value)
-    already — no DB lookup needed."""
+    """``tenant`` is resolved via _resolve_tenant_names (DB lookup, falling
+    back to the raw Prometheus label only on a miss) — see
+    MeteringService.usage_concentration."""
     if not (is_admin and conc):
         return None
     return UsageConcentration(
@@ -410,6 +412,39 @@ def _service_consumption_summary(breakdown: Optional[dict]) -> Optional[ServiceS
     )
 
 
+def _model_consumption_summary(
+    breakdown: Optional[dict], total_models: Optional[int], most_used: Optional[dict],
+) -> Optional[ModelConsumptionSummary]:
+    """Model Consumption KPI cards (AI4IDS-2790) — active_models/overall_success_rate_pct/
+    worst all computed in one pass by MeteringService.model_consumption_kpis; `most_used`
+    is model-level (pre-aggregated by MeteringService.model_consumption_ranking),
+    `highest_failure_rate` stays service-level."""
+    if breakdown is None:
+        return None
+    kpis = MeteringService.model_consumption_kpis(breakdown["services"], breakdown["model_totals"])
+    worst = kpis["worst"]
+
+    return ModelConsumptionSummary(
+        total_models=total_models,
+        active_models=kpis["active_models"],
+        overall_success_rate_pct=kpis["overall_success_rate_pct"],
+        most_used=(
+            MostUsedModel(
+                model_id=most_used["model_id"], name=most_used["model_name"], requests=most_used["requests"]
+            )
+            if most_used else None
+        ),
+        highest_failure_rate=(
+            HighestFailureModel(
+                service_id=worst["service_id"],
+                name=worst["name"],
+                failure_rate_pct=round(100 - worst["success_pct"], 2),
+            )
+            if worst else None
+        ),
+    )
+
+
 _STEP_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
 
@@ -424,6 +459,8 @@ async def _request_volume_chart(
     window: str,
     tenant: Optional[str],
     task_types: Optional[list[str]] = None,
+    tenant_id: Optional[str] = None,
+    auth_type: Optional[str] = None,
 ) -> Optional[Graph]:
     """OVERVIEW "Request Volume" chart — successful vs failed request COUNTS per bucket:
       - "successful" : 2xx request count per bucket
@@ -438,8 +475,12 @@ async def _request_volume_chart(
     task_sel = build_task_type_selector(task_types)
     success_extra = [task_sel, 'status_code=~"2.."'] if task_sel else ['status_code=~"2.."']
     failed_extra = [task_sel, 'status_code=~"[45].."'] if task_sel else ['status_code=~"[45].."']
-    success_sel = build_base_selectors(inference_only=True, tenant=tenant, extra=success_extra)
-    failed_sel = build_base_selectors(inference_only=True, tenant=tenant, extra=failed_extra)
+    success_sel = build_base_selectors(
+        inference_only=True, tenant=tenant, extra=success_extra, tenant_id=tenant_id, auth_type=auth_type
+    )
+    failed_sel = build_base_selectors(
+        inference_only=True, tenant=tenant, extra=failed_extra, tenant_id=tenant_id, auth_type=auth_type
+    )
     success_metric = f"telemetry_obsv_requests_total{success_sel}"
     failed_metric = f"telemetry_obsv_requests_total{failed_sel}"
     step = WINDOW_STEP[window]
@@ -512,6 +553,10 @@ async def get_overview(
     is_admin = _is_platform_admin(request)
     scope_tenant, scope_tenant_name = await _resolve_tenant_scope(request, svc, tenant_id, is_admin)
     task_type_filter = _parse_task_types(task_types)
+    # UI/playground calls are free — restrict the request-count KPI and the
+    # request-volume chart to API-key-authenticated traffic only, same as
+    # payperuse_consumer/handler.py already restricts billing.
+    auth_type_filter = API_KEY_AUTH_TYPE
 
     cache_key = (
         f"metering:overview:v2:{window}:{scope_tenant_name or 'all'}:"
@@ -521,22 +566,36 @@ async def get_overview(
     if cached:
         return cached
 
+    # tenant_count()/active_tenants() all touch self._auth_db (a single
+    # AsyncSession — NOT safe for concurrent use), so they're fetched via
+    # overview_tenant_data() rather than being thrown into the same gather()
+    # as everything else below — see its docstring for the concurrency bug
+    # that caused (sqlalchemy.exc.InvalidRequestError: "This session is
+    # provisioning a new connection").
+    tc, active_by_range = await svc.overview_tenant_data(["24h", "7d", "30d"])
+
     results = await asyncio.gather(
-        svc.tenant_count(),
-        svc.active_tenants("24h"),
-        svc.active_tenants("7d"),
-        svc.active_tenants("30d"),
         svc.request_total(
             inference_only=True, tenant=scope_tenant_name, service_id=None, time_range=window,
-            task_types=task_type_filter,
+            task_types=task_type_filter, tenant_id=scope_tenant, auth_type=auth_type_filter,
         ),
-        _request_volume_chart(svc, window, scope_tenant_name, task_type_filter),
+        _request_volume_chart(
+            svc, window, scope_tenant_name, task_type_filter,
+            tenant_id=scope_tenant, auth_type=auth_type_filter,
+        ),
         # Usage Concentration is platform-wide top-5; hide it when a tenant filter is applied.
         svc.usage_concentration(limit=5, time_range=window, task_types=task_type_filter)
         if (is_admin and not scope_tenant) else asyncio.sleep(0),
         return_exceptions=True,
     )
-    (tc, at24, at7, at30, rt, chart, conc), degraded = _partition_results(results)
+    # Merge both result sets through one _partition_results call so a failure
+    # in either half still degrades the response instead of raising —
+    # active_tenants() (unlike tenant_count()) doesn't catch a Prometheus
+    # query failure internally, so its slot here can be a real Exception.
+    combined, degraded = _partition_results([
+        active_by_range["24h"], active_by_range["7d"], active_by_range["30d"], *results,
+    ])
+    at24, at7, at30, rt, chart, conc = combined
 
     org = scope_tenant_name
 
@@ -608,21 +667,46 @@ async def get_tenant_consumption(
     if cached:
         return cached
 
-    results = await asyncio.gather(
-        svc.tenant_ranking(limit=limit, time_range=window, tenant=scope_tenant_name),
-        svc.usage_by_tenant_service(
-            limit=limit, time_range=window, services=task_type_filter, tenant=scope_tenant_name
-        ),
-        svc.avg_per_active_tenant_previous(window, tenant=scope_tenant_name),
-        return_exceptions=True,
+    async def _ranking_then_heatmap():
+        """tenant_ranking and usage_by_tenant_service both now resolve
+        tenant names via self._auth_db (_resolve_tenant_names) — a single
+        AsyncSession, not safe for concurrent use (see overview_tenant_data's
+        docstring for the exact InvalidRequestError this avoids). Unlike
+        that error, _resolve_tenant_names swallows the failure and falls
+        back to the raw Prometheus tenant label — silently showing the
+        stale pre-rename name on whichever call loses the race. So these
+        two must run sequentially relative to EACH OTHER; each still
+        degrades independently (mirrors _partition_results' per-item
+        contract) rather than one failure taking both down.
+        """
+        try:
+            ranking_result = await svc.tenant_ranking(
+                limit=limit, time_range=window, tenant=scope_tenant_name, tenant_id=scope_tenant,
+            )
+        except Exception as exc:
+            ranking_result = exc
+        try:
+            heatmap_result = await svc.usage_by_tenant_service(
+                limit=limit, time_range=window, services=task_type_filter,
+                tenant=scope_tenant_name, tenant_id=scope_tenant,
+            )
+        except Exception as exc:
+            heatmap_result = exc
+        return ranking_result, heatmap_result
+
+    (ranking, heatmap), prev_avg = await asyncio.gather(
+        _ranking_then_heatmap(),
+        svc.avg_per_active_tenant_previous(window, tenant=scope_tenant_name, tenant_id=scope_tenant),
     )
-    (ranking, heatmap, prev_avg), degraded = _partition_results(results)
+    (ranking, heatmap, prev_avg), degraded = _partition_results([ranking, heatmap, prev_avg])
 
     ranking_tenants = ranking["tenants"] if ranking else []
     heatmap_rows = heatmap["tenants"] if heatmap else []
 
-    # ``tenant`` IS the organisation name (the Prometheus label value)
-    # already — no DB lookup needed.
+    # ``tenant`` is resolved via _resolve_tenant_names (DB lookup, falling
+    # back to the raw Prometheus label only on a miss) — see
+    # usage_by_tenant_service — so this is NOT always already the
+    # organisation name; it's just already the best display value available.
     for r in heatmap_rows:
         r["organisation"] = r["tenant"]
 
@@ -679,7 +763,10 @@ async def get_service_consumption(
         return cached
 
     results = await asyncio.gather(
-        svc.service_breakdown(tenant=scope_tenant_name, time_range=window, service_filter=task_type_filter),
+        svc.service_breakdown(
+            tenant=scope_tenant_name, time_range=window, service_filter=task_type_filter,
+            tenant_id=scope_tenant,
+        ),
         return_exceptions=True,
     )
     (breakdown,), degraded = _partition_results(results)
@@ -729,6 +816,7 @@ async def get_model_consumption(
     request: Request,
     window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
     tenant_id: Optional[int] = Query(None, ge=1, description="Narrow to a specific tenant (admin only)"),
+    limit: int = Query(10, ge=1, le=25, description="Max models to return in top_models"),
     svc: MeteringService = Depends(get_metering_service),
     redis: aioredis.Redis = Depends(get_redis),
 ):
@@ -737,55 +825,56 @@ async def get_model_consumption(
     is_admin = _is_platform_admin(request)
     scope_tenant, scope_tenant_name = await _resolve_tenant_scope(request, svc, tenant_id, is_admin)
 
-    cache_key = f"metering:model-consumption:v1:{window}:{scope_tenant_name or 'all'}:{_caller_role_label(request)}"
+    # v3: TopModelRow/ServiceModelRow gained a required `model_id` field.
+    # Bumped from v2 so a payload cached just before this deploy (with no
+    # model_id) can't be served back and fail ModelConsumptionResponse
+    # validation with a 500 for up to the 60s TTL — it starts from a cold key.
+    cache_key = (
+        f"metering:model-consumption:v3:{window}:{limit}:{scope_tenant_name or 'all'}:"
+        f"{_caller_role_label(request)}"
+    )
     cached = await _cache_get(redis, cache_key)
     if cached:
         return cached
 
     results = await asyncio.gather(
-        svc.model_breakdown(tenant=scope_tenant_name, time_range=window),
+        svc.model_breakdown(tenant=scope_tenant_name, time_range=window, tenant_id=scope_tenant),
         return_exceptions=True,
     )
     (breakdown,), degraded = _partition_results(results)
+    # Not gathered with model_breakdown above: both end up querying the same
+    # per-request AsyncSession (ServiceRepository(db) / ModelRepository(db) in
+    # get_metering_service share `db`), and AsyncSession is not safe for
+    # concurrent use — see the same note on tenant_count(). registry_model_count()
+    # never raises (catches internally), so it can't regress `degraded`.
+    total_models = await svc.registry_model_count()
 
     org = scope_tenant_name
 
     services = breakdown["services"] if breakdown else []
-    # Summary KPIs — computed over services with traffic (a 0-request service
-    # must not win "highest failure rate").
-    summary: Optional[ModelConsumptionSummary] = None
-    if breakdown is not None:
-        active = [s for s in services if s["requests"] > 0]
-        most_used = max(active, key=lambda s: s["requests"]) if active else None
-        worst = max(active, key=lambda s: 100 - s["success_pct"]) if active else None
-        summary = ModelConsumptionSummary(
-            most_used=(
-                MostUsedModel(
-                    service_id=most_used["service_id"],
-                    name=most_used["name"],
-                    requests=most_used["requests"],
-                )
-                if most_used else None
-            ),
-            highest_failure_rate=(
-                HighestFailureModel(
-                    service_id=worst["service_id"],
-                    name=worst["name"],
-                    failure_rate_pct=round(100 - worst["success_pct"], 2),
-                )
-                if worst else None
-            ),
-        )
+    model_totals = breakdown["model_totals"] if breakdown else []
+    # most_used/top_models rank model_breakdown's already-grouped, Registry-
+    # validated model_totals — see MeteringService.model_consumption_ranking.
+    # top_models_total_requests is the model-level denominator
+    # consumption_pct is computed against — NOT the full window's total.
+    most_used, ranked_models, top_models_total_requests = (
+        svc.model_consumption_ranking(model_totals, limit) if breakdown is not None else (None, [], 0)
+    )
+    summary = _model_consumption_summary(breakdown, total_models, most_used)
+    top_models = [TopModelRow(**m) for m in ranked_models]
 
     generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     response = ModelConsumptionResponse(
         scope=Scope(role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window),
         summary=summary,
+        top_models=top_models,
+        top_models_total_requests=top_models_total_requests,
         breakdown=[
             ServiceModelRow(
                 service_id=s["service_id"],
                 name=s["name"],
+                model_id=s["model_id"],
                 model_name=s["model_name"],
                 requests=s["requests"],
                 native_units=s["native_units"],

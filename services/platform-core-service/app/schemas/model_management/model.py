@@ -16,10 +16,15 @@ from app.schemas.common import (
     Benchmark,
     InferenceApiKey,
     LanguagePair,
+    LanguagePairLenient,
+    MessageMeta,
+    SuccessResponse,
+    SuccessResponseWithMeta,
     Submitter,
     TaskSpec,
     TaskSpecLenient,
     TrainingDataset,
+    is_recognized_schema_task_type,
     validate_entity_name,
     validate_license,
 )
@@ -212,10 +217,15 @@ class ModelCreateRequest(BaseSchema):
         None,
         alias="schema",
         description=(
-            "Optional. Task-specific inference request/response contract "
-            "(e.g. {\"taskType\": \"translation\", \"model_name\": \"...\"}). "
-            "The nested ``model_name`` key is used by the inference service "
-            "to construct the Triton URL."
+            "Optional overall, but when provided must be complete: "
+            "'model_name', 'taskType', 'request', and 'response' are all "
+            "required. Task-specific inference request/response contract "
+            "(e.g. {\"taskType\": \"translation\", \"model_name\": \"...\", "
+            "\"request\": {...}, \"response\": {...}}). The nested "
+            "``model_name`` key is used by the inference service to "
+            "construct the Triton URL; ``taskType``/``request``/``response`` "
+            "are what a Service created against this model later derives "
+            "its own inferenceEndPoint.schema from."
         ),
     )
     callbackUrl: Optional[str] = Field(
@@ -259,12 +269,29 @@ class ModelCreateRequest(BaseSchema):
 
     @field_validator("endpoint_schema", mode="after")
     @classmethod
-    def _require_model_name_in_schema(cls, v: Any) -> Any:
-        if v is not None and "model_name" not in v:
-            raise ValueError(
-                "schema must include 'model_name' — the Triton model identifier "
-                "used to construct the inference URL (e.g. 'indictrans2-en-hi')"
-            )
+    def _require_complete_schema(cls, v: Any) -> Any:
+        if v is not None:
+            missing = [f for f in ("model_name", "taskType", "request", "response") if f not in v]
+            if missing:
+                raise ValueError(
+                    f"schema must include {missing} — 'model_name' is the "
+                    "Triton model identifier used to construct the "
+                    "inference URL (e.g. 'indictrans2-en-hi'); "
+                    "'taskType'/'request'/'response' together are the "
+                    "declared per-task contract that a Service created "
+                    "against this model later derives its own "
+                    "inferenceEndPoint.schema from when none is supplied "
+                    "directly on the Service."
+                )
+            task_type = v.get("taskType")
+            if not is_recognized_schema_task_type(task_type):
+                raise ValueError(
+                    f"schema.taskType '{task_type}' is not a recognized "
+                    "task type — a Service later derives its own "
+                    "inferenceEndPoint.schema from this value, and Service "
+                    "creation rejects an unrecognized one anyway, so "
+                    "catching it here is strictly earlier, not different."
+                )
         return v
 
     @field_validator("adapterConfig", mode="after")
@@ -387,7 +414,14 @@ class ModelUpdateRequest(BaseSchema):
     endpoint_schema: Optional[Dict[str, Any]] = Field(
         None,
         alias="schema",
-        description="Optional — omit to leave unchanged. Replaces the stored schema entirely when provided.",
+        description=(
+            "Optional — omit to leave unchanged. Replaces the stored "
+            "schema entirely when provided; only 'model_name' is required "
+            "(looser than create's full-completeness rule, so a model "
+            "whose stored schema predates that rule can still be PATCHed "
+            "without also having to backfill 'taskType'/'request'/"
+            "'response' in the same request)."
+        ),
     )
     callbackUrl: Optional[str] = Field(None, description="Optional — omit to leave unchanged.")
     inferenceApiKey: Optional[InferenceApiKey] = Field(None, description="Optional — omit to leave unchanged.")
@@ -409,6 +443,14 @@ class ModelUpdateRequest(BaseSchema):
             )
         return values
 
+    # Deliberately NOT the same strictness as ModelCreateRequest's
+    # _require_complete_schema (PR review): PATCH replaces the stored
+    # `schema` outright, so requiring the full set here would 422 a
+    # GET-edit-PATCH round trip on any model whose stored schema predates
+    # that stricter rule (or was itself only ever PATCHed, since this has
+    # always been the only check on the update path) — exactly the rows
+    # ServiceService._resolve_inference_schema's backfill exists to handle.
+    # Keep this at model_name only until/unless those rows get migrated.
     @field_validator("endpoint_schema", mode="after")
     @classmethod
     def _require_model_name_in_schema(cls, v: Any) -> Any:
@@ -439,6 +481,45 @@ class ModelViewRequest(BaseSchema):
     version: Optional[str] = None
 
 
+class InferenceEndpointSchema(BaseSchema):
+    """Task-specific inference request/response contract (the ``schema`` field).
+
+    ``model_name`` (the Triton model identifier used to construct the
+    inference URL, e.g. 'indictrans2-en-hi') is the only key the write-side
+    validator requires — everything else genuinely varies per task type, so
+    it's left optional here too (defensively — this is a response model, it
+    must not fail to read back a row written before that validator existed)
+    and any other key is preserved as-is.
+    """
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    model_name: Optional[str] = None
+    taskType: Optional[str] = Field(None, description="e.g. 'translation'.")
+
+
+class AdapterConfigSchema(BaseSchema):
+    """Platform-specific Triton I/O tensor mapping (the ``adapterConfig`` field).
+
+    ``inputs``/``outputs`` are the two keys the create-time validator
+    requires present (their internal tensor-descriptor shape isn't enforced
+    beyond that, so they stay loosely typed). ``model_name`` is the
+    authoritative real model identifier used for LLM (OpenAI-compatible)
+    deployments (see ``utils/probe_payloads.py``, ``utils/endpoint_validator.py``).
+    All fields are optional here — defensively, since this is a response
+    model reading back whatever was actually persisted. Any other key is
+    preserved as-is.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    inputs: Optional[Any] = Field(None, description="Triton input tensor mapping.")
+    outputs: Optional[Any] = Field(None, description="Triton output tensor mapping.")
+    model_name: Optional[str] = Field(
+        None, description="Authoritative real model identifier — used for LLM task-type deployments."
+    )
+
+
 class ModelResponse(BaseSchema):
     """Single-model response shape (preserves model-management camelCase)."""
 
@@ -451,23 +532,28 @@ class ModelResponse(BaseSchema):
     versionStatus: Optional[str] = None
     versionStatusUpdatedAt: Optional[str] = None
     description: Optional[str] = None
-    languages: List[LanguagePair] = Field(default_factory=list)
+    # LanguagePairLenient, not the strict LanguagePair used on create/update —
+    # live rows have been observed with sourceLanguage: "*" (a wildcard),
+    # which isn't a SupportedLanguagesEnum member and 500s GET /models
+    # entirely if this field is enum-typed. See LanguagePairLenient's docstring.
+    languages: List[LanguagePairLenient] = Field(default_factory=list)
     isLangDetectionEnabled: bool = False
     isMultilingual: bool = False
     domain: List[str] = Field(default_factory=list)
     submitter: Optional[Submitter] = None
     license: Optional[str] = None
     licenseUrl: Optional[str] = None
-    adapterConfig: Optional[Dict[str, Any]] = None
-    endpoint_schema: Optional[Dict[str, Any]] = Field(None, alias="schema")
+    adapterConfig: Optional[AdapterConfigSchema] = None
+    endpoint_schema: Optional[InferenceEndpointSchema] = Field(None, alias="schema")
     callbackUrl: Optional[str] = None
-    inferenceApiKey: Optional[Dict[str, Any]] = None
+    inferenceApiKey: Optional[InferenceApiKey] = None
     isSyncApi: Optional[bool] = None
     asyncApiDetails: Optional[AsyncApiDetails] = None
     source: Optional[str] = None  # alias for refUrl
     task: TaskSpecLenient
     trainingDataset: Optional[TrainingDataset] = None
     classInstance: Optional[str] = None
+    createdAt: Optional[str] = None
     createdBy: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -481,3 +567,72 @@ class ModelListResponse(BaseSchema):
 
     items: List[ModelListItem]
     total: int
+
+
+# ── Route-specific ``data`` / ``meta`` shapes ──
+
+
+class CreateModelData(BaseSchema):
+    """``data`` shape for ``POST /models``."""
+
+    modelId: str
+    name: str
+    version: str
+
+
+class UpdateModelData(BaseSchema):
+    """``data`` shape for ``PATCH /models``."""
+
+    modelId: str
+    version: str
+
+
+class DeleteModelData(BaseSchema):
+    """``data`` shape for ``DELETE /models/{model_id}``."""
+
+    modelId: str
+
+
+class ModelListMeta(BaseSchema):
+    """``meta`` shape for ``GET /models`` — pagination info alongside the page of items."""
+
+    total: int
+    offset: int
+    limit: int
+
+
+# ── Route response envelopes — ``{"success": true, "data": ..., "meta": ...}`` ──
+
+
+class ListModelsResponse(SuccessResponseWithMeta):
+    """GET /models"""
+
+    data: List[ModelResponse]
+    meta: ModelListMeta
+
+
+class GetModelResponse(SuccessResponse):
+    """GET /models/{model_id}"""
+
+    data: ModelResponse
+
+
+class CreateModelResponse(SuccessResponseWithMeta):
+    """POST /models"""
+
+    data: CreateModelData
+    meta: MessageMeta
+
+
+class UpdateModelResponse(SuccessResponseWithMeta):
+    """PATCH /models"""
+
+    data: UpdateModelData
+    meta: MessageMeta
+
+
+class DeleteModelResponse(SuccessResponseWithMeta):
+    """DELETE /models/{model_id}"""
+
+    data: DeleteModelData
+    meta: MessageMeta

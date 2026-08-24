@@ -83,8 +83,19 @@ class Orchestrator:
             # too, via service_info["serviceId"]) so ObservabilityMiddleware
             # has it without re-parsing the body — same request.state.service_id
             # pattern the LLM chat route already uses in routes/inference.py.
+            #
+            # model_id is set here too (not bundled into the set_metric_labels
+            # call below) for the same reason: it's already fully known from
+            # service_info, unlike source_lang/target_lang which only exist
+            # once task_service.process() has actually run. Setting it early
+            # means a request that fails/raises during process() (e.g. a 502
+            # from the upstream Triton server) still gets model_id on its
+            # metrics — set_metric_labels() never resets a field the caller
+            # doesn't pass (see its docstring), so this survives the second,
+            # post-process() call below untouched.
             if request is not None:
                 request.state.service_id = service_info.get("serviceId", "") or ""
+                set_metric_labels(request, model_id=service_info.get("model_id") or "")
 
             # Tier entitlement check (API key calls only; JWT has empty X-Tier-ID)
             if request:

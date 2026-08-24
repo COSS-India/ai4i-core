@@ -18,6 +18,16 @@ from app.core.config import settings
 # metering_service.py must match on this label.
 PROMETHEUS_API_PATH_LABEL = settings.prometheus_api_path_label
 
+# The single auth_type value the Metering Dashboard restricts itself to —
+# UI/playground calls authenticate via JWT, not this. Defined once here (not
+# repeated as a literal at every call site in metering_service.py) so the
+# policy has one home; every selector below also matches it fail-open (see
+# api_key_auth_type_selector) rather than by exact equality, since an exact
+# match would silently drop every series recorded before this label existed,
+# and any request the gateway doesn't stamp with X-Auth-Type at all —
+# payperuse_consumer/handler.py fails open the same way for billing.
+API_KEY_AUTH_TYPE = "api_key"
+
 # Allowed time range values mapped to Prometheus duration strings.
 # None means no window — returns the cumulative counter value.
 TIME_RANGES: dict = {
@@ -103,6 +113,24 @@ def build_task_type_selector(task_types: list[str] | None) -> str | None:
             patterns.append(f"/api/v1/{task.replace('_', '-')}/inference")
     regex = "|".join(patterns)
     return f'{PROMETHEUS_API_PATH_LABEL}=~"{regex}"'
+
+
+def api_key_auth_type_selector() -> str:
+    """Build the ``auth_type`` selector fragment (no braces) that restricts
+    the Metering Dashboard to API-key traffic, fail-open on absence.
+
+    ``auth_type=~"api_key|"`` — not the exact-equality ``auth_type="api_key"``
+    — because Prometheus treats an absent label as the empty string for
+    matching purposes: every series recorded before this label existed, and
+    any request the gateway doesn't stamp with X-Auth-Type at all, has no
+    ``auth_type`` label rather than one set to something else. An equality
+    match would silently exclude those series for as long as they remain in
+    the query window (up to the full 7d/30d retention), rather than just the
+    JWT/UI traffic it's meant to exclude. Self-heals as pre-rollout series
+    age out — see payperuse_consumer/handler.py for the same fail-open
+    reasoning applied to billing.
+    """
+    return f'auth_type=~"{API_KEY_AUTH_TYPE}|"'
 
 
 def escape_label_value(value: str) -> str:
@@ -295,21 +323,61 @@ def build_base_selectors(
     service_id: str | None = None,
     extra: list[str] | None = None,
     endpoint_regex: str | None = None,
+    tenant_id: str | None = None,
+    auth_type: str | None = None,
 ) -> str:
     """Build a PromQL label selector string for telemetry_obsv_requests_total.
 
     Returns a brace-enclosed string like '{exported_endpoint=~"...",tenant="foo"}'
     or an empty string when no filters apply. ``endpoint_regex`` overrides the
     default INFERENCE_ENDPOINT_REGEX (e.g. to scope to LLM-only endpoints);
-    ignored when ``inference_only`` is False.
+    ignored when ``inference_only`` is False. ``auth_type`` restricts to a
+    single auth_type label value (e.g. "api_key") — the request counter
+    started carrying this label once ObservabilityMiddleware began forwarding
+    X-Auth-Type, so callers can filter UI/JWT traffic out of request counts
+    the same way payperuse_consumer/handler.py already restricts billing to
+    API-key calls. Matched fail-open (``=~"value|"``, not ``="value"``) so a
+    series with no auth_type label at all (recorded before this label
+    existed, or a request the gateway never stamped) isn't silently dropped
+    — see api_key_auth_type_selector's docstring.
+
+    ``tenant_id`` scopes to a single tenant by its immutable numeric id —
+    prefer it over ``tenant`` (the organisation name) wherever the caller has
+    it, since the name changes on a tenant rename and orphans historical
+    series (see ObservabilityMiddleware). When both are given, ``tenant_id``
+    is the effective filter; ``tenant`` is only applied when ``tenant_id`` is
+    absent, so older call sites that still pass just a name keep working.
+
+    KNOWN CUTOVER GAP (accepted, tracked in the ticket, not fixed here):
+    when ``tenant_id`` is given, this selector matches ONLY series written
+    after tenant_id started being emitted — pre-cutover series for that same
+    tenant have no tenant_id label at all and are silently excluded. Unlike
+    the platform-wide views (active_tenants/usage_concentration/
+    tenant_ranking/heatmap), which recover this data via a (tenant_id,
+    tenant) group-by + merge, a single-tenant filter can't do the same
+    without either an invalid PromQL construct (an `or` of two selectors
+    can't be wrapped in a range vector like `increase(...[24h])`, which
+    every windowed query here uses) or doubling every tenant-scoped query
+    and merging in Python — a real fix, deliberately deferred. Every caller
+    that passes ``tenant_id`` through to a windowed query (request_total,
+    avg_per_active_tenant_previous, service_breakdown, model_breakdown,
+    tenant_ranking(tenant_id=...), usage_by_tenant_service, and
+    _native_unit_queries in metering_service.py) inherits this gap: a
+    single-tenant view can be missing up to ~30 days of that tenant's
+    history right after this label's rollout. QA should expect this when
+    re-testing by selecting a specific (especially a just-renamed) tenant.
     """
     selectors: list[str] = ['tenant!="unknown"']
     if inference_only:
         selectors.append(f'{PROMETHEUS_API_PATH_LABEL}=~"{endpoint_regex or INFERENCE_ENDPOINT_REGEX}"')
-    if tenant:
+    if tenant_id:
+        selectors.append(f'tenant_id="{escape_label_value(tenant_id)}"')
+    elif tenant:
         selectors.append(f'tenant="{escape_label_value(tenant)}"')
     if service_id:
         selectors.append(f'service_id="{service_id}"')
+    if auth_type:
+        selectors.append(f'auth_type=~"{escape_label_value(auth_type)}|"')
     if extra:
         selectors.extend(extra)
     return "{" + ",".join(selectors) + "}"

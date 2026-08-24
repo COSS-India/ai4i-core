@@ -5,7 +5,7 @@ service.read is deliberately granted to every role (Admin, Moderator, Tenant
 Admin, User, Guest) because every inference-submission flow depends on this
 endpoint to resolve a serviceId — a 403 for non-admin roles would break
 inference platform-wide. The actual defect was that the unfiltered response
-exposes api_key, policy, and billing/health/hardware internals to every
+exposes api_key and billing/health/hardware internals to every
 caller, including the fully public try-it endpoint.
 """
 
@@ -53,15 +53,35 @@ _FULL_SERVICE = {
     "languages": [{"sourceLanguage": "en"}],
     "versionStatus": "ACTIVE",
     "model": {
+        # name/version/task are required on ModelResponse (ServiceDetailResponse's
+        # embedded model card) — model_to_dict() always supplies them for a
+        # real row, so the fixture needs them too now that view_service's
+        # return value is validated against that schema.
+        #
+        # adapterConfig is top-level here (matching model_to_dict()'s actual
+        # output — services/model-management/serializers.py flattens the ORM
+        # inference_endpoint column's own "adapterConfig" key straight onto
+        # the model dict). There is no "inferenceEndPoint" wrapper on a model
+        # card — that's a Service-level concept (Service.inferenceEndPoint,
+        # built by _service_inference_endpoint) — a previous version of this
+        # fixture conflated the two.
         "modelId": "model-1",
-        "inferenceEndPoint": {
-            "adapter_config": {"inputs": [], "outputs": [], "version": "1.0"},
-        },
+        "name": "asr-model",
+        "version": "1.0",
+        "task": {"type": "asr"},
+        "adapterConfig": {"inputs": [], "outputs": [], "version": "1.0"},
     },
     "api_key": "super-secret-key",
-    "policy": {"accuracy": "sensitive", "cost": "tier_1"},
-    "healthStatus": "healthy",
-    "benchmarks": {"p99": 120},
+    # service_to_dict() now normalizes a bare string (possible via
+    # ServiceUpdateRequest.healthStatus: Optional[str]) into {status,
+    # lastUpdated} before this dict is built — this fixture stands in for
+    # that already-normalized output, not the raw DB column value.
+    "healthStatus": {"status": "healthy", "lastUpdated": None},
+    # service.benchmarks is only ever written from ServiceCreateRequest's own
+    # Optional[Dict[str, List[BenchmarkEntry]]] (service_service.py:
+    # jsonable_encoder(payload.benchmarks)) — a bare {"p99": 120} scalar
+    # doesn't match that shape and never occurs in real data.
+    "benchmarks": {"p99": [{"output_length": 120}]},
     "hardwareDescription": "8x A100",
     "costPerUnit": 0.5,
     "unitSize": 1,
@@ -79,7 +99,7 @@ _FULL_SERVICE = {
 }
 
 _SENSITIVE_FIELDS = {
-    "api_key", "policy", "healthStatus", "benchmarks", "hardwareDescription",
+    "api_key", "healthStatus", "benchmarks", "hardwareDescription",
     "costPerUnit", "unitSize", "unitRate", "tierIds", "tierNames",
     "inferenceServerType", "sslVerify", "publishedAt", "unpublishedAt",
     "deletedAt", "createdAt", "createdBy", "updatedBy",
@@ -112,11 +132,11 @@ class TestFilterServiceFields:
         """Regression: inference-service's internal GET /services/{id} call
         carries no permission headers, so it always hits this filtered path.
         Dropping "model" here breaks every inference request platform-wide,
-        since adapter_config lives at model.inferenceEndPoint.adapter_config
-        and GenericTritonMapper fails validation without it (AI4IDS-2562
+        since adapter_config lives at model.adapterConfig and
+        GenericTritonMapper fails validation without it (AI4IDS-2562
         investigation)."""
         filtered = _filter_service_fields(_FULL_SERVICE)
-        assert filtered["model"]["inferenceEndPoint"]["adapter_config"] == {
+        assert filtered["model"]["adapterConfig"] == {
             "inputs": [], "outputs": [], "version": "1.0",
         }
 
@@ -176,7 +196,6 @@ class TestListServicesRoute:
 
         item = result["data"]["services"][0]
         assert "api_key" not in item
-        assert "policy" not in item
         assert item["serviceId"] == "svc-1"
 
 
@@ -190,8 +209,14 @@ class TestViewServiceRoute:
             request=_make_request(""), service_id="svc-1", svc=svc
         )
 
-        assert "api_key" not in result["data"]
-        assert result["data"]["serviceId"] == "svc-1"
+        # view_service now returns a GetServiceResponse instance (not a plain
+        # dict) — attribute access for the object itself, and
+        # model_dump(exclude_unset=True) to inspect exactly what the route's
+        # response_model_exclude_unset=True will actually put on the wire
+        # (a filtered-out field must be genuinely absent, not present as null).
+        dumped = result.data.model_dump(exclude_unset=True)
+        assert "api_key" not in dumped
+        assert result.data.serviceId == "svc-1"
 
     @pytest.mark.asyncio
     async def test_no_permission_header_still_returns_adapter_config(self) -> None:
@@ -207,7 +232,7 @@ class TestViewServiceRoute:
 
         result = await view_service(request=request, service_id="svc-1", svc=svc)
 
-        assert result["data"]["model"]["inferenceEndPoint"]["adapter_config"] == {
+        assert result.data.model.adapterConfig.model_dump(exclude_none=True) == {
             "inputs": [], "outputs": [], "version": "1.0",
         }
 
@@ -220,7 +245,7 @@ class TestViewServiceRoute:
             request=_make_request("1"), service_id="svc-1", svc=svc
         )
 
-        assert result["data"]["api_key"] == "super-secret-key"
+        assert result.data.api_key == "super-secret-key"
 
 
 class TestTryItServiceListRoute:
@@ -234,5 +259,4 @@ class TestTryItServiceListRoute:
 
         item = result["data"]["services"][0]
         assert "api_key" not in item
-        assert "policy" not in item
         assert item["serviceId"] == "svc-1"

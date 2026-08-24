@@ -15,6 +15,7 @@ import { GlobalToastRegistrar } from '../utils/toast';
 import AuthGuard from '../components/auth/AuthGuard';
 import {
   applyRuntimeConfig,
+  EMPTY_RUNTIME_CONFIG,
   getServerRuntimeConfig,
   type RuntimeConfig,
 } from '../config/runtimeConfig';
@@ -40,7 +41,7 @@ const layoutRoutes = [
   '/profile',
   '/model-management',
   '/services-management',
-  '/tenant-management',
+  '/institution-management',
   '/api-key-management',
   '/ocr',
   '/transliteration',
@@ -52,9 +53,9 @@ const layoutRoutes = [
   '/logs',
   '/usage-dashboard',
   '/traces',
-  // AI4IDS-2604: Alerts Management removed from UI — uncomment to restore
+  // Alerts Management removed from UI — uncomment to restore
   // '/alerts-management',
-  // AI4IDS-2605: PII Guardrail removed from UI — uncomment to restore
+  // PII Guardrail removed from UI — uncomment to restore
   // '/pii-management',
   '/tier-management',
   '/policy-management',
@@ -68,11 +69,8 @@ export default function MyApp({
   // Apply before children render so hooks/services see ConfigMap values.
   applyRuntimeConfig(
     runtimeConfig ??
-      (typeof window !== "undefined" ? window.__RUNTIME_CONFIG__ : undefined) ?? {
-        apiUrl: "",
-        telemetryServiceUrl: "",
-        enabledTaskTypes: "",
-      },
+      (typeof window !== "undefined" ? window.__RUNTIME_CONFIG__ : undefined) ??
+      EMPTY_RUNTIME_CONFIG,
   );
   syncApiClientBaseUrl();
 

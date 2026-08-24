@@ -37,6 +37,7 @@ from app.core.constants import (
     TIMEZONE_MAX_LENGTH,
 )
 from app.schemas.base import BaseSchema
+from app.schemas.common import MessageData, SuccessResponse
 
 _PASSWORD_FIELD = Field(..., min_length=PASSWORD_MIN_LENGTH, max_length=PASSWORD_MAX_LENGTH)
 
@@ -111,26 +112,37 @@ class SetPasswordStatusRequest(BaseSchema):
     token: str = Field(..., min_length=10, max_length=2048)
 
 
-# ── Responses ──
+# ── Unwrapped responses (these routes never used {success, data}) ──
 
 class LoginResponse(BaseSchema):
+    """POST /auth/login"""
+
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
     expires_in: int
 
 
-class TokenRefreshResponse(BaseSchema):
+class GuestLoginResponse(LoginResponse):
+    """POST /auth/guest/login"""
+
+
+class RefreshTokenResponse(BaseSchema):
+    """POST /auth/refresh"""
+
     access_token: str
     token_type: str = "bearer"
     expires_in: int
 
 
 class ChangePasswordResponse(BaseSchema):
-    """Keeps the pre-existing `message` field so old consumers of this
+    """POST /auth/change-password
+
+    Keeps the pre-existing `message` field so old consumers of this
     endpoint are unaffected, and adds a fresh token pair alongside it so the
     caller's own client can stay logged in without depending on a guessed
-    refresh token (see change_password in auth_service.py)."""
+    refresh token (see change_password in auth_service.py).
+    """
 
     message: str = "Password changed successfully."
     access_token: str
@@ -140,11 +152,81 @@ class ChangePasswordResponse(BaseSchema):
 
 
 class LogoutResponse(BaseSchema):
+    """POST /auth/logout"""
+
     message: str
     logged_out: bool
 
 
-class SetPasswordStatusResponse(BaseSchema):
+class GetSetupTokenStatusResponse(BaseSchema):
+    """GET /auth/set-password/status"""
+
     valid: bool
     status: str
     message: str
+
+
+# ── Enveloped responses (these routes already returned {success, data}) ──
+
+class CheckEmailData(BaseSchema):
+    exists: bool
+
+
+class RegisterData(BaseSchema):
+    user_id: str
+    email: str
+    username: str
+    message: str
+
+
+class ResetPasswordData(BaseSchema):
+    message: str
+    sign_out_other_sessions: bool = True
+
+
+class CheckEmailResponse(SuccessResponse):
+    """GET /auth/check-email"""
+
+    data: CheckEmailData
+
+
+class RegisterResponse(SuccessResponse):
+    """POST /auth/register"""
+
+    data: RegisterData
+
+
+class VerifyEmailResponse(SuccessResponse):
+    """POST /auth/verify-email"""
+
+    data: MessageData
+
+
+class ResendVerificationResponse(SuccessResponse):
+    """POST /auth/resend-verification"""
+
+    data: MessageData
+
+
+class ForgotPasswordResponse(SuccessResponse):
+    """POST /auth/forgot-password"""
+
+    data: MessageData
+
+
+class ResetPasswordResponse(SuccessResponse):
+    """POST /auth/reset-password"""
+
+    data: ResetPasswordData
+
+
+class SetPasswordResponse(SuccessResponse):
+    """POST /auth/set-password"""
+
+    data: MessageData
+
+
+class ResendSetupLinkResponse(SuccessResponse):
+    """POST /auth/resend-setup-link"""
+
+    data: MessageData

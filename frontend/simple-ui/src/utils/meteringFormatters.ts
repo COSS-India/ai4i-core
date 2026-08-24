@@ -4,11 +4,10 @@ import type {
   MeteringWindow,
   ModelConsumptionRow,
   ModelConsumptionSummary,
-  ServiceConsumptionSummary,
-  ServiceRow,
+  TopModelRow,
 } from "../types/metering";
 import { METERING } from "../config/meteringConstants";
-import { meteringServiceColor } from "./meteringColors";
+import { meteringServiceColor, meteringColorAt } from "./meteringColors";
 
 export const getWindowLabel = (window: MeteringWindow): string =>
   METERING.TIME_WINDOW_LABELS[window] ?? window;
@@ -252,71 +251,22 @@ export interface ServiceChartSlice {
   pct: number;
 }
 
-/** Donut + legend data for service breakdown charts. Zero-traffic rows omitted (AI4IDS-2673). */
-export function buildServiceBreakdownChart(breakdown: ServiceRow[]): {
+/** Donut + legend data for model-level top_models ranking. */
+export function buildTopModelsChart(topModels: TopModelRow[]): {
   slices: ServiceChartSlice[];
   totalRequests: number;
 } {
-  const withTraffic = breakdown.filter((s) => s.requests > 0);
-  const totalRequests = withTraffic.reduce((sum, s) => sum + s.requests, 0);
-  const slices = withTraffic.map((s, i) => {
-    const value = s.requests;
-    const pct =
-      s.percentage ?? (totalRequests > 0 ? (value / totalRequests) * 100 : 0);
-    return {
-      name: s.service,
-      value,
-      color: meteringServiceColor(s.service, i),
-      pct,
-    };
-  });
+  const totalRequests = topModels.reduce((sum, m) => sum + m.requests, 0);
+  const slices = topModels.map((m, i) => ({
+    name: m.model_name,
+    value: m.requests,
+    color: meteringColorAt(i),
+    pct: m.consumption_pct,
+  }));
   return { slices, totalRequests };
 }
 
-export interface ServiceInsights {
-  mostUsed: { service: string; requests: number };
-  highestFailureRate: number;
-  highestFailureService: string;
-}
-
-/** Service tab KPI row — prefers API summary, derives from breakdown when absent. */
-export function deriveServiceInsights(
-  summary: ServiceConsumptionSummary | null | undefined,
-  breakdown: ServiceRow[],
-): ServiceInsights | null {
-  if (summary?.most_used && summary.highest_failure_rate) {
-    return {
-      mostUsed: summary.most_used,
-      highestFailureRate: summary.highest_failure_rate.failure_rate_pct,
-      highestFailureService: summary.highest_failure_rate.service,
-    };
-  }
-  if (!breakdown.length) return null;
-
-  // Match backend + model-consumption: only services with traffic (AI4IDS-2689).
-  const withTraffic = breakdown.filter((r) => r.requests > 0);
-  const pool = withTraffic.length ? withTraffic : breakdown;
-  const mostUsed = [...pool].sort((a, b) => b.requests - a.requests)[0];
-  const highestFailure = [...pool].sort(
-    (a, b) =>
-      (b.failure_rate_pct ?? 100 - b.success_pct) -
-      (a.failure_rate_pct ?? 100 - a.success_pct),
-  )[0];
-
-  if (!mostUsed || !highestFailure) return null;
-
-  return {
-    mostUsed: { service: mostUsed.service, requests: mostUsed.requests },
-    highestFailureRate: highestFailure.failure_rate_pct ?? 100 - highestFailure.success_pct,
-    highestFailureService: highestFailure.service,
-  };
-}
-
-export function serviceFailureRate(row: ServiceRow): number {
-  return row.failure_rate_pct ?? 100 - row.success_pct;
-}
-
-/** Donut + legend data for model-consumption breakdown charts. */
+/** Donut + legend data for model-consumption breakdown charts (per-service fallback). */
 export function buildModelBreakdownChart(breakdown: ModelConsumptionRow[]): {
   slices: ServiceChartSlice[];
   totalRequests: number;
@@ -336,9 +286,11 @@ export function buildModelBreakdownChart(breakdown: ModelConsumptionRow[]): {
 }
 
 export interface ModelInsights {
+  totalModels: number | null;
+  activeModels: number | null;
   mostUsedName: string;
   mostUsedRequests: number;
-  overallSuccessRate: number;
+  overallSuccessRate: number | null;
   totalRequests: number;
 }
 
@@ -364,16 +316,22 @@ export function deriveModelInsights(
   breakdown: ModelConsumptionRow[],
 ): ModelInsights | null {
   const derived = overallSuccessFromBreakdown(breakdown);
+  const totalModels = summary?.total_models ?? null;
+  const activeModels = summary?.active_models ?? null;
 
-  if (summary?.most_used && summary.overall_success_rate_pct != null) {
+  if (summary?.most_used || summary?.overall_success_rate_pct != null || totalModels != null) {
+    const mostUsed = summary?.most_used;
+    const mostUsedName = mostUsed
+      ? mostUsed.name?.trim() || mostUsed.service_id || METERING.GRAPH.EMPTY_VALUE
+      : METERING.GRAPH.EMPTY_VALUE;
     return {
-      mostUsedName:
-        summary.most_used.name?.trim() ||
-        summary.most_used.service_id ||
-        METERING.GRAPH.EMPTY_VALUE,
-      mostUsedRequests: summary.most_used.requests,
-      overallSuccessRate: summary.overall_success_rate_pct,
-      totalRequests: derived?.totalRequests ?? summary.most_used.requests,
+      totalModels,
+      activeModels,
+      mostUsedName,
+      mostUsedRequests: mostUsed?.requests ?? 0,
+      overallSuccessRate:
+        summary?.overall_success_rate_pct ?? derived?.overallSuccessRate ?? null,
+      totalRequests: derived?.totalRequests ?? mostUsed?.requests ?? 0,
     };
   }
 
@@ -385,6 +343,8 @@ export function deriveModelInsights(
   if (!mostUsed) return null;
 
   return {
+    totalModels,
+    activeModels,
     mostUsedName: mostUsed.name,
     mostUsedRequests: mostUsed.requests,
     overallSuccessRate: derived.overallSuccessRate,

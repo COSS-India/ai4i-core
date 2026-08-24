@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from ai4i_core.context import (
     get_llm_usage_input_tokens,
+    get_llm_usage_model_id,
     get_llm_usage_model_name,
     get_llm_usage_output_tokens,
 )
@@ -19,12 +20,10 @@ from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
 from ai4i_core.observability import set_billed_state, set_metric_labels
 
-from models.common import GenericInferenceResponse
+from models.common import ChatCompletionResponse, GenericInferenceResponse
 from orchestrator import Orchestrator
 from services.llm_service import OpenAIProxyService
 from trace.request_span import traced_span, get_context_attributes
-
-from swagger_docs import _CHAT_OPENAPI_RESPONSES, _CHAT_EXAMPLE
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["inference"])
@@ -223,6 +222,13 @@ async def run_nmt_try_it(
     return await _run_inference(request, inner, orchestrator, default_task_type="NMT")
 
 
+_CHAT_EXAMPLE: Dict[str, Any] = {
+    "model": "llm-service-1",
+    "messages": [{"role": "user", "content": "Hello, how are you?"}],
+    "stream": False,
+}
+
+
 @router.post(
     "/llm/try-it",
     summary="LLM Try-It Endpoint (anonymous)",
@@ -232,12 +238,13 @@ async def run_nmt_try_it(
         "({ service_name, serviceId?, payload: ... }) when APISIX forwards the "
         "wrapped body."
     ),
-    responses=_CHAT_OPENAPI_RESPONSES,
+    responses={200: {"model": ChatCompletionResponse, "description": "Successful Response"}},
 )
 async def run_llm_try_it(
     request: Request,
     body: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
 ) -> Response:
+    """Anonymous LLM try-it endpoint; unwraps the TryItRequest envelope when present."""
     # Unwrap TryItRequest envelope if present; otherwise treat body as the
     # OpenAI-compatible chat payload (what the portal try-it UI sends).
     inner = body.get("payload")
@@ -254,7 +261,13 @@ async def run_llm_try_it(
 
 @router.post(
     "/ner/inference",
+    # response_model deliberately None: NER's response carries a top-level
+    # "taskType" (see config_mapper.build_response_envelope) that
+    # GenericInferenceResponse doesn't declare — enforcing it as
+    # response_model would silently strip that field (commit b883a4b6).
+    # responses= documents the shape for Swagger without filtering it.
     response_model=None,
+    responses={200: {"model": GenericInferenceResponse, "description": "Successful Response"}},
     summary="NER Inference Endpoint",
     description="Route inference requests to NER TaskService",
     openapi_extra={"requestBody": {"content": {"application/json": {"example": {
@@ -343,6 +356,10 @@ async def run_asr_inference(
 
 @router.post(
     "/tts/inference",
+    # response_model must stay None: TTSTaskService.postprocess_output returns
+    # {"audio", "config", "smr_response"} with no "output" key, which is
+    # required on GenericInferenceResponse — using it here would make every
+    # successful call fail FastAPI's response validation with a 500.
     response_model=None,
     summary="TTS Inference Endpoint",
     description="Route inference requests to TTS TaskService",
@@ -368,7 +385,11 @@ async def run_tts_inference(
 
 @router.post(
     "/audio-lang-detection/inference",
+    # response_model deliberately None: the adapter-driven envelope includes
+    # a top-level "taskType" GenericInferenceResponse doesn't declare, which
+    # response_model would otherwise silently strip (commit 20dbead1).
     response_model=None,
+    responses={200: {"model": GenericInferenceResponse, "description": "Successful Response"}},
     summary="Audio Language Detection Inference Endpoint",
     description="Route inference requests to Audio Language Detection TaskService",
     openapi_extra={"requestBody": {"content": {"application/json": {"example": {
@@ -392,7 +413,11 @@ async def run_audio_lang_detection_inference(
 
 @router.post(
     "/speaker-diarization/inference",
+    # response_model deliberately None: postprocess_output returns a
+    # top-level "taskType" GenericInferenceResponse doesn't declare, which
+    # response_model would otherwise silently strip (commit ec33418a).
     response_model=None,
+    responses={200: {"model": GenericInferenceResponse, "description": "Successful Response"}},
     summary="Speaker Diarization Inference Endpoint",
     description="Route inference requests to Speaker Diarization TaskService",
     openapi_extra={"requestBody": {"content": {"application/json": {"example": {
@@ -416,7 +441,11 @@ async def run_speaker_diarization_inference(
 
 @router.post(
     "/language-diarization/inference",
+    # response_model deliberately None: the adapter-driven envelope includes
+    # a top-level "taskType" GenericInferenceResponse doesn't declare, which
+    # response_model would otherwise silently strip (commit d07f5672).
     response_model=None,
+    responses={200: {"model": GenericInferenceResponse, "description": "Successful Response"}},
     summary="Language Diarization Inference Endpoint",
     description="Route inference requests to Language Diarization TaskService",
     openapi_extra={"requestBody": {"content": {"application/json": {"example": {
@@ -476,7 +505,11 @@ def _bridge_llm_usage_to_request(request: Request) -> None:
         billed_input=get_llm_usage_input_tokens() or 0,
         billed_output=get_llm_usage_output_tokens() or 0,
     )
-    set_metric_labels(request, model=get_llm_usage_model_name() or "")
+    set_metric_labels(
+        request,
+        model=get_llm_usage_model_name() or "",
+        model_id=get_llm_usage_model_id() or "",
+    )
 
 
 async def _run_llm_chat_consolidated(request: Request, payload: Dict[str, Any], path: str) -> JSONResponse:
@@ -527,6 +560,15 @@ async def _run_llm_chat_stream(
             req_attrs.update(get_context_attributes())
             req_attrs["status"] = "failure"
             req_attrs["status_code"] = status_code
+        # Unlike the success path below, this branch never reaches the
+        # generator's post-stream bridge call — without this, a failed
+        # streaming request carries no model_id (model_breakdown drops the
+        # empty-model_id bucket entirely, so the failure silently vanishes
+        # from the model's totals instead of counting against its
+        # success_pct). model_id may itself be "" here too (e.g. resolution
+        # failed before MMS ever returned one) — the bridge handles that via
+        # its own `or ""` fallback, same as the success path.
+        _bridge_llm_usage_to_request(request)
         return JSONResponse(status_code=status_code, content=result)
 
     async def gen():
@@ -583,12 +625,13 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
     "/chat/completions",
     summary="OpenAI-compatible Chat Completions",
     description="Forwards the request to the upstream LLM at /v1/chat/completions",
-    responses=_CHAT_OPENAPI_RESPONSES,
+    responses={200: {"model": ChatCompletionResponse, "description": "Successful Response"}},
 )
 async def chat_completions(
     request: Request,
     payload: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
 ) -> Response:
+    """OpenAI-compatible chat completions, proxied verbatim to the upstream LLM."""
     return await _run_llm_chat(request, payload, path="/v1/chat/completions")
 
 
@@ -596,12 +639,13 @@ async def chat_completions(
     "/chat",
     summary="LLM Chat",
     description="Forwards the request to the upstream LLM at /v1/chat/completions",
-    responses=_CHAT_OPENAPI_RESPONSES,
+    responses={200: {"model": ChatCompletionResponse, "description": "Successful Response"}},
 )
 async def chat(
     request: Request,
     payload: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
 ) -> Response:
+    """Alias of /chat/completions; proxied verbatim to the upstream LLM."""
     return await _run_llm_chat(request, payload, path="/v1/chat/completions")
 
 
