@@ -10,7 +10,7 @@ from confluent_kafka.cimpl import Message
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import Constants
+from consumers.payperuse_consumer.config import Constants
 
 logger = get_logger(__name__)
 
@@ -95,13 +95,13 @@ async def get_service_pricing(
     # a stale empty entry would block billing for 1 hour after admin adds pricing.
     if redis is not None and pricing.task_type:
         pipe = redis.pipeline()
-        pipe.hset(cache_key, mapping={
+        await pipe.hset(cache_key, mapping={
             "task_type": pricing.task_type,
             "unit_rate": str(pricing.unit_rate) if pricing.unit_rate is not None else "",
             "cost_per_unit": str(pricing.cost_per_unit) if pricing.cost_per_unit is not None else "",
             "unit_size": str(pricing.unit_size) if pricing.unit_size is not None else "",
         })
-        pipe.expire(cache_key, Constants.PPU_PRICING_CACHE_TTL)
+        await pipe.expire(cache_key, Constants.PPU_PRICING_CACHE_TTL)
         await pipe.execute()
 
     return pricing

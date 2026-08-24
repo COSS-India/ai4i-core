@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import confluent_kafka
 import pytest
-from confluent_kafka import Consumer
+from confluent_kafka import Consumer, TopicPartition
 
 from bootstrap.config import KafkaSettings
-from bootstrap.consumers import ManagedConsumer
+from bootstrap.consumers import CommitMode, ManagedConsumer
 
 # Unreachable on purpose: any test that accidentally needs a broker must fail,
 # not quietly talk to a real one.
@@ -71,7 +71,10 @@ class TestSubclassing:
     def test_no_wrapper_name_shadows_an_inherited_one(self):
         # Overriding commit or store_offsets with an async method would break
         # librdkafka's own internal use during close and rebalance.
-        ours = {"consume_batch", "store_processed", "commit_stored", "shutdown", "owns"}
+        ours = {
+            "consume_batch", "store_processed", "record_processed",
+            "commit_stored", "shutdown", "owns",
+        }
         assert ours & set(dir(confluent_kafka.Consumer)) == set()
 
     def test_the_wrappers_delegate_to_inherited_names_that_do_exist(self):
@@ -121,3 +124,120 @@ class TestBuildBulkMessageConsumer:
     def test_starts_with_no_assignment(self, consumer):
         assert consumer.owns(_FakeMessage()) is False
         assert consumer.generation == 0
+
+
+def _record(calls: list, label: str):
+    async def _fn(*args, **kwargs) -> None:
+        calls.append(label)
+
+    return _fn
+
+
+class TestCommitModeAndRecordProcessed:
+    """record_processed resolves store-vs-commit from commit_mode, so a loop
+    calling record_processed(msg, flush=is_last_of_chunk) is correct under
+    either policy without branching."""
+
+    def test_defaults_to_per_message(self, consumer):
+        assert consumer.commit_mode is CommitMode.PER_MESSAGE
+
+    def test_explicit_commit_mode_is_honoured(self):
+        c = ManagedConsumer.build_bulk_message_consumer(
+            group_id="g", topic="t", settings=SETTINGS, commit_mode=CommitMode.PER_BATCH
+        )
+        try:
+            assert c.commit_mode is CommitMode.PER_BATCH
+        finally:
+            c.shutdown()
+
+    async def test_per_message_always_stores_and_commits(self, consumer, monkeypatch):
+        calls: list = []
+        monkeypatch.setattr(consumer, "store_processed", _record(calls, "store"))
+        monkeypatch.setattr(consumer, "commit_stored", _record(calls, "commit"))
+
+        await consumer.record_processed(_FakeMessage())
+
+        assert calls == ["store", "commit"]
+
+    async def test_per_batch_stores_without_committing_when_not_flushed(self, monkeypatch):
+        c = ManagedConsumer.build_bulk_message_consumer(
+            group_id="g", topic="t", settings=SETTINGS, commit_mode=CommitMode.PER_BATCH
+        )
+        try:
+            calls: list = []
+            monkeypatch.setattr(c, "store_processed", _record(calls, "store"))
+            monkeypatch.setattr(c, "commit_stored", _record(calls, "commit"))
+
+            await c.record_processed(_FakeMessage(), flush=False)
+
+            assert calls == ["store"]
+        finally:
+            c.shutdown()
+
+    async def test_per_batch_commits_on_flush(self, monkeypatch):
+        c = ManagedConsumer.build_bulk_message_consumer(
+            group_id="g", topic="t", settings=SETTINGS, commit_mode=CommitMode.PER_BATCH
+        )
+        try:
+            calls: list = []
+            monkeypatch.setattr(c, "store_processed", _record(calls, "store"))
+            monkeypatch.setattr(c, "commit_stored", _record(calls, "commit"))
+
+            await c.record_processed(_FakeMessage(), flush=True)
+
+            assert calls == ["store", "commit"]
+        finally:
+            c.shutdown()
+
+
+class TestRebalanceHooks:
+    """Hooks are registered separately from the mechanics ManagedConsumer owns
+    (incremental_assign/unassign, which are monkeypatched out here so these
+    tests need no real broker or assignment)."""
+
+    def test_assignment_hook_fires_with_the_newly_assigned_set_after_incremental_assign(
+        self, consumer, monkeypatch
+    ):
+        order: list = []
+        monkeypatch.setattr(
+            consumer, "incremental_assign", lambda parts: order.append("assign")
+        )
+        consumer.add_assignment_hook(lambda added: order.append(("hook", added)))
+
+        consumer.on_assign(consumer, [TopicPartition("t", 0)])
+
+        assert order == ["assign", ("hook", {("t", 0)})]
+
+    def test_revocation_hook_receives_lost_false_from_on_revoke(self, consumer, monkeypatch):
+        monkeypatch.setattr(consumer, "incremental_unassign", lambda parts: None)
+        seen: list = []
+        consumer.add_revocation_hook(lambda removed, lost: seen.append((removed, lost)))
+
+        consumer.on_revoke(consumer, [TopicPartition("t", 0)])
+
+        assert seen == [({("t", 0)}, False)]
+
+    def test_revocation_hook_receives_lost_true_from_on_lost(self, consumer, monkeypatch):
+        monkeypatch.setattr(consumer, "incremental_unassign", lambda parts: None)
+        seen: list = []
+        consumer.add_revocation_hook(lambda removed, lost: seen.append((removed, lost)))
+
+        consumer.on_lost(consumer, [TopicPartition("t", 0)])
+
+        assert seen == [({("t", 0)}, True)]
+
+    def test_a_raising_hook_is_logged_and_swallowed_and_the_assignment_still_applies(
+        self, consumer, monkeypatch, caplog
+    ):
+        monkeypatch.setattr(consumer, "incremental_assign", lambda parts: None)
+
+        def _boom(added):
+            raise RuntimeError("boom")
+
+        consumer.add_assignment_hook(_boom)
+
+        with caplog.at_level("ERROR"):
+            consumer.on_assign(consumer, [TopicPartition("t", 0)])
+
+        assert "Rebalance hook failed" in caplog.text
+        assert consumer.owns(_FakeMessage(topic="t", partition=0))

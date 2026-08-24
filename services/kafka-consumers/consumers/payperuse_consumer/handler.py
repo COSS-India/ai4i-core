@@ -1,15 +1,15 @@
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
 import httpx
-from ai4i_core.bootstrap import get_redis_client, get_db
+from ai4i_core.bootstrap import get_redis_client
 from ai4i_core.logging import get_logger
 from confluent_kafka.cimpl import Message
 
-from config import settings
+from bootstrap.lifecycle import session_scope
+from consumers.payperuse_consumer import config as cfg
 from consumers.payperuse_consumer._billing import (
     ServicePricing,
     calculate_cost,
@@ -20,12 +20,6 @@ from consumers.payperuse_consumer._billing import (
 )
 
 logger = get_logger(__name__)
-
-
-@asynccontextmanager
-async def get_session():
-    async for db in get_db():
-        yield db
 
 
 def _get_otel_attributes(attrs: dict):
@@ -283,7 +277,7 @@ async def handle_ppu_usage(msg: Message) -> None:
     if ctx is None:
         return
 
-    async with get_session() as db:
+    async with session_scope() as db:
         outcome = await _bill_usage(db, ctx)
 
     if outcome is None:
@@ -304,7 +298,7 @@ async def handle_ppu_usage(msg: Message) -> None:
 
 async def _notify_auth(path: str, body: dict) -> None:
     """POST to auth-service internal endpoint to update API key Redis flags."""
-    url = f"{settings.AUTH_SERVICE_URL}{path}"
+    url = f"{cfg.get_settings().AUTH_SERVICE_URL}{path}"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.post(url, json=body)

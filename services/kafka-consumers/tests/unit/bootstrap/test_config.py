@@ -1,18 +1,14 @@
 """bootstrap/config.py — settings, build_consumer_config, BrokerErrorReporter.
 
-Two things make this file worth more than its line count:
+`build_consumer_config` here is now the ONLY one in the service —
+`consumers/payperuse_consumer/main.py` builds on it too, and the superseded
+service-root `config.py` (which deliberately disagreed with this module on
+`auto.offset.reset`, the assignor, and `enable.auto.offset.store`) is deleted.
 
-  * `build_consumer_config` here is the SECOND one in the service — the
-    service-root `config.py` still has the live one, because
-    `consumers/payperuse_consumer/main.py` has not migrated yet.  The two
-    deliberately disagree, and `TestDivergenceFromTheRootConfig` pins that
-    disagreement so the migration is a reviewable, separable step rather than a
-    surprise the first time the billing consumer is restarted.
-
-  * Half of the dict this builds is correctness, not tuning: an
-    `enable.auto.offset.store` left at its default commits past a message whose
-    handler raised (§6.1).  A test is the only thing standing between that and a
-    plausible-looking one-line "cleanup".
+Half of the dict this builds is correctness, not tuning: an
+`enable.auto.offset.store` left at its default commits past a message whose
+handler raised (§6.1).  A test is the only thing standing between that and a
+plausible-looking one-line "cleanup".
 
 Nothing here needs a broker, a database or Redis.  Every settings object is
 built with `_env_file=None` or through monkeypatched environment variables, so
@@ -206,71 +202,6 @@ class TestBuildConsumerConfig:
         monkeypatch.setenv("KAFKA_SERVER", "from-the-environment:9093")
         cfg = build_consumer_config("g")  # no settings argument
         assert cfg["bootstrap.servers"] == "from-the-environment:9093"
-
-
-class TestDivergenceFromTheRootConfig:
-    """The live `build_consumer_config` is still the service-root one.
-
-    `consumers/payperuse_consumer/main.py` imports the root version, so the
-    dict below — not the one above — is what the billing consumer runs with
-    today.  The two differ in exactly three ways, and every one of them changes
-    broker-visible behaviour on a group that holds real committed offsets:
-
-      * `auto.offset.reset`: 'earliest' (root default) vs 'error'.  Flipping it
-        can only be done once the group-id migration in §10.2 has run.
-      * `partition.assignment.strategy`: absent (librdkafka default
-        `range,roundrobin`) vs `cooperative-sticky`.  Old and new processes
-        share no common assignor, so a group cannot form across the cutover —
-        this is a stop-the-world deploy, not a rolling one.
-      * `enable.auto.offset.store`: absent (defaults true) vs False.  The live
-        loop compensates by committing explicit per-partition offsets rather
-        than a bare commit().
-
-    Asserting the difference set keeps the migration honest: adding a fourth
-    divergence, or silently closing one, fails here and has to be explained.
-    """
-
-    @staticmethod
-    def _root_config() -> dict:
-        # Imported inside the test, not at module scope: the root config.py
-        # instantiates its settings at IMPORT time, and at module scope that
-        # happens during collection — before conftest's session fixture has
-        # moved the CWD away from the deployment .env.
-        from config import KafkaSettings as RootKafkaSettings
-        from config import build_consumer_config as root_build
-
-        return root_build("g", RootKafkaSettings(
-            KAFKA_SERVER=BROKER,
-            AUTH_SERVICE_URL="http://auth.invalid",
-            _env_file=None,
-        ))
-
-    def test_the_root_default_is_still_earliest(self):
-        # If this ever fails, the flip has landed — check it was sequenced with
-        # the group-id migration and not applied as a drive-by.
-        assert self._root_config()["auto.offset.reset"] == "earliest"
-        assert build_consumer_config("g", _kafka())["auto.offset.reset"] == "error"
-
-    def test_the_root_config_sets_no_assignor(self):
-        assert "partition.assignment.strategy" not in self._root_config()
-
-    def test_the_root_config_leaves_offset_store_on_the_default(self):
-        assert "enable.auto.offset.store" not in self._root_config()
-
-    def test_the_divergence_is_exactly_the_three_documented_keys(self):
-        root = self._root_config()
-        shared = build_consumer_config("g", _kafka())
-        # error_cb is an object identity, not a value — compare on keys only.
-        differing = {
-            key
-            for key in set(root) | set(shared)
-            if key != "error_cb" and root.get(key) != shared.get(key)
-        }
-        assert differing == {
-            "auto.offset.reset",
-            "partition.assignment.strategy",
-            "enable.auto.offset.store",
-        }
 
 
 class _FakeKafkaError:
