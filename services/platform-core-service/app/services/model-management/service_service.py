@@ -157,6 +157,29 @@ def _extract_validation_params(model_inference_endpoint: Dict[str, Any]) -> Dict
     }
 
 
+def _resolve_tier_names(
+    tier_ids: Optional[List[str]], tier_name_map: Dict[str, str]
+) -> Optional[List[str]]:
+    """Map ``tier_ids`` to their names via ``tier_name_map``, silently
+    dropping any id with no match (e.g. a tier that was since deleted).
+
+    A response model here requires every tierName to be a string, so a stale
+    tier_id must never surface as a literal None — that turns into a 500 on
+    every list/detail call for the affected service (AI4IDS: gemma-4-31B-it
+    500 investigation).
+    """
+    if not tier_ids:
+        return None
+    resolved = [tier_name_map[tid] for tid in tier_ids if tid in tier_name_map]
+    missing = [tid for tid in tier_ids if tid not in tier_name_map]
+    if missing:
+        logger.warning(
+            "Service references unknown/deleted tier id(s) %s; omitting from tierNames.",
+            missing,
+        )
+    return resolved or None
+
+
 class ServiceService:
     """Application-level service orchestrating service use-cases."""
 
@@ -193,7 +216,7 @@ class ServiceService:
             )
 
         tier_name_map = await self._services.get_tier_names_by_ids(service.tier_ids or [])
-        tier_names = [tier_name_map.get(tid) for tid in service.tier_ids] if service.tier_ids else None
+        tier_names = _resolve_tier_names(service.tier_ids, tier_name_map)
         data = service_detail_dict(service, model, tier_names=tier_names)
         self._cache.set_service(service.service_id, data)
         return data
@@ -221,7 +244,7 @@ class ServiceService:
                 service,
                 model=model,
                 include_task_languages=True,
-                tier_names=[tier_name_map.get(tid) for tid in service.tier_ids] if service.tier_ids else None,
+                tier_names=_resolve_tier_names(service.tier_ids, tier_name_map),
             )
             for service, model in rows
         ]
@@ -353,7 +376,7 @@ class ServiceService:
 
         # 7. Warm cache
         tier_name_map = await self._services.get_tier_names_by_ids(instance.tier_ids or [])
-        tier_names = [tier_name_map.get(tid) for tid in instance.tier_ids] if instance.tier_ids else None
+        tier_names = _resolve_tier_names(instance.tier_ids, tier_name_map)
         data = service_detail_dict(instance, model, tier_names=tier_names)
         self._cache.set_service(instance.service_id, data)
         logger.info("Created service '%s' (id=%s)", payload.name, service_id)
@@ -559,7 +582,7 @@ class ServiceService:
         )
         if model is not None:
             tier_name_map = await self._services.get_tier_names_by_ids(instance.tier_ids or [])
-            tier_names = [tier_name_map.get(tid) for tid in instance.tier_ids] if instance.tier_ids else None
+            tier_names = _resolve_tier_names(instance.tier_ids, tier_name_map)
             self._cache.set_service(
                 instance.service_id, service_detail_dict(instance, model, tier_names=tier_names)
             )
@@ -629,7 +652,7 @@ class ServiceService:
     async def _refresh_endpoint_cache(self, instance: Service, model: Any) -> None:
         self._cache.invalidate_service(instance.service_id)
         tier_name_map = await self._services.get_tier_names_by_ids(instance.tier_ids or [])
-        tier_names = [tier_name_map.get(tid) for tid in instance.tier_ids] if instance.tier_ids else None
+        tier_names = _resolve_tier_names(instance.tier_ids, tier_name_map)
         self._cache.set_service(
             instance.service_id, service_detail_dict(instance, model, tier_names=tier_names)
         )

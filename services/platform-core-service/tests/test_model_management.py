@@ -631,3 +631,40 @@ class TestServiceServiceDelete:
         svc._services.get_by_service_id = AsyncMock(return_value=instance)
         await svc.delete_service("svc-del")
         svc._cache.invalidate_service.assert_awaited_once_with("svc-del")
+
+
+# ===========================================================================
+# Section 8 — _resolve_tier_names (AI4IDS: GET /services 500 on stale tier_id)
+# ===========================================================================
+#
+# A published service (e.g. google/gemma-4-31B-it) can reference a tier_id
+# whose row was since deleted from the tiers table. `get_tier_names_by_ids`
+# only returns names for tiers it actually finds, so such an id is simply
+# absent from the map — it must never surface as a literal `None` in
+# `tierNames`, since ServiceListItem.tierNames is `Optional[List[str]]`
+# (a list of strings, not a list that may contain None).
+
+_resolve_tier_names = _svc_svc_mod._resolve_tier_names
+
+
+class TestResolveTierNames:
+    def test_no_tier_ids_returns_none(self):
+        assert _resolve_tier_names(None, {}) is None
+        assert _resolve_tier_names([], {"tier-1": "Gold"}) is None
+
+    def test_all_known_ids_resolve_in_order(self):
+        tier_map = {"tier-1": "Gold", "tier-2": "Silver"}
+        assert _resolve_tier_names(["tier-1", "tier-2"], tier_map) == ["Gold", "Silver"]
+
+    def test_unknown_tier_id_is_dropped_not_none(self):
+        """The exact bug this guards against: a stale tier_id must be
+        skipped, not turned into a None entry that fails response
+        validation (`services.N.tierNames.0 — Input should be a valid
+        string, got None`)."""
+        tier_map = {"tier-1": "Gold"}
+        result = _resolve_tier_names(["tier-1", "deleted-tier"], tier_map)
+        assert result == ["Gold"]
+        assert None not in result
+
+    def test_all_ids_unknown_returns_none(self):
+        assert _resolve_tier_names(["deleted-tier"], {}) is None
