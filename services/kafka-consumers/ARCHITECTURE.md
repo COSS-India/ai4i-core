@@ -1024,7 +1024,7 @@ The failure that decides this: fetch 10 messages, process 5, crash before
 committing. Those 5 are uncommitted, so on restart all 10 are redelivered and the
 5 completed ones are processed a second time. For a billing consumer that means 5
 spans re-billed — and the only thing standing in the way is a Redis key with a
-1-hour TTL on an LRU instance (§8.2). Any commit window wider than one message
+1-hour TTL on an LRU instance. Any commit window wider than one message
 turns one crash into that many duplicate side effects.
 
 This is a rule about **commit cadence, not batch size**. It would still matter if
@@ -1188,11 +1188,11 @@ the old and new owner can briefly believe they own a partition — the old owner
 has not yet processed the revocation. Kafka has no mechanism that prevents this
 against an external system. The fence is a necessary mitigation, not a guarantee.
 
-**The remaining guard lives at the sink**: the debit is gated on the span key not
-already being present, in the same SQL statement that performs it, so a duplicate
-is *rejected by Postgres* rather than prevented by timing. See §8.2 — it is a
-precondition for running more than one replica, and the fence alone does not
-substitute for it.
+**The remaining guard would live at the sink**: gating the debit on the span key
+not already being present, in the same SQL statement that performs it, so a
+duplicate is *rejected by Postgres* rather than prevented by timing. That guard
+is not implemented (§11) — it is a precondition for running more than one
+replica, and the fence alone does not substitute for it.
 
 Two consequences worth stating:
 
@@ -1203,12 +1203,11 @@ which applies only above one.
 
 The batch machinery is kept, not removed: `consume(num_messages=N)` is still the
 call, `KAFKA_BATCH_SIZE` is still the knob, and raising it is a config change
-rather than a rewrite. **Two things must be true before raising it:**
+rather than a rewrite. **One thing must be true before raising it:** the
+write-time guard exists (§11), so a concurrent duplicate is rejected by
+Postgres rather than merely narrowed by the fence.
 
-1. The write-time guard (§8.2) exists, so a concurrent duplicate is rejected by
-   Postgres rather than merely narrowed by the fence.
-
-Until both hold, a larger batch trades a real correctness margin for a fetch
+Until it holds, a larger batch trades a real correctness margin for a fetch
 saving that §6.8 shows is small in steady state.
 
 ### 6.5 Rebalance callbacks — where correctness actually lives
@@ -1395,23 +1394,23 @@ Separate malformed input from infrastructure failure:
 | Empty dedup key (span has no `correlation_id`) | **Skip** | Skip permanently — retrying cannot help. Should warn; the shipped `_is_already_billed` returns `None` with **no log line at all**, so this skip is invisible. Unreachable in practice: `inference-service/trace/setup.py` already drops spans with no `correlation_id`. |
 | Dedup key exists | **Skip** | Duplicate; already billed. |
 | Dedup key absent | proceed | Bill. |
-| Redis error during the dedup check | **Proceed** | Warn and bill. The write-time guard (§8.2) is the authority; Redis is only the fast path. |
+| Redis error during the dedup check | **Proceed** | Warn and bill. The write-time guard would be the authority; Redis is only the fast path. |
 | Postgres error during the billing write | **Failure** | Raise. Retried by §7.1. |
 
-**The Redis row changes meaning once §8.2 ships, and it is worth being explicit
-about why.** While Redis dedup is the *only* guard, an error there has no good
-answer: proceed and risk double-billing, or fail and stall. Once the debit is
-gated in SQL, the question dissolves — a duplicate that slips past a
-Redis outage is rejected by the guard, so the correct action is to warn and carry
-on. Retrying would stall billing for the duration of a Redis incident to protect
-against something Postgres already prevents.
+**The Redis row changes meaning once a write-time guard ships (§11), and it is
+worth being explicit about why.** While Redis dedup is the *only* guard, an error
+there has no good answer: proceed and risk double-billing, or fail and stall.
+Once the debit is gated in SQL, the question dissolves — a duplicate that slips
+past a Redis outage is rejected by the guard, so the correct action is to warn
+and carry on. Retrying would stall billing for the duration of a Redis incident
+to protect against something Postgres already prevents.
 
-Until §8.2 lands, treat a Redis error as a **Failure** instead: with no
+Until that guard lands, treat a Redis error as a **Failure** instead: with no
 authoritative guard behind it, retrying is the lesser risk. This is the one place
-in §7 whose classification depends on which of the two has shipped.
+in §7 whose classification depends on whether the guard has shipped.
 
 The general rule is unchanged: an error reaching *the store that owns the truth*
-is a failure. After §8.2 that store is Postgres, not Redis.
+is a failure. Once the guard ships, that store is Postgres, not Redis.
 
 ### 7.4 Delivery guarantee
 
@@ -1422,20 +1421,20 @@ matters which covers what:
 |---|---|---|
 | **Crash** — process dies after a side effect, before its commit | Per-message commit (§6.1) | One message |
 | **Rebalance** — partition reassigned while its messages are held | The `owns()` fence (§6.4) | One message: the one in flight when the revocation landed |
-| **Concurrency** — old and new owner both believe they hold the partition | **Nothing in Kafka.** Only a guard at the sink (§8.2) | Rejected at write time, within the guard's `N`-key window |
+| **Concurrency** — old and new owner both believe they hold the partition | **Nothing in Kafka.** Only a guard at the sink (not yet implemented, §11) | Rejected at write time, within the guard's `N`-key window |
 
 The third row is the important one. The first two are *narrowing* mechanisms —
 they shrink windows, they do not close them, and no commit strategy can, because
 during a rebalance the losing consumer has not yet learned it lost. Handlers must
 therefore be idempotent regardless of how tight the first two are.
 
-Note the third row's bound is not "zero". §8.2's guard is a bounded set, not a
-unique constraint: a duplicate arriving after `N` other billings for the same
-tenant is not rejected.
+Note the third row's bound is not "zero" either: the planned guard is a bounded
+set, not a unique constraint, so a duplicate arriving after `N` other billings
+for the same tenant would not be rejected.
 
 The PPU handler's Redis dedup key — a 1-hour cache entry on an LRU instance — is
 adequate as a fast path against the one-message windows, and **not** adequate as
-the guard against concurrent processing. §8.2 specifies what is.
+the guard against concurrent processing (§11).
 
 ---
 
@@ -1447,6 +1446,9 @@ whatever members are alive. What Kafka does **not** handle is two members briefl
 processing the same offsets during a rebalance (§6.4) — which on a billing path
 means charging a customer twice.
 
+> **Replicas stay at `1` until the write-time guard and the reconciliation job
+> that backstops it are live (§11). Once both ship, replicas may be raised.**
+> A hard gate, not a preference. Everything below is what makes lifting it safe.
 
 ### 8.1 What to expect operationally
 
@@ -1577,10 +1579,10 @@ Recorded deliberately. None are addressed by this redesign.
   `None` as "already billed", so the span is skipped and its offset committed —
   while logging "proceeding without dedup". **This loses revenue for the duration
   of any Redis incident.** The intended behaviour is to warn and bill, which is
-  safe once §8.2's write-time guard exists.
+  safe once a write-time guard exists.
 - **Duplicate-billing window** between `db.commit()` and the Redis dedup `set`.
-  Closed by the write-time guard in §8.2; live until it ships, which is what the
-  §8.1 replica gate exists for.
+  Would be closed by a write-time guard at the sink (not yet implemented); live
+  until it ships, which is what the §8 replica gate exists for.
 - **Loop logic is copied, not shared** (§3.5) — a deliberate line, but a real
   cost: the offset and retry discipline of §6 and §7 is normative and unenforced.
   Watch for the second consumer; a byte-identical loop is the signal to promote it
@@ -1631,7 +1633,7 @@ Recorded deliberately. None are addressed by this redesign.
    `earliest` for `payperuse_consumer`'s sake, a new consumer sharing that file
    inherits `earliest` too.
 7. Add a deployment unit running the shared image with
-   `--consumer <name>_consumer` and `replicas: 1` (§8.1).
+   `--consumer <name>_consumer`.
 
 There is no root `main.py` to edit and no registry to update. If
 `consumers/<name>/main.py` exists with a callable `run`, the launcher can run it.

@@ -88,8 +88,9 @@ class KafkaSettings(BaseSettings):
 
     KAFKA_SERVER: str = Field(description="Bootstrap broker address (host:port)")
     KAFKA_AUTO_OFFSET_RESET: str = Field(
-        "earliest",
-        description="Offset reset policy when no committed offset exists: 'earliest' or 'latest'",
+        "error",
+        description="Offsets are lost somehow, now what to do ? fail loudly is default so that we dont process "
+                    "a message multiple times.",
     )
     KAFKA_ENABLE_AUTO_COMMIT: bool = Field(
         False,
@@ -111,7 +112,7 @@ class KafkaSettings(BaseSettings):
             "Messages requested per consume() call.  DEFAULT 1 — above 1 this "
             "opens an in-flight window during rebalances (§6.4) and re-enables "
             "librdkafka's batch-API hazard (§11).  Raising it requires the "
-            "write-time guard (§8.2) and reconciliation (§7.5) to be live."
+            "write-time guard and reconciliation job to be live (§11)."
         ),
     )
 
@@ -194,6 +195,7 @@ def build_consumer_config(group_id: str, settings: KafkaSettings | None = None) 
         # ── Fixed below: correctness, not tuning (§3.1).  Do not promote to settings. ──
         # Nothing is committed on a timer behind our back.
         "enable.auto.commit": False,
+        "enable.auto.offset.store": False,
         # Incremental rebalancing: only the partitions that must move are revoked,
         # instead of stop-the-world for the whole group (§6.5).
         "partition.assignment.strategy": "cooperative-sticky",

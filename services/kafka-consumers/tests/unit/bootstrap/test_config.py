@@ -50,7 +50,7 @@ class TestKafkaSettings:
     def test_batch_size_defaults_to_one(self):
         # Above 1 this opens an in-flight window across rebalances (§6.4) and
         # re-enables librdkafka's batch-API hazard (§11).  Raising it is gated on
-        # the write-time guard (§8.2) and reconciliation (§7.5).
+        # the write-time guard and reconciliation job (§11).
         assert _kafka().KAFKA_BATCH_SIZE == 1
 
     def test_batch_size_below_one_is_rejected(self):

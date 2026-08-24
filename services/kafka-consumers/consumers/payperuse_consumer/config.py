@@ -24,7 +24,7 @@ class Constants:
     # §7.1 retry ladder: the in-hand Message is retried this many times before
     # being dropped with a CRITICAL log line.
     MAX_ATTEMPTS = 3
-    BACKOFF_BASE_S = 1.0
+    BACKOFF_BASE_S = 2.0
     # §6.4 chunk deadline.  A fraction of KAFKA_MAX_POLL_INTERVAL_MS (300s): the
     # loop stops processing a chunk on reaching this and returns to consume(),
     # which is the only call that resets the poll clock (§6.7).  Sized so that
