@@ -15,8 +15,9 @@ Three implementation caveats, all verified against confluent-kafka 2.15.0:
 
   * Do NOT shadow inherited method names.  poll, consume, commit, store_offsets,
     subscribe, assign, seek, pause, resume, position, committed and close all
-    come from the C type — hence consume_batch / store_processed / commit_stored
-    / shutdown, each delegating to the inherited call of the obvious name.
+    come from the C type — hence consume_batch / store_processed / record_processed
+    / commit_stored / shutdown, each delegating to the inherited call of the
+    obvious name.
     Overriding commit or store_offsets with an async method would break every
     internal caller expecting the synchronous one, including librdkafka's own
     use during close and rebalance, which runs on its thread, not the loop.
@@ -39,6 +40,7 @@ import asyncio
 import functools
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from enum import Enum
 from typing import Callable, Iterable
 
 from ai4i_core.logging import get_logger
@@ -49,7 +51,20 @@ from bootstrap.config import KafkaSettings, build_consumer_config, get_kafka_set
 logger = get_logger(__name__)
 _rdkafka_logger = logging.getLogger("librdkafka")
 
-RevocationHook = Callable[[set[tuple[str, int]]], None]
+AssignmentHook = Callable[[set[tuple[str, int]]], None]
+RevocationHook = Callable[[set[tuple[str, int]], bool], None]  # (partitions, lost)
+
+
+class CommitMode(Enum):
+    """When the loop's stored offsets reach the broker.
+
+    A CONSTRUCTOR ARGUMENT, never a setting: a deployment must not be able to
+    turn a per-message-commit consumer into a batched one by editing the
+    environment.  Same reasoning as group_id (§3.1/§5).
+    """
+
+    PER_MESSAGE = "per_message"
+    PER_BATCH = "per_batch"
 
 
 class ManagedConsumer(Consumer):
@@ -64,6 +79,7 @@ class ManagedConsumer(Consumer):
         batch_size: int,
         auto_offset_reset: str,
         thread_name_prefix: str,
+        commit_mode: CommitMode = CommitMode.PER_MESSAGE,
     ) -> None:
         # config is the only thing the C type sees (plus logger=, a real base kwarg).
         # Routing librdkafka's own output through ai4i_core.logging is what keeps
@@ -74,6 +90,7 @@ class ManagedConsumer(Consumer):
         self.poll_timeout = poll_timeout
         self.batch_size = batch_size
         self.auto_offset_reset = auto_offset_reset
+        self.commit_mode = commit_mode
 
         # Assignment state for the §6.4 revocation fence.  Written by the
         # rebalance callbacks on the executor thread, read by the loop on the
@@ -81,6 +98,7 @@ class ManagedConsumer(Consumer):
         # GIL (§6.6).  No lock — a lock here risks the callback deadlock.
         self._assigned: set[tuple[str, int]] = set()
         self._generation: int = 0
+        self._assignment_hooks: list[AssignmentHook] = []
         self._revocation_hooks: list[RevocationHook] = []
 
         self._executor = ThreadPoolExecutor(
@@ -98,6 +116,7 @@ class ManagedConsumer(Consumer):
         batch_size: int | None = None,
         poll_timeout: float | None = None,
         thread_name_prefix: str | None = None,
+        commit_mode: CommitMode = CommitMode.PER_MESSAGE,
     ) -> "ManagedConsumer":
         """Construct, configure and subscribe a batch-fetch consumer.
 
@@ -106,6 +125,9 @@ class ManagedConsumer(Consumer):
         built on, and 1 is the safe setting for it today (§3.4/§6.4).  Raising
         it is a config change rather than a rewrite, once §8.2's write-time
         guard and §7.5's reconciliation are live.
+
+        commit_mode is explicit, never defaulted from settings (§3.1/§5) — see
+        CommitMode's docstring.
         """
         s = settings or get_kafka_settings()
         consumer = cls(
@@ -116,6 +138,7 @@ class ManagedConsumer(Consumer):
             batch_size=batch_size if batch_size is not None else s.KAFKA_BATCH_SIZE,
             auto_offset_reset=s.KAFKA_AUTO_OFFSET_RESET,
             thread_name_prefix=thread_name_prefix or f"kafka-{group_id}",
+            commit_mode=commit_mode,
         )
         # Subscribing here is what makes it impossible for a consumer's run()
         # to forget to wire the rebalance callbacks (§6.5).
@@ -127,12 +150,13 @@ class ManagedConsumer(Consumer):
         )
         logger.info(
             "Consumer built | group_id=%s topic=%s batch_size=%d poll_timeout=%.1fs "
-            "auto_offset_reset=%s assignor=cooperative-sticky",
+            "auto_offset_reset=%s assignor=cooperative-sticky commit_mode=%s",
             group_id,
             topic,
             consumer.batch_size,
             consumer.poll_timeout,
             consumer.auto_offset_reset,
+            consumer.commit_mode.value,
         )
         return consumer
 
@@ -146,14 +170,26 @@ class ManagedConsumer(Consumer):
     def generation(self) -> int:
         return self._generation
 
+    def add_assignment_hook(self, hook: AssignmentHook) -> None:
+        """Register a callback invoked with the NEWLY assigned (topic, partition)
+        set, after the assignment is applied.
+
+        Only add_revocation_hook existed before this — a consumer could observe
+        losing a partition but not gaining one.
+        """
+        self._assignment_hooks.append(hook)
+
     def add_revocation_hook(self, hook: RevocationHook) -> None:
-        """Register a callback invoked with the revoked (topic, partition) set.
+        """Register a callback invoked with the revoked (topic, partition) set
+        and whether the loss was clean (`lost=False`, an orderly on_revoke) or
+        dirty (`lost=True`, on_lost — session/poll-interval timeout, so another
+        consumer may already own the partition and be ahead of us).
 
         A consumer holding per-partition state (a retry counter, a buffer) must
         drop it here — stale state for a partition you no longer own would
         suppress processing if that partition came back (§6.5).  The reference
         implementation retries the in-hand Message and holds no such state, so
-        it registers nothing.
+        it registers nothing beyond observability.
         """
         self._revocation_hooks.append(hook)
 
@@ -177,6 +213,7 @@ class ManagedConsumer(Consumer):
         self._assigned |= added
         self._generation += 1
         self.incremental_assign(partitions)
+        self._run_hooks(self._assignment_hooks, added)
         logger.info(
             "Partitions assigned | added=%s held=%d generation=%d",
             sorted(added),
@@ -185,7 +222,7 @@ class ManagedConsumer(Consumer):
         )
 
     def on_revoke(self, consumer, partitions: list[TopicPartition]) -> None:
-        self._drop(partitions)
+        self._drop(partitions, lost=False)
         self.incremental_unassign(partitions)
         logger.info(
             "Partitions revoked | revoked=%s held=%d generation=%d",
@@ -199,7 +236,7 @@ class ManagedConsumer(Consumer):
         # max.poll.interval.ms exceeded.  Same state changes, logged at ERROR:
         # another consumer may already own these partitions and be ahead of us,
         # so work was very likely processed twice.  Emphatically no commit.
-        self._drop(partitions)
+        self._drop(partitions, lost=True)
         self.incremental_unassign(partitions)
         logger.error(
             "Partitions LOST (no clean revoke) | lost=%s held=%d generation=%d",
@@ -208,15 +245,18 @@ class ManagedConsumer(Consumer):
             self._generation,
         )
 
-    def _drop(self, partitions: Iterable[TopicPartition]) -> None:
+    def _drop(self, partitions: Iterable[TopicPartition], *, lost: bool) -> None:
         removed = {(tp.topic, tp.partition) for tp in partitions}
         self._assigned -= removed
         self._generation += 1
-        for hook in self._revocation_hooks:
+        self._run_hooks(self._revocation_hooks, removed, lost)
+
+    def _run_hooks(self, hooks: list[Callable], *args) -> None:
+        for hook in hooks:
             try:
-                hook(removed)
+                hook(*args)
             except Exception:  # never let a hook wedge a rebalance
-                logger.exception("Revocation hook failed")
+                logger.exception("Rebalance hook failed")
 
     # ── async wrappers over the blocking calls (§6.6) ───────────────────────
     async def consume_batch(self) -> list[Message]:
@@ -238,6 +278,32 @@ class ManagedConsumer(Consumer):
         await loop.run_in_executor(
             self._executor, functools.partial(self.store_offsets, message=msg)
         )
+
+    async def record_processed(self, msg: Message, *, flush: bool = False) -> None:
+        """Mark msg processed, and commit if commit_mode says to.
+
+        store_processed ALWAYS runs: storing is local, free, and is what makes
+        the offset committable at all.  Whether that store reaches the broker
+        now or at the end of the chunk is the only thing commit_mode changes.
+
+        A loop calling record_processed(msg, flush=is_last_of_chunk) is correct
+        under BOTH modes without branching on the mode — which is the point.
+        Under PER_MESSAGE `flush` is redundant and harmless; under PER_BATCH it
+        is what actually commits the chunk.
+
+        PER_BATCH does not reintroduce the legacy batching bug: it is still
+        store_offsets + a bare commit(), so there is no pending_offsets dict and
+        no manual +1 — librdkafka already tracks the per-partition high-water
+        mark.  It does impose a rule on its loop: a message that is NOT
+        committable (a handler failure to be redelivered, or one dropped by the
+        revocation fence) must terminate the chunk for its partition after
+        flushing what is already stored — otherwise a later message's store
+        would commit past the failed one.  PER_MESSAGE cannot hit this; there is
+        never more than one message's worth of stored, uncommitted state.
+        """
+        await self.store_processed(msg)
+        if self.commit_mode is CommitMode.PER_MESSAGE or flush:
+            await self.commit_stored()
 
     async def commit_stored(self, offsets: list[TopicPartition] | None = None) -> None:
         """Commit the highest stored offset for every assigned partition,

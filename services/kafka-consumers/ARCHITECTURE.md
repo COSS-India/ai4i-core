@@ -874,10 +874,7 @@ startup failure (database, Redis, broker), which the orchestrator restarts.
 Every `consumers/<name>/main.py` **must** expose:
 
 - **`GROUP_ID: str`** — a hardcoded module constant. Never read from settings,
-  never overridable by environment. See
-  [§8](#8-running-multiple-replicas--gated-on-the-write-time-guard) for why, and
-  [§10](#10-offset-position-is-always-an-explicit-decision) before you choose or
-  change one.
+  never overridable by environment.
 - **`async def run() -> None`** — the lifecycle, assembled from `bootstrap/`.
 
 Its own `config.py` holds anything specific to it — its topic, service URLs, and
@@ -889,20 +886,6 @@ A consumer **may** expose `async def rollback(msg) -> None`, called when a
 side effect must be compensated because the message should not have been
 processed. **`payperuse_consumer` does not implement it, and should not.**
 
-Prefer making the write conditional (§8.2): the guard and the debit are the same
-SQL statement, so the losing consumer never writes and there is nothing to undo.
-That is strictly better than compensating, for three reasons:
-
-- **Detection needs a durable record anyway.** Nothing tells consumer A that
-  consumer B also processed a span — `on_revoke` carries no such information, and
-  by the time it fires A has already committed. Any reliable duplicate check is a
-  lookup on `(correlation_id, span_id)`, which is exactly what §8.2's guard
-  already does at write time. Once you have that, rollback is redundant; without
-  it, rollback has nothing to trigger on.
-- **It moves the failure window instead of closing it.** Debit, then crash before
-  compensating, and the compensation never runs.
-- **The compensation is itself a racing write**, competing with the other
-  consumer's debit and every other concurrent debit on that wallet.
 
 `rollback` exists for the case the conditional write cannot cover: a consumer
 whose non-idempotent side effects reach **outside the database** — a payment
@@ -912,18 +895,7 @@ atomicity is genuinely unavailable. A consumer that implements `rollback` must
 document in its module docstring which effect is being compensated and what
 happens if the compensation itself fails.
 
-### Its own tests **`[PLANNED]`**
-
-> **The *location* rule below is reversed** — same reversal as §3.6, and subject
-> to the same caveat: no test suite is committed for this service at all.
-> `services/kafka-consumers/tests/` exists only as an untracked local prototype
-> (§3.6). If and when it lands, tests do not live inside the consumer package —
-> a consumer's unit tests belong at `tests/unit/consumers/<name>/`.
->
-> **What a consumer must be covered for is unchanged** — the list below is still
-> correct, and so is the reason for it. Nothing under `tests/unit/consumers/`
-> exists today, committed or otherwise: `payperuse_consumer` is entirely
-> unasserted.
+### Its own tests
 
 A consumer without tests is not complete.
 They cover:
@@ -946,7 +918,7 @@ cache are mocked, the same way the other three services' conftests already do it
 `tests/conftest.py` already sets every connection variable to an unreachable
 value, so a consumer suite inherits that safety property for free.
 
-### Shape of `run()` **`[PLANNED]` for `payperuse_consumer`**
+### Shape of `run()` **for `payperuse_consumer`**
 
 Every primitive below is built (§3). This is the shape a new consumer should have,
 and the shape `payperuse_consumer` should be migrated to; it is **not** what that
@@ -1235,8 +1207,6 @@ rather than a rewrite. **Two things must be true before raising it:**
 
 1. The write-time guard (§8.2) exists, so a concurrent duplicate is rejected by
    Postgres rather than merely narrowed by the fence.
-2. Reconciliation (§7.5) is running, so messages lost to the batch-API hazard are
-   detected rather than silently unbilled.
 
 Until both hold, a larger batch trades a real correctness margin for a fetch
 saving that §6.8 shows is small in steady state.
@@ -1376,16 +1346,16 @@ stated in terms of idempotency, which does not cover it.
 Three outcomes, and they must be kept distinct. Conflating them is the root of
 both offset bugs the old code carried.
 
-| Outcome | Meaning | Offset |
-|---|---|---|
-| **Success** | Handler returned | Stored and committed immediately (§6.1) |
-| **Skip** | Message is not for us, or is permanently malformed | Recorded and committed — retrying cannot help |
-| **Failure** | Transient: infrastructure unavailable, unexpected error | **Not** recorded; the message is retried (§7.1). **`payperuse_consumer` does not achieve this** — see the §7.1 banner. |
+| Outcome | Meaning | Offset                                                                                     |
+|---|---|--------------------------------------------------------------------------------------------|
+| **Success** | Handler returned | committed immediately (§6.1)                                                     |
+| **Skip** | Message is not for us, or is permanently malformed | Recorded and committed — retrying cannot help                                              |
+| **Failure** | Transient: infrastructure unavailable, unexpected error | **Not** recorded; the message is retried, but upon failure will move on to the next message |
 
 ### 7.1 A failed message must actually be retried
 
-A message that fails gets logged but the consumption continues. For the next message if it succeeds, the message is  
-committed. There is no DLQ at this point.
+A message that fails must be retried , if still not succeeds then the next message should be processed  
+ and the consumption continues. If the next message succeeds, the message is committed.
 
 ### 7.2 Partial batch failure
 
@@ -1461,97 +1431,11 @@ therefore be idempotent regardless of how tight the first two are.
 
 Note the third row's bound is not "zero". §8.2's guard is a bounded set, not a
 unique constraint: a duplicate arriving after `N` other billings for the same
-tenant is not rejected. That residue is what reconciliation (§7.5) exists to
-catch.
+tenant is not rejected.
 
 The PPU handler's Redis dedup key — a 1-hour cache entry on an LRU instance — is
 adequate as a fast path against the one-message windows, and **not** adequate as
 the guard against concurrent processing. §8.2 specifies what is.
-
-### 7.5 Reconciliation — the backstop for what slips through
-
-Everything above bounds *duplication*. Nothing above detects **loss**, and this
-pipeline has three ways to lose a billable span:
-
-| Loss path | Where |
-|---|---|
-| Retry ladder exhausted — message committed past after a `CRITICAL` | §7.1 |
-| librdkafka's batch API dropping messages during a rebalance | §11, live only if `KAFKA_BATCH_SIZE > 1` |
-| Any future handler bug that classifies a real message as a skip | §7 |
-
-None of them is visible from inside the consumer: a message that never arrives
-leaves no trace, and a `CRITICAL` line only helps if somebody reads it.
-
-**A nightly reconciliation job closes all three with one mechanism, and needs no
-new storage.** The two sides already exist and are genuinely independent:
-
-| Side | Source | Grain |
-|---|---|---|
-| What *should* have been billed | OpenSearch `traces-*` | per span |
-| What *was* billed | `ppu_quota_usage.units_used` / `cost_accum` | per `(tenant, inference_name, billing_month, tier_id)` |
-
-The independence is real: Fluent Bit and the PPU consumer are two separate sinks
-off the same Kafka topic (`kafka-topic-otel-trace`), so a fault in one does not
-corrupt the other.
-
-Because the Postgres side is a monthly rollup, this is **aggregate**
-reconciliation. Sum billable units per `(tenant, service_id)` from `traces-*`,
-join `mm_services` for `task_type`, apply the LLM-vs-rest unit rule, and compare
-against `units_used`. A non-zero delta means something was lost or double-billed.
-
-**It tells you *that* there is drift, not *which* span caused it.** That is the
-price of not keeping a per-span ledger, and it is why §8.2's guard exists — the
-guard prevents the common case at write time, reconciliation catches what escapes
-it.
-
-**Run it after midnight, on the previous day's data.** Two reasons beyond low
-traffic: `traces-*` is a **daily** index (`traces-YYYY.MM.DD`), so a closed day is
-a complete, no-longer-written index; and it bounds drift correction to under 24
-hours.
-
-**Prerequisite: `traces-*` needs an explicit index template.** It currently has
-none — only `logs-*` does
-(`infrastructure/opensearch/index-template.json`, pushed by
-`infrastructure/opensearch/init-opensearch.sh`). Consequences of leaving it
-dynamic:
-
-- Field types are re-inferred **per daily index**. `input_tokens` is seeded as
-  int `0` and later carries floats, so one day may map `long` and the next
-  `double`. If a non-numeric ever lands first, the field maps as `text`, every
-  subsequent numeric document that day is **rejected at index time**, and Fluent
-  Bit discards it after `Retry_Limit 5` — silent loss in the very store used to
-  detect silent loss.
-- Strings map as `text` with a `.keyword` subfield, so `attributes.tenantId` is
-  analyzed. Billing filters must use `term` on `attributes.tenantId.keyword`, not
-  `match_phrase`, or a tenant id containing `-` or `_` will match too broadly.
-
-The template must pin `attributes.tenantId`, `attributes.service_id`,
-`attributes.authType`, `context.span_id` and `context.trace_id` as `keyword`, and
-the token counts as a single numeric type.
-
-**Known coupling — the billing rules exist in two places.** The job must mirror
-every filter the consumer applies, or it reports drift that is not real:
-
-| Rule | Where |
-|---|---|
-| Skip unless `attributes.authType == "api_key"` (absent ⇒ bill) | `handler.py:140-146` |
-| Skip when tenant, service, or total tokens are missing/zero | `handler.py:155` |
-| Skip when `mm_services` has no pricing row, or cost computes to 0 | `_bill_usage`, `_billing.py` |
-| LLM bills `input+output`; everything else bills `input` only | `_bill_usage` — driven by `mm_services.task_type`, **not** the span's `attributes.task_type`, which is observability-only |
-
-Changing a billing rule means changing both. The alternative — extracting the
-billable-units calculation into a shared pure function both call — is the right
-fix if this drifts even once.
-
-Also note `end_time` **is** present in the indexed document (Fluent Bit's `lift`
-promotes it; a comment in `platform-core-service/app/routes/telemetry.py` claiming
-otherwise is stale), so the job can derive `billing_month` exactly as
-`_resolve_billing_month` does rather than approximating with `@timestamp`, which
-is ingest time.
-
-This is also what makes raising `KAFKA_BATCH_SIZE` above 1 defensible (§6.4):
-with reconciliation running, the batch-API hazard becomes a detected condition
-rather than silent lost revenue.
 
 ---
 
@@ -1563,144 +1447,8 @@ whatever members are alive. What Kafka does **not** handle is two members briefl
 processing the same offsets during a rebalance (§6.4) — which on a billing path
 means charging a customer twice.
 
-### 8.1 The gate
 
-> **Replicas stay at `1` until the write-time guard below exists, together with
-> the reconciliation job (§7.5) that backstops it. Once both ship, replicas may
-> be raised.**
-
-A hard gate, not a preference. Everything else in this section is what makes
-lifting it safe.
-
-### 8.2 The write-time guard — bounded recent-span keys
-
-Redis dedup is not sufficient, and never was. The key
-`ppu:billed:{correlation_id}:{span_id}` is checked *before* billing and set
-*after* the database commit, so there is a window between them. With one process,
-a crash in that window means redelivery to itself. With N processes, two replicas
-can be inside it concurrently and **both bill**. The key also lives on an
-`allkeys-lru` instance shared with `auth:apikey:*` and `core:service:*` under a
-1-hour TTL (`Constants.PPU_BILLED_KEY_TTL`) — eviction under memory pressure
-silently re-arms double billing.
-
-The guard has to be **in the same statement as the debit**, so that the check and
-the write cannot be separated by a rebalance. It does **not** need a separate
-table: a bounded set of recently-billed span keys carried on the assignment row
-itself is enough, because the row being guarded is the row being debited.
-
-**Column.** Add to `ppu_tenant_tier_assignments`:
-
-```sql
-ALTER TABLE ppu_tenant_tier_assignments
-    ADD COLUMN recent_span_keys text[] NOT NULL DEFAULT '{}';
-```
-
-`NOT NULL DEFAULT '{}'` is not cosmetic. With a NULL array, `:key = ANY(NULL)`
-evaluates to NULL, `NOT NULL` is NULL, the `WHERE` clause fails to match, and
-**every billing silently stops**. Adding a column with a non-volatile default is
-metadata-only on PG 11+, so the migration does not rewrite the table.
-
-**The guarded write**, replacing the `wallet_update` CTE in
-`deduct_balance_and_update_quota` (`consumers/payperuse_consumer/_billing.py`):
-
-```sql
-WITH target AS (
-    -- classification only: does an active assignment exist at all?
-    SELECT id FROM ppu_tenant_tier_assignments
-     WHERE tenant_id = :tenant_id
-       AND effective_from <= now() AND effective_to > now()
-),
-wallet_update AS (
-    UPDATE ppu_tenant_tier_assignments a
-       SET available_balance = a.available_balance - :cost,
-           recent_span_keys  = (ARRAY[:span_key] || a.recent_span_keys)[1:50],
-           updated_at        = now()
-      FROM target
-     WHERE a.id = target.id
-       AND NOT (:span_key = ANY(a.recent_span_keys))   -- ← the guard
-    RETURNING a.available_balance, a.tier_id
-),
-quota_upsert AS ( ... )        -- unchanged, still fed by wallet_update
-SELECT (SELECT count(*) FROM target) AS assignment_exists,
-       wallet_update.available_balance, wallet_update.tier_id,
-       quota_upsert.units_used, quota_upsert.monthly_quota_snap
-  FROM ...
-```
-
-`:span_key` is `"{correlation_id}:{span_id}"` — the same composite the Redis key
-already uses. **`correlation_id` alone is not sufficient**: one request can emit
-several `ai-inference` spans under one correlation id (TTS chunks text over 400
-chars into per-item Triton calls), so guarding on it alone would reject every
-chunk after the first and *under-bill* the request. `handler.py:114-125` explains
-this at length; the same reasoning applies here.
-
-**Why this is atomic.** Under READ COMMITTED, a second `UPDATE` targeting the same
-row blocks until the first commits and then **re-evaluates its `WHERE` clause
-against the new row version**. So the loser of a race sees the winner's key
-already in `recent_span_keys`, matches no row, and never debits. Postgres
-arbitrates at write time; there is no undo because there was no write. This adds
-no contention that did not already exist — the balance decrement already
-serialized every billing for a tenant onto this row.
-
-**Distinguishing "duplicate" from "no assignment" is mandatory.** Both produce
-zero rows from `wallet_update`, but they mean opposite things, and the existing
-caller treats a missing `tier_id` as *not entitled* — setting `quota_exhausted`
-and firing the quota-exhausted notification to auth-service. A duplicate must not
-do that. The `assignment_exists` count above is what separates them:
-
-| `assignment_exists` | `wallet_update` row | Meaning | Action |
-|---|---|---|---|
-| 0 | none | No active tier assignment | Existing not-entitled path (§7 / `BillingWriteResult.tier_id is None`) |
-| ≥ 1 | none | **Duplicate rejected by the guard** | Log at `DEBUG` and skip. No notification, no error |
-| ≥ 1 | present | Billed | Normal path |
-
-**Sizing `N` (the `[1:50]` slice).** The array must hold enough keys that a
-redelivered span is still remembered when it comes back. The redelivery window is
-short — one message per partition per rebalance (§6.4), reprocessed within
-seconds — so `N` only has to exceed the number of billings **for that one tenant**
-in that window. 50 is a reasonable start. Two constraints on going larger: keys
-are ~55 bytes, so ~50 keys keeps the row near Postgres's ~2 KB TOAST threshold and
-above that the array is stored out-of-line and rewritten on every billing; and a
-duplicate older than `N` slips through, where it is caught by reconciliation
-(§7.5) rather than prevented.
-
-**Operational note.** This row is now rewritten on every billing event — it
-already was, for the balance decrement, but each dead tuple is larger. Consider a
-per-table `autovacuum_vacuum_scale_factor` low enough for a small, very
-high-update table.
-
-Note which operations this protects. Only two things in the billing path are
-non-idempotent, and both are arithmetic inside this one statement:
-`available_balance - :cost` and `units_used + :units`. Everything else is already
-safe to repeat — `_notify_auth` POSTs `{"exhausted": true}` and
-`{"inference_name": ...}`, which are state-sets, not increments.
-
-Redis then demotes to a fast path in front of an authoritative check. It may be
-stale, evicted, or entirely down without affecting correctness — only latency.
-That also dissolves §7.3's awkwardness about Redis outages costing revenue.
-
-Until this lands, the comment in `consumers/payperuse_consumer/handler.py` —
-*"billing correctness relies on at-most-one consumer instance when Redis is
-down"* — accurately describes a fragile design. Once it lands the comment is
-false and must be removed.
-
-> **Known limit, accepted deliberately.** This is a bounded guard, not a
-> constraint: it cannot catch a duplicate that arrives after `N` other billings
-> for the same tenant. That was the tradeoff taken to avoid a per-span ledger
-> table. Reconciliation (§7.5) is the backstop, which is why the two ship
-> together.
-
-### 8.3 Rules for running N
-
-| Rule | Why |
-|---|---|
-| Each consumer has its **own group id** | Two different consumers sharing a group would split one topic's partitions between unrelated handlers |
-| **Replicas ≤ partitions** | Surplus members get no assignment and idle; partition count is the real parallelism ceiling |
-| The **`owns()` fence** (§6.4) is mandatory | Without it, a rebalance leaves a whole batch being processed by two members at once |
-| Rebalance callbacks **never commit** (§6.5) | `_NO_OFFSET` / `_ASSIGNMENT_LOST` would crash every member on every deploy |
-| Handlers are **idempotent** (§7.4) | The residual one-message windows are irreducible |
-
-### 8.4 What to expect operationally
+### 8.1 What to expect operationally
 
 Every deploy, scale event, pod eviction and liveness restart is a rebalance, and
 each exercises §6.4 and §6.5. `cooperative-sticky` is what keeps a rebalance from
@@ -1717,35 +1465,7 @@ message at a time. Scaling is horizontal only, and bounded by partition count.
 - **Import injection.** `--consumer` feeds `importlib.import_module()`. The
   validation in §3.2 (regex **and** allow-list from the `consumers/` directory)
   is the guard. Do not relax it to accept dotted paths.
-- **Secrets in the image — mitigated by `.dockerignore`.** The Dockerfile's
-  `COPY . .` copies the whole build context, runs as root *before* the `chown` to
-  `appuser`, and Docker layers are readable by anyone who can pull the image.
-  A local `.env` sits in that context: it is **git**-ignored, which does nothing
-  for a build. `services/kafka-consumers/.dockerignore` is what keeps it out,
-  along with `.venv/` and the generated cache artifacts.
 
-  `tests/` is **not** in `.dockerignore`'s exclude list — but `tests/` is also not
-  a committed part of this repo (§3.6, `[PLANNED]`), so on a fresh clone there is
-  nothing under that name for `COPY . .` to pick up in the first place. Docker's
-  build context is whatever exists on disk, not what git tracks, so the *only*
-  way `tests/` ends up in an image today is a local build run from a checkout
-  that still has the untracked prototype sitting in the working tree — an
-  accident of the builder's machine, not a documented or intended behaviour.
-  Once a real suite is committed, decide deliberately whether it belongs in the
-  image; if the intent is "run the suite against the built image"
-  (`docker run --entrypoint python kafka-consumers -m pytest tests/unit`), note
-  that this does not work as the Dockerfile stands regardless: it installs only
-  `requirements.txt`, which has no `pytest` and no `pytest-asyncio`.
-
-  **The `.dockerignore` is itself matched by the repo-root `.gitignore`
-  (line 75), so it is present on disk but not tracked.** A fresh clone builds
-  without it and bakes in whatever `.env` the builder happens to have. Either
-  un-ignore this one file or treat recreating it as part of the build
-  instructions; do not assume it travels with the repo.
-- **Trust boundary.** This service calls auth-service `/internal/ppu/*`, which is
-  service-to-service only and must never be publicly reachable. It also writes
-  directly to the `ppu_*` tables in `ai4iplatform_core` with no in-process
-  authorization — the process's network position *is* its authorization.
 - The image runs as non-root `appuser`. Keep it that way.
 
 ---
@@ -1852,80 +1572,15 @@ check the seeding rather than switching the setting back to `earliest`.
 
 Recorded deliberately. None are addressed by this redesign.
 
-- **A failed message is dropped, not retried** (§7.1). `pending_offsets` is a
-  per-partition high-water mark, so the next success on a partition commits past a
-  message whose handler raised. The loop's own comments and both docs claimed
-  redelivery; they were wrong. **This loses billing events.** Fixing it means
-  either committing per message (§6.1) or tracking failures per partition.
 - **A Redis outage drops spans instead of billing them** (§7.3).
   `_is_already_billed` returns `None` on any Redis exception and the caller treats
   `None` as "already billed", so the span is skipped and its offset committed —
   while logging "proceeding without dedup". **This loses revenue for the duration
   of any Redis incident.** The intended behaviour is to warn and bill, which is
   safe once §8.2's write-time guard exists.
-- **There is no committed test suite for this service, full stop** (§3.6). The
-  only thing on disk is an untracked local prototype (75 cases, `bootstrap/`
-  only) — `git status` shows `?? tests/`. Nothing in `bootstrap/` or
-  `consumers/payperuse_consumer/` is verified by anything this repository
-  tracks. Once a suite is committed, `payperuse_consumer` is the larger of the
-  two gaps within it: the billing SQL, the dedup semantics, the pricing
-  resolution, the auth-service notification and the loop's per-partition
-  offset tracking would all need covering at
-  `tests/unit/consumers/payperuse_consumer/` (§5). The two defects above would
-  both have been caught by a loop-policy test — their presence is itself
-  evidence of what testing nothing costs.
-- **The test dependencies are not declared anywhere.** `requirements.txt` is
-  runtime-only and there is no `requirements-dev.txt`, so `pytest` and
-  `pytest-asyncio` (required — the prototype's `pytest.ini` sets
-  `asyncio_mode = auto`) must be installed out of band. Landing a committed
-  suite means deciding where those dependencies go, not just adding `tests/` to
-  git.
-
-- **No dead-letter queue — deliberately out of scope at this stage.** §7.1's
-  exhausted-retry path terminates in a `CRITICAL` log line carrying the raw
-  payload, and recovery is manual replay from it. Reconciliation (§7.5) covers
-  the *detection* half of what a DLQ would give — a dropped span shows up as a
-  billing shortfall against `traces-*` — so what is missing is the automatic
-  requeue, not the visibility.
-  Revisit if the `CRITICAL` line fires often enough that manual replay stops
-  being practical.
-- **Batch fetch is not safe against concurrent rebalancing.** librdkafka's own
-  known issues, for the version pinned here:
-
-  > The Consumer Batch APIs … are not thread safe if `rkmessages_size` is greater
-  > than 1 and any of the **seek**, **pause**, **resume** or **rebalancing**
-  > operation is performed in parallel … **Some of the messages might be lost, or
-  > erroneously returned to the application.**
-
-  The single-worker executor (§6.6) serializes every app-driven call, and this
-  design no longer calls `seek()` at all (§7.1) — so the app-driven half of that
-  condition is satisfied. **Rebalancing is not app-driven and cannot be
-  serialized**, so the only way to escape the condition is `num_messages == 1`.
-
-  **Mitigated, not open:** `KAFKA_BATCH_SIZE` defaults to `1`, which puts the
-  hazard out of reach. It returns the moment that setting is raised, which is why
-  §6.4 gates raising it on the write-time guard (§8.2) and reconciliation (§7.5).
-  Listed here because the knob exists and the risk is one config change away.
-- **No metrics.** `ai4i_core.observability` is installed and never imported.
-  There is no consumer-lag, processing-latency, error-rate or DLQ
-  instrumentation, and no health endpoint. The Docker `HEALTHCHECK` greps
-  `/proc/1/cmdline` — process liveness only, not broker/DB/Redis connectivity and
-  not lag. Now that one image runs several roles it should also match the
-  consumer name. Broker connectivity is no longer blind *for a consumer built on
-  `bootstrap/`* — `error_cb` and `logger=` in §3.1 surface it — but the root
-  `config.py` sets neither, so **`payperuse_consumer` is still blind to it
-  today**: it can sit disconnected indefinitely while `poll()` returns `None`, the
-  loop spins, and the healthcheck sees a live process. Lag is invisible either
-  way.
 - **Duplicate-billing window** between `db.commit()` and the Redis dedup `set`.
   Closed by the write-time guard in §8.2; live until it ships, which is what the
   §8.1 replica gate exists for.
-- **The write-time guard is bounded, not absolute** (§8.2). A duplicate arriving
-  after `N` other billings for the same tenant is not caught, and falls through to
-  reconciliation. That is the accepted cost of not keeping a per-span ledger
-  table.
-- **Billing rules are duplicated** between the consumer and the reconciliation
-  job (§7.5). Changing one without the other produces phantom drift.
 - **Loop logic is copied, not shared** (§3.5) — a deliberate line, but a real
   cost: the offset and retry discipline of §6 and §7 is normative and unenforced.
   Watch for the second consumer; a byte-identical loop is the signal to promote it

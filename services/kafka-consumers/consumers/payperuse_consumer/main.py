@@ -1,32 +1,32 @@
 """payperuse_consumer — bills ai-inference spans against tenant wallets.
 
-Owns its own process: its group id, its topic subscription, its lifecycle and
-its poll loop. Launched by the service-root main.py with
-``--consumer payperuse_consumer``; the launcher only imports this module and
-calls ``run()``.
+Reference implementation of the loop invariants in ARCHITECTURE.md §6 and §7.
+A copy that violates them is a bug regardless of whether it appears to work.
 
-The loop below is moved as-is from the old single-process root main.py — same
-plain sync Consumer, same poll(), same batched-commit discipline. Every comment
-here documents a failure that was actually hit; read them before changing the
-offset handling.
+The topic of otel trace has ONE partition (§0), so this loop is the only thing consuming it.
+That is why it optimises for durability rather than throughput: chunked fetch to
+catch up, per-message commit so a crash costs one message, and a deadline so a
+slow chunk cannot get the partition taken away mid-work.
+
+GROUP_ID is same as the old one to avoid double processing. Before chaning see point 10 of ARCHITECTURE.md
 """
+from __future__ import annotations
+
 import asyncio
-import functools
-import signal
-from concurrent.futures import ThreadPoolExecutor
+import time
 
-from ai4i_core.bootstrap import init_database, close_database, init_redis
 from ai4i_core.logging import get_logger
-from confluent_kafka import Consumer, KafkaException, TopicPartition
+from confluent_kafka import KafkaError, KafkaException, Message
 
-from config import settings, build_consumer_config
+from bootstrap.config import get_db_settings
+from bootstrap.consumers import CommitMode, ManagedConsumer
+from bootstrap.lifecycle import infra, shutdown_event
+from consumers.payperuse_consumer import config as cfg
 from consumers.payperuse_consumer.handler import handle_ppu_usage
 
 logger = get_logger(__name__)
 
-# ===============
-# DO NOT CHANGE: this is only 1 process that does lightweight io bound consumer tasks only,
-# do not change, do not make it configurable, do not push it to settings.
+# Hardcoded, never read from settings, never overridable by environment (§5).
 #
 # Still the legacy id: this group already has committed offsets for the topic,
 # and KAFKA_AUTO_OFFSET_RESET is 'earliest', so renaming it would replay the
@@ -36,193 +36,177 @@ logger = get_logger(__name__)
 GROUP_ID = "aio-python-consumers"
 # ===============
 
-# The topic this consumer consumes, declared here rather than discovered from a
-# registry: one process per consumer means the subscription is a property of this
-# module, not of a lookup table shared with unrelated consumers.
-TOPIC = settings.topics.TOPIC_PAY_PER_USE
-
-# Commit offsets every N successful messages, or every T seconds since the
-# last commit — whichever comes first — instead of after every message. A
-# broker round-trip per message is real overhead under burst load; batching
-# is safe here because handle_ppu_usage is already redelivery-safe (see the
-# Redis dedup check) — a crash mid-batch just means up to COMMIT_BATCH_SIZE
-# already-billed messages get redelivered and no-op'd on restart, not
-# double-billed.
-#
-# Tracked per (topic, partition) — NOT a single shared "last message" — and
-# committed via explicit TopicPartition offsets, not a bare consumer.commit().
-# A single shared last-message was tried first and is WRONG for a
-# multi-partition topic: commit(message=msg) only advances msg's own
-# partition, so with messages interleaving across partitions, whichever
-# partition owned the most-recently-processed message got committed and the
-# rest never advanced at all — reproduced locally against an 8-partition
-# topic (7 of 8 partitions never committed a single offset). A bare
-# consumer.commit() (no explicit offsets) isn't a safe fix either:
-# enable.auto.offset.store defaults to true, so poll() auto-marks a
-# message's offset as committable the instant it's returned — including
-# messages whose processing later raised — a bare commit() would then
-# commit past a failed message anyway. Explicit per-partition offsets, only
-# updated after a message's dispatch() succeeds, avoid both problems.
-COMMIT_BATCH_SIZE = 100
-COMMIT_INTERVAL_S = 5.0
-
-
 async def run() -> None:
-    # ── Database ──
-    db_cfg = settings.db_settings
-    logger.info(
-        "Initialising database | host=%s port=%d pool_size=%d max_overflow=%d"
-        " platform_core_db=%s",
-        db_cfg.POSTGRES_HOST,
-        db_cfg.POSTGRES_PORT,
-        db_cfg.DB_POOL_SIZE,
-        db_cfg.DB_MAX_OVERFLOW,
-        db_cfg.PLATFORM_CORE_DB,
-    )
-    try:
-        await init_database(
-            db_url=db_cfg.get_database_url(db_cfg.PLATFORM_CORE_DB),
-            pool_size=db_cfg.DB_POOL_SIZE,
-            max_overflow=db_cfg.DB_MAX_OVERFLOW,
+    db = get_db_settings()
+    settings = cfg.get_settings()
+
+    async with infra(db_name=db.PLATFORM_CORE_DB):
+        consumer = ManagedConsumer.build_bulk_message_consumer(
+            group_id=GROUP_ID,
+            topic=settings.TOPIC_PAY_PER_USE,
+            # Explicit, not defaulted: this is the single most consequential fact
+            # about this consumer's durability (§6.1/§6.8).
+            commit_mode=CommitMode.PER_MESSAGE,
         )
-    except Exception as exc:
-        logger.critical("Failed to initialise database | error=%s", exc)
-        raise
+        # Before the first fetch: subscribe() already happened inside the factory,
+        # so an assignment can arrive on the very first consume_batch().
+        # consumer.add_assignment_hook(_on_assign)
+        # consumer.add_revocation_hook(_on_revoke)
 
-    logger.info("Database ready | platform_core_db=%s", db_cfg.PLATFORM_CORE_DB)
+        shutdown = shutdown_event()
+        logger.info(
+            "Consumer started | group_id=%s topic=%s batch_size=%d commit_mode=%s",
+            GROUP_ID, settings.TOPIC_PAY_PER_USE,
+            consumer.batch_size, consumer.commit_mode.value,
+        )
+        try:
+            while not shutdown.is_set():
+                try:
+                    chunk = await consumer.consume_batch()
+                except KafkaException as exc:
+                    # A fetch-level failure.  Only a fatal error may take the
+                    # process down; anything else is logged and retried by the
+                    # next iteration.
+                    if exc.args[0].fatal():
+                        raise
+                    logger.error("Fetch failed | code=%s: %s", exc.args[0].name(), exc.args[0].str())
+                    continue
 
-    # ── Redis ──
-    redis_cfg = settings.redis_settings
-    logger.info(
-        "Redis settings loaded | host=%s port=%d db=%d timeout=%ds max_connections=%d",
-        redis_cfg.REDIS_HOST,
-        redis_cfg.REDIS_PORT,
-        redis_cfg.REDIS_DB,
-        redis_cfg.REDIS_TIMEOUT,
-        redis_cfg.REDIS_MAX_CONNECTIONS,
-    )
+                # ── the §6.4 chunk deadline ──
+                # KAFKA_BATCH_SIZE x worst-case per-message time can exceed
+                # max.poll.interval.ms.  Overrunning it means the partition is
+                # taken away as on_lost WHILE we are still processing it —
+                # self-inflicted double billing.  Stamped per chunk because only
+                # consume() resets the poll clock; committing does not (§6.7).
+                deadline = time.monotonic() + cfg.Constants.CHUNK_DEADLINE_S
 
-    try:
-        await init_redis(settings.redis_settings.get_redis_url())
-    except Exception as exc:
-        logger.critical("Failed to initialise redis connection| error=%s", exc)
-        raise
+                for index, msg in enumerate(chunk):
+                    # ── the §6.4 fence, before anything else ──
+                    # A rebalance can revoke a partition while its messages are
+                    # still in this chunk; processing them would duplicate work the
+                    # new owner is already doing.
+                    #
+                    # continue, NOT break.  A revocation takes away SOME partitions;
+                    # the others in this chunk are independent and still ours, and
+                    # abandoning them would re-fetch work that was never at risk.
+                    if not consumer.owns(msg):
+                        logger.warning(
+                            "Skipping message from revoked partition | %s[%d]@%d",
+                            msg.topic(), msg.partition(), msg.offset(),
+                        )
+                        continue
 
-    # ── Kafka ──
-    logger.info(
-        "Kafka consumer configured | broker=%s group_id=%s topic=%s",
-        settings.KAFKA_SERVER,
-        GROUP_ID,
-        TOPIC,
-    )
+                    # ── classify before handling (§6.3) ──
+                    if not _usable(msg):
+                        continue
 
-    # Plain sync Consumer, not confluent_kafka.aio.AIOConsumer: AIOConsumer
-    # binds its background-thread -> event-loop callback bridge via the
-    # deprecated asyncio.get_event_loop() (confluentinc/confluent-kafka-python
-    # #2211, open/unfixed), which can silently attach to the wrong loop —
-    # await consumer.poll() then hangs forever with no error, no exception,
-    # no log line. The sync Consumer has no such bridge to get wrong: every
-    # blocking call below is pushed onto _kafka_executor explicitly by us.
-    consumer = Consumer(build_consumer_config(GROUP_ID, settings))
-    # Single worker: our loop only ever has one poll()/commit() call in
-    # flight at a time (each is awaited before the next is issued), and the
-    # underlying librdkafka Consumer handle isn't safe to call concurrently
-    # from multiple threads.
-    _kafka_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kafka-consumer")
+                    # break here, unlike the fence above: the deadline is a
+                    # property of the whole CHUNK, not of one partition, so
+                    # stopping outright is correct at any partition count.
+                    #
+                    # Abandoning is free: everything processed so far is already
+                    # committed, and the remainder was never stored, so the next
+                    # fetch returns it.  Checked BEFORE the handler so the deadline
+                    # bounds when we stop starting work, not when we finish it.
+                    if time.monotonic() > deadline:
+                        logger.warning(
+                            "Chunk deadline reached — yielding to the next fetch | "
+                            "processed=%d remaining=%d",
+                            index, len(chunk) - index,
+                        )
+                        break
 
-    try:
-        consumer.subscribe([TOPIC])
-    except KafkaException as exc:
-        logger.critical("Failed to subscribe to Kafka topic %s: %s", TOPIC, exc)
-        raise
+                    # ── retry in hand, never seek (§7.1) ──
+                    await _handle_with_retry(msg)
 
-    logger.info(
-        "Consumer started | topic=%s poll_timeout=%.1fs auto_offset_reset=%s",
-        TOPIC,
-        settings.KAFKA_POLL_TIMEOUT_S,
-        settings.KAFKA_AUTO_OFFSET_RESET,
-    )
+                    # ── store + commit after the handler returned.
+                    #    record_processed resolves store-vs-commit from
+                    #    commit_mode, so this line is correct under either policy.
+                    #    Under PER_MESSAGE the flush arg is redundant and
+                    #    harmless.
+                    await consumer.record_processed(
+                        msg, flush=(index == len(chunk) - 1),
+                    )
+        finally:
+            consumer.shutdown()
 
-    loop = asyncio.get_running_loop()
-    shutdown = asyncio.Event()
 
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, shutdown.set)
+def _usable(msg: Message) -> bool:
+    """Error classification (§6.3).  Only a FATAL error may take the process down.
 
-    # (topic, partition) -> next offset to commit (last successfully
-    # processed message's offset + 1 — matching the +1 convention
-    # consumer.commit(message=msg) applies automatically, which committing
-    # via explicit TopicPartition offsets does NOT do for us.
-    pending_offsets: dict[tuple[str, int], int] = {}
-    uncommitted = 0
-    last_commit_time = loop.time()
+    Do NOT use err.retriable() as the discriminator: KafkaError(_MAX_POLL_EXCEEDED)
+    reports retriable() == False and fatal() == False (verified, confluent-kafka
+    2.15.0), so a retriable()-based rule would let it through to the raise branch
+    — and _MAX_POLL_EXCEEDED is precisely the error you receive BECAUSE you were
+    slow, which restarting makes worse.
+    """
+    err = msg.error()
+    if err is None:
+        return True
 
-    async def _flush_commit() -> None:
-        nonlocal uncommitted, last_commit_time, pending_offsets
-        if not pending_offsets:
+    if err.code() == KafkaError._PARTITION_EOF:
+        # Informational end-of-partition, not a failure.  Only delivered when
+        # enable.partition.eof is on; handle it anyway.
+        return False
+
+    if err.code() == KafkaError._AUTO_OFFSET_RESET:
+        # KAFKA_AUTO_OFFSET_RESET=error turned a silent full-topic replay into
+        # this entry (§10.1).  It will not resolve on its own and consuming
+        # cannot proceed, so make it a loud, restarting failure rather than a
+        # process that spins forever logging ERROR and billing nothing.
+        logger.critical(
+            "No valid committed offset for %s[%d] — the group is unseeded or its "
+            "offset aged out of retention.  Seed the group's offsets deliberately "
+            "(ARCHITECTURE.md §10.2); do NOT switch auto.offset.reset to earliest, "
+            "which would replay the topic and re-bill every span older than the "
+            "1h dedup TTL. | %s",
+            msg.topic(), msg.partition(), err.str(),
+        )
+        raise KafkaException(err)
+
+    if err.fatal():
+        logger.critical("Fatal Kafka error — exiting for restart | code=%s: %s", err.name(), err.str())
+        raise KafkaException(err)
+
+    # Everything else: log and continue.  Raising here crash-loops the process
+    # on transient conditions.
+    logger.error("Kafka error entry | code=%s: %s", err.name(), err.str())
+    return False
+
+
+async def _handle_with_retry(msg: Message) -> None:
+    """Retry the IN-HAND Message object, in place.  There is no rewind.
+
+    The handler's contract: returning means success-or-permanent-skip (commit
+    and move on); raising means transient failure (retry).  Permanent skips are
+    signalled by returning, never by raising.
+
+    Why no seek(): the crash case is already covered because an unstored offset
+    is never committed, so a restart resumes at exactly this message.  Removing
+    seek() also removes librdkafka's "avoid storing offsets after seek()"
+    ordering rule.
+
+    The tradeoff, stated plainly: this blocks the partition for up to a few
+    seconds, and giving up after MAX_ATTEMPTS DROPS a message.  Bounded-retry-
+    then-skip is chosen because a permanently stalled billing partition loses
+    the data anyway once topic retention expires — and does so with no CRITICAL
+    line for anyone to act on.  Recovery from that line is manual replay.
+    """
+    for attempt in range(1, cfg.Constants.MAX_ATTEMPTS + 1):
+        try:
+            await handle_ppu_usage(msg)
             return
-        offsets = [
-            TopicPartition(topic, partition, offset)
-            for (topic, partition), offset in pending_offsets.items()
-        ]
-        # asynchronous=False: block until the broker has acked the commit,
-        # matching the previous AIOConsumer.commit()'s await semantics —
-        # the default (asynchronous=True) would return immediately and
-        # complete the round-trip in the background, which would let us
-        # clear pending_offsets before the commit is actually durable.
-        await loop.run_in_executor(
-            _kafka_executor,
-            functools.partial(consumer.commit, offsets=offsets, asynchronous=False),
-        )
-        pending_offsets = {}
-        uncommitted = 0
-        last_commit_time = loop.time()
-
-    try:
-        while not shutdown.is_set():
-            try:
-                msg = await loop.run_in_executor(
-                    _kafka_executor, consumer.poll, settings.KAFKA_POLL_TIMEOUT_S
+        except Exception as exc:
+            if attempt == cfg.Constants.MAX_ATTEMPTS:
+                logger.critical(
+                    "Giving up after %d attempts — MESSAGE DROPPED | %s[%d]@%d payload=%r: %s",
+                    attempt, msg.topic(), msg.partition(), msg.offset(), msg.value(), exc,
                 )
-            except KafkaException as exc:
-                logger.error("Poll failed: %s", exc)
-                continue
-
-            if msg is None:
-                # Nothing to process right now — flush any pending commit so
-                # offsets aren't held back indefinitely during quiet periods.
-                if loop.time() - last_commit_time >= COMMIT_INTERVAL_S:
-                    await _flush_commit()
-                continue
-            if msg.error():
-                logger.error("Kafka error: %s", msg.error())
-                continue
-
-            try:
-                await handle_ppu_usage(msg)
-            except Exception as exc:
-                logger.exception(
-                    "Unhandled error handling message from topic %s: %s",
-                    msg.topic(),
-                    exc,
-                )
-                # Don't count a failed message toward the batch — its offset
-                # must stay uncommitted so it's redelivered on restart.
-                continue
-
-            pending_offsets[(msg.topic(), msg.partition())] = msg.offset() + 1
-            uncommitted += 1
-            if uncommitted >= COMMIT_BATCH_SIZE or loop.time() - last_commit_time >= COMMIT_INTERVAL_S:
-                await _flush_commit()
-
-        # Flush any remaining uncommitted offsets before shutting down.
-        await _flush_commit()
-    finally:
-        # consumer.close() blocks briefly (leaves the group, one-off at
-        # shutdown) — not worth routing through the executor.
-        consumer.close()
-        _kafka_executor.shutdown(wait=True)
-
-    logger.info("Shutdown signal received — closing database connection")
-    await close_database()
-    logger.info("Consumer shut down cleanly.")
+                return
+            delay = cfg.Constants.BACKOFF_BASE_S * (2 ** (attempt - 1))  # 1s, 2s
+            logger.warning(
+                "Handler failed — retrying in %.1fs | attempt=%d/%d %s[%d]@%d: %s",
+                delay, attempt, cfg.Constants.MAX_ATTEMPTS,
+                msg.topic(), msg.partition(), msg.offset(), exc,
+            )
+            await asyncio.sleep(delay)
