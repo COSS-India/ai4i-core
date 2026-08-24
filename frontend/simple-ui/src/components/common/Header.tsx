@@ -1,6 +1,6 @@
 // Header/navbar component for top navigation with authentication and API key management
 
-import { ArrowBackIcon, HamburgerIcon } from "@chakra-ui/icons";
+import { ArrowBackIcon, ChevronDownIcon, HamburgerIcon } from "@chakra-ui/icons";
 import {
   Badge,
   Box,
@@ -10,6 +10,7 @@ import {
   IconButton,
   Menu,
   MenuButton,
+  MenuGroup,
   MenuItem,
   MenuList,
   useColorModeValue,
@@ -21,7 +22,7 @@ import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { INSTITUTION } from "../../config/constants";
 import {
-  ONBOARDING_GUIDE_HREF,
+  PRE_LOGIN_GUIDE_OPTIONS,
   canSeeOnboardingGuide,
   getOnboardingGuideHref,
 } from "../../config/onboardingGuide";
@@ -231,15 +232,31 @@ const Header: React.FC = () => {
             ) : (
               <HStack spacing={3}>
                 {showHomeOnboardingGuideLink && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      window.open(ONBOARDING_GUIDE_HREF, "_blank", "noopener,noreferrer");
-                    }}
-                  >
-                    Onboarding Guide
-                  </Button>
+                  <Menu placement="bottom-end">
+                    <MenuButton
+                      as={Button}
+                      variant="ghost"
+                      size="sm"
+                      rightIcon={<ChevronDownIcon />}
+                    >
+                      Onboarding Guide
+                    </MenuButton>
+                    <MenuList minW="16rem">
+                      <MenuGroup title="Select your guide">
+                        {PRE_LOGIN_GUIDE_OPTIONS.map((option) => (
+                          <MenuItem
+                            key={option.href}
+                            as="a"
+                            href={option.href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {option.label}
+                          </MenuItem>
+                        ))}
+                      </MenuGroup>
+                    </MenuList>
+                  </Menu>
                 )}
                 <Button
                   colorScheme="blue"

@@ -3,9 +3,19 @@
 import {
   ADOPTER_ADMIN_GUIDE_HREF,
   INSTITUTION_ADMIN_GUIDE_HREF,
+  PRE_LOGIN_GUIDE_OPTIONS,
   canSeeOnboardingGuide,
   getOnboardingGuideHref,
 } from "../../src/config/onboardingGuide";
+
+describe("PRE_LOGIN_GUIDE_OPTIONS", () => {
+  it("exposes both guides for the signed-out chooser", () => {
+    expect(PRE_LOGIN_GUIDE_OPTIONS.map((option) => option.href)).toEqual([
+      ADOPTER_ADMIN_GUIDE_HREF,
+      INSTITUTION_ADMIN_GUIDE_HREF,
+    ]);
+  });
+});
 
 describe("canSeeOnboardingGuide", () => {
   it.each([
