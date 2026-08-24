@@ -859,7 +859,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       });
       showToast({
         type: "success",
-        message: `${created.organisation} is pending activation. The contact will receive a setup link by email.`,
+        message: `${created.organisation} is created successfully and is pending activation. A setup link is being sent to the contact's email address.`,
       });
       closeTenantModal();
       await refreshTenantAndUserLists(
@@ -990,8 +990,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       }
       showToast({
         type: "success",
-        message:
-          `User provisioned under ${INSTITUTION.toLowerCase()}. The username is auto-generated from email.`,
+        message: `${INSTITUTION} user is created and provisioned under ${tenant?.organisation?.trim() || tenantId}. A setup link is being sent. The username is auto-generated from the email address.`,
       });
       closeUserModal();
       const createdRole = userForm.role;

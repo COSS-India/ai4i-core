@@ -6,6 +6,7 @@ import {
   Td,
   Text,
   Thead,
+  Tooltip,
   Tr,
   VStack,
 } from "@chakra-ui/react";
@@ -109,11 +110,19 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
               />
               <KpiCard
                 label={section.MOST_USED}
+                valueFontSize="xl"
                 value={
                   hasMostUsed ? (
-                    <HStack spacing={2}>
-                      <Box w={2} h={2} borderRadius="full" bg="green.400" />
-                      <Text as="span">{insights.mostUsedName}</Text>
+                    <HStack spacing={2} minW={0} w="full">
+                      <Box w={2} h={2} borderRadius="full" bg="green.400" flexShrink={0} />
+                      <Tooltip
+                        label={insights.mostUsedName}
+                        hasArrow
+                        placement="top"
+                        openDelay={200}
+                      >
+                        <Text noOfLines={1}>{insights.mostUsedName}</Text>
+                      </Tooltip>
                     </HStack>
                   ) : (
                     METERING.GRAPH.EMPTY_VALUE
