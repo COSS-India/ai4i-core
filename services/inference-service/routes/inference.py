@@ -549,7 +549,7 @@ async def _run_llm_chat_stream(
     opened inside the generator and kept alive until the stream ends, the same
     trick proxy_traced_stream() uses for the model/ai-inference spans.
     """
-    kind, status_code, result = await OpenAIProxyService().proxy_traced_stream(
+    kind, status_code, result, model_ctx = await OpenAIProxyService().proxy_traced_stream(
         path=path, payload=payload, request=request,
     )
 
@@ -560,6 +560,18 @@ async def _run_llm_chat_stream(
             req_attrs.update(get_context_attributes())
             req_attrs["status"] = "failure"
             req_attrs["status_code"] = status_code
+            # Built here, inside "request" (now the active OTel context),
+            # instead of inside proxy_traced_stream() — which returns before
+            # this span exists, so a "model" span opened there would have no
+            # parent and export as its own disconnected root. See
+            # proxy_traced_stream()'s docstring for the full reasoning.
+            with traced_span("model") as model_attrs:
+                OpenAIProxyService._seed_model_attrs(
+                    model_attrs,
+                    model_ctx.get("service_id", ""),
+                    model_ctx.get("model_name"),
+                    failure_status_code=status_code,
+                )
         # Unlike the success path below, this branch never reaches the
         # generator's post-stream bridge call — without this, a failed
         # streaming request carries no model_id (model_breakdown drops the

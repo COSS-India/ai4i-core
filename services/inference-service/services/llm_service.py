@@ -458,7 +458,7 @@ class OpenAIProxyService:
         path: str,
         payload: Any,
         request: Optional[Any] = None,
-    ) -> Tuple[str, int, Any]:
+    ) -> Tuple[str, int, Any, Optional[Dict[str, str]]]:
         """
         Streaming counterpart to ``proxy_traced()``. Shares
         ``_prepare_request`` with it, so MMS resolution, the tier gate and the
@@ -470,32 +470,35 @@ class OpenAIProxyService:
         once the client has read the whole SSE response) — callers must
         consume it to completion, not just discard it, or the ai-inference
         span used for PPU billing never gets logged.
+
+        On the "error" path, the caller (``_run_llm_chat_stream`` in
+        routes/inference.py) opens its "request" span only *after* this
+        method returns — so a "model" span created eagerly in here, before
+        that "request" span exists, has no parent in the active OTel context
+        and exports as its own disconnected root (different otel_trace_id
+        than its sibling "request" span). This method therefore does NOT
+        open a "model" span for either error branch itself; it instead
+        returns ``model_ctx`` — {"service_id", "model_name"} — as the 4th
+        tuple element (``None`` for the "stream" kind) so the caller can
+        build that span from inside its already-open "request" span, keeping
+        the tree intact. The dashboard is unaffected either way (it groups
+        by correlation_id, not OTel parent linkage), but the raw trace data
+        is now consistent.
         """
         try:
             url, service_id, model_name, payload = await self._prepare_request(
                 path=path, payload=payload, request=request,
             )
         except LLMProxyError as exc:
-            # Same reasoning as proxy_traced(): no "model" span means no
-            # task_type on this trace, so it silently drops out of the logs
-            # dashboard's task_types=llm filter. service_id/model_name come
-            # off the exception rather than re-deriving from payload again.
-            with traced_span("model") as model_attrs:
-                self._seed_model_attrs(
-                    model_attrs, exc.service_id, exc.model_name, failure_status_code=exc.status_code,
-                )
-            return "error", exc.status_code, exc.body
+            model_ctx = {"service_id": exc.service_id, "model_name": exc.model_name}
+            return "error", exc.status_code, exc.body, model_ctx
 
         payload = self._with_include_usage(payload)
 
         kind, status_code, result = await self.proxy_stream(path=url, payload=payload)
         if kind == "error":
-            # proxy_stream() failed before gen() (and its own "model" span)
-            # was ever created — same gap as above, for a genuine upstream
-            # 4xx/5xx or transport error instead of an MMS-level rejection.
-            with traced_span("model") as model_attrs:
-                self._seed_model_attrs(model_attrs, service_id, model_name, failure_status_code=status_code)
-            return "error", status_code, result
+            model_ctx = {"service_id": service_id, "model_name": model_name}
+            return "error", status_code, result, model_ctx
 
         async def gen() -> AsyncIterator[str]:
             with traced_span("model") as model_attrs:
@@ -513,7 +516,7 @@ class OpenAIProxyService:
                         self._record_stream_usage(line, infer_attrs)
                         yield line
 
-        return "stream", 200, gen()
+        return "stream", 200, gen(), None
 
     @staticmethod
     def _record_stream_usage(line: str, infer_attrs: Dict[str, Any]) -> None:

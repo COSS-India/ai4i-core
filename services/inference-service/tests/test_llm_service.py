@@ -293,50 +293,56 @@ async def test_proxy_traced_emits_model_span_task_type_on_tier_rejected(
 
 
 @pytest.mark.asyncio
-async def test_proxy_traced_stream_emits_model_span_task_type_on_service_not_found(
+async def test_proxy_traced_stream_returns_model_ctx_on_service_not_found(
     llm_service, capture_finalize_span,
 ):
-    """Same regression, for the streaming entry point's LLMProxyError path."""
+    """Same regression, for the streaming entry point's LLMProxyError path.
+
+    proxy_traced_stream() no longer opens the "model" span itself for a
+    rejection — it returns (service_id, model_name) as model_ctx, the 4th
+    tuple element, so the caller (_run_llm_chat_stream) can build that span
+    from inside its own already-open "request" span instead (see
+    test_llm_chat_stream_bridge.py for that nesting behavior — asserting it
+    here would require the real OTel plumbing this unit test deliberately
+    doesn't set up)."""
     with patch.object(llm_service, "resolve_upstream_url",
                       new=AsyncMock(side_effect=LookupError("not found"))):
-        kind, status, _ = await llm_service.proxy_traced_stream(
+        kind, status, _, model_ctx = await llm_service.proxy_traced_stream(
             "/v1/chat/completions", {"model": "missing-svc", "stream": True}
         )
 
     assert kind == "error"
     assert status == 404
-    model_attrs, _ = _capture_model_attrs(capture_finalize_span)
-    assert model_attrs["task_type"] == "LLM"
-    assert model_attrs["service_id"] == "missing-svc"
-    assert model_attrs["status"] == "failure"
-    assert model_attrs["status_code"] == 404
+    assert model_ctx == {"service_id": "missing-svc", "model_name": ""}
+    # No "model" span should have been opened by proxy_traced_stream itself.
+    assert not any("input_type" not in attrs for attrs, _ in capture_finalize_span), (
+        "proxy_traced_stream() should no longer emit its own 'model' span "
+        "on rejection — that responsibility moved to the route layer"
+    )
 
 
 @pytest.mark.asyncio
-async def test_proxy_traced_stream_emits_model_span_task_type_on_upstream_error(
+async def test_proxy_traced_stream_returns_model_ctx_on_upstream_error(
     llm_service, capture_finalize_span,
 ):
-    """proxy_stream() failing (real upstream 4xx/5xx or transport error) also
-    used to skip gen()'s "model" span entirely, since gen() is only created on
-    the success path — a genuinely different gap from the LLMProxyError case
-    above, both are fixed the same way."""
+    """proxy_stream() failing (real upstream 4xx/5xx or transport error) is
+    the second rejection branch with the same model_ctx contract."""
     from services.llm_service import UpstreamStreamError
 
     with patch.object(llm_service, "resolve_upstream_url",
                       new=AsyncMock(return_value=("http://vllm:8000/v1/chat/completions", _STUB_SERVICE_INFO))), \
          patch.object(llm_service, "open_stream",
                       new=AsyncMock(side_effect=UpstreamStreamError(500, {"detail": "model server error"}))):
-        kind, status, body = await llm_service.proxy_traced_stream(
+        kind, status, body, model_ctx = await llm_service.proxy_traced_stream(
             "/v1/chat/completions", {"model": "svc-1", "stream": True}
         )
 
     assert kind == "error"
     assert status == 500
-    model_attrs, _ = _capture_model_attrs(capture_finalize_span)
-    assert model_attrs["task_type"] == "LLM"
-    assert model_attrs["model_name"] == "google/gemma-4-E4B-it"
-    assert model_attrs["status"] == "failure"
-    assert model_attrs["status_code"] == 500
+    assert model_ctx == {"service_id": "svc-1", "model_name": "google/gemma-4-E4B-it"}
+    assert not any("input_type" not in attrs for attrs, _ in capture_finalize_span), (
+        "proxy_traced_stream() should no longer emit its own 'model' span on rejection"
+    )
 
 
 # ── proxy_traced — ai-inference span must reflect real failures ──────────────
@@ -449,7 +455,7 @@ def test_with_include_usage_does_not_mutate_caller_payload(llm_service):
 async def test_proxy_traced_stream_returns_404_when_service_not_found(llm_service):
     with patch.object(llm_service, "resolve_upstream_url",
                       new=AsyncMock(side_effect=LookupError("not found"))):
-        kind, status, _ = await llm_service.proxy_traced_stream(
+        kind, status, _, _ = await llm_service.proxy_traced_stream(
             "/v1/chat/completions", {"model": "missing-svc", "stream": True}
         )
     assert kind == "error"
@@ -460,7 +466,7 @@ async def test_proxy_traced_stream_returns_404_when_service_not_found(llm_servic
 async def test_proxy_traced_stream_returns_503_when_mms_unavailable(llm_service):
     with patch.object(llm_service, "resolve_upstream_url",
                       new=AsyncMock(side_effect=ConnectionError("mms down"))):
-        kind, status, _ = await llm_service.proxy_traced_stream(
+        kind, status, _, _ = await llm_service.proxy_traced_stream(
             "/v1/chat/completions", {"model": "svc-1", "stream": True}
         )
     assert kind == "error"
@@ -473,13 +479,17 @@ async def test_proxy_traced_stream_enforces_tier_gate(
 ):
     """Streaming must not be a way around the entitlement check. Also the
     streaming counterpart of the model_name-loss regression: MMS has already
-    resolved the real model name by the time the tier gate rejects."""
+    resolved the real model name by the time the tier gate rejects — that
+    now reaches the caller via model_ctx, the 4th return element, since
+    proxy_traced_stream() no longer opens the "model" span itself (that
+    moved to the route layer so it nests under "request" — see
+    test_llm_chat_stream_bridge.py for the span-nesting assertion)."""
     mock_request = MagicMock()
     mock_request.headers.get.return_value = "tier-2"  # not in allowed_tiers
 
     with patch.object(llm_service, "resolve_upstream_url",
                       new=AsyncMock(return_value=("http://vllm:8000/v1/chat/completions", _STUB_SERVICE_INFO))):
-        kind, status, body = await llm_service.proxy_traced_stream(
+        kind, status, body, model_ctx = await llm_service.proxy_traced_stream(
             "/v1/chat/completions",
             {"model": "svc-1", "stream": True},
             request=mock_request,
@@ -487,12 +497,10 @@ async def test_proxy_traced_stream_enforces_tier_gate(
     assert kind == "error"
     assert status == 403
     assert "quota" in body["detail"].lower()
-    model_attrs, _ = _capture_model_attrs(capture_finalize_span)
-    assert model_attrs["task_type"] == "LLM"
-    assert model_attrs["status"] == "failure"
-    assert model_attrs["status_code"] == 403
-    assert model_attrs["service_id"] == "svc-1"
-    assert model_attrs["model_name"] == "google/gemma-4-E4B-it"
+    assert model_ctx == {"service_id": "svc-1", "model_name": "google/gemma-4-E4B-it"}
+    assert not any("input_type" not in attrs for attrs, _ in capture_finalize_span), (
+        "proxy_traced_stream() should no longer emit its own 'model' span on rejection"
+    )
 
 
 @pytest.mark.asyncio
@@ -509,7 +517,7 @@ async def test_proxy_traced_stream_injects_upstream_model_and_include_usage(llm_
     with patch.object(llm_service, "resolve_upstream_url",
                       new=AsyncMock(return_value=("http://vllm:8000/v1/chat/completions", _STUB_SERVICE_INFO))), \
          patch.object(llm_service, "proxy_stream", side_effect=capture_stream):
-        kind, _, result = await llm_service.proxy_traced_stream(
+        kind, _, result, _ = await llm_service.proxy_traced_stream(
             "/v1/chat/completions", {"model": "svc-1", "stream": True}
         )
         await _drain(result)
@@ -534,7 +542,7 @@ async def test_proxy_traced_stream_passes_sse_lines_through_untouched(llm_servic
                       new=AsyncMock(return_value=("http://vllm:8000/v1/chat/completions", _STUB_SERVICE_INFO))), \
          patch.object(llm_service, "proxy_stream",
                       new=AsyncMock(return_value=("stream", 200, _sse_lines(lines)))):
-        _, _, result = await llm_service.proxy_traced_stream(
+        _, _, result, _ = await llm_service.proxy_traced_stream(
             "/v1/chat/completions", {"model": "svc-1", "stream": True}
         )
         received = await _drain(result)
@@ -571,7 +579,7 @@ async def test_proxy_traced_stream_records_usage_from_final_chunk(llm_service):
                       new=AsyncMock(return_value=("http://vllm:8000/v1/chat/completions", _STUB_SERVICE_INFO))), \
          patch.object(llm_service, "proxy_stream",
                       new=AsyncMock(return_value=("stream", 200, _sse_lines(lines)))):
-        _, _, result = await llm_service.proxy_traced_stream(
+        _, _, result, _ = await llm_service.proxy_traced_stream(
             "/v1/chat/completions", {"model": "svc-1", "stream": True}
         )
         await _drain(result)
