@@ -255,12 +255,23 @@ async def test_proxy_traced_emits_model_span_task_type_on_service_not_found(
     model_attrs, _ = _capture_model_attrs(capture_finalize_span)
     assert model_attrs["task_type"] == "LLM"
     assert model_attrs["service_id"] == "missing-svc"
+    # Regression: proxy_multipart() shares this same rejection-span pattern
+    # and has NO "request" span at all — without status/status_code here,
+    # a rejected request would export with no failure marker anywhere in the
+    # trace. proxy_traced() also has a sibling "request" span (routes/
+    # inference.py) that independently marks failure, but this span should
+    # be self-consistent regardless of whether that sibling exists.
+    assert model_attrs["status"] == "failure"
+    assert model_attrs["status_code"] == 404
 
 
 @pytest.mark.asyncio
 async def test_proxy_traced_emits_model_span_task_type_on_tier_rejected(
     llm_service, capture_finalize_span,
 ):
+    """Regression test for the model_name-loss bug: MMS has already resolved
+    the real upstream model name by the time the tier gate rejects the
+    request, so the 403's model span must carry it — not "unknown"."""
     mock_request = MagicMock()
     mock_request.headers.get.return_value = "tier-2"  # not in allowed_tiers
 
@@ -275,6 +286,10 @@ async def test_proxy_traced_emits_model_span_task_type_on_tier_rejected(
     assert status == 403
     model_attrs, _ = _capture_model_attrs(capture_finalize_span)
     assert model_attrs["task_type"] == "LLM"
+    assert model_attrs["status"] == "failure"
+    assert model_attrs["status_code"] == 403
+    assert model_attrs["service_id"] == "svc-1"
+    assert model_attrs["model_name"] == "google/gemma-4-E4B-it"
 
 
 @pytest.mark.asyncio
@@ -293,6 +308,8 @@ async def test_proxy_traced_stream_emits_model_span_task_type_on_service_not_fou
     model_attrs, _ = _capture_model_attrs(capture_finalize_span)
     assert model_attrs["task_type"] == "LLM"
     assert model_attrs["service_id"] == "missing-svc"
+    assert model_attrs["status"] == "failure"
+    assert model_attrs["status_code"] == 404
 
 
 @pytest.mark.asyncio
@@ -318,6 +335,8 @@ async def test_proxy_traced_stream_emits_model_span_task_type_on_upstream_error(
     model_attrs, _ = _capture_model_attrs(capture_finalize_span)
     assert model_attrs["task_type"] == "LLM"
     assert model_attrs["model_name"] == "google/gemma-4-E4B-it"
+    assert model_attrs["status"] == "failure"
+    assert model_attrs["status_code"] == 500
 
 
 # ── proxy_traced — ai-inference span must reflect real failures ──────────────
@@ -449,8 +468,12 @@ async def test_proxy_traced_stream_returns_503_when_mms_unavailable(llm_service)
 
 
 @pytest.mark.asyncio
-async def test_proxy_traced_stream_enforces_tier_gate(llm_service):
-    """Streaming must not be a way around the entitlement check."""
+async def test_proxy_traced_stream_enforces_tier_gate(
+    llm_service, capture_finalize_span,
+):
+    """Streaming must not be a way around the entitlement check. Also the
+    streaming counterpart of the model_name-loss regression: MMS has already
+    resolved the real model name by the time the tier gate rejects."""
     mock_request = MagicMock()
     mock_request.headers.get.return_value = "tier-2"  # not in allowed_tiers
 
@@ -464,6 +487,12 @@ async def test_proxy_traced_stream_enforces_tier_gate(llm_service):
     assert kind == "error"
     assert status == 403
     assert "quota" in body["detail"].lower()
+    model_attrs, _ = _capture_model_attrs(capture_finalize_span)
+    assert model_attrs["task_type"] == "LLM"
+    assert model_attrs["status"] == "failure"
+    assert model_attrs["status_code"] == 403
+    assert model_attrs["service_id"] == "svc-1"
+    assert model_attrs["model_name"] == "google/gemma-4-E4B-it"
 
 
 @pytest.mark.asyncio
@@ -720,12 +749,20 @@ async def test_proxy_multipart_emits_model_span_task_type_on_service_not_found(
     model_attrs, _ = _capture_model_attrs(capture_finalize_span)
     assert model_attrs["task_type"] == "LLM"
     assert model_attrs["service_id"] == "missing-svc"
+    # proxy_multipart() never opens a "request" span — this model span is
+    # the ONLY span in the trace, so it must carry the failure itself or the
+    # rejected request is untraceable as a failure anywhere in the pipeline.
+    assert model_attrs["status"] == "failure"
+    assert model_attrs["status_code"] == 404
 
 
 @pytest.mark.asyncio
 async def test_proxy_multipart_emits_model_span_task_type_on_tier_rejected(
     llm_service, capture_finalize_span,
 ):
+    """Regression test for the model_name-loss bug: MMS has already resolved
+    the real upstream model name by the time the tier gate rejects the
+    request, so the 403's model span must carry it — not "unknown"."""
     mock_request = MagicMock()
     mock_request.headers.get.return_value = "tier-2"  # not in allowed_tiers
 
@@ -741,3 +778,7 @@ async def test_proxy_multipart_emits_model_span_task_type_on_tier_rejected(
     assert status == 403
     model_attrs, _ = _capture_model_attrs(capture_finalize_span)
     assert model_attrs["task_type"] == "LLM"
+    assert model_attrs["status"] == "failure"
+    assert model_attrs["status_code"] == 403
+    assert model_attrs["service_id"] == "svc-1"
+    assert model_attrs["model_name"] == "google/gemma-4-E4B-it"

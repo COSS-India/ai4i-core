@@ -43,12 +43,22 @@ class LLMProxyError(Exception):
     not found, MMS unreachable, tier not entitled). Carries the
     ``(status_code, body)`` the caller should surface, because the buffered
     and streaming entry points return different shapes for the same failure.
+
+    Also carries whatever ``service_id``/``model_name`` ``_prepare_request``
+    already knows at the point of rejection, so callers building the
+    rejection-branch "model" span read them off the exception instead of
+    re-deriving service_id from the raw payload a second time. model_name is
+    only ever non-empty for the 403 (tier) case — MMS has already resolved
+    it by then; the 404/503 cases fail resolution itself, so it's genuinely
+    unknown there and defaults to "" (→ "unknown" in _seed_model_attrs).
     """
 
-    def __init__(self, status_code: int, body: Any):
+    def __init__(self, status_code: int, body: Any, *, service_id: str = "", model_name: str = ""):
         super().__init__(f"llm proxy error {status_code}")
         self.status_code = status_code
         self.body = body
+        self.service_id = service_id
+        self.model_name = model_name
 
 
 class UpstreamStreamError(Exception):
@@ -126,11 +136,17 @@ class OpenAIProxyService:
         service_id: str,
         service_info: Dict[str, Any],
         request: Optional[Any],
+        *,
+        model_name: str = "",
     ) -> None:
         """
         Reject the request when the caller's tier is not entitled to the
         service. Mirrors orchestrator.py for Triton services, and is only
         enforced when the service has explicit tier assignments.
+
+        ``model_name`` is passed in already-resolved (from _prepare_request,
+        which computes it before calling this) so a 403 here still carries
+        the real model name on its "model" span instead of "unknown".
         """
         if request is None:
             return
@@ -140,7 +156,8 @@ class OpenAIProxyService:
         allowed_tiers = [str(t) for t in service_info.get("tier_ids", [])]
         if allowed_tiers and tier_id not in allowed_tiers:
             raise LLMProxyError(
-                403, {"detail": f"Service '{service_id}' is not available for your quota"}
+                403, {"detail": f"Service '{service_id}' is not available for your quota"},
+                service_id=service_id, model_name=model_name,
             )
 
     async def _prepare_request(
@@ -177,18 +194,21 @@ class OpenAIProxyService:
             url, service_info = await self.resolve_upstream_url(service_id=service_id, path=path)
         except LookupError:
             logger.error("LLM service not found: %s", service_id)
-            raise LLMProxyError(404, {"detail": f"Service '{service_id}' not found"})
+            raise LLMProxyError(404, {"detail": f"Service '{service_id}' not found"}, service_id=service_id)
         except (ConnectionError, ValueError):
             logger.error("LLM proxy unavailable for service: %s", service_id)
-            raise LLMProxyError(503, {"detail": "LLM service unavailable"})
+            raise LLMProxyError(503, {"detail": "LLM service unavailable"}, service_id=service_id)
+
+        # The real upstream model name from MMS adapter_config, replacing the
+        # client's `model` value (which was the service ID) with the model
+        # vLLM actually expects. Resolved here — before the tier gate, which
+        # can itself raise — so a 403 rejection still carries the real model
+        # name on its LLMProxyError instead of losing it to "unknown".
+        model_name = (service_info.get("adapter_config") or {}).get("model_name", "") if isinstance(payload, dict) else ""
 
         # Runs before creating billing spans so a 403 produces no ai-inference span.
-        self._enforce_tier_gate(service_id, service_info, request)
+        self._enforce_tier_gate(service_id, service_info, request, model_name=model_name)
 
-        # Inject the real upstream model name from MMS adapter_config, replacing
-        # the client's `model` value (which was the service ID) with the model
-        # vLLM actually expects.
-        model_name = (service_info.get("adapter_config") or {}).get("model_name", "") if isinstance(payload, dict) else ""
         if model_name and isinstance(payload, dict):
             payload = {**payload, "model": model_name}
 
@@ -207,6 +227,8 @@ class OpenAIProxyService:
         model_attrs: Dict[str, Any],
         service_id: str,
         model_name: Optional[str] = None,
+        *,
+        failure_status_code: Optional[int] = None,
     ) -> None:
         """
         Stamp the attrs every "model" span carries, regardless of outcome.
@@ -215,12 +237,25 @@ class OpenAIProxyService:
         caller, success or rejected, funnels through this one place instead
         of repeating the literal, so there's exactly one spot that decides
         how an LLM request's model span is classified.
+
+        ``failure_status_code`` marks a rejection span as failed, mirroring
+        ``req_attrs["status"] = "failure"`` in routes/inference.py's request
+        span. It matters most for proxy_multipart(), which never opens a
+        "request" span — the model span this seeds is the *only* span in
+        that trace, so without this it carries task_type but nothing marking
+        the request as failed, e.g. for a rejected/never-forwarded audio
+        upload. Success spans (the default, param omitted) are unaffected —
+        the model span has never carried a status attribute on that path,
+        and this doesn't change that.
         """
         model_attrs["task_type"] = _TASK_TYPE_LLM
         model_attrs["model_name"] = model_name or "unknown"
         model_attrs["model_version"] = "unknown"
         model_attrs.update(get_context_attributes())
         model_attrs["service_id"] = service_id
+        if failure_status_code is not None:
+            model_attrs["status"] = "failure"
+            model_attrs["status_code"] = failure_status_code
 
     async def proxy_traced(
         self,
@@ -246,10 +281,13 @@ class OpenAIProxyService:
             # without one this trace would show task_type=null and never
             # match a task_types=llm filter. Emit a minimal model span, seeded
             # the same way as the success span below, so the failure is still
-            # classifiable as an LLM request.
-            rejected_service_id = payload.get("model", "") or "" if isinstance(payload, dict) else ""
+            # classifiable as an LLM request. service_id/model_name come off
+            # the exception (whatever _prepare_request already resolved)
+            # rather than re-deriving service_id from payload a second time.
             with traced_span("model") as model_attrs:
-                self._seed_model_attrs(model_attrs, rejected_service_id)
+                self._seed_model_attrs(
+                    model_attrs, exc.service_id, exc.model_name, failure_status_code=exc.status_code,
+                )
             return exc.status_code, exc.body
 
         with traced_span("model") as model_attrs:
@@ -440,10 +478,12 @@ class OpenAIProxyService:
         except LLMProxyError as exc:
             # Same reasoning as proxy_traced(): no "model" span means no
             # task_type on this trace, so it silently drops out of the logs
-            # dashboard's task_types=llm filter.
-            rejected_service_id = payload.get("model", "") or "" if isinstance(payload, dict) else ""
+            # dashboard's task_types=llm filter. service_id/model_name come
+            # off the exception rather than re-deriving from payload again.
             with traced_span("model") as model_attrs:
-                self._seed_model_attrs(model_attrs, rejected_service_id)
+                self._seed_model_attrs(
+                    model_attrs, exc.service_id, exc.model_name, failure_status_code=exc.status_code,
+                )
             return "error", exc.status_code, exc.body
 
         payload = self._with_include_usage(payload)
@@ -454,7 +494,7 @@ class OpenAIProxyService:
             # was ever created — same gap as above, for a genuine upstream
             # 4xx/5xx or transport error instead of an MMS-level rejection.
             with traced_span("model") as model_attrs:
-                self._seed_model_attrs(model_attrs, service_id, model_name)
+                self._seed_model_attrs(model_attrs, service_id, model_name, failure_status_code=status_code)
             return "error", status_code, result
 
         async def gen() -> AsyncIterator[str]:
@@ -535,14 +575,24 @@ class OpenAIProxyService:
             url, service_info = await self.resolve_upstream_url(service_id=service_id, path=path)
         except LookupError:
             logger.error("LLM audio service not found: %s", service_id)
+            # proxy_multipart never opens a "request" span (see routes calling
+            # it), so this model span is the ONLY span in the trace — without
+            # a failure marking here, the whole request is untraceable as
+            # failed anywhere in the pipeline.
             with traced_span("model") as model_attrs:
-                self._seed_model_attrs(model_attrs, service_id)
+                self._seed_model_attrs(model_attrs, service_id, failure_status_code=404)
             return 404, {"error": {"message": f"Service '{service_id}' not found", "type": "not_found"}}
         except (ConnectionError, ValueError):
             logger.error("LLM audio proxy unavailable for service: %s", service_id)
             with traced_span("model") as model_attrs:
-                self._seed_model_attrs(model_attrs, service_id)
+                self._seed_model_attrs(model_attrs, service_id, failure_status_code=503)
             return 503, {"error": {"message": "Service unavailable", "type": "api_error"}}
+
+        # The real upstream model name from MMS adapter_config — resolved
+        # here, before the tier gate, so a 403 rejection's model span still
+        # carries it instead of "unknown" (service_info already has it;
+        # mirrors _prepare_request's ordering for the JSON entry points).
+        model_name = (service_info.get("adapter_config") or {}).get("model_name", "")
 
         # Tier entitlement check. Only enforced when service has explicit tier assignments.
         if request is not None:
@@ -551,14 +601,13 @@ class OpenAIProxyService:
                 allowed_tiers = [str(t) for t in service_info.get("tier_ids", [])]
                 if allowed_tiers and tier_id not in allowed_tiers:
                     with traced_span("model") as model_attrs:
-                        self._seed_model_attrs(model_attrs, service_id)
+                        self._seed_model_attrs(model_attrs, service_id, model_name, failure_status_code=403)
                     return 403, {"error": {
                         "message": f"Service '{service_id}' is not available for your quota",
                         "type": "permission_error",
                     }}
 
-        # Inject model name from MMS adapter_config.
-        model_name = (service_info.get("adapter_config") or {}).get("model_name", "")
+        # Inject the resolved model name into the outgoing form data.
         if model_name:
             data["model"] = model_name
         model = data.get("model", "")
