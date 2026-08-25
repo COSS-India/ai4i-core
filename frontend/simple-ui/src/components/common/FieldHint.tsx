@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { FormHelperText, type FormHelperTextProps } from "@chakra-ui/react";
+import { Text, type TextProps } from "@chakra-ui/react";
 
 const TONE = {
   muted: "gray.500",
@@ -14,7 +14,7 @@ type FieldHintProps = {
   tone?: FieldHintTone;
   /** Skip render (e.g. while an error message is showing). */
   show?: boolean;
-} & Omit<FormHelperTextProps, "children" | "color">;
+} & Omit<TextProps, "children" | "color">;
 
 /** Always-visible field guidance. Copy belongs in `FIELD_HINTS`. */
 export default function FieldHint({
@@ -27,8 +27,8 @@ export default function FieldHint({
 }: FieldHintProps) {
   if (!show || children == null || children === "") return null;
   return (
-    <FormHelperText fontSize={fontSize} color={TONE[tone]} m={0} mt={mt} {...rest}>
+    <Text fontSize={fontSize} color={TONE[tone]} m={0} mt={mt} {...rest}>
       {children}
-    </FormHelperText>
+    </Text>
   );
 }
