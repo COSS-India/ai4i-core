@@ -845,6 +845,7 @@ export default function TenantManagementTab({
               currency={ownInstitution.currency}
               isLoading={ownInstitution.isLoading}
               errorMessage={ownInstitution.errorMessage}
+              tierBudgetErrorMessage={ownInstitution.tierBudgetErrorMessage}
             />
           </TabPanel>
           <TabPanel px={0}>{renderTenantView()}</TabPanel>

@@ -11,9 +11,8 @@ export function dash(v?: string | null): string {
 /** Locale date-time for an ISO timestamp; the raw value if it will not parse. */
 export function fmtDate(v?: string | null): string {
   if (!v) return EMPTY_VALUE;
-  try {
-    return new Date(v).toLocaleString();
-  } catch {
-    return v;
-  }
+  // An unparseable date yields "Invalid Date" rather than throwing, so test the
+  // timestamp instead of relying on a catch.
+  const parsed = new Date(v);
+  return Number.isNaN(parsed.getTime()) ? v : parsed.toLocaleString();
 }

@@ -27,6 +27,8 @@ export interface OwnInstitutionDetails {
   currency: string;
   isLoading: boolean;
   errorMessage: string | null;
+  /** Tier/Budget could not be read — distinct from nothing being assigned. */
+  tierBudgetErrorMessage: string | null;
 }
 
 /**
@@ -57,21 +59,30 @@ export function useOwnInstitutionDetails({
 
   const usage = usageQuery.data;
   const tier = usage?.tier?.trim() ?? "";
-  const hasTierAssignment =
-    Boolean(usage) &&
-    usage?.tierId !== UNASSIGNED_TIER_ID &&
-    tier.toLowerCase() !== UNASSIGNED_TIER_NAME;
+  const hasAssignment = Boolean(usage) && usage?.tierId !== UNASSIGNED_TIER_ID;
+  const rawBudgetLimit = usage?.budget?.limit ?? null;
+
+  // Tier and Budget are read independently: the budget comes off the assignment
+  // row keyed by tenant, so a deleted tier row leaves the name as "Unassigned"
+  // while the budget is still real.
+  const tierName =
+    hasAssignment && tier.toLowerCase() !== UNASSIGNED_TIER_NAME ? tier || null : null;
+  const budgetLimit =
+    hasAssignment || (rawBudgetLimit ?? 0) > 0 ? rawBudgetLimit : null;
 
   return {
     institution: institutionQuery.data ?? null,
-    // No assignment this period, or a failed usage call → null, rendered as "—".
-    tierName: hasTierAssignment ? tier || null : null,
-    budgetLimit: hasTierAssignment ? (usage?.budget?.limit ?? null) : null,
+    // null (no assignment this period, or a failed call) renders as "—".
+    tierName,
+    budgetLimit,
     currency: usage?.currency || "INR",
     // Idle queries report "pending" too, hence the isEnabled guard.
     isLoading: isEnabled && (institutionQuery.isPending || usageQuery.isPending),
     errorMessage: institutionQuery.error
       ? parseError(institutionQuery.error).message
+      : null,
+    tierBudgetErrorMessage: usageQuery.error
+      ? parseError(usageQuery.error).message
       : null,
   };
 }

@@ -28,6 +28,9 @@ import { formatSpendMoney } from "../../utils/usageSpendHelpers";
 import { EMPTY_VALUE, dash, fmtDate } from "../../utils/valueFormatters";
 import type { TenantView } from "../../types/tenant";
 
+/** Shown for Tier/Budget when the call behind them failed — not the same as unassigned. */
+const UNAVAILABLE = "Unavailable";
+
 function DetailField({
   label,
   children,
@@ -52,6 +55,8 @@ export interface InstitutionDetailsPanelProps {
   currency?: string;
   isLoading?: boolean;
   errorMessage?: string | null;
+  /** Set when Tier/Budget could not be read; the two fields then read "Unavailable". */
+  tierBudgetErrorMessage?: string | null;
 }
 
 /** View-only card of the Institution Admin's own institution — no edit or delete. */
@@ -62,6 +67,7 @@ export default function InstitutionDetailsPanel({
   currency = "INR",
   isLoading = false,
   errorMessage = null,
+  tierBudgetErrorMessage = null,
 }: Readonly<InstitutionDetailsPanelProps>) {
   if (isLoading) {
     return (
@@ -145,16 +151,25 @@ export default function InstitutionDetailsPanel({
             <Text>{fmtDate(institution.created_at)}</Text>
           </DetailField>
           <DetailField label="Tier Assigned">
-            <Text>{dash(tierName)}</Text>
+            <Text>{tierBudgetErrorMessage ? UNAVAILABLE : dash(tierName)}</Text>
           </DetailField>
           <DetailField label="Budget Assigned">
             <Text>
-              {budgetLimit != null
-                ? formatSpendMoney(budgetLimit, currency)
-                : EMPTY_VALUE}
+              {tierBudgetErrorMessage
+                ? UNAVAILABLE
+                : budgetLimit != null
+                  ? formatSpendMoney(budgetLimit, currency)
+                  : EMPTY_VALUE}
             </Text>
           </DetailField>
         </SimpleGrid>
+
+        {tierBudgetErrorMessage && (
+          <Alert status="warning" borderRadius="md" mt={4}>
+            <AlertIcon />
+            <Text fontSize="sm">{tierBudgetErrorMessage}</Text>
+          </Alert>
+        )}
       </CardBody>
 
       <CardFooter borderTopWidth="1px" borderColor="gray.100" pt={4}>
