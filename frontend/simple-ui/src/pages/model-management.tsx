@@ -39,6 +39,8 @@ import { ViewIcon } from "@chakra-ui/icons";
 import { useRouter } from "next/router";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import ContentLayout from "../components/common/ContentLayout";
+import FieldHint from "../components/common/FieldHint";
+import { FIELD_HINTS } from "../config/fieldHints";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import {
   fetchAllModelsMatchingFilters,
@@ -1054,9 +1056,9 @@ const ModelManagementPage: React.FC = () => {
                                 bg="white"
                               p={2}
                             />
-                            <Text fontSize="sm" color="gray.500" mt={2}>
-                              Upload a JSON file containing the model data. The file will be validated before you can create the model.
-                            </Text>
+                            <FieldHint mt={2} fontSize="sm">
+                              {FIELD_HINTS.model.jsonUpload.helper}
+                            </FieldHint>
                             <Box mt={2} p={3} bg="blue.50" borderRadius="md" border="1px solid" borderColor="blue.200">
                               <Text fontSize="xs" fontWeight="semibold" color="blue.700" mb={1}>
                                 Required Fields (ULCA):

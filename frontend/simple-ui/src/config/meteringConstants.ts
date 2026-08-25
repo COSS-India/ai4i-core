@@ -65,11 +65,10 @@ export const METERING = {
     },
     TOOLTIPS: {
       total_requests:
-        "Total LLM inference requests in the selected time window (successful and failed).",
-      successful: "LLM requests that completed successfully in the selected time window.",
-      failed: "LLM requests that failed in the selected time window.",
-      avg_rps:
-        "Average LLM requests per second over the selected time window (total requests ÷ window duration).",
+        `Total requests across all models and ${INSTITUTIONS.toLowerCase()} in the selected window.`,
+      successful: "Total requests that completed without error in the selected window.",
+      failed: "Total requests that returned an error in the selected window.",
+      avg_rps: "Average requests per second over the selected window.",
     },
   },
   GRAPH: {
@@ -152,6 +151,11 @@ export const METERING = {
       USAGE: "Quota consumed versus remaining for this model task type.",
       SPEND: "Monetary spend for this model task type in the selected billing period.",
       SHARE: "This row's spend as a percentage of the institution's total spend in the period.",
+      ACTIVE_TENANTS: `${INSTITUTIONS} with spend recorded in the selected billing period.`,
+      BUDGET_EXCEEDED: `Number of ${INSTITUTIONS.toLowerCase()} whose spend has exceeded their allocated budget for this period.`,
+      VS_LAST_MONTH:
+        "Percentage change in total spend compared with the previous billing period.",
+      USAGE_BREAKDOWN: `Number of tiers or task types this ${INSTITUTION.toLowerCase()} consumed under in the selected period — expand to see the breakdown.`,
     },
   },
   COLORS: {
@@ -236,31 +240,31 @@ export const METERING = {
           key: "total_tenants",
           label: `Total ${INSTITUTIONS.toLowerCase()}`,
           helper: "registered on platform",
-          tooltip: `All ${INSTITUTIONS.toLowerCase()} registered on the platform (not filtered by the time window).`,
+          tooltip: `${INSTITUTIONS} registered on the platform, regardless of status.`,
         },
         {
           key: "active_24h",
           label: `Active ${INSTITUTIONS.toLowerCase()}`,
           helper: "last 24 hours",
-          tooltip: `${INSTITUTIONS} with at least one LLM request in the last 24 hours.`,
+          tooltip: `${INSTITUTIONS} with at least one request in the last 24 hours.`,
         },
         {
           key: "active_7d",
           label: `Active ${INSTITUTIONS.toLowerCase()}`,
           helper: "last 7 days",
-          tooltip: `${INSTITUTIONS} with at least one LLM request in the last 7 days.`,
+          tooltip: `${INSTITUTIONS} with at least one request in the last 7 days.`,
         },
         {
           key: "active_30d",
           label: `Active ${INSTITUTIONS.toLowerCase()}`,
           helper: "last 30 days",
-          tooltip: `${INSTITUTIONS} with at least one LLM request in the last 30 days.`,
+          tooltip: `${INSTITUTIONS} with at least one request in the last 30 days.`,
         },
         {
           key: "new_tenants_7d",
           label: `New ${INSTITUTIONS.toLowerCase()}`,
           helper: "onboarded in last 7 days",
-          tooltip: `${INSTITUTIONS} registered on the platform in the last 7 days.`,
+          tooltip: `${INSTITUTIONS} onboarded to the platform in the last 7 days.`,
         },
       ] as const,
     },
@@ -274,10 +278,10 @@ export const METERING = {
       AVG_REQUESTS_LABEL: `Average Requests Per Active ${INSTITUTION}`,
       TOOLTIPS: {
         AVG_REQUESTS:
-          `Total LLM requests in the selected window divided by the number of active ${INSTITUTIONS.toLowerCase()}.`,
+          `Total requests divided by the number of active ${INSTITUTIONS.toLowerCase()} in the selected window.`,
         REQUESTS: "LLM request count for this institution in the selected time window.",
         SHARE:
-          "This institution's share of total platform LLM requests in the selected time window.",
+          `Each ${INSTITUTION.toLowerCase()}'s share of total requests among the ${INSTITUTIONS.toLowerCase()} shown (Top 10 or Top 25, per the toggle).`,
       },
     },
     REQUEST_VOLUME: {
@@ -317,12 +321,13 @@ export const METERING = {
         ACTIVE_MODELS:
           "LLM model versions with traffic in the selected time window.",
         OVERALL_SUCCESS:
-          "Request-weighted average success rate across all services with traffic.",
-        MOST_USED: "Model with the highest total request count in the selected time window.",
+          "Success rate across all models combined in the selected window — the request count here covers every model, not just the one shown as Most Used.",
+        MOST_USED: "Model with the highest number of requests in the selected window.",
         TOTAL_REQUESTS: "LLM request count for this service in the selected time window.",
         CONSUMPTION_PCT:
           "This model's share of requests among services with a resolved Registry model name.",
-        TOKEN_CONSUMPTION: "Tokens processed for this service in the selected time window.",
+        TOKEN_CONSUMPTION:
+          "Consumption measured in the model's own billing unit — for example, tokens, characters, or seconds.",
         SUCCESS_RATE: "Share of successful requests for this service.",
         FAILURE_RATE: "Share of failed requests for this service (100 − success rate).",
       },

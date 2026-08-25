@@ -28,6 +28,8 @@ import UserSearchableSelect from "../common/UserSearchableSelect";
 import StandardModal from "../common/StandardModal";
 import { formatDefaultTenantAssignableRoleLabel } from "../../utils/defaultTenant";
 import { INSTITUTION } from "../../config/constants";
+import { FIELD_HINTS } from "../../config/fieldHints";
+import FieldHint from "../common/FieldHint";
 
 export interface RolesTabProps {
   users: import("../../types/auth").User[];
@@ -98,7 +100,7 @@ export default function RolesTab({ users, isLoadingUsers, defaultTenantId }: Rol
                 selectedPreview={rt.selectedUser}
                 allowClear
               />
-
+              <FieldHint>{FIELD_HINTS.profile.roleUser.helper}</FieldHint>
             </FormControl>
           </Box>
 

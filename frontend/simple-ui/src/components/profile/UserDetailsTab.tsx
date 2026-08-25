@@ -22,6 +22,8 @@ import { canEditOwnProfile } from "../../utils/rbac";
 import { useUserDetails } from "./hooks/useUserDetails";
 import { TIMEZONES } from "./types";
 import DeleteAccountSection from "./DeleteAccountSection";
+import { FIELD_HINTS } from "../../config/fieldHints";
+import FieldHint from "../common/FieldHint";
 
 export default function UserDetailsTab() {
   const { user, updateUser } = useAuth();
@@ -103,8 +105,9 @@ export default function UserDetailsTab() {
               isReadOnly={!ud.isEditingUser}
               onChange={(e) => ud.handleInputChange("full_name", e.target.value)}
               bg={ud.isEditingUser ? "white" : inputReadOnlyBg}
-              placeholder="Enter your full name"
+              placeholder={FIELD_HINTS.profile.fullName.placeholder}
             />
+            <FieldHint show={ud.isEditingUser}>{FIELD_HINTS.profile.fullName.helper}</FieldHint>
           </FormControl>
 
           <FormControl>
@@ -112,9 +115,7 @@ export default function UserDetailsTab() {
             <Text fontSize="md" color="gray.700" py={1}>
               {user.username || "N/A"}
             </Text>
-            <Text fontSize="xs" color="gray.500" mt={1}>
-              Username cannot be changed
-            </Text>
+            <FieldHint>{FIELD_HINTS.profile.usernameLocked}</FieldHint>
           </FormControl>
 
           <FormControl>
@@ -122,9 +123,7 @@ export default function UserDetailsTab() {
             <Text fontSize="md" color="gray.700" py={1}>
               {user.email || "N/A"}
             </Text>
-            <Text fontSize="xs" color="gray.500" mt={1}>
-              Email cannot be changed
-            </Text>
+            <FieldHint>{FIELD_HINTS.profile.emailLocked}</FieldHint>
           </FormControl>
 
           <FormControl isInvalid={!!ud.errors.phone_number}>
@@ -138,14 +137,12 @@ export default function UserDetailsTab() {
               isReadOnly={!ud.isEditingUser}
               onChange={(e) => ud.handleInputChange("phone_number", e.target.value)}
               bg={ud.isEditingUser ? "white" : inputReadOnlyBg}
-              placeholder="+91XXXXXXXXXX or XXXXXXXXXX"
+              placeholder={FIELD_HINTS.profile.phone.placeholder}
               type="tel"
             />
-            {ud.isEditingUser && !ud.errors.phone_number && (
-              <Text fontSize="xs" color="gray.500" mt={1}>
-                Enter a valid Indian mobile number (10 digits starting with 6-9)
-              </Text>
-            )}
+            <FieldHint show={ud.isEditingUser && !ud.errors.phone_number}>
+              {FIELD_HINTS.profile.phone.helper}
+            </FieldHint>
             {ud.errors.phone_number && (
               <Text color="red.500" fontSize="sm" mt={1}>
                 {ud.errors.phone_number}
@@ -171,6 +168,7 @@ export default function UserDetailsTab() {
               ) : (
                 <Input value={user.timezone || "N/A"} isReadOnly bg={inputReadOnlyBg} />
               )}
+              <FieldHint>{FIELD_HINTS.profile.timezone.helper}</FieldHint>
             </FormControl>
           </HStack>
             </VStack>
