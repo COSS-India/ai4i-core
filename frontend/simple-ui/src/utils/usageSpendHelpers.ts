@@ -62,16 +62,17 @@ export function billingPeriodLabel(key: BillingPeriodKey): string {
   return key === "current" ? "CURRENT MONTH" : "LAST MONTH";
 }
 
+/** Budget and spend figures display as whole currency units — decimals rounded away. */
 export function formatSpendMoney(n: number, currency = "INR"): string {
   try {
     return new Intl.NumberFormat("en-IN", {
       style: "currency",
       currency,
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
     }).format(n);
   } catch {
-    return `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return `₹${Math.round(n).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
   }
 }
 
