@@ -146,8 +146,6 @@ export const METERING = {
       BUDGET:
         "How much of the allocated budget has been spent versus what remains in this period.",
       ALLOCATED_TOKENS: "Token allowance assigned to this institution for the billing period.",
-      TOKEN_USAGE:
-        "Tokens consumed versus remaining allowance in this billing period. Multi-task institutions expand for a per-type breakdown.",
       USAGE: "Quota consumed versus remaining for this model task type.",
       SPEND: "Monetary spend for this model task type in the selected billing period.",
       SHARE: "This row's spend as a percentage of the institution's total spend in the period.",

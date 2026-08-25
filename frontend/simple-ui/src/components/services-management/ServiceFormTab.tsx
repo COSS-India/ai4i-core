@@ -243,10 +243,8 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
 
             {/* 3. Model ID + Model Submission Date — FYI plain text (not disabled inputs) */}
             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-              <Box>
-                <Text fontSize="sm" fontWeight="semibold" color="gray.700" mb={1}>
-                  Model ID
-                </Text>
+              <FormControl>
+                <FormLabel fontWeight="semibold">Model ID</FormLabel>
                 <Text
                   fontSize="sm"
                   color={isCreateFormModelSelected ? "gray.800" : "gray.500"}
@@ -254,11 +252,9 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   {formData.modelId || FIELD_HINTS.service.modelId.empty}
                 </Text>
                 <FieldHint>{FIELD_HINTS.service.modelId.helper}</FieldHint>
-              </Box>
-              <Box>
-                <Text fontSize="sm" fontWeight="semibold" color="gray.700" mb={1}>
-                  Model Submission Date
-                </Text>
+              </FormControl>
+              <FormControl>
+                <FormLabel fontWeight="semibold">Model Submission Date</FormLabel>
                 <Text
                   fontSize="sm"
                   color={
@@ -272,7 +268,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                     : FIELD_HINTS.service.modelId.empty}
                 </Text>
                 <FieldHint>{FIELD_HINTS.service.submissionDate.helper}</FieldHint>
-              </Box>
+              </FormControl>
             </SimpleGrid>
 
             {/* Service Name (non-LLM) + Service ID */}
@@ -324,7 +320,9 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 <FormErrorMessage>{idError}</FormErrorMessage>
               ) : (
                 <FieldHint show={!editingService}>
-                  {FIELD_HINTS.service.serviceId.helper}
+                  {isLlmTaskType
+                    ? FIELD_HINTS.service.serviceId.llmHelper
+                    : FIELD_HINTS.service.serviceId.helper}
                 </FieldHint>
               )}
             </FormControl>

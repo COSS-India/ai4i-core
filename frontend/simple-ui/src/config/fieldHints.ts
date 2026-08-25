@@ -3,6 +3,9 @@ import { EMAIL_AVAILABLE_MSG } from "../utils/tenantEmailValidation";
 
 const org = INSTITUTION.toLowerCase();
 
+const NAME_CHARS_HELPER =
+  "Letters, spaces, hyphens, and apostrophes only, 2–80 characters";
+
 /** Placeholder + always-visible helper/tooltip copy for field-level guidance. */
 export const FIELD_HINTS = {
   tenant: {
@@ -12,7 +15,7 @@ export const FIELD_HINTS = {
     },
     contactName: {
       placeholder: "Enter contact's full name",
-      helper: "Letters, spaces & hyphens only, 2–80 characters",
+      helper: NAME_CHARS_HELPER,
     },
     email: {
       placeholder: "Enter official email address",
@@ -33,7 +36,7 @@ export const FIELD_HINTS = {
     tenant: { helper: `Auto-filled from selected ${org}` },
     fullName: {
       placeholder: "Enter user's full name",
-      helper: "Letters, spaces & hyphens only, 2–80 characters",
+      helper: NAME_CHARS_HELPER,
     },
     email: {
       placeholder: "Enter official email address",
@@ -73,12 +76,15 @@ export const FIELD_HINTS = {
     submissionDate: { helper: "Auto-filled" },
     name: {
       placeholder: "Enter service name",
-      helper: "e.g: [model-name]/[GPU]. Letters, numbers, hyphens, and slashes only",
+      helper:
+        "5–100 characters. Letters, numbers, hyphens, and slashes only. e.g: [model-name]/[GPU]",
     },
     serviceId: {
       placeholder: "Enter service ID",
       helper:
-        "Pre-filled with the model prefix. Letters, numbers, hyphens, underscores, and slashes only. e.g: [model-name]/[GPU]",
+        "5–255 characters. Letters, numbers, hyphens, underscores, and slashes only. e.g: [model-name]/[GPU]",
+      llmHelper:
+        "Pre-filled with the model prefix. Letters, numbers, hyphens, and slashes only. 5–255 characters. e.g: [model-name]/[GPU]",
     },
     description: {
       placeholder: "Provide a brief description of what this service does",
@@ -103,7 +109,7 @@ export const FIELD_HINTS = {
     tierSearch: { placeholder: "Search tiers..." },
   },
   logs: {
-    search: { placeholder: "Search by trace ID or URL" },
+    search: { placeholder: "Search by trace ID, URL, task type, or status" },
     startTime: { helper: "Filter logs from this date & time" },
     endTime: { helper: "Filter logs up to this date & time; must be after Start Time" },
     tenant: { helper: `Filter logs by ${org}.` },
@@ -112,7 +118,7 @@ export const FIELD_HINTS = {
   profile: {
     fullName: {
       placeholder: "Enter your full name",
-      helper: "Letters, spaces & hyphens only, 2–80 characters",
+      helper: NAME_CHARS_HELPER,
     },
     timezone: { helper: "Used to display dates and times across the portal" },
     currentPassword: { placeholder: "Enter current password", helper: "Required" },

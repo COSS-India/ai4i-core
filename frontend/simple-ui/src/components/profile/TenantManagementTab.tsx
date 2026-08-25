@@ -1635,17 +1635,22 @@ export default function TenantManagementTab({
                     <FormErrorMessage>
                       {tm.editTenantFormErrors.email}
                     </FormErrorMessage>
+                    <FieldHint show={!tm.editTenantFormErrors.email}>
+                      {FIELD_HINTS.tenant.emailVerifyOnChange}
+                    </FieldHint>
                     <FieldHint
-                      show={!tm.editTenantFormErrors.email}
+                      show={
+                        !tm.editTenantFormErrors.email &&
+                        (tm.editTenantEmailStatus === "checking" ||
+                          tm.editTenantEmailStatus === "available")
+                      }
                       tone={
                         tm.editTenantEmailStatus === "available" ? "success" : "muted"
                       }
                     >
                       {tm.editTenantEmailStatus === "checking"
                         ? FIELD_HINTS.tenant.emailChecking
-                        : tm.editTenantEmailStatus === "available"
-                          ? FIELD_HINTS.tenant.emailAvailable
-                          : FIELD_HINTS.tenant.emailVerifyOnChange}
+                        : FIELD_HINTS.tenant.emailAvailable}
                     </FieldHint>
                   </>
                 ) : (
