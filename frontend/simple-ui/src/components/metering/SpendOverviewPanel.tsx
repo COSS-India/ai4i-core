@@ -93,6 +93,8 @@ interface SpendOverviewPanelProps {
   emptyStateMessage?: string;
   /** When set, show tenant Budget / Quota summary cards instead of platform totals. */
   tenantDetail?: TenantUsageItem | null;
+  /** Program-wide summary strip (Active institutions, Budget exceeded, vs last month). Hidden for Institution Admin / scoped views. */
+  showProgramMetrics?: boolean;
 }
 
 const cardFlex = {
@@ -239,6 +241,7 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
   spendChangePercent,
   emptyStateMessage = "No spend data for this period.",
   tenantDetail = null,
+  showProgramMetrics = true,
 }) => {
   const [hlKey, setHlKey] = useState<string | null>(null);
   const sorted = useMemo(
@@ -310,37 +313,39 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
           />
         ))}
       </Flex>
-      <Box bg={SPEND_CARD_BG} borderRadius="12px" borderWidth="1px" borderColor="gray.200" p="14px 20px">
-        <Flex
-          direction={{ base: "column", sm: "row" }}
-          gap={{ base: "9px", sm: 6 }}
-          justify="space-between"
-          fontSize="12.5px"
-          flexWrap="wrap"
-        >
-          <HStack spacing={1.5}>
-            <Text color="gray.500">Active {INSTITUTIONS.toLowerCase()}:</Text>
-            <Text fontWeight="semibold" color="gray.800">{summary?.activeTenants ?? "—"}</Text>
-          </HStack>
-          <HStack spacing={1.5}>
-            <Text color="gray.500">Budget exceeded:</Text>
-            <Text
-              fontWeight="semibold"
-              color={(summary?.budgetExceededTenants ?? 0) > 0 ? USAGE_SPEND_DANGER : "gray.800"}
-            >
-              {budgetExceededLabel(summary?.budgetExceededTenants)}
-            </Text>
-          </HStack>
-          <HStack spacing={1.5}>
-            <Text color="gray.500">vs last month:</Text>
-            <Text fontWeight="semibold" color={spendChangeColor(spendChangePercent) ?? "gray.800"}>
-              {spendChangePercent == null
-                ? "—"
-                : `${spendChangeArrow(spendChangePercent)} ${Math.abs(spendChangePercent).toFixed(1)}%`}
-            </Text>
-          </HStack>
-        </Flex>
-      </Box>
+      {showProgramMetrics ? (
+        <Box bg={SPEND_CARD_BG} borderRadius="12px" borderWidth="1px" borderColor="gray.200" p="14px 20px">
+          <Flex
+            direction={{ base: "column", sm: "row" }}
+            gap={{ base: "9px", sm: 6 }}
+            justify="space-between"
+            fontSize="12.5px"
+            flexWrap="wrap"
+          >
+            <HStack spacing={1.5}>
+              <Text color="gray.500">Active {INSTITUTIONS.toLowerCase()}:</Text>
+              <Text fontWeight="semibold" color="gray.800">{summary?.activeTenants ?? "—"}</Text>
+            </HStack>
+            <HStack spacing={1.5}>
+              <Text color="gray.500">Budget exceeded:</Text>
+              <Text
+                fontWeight="semibold"
+                color={(summary?.budgetExceededTenants ?? 0) > 0 ? USAGE_SPEND_DANGER : "gray.800"}
+              >
+                {budgetExceededLabel(summary?.budgetExceededTenants)}
+              </Text>
+            </HStack>
+            <HStack spacing={1.5}>
+              <Text color="gray.500">vs last month:</Text>
+              <Text fontWeight="semibold" color={spendChangeColor(spendChangePercent) ?? "gray.800"}>
+                {spendChangePercent == null
+                  ? "—"
+                  : `${spendChangeArrow(spendChangePercent)} ${Math.abs(spendChangePercent).toFixed(1)}%`}
+              </Text>
+            </HStack>
+          </Flex>
+        </Box>
+      ) : null}
     </VStack>
   );
 

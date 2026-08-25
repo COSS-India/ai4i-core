@@ -1,7 +1,11 @@
 import { TABS } from "../config/constants";
 import { METERING } from "../config/meteringConstants";
 import authService from "../services/authService";
-import { canAccessUsageDashboard, getMeteringRoleViewConfig } from "./rbac";
+import {
+  canAccessUsageDashboard,
+  getMeteringRoleViewConfig,
+  isUsageDashboardOnlyUser,
+} from "./rbac";
 
 export const APP_HOME_PATH = "/";
 export const USAGE_DASHBOARD_PATH = `/${TABS.usageDashboard}`;
@@ -38,4 +42,18 @@ export function getDefaultLandingPath(roles?: string[]): string {
       : METERING.DEFAULTS.SUB_TAB;
 
   return getUsageDashboardPath(tab);
+}
+
+/** Resolves where "home" is for this user — not every role can open "/". */
+export function getHomePath(roles?: string[]): string {
+  const effectiveRoles = resolveRoles(roles);
+  if (isUsageDashboardOnlyUser(effectiveRoles)) {
+    return getDefaultLandingPath(effectiveRoles);
+  }
+  return APP_HOME_PATH;
+}
+
+/** True when this route is the user's home page. Anything after "?" is ignored. */
+export function isHomePathname(pathname: string, roles?: string[]): boolean {
+  return pathname === getHomePath(roles).split("?")[0];
 }

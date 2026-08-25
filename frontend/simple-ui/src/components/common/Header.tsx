@@ -1,6 +1,6 @@
 // Header/navbar component for top navigation with authentication and API key management
 
-import { ArrowBackIcon, HamburgerIcon } from "@chakra-ui/icons";
+import { ArrowBackIcon, ChevronDownIcon, HamburgerIcon } from "@chakra-ui/icons";
 import {
   Badge,
   Box,
@@ -10,6 +10,7 @@ import {
   IconButton,
   Menu,
   MenuButton,
+  MenuGroup,
   MenuItem,
   MenuList,
   useColorModeValue,
@@ -21,10 +22,11 @@ import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { INSTITUTION } from "../../config/constants";
 import {
-  ONBOARDING_GUIDE_HREF,
+  PRE_LOGIN_GUIDE_OPTIONS,
   canSeeOnboardingGuide,
   getOnboardingGuideHref,
 } from "../../config/onboardingGuide";
+import { getHomePath, isHomePathname } from "../../utils/navigation";
 import AuthModal from "../auth/AuthModal";
 
 const PATH_TO_SERVICE: Record<string, ServiceId> = {
@@ -144,7 +146,9 @@ const Header: React.FC = () => {
 
   const bgColor = useColorModeValue("white", "gray.800");
   const borderColor = useColorModeValue("gray.200", "gray.700");
-  const showBackButton = router.pathname !== "/";
+  // Home is role-aware: restricted roles (Usage Dashboard only) cannot reach "/",
+  const homePath = getHomePath(user?.roles);
+  const showBackButton = !isHomePathname(router.pathname, user?.roles);
 
   const handleBack = () => {
     if (router.pathname === "/services-management" && router.query.tab === "2") {
@@ -155,10 +159,6 @@ const Header: React.FC = () => {
       router.push("/profile");
       return;
     }
-    if (router.pathname === "/institution-management") {
-      router.push("/");
-      return;
-    }
     if (router.pathname === "/model-management" && router.query.tab === "2") {
       router.push("/model-management");
       return;
@@ -167,7 +167,7 @@ const Header: React.FC = () => {
        router.push("/logs");
        return;
     }
-    router.push("/");
+    router.push(homePath);
   };
 
   const handleAuthClick = () => {
@@ -231,15 +231,31 @@ const Header: React.FC = () => {
             ) : (
               <HStack spacing={3}>
                 {showHomeOnboardingGuideLink && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      window.open(ONBOARDING_GUIDE_HREF, "_blank", "noopener,noreferrer");
-                    }}
-                  >
-                    Onboarding Guide
-                  </Button>
+                  <Menu placement="bottom-end">
+                    <MenuButton
+                      as={Button}
+                      variant="ghost"
+                      size="sm"
+                      rightIcon={<ChevronDownIcon />}
+                    >
+                      Onboarding Guide
+                    </MenuButton>
+                    <MenuList minW="16rem">
+                      <MenuGroup title="Select your guide">
+                        {PRE_LOGIN_GUIDE_OPTIONS.map((option) => (
+                          <MenuItem
+                            key={option.href}
+                            as="a"
+                            href={option.href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {option.label}
+                          </MenuItem>
+                        ))}
+                      </MenuGroup>
+                    </MenuList>
+                  </Menu>
                 )}
                 <Button
                   colorScheme="blue"
