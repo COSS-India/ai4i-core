@@ -67,6 +67,7 @@ import {
   FiArrowLeft,
   FiCheckCircle,
   FiEdit2,
+  FiHome,
   FiMail,
   FiPauseCircle,
   FiPlus,
@@ -83,6 +84,8 @@ import {
 import { useAuth } from "../../hooks/useAuth";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { useTenantManagement } from "./hooks/useTenantManagement";
+import { useOwnInstitutionDetails } from "./hooks/useOwnInstitutionDetails";
+import InstitutionDetailsPanel from "./InstitutionDetailsPanel";
 import ConfirmDialog from "../common/ConfirmDialog";
 import ConsentCheckbox, {
   getConsentValidationError,
@@ -120,6 +123,7 @@ import {
   dateInputToStartOfDayIso,
   dateInputToEndOfDayIso,
 } from "../../utils/helpers";
+import { dash, fmtDate } from "../../utils/valueFormatters";
 import type { TenantUserView, TenantView } from "../../types/tenant";
 
 const BUDGET_MAX_INTEGER_DIGITS = 7;
@@ -136,19 +140,6 @@ function clampBudgetInput(raw: string): string {
   );
   const decimalPart = dotIndex === -1 ? "" : raw.slice(dotIndex);
   return intPart + decimalPart;
-}
-
-function dash(v?: string | null): string {
-  return v && v.trim() ? v : "—";
-}
-
-function fmtDate(v?: string | null): string {
-  if (!v) return "—";
-  try {
-    return new Date(v).toLocaleString();
-  } catch {
-    return v;
-  }
 }
 
 export interface TenantManagementTabProps {
@@ -183,6 +174,11 @@ export default function TenantManagementTab({
   const tm = useTenantManagement({ user });
 
   const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
+  // Institution Admin view only — idle on the adopter path.
+  const ownInstitution = useOwnInstitutionDetails({
+    tenantId: user?.tenant_id,
+    enabled: !isAdmin,
+  });
   const { taskTypeNames } = useInferenceTypes();
   const enabledTaskTypesParam =
     taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
@@ -235,10 +231,12 @@ export default function TenantManagementTab({
     onClose: onViewTierClose,
   } = useDisclosure();
 
+  // Adopter-only: the tier modals need this, and ppu.tier.read is ADMIN-only.
   const tiersQuery = useQuery({
     queryKey: ["tiers"],
     queryFn: () => fetchTiers(),
     staleTime: 5 * 60_000,
+    enabled: isAdmin,
   });
   const tierOptions = tiersQuery.data?.data ?? [];
 
@@ -742,7 +740,7 @@ export default function TenantManagementTab({
     <Box>
       {isAdmin && !tm.tenantDetailView && renderAdopterView()}
 
-      {!isAdmin && !tm.tenantDetailView && renderTenantView()}
+      {!isAdmin && !tm.tenantDetailView && renderInstitutionAdminView()}
 
       {tm.tenantDetailView && renderTenantDetail()}
 
@@ -820,6 +818,39 @@ export default function TenantManagementTab({
           />
         </CardBody>
       </Card>
+    );
+  }
+
+  // ── Institution Admin landing view (own institution + its users) ────────
+  // One institution, so no list to drill into — tabs are the first screen.
+  function renderInstitutionAdminView() {
+    return (
+      <Tabs>
+        <TabList>
+          <Tab>
+            <FiHome style={{ marginRight: 6 }} />
+            {`My ${INSTITUTION.toLowerCase()}`}
+          </Tab>
+          <Tab>
+            <FiUsers style={{ marginRight: 6 }} />
+            Users
+          </Tab>
+        </TabList>
+        <TabPanels>
+          <TabPanel px={0}>
+            <InstitutionDetailsPanel
+              institution={ownInstitution.institution}
+              tierName={ownInstitution.tierName}
+              budgetLimit={ownInstitution.budgetLimit}
+              currency={ownInstitution.currency}
+              isLoading={ownInstitution.isLoading}
+              errorMessage={ownInstitution.errorMessage}
+              tierBudgetErrorMessage={ownInstitution.tierBudgetErrorMessage}
+            />
+          </TabPanel>
+          <TabPanel px={0}>{renderTenantView()}</TabPanel>
+        </TabPanels>
+      </Tabs>
     );
   }
 
