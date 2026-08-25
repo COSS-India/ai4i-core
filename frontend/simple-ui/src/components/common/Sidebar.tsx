@@ -208,8 +208,7 @@ interface NavItem {
   requiresAuth?: boolean;
 }
 
-// Home is always in the top nav. Model / Services Management are role-gated
-// and hidden for anonymous (unsigned-in) users.
+// Unsigned-in users only see Home. Remaining top-nav items are role-gated.
 const topNavItems: NavItem[] = [
   {
     id: TABS.home,
@@ -459,7 +458,11 @@ interface TopNavFilterContext {
   userRoles?: string[];
 }
 
-export function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean {
+function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean {
+  if (!ctx.isAuthenticated) {
+    return itemId === TABS.home;
+  }
+
   if (isUsageDashboardOnlyUser(ctx.userRoles)) {
     return itemId === TABS.usageDashboard;
   }
@@ -471,14 +474,9 @@ export function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): b
     case TABS.policyManagement:
       return false;
     case TABS.modelManagement:
-      return ctx.isAuthenticated && !ctx.isGuest && !ctx.isUser;
+      return !ctx.isGuest && !ctx.isUser;
     case TABS.servicesManagement:
-      return (
-        ctx.isAuthenticated &&
-        !ctx.isGuest &&
-        !ctx.isUser &&
-        canAccessServicesManagement(ctx.userRoles)
-      );
+      return !ctx.isGuest && !ctx.isUser && canAccessServicesManagement(ctx.userRoles);
     case TABS.tenantManagement:
       return ctx.showTenantManagement;
     case TABS.apiKeyManagement:
