@@ -731,6 +731,17 @@ async def _proxy_audio_upload(
     `include[]`, etc.) are serialised on the wire."""
     file_bytes = await file.read()
     if len(file_bytes) > _AUDIO_MAX_BYTES:
+        # This returns before OpenAIProxyService().proxy_multipart() is ever
+        # called — the only place in this flow that creates any span — so
+        # without emitting one here, an oversized upload produces zero trace
+        # rows at all (not even a mismarked one). service_id comes straight
+        # off the form data, same field proxy_multipart() itself reads it
+        # from; no "request" span is opened here, matching proxy_multipart's
+        # own rejection branches, which have never had one either.
+        with traced_span("model") as model_attrs:
+            OpenAIProxyService._seed_model_attrs(
+                model_attrs, data.get("model", "") or "", failure_status_code=413,
+            )
         return _audio_error(
             413,
             message=(

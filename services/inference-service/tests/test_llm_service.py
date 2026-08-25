@@ -790,3 +790,8 @@ async def test_proxy_multipart_emits_model_span_task_type_on_tier_rejected(
     assert model_attrs["status_code"] == 403
     assert model_attrs["service_id"] == "svc-1"
     assert model_attrs["model_name"] == "google/gemma-4-E4B-it"
+
+# routes._proxy_audio_upload's 25 MB cap has its own dedicated regression
+# test in tests/test_audio_upload_span.py (pre-existing in this repo,
+# already covers "emits a model span" + "still reaches proxy_multipart when
+# under the cap" — no need to duplicate here).
