@@ -7,9 +7,26 @@ const ALLOWED_RASTER_DATA_IMAGE_TYPES = new Set([
   "image/webp",
 ]);
 
+const DANGEROUS_SCHEME_RE = /^(?:javascript|vbscript|file|about):/i;
+
 function parseDataImageMimeType(url: string): string | null {
   const match = url.match(/^data:(image\/[^;,]+)/i);
   return match ? match[1].toLowerCase() : null;
+}
+
+function decodeForSchemeCheck(url: string): string {
+  try {
+    return decodeURI(url);
+  } catch {
+    return url;
+  }
+}
+
+function hasDangerousScheme(url: string): boolean {
+  const normalized = decodeForSchemeCheck(url)
+    .replace(/[\u0000-\u001F\u007F]/g, "")
+    .trim();
+  return DANGEROUS_SCHEME_RE.test(normalized);
 }
 
 /**
@@ -18,11 +35,7 @@ function parseDataImageMimeType(url: string): string | null {
  */
 export function isSafeUserImageUrl(url: string): boolean {
   const trimmed = url?.trim();
-  if (!trimmed) {
-    return false;
-  }
-
-  if (trimmed.startsWith("blob:")) {
+  if (!trimmed || trimmed.startsWith("blob:") || hasDangerousScheme(trimmed)) {
     return false;
   }
 
@@ -42,18 +55,35 @@ export function isSafeUserImageUrl(url: string): boolean {
 /**
  * Sanitizes a value before binding to img[src].
  * Blob URLs are accepted only when set by the app (URL.createObjectURL).
+ * Returns a URL reconstructed by the URL parser so javascript: / vbscript:
+ * schemes cannot reach the DOM.
  */
 export function sanitizeImagePreviewUrl(
   url: string | null | undefined
 ): string | null {
   const trimmed = url?.trim();
-  if (!trimmed) {
+  if (!trimmed || hasDangerousScheme(trimmed)) {
     return null;
   }
 
-  if (trimmed.startsWith("blob:")) {
-    return trimmed;
-  }
+  try {
+    if (trimmed.toLowerCase().startsWith("data:")) {
+      const mime = parseDataImageMimeType(trimmed);
+      return mime !== null && ALLOWED_RASTER_DATA_IMAGE_TYPES.has(mime)
+        ? trimmed
+        : null;
+    }
 
-  return isSafeUserImageUrl(trimmed) ? trimmed : null;
+    const parsed = new URL(trimmed);
+    if (
+      parsed.protocol === "blob:" ||
+      parsed.protocol === "http:" ||
+      parsed.protocol === "https:"
+    ) {
+      return parsed.href;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
