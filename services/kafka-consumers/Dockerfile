@@ -24,4 +24,7 @@ USER appuser
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD cat /proc/1/cmdline | tr '\0' ' ' | grep -q -- "--consumer" || exit 1
 
+# TODO: temporary default consumer, remove once the caller always passes --consumer explicitly.
 ENTRYPOINT ["python", "main.py"]
+
+CMD ["--consumer", "payperuse_consumer"]
