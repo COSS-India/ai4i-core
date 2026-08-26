@@ -1,0 +1,707 @@
+<title>Key Allocation Ledger</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+  :root{
+    --ink:#1c2b28;
+    --paper:#f2f5f3;
+    --surface:#ffffff;
+    --surface-2:#eaeeeb;
+    --line:#d6ded9;
+    --muted:#5e6f69;
+    --brass:#a97728;
+    --brass-soft:#f3e6d1;
+    --rust:#9c4a3c;
+    --rust-soft:#f5e2dd;
+    --teal:#0f6b5c;
+    --teal-soft:#dcece7;
+    --code-bg:#1c2b28;
+    --code-fg:#e8ece9;
+    --shadow: 0 1px 2px rgba(28,43,40,0.06), 0 8px 24px rgba(28,43,40,0.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ink:#e8ece9;
+      --paper:#121815;
+      --surface:#182220;
+      --surface-2:#1f2b28;
+      --line:#2b3733;
+      --muted:#93a29c;
+      --brass:#d19a4a;
+      --brass-soft:#382c1a;
+      --rust:#d97c6a;
+      --rust-soft:#3a2420;
+      --teal:#4fb39e;
+      --teal-soft:#16302b;
+      --code-bg:#0d1412;
+      --code-fg:#dfe7e3;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.25);
+    }
+  }
+  :root[data-theme="dark"]{
+    --ink:#e8ece9;
+    --paper:#121815;
+    --surface:#182220;
+    --surface-2:#1f2b28;
+    --line:#2b3733;
+    --muted:#93a29c;
+    --brass:#d19a4a;
+    --brass-soft:#382c1a;
+    --rust:#d97c6a;
+    --rust-soft:#3a2420;
+    --teal:#4fb39e;
+    --teal-soft:#16302b;
+    --code-bg:#0d1412;
+    --code-fg:#dfe7e3;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.25);
+  }
+
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; }
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+    font-size:16px;
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  ::selection{ background:var(--brass-soft); }
+
+  a{ color:var(--teal); text-decoration-thickness:1px; }
+  a:focus-visible, button:focus-visible, summary:focus-visible{
+    outline:2px solid var(--teal); outline-offset:2px;
+  }
+
+  .page{
+    max-width:920px;
+    margin:0 auto;
+    padding:64px 28px 120px;
+  }
+
+  header.doc-head{
+    border-bottom:1px solid var(--line);
+    padding-bottom:28px;
+    margin-bottom:40px;
+  }
+  .kicker{
+    font-family:'IBM Plex Mono', ui-monospace, monospace;
+    font-size:12.5px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--brass);
+    margin:0 0 14px;
+  }
+  h1.doc-title{
+    font-family:'IBM Plex Serif', Georgia, serif;
+    font-weight:600;
+    font-size:clamp(28px, 4vw, 40px);
+    line-height:1.15;
+    letter-spacing:-.01em;
+    margin:0 0 12px;
+    text-wrap:balance;
+    color:var(--ink);
+  }
+  .doc-sub{
+    font-size:17px;
+    color:var(--muted);
+    max-width:62ch;
+    margin:0 0 20px;
+  }
+  .meta-row{
+    display:flex;
+    flex-wrap:wrap;
+    gap:18px;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12.5px;
+    color:var(--muted);
+  }
+  .meta-row span b{ color:var(--ink); font-weight:500; }
+
+  nav.toc{
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:3px;
+    padding:20px 24px;
+    margin:32px 0 48px;
+    box-shadow:var(--shadow);
+  }
+  nav.toc .toc-label{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11.5px;
+    letter-spacing:.12em;
+    text-transform:uppercase;
+    color:var(--muted);
+    margin:0 0 12px;
+  }
+  nav.toc ol{
+    margin:0; padding:0; list-style:none;
+    display:grid; grid-template-columns:1fr 1fr; gap:6px 28px;
+  }
+  nav.toc li a{
+    color:var(--ink); text-decoration:none; font-size:14.5px;
+    display:flex; gap:8px;
+  }
+  nav.toc li a:hover{ color:var(--teal); }
+  nav.toc li a .n{ color:var(--brass); font-family:'IBM Plex Mono',monospace; font-size:13px; min-width:2.4em; }
+  @media (max-width:640px){ nav.toc ol{ grid-template-columns:1fr; } }
+
+  section.part{ margin:56px 0; }
+  .part-label{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12.5px;
+    letter-spacing:.12em;
+    text-transform:uppercase;
+    color:var(--teal);
+    margin:0 0 6px;
+  }
+  h2{
+    font-family:'IBM Plex Serif', Georgia, serif;
+    font-weight:600;
+    font-size:27px;
+    letter-spacing:-.01em;
+    margin:0 0 6px;
+    text-wrap:balance;
+    padding-top:4px;
+    scroll-margin-top:20px;
+  }
+  h2 .num{ color:var(--brass); margin-right:10px; }
+  .part-intro{ color:var(--muted); max-width:66ch; margin:10px 0 28px; }
+
+  h3{
+    font-family:'IBM Plex Sans', sans-serif;
+    font-weight:600;
+    font-size:18px;
+    margin:36px 0 10px;
+    color:var(--ink);
+    scroll-margin-top:20px;
+  }
+  h3 .num{ color:var(--muted); font-family:'IBM Plex Mono',monospace; font-size:14px; margin-right:8px; }
+
+  p{ max-width:70ch; margin:0 0 14px; }
+  ul, ol{ max-width:68ch; padding-left:22px; }
+  li{ margin-bottom:6px; }
+  strong{ color:var(--ink); font-weight:600; }
+  code{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:.92em;
+    background:var(--surface-2);
+    padding:.15em .4em;
+    border-radius:3px;
+    color:var(--ink);
+  }
+
+  .callout{
+    display:grid;
+    grid-template-columns:auto 1fr;
+    gap:2px 16px;
+    border-left:3px solid var(--teal);
+    background:var(--teal-soft);
+    padding:16px 20px;
+    margin:20px 0;
+    border-radius:2px;
+  }
+  .callout .tag{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+    color:var(--teal);
+    align-self:start;
+    padding-top:2px;
+  }
+  .callout p{ margin:0; max-width:62ch; }
+  .callout.decision{ border-left-color:var(--brass); background:var(--brass-soft); }
+  .callout.decision .tag{ color:var(--brass); }
+  .callout.risk{ border-left-color:var(--rust); background:var(--rust-soft); }
+  .callout.risk .tag{ color:var(--rust); }
+
+  .card-grid{
+    display:grid; grid-template-columns:repeat(auto-fit, minmax(260px,1fr));
+    gap:14px; margin:24px 0;
+  }
+  .card{
+    background:var(--surface); border:1px solid var(--line); border-radius:3px;
+    padding:16px 18px; box-shadow:var(--shadow);
+  }
+  .card .card-n{
+    font-family:'IBM Plex Mono',monospace; color:var(--brass); font-size:12px;
+    letter-spacing:.08em;
+  }
+  .card h4{ font-size:15px; margin:6px 0 6px; font-weight:600; }
+  .card p{ font-size:14px; color:var(--muted); margin:0; }
+
+  .scrollbox{ overflow-x:auto; margin:20px 0; border-radius:3px; }
+  table{
+    width:100%; border-collapse:collapse; font-size:14px; min-width:520px;
+    background:var(--surface);
+  }
+  caption{
+    text-align:left; font-family:'IBM Plex Mono',monospace; font-size:12px;
+    color:var(--muted); padding-bottom:8px; letter-spacing:.04em;
+  }
+  th, td{
+    text-align:left; padding:9px 14px; border-bottom:1px solid var(--line);
+    vertical-align:top;
+  }
+  thead th{
+    font-family:'IBM Plex Mono',monospace; font-size:11.5px; letter-spacing:.06em;
+    text-transform:uppercase; color:var(--muted); border-bottom:1px solid var(--ink);
+    background:var(--surface-2);
+  }
+  td code, th code{ white-space:nowrap; }
+  tbody tr:hover{ background:var(--surface-2); }
+  .num-col{ font-family:'IBM Plex Mono',monospace; font-variant-numeric:tabular-nums; text-align:right; }
+
+  pre{
+    background:var(--code-bg); color:var(--code-fg);
+    border-radius:4px; padding:18px 20px; overflow-x:auto;
+    font-family:'IBM Plex Mono', monospace; font-size:13px; line-height:1.65;
+    margin:18px 0;
+  }
+  pre code{ background:none; padding:0; color:inherit; }
+  .pre-label{
+    font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--muted); margin:18px 0 -6px;
+  }
+
+  pre.mermaid{
+    background:var(--surface); border:1px solid var(--line); padding:20px;
+    box-shadow:var(--shadow);
+  }
+
+  .endpoint{
+    display:flex; align-items:baseline; gap:10px; margin:34px 0 4px;
+    font-family:'IBM Plex Mono',monospace;
+  }
+  .verb{
+    font-size:11.5px; font-weight:600; letter-spacing:.06em; padding:3px 8px;
+    border-radius:3px; color:#fff;
+  }
+  .verb.post{ background:var(--teal); }
+  .verb.patch{ background:var(--brass); }
+  .verb.put{ background:#5b6f8c; }
+  .path{ font-size:14.5px; color:var(--ink); }
+  .endpoint-desc{ color:var(--muted); font-size:14px; margin:0 0 14px; max-width:66ch; }
+
+  .badge{
+    display:inline-block; font-family:'IBM Plex Mono',monospace; font-size:11px;
+    padding:2px 7px; border-radius:3px; margin-right:4px; letter-spacing:.03em;
+  }
+  .badge.new{ background:var(--teal-soft); color:var(--teal); }
+  .badge.derived{ background:var(--brass-soft); color:var(--brass); }
+
+  hr.rule{ border:none; border-top:1px solid var(--line); margin:56px 0; }
+
+  footer.doc-foot{
+    margin-top:64px; padding-top:24px; border-top:1px solid var(--line);
+    color:var(--muted); font-size:13px; font-family:'IBM Plex Mono',monospace;
+  }
+
+  @media (prefers-reduced-motion: reduce){ *{ scroll-behavior:auto !important; } }
+</style>
+
+<div class="page">
+
+  <header class="doc-head">
+    <p class="kicker">Technical Design &middot; HLD / LLD / API Contract</p>
+    <h1 class="doc-title">API Key Allocation &amp; Reallocation</h1>
+    <p class="doc-sub">How a percentage of an Application's budget is granted to an individual API key at creation, re-sliced later without breaking siblings, and kept honest across two databases that don't share a transaction.</p>
+    <div class="meta-row">
+      <span>Status: <b>Draft — for review</b></span>
+      <span>Scope: <b>Key create · Key edit · Reallocation</b></span>
+      <span>Builds on: <b>Application Onboarding &amp; Hierarchical Budget</b></span>
+      <span>Dated: <b>25 Aug 2026</b></span>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="Table of contents">
+    <p class="toc-label">Contents</p>
+    <ol>
+      <li><a href="#departures"><span class="n">00</span> Where this departs from the shared artifact</span></a></li>
+      <li><a href="#hld"><span class="n">I</span> High-level design</span></a></li>
+      <li><a href="#hld-1"><span class="n">I.1</span> Actors and goal</span></a></li>
+      <li><a href="#hld-2"><span class="n">I.2</span> Design decisions</span></a></li>
+      <li><a href="#hld-3"><span class="n">I.3</span> System diagram</span></a></li>
+      <li><a href="#hld-4"><span class="n">I.4</span> Create &amp; reallocate, at a glance</span></a></li>
+      <li><a href="#lld"><span class="n">II</span> Low-level design</span></a></li>
+      <li><a href="#lld-1"><span class="n">II.1</span> Schema</span></a></li>
+      <li><a href="#lld-2"><span class="n">II.2</span> Deriving and propagating an amount</span></a></li>
+      <li><a href="#lld-3"><span class="n">II.3</span> Create — sequence and algorithm</span></a></li>
+      <li><a href="#lld-4"><span class="n">II.4</span> Reallocate — sequence and algorithm</span></a></li>
+      <li><a href="#lld-5"><span class="n">II.5</span> Concurrency and the cross-database gap</span></a></li>
+      <li><a href="#lld-6"><span class="n">II.6</span> Edge cases</span></a></li>
+      <li><a href="#api"><span class="n">III</span> API contract</span></a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== 00 — DEPARTURES ===================== -->
+  <section class="part" id="departures">
+    <p class="part-label">00 &middot; Starting point</p>
+    <h2><span class="num">00</span>Where this departs from the shared artifact</h2>
+    <p class="part-intro">The Application Onboarding artifact this builds on has changed shape twice while this was being written — basis points, then absolute ceilings, then a percentage-plus-derived-amount hybrid — and its key-level detail hasn't caught up with its own schema. Rather than inherit the gaps, the four calls below are made explicitly here and carried through the rest of this document.</p>
+
+    <div class="scrollbox">
+    <table>
+      <thead><tr><th style="width:26%">Open question in the source</th><th>Position taken here</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>api_key.application_id</code> shown as unconditionally <code>NOT NULL</code>, no admin exception</td>
+          <td>Kept mandatory for every key. The adopter-admin exception moves to a seeded <strong>System</strong> Application per platform, rather than a nullable column — see <a href="#lld-1">II.1</a>.</td>
+        </tr>
+        <tr>
+          <td><code>api_key.user_id</code> removed, ownership model unstated</td>
+          <td>Replaced with <code>created_by</code> — audit only. Management rights come from the caller's role over the Application's Institution, not from having created the row.</td>
+        </tr>
+        <tr>
+          <td><code>budget_usage</code> grained per key only, no tenant/application column</td>
+          <td>Kept as-is; Application and Institution totals are always a roll-up over their keys' rows, never stored redundantly. See <a href="#lld-1">II.1</a>.</td>
+        </tr>
+        <tr>
+          <td>"auth unreachable, core up" left as an open question</td>
+          <td>Resolved: billing enforcement never depends on auth being reachable. Only <em>administration</em> — creating or editing an allocation — does. See <a href="#lld-5">II.5</a>.</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ===================== I — HLD ===================== -->
+  <section class="part" id="hld">
+    <p class="part-label">Part I</p>
+    <h2><span class="num">I</span>High-level design</h2>
+
+    <h3 id="hld-1"><span class="num">I.1</span>Actors and goal</h3>
+    <p>An <strong>Institution Admin</strong> slices an Application's budget across the keys that draw on it. An <strong>Adopter Admin</strong> does the same inside the platform's own System Application. Both need three guarantees: a key's slice can never make its siblings overcommitted, a slice can never be cut below what its key has already spent, and two admins editing at once can never both succeed into an invalid total.</p>
+
+    <div class="card-grid">
+      <div class="card"><span class="card-n">01</span><h4>Percentage in, amount cached</h4><p>An admin always enters a share of the parent. The system derives and stores a currency figure alongside it, so billing never has to do that arithmetic per request.</p></div>
+      <div class="card"><span class="card-n">02</span><h4>One ceiling, one ledger</h4><p>The ceiling lives beside the key's identity in auth. What it has actually spent lives in core, in exactly one place, and is never duplicated as a second stored counter.</p></div>
+      <div class="card"><span class="card-n">03</span><h4>A snapshot bridges the two</h4><p>Core keeps a copy of the ceiling so billing reads one database, not two. Every allocation write refreshes that copy; a reconciliation sweep bounds how stale it can ever get.</p></div>
+    </div>
+
+    <h3 id="hld-2"><span class="num">I.2</span>Design decisions</h3>
+
+    <div class="callout decision">
+      <span class="tag">Decision</span>
+      <p><strong>Percentage is the source, amount is derived, both are stored.</strong> Admins reason in shares of a parent; billing needs a plain number to compare against spend. Storing both on the same row means neither has to be recomputed on the request path — only on the (rare) admin write path.</p>
+    </div>
+    <div class="callout decision">
+      <span class="tag">Decision</span>
+      <p><strong>Every application has a home, including test keys.</strong> No key is ever created without an <code>application_id</code>. Unattached, ad-hoc keys are keys inside a seeded <strong>System</strong> Application that carries no ceiling of its own — the same escape hatch the "Default" Application already provides for pre-existing keys, reused rather than reinvented.</p>
+    </div>
+    <div class="callout decision">
+      <span class="tag">Decision</span>
+      <p><strong>Revoking a key freezes its slice; releasing it is a separate, explicit action.</strong> A revoked key keeps its historical spend and its allocation until an admin deliberately releases the slice back to the Application. This stops budget from being reclaimed by revoke-and-recreate, without permanently stranding it either.</p>
+    </div>
+
+    <h3 id="hld-3"><span class="num">I.3</span>System diagram</h3>
+    <p>Ceilings are set and read in <strong>auth</strong>, alongside the identities they belong to. Spend is recorded and read in <strong>core</strong>, alongside the ledger it has always lived in. The snapshot is the only thing that ever crosses.</p>
+    <pre class="mermaid">
+flowchart TB
+  subgraph AUTH["ai4iplatform_auth — identity + ceilings"]
+    direction TB
+    T["tenants<br/><span style='opacity:.7'>allocated_budget</span>"]
+    AP["applications<br/><span style='opacity:.7'>allocation_pct → allocated_budget</span>"]
+    K["api_key<br/><span style='opacity:.7'>allocation_pct → allocated_budget</span>"]
+    T --> AP --> K
+  end
+  subgraph CORE["ai4iplatform_core — the ledger"]
+    direction TB
+    BU["budget_usage<br/><span style='opacity:.7'>ceiling_snapshot, consumed</span>"]
+  end
+  K -- "on every allocation write" --> BU
+  BU -- "read once, at edit-time validation only" --> K
+    </pre>
+
+    <h3 id="hld-4"><span class="num">I.4</span>Create &amp; reallocate, at a glance</h3>
+    <ul>
+      <li><strong>Create:</strong> pick an Application, optionally hand the new key a percentage of it. The system checks siblings still fit inside 100%, then writes the key and mirrors its ceiling into core.</li>
+      <li><strong>Reallocate:</strong> change one key's percentage. The system checks siblings again, checks the new ceiling still covers what's already been spent, then writes and re-mirrors.</li>
+      <li><strong>Release:</strong> a revoked key's frozen slice is returned to the Application's headroom on request, never automatically.</li>
+    </ul>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ===================== II — LLD ===================== -->
+  <section class="part" id="lld">
+    <p class="part-label">Part II</p>
+    <h2><span class="num">II</span>Low-level design</h2>
+
+    <h3 id="lld-1"><span class="num">II.1</span>Schema</h3>
+
+    <div class="scrollbox">
+    <table>
+      <caption><code>api_key</code> — ai4iplatform_auth · altered</caption>
+      <thead><tr><th>Column</th><th>Type</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>id</code></td><td>int</td><td>PK</td></tr>
+        <tr><td><code>application_id</code></td><td>uuid</td><td>FK, <strong>NOT NULL</strong> — every key, including System-application keys</td></tr>
+        <tr><td><code>allocation_pct</code></td><td>numeric</td><td><span class="badge new">source</span> nullable — <code>NULL</code> = uncapped at this level, bounded by the Application</td></tr>
+        <tr><td><code>allocated_budget</code></td><td>numeric</td><td><span class="badge derived">derived</span> nullable — recomputed whenever <code>allocation_pct</code> or the Application's own amount changes</td></tr>
+        <tr><td><code>is_active</code></td><td>bool</td><td>revoke keeps the row; historical spend keeps counting</td></tr>
+        <tr><td><code>version</code></td><td>int</td><td>NEW — optimistic concurrency token, incremented on every allocation write</td></tr>
+        <tr><td><code>created_by</code></td><td>uuid</td><td>NEW — audit only, replaces the removed <code>user_id</code>; confers no management right by itself</td></tr>
+        <tr><td><code>cached_data</code></td><td>jsonb</td><td>3 exhaustion flags — unchanged</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="scrollbox">
+    <table>
+      <caption><code>applications</code> — ai4iplatform_auth · new table</caption>
+      <thead><tr><th>Column</th><th>Type</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>id</code></td><td>uuid</td><td>PK; <code>uuid5</code> for the seeded rows</td></tr>
+        <tr><td><code>tenant_id</code></td><td>int</td><td>FK, NOT NULL, RESTRICT</td></tr>
+        <tr><td><code>name</code></td><td>string</td><td>unique per tenant, case-insensitive</td></tr>
+        <tr><td><code>allocation_pct</code></td><td>numeric</td><td><span class="badge new">source</span> nullable — <code>NULL</code> only on the seeded Default / System rows</td></tr>
+        <tr><td><code>allocated_budget</code></td><td>numeric</td><td><span class="badge derived">derived</span> nullable — <code>tenant.allocated_budget × allocation_pct / 100</code></td></tr>
+        <tr><td><code>status</code></td><td>string</td><td>ACTIVE | INACTIVE</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="scrollbox">
+    <table>
+      <caption><code>budget_usage</code> — ai4iplatform_core · new table, one row per key</caption>
+      <thead><tr><th>Column</th><th>Type</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>id</code></td><td>uuid</td><td>PK</td></tr>
+        <tr><td><code>api_key_id</code></td><td>int</td><td>unique — the only grouping key; Application/Institution totals roll up over this</td></tr>
+        <tr><td><code>ceiling_snapshot</code></td><td>numeric</td><td>mirror of <code>api_key.allocated_budget</code> at last sync; nullable</td></tr>
+        <tr><td><code>ceiling_snapshot_version</code></td><td>int</td><td>NEW — mirrors <code>api_key.version</code>; a mismatch is drift, caught by the sweep in <a href="#lld-5">II.5</a></td></tr>
+        <tr><td><code>consumed</code></td><td>numeric</td><td>the spend — the one and only stored figure for it</td></tr>
+        <tr><td><code>updated_at</code></td><td>timestamptz</td><td></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="callout risk">
+      <span class="tag">Worth flagging</span>
+      <p>Because <code>budget_usage</code> carries no <code>application_id</code>, computing an Application's total spend means first listing its key ids in auth, then summing <code>consumed</code> for those ids in core — a cross-database step on every roll-up read, not only on the billing write path. Acceptable for an admin-facing dashboard refreshed occasionally; worth a second look if it ever needs to be near-real-time.</p>
+    </div>
+
+    <h3 id="lld-2"><span class="num">II.2</span>Deriving and propagating an amount</h3>
+    <p>An amount is only ever computed one level at a time, downward:</p>
+    <pre><code>application.allocated_budget = tenant.allocated_budget      × application.allocation_pct / 100
+key.allocated_budget         = application.allocated_budget × key.allocation_pct / 100</code></pre>
+    <p>Whichever level changes — the tenant's total, an Application's own percentage, or a key's percentage — recomputes everything <em>beneath</em> it, in the same transaction, before that transaction commits. A tenant budget change therefore fans out to every Application and every key underneath it in one pass; expected to be tens of rows, not thousands, so the cost is a non-issue.</p>
+
+    <h3 id="lld-3"><span class="num">II.3</span>Create — sequence and algorithm</h3>
+    <pre class="mermaid">
+sequenceDiagram
+    participant Admin
+    participant Auth as auth-service
+    participant AuthDB as auth DB
+    participant CoreDB as core DB
+    Admin->>Auth: POST /api-keys { applicationId, allocationPct }
+    Auth->>AuthDB: pg_advisory_xact_lock("app-alloc:"+applicationId)
+    Auth->>AuthDB: SUM(allocation_pct) over active siblings
+    AuthDB-->>Auth: siblings total
+    Auth->>Auth: check siblings + new ≤ 100
+    Auth->>AuthDB: INSERT api_key (version = 1)
+    AuthDB-->>Auth: committed — lock released
+    Auth->>CoreDB: UPSERT budget_usage (ceiling_snapshot, version = 1)
+    alt core reachable
+        CoreDB-->>Auth: ok
+        Auth-->>Admin: 201 Created, syncPending: false
+    else core unreachable
+        Auth-->>Admin: 201 Created, syncPending: true
+        Note over Auth,CoreDB: reconciliation sweep closes the gap — II.5
+    end
+    </pre>
+
+    <p class="pre-label">Algorithm</p>
+    <pre><code>fn createApiKey(tenantId, applicationId, allocationPct, callerId):
+    application = auth.get(applicationId)
+    require application.tenant_id == tenantId          # cross-tenant guard
+
+    with auth.advisory_lock("app-alloc:" + applicationId):
+        siblings = auth.sum(allocation_pct WHERE application_id = applicationId
+                             AND is_active)
+        if allocationPct is not NULL and siblings + allocationPct > 100:
+            raise ALLOCATION_TOTAL_EXCEEDED
+
+        budget = derive(application.allocated_budget, allocationPct)
+        key = auth.insert(api_key, application_id, allocationPct, budget,
+                           is_active=true, version=1, created_by=callerId)
+        # lock releases on commit
+
+    syncPending = not core.try_upsert(budget_usage,
+                                       api_key_id=key.id,
+                                       ceiling_snapshot=budget,
+                                       ceiling_snapshot_version=1,
+                                       consumed=0)
+    return key, syncPending</code></pre>
+
+    <h3 id="lld-4"><span class="num">II.4</span>Reallocate — sequence and algorithm</h3>
+    <pre class="mermaid">
+sequenceDiagram
+    participant Admin
+    participant Auth as auth-service
+    participant AuthDB as auth DB
+    participant CoreDB as core DB
+    Admin->>Auth: PATCH /api-keys/{id}/allocation { allocationPct, expectedVersion }
+    Auth->>AuthDB: pg_advisory_xact_lock("app-alloc:"+applicationId)
+    Auth->>AuthDB: SELECT api_key FOR UPDATE
+    Auth->>Auth: version matches expectedVersion?
+    Auth->>AuthDB: SUM(allocation_pct) over other active siblings
+    Auth->>Auth: siblings + new ≤ 100?
+    Auth->>CoreDB: read consumed for this key
+    CoreDB-->>Auth: consumed
+    Auth->>Auth: new ceiling ≥ consumed?
+    Auth->>AuthDB: UPDATE api_key (version += 1)
+    AuthDB-->>Auth: committed — lock released
+    Auth->>CoreDB: UPDATE budget_usage.ceiling_snapshot, ceiling_snapshot_version
+    Auth-->>Admin: 200 OK
+    </pre>
+
+    <p class="pre-label">Algorithm</p>
+    <pre><code>fn reallocate(keyId, newPct, expectedVersion):
+    with auth.advisory_lock("app-alloc:" + key.application_id):
+        key = auth.get(keyId, FOR_UPDATE)
+        if key.version != expectedVersion:
+            raise ALLOCATION_VERSION_CONFLICT
+
+        siblings = auth.sum(allocation_pct WHERE application_id = key.application_id
+                             AND is_active AND id != keyId)
+        if newPct is not NULL and siblings + newPct > 100:
+            raise ALLOCATION_TOTAL_EXCEEDED
+
+        newBudget = derive(application.allocated_budget, newPct)
+        consumed  = core.read(budget_usage.consumed WHERE api_key_id = keyId)
+        if newBudget is not NULL and consumed > newBudget:
+            raise ALLOCATION_BELOW_CONSUMED(consumed, newBudget)
+
+        key.allocation_pct, key.allocated_budget = newPct, newBudget
+        key.version += 1
+        auth.commit()
+
+    syncPending = not core.try_update(budget_usage,
+                                       api_key_id=keyId,
+                                       ceiling_snapshot=newBudget,
+                                       ceiling_snapshot_version=key.version)
+    return key, syncPending</code></pre>
+
+    <h3 id="lld-5"><span class="num">II.5</span>Concurrency and the cross-database gap</h3>
+    <p><strong>Two admins, one Application:</strong> every create or reallocate under the same Application takes the same advisory lock, keyed on <code>application_id</code>, held only for the auth-side read-check-write. Two concurrent requests serialize there; the second always sees the first's committed total before it validates.</p>
+    <p><strong>Auth down, core up:</strong> billing is unaffected — it reads only <code>budget_usage.ceiling_snapshot</code>, already in core, and never reaches across to auth. Only <em>administration</em> — create, reallocate, release — is blocked until auth recovers. This is the resolution to the open question carried over from the source artifact: enforcement never has a hard dependency on auth's availability.</p>
+    <p><strong>Core down, auth up:</strong> a create or reallocate still succeeds and commits in auth — the ceiling of record is set — but the mirrored snapshot in core can't be written yet. The response says so (<code>syncPending: true</code>) rather than silently claiming full success.</p>
+    <p><strong>Closing the gap:</strong> a sweep, run roughly every 60 seconds, compares <code>api_key.version</code> against <code>budget_usage.ceiling_snapshot_version</code> for every key and re-pushes any mismatch. This bounds staleness to about a minute even when the synchronous push fails, and turns "did the snapshot actually update" from a silent unknown into a counted, alertable metric.</p>
+
+    <h3 id="lld-6"><span class="num">II.6</span>Edge cases</h3>
+    <div class="scrollbox">
+    <table>
+      <thead><tr><th>Case</th><th>Handling</th></tr></thead>
+      <tbody>
+        <tr><td>Key's <code>allocation_pct</code> is <code>NULL</code></td><td>No ceiling at this level; the Application's own ceiling still bounds it. Never treated as zero.</td></tr>
+        <tr><td>Revoked key still holds a slice</td><td>Counts toward the sibling sum until explicitly released — see <code>POST /api-keys/{id}/release-allocation</code> in Part III.</td></tr>
+        <tr><td>Application's own budget shrinks below its keys' promises</td><td>Rejected before the requested change is even evaluated — feasibility is checked first, per the source artifact's existing rule.</td></tr>
+        <tr><td>Reconciliation sweep finds persistent drift on one key</td><td>Treated as a signal, not just a fix — logged with a count; repeated drift on the same key points at a bug in the synchronous push, not normal operation.</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ===================== III — API ===================== -->
+  <section class="part" id="api">
+    <p class="part-label">Part III</p>
+    <h2><span class="num">III</span>API contract</h2>
+    <p class="part-intro">Four operations: create a key with an optional allocation, edit one key's allocation, re-slice a whole Application's keys at once, and release a revoked key's frozen slice.</p>
+
+    <div class="endpoint"><span class="verb post">POST</span><span class="path">/v1/institutions/{tenantId}/api-keys</span></div>
+    <p class="endpoint-desc">Create a key scoped to an Application, with an optional share of its budget.</p>
+    <p class="pre-label">Request</p>
+    <pre><code>{
+  "name": "reporting-bot",
+  "applicationId": "3fa8b8b0-...",
+  "allocationPct": 30.0            // optional — omit for an uncapped key
+}</code></pre>
+    <p class="pre-label">201 Created</p>
+    <pre><code>{
+  "id": 4821,
+  "name": "reporting-bot",
+  "applicationId": "3fa8b8b0-...",
+  "allocationPct": 30.0,
+  "allocatedBudget": 15000.00,
+  "isActive": true,
+  "version": 1,
+  "syncPending": false,
+  "createdAt": "2026-08-25T09:14:02Z",
+  "createdBy": "e2c9..."
+}</code></pre>
+    <p class="pre-label">Errors</p>
+    <div class="scrollbox">
+    <table>
+      <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>422 APPLICATION_REQUIRED</code></td><td><code>applicationId</code> omitted — never allowed, including for adopter admins</td></tr>
+        <tr><td><code>422 APPLICATION_NOT_IN_INSTITUTION</code></td><td>the Application belongs to a different tenant than the caller's</td></tr>
+        <tr><td><code>422 ALLOCATION_TOTAL_EXCEEDED</code></td><td>this key's share would push its siblings past 100% of the Application</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="endpoint"><span class="verb patch">PATCH</span><span class="path">/v1/api-keys/{keyId}/allocation</span></div>
+    <p class="endpoint-desc">Change one key's share. Requires the version last read, to catch concurrent edits.</p>
+    <p class="pre-label">Request</p>
+    <pre><code>{
+  "allocationPct": 25.0,
+  "expectedVersion": 1
+}</code></pre>
+    <p class="pre-label">200 OK</p>
+    <pre><code>{
+  "id": 4821,
+  "allocationPct": 25.0,
+  "allocatedBudget": 12500.00,
+  "version": 2,
+  "syncPending": false
+}</code></pre>
+    <p class="pre-label">Errors</p>
+    <div class="scrollbox">
+    <table>
+      <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>409 ALLOCATION_VERSION_CONFLICT</code></td><td><code>expectedVersion</code> is stale — someone else edited this key first; re-fetch and retry</td></tr>
+        <tr><td><code>422 ALLOCATION_TOTAL_EXCEEDED</code></td><td>the new share would push siblings past 100%</td></tr>
+        <tr><td><code>422 ALLOCATION_BELOW_CONSUMED</code></td><td>the new ceiling is below what this key has already spent — carries <code>consumedAmount</code> and <code>requestedBudget</code></td></tr>
+        <tr><td><code>409 APPLICATION_BUDGET_OVERCOMMITTED</code></td><td>the Application itself is already over its own budget; fix that before re-slicing its keys</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="endpoint"><span class="verb put">PUT</span><span class="path">/v1/applications/{applicationId}/key-allocations</span></div>
+    <p class="endpoint-desc">Replace every active key's share under one Application in a single call — for a full re-slice, not an incremental one.</p>
+    <pre><code>{
+  "allocations": [
+    { "apiKeyId": 4821, "allocationPct": 20.0 },
+    { "apiKeyId": 4822, "allocationPct": 30.0 }
+  ],
+  "expectedApplicationVersion": 7
+}</code></pre>
+    <p>Validated and written exactly as a single-key reallocation, but against the complete sibling set at once — the same evaluation order as Part II.4, run once per row inside one lock.</p>
+
+    <div class="endpoint"><span class="verb post">POST</span><span class="path">/v1/api-keys/{keyId}/release-allocation</span></div>
+    <p class="endpoint-desc">Return a revoked key's frozen slice to its Application's headroom. Requires the key to already be inactive.</p>
+    <p class="pre-label">Errors</p>
+    <div class="scrollbox">
+    <table>
+      <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>409 KEY_STILL_ACTIVE</code></td><td>revoke the key before releasing its allocation</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </section>
+
+  <footer class="doc-foot">
+    Application Onboarding &amp; Hierarchical Budget — companion design &middot; drafted for review, not yet implemented
+  </footer>
+
+</div>

@@ -1,0 +1,767 @@
+<title>Allocation Ladder</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root{
+    --ink:#1c2b28; --paper:#f2f5f3; --surface:#ffffff; --surface-2:#eaeeeb;
+    --line:#d6ded9; --muted:#5e6f69; --brass:#a97728; --brass-soft:#f3e6d1;
+    --good:#2f7a4f; --good-soft:#e1f1e6; --bad:#b23b3b; --bad-soft:#fbe4e2;
+    --shadow: 0 1px 2px rgba(28,43,40,.06), 0 10px 28px rgba(28,43,40,.08);
+    --radius: 5px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ink:#e8ece9; --paper:#12100d0d; --paper:#141b19; --surface:#1b2422; --surface-2:#212b28;
+      --line:#2c3733; --muted:#94a39d; --brass:#d19a4a; --brass-soft:#3a2c17;
+      --good:#59b884; --good-soft:#173226; --bad:#e18378; --bad-soft:#3a201d;
+      --shadow: 0 1px 2px rgba(0,0,0,.35), 0 10px 28px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"]{
+    --ink:#e8ece9; --paper:#141b19; --surface:#1b2422; --surface-2:#212b28;
+    --line:#2c3733; --muted:#94a39d; --brass:#d19a4a; --brass-soft:#3a2c17;
+    --good:#59b884; --good-soft:#173226; --bad:#e18378; --bad-soft:#3a201d;
+    --shadow: 0 1px 2px rgba(0,0,0,.35), 0 10px 28px rgba(0,0,0,.3);
+  }
+
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; }
+  body{
+    background:var(--paper); color:var(--ink);
+    font-family:'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+    font-size:14.5px; line-height:1.5; -webkit-font-smoothing:antialiased;
+  }
+  input, button, select{ font-family:inherit; font-size:inherit; }
+  .num{ font-family:'IBM Plex Mono', ui-monospace, monospace; font-variant-numeric:tabular-nums; }
+  a{ color:var(--brass); }
+  button{ cursor:pointer; }
+  button:focus-visible, input:focus-visible, [tabindex]:focus-visible{ outline:2px solid var(--brass); outline-offset:1px; }
+
+  header.top{
+    padding:18px 24px; border-bottom:1px solid var(--line); background:var(--surface);
+    display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+  }
+  header.top h1{ font-size:17px; margin:0; font-weight:700; letter-spacing:-.01em; }
+  header.top p{ margin:0; color:var(--muted); font-size:13px; }
+
+  .app-shell{ display:flex; min-height:calc(100vh - 60px); }
+
+  /* ---- sidebar ---- */
+  aside.sidebar{
+    width:260px; flex:0 0 260px; border-right:1px solid var(--line); background:var(--surface);
+    padding:18px 16px; overflow-y:auto;
+  }
+  .sidebar h2{ font-size:11.5px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:0 0 10px; }
+  .tenant-item{
+    display:flex; flex-direction:column; gap:2px; padding:9px 10px; border-radius:var(--radius);
+    cursor:pointer; border:1px solid transparent; margin-bottom:4px;
+  }
+  .tenant-item:hover{ background:var(--surface-2); }
+  .tenant-item.active{ background:var(--brass-soft); border-color:var(--brass); }
+  .tenant-item .t-name{ font-weight:600; font-size:13.5px; }
+  .tenant-item .t-sub{ font-size:11.5px; color:var(--muted); }
+
+  .new-tenant-form{
+    margin-top:14px; padding-top:14px; border-top:1px dashed var(--line);
+    display:flex; flex-direction:column; gap:6px;
+  }
+  .new-tenant-form input{
+    padding:7px 8px; border:1px solid var(--line); border-radius:4px; background:var(--surface); color:var(--ink);
+  }
+  .btn{
+    padding:7px 12px; border-radius:4px; border:1px solid var(--line); background:var(--surface); color:var(--ink);
+    font-size:12.5px; font-weight:600;
+  }
+  .btn:hover{ background:var(--surface-2); }
+  .btn.primary{ background:var(--brass); border-color:var(--brass); color:#fff; }
+  .btn.primary:hover{ filter:brightness(1.05); }
+  .btn.primary:disabled{ opacity:.45; cursor:not-allowed; filter:none; }
+  .btn.ghost{ background:transparent; border-color:transparent; color:var(--brass); padding:4px 6px; }
+  .btn.ghost:hover{ background:var(--brass-soft); }
+  .btn.small{ padding:4px 9px; font-size:11.5px; }
+
+  /* ---- main ---- */
+  main.content{ flex:1; padding:22px 28px 60px; overflow-x:auto; }
+  .empty-state{ color:var(--muted); padding:40px 0; text-align:center; }
+
+  .tenant-head{ display:flex; justify-content:space-between; align-items:flex-start; gap:20px; flex-wrap:wrap; margin-bottom:6px; }
+  .tenant-head h2{ margin:0; font-size:20px; }
+  .tenant-head .sub{ color:var(--muted); font-size:12.5px; }
+
+  .budget-card{
+    background:var(--surface); border:1px solid var(--line); border-radius:var(--radius);
+    padding:16px 18px; margin:14px 0 22px; box-shadow:var(--shadow);
+  }
+  .budget-card .row1{ display:flex; justify-content:space-between; align-items:baseline; gap:16px; flex-wrap:wrap; }
+  .budget-card .amount{ font-size:24px; font-weight:700; }
+  .budget-card .label{ font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+  .meter{ height:9px; border-radius:5px; background:var(--surface-2); overflow:hidden; margin-top:10px; display:flex; }
+  .meter .fill{ background:var(--brass); }
+  .meter .fill.over{ background:var(--bad); }
+  .meter-labels{ display:flex; justify-content:space-between; font-size:11.5px; color:var(--muted); margin-top:5px; }
+
+  section.tier{ margin-bottom:26px; }
+  .tier-title{ display:flex; align-items:center; gap:8px; margin:0 0 8px; font-size:13px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+
+  table.rows{ width:100%; border-collapse:collapse; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; }
+  table.rows th{
+    text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
+    padding:8px 10px; background:var(--surface-2); border-bottom:1px solid var(--line); font-weight:600;
+  }
+  table.rows td{ padding:7px 10px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  table.rows tr:last-child td{ border-bottom:none; }
+  table.rows tr.child-row td:first-child{ padding-left:26px; }
+  table.rows input.cell{
+    width:80px; padding:5px 6px; border:1px solid var(--line); border-radius:4px;
+    background:var(--surface); color:var(--ink); text-align:right;
+  }
+  table.rows input.cell.wide{ width:100px; }
+  table.rows input.cell:invalid{ border-color:var(--bad); }
+  .pill{
+    display:inline-flex; align-items:center; gap:4px; font-size:11px; font-weight:600; padding:2px 8px;
+    border-radius:99px;
+  }
+  .pill.ok{ background:var(--good-soft); color:var(--good); }
+  .pill.bad{ background:var(--bad-soft); color:var(--bad); }
+  .pill.dot::before{ content:''; width:6px; height:6px; border-radius:50%; background:currentColor; }
+  .headroom-note{ font-size:11.5px; color:var(--muted); margin-top:2px; }
+  .headroom-note.warn{ color:var(--bad); }
+
+  .expand-btn{
+    background:none; border:none; color:var(--muted); font-size:12px; padding:2px 4px; margin-right:4px;
+    display:inline-flex; align-items:center;
+  }
+  .name-cell{ font-weight:600; }
+  .row-actions{ display:flex; gap:4px; }
+
+  .add-row-form{ display:flex; gap:6px; padding:8px 10px; background:var(--surface-2); align-items:center; flex-wrap:wrap; }
+  .add-row-form input{ padding:5px 7px; border:1px solid var(--line); border-radius:4px; background:var(--surface); color:var(--ink); }
+  .add-row-form input.name{ width:150px; }
+  .add-row-form input.pct{ width:70px; text-align:right; }
+  .add-row-form input.spent{ width:80px; text-align:right; }
+  .add-row-form span.lbl{ font-size:11.5px; color:var(--muted); }
+
+  /* ---- modal wizard ---- */
+  .overlay{
+    position:fixed; inset:0; background:rgba(20,27,25,.45); display:flex; align-items:center; justify-content:center;
+    padding:20px; z-index:50;
+  }
+  .wizard{
+    width:min(720px, 100%); max-height:88vh; overflow-y:auto; background:var(--surface); border-radius:8px;
+    border:1px solid var(--line); box-shadow:var(--shadow); padding:22px 24px;
+  }
+  .wizard h3{ margin:0 0 3px; font-size:16.5px; }
+  .wizard .wsub{ color:var(--muted); font-size:12.5px; margin:0 0 16px; }
+  .field-row{ display:flex; gap:16px; align-items:flex-end; margin-bottom:14px; flex-wrap:wrap; }
+  .field{ display:flex; flex-direction:column; gap:4px; }
+  .field label{ font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
+  .field input{ padding:7px 9px; border:1px solid var(--line); border-radius:4px; background:var(--surface); color:var(--ink); width:160px; }
+  .mode-toggle{ display:flex; gap:6px; }
+  .mode-toggle button{
+    padding:7px 14px; border:1px solid var(--line); background:var(--surface); color:var(--ink);
+    border-radius:4px; font-size:12.5px; font-weight:600;
+  }
+  .mode-toggle button.active{ background:var(--brass); border-color:var(--brass); color:#fff; }
+  .wizard table{ width:100%; border-collapse:collapse; margin-top:6px; }
+  .wizard table th{ text-align:left; font-size:10.5px; text-transform:uppercase; color:var(--muted); padding:6px 8px; border-bottom:1px solid var(--line); }
+  .wizard table td{ padding:6px 8px; border-bottom:1px solid var(--line); }
+  .wizard table input[type=text]{ width:80px; padding:4px 6px; border:1px solid var(--line); border-radius:4px; background:var(--surface); color:var(--ink); text-align:right; }
+  .wizard table input[type=checkbox]{ width:15px; height:15px; }
+  .wizard table input[type=checkbox]:disabled{ opacity:.35; cursor:not-allowed; }
+  .protected-tag{ font-size:10.5px; color:var(--muted); font-style:italic; }
+  .wizard-footer{ display:flex; justify-content:space-between; align-items:center; margin-top:16px; padding-top:14px; border-top:1px solid var(--line); }
+  .totals-line{ font-size:13px; }
+  .totals-line .num{ font-weight:700; }
+  .err-box{ background:var(--bad-soft); color:var(--bad); font-size:12px; padding:8px 10px; border-radius:4px; margin-top:10px; }
+  .hint{ font-size:11.5px; color:var(--muted); margin:8px 0 0; }
+
+  ::-webkit-scrollbar{ width:10px; height:10px; }
+  ::-webkit-scrollbar-thumb{ background:var(--line); border-radius:6px; }
+</style>
+
+<header class="top">
+  <h1>Allocation Ladder</h1>
+  <p>A working model of Tenant → Application → API Key budget cascades — proportional vs. directed redistribution, live.</p>
+</header>
+
+<div class="app-shell">
+  <aside class="sidebar">
+    <h2>Tenants</h2>
+    <div id="tenantList"></div>
+    <div class="new-tenant-form">
+      <input id="newTenantName" placeholder="Tenant name" />
+      <input id="newTenantBudget" type="number" placeholder="Initial budget ₹" />
+      <button class="btn primary" onclick="createTenant()">+ New Tenant</button>
+    </div>
+  </aside>
+
+  <main class="content" id="content"></main>
+</div>
+
+<div id="wizardRoot"></div>
+
+<script>
+// ---------------------------------------------------------------
+// State
+// ---------------------------------------------------------------
+let uidCounter = 1;
+const uid = () => 'id' + (uidCounter++);
+
+let state = {
+  selectedTenantId: null,
+  tenants: []
+};
+
+function seed(){
+  const t = { id: uid(), name: 'Acme Corp', allocatedBudget: 100000, version: 1, applications: [] };
+  const a = { id: uid(), name: 'App A', allocatedPercentage: 50, allocatedBudget: 50000, spent: 40000, version: 1, keys: [] };
+  const b = { id: uid(), name: 'App B', allocatedPercentage: 30, allocatedBudget: 30000, spent: 10000, version: 1, keys: [] };
+  const c = { id: uid(), name: 'App C', allocatedPercentage: 20, allocatedBudget: 20000, spent: 5000, version: 1, keys: [] };
+  a.keys.push(
+    { id: uid(), name: 'Key 1', allocatedPercentage: 60, allocatedBudget: 30000, spent: 20000, version: 1 },
+    { id: uid(), name: 'Key 2', allocatedPercentage: 40, allocatedBudget: 20000, spent: 8000, version: 1 }
+  );
+  t.applications.push(a, b, c);
+  state.tenants.push(t);
+  state.selectedTenantId = t.id;
+
+  const t2 = { id: uid(), name: 'Globex Inc', allocatedBudget: 40000, version: 1, applications: [] };
+  state.tenants.push(t2);
+}
+seed();
+
+// ---------------------------------------------------------------
+// Core algorithm (mirrors flexible-allocation-logic-design.md, Section 4)
+// ---------------------------------------------------------------
+const EPS = 0.005;
+
+// Decides whether `app`'s own Keys cascade along with it, and resolves them
+// proportionally against its new amount if so. Mirrors
+// flexible-allocation-logic-design.md §4 step 3d:
+//   - alwaysCascade=true (proportional mode): cascades every time, either direction —
+//     the whole tree scales together by default.
+//   - alwaysCascade=false (a directed override, or a single inline edit): only
+//     cascades on an actual DECREASE — mandatory, so a shrinking Application can
+//     never strand its Keys. A directed INCREASE leaves Keys untouched on purpose,
+//     so an admin can choose where it lands via a separate call (§5.2/§6).
+function cascadeToKeys(app, newAppAmount, alwaysCascade){
+  if (!app.keys || !app.keys.length) return { needed: false, ok: true, keys: [] };
+  const isDecrease = newAppAmount < app.allocatedBudget - EPS;
+  if (!alwaysCascade && !isDecrease) return { needed: false, ok: true, keys: [] };
+  const resolvedKeys = app.keys.map(k => {
+    const amt = newAppAmount * k.allocatedPercentage / 100;
+    return { key: k, pct: k.allocatedPercentage, amt, floorOk: amt >= k.spent - EPS };
+  });
+  const failing = resolvedKeys.find(r => !r.floorOk);
+  return { needed: true, ok: !failing, keys: resolvedKeys, failing };
+}
+
+function resolveCascade(newParentAmount, children, mode, overrides){
+  // overrides: { [childId]: { percentage?: number, amount?: number } }
+  let total = 0;
+  const resolved = children.map(child => {
+    let pct, amt, source;
+    const ov = overrides[child.id];
+    if (ov && (ov.amount != null || ov.percentage != null)) {
+      source = 'override';
+      if (ov.amount != null) { amt = ov.amount; pct = newParentAmount > 0 ? (amt / newParentAmount * 100) : 0; }
+      else { pct = ov.percentage; amt = newParentAmount * pct / 100; }
+    } else if (mode === 'proportional') {
+      source = 'proportional';
+      pct = child.allocatedPercentage;
+      amt = newParentAmount * pct / 100;
+    } else {
+      source = 'protected';
+      amt = child.allocatedBudget;
+      pct = newParentAmount > 0 ? (amt / newParentAmount * 100) : 0;
+    }
+    total += amt;
+    const cascade = cascadeToKeys(child, amt, mode === 'proportional');
+    const floorOk = cascade.needed ? cascade.ok : (amt >= child.spent - EPS);
+    return { child, pct, amt, source, floorOk, cascade };
+  });
+  const siblingOk = total <= newParentAmount + EPS;
+  return { resolved, total, siblingOk };
+}
+
+function fmtMoney(n){ return '₹' + Number(n).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2}); }
+function fmtPct(n){ return Number(n).toFixed(2) + '%'; }
+
+// ---------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------
+function render(){
+  renderSidebar();
+  renderContent();
+}
+
+function renderSidebar(){
+  const list = document.getElementById('tenantList');
+  list.innerHTML = '';
+  state.tenants.forEach(t => {
+    const div = document.createElement('div');
+    div.className = 'tenant-item' + (t.id === state.selectedTenantId ? ' active' : '');
+    const allocated = t.applications.reduce((s,a)=>s+a.allocatedBudget,0);
+    div.innerHTML = `<span class="t-name">${escapeHtml(t.name)}</span><span class="t-sub num">${fmtMoney(t.allocatedBudget)} · ${t.applications.length} apps</span>`;
+    div.onclick = () => { state.selectedTenantId = t.id; render(); };
+    list.appendChild(div);
+  });
+}
+
+function renderContent(){
+  const el = document.getElementById('content');
+  const t = state.tenants.find(x => x.id === state.selectedTenantId);
+  if (!t) { el.innerHTML = '<div class="empty-state">Select or create a Tenant to begin.</div>'; return; }
+
+  const allocatedTotal = t.applications.reduce((s,a)=>s+a.allocatedBudget,0);
+  const pct = t.allocatedBudget > 0 ? Math.min(100, allocatedTotal / t.allocatedBudget * 100) : 0;
+  const over = allocatedTotal > t.allocatedBudget + EPS;
+
+  let html = `
+    <div class="tenant-head">
+      <div>
+        <h2>${escapeHtml(t.name)}</h2>
+        <div class="sub">Root of the hierarchy — assigned directly, never allocated from a parent</div>
+      </div>
+    </div>
+    <div class="budget-card">
+      <div class="row1">
+        <div>
+          <div class="label">Tenant Budget</div>
+          <div class="amount num">${fmtMoney(t.allocatedBudget)}</div>
+        </div>
+        <button class="btn primary" onclick="openWizard('tenant','${t.id}')">Revise Budget →</button>
+      </div>
+      <div class="meter"><div class="fill ${over?'over':''}" style="width:${Math.min(pct,100)}%"></div></div>
+      <div class="meter-labels">
+        <span>Allocated to Applications: <span class="num">${fmtMoney(allocatedTotal)}</span> (${fmtPct(t.allocatedBudget>0?allocatedTotal/t.allocatedBudget*100:0)})</span>
+        <span>${over ? '<span class="pill bad dot">Over budget</span>' : 'Headroom: <span class=\"num\">'+fmtMoney(Math.max(0,t.allocatedBudget-allocatedTotal))+'</span>'}</span>
+      </div>
+    </div>
+
+    <section class="tier">
+      <div class="tier-title">Applications</div>
+      <table class="rows">
+        <thead><tr><th>Name</th><th style="text-align:right">%</th><th style="text-align:right">Allocated ₹</th><th style="text-align:right">Spent ₹</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+  `;
+
+  t.applications.forEach(a => {
+    html += renderAppRow(t, a);
+    html += renderKeysBlock(t, a);
+  });
+
+  html += `
+        </tbody>
+      </table>
+      <div class="add-row-form">
+        <span class="lbl">New Application:</span>
+        <input class="name" id="newAppName-${t.id}" placeholder="Name" />
+        <input class="pct" id="newAppPct-${t.id}" type="number" placeholder="% (optional)" />
+        <button class="btn small primary" onclick="createApplication('${t.id}')">+ Add</button>
+      </div>
+    </section>
+  `;
+
+  el.innerHTML = html;
+}
+
+function renderAppRow(t, a){
+  const keysTotal = a.keys.reduce((s,k)=>s+k.allocatedBudget,0);
+  // Once committed, Σ Keys ≤ this Application's own ₹ always holds — a shrink
+  // either re-fits the Keys automatically or is refused outright (never both
+  // committed and over). So the static display only needs the plain spend check.
+  const floorOk = a.allocatedBudget >= a.spent - EPS;
+  const headroom = a.allocatedBudget - keysTotal;
+  return `
+    <tr>
+      <td class="name-cell">
+        <button class="expand-btn" onclick="toggleExpand('${a.id}')">${expanded[a.id] ? '▾' : '▸'}</button>
+        ${escapeHtml(a.name)}
+      </td>
+      <td style="text-align:right">
+        <input class="cell num" type="number" step="0.01" value="${round2(a.allocatedPercentage)}"
+          onchange="editRow('${t.id}', null, '${a.id}', 'pct', this.value)" />
+      </td>
+      <td style="text-align:right">
+        <input class="cell num wide" type="number" step="0.01" value="${round2(a.allocatedBudget)}"
+          onchange="editRow('${t.id}', null, '${a.id}', 'amt', this.value)" />
+      </td>
+      <td style="text-align:right">
+        <input class="cell num" type="number" step="0.01" value="${round2(a.spent)}"
+          onchange="editSpent('${t.id}', null, '${a.id}', this.value)" />
+      </td>
+      <td>${floorOk ? '<span class="pill ok dot">OK</span>' : '<span class="pill bad dot">Below spend</span>'}</td>
+      <td><button class="btn ghost small" onclick="openWizard('app','${t.id}','${a.id}')">Revise →</button></td>
+    </tr>
+    ${rowErrors[a.id] ? `<tr><td colspan="6" style="padding:0;border:none;">
+        <div class="headroom-note warn" style="padding:2px 10px 6px 30px;">⚠ ${escapeHtml(rowErrors[a.id])}</div>
+      </td></tr>` : ''}
+    ${a.keys.length ? `<tr><td colspan="6" style="padding:0;border:none;">
+        <div class="headroom-note ${headroom < -EPS ? 'warn' : ''}" style="padding:2px 10px 6px 30px;">
+          Keys total ${fmtMoney(keysTotal)} of ${fmtMoney(a.allocatedBudget)} ${headroom > EPS ? '— ' + fmtMoney(headroom) + ' unassigned' : ''}
+        </div>
+      </td></tr>` : ''}
+  `;
+}
+
+const expanded = {};
+function toggleExpand(appId){ expanded[appId] = !expanded[appId]; render(); }
+
+function renderKeysBlock(t, a){
+  if (!expanded[a.id]) return '';
+  let rows = '';
+  a.keys.forEach(k => {
+    const floorOk = k.allocatedBudget >= k.spent - EPS;
+    rows += `
+      <tr class="child-row">
+        <td class="name-cell">${escapeHtml(k.name)}</td>
+        <td style="text-align:right">
+          <input class="cell num" type="number" step="0.01" value="${round2(k.allocatedPercentage)}"
+            onchange="editRow('${t.id}', '${a.id}', '${k.id}', 'pct', this.value)" />
+        </td>
+        <td style="text-align:right">
+          <input class="cell num wide" type="number" step="0.01" value="${round2(k.allocatedBudget)}"
+            onchange="editRow('${t.id}', '${a.id}', '${k.id}', 'amt', this.value)" />
+        </td>
+        <td style="text-align:right">
+          <input class="cell num" type="number" step="0.01" value="${round2(k.spent)}"
+            onchange="editSpent('${t.id}', '${a.id}', '${k.id}', this.value)" />
+        </td>
+        <td>${floorOk ? '<span class="pill ok dot">OK</span>' : '<span class="pill bad dot">Below spend</span>'}</td>
+        <td></td>
+      </tr>
+      ${rowErrors[k.id] ? `<tr><td colspan="6" style="padding:0;border:none;">
+          <div class="headroom-note warn" style="padding:2px 10px 6px 26px;">⚠ ${escapeHtml(rowErrors[k.id])}</div>
+        </td></tr>` : ''}
+    `;
+  });
+  return `
+    <tr><td colspan="6" style="padding:0; border:none; background:var(--surface-2);">
+      <table class="rows" style="border:none; border-radius:0;">
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="add-row-form">
+        <span class="lbl">New Key under ${escapeHtml(a.name)}:</span>
+        <input class="name" id="newKeyName-${a.id}" placeholder="Name" />
+        <input class="pct" id="newKeyPct-${a.id}" type="number" placeholder="% (optional)" />
+        <button class="btn small primary" onclick="createKey('${t.id}','${a.id}')">+ Add</button>
+      </div>
+    </td></tr>
+  `;
+}
+
+function round2(n){ return Math.round(n*100)/100; }
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// ---------------------------------------------------------------
+// Single-row bidirectional edit (Section 2.1 — no parent change, no mode)
+// Same two rules as the wizard: floor check + sibling check. A row that
+// fails either is rejected outright — the input reverts, nothing commits.
+// ---------------------------------------------------------------
+let rowErrors = {};
+function setRowError(id, msg){ rowErrors[id] = msg; }
+function clearRowError(id){ delete rowErrors[id]; }
+
+function editRow(tenantId, appId, rowId, field, rawValue){
+  clearRowError(rowId);
+  const value = parseFloat(rawValue);
+  if (isNaN(value) || value < 0) { render(); return; }
+
+  const t = state.tenants.find(x=>x.id===tenantId);
+  const parentAmount = appId ? t.applications.find(a=>a.id===appId).allocatedBudget : t.allocatedBudget;
+  const list = appId ? t.applications.find(a=>a.id===appId).keys : t.applications;
+  const row = list.find(x=>x.id===rowId);
+
+  const newAmt = field === 'pct' ? parentAmount * value / 100 : value;
+  const newPct = field === 'pct' ? value : (parentAmount > 0 ? (value / parentAmount * 100) : 0);
+
+  // Floor check — if this row is shrinking and has its own Keys, re-fit them
+  // proportionally against the new amount and check THEM, instead of comparing
+  // this row's own figure against a static floor.
+  const cascade = cascadeToKeys(row, newAmt, false); // a single inline edit is an explicit override — only cascades on a decrease
+  const floorOk = cascade.needed ? cascade.ok : (newAmt >= row.spent - EPS);
+  if (!floorOk) {
+    const msg = cascade.needed
+      ? `${cascade.failing.key.name} would drop to ${fmtMoney(cascade.failing.amt)} at its current ${fmtPct(cascade.failing.pct)} share — below its ${fmtMoney(cascade.failing.key.spent)} already spent.`
+      : `${fmtMoney(newAmt)} is below the ${fmtMoney(row.spent)} already spent.`;
+    setRowError(rowId, `Rejected: ${msg}`);
+    render();
+    return;
+  }
+  // Sibling check — every OTHER row keeps its current ₹; only this row changes
+  const total = list.reduce((s,r) => s + (r.id === rowId ? newAmt : r.allocatedBudget), 0);
+  if (total > parentAmount + EPS) {
+    setRowError(rowId, `Rejected: siblings would total ${fmtMoney(total)}, over the ${fmtMoney(parentAmount)} ceiling. Lower another row first, or use "Revise Budget →" to change the total itself.`);
+    render();
+    return;
+  }
+
+  row.allocatedPercentage = newPct;
+  row.allocatedBudget = newAmt;
+  row.version++;
+  if (cascade.needed) {
+    // this row shrank and had its own Keys — commit their proportional re-fit too
+    cascade.keys.forEach(rk => {
+      rk.key.allocatedPercentage = rk.pct;
+      rk.key.allocatedBudget = rk.amt;
+      rk.key.version++;
+      clearRowError(rk.key.id);
+    });
+  }
+  render();
+}
+function editSpent(tenantId, appId, rowId, rawValue){
+  const value = parseFloat(rawValue);
+  if (isNaN(value) || value < 0) { render(); return; }
+  const t = state.tenants.find(x=>x.id===tenantId);
+  const list = appId ? t.applications.find(a=>a.id===appId).keys : t.applications;
+  list.find(x=>x.id===rowId).spent = value;
+  render();
+}
+
+// ---------------------------------------------------------------
+// Create flows (bare-minimum fields)
+// ---------------------------------------------------------------
+function createTenant(){
+  const nameEl = document.getElementById('newTenantName');
+  const budgetEl = document.getElementById('newTenantBudget');
+  const name = nameEl.value.trim() || 'Untitled Tenant';
+  const budget = parseFloat(budgetEl.value) || 0;
+  const t = { id: uid(), name, allocatedBudget: budget, version: 1, applications: [] };
+  state.tenants.push(t);
+  state.selectedTenantId = t.id;
+  nameEl.value = ''; budgetEl.value = '';
+  render();
+}
+function createApplication(tenantId){
+  const t = state.tenants.find(x=>x.id===tenantId);
+  const nameEl = document.getElementById('newAppName-'+tenantId);
+  const pctEl = document.getElementById('newAppPct-'+tenantId);
+  const name = nameEl.value.trim() || 'Untitled App';
+  const pct = parseFloat(pctEl.value) || 0;
+  t.applications.push({ id: uid(), name, allocatedPercentage: pct, allocatedBudget: t.allocatedBudget*pct/100, spent: 0, version: 1, keys: [] });
+  render();
+}
+function createKey(tenantId, appId){
+  const t = state.tenants.find(x=>x.id===tenantId);
+  const a = t.applications.find(x=>x.id===appId);
+  const nameEl = document.getElementById('newKeyName-'+appId);
+  const pctEl = document.getElementById('newKeyPct-'+appId);
+  const name = nameEl.value.trim() || 'Untitled Key';
+  const pct = parseFloat(pctEl.value) || 0;
+  a.keys.push({ id: uid(), name, allocatedPercentage: pct, allocatedBudget: a.allocatedBudget*pct/100, spent: 0, version: 1 });
+  expanded[a.id] = true;
+  render();
+}
+
+// ---------------------------------------------------------------
+// Revise-budget wizard (Section 2.2 / 4 — proportional vs directed)
+// ---------------------------------------------------------------
+let wizard = null; // { level: 'tenant'|'app', tenantId, appId, newAmount, mode, overrides }
+
+function openWizard(level, tenantId, appId){
+  const t = state.tenants.find(x=>x.id===tenantId);
+  const currentAmount = level === 'tenant' ? t.allocatedBudget : t.applications.find(a=>a.id===appId).allocatedBudget;
+  // newAmountRaw is exactly what's shown in the input — never re-derived from
+  // the parsed number, so an empty/mid-edit field is never silently snapped
+  // back to "0" while you're still typing or clearing it.
+  wizard = { level, tenantId, appId, newAmount: currentAmount, newAmountRaw: String(round2(currentAmount)), mode: 'proportional', overrides: {} };
+  renderWizard();
+}
+function closeWizard(){ wizard = null; renderWizard(); }
+function setWizardAmount(v){
+  wizard.newAmountRaw = v;
+  const parsed = parseFloat(v);
+  wizard.newAmount = isNaN(parsed) ? 0 : parsed; // used for the live preview math only, never redisplayed
+  renderWizard();
+}
+function setWizardMode(m){
+  wizard.mode = m;
+  if (m === 'proportional') wizard.overrides = {}; // overrides only mean something in directed mode
+  renderWizard();
+}
+function toggleOverride(childId, on){
+  if (on) {
+    const current = getChildren().find(c=>c.id===childId).allocatedBudget;
+    wizard.overrides[childId] = { amount: current, amountRaw: String(round2(current)) };
+  } else {
+    delete wizard.overrides[childId];
+  }
+  renderWizard();
+}
+function setOverrideField(childId, field, rawValue){
+  const parsed = parseFloat(rawValue);
+  if (field === 'pct') {
+    wizard.overrides[childId] = { percentageRaw: rawValue, percentage: isNaN(parsed) ? 0 : parsed };
+  } else {
+    wizard.overrides[childId] = { amountRaw: rawValue, amount: isNaN(parsed) ? 0 : parsed };
+  }
+  renderWizard();
+}
+
+function getChildren(){
+  const t = state.tenants.find(x=>x.id===wizard.tenantId);
+  return wizard.level === 'tenant' ? t.applications : t.applications.find(a=>a.id===wizard.appId).keys;
+}
+
+// Re-renders `root` from `html`, but if the currently-focused element inside
+// `root` is tagged with data-focus-id, re-finds the same element afterward
+// and restores focus + cursor position — otherwise an oninput-driven
+// re-render kicks focus out after every single keystroke.
+function rerenderPreservingFocus(root, html){
+  const active = document.activeElement;
+  let focusId = null, selStart = null, selEnd = null;
+  if (active && root.contains(active) && active.dataset && active.dataset.focusId) {
+    focusId = active.dataset.focusId;
+    selStart = active.selectionStart;
+    selEnd = active.selectionEnd;
+  }
+  root.innerHTML = html;
+  if (focusId) {
+    const el = root.querySelector(`[data-focus-id="${CSS.escape(focusId)}"]`);
+    if (el) {
+      el.focus();
+      if (selStart != null && typeof el.setSelectionRange === 'function') {
+        try { el.setSelectionRange(selStart, selEnd); } catch(e) { /* not all input types support this */ }
+      }
+    }
+  }
+}
+
+function renderWizard(){
+  const root = document.getElementById('wizardRoot');
+  if (!wizard) { root.innerHTML = ''; return; }
+  const children = getChildren();
+  const result = resolveCascade(wizard.newAmount, children, wizard.mode, wizard.overrides);
+  const label = wizard.level === 'tenant' ? 'Applications' : 'Keys';
+  const parentLabel = wizard.level === 'tenant'
+    ? state.tenants.find(x=>x.id===wizard.tenantId).name
+    : state.tenants.find(x=>x.id===wizard.tenantId).applications.find(a=>a.id===wizard.appId).name;
+
+  let rows = '';
+  result.resolved.forEach(r => {
+    const ov = wizard.overrides[r.child.id];
+    const isOverridden = !!ov;
+    rows += `
+      <tr>
+        <td>
+          <input type="checkbox" ${isOverridden?'checked':''} ${wizard.mode==='proportional'?'disabled':''} onchange="toggleOverride('${r.child.id}', this.checked)" title="${wizard.mode==='proportional' ? 'Switch to Directed mode to override a row' : ''}" />
+        </td>
+        <td>${escapeHtml(r.child.name)}</td>
+        <td style="text-align:right" class="num">${fmtMoney(r.child.allocatedBudget)}</td>
+        <td style="text-align:right">
+          ${isOverridden
+            ? `<input type="text" inputmode="decimal" data-focus-id="ov-pct-${r.child.id}" placeholder="%" value="${ov.percentageRaw!=null?ov.percentageRaw:''}" oninput="setOverrideField('${r.child.id}','pct', this.value)" />`
+            : `<span class="protected-tag">${wizard.mode==='directed' ? 'protected' : 'auto'}</span>`}
+        </td>
+        <td style="text-align:right">
+          ${isOverridden
+            ? `<input type="text" inputmode="decimal" data-focus-id="ov-amt-${r.child.id}" placeholder="₹" value="${ov.amountRaw!=null?ov.amountRaw:''}" oninput="setOverrideField('${r.child.id}','amt', this.value)" />`
+            : ''}
+        </td>
+        <td style="text-align:right" class="num">${fmtPct(r.pct)}</td>
+        <td style="text-align:right" class="num">${fmtMoney(r.amt)}</td>
+        <td>${r.floorOk
+            ? '<span class="pill ok dot">OK</span>'
+            : (r.cascade.needed
+                ? '<span class="pill bad dot">' + escapeHtml(r.cascade.failing.key.name) + ' cannot fit</span>'
+                : '<span class="pill bad dot">Below spend</span>')}</td>
+      </tr>
+      ${r.cascade.needed ? `<tr><td colspan="8" style="padding:0;border:none;">
+          <div class="headroom-note ${r.cascade.ok ? '' : 'warn'}" style="padding:2px 10px 8px 10px;">
+            ${r.cascade.ok
+              ? '↳ Shrinking — Keys auto-fit proportionally: ' + r.cascade.keys.map(k => escapeHtml(k.key.name) + ' → ' + fmtMoney(k.amt)).join(', ')
+              : '↳ ' + escapeHtml(r.cascade.failing.key.name) + ' would drop to ' + fmtMoney(r.cascade.failing.amt) + ' at its current ' + fmtPct(r.cascade.failing.pct) + ' share — below its ' + fmtMoney(r.cascade.failing.key.spent) + ' already spent. Cut this Application less, or shrink ' + escapeHtml(r.cascade.failing.key.name) + ' own share first via its Application\'s "Revise →".'}
+          </div>
+        </td></tr>` : ''}
+    `;
+  });
+
+  const allFloorOk = result.resolved.every(r => r.floorOk);
+  const canApply = allFloorOk && result.siblingOk;
+
+  rerenderPreservingFocus(root, `
+    <div class="overlay" onclick="if(event.target===this) closeWizard()">
+      <div class="wizard">
+        <h3>Revise Budget — ${escapeHtml(parentLabel)}</h3>
+        <p class="wsub">Choose how the ${label.toLowerCase()} you don't explicitly override should react to the new total.</p>
+
+        <div class="field-row">
+          <div class="field">
+            <label>New Amount (₹)</label>
+            <input type="text" inputmode="decimal" data-focus-id="newAmount" value="${wizard.newAmountRaw}" oninput="setWizardAmount(this.value)" />
+          </div>
+          <div class="field">
+            <label>Redistribution Mode</label>
+            <div class="mode-toggle">
+              <button class="${wizard.mode==='proportional'?'active':''}" onclick="setWizardMode('proportional')">Proportional</button>
+              <button class="${wizard.mode==='directed'?'active':''}" onclick="setWizardMode('directed')">Directed</button>
+            </div>
+          </div>
+        </div>
+
+        <table>
+          <thead><tr>
+            <th>Override</th><th>${label.slice(0,-1)}</th><th style="text-align:right">Current ₹</th>
+            <th style="text-align:right">New %</th><th style="text-align:right">New ₹</th>
+            <th style="text-align:right">Resolved %</th><th style="text-align:right">Resolved ₹</th><th>Floor</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+
+        ${wizard.mode==='proportional' ? '<p class="hint">Proportional mode: every row keeps its % fixed — its ₹ moves with the new total. Switch to Directed to override a specific row instead.</p>' : '<p class="hint">Directed mode: every unticked row keeps its ₹ fixed (protected) — its % floats. Tick "Override" to redirect part of the change to a specific row.</p>'}
+        <p class="hint">${wizard.mode==='proportional'
+          ? 'In Proportional mode, any row with its own Keys auto-fits them too — the whole tree scales together in this one Apply, growing or shrinking.'
+          : 'A row that <em>shrinks</em> here and has its own Keys auto-fits them proportionally in this same Apply, mandatory either way. A row that <em>grows</em> via override leaves its Keys untouched on purpose — revise that Application\'s own Keys afterward if you want to direct the growth further.'}</p>
+
+        ${!result.siblingOk ? `<div class="err-box">Resolved total ${fmtMoney(result.total)} exceeds the new amount ${fmtMoney(wizard.newAmount)} — protected/overridden rows don't fit. Reduce an override, or switch mode.</div>` : ''}
+        ${!allFloorOk ? `<div class="err-box">One or more rows would fall below what's already been spent — fix the highlighted row(s) before applying.</div>` : ''}
+
+        <div class="wizard-footer">
+          <div class="totals-line">Resolved total: <span class="num">${fmtMoney(result.total)}</span> of <span class="num">${fmtMoney(wizard.newAmount)}</span></div>
+          <div class="row-actions">
+            <button class="btn" onclick="closeWizard()">Cancel</button>
+            <button class="btn primary" ${canApply?'':'disabled'} onclick="applyWizard()">Apply</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `);
+}
+
+function applyWizard(){
+  const t = state.tenants.find(x=>x.id===wizard.tenantId);
+  const children = getChildren();
+  const result = resolveCascade(wizard.newAmount, children, wizard.mode, wizard.overrides);
+  if (!result.siblingOk || !result.resolved.every(r=>r.floorOk)) return;
+
+  if (wizard.level === 'tenant') {
+    t.allocatedBudget = wizard.newAmount;
+    t.version++;
+  } else {
+    const a = t.applications.find(x=>x.id===wizard.appId);
+    a.allocatedBudget = wizard.newAmount;
+    a.version++;
+  }
+  result.resolved.forEach(r => {
+    r.child.allocatedPercentage = r.pct;
+    r.child.allocatedBudget = r.amt;
+    r.child.version++;
+    clearRowError(r.child.id); // wizard just committed a valid value — any earlier rejected inline edit no longer applies
+    if (r.cascade.needed && r.cascade.ok) {
+      // this Application shrank — its Keys were re-fit proportionally as part of the SAME commit
+      r.cascade.keys.forEach(rk => {
+        rk.key.allocatedPercentage = rk.pct;
+        rk.key.allocatedBudget = rk.amt;
+        rk.key.version++;
+        clearRowError(rk.key.id);
+      });
+    }
+  });
+  closeWizard();
+  render();
+}
+
+render();
+</script>
