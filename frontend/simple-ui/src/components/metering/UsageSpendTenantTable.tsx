@@ -212,7 +212,7 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
             </ThWithTip>
             {showTokenUsage ? (
               <ThWithTip
-                message={tips.TOKEN_USAGE}
+                message={tips.USAGE_BREAKDOWN}
                 w={COLUMN_WIDTHS.withTokenUsage.tokenUsage}
                 sx={thSx}
               >

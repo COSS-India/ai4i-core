@@ -49,6 +49,8 @@ import { useTierManagement } from "../../hooks/useTierManagement";
 import type { Tier } from "../../services/tierManagementService";
 import type { TierFormData, TierFormQuota } from "../../types/tierManagement";
 import { INSTITUTIONS, formatModelTaskTypeLabel } from "../../config/constants";
+import { FIELD_HINTS } from "../../config/fieldHints";
+import FieldHint from "../common/FieldHint";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { generateUUID } from "../../utils/uuid";
 
@@ -388,6 +390,9 @@ function QuotaEditor({
                     <FormErrorMessage fontSize="xs">
                       Unit is required.
                     </FormErrorMessage>
+                    <FieldHint show={!(showErrors && isUnitInvalid(quota))}>
+                      {FIELD_HINTS.tier.quotaUnit.helper}
+                    </FieldHint>
                   </FormControl>
 
                   <FormControl
@@ -405,11 +410,14 @@ function QuotaEditor({
                       value={quota.limit}
                       onChange={(v) => handleQuotaChange(idx, "limit", v)}
                     >
-                      <NumberInputField placeholder="e.g. 10000" />
+                      <NumberInputField placeholder={FIELD_HINTS.tier.quotaLimit.placeholder} />
                     </NumberInput>
                     <FormErrorMessage fontSize="xs">
                       Limit must be greater than 0.
                     </FormErrorMessage>
+                    <FieldHint show={!(showErrors && isLimitInvalid(quota))}>
+                      {FIELD_HINTS.tier.quotaLimit.helper}
+                    </FieldHint>
                   </FormControl>
                 </HStack>
 
@@ -496,8 +504,9 @@ function TierForm({
         <Input
           value={formData.name}
           onChange={(e) => onChange({ ...formData, name: e.target.value })}
-          placeholder="e.g. Enterprise"
+          placeholder={FIELD_HINTS.tier.name.placeholder}
         />
+        <FieldHint>{FIELD_HINTS.tier.name.helper}</FieldHint>
       </FormControl>
 
       <FormControl>
@@ -507,8 +516,9 @@ function TierForm({
           onChange={(e) =>
             onChange({ ...formData, description: e.target.value })
           }
-          placeholder="e.g. Enterprise tier for high usage"
+          placeholder={FIELD_HINTS.tier.description.placeholder}
         />
+        <FieldHint>{FIELD_HINTS.tier.description.helper}</FieldHint>
       </FormControl>
 
       <Divider />

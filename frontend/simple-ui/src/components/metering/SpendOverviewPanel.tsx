@@ -324,10 +324,12 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
           >
             <HStack spacing={1.5}>
               <Text color="gray.500">Active {INSTITUTIONS.toLowerCase()}:</Text>
+              <InfoTip message={METERING.USAGE_SPEND.TOOLTIPS.ACTIVE_TENANTS} />
               <Text fontWeight="semibold" color="gray.800">{summary?.activeTenants ?? "—"}</Text>
             </HStack>
             <HStack spacing={1.5}>
               <Text color="gray.500">Budget exceeded:</Text>
+              <InfoTip message={METERING.USAGE_SPEND.TOOLTIPS.BUDGET_EXCEEDED} />
               <Text
                 fontWeight="semibold"
                 color={(summary?.budgetExceededTenants ?? 0) > 0 ? USAGE_SPEND_DANGER : "gray.800"}
@@ -337,6 +339,7 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
             </HStack>
             <HStack spacing={1.5}>
               <Text color="gray.500">vs last month:</Text>
+              <InfoTip message={METERING.USAGE_SPEND.TOOLTIPS.VS_LAST_MONTH} />
               <Text fontWeight="semibold" color={spendChangeColor(spendChangePercent) ?? "gray.800"}>
                 {spendChangePercent == null
                   ? "—"

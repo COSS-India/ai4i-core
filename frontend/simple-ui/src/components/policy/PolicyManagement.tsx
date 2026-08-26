@@ -12,7 +12,6 @@ import {
   CheckboxGroup,
   Flex,
   FormControl,
-  FormHelperText,
   FormLabel,
   Heading,
   HStack,
@@ -56,6 +55,8 @@ import {
   type PolicyOut,
 } from "../../services/policyService";
 import { INSTITUTION, INSTITUTION_ARTICLE, INSTITUTIONS, isTenantStatus, TENANT } from "../../config/constants";
+import { FIELD_HINTS } from "../../config/fieldHints";
+import FieldHint from "../common/FieldHint";
 import { listTenants } from "../../services/tenantService";
 import type { TenantView } from "../../types/tenant";
 
@@ -1149,7 +1150,7 @@ function PolicyFormModal({
                     fontSize="sm"
                     rows={3}
                   />
-                  <FormHelperText>Enter one or more {INSTITUTION.toLowerCase()} IDs.</FormHelperText>
+                  <FieldHint>{FIELD_HINTS.policy.tenantIdsManual}</FieldHint>
                 </>
               ) : (
                 <>
@@ -1174,9 +1175,7 @@ function PolicyFormModal({
                       </Stack>
                     </CheckboxGroup>
                   </Box>
-                  <FormHelperText>
-                    Select one or more active {INSTITUTION.toLowerCase()} assignments for this policy.
-                  </FormHelperText>
+                  <FieldHint>{FIELD_HINTS.policy.tenantIdsSelect}</FieldHint>
                 </>
               )}
             </FormControl>
