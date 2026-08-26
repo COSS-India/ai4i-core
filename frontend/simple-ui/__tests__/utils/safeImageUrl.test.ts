@@ -18,6 +18,8 @@ describe("isSafeUserImageUrl", () => {
 
   it("rejects dangerous protocols and scriptable image types", () => {
     expect(isSafeUserImageUrl("javascript:alert(1)")).toBe(false);
+    expect(isSafeUserImageUrl("javascript%3Aalert(1)")).toBe(false);
+    expect(isSafeUserImageUrl("vbscript:msgbox(1)")).toBe(false);
     expect(isSafeUserImageUrl("data:text/html,<script>alert(1)</script>")).toBe(
       false
     );
@@ -38,9 +40,11 @@ describe("sanitizeImagePreviewUrl", () => {
 
   it("sanitizes user URLs at the render sink", () => {
     expect(sanitizeImagePreviewUrl("https://example.com/a.jpg")).toBe(
-      "https://example.com/a.jpg"
+      encodeURI("https://example.com/a.jpg")
     );
     expect(sanitizeImagePreviewUrl("javascript:alert(1)")).toBeNull();
+    expect(sanitizeImagePreviewUrl("javascript%3Aalert(1)")).toBeNull();
+    expect(sanitizeImagePreviewUrl("vbscript:msgbox(1)")).toBeNull();
     expect(sanitizeImagePreviewUrl(null)).toBeNull();
     expect(sanitizeImagePreviewUrl("  ")).toBeNull();
   });
