@@ -8,17 +8,17 @@ from app.models import Base
 
 
 class PPUQuotaUsage(Base):
-    __tablename__ = "ppu_quota_usage"
+    __tablename__ = "quota_usage"
     __table_args__ = (
         UniqueConstraint(
             "tenant_id",
             "inference_name",
             "billing_month",
             "tier_id",
-            name="uq_ppu_quota_usage_tenant_inference_month_tier",
+            name="uq_quota_usage_tenant_inference_month_tier",
         ),
         Index(
-            "ix_ppu_quota_usage_billing_month_tenant",
+            "ix_quota_usage_billing_month_tenant",
             "billing_month", "tenant_id",
         ),
     )
@@ -28,10 +28,10 @@ class PPUQuotaUsage(Base):
     inference_name = Column(String(64), nullable=False, index=True)
     billing_month = Column(String(7), nullable=False)
     monthly_quota_snap = Column(Numeric(15, 4), nullable=True)
-    units_used = Column(Numeric(15, 4), nullable=False, default=0, server_default="0")
+    monthly_quota_used = Column(Numeric(15, 4), nullable=False, default=0, server_default="0")
     tier_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("ppu_tiers.id", ondelete="SET NULL"),
+        ForeignKey("tiers.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )

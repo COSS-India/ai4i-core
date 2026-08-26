@@ -25,7 +25,7 @@ class PPUTenantTierAssignment(Base):
     tenant_id = Column(String(255), nullable=False)
     tier_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("ppu_tiers.id"),
+        ForeignKey("tiers.id"),
         nullable=False,
         index=True,
     )
