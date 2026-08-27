@@ -31,7 +31,7 @@ class Application(Base):
     description = Column(String(500), nullable=True)
     domain = Column(String(255), nullable=True)
     allocated_percentage = Column(Numeric(5, 2), nullable=True)
-    allocated_budget = Column(Numeric(15, 2), nullable=True)
+    allocated_budget = Column(Numeric(15, 8), nullable=True)
     status = Column(
         Enum(
             ApplicationStatus,
