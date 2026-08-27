@@ -200,7 +200,8 @@ async def _validate_api_key(
             ).model_dump(),
         )
 
-    user_id = result.get("user_id")
+    application_id = result.get("application_id")
+    api_key_id = result.get("id")
     tenant_id = result.get("tenant_id")
 
     # ── PPU enforcement — decided HERE, not in APISIX ──────────────────────
@@ -236,8 +237,12 @@ async def _validate_api_key(
             headers=quota_header,
         )
 
-    if user_id:
-        response.headers["X-User-ID"] = str(user_id)
+    # No X-User-ID for API-key traffic — a key has no owning user any more
+    # (application_id replaced user_id: migration e9f0a1b2c3d4).
+    if application_id:
+        response.headers["X-Application-ID"] = str(application_id)
+    if api_key_id:
+        response.headers["X-API-Key-ID"] = str(api_key_id)
     # No X-User-Plan header: the plan is fully derivable from X-Auth-Type
     # (api_key ⇒ P2, jwt ⇒ P1) and nothing consumes it.
     response.headers["X-Tier-ID"] = result.get("tier_id") or ""
@@ -248,7 +253,7 @@ async def _validate_api_key(
     response.headers["X-Permission-IDS"] = "[" + ",".join(str(p) for p in permission_ids) + "]"
     if tenant_id:
         _set_tenant_headers(response, tenant_id)
-    return ValidateAPIKeyResponse(valid=True, user_id=user_id, permission_ids=permission_ids)
+    return ValidateAPIKeyResponse(valid=True, application_id=application_id, permission_ids=permission_ids)
 
 
 async def _validate_jwt(

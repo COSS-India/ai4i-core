@@ -6,10 +6,15 @@ The raw hex key is stored directly in Postgres (api_key column = primary key).
 Redis is the sole validation path at inference time — zero DB calls per request.
 Revocation immediately deletes the Redis entry; subsequent lookups find nothing.
 
+Ownership: an API key belongs to an Application, not a User (migration
+e9f0a1b2c3d4 dropped api_key.user_id in favor of api_key.application_id).
+Eligibility to serve a key therefore depends on the owning Application's and
+its Tenant's state — there is no per-user access flag in this path anymore.
+
 Effective key status (no separate DB status column):
-  * Active   — ``is_active=True`` and user/tenant allow access (Redis cached)
-  * Inactive — ``is_active=True`` but tenant SUSPENDED / user locked (Redis evicted;
-               auto-resumes to Active on reactivation via cache refresh)
+  * Active   — ``is_active=True`` and application/tenant allow access (Redis cached)
+  * Inactive — ``is_active=True`` but application INACTIVE / tenant SUSPENDED
+               (Redis evicted; auto-resumes to Active on reactivation via cache refresh)
   * Revoked  — ``is_active=False`` (tenant DEACTIVATED or explicit revoke;
                reactivation does not restore the key)
 """
@@ -19,11 +24,13 @@ import re
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import HTTPException, status
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai4i_core.ppu import get_inference_types
 
@@ -31,17 +38,17 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.exceptions import AuthorizationError, EntityNotFoundError, InvalidAPIKeyError, ValidationError
 from app.models.api_key import APIKey
+from app.models.application import Application, ApplicationStatus
 from app.models.tenant import Tenant, TenantStatus
-from app.models.user import User
 from app.repositories.api_key_repository import APIKeyRepository
+from app.repositories.application_repository import ApplicationRepository
 from app.repositories.tenant_repository import TenantRepository
-from app.repositories.user_repository import UserRepository
 from app.services.cache_service import CacheService
 
 logger = logging.getLogger(__name__)
 
 _HEX_KEY_RE = re.compile(r"[0-9a-f]{32}")
-_USERS_PAGE_SIZE = 500
+_TENANT_CASCADE_PAGE_SIZE = 500
 
 # Ad hoc, short-lived session for validate_api_key's DB fallback — opened only
 # on an actual Redis miss, independent of any repository injected into a
@@ -56,22 +63,20 @@ class APIKeyService:
         self,
         api_key_repo: Optional[APIKeyRepository],
         cache_service: CacheService,
-        user_repo: Optional[UserRepository] = None,
+        application_repo: Optional[ApplicationRepository] = None,
         tenant_repo: Optional[TenantRepository] = None,
     ) -> None:
         self._repo = api_key_repo
         self._cache = cache_service
-        self._users = user_repo
+        self._applications = application_repo
         self._tenants = tenant_repo
 
     @staticmethod
-    def user_may_use_api_keys(user: User, tenant: Optional[Tenant]) -> bool:
-        """True when the user and tenant allow API key authentication."""
-        if user.is_delete:
-            return False
-        if not user.is_active:
-            return False
-        if user.is_tenant_active is False:
+    def application_may_use_api_keys(
+        application: Optional[Application], tenant: Optional[Tenant]
+    ) -> bool:
+        """True when the application and its tenant allow API key authentication."""
+        if application is not None and application.status != ApplicationStatus.ACTIVE:
             return False
         if tenant is None:
             return True
@@ -79,13 +84,13 @@ class APIKeyService:
 
     @staticmethod
     def effective_is_active(
-        api_key: APIKey, user: User, tenant: Optional[Tenant]
+        api_key: APIKey, application: Optional[Application], tenant: Optional[Tenant]
     ) -> bool:
-        """Runtime validity: owner-enabled, not expired, user/tenant allow access."""
+        """Runtime validity: not revoked, not expired, application/tenant allow access."""
         return bool(
             api_key.is_active
             and not api_key.is_expired()
-            and APIKeyService.user_may_use_api_keys(user, tenant)
+            and APIKeyService.application_may_use_api_keys(application, tenant)
         )
 
     @staticmethod
@@ -158,9 +163,10 @@ class APIKeyService:
         """The canonical Redis-hash shape for an API key — defined once so
         every writer (create, refresh, DB-fallback rehydrate) stays in sync."""
         return {
+            "id": db_key.id,
             "api_key": db_key.api_key,
             "permissions": db_key.permissions or [],
-            "user_id": str(db_key.user_id),
+            "application_id": str(db_key.application_id),
             "tenant_id": tenant_id,
             **(extra_fields or {}),
         }
@@ -180,7 +186,7 @@ class APIKeyService:
 
     async def _persist_cache_snapshot(self, db_key: APIKey, payload: dict) -> None:
         """Mirror ``payload`` onto ``api_key.cached_data`` so a future Redis
-        miss can repopulate the cache without rejoining users/tenants.
+        miss can repopulate the cache without rejoining applications/tenants.
         Merges forward any billing flags already in cached_data that
         ``payload`` doesn't itself carry — payload's own values (e.g.
         preserved from a live Redis hash) still win when present, since
@@ -192,7 +198,7 @@ class APIKeyService:
     @staticmethod
     def _preserved_tier_id(db_key: APIKey) -> dict:
         """tier_id is only ever correctly computed once, at create_api_key
-        time (a platform-core PPU lookup) — every other writer must carry
+        time (a read of tenants.tier_id) — every other writer must carry
         forward whatever's already in cached_data instead of recomputing it."""
         if db_key.cached_data and "tier_id" in db_key.cached_data:
             return {"tier_id": db_key.cached_data["tier_id"]}
@@ -227,46 +233,42 @@ class APIKeyService:
         self, db_key: APIKey, tenant_id: Optional[str]
     ) -> None:
         """Write-through even while the key isn't currently eligible to be
-        served (revoked, or owner/tenant temporarily inactive): cached_data
-        must never silently drift from the row an admin just edited, or a
-        later reactivation/DB-fallback rehydrate would serve stale
-        permissions/expiry. Redis is deliberately left alone here — only
-        the DB snapshot updates, since the key must not become servable
+        served (revoked, or application/tenant temporarily inactive):
+        cached_data must never silently drift from the row an admin just
+        edited, or a later reactivation/DB-fallback rehydrate would serve
+        stale permissions/expiry. Redis is deliberately left alone here —
+        only the DB snapshot updates, since the key must not become servable
         again just because its details changed."""
         payload = self._build_cache_payload(db_key, tenant_id, self._preserved_tier_id(db_key))
         await self._persist_cache_snapshot(db_key, payload)
 
-    async def evict_keys_for_user(self, user_id: UUID) -> None:
-        """Remove Redis entries for all keys owned by ``user_id``. No DB writes."""
+    async def evict_keys_for_application(self, application_id: int) -> None:
+        """Remove Redis entries for all keys under ``application_id``. No DB writes."""
         if self._repo is None:
             return
-        for key in await self._repo.list_by_user(user_id):
+        for key in await self._repo.list_by_application(application_id):
             await self._cache.delete_api_key_cache(key.api_key)
 
     async def evict_keys_for_tenant(self, tenant_id: int) -> None:
-        """Evict Redis cache for all tenant users' keys. No DB writes.
+        """Evict Redis cache for all of the tenant's applications' keys. No DB writes.
 
         Used for tenant SUSPENDED: keys stay ``is_active=True`` (Inactive) so
         reactivation can repopulate Redis without issuing a new key.
         """
-        if self._repo is None or self._users is None:
-            logger.warning(
-                "evict_keys_for_tenant skipped: missing repositories (tenant_id=%s)",
-                tenant_id,
-            )
+        if self._repo is None:
             return
-        offset = 0
+        after_id = 0
         while True:
-            users = await self._users.list_by_tenant(
-                tenant_id, offset=offset, limit=_USERS_PAGE_SIZE
+            keys = await self._repo.list_active_keys_for_tenant(
+                tenant_id, after_id=after_id, limit=_TENANT_CASCADE_PAGE_SIZE
             )
-            if not users:
+            if not keys:
                 break
-            for user in users:
-                await self.evict_keys_for_user(user.id)
-            if len(users) < _USERS_PAGE_SIZE:
+            for key in keys:
+                await self._cache.delete_api_key_cache(key.api_key)
+            after_id = keys[-1].id
+            if len(keys) < _TENANT_CASCADE_PAGE_SIZE:
                 break
-            offset += _USERS_PAGE_SIZE
 
     async def revoke_keys_for_tenant(self, tenant_id: int) -> None:
         """Permanently revoke all active API keys for a tenant (DEACTIVATED).
@@ -277,27 +279,15 @@ class APIKeyService:
         let a later reactivation refresh restore them). Reactivating the
         tenant will not restore revoked keys — an admin must create new ones.
         """
-        if self._repo is None or self._users is None:
+        if self._repo is None or self._applications is None:
             logger.warning(
                 "revoke_keys_for_tenant skipped: missing repositories (tenant_id=%s)",
                 tenant_id,
             )
             return
-        revoked_keys: list[str] = []
-        offset = 0
-        while True:
-            users = await self._users.list_by_tenant(
-                tenant_id, offset=offset, limit=_USERS_PAGE_SIZE
-            )
-            if not users:
-                break
-            page_keys = await self._repo.revoke_active_for_users(
-                [user.id for user in users]
-            )
-            revoked_keys.extend(page_keys)
-            if len(users) < _USERS_PAGE_SIZE:
-                break
-            offset += _USERS_PAGE_SIZE
+        applications = await self._applications.list_by_tenant(tenant_id)
+        application_ids = [a.id for a in applications]
+        revoked_keys = await self._repo.revoke_active_for_applications(application_ids)
         if not revoked_keys:
             logger.info(
                 "Revoked 0 API key(s) for deactivated tenant_id=%s",
@@ -313,27 +303,27 @@ class APIKeyService:
             tenant_id,
         )
 
-    async def refresh_keys_cache_for_user(
+    async def refresh_keys_cache_for_application(
         self,
-        user: User,
+        application: Application,
         tenant: Optional[Tenant] = None,
     ) -> None:
-        """Repopulate Redis for keys that remain valid for the user's access state."""
+        """Repopulate Redis for keys that remain valid for the application's access state."""
         if self._repo is None:
             return
-        if tenant is None and user.tenant_id is not None and self._tenants is not None:
-            tenant = await self._tenants.get_by_id(user.tenant_id)
-        if not self.user_may_use_api_keys(user, tenant):
-            await self.evict_keys_for_user(user.id)
+        if tenant is None and self._tenants is not None:
+            tenant = await self._tenants.get_by_id(application.tenant_id)
+        if not self.application_may_use_api_keys(application, tenant):
+            await self.evict_keys_for_application(application.id)
             return
-        tenant_id_str = str(user.tenant_id) if user.tenant_id else None
-        for key in await self._repo.list_by_user(user.id):
+        tenant_id_str = str(application.tenant_id)
+        for key in await self._repo.list_by_application(application.id):
             if key.is_active and not key.is_expired():
                 await self._refresh_redis_cache(key, tenant_id_str)
 
     async def refresh_keys_cache_for_tenant(self, tenant_id: int) -> None:
         """Repopulate Redis for all eligible keys in the tenant."""
-        if self._repo is None or self._users is None or self._tenants is None:
+        if self._repo is None or self._applications is None or self._tenants is None:
             logger.warning(
                 "refresh_keys_cache_for_tenant skipped: missing repositories (tenant_id=%s)",
                 tenant_id,
@@ -342,40 +332,27 @@ class APIKeyService:
         tenant = await self._tenants.get_by_id(tenant_id)
         if not tenant:
             return
-        offset = 0
-        while True:
-            users = await self._users.list_by_tenant(
-                tenant_id, offset=offset, limit=_USERS_PAGE_SIZE
-            )
-            if not users:
-                break
-            for user in users:
-                await self.refresh_keys_cache_for_user(user, tenant)
-            if len(users) < _USERS_PAGE_SIZE:
-                break
-            offset += _USERS_PAGE_SIZE
+        for application in await self._applications.list_by_tenant(tenant_id):
+            await self.refresh_keys_cache_for_application(application, tenant)
 
-    async def _for_each_active_tenant_key(self, tenant_id: Optional[int], op) -> None:
-        """Apply ``op(key)`` to every active, non-expired API key for a tenant
-        (or across all tenants when ``tenant_id`` is None). Callers must check
-        for missing repositories before calling."""
-        offset = 0
+    async def _for_each_active_tenant_key(self, tenant_id: int, op) -> None:
+        """Apply ``op(key)`` to every active, non-expired API key for a
+        tenant, keyset-paginated over api_key.id so a large tenant is walked
+        in bounded batches."""
+        if self._repo is None:
+            return
+        after_id = 0
         while True:
-            if tenant_id is not None:
-                users = await self._users.list_by_tenant(
-                    tenant_id, offset=offset, limit=_USERS_PAGE_SIZE
-                )
-            else:
-                users = await self._users.list_all(offset=offset, limit=_USERS_PAGE_SIZE)
-            if not users:
+            keys = await self._repo.list_active_keys_for_tenant(
+                tenant_id, after_id=after_id, limit=_TENANT_CASCADE_PAGE_SIZE
+            )
+            if not keys:
                 break
-            for user in users:
-                for key in await self._repo.list_by_user(user.id):
-                    if key.is_active and not key.is_expired():
-                        await op(key)
-            if len(users) < _USERS_PAGE_SIZE:
+            for key in keys:
+                await op(key)
+            after_id = keys[-1].id
+            if len(keys) < _TENANT_CASCADE_PAGE_SIZE:
                 break
-            offset += _USERS_PAGE_SIZE
 
     async def _patch_all_tenant_key_caches(
         self, tenant_id: int, field: str, value: str
@@ -384,7 +361,7 @@ class APIKeyService:
         tenant, and mirror the same field/value onto cached_data (write-
         through) so it survives a cache eviction instead of resetting to
         unset on the next DB-fallback rehydrate."""
-        if self._repo is None or self._users is None:
+        if self._repo is None:
             return
         await self._for_each_active_tenant_key(
             tenant_id,
@@ -404,31 +381,30 @@ class APIKeyService:
         and remove the same fields from cached_data. Called by the monthly cron on
         the 1st of each month.
 
-        Reads api_keys directly, paginated by key id — no join through users
-        (list_active_keys), and clears each page via one pipelined Redis call
-        (delete_api_key_cache_fields_bulk) instead of one HDEL per key. This
-        was previously one DB query per user plus one serial HDEL per key,
-        which doesn't scale to a large (lakhs-of-keys) tenant population. The
-        cached_data side is likewise cleared in id-keyset batches
-        (remove_cached_data_fields_globally), each its own transaction, so
-        neither side holds table-wide locks or builds one oversized
-        transaction.
+        Reads api_keys directly, paginated by key id — no join through
+        applications (list_active_keys), and clears each page via one
+        pipelined Redis call (delete_api_key_cache_fields_bulk) instead of
+        one HDEL per key. The cached_data side is likewise cleared in
+        id-keyset batches (remove_cached_data_fields_globally), each its own
+        transaction, so neither side holds table-wide locks or builds one
+        oversized transaction.
         """
         if self._repo is None:
             logger.warning("reset_all_quota_fields skipped: missing repositories")
             return
         inference_fields = [f"quota-{entry['name']}" for entry in get_inference_types()]
         offset = 0
+        page_size = _TENANT_CASCADE_PAGE_SIZE
         while True:
-            keys = await self._repo.list_active_keys(offset=offset, limit=_USERS_PAGE_SIZE)
+            keys = await self._repo.list_active_keys(offset=offset, limit=page_size)
             if not keys:
                 break
             await self._cache.delete_api_key_cache_fields_bulk(
                 [key.api_key for key in keys], inference_fields
             )
-            if len(keys) < _USERS_PAGE_SIZE:
+            if len(keys) < page_size:
                 break
-            offset += _USERS_PAGE_SIZE
+            offset += page_size
         # Commits per batch internally (keyset-paginated); no trailing commit needed.
         await self._repo.remove_cached_data_fields_globally(inference_fields)
 
@@ -449,7 +425,7 @@ class APIKeyService:
         under the previous tier is stale and must not keep 429'ing requests
         until the monthly cron runs.
         """
-        if self._repo is None or self._users is None:
+        if self._repo is None:
             logger.warning(
                 "clear_quota_flags_for_tenant skipped: missing repositories (tenant_id=%s)",
                 tenant_id,
@@ -465,18 +441,25 @@ class APIKeyService:
 
     async def create_api_key(
         self,
-        user_id: UUID,
+        actor_user_id: UUID,
         key_name: str,
         permissions: list[str],
+        application_id: int,
         expires_days: Optional[int] = None,
-        tenant_id: Optional[str] = None,
-        platform_core_db: Optional[AsyncSession] = None,
+        allocated_percentage: Optional[Decimal] = None,
+        *,
+        caller_tenant_id: Optional[int] = None,
     ) -> tuple[str, APIKey]:
         """
         Generate a hex API key, persist to DB, cache in Redis.
         Returns (raw_hex_key, api_key_record). Raw key is shown once and never stored again.
+
+        ``caller_tenant_id`` is None for a system admin (unscoped — any
+        tenant's application may be targeted); otherwise the application must
+        belong to that tenant or this raises the same 404 as "doesn't exist"
+        (APPLICATION_NOT_FOUND), so a caller cannot enumerate application IDs
+        outside their own tenant.
         """
-        # Validate expires_days if provided
         if expires_days is not None:
             if not isinstance(expires_days, int) or expires_days < 1:
                 raise ValidationError(
@@ -484,91 +467,93 @@ class APIKeyService:
                     code="INVALID_EXPIRES_DAYS",
                 )
 
+        if self._applications is None:
+            raise ValidationError(
+                message="API key service is missing application repository; cannot verify application.",
+                code="API_KEY_SERVICE_MISCONFIGURED",
+            )
+        if self._tenants is None:
+            raise ValidationError(
+                message="API key service is missing tenant repository; cannot verify tier assignment.",
+                code="API_KEY_SERVICE_MISCONFIGURED",
+            )
+
+        if caller_tenant_id is not None:
+            application = await self._applications.get_by_id_for_tenant(
+                application_id, caller_tenant_id
+            )
+        else:
+            application = await self._applications.get_by_id(application_id)
+        if application is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "APPLICATION_NOT_FOUND", "message": "Application not found."},
+            )
+
+        tenant = await self._tenants.get_by_id(application.tenant_id)
+        if tenant is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "APPLICATION_NOT_FOUND", "message": "Application not found."},
+            )
+
+        # Checked via tenants.tier_id directly (no cross-DB PPU lookup needed
+        # any more — tier now lives on the tenant row itself).
+        if not tenant.tier_id:
+            raise ValidationError(
+                message="API key cannot be created: tenant has no active tier assignment.",
+                code="NO_ACTIVE_TIER",
+            )
+
         permission_ids = await self._resolve_permission_names(permissions)
+
+        if allocated_percentage is not None:
+            existing_total = await self._applications.sum_allocated_percentage(application_id)
+            if existing_total + allocated_percentage > Decimal("100"):
+                raise ValidationError(
+                    message=(
+                        f"Allocating {allocated_percentage}% would bring this application's "
+                        f"total API key allocation to {existing_total + allocated_percentage}%, "
+                        "which exceeds 100%."
+                    ),
+                    code="ALLOCATION_TOTAL_EXCEEDED",
+                )
+
+        allocated_budget: Optional[Decimal] = None
+        if allocated_percentage is not None and application.allocated_budget is not None:
+            allocated_budget = (application.allocated_budget * allocated_percentage) / Decimal("100")
 
         raw_key = self.generate_api_key()
         days = expires_days or settings.api_key_expire_days
         expires_at = datetime.now(timezone.utc) + timedelta(days=days)
         ttl = int(timedelta(days=days).total_seconds())
 
-        if self._users is None:
-            raise ValidationError(
-                message="API key service is missing user repository; cannot verify owner state.",
-                code="API_KEY_SERVICE_MISCONFIGURED",
-            )
-
-        owner = await self._users.get_by_id(user_id)
-        if not owner:
-            raise EntityNotFoundError("User")
-
-        tenant = None
-        if owner.tenant_id is not None:
-            if self._tenants is None:
-                raise ValidationError(
-                    message="API key service is missing tenant repository; cannot verify tenant state.",
-                    code="API_KEY_SERVICE_MISCONFIGURED",
-                )
-            tenant = await self._tenants.get_by_id(owner.tenant_id)
-        owner_active = self.user_may_use_api_keys(owner, tenant)
-
-        if not tenant_id:
-            raise ValidationError(
-                message="A tenant ID is required to create an API key.",
-                code="TENANT_ID_REQUIRED",
-            )
-
-        if platform_core_db is None:
-            raise ValidationError(
-                message="Tier assignment cannot be verified: platform-core DB is not configured.",
-                code="PLATFORM_CORE_DB_NOT_CONFIGURED",
-            )
-
-        tier_id = ""
-        try:
-            row = (await platform_core_db.execute(
-                text(
-                    "SELECT tier_id FROM ppu_tenant_tier_assignments"
-                    " WHERE tenant_id = :tenant_id"
-                    "   AND effective_from <= now()"
-                    "   AND effective_to   >  now()"
-                    " LIMIT 1"
-                ),
-                {"tenant_id": tenant_id},
-            )).first()
-            if row:
-                tier_id = str(row.tier_id)
-        except Exception as exc:
-            logger.warning("Failed to fetch tier_id for tenant %s: %s", tenant_id, exc)
-            raise ValidationError(
-                message="Failed to verify tier assignment for the tenant.",
-                code="TIER_LOOKUP_FAILED",
-            ) from exc
-
-        if not tier_id:
-            raise ValidationError(
-                message="API key cannot be created: tenant has no active tier assignment.",
-                code="NO_ACTIVE_TIER",
-            )
-
         api_key = APIKey(
             api_key=raw_key,
-            user_id=user_id,
+            application_id=application_id,
             key_name=key_name,
+            allocated_percentage=allocated_percentage,
+            allocated_budget=allocated_budget,
             permissions=permission_ids,
             expires_at=expires_at,
             is_active=True,
-            created_by=str(user_id),
-            updated_by=str(user_id),
+            created_by=str(actor_user_id),
+            updated_by=str(actor_user_id),
         )
         await self._repo.create(api_key)
         await self._repo.commit()
 
-        if owner_active:
-            payload = self._build_cache_payload(api_key, tenant_id, {"tier_id": tier_id})
+        if self.application_may_use_api_keys(application, tenant):
+            payload = self._build_cache_payload(
+                api_key, str(tenant.id), {"tier_id": str(tenant.tier_id)}
+            )
             await self._cache.set_api_key_cache(raw_key, ttl, payload)
             await self._persist_cache_snapshot(api_key, payload)
 
-        logger.info("API key created: name=%s user=%s permissions=%s", key_name, user_id, permission_ids)
+        logger.info(
+            "API key created: name=%s application=%s permissions=%s",
+            key_name, application_id, permission_ids,
+        )
         return raw_key, api_key
 
     @staticmethod
@@ -586,26 +571,26 @@ class APIKeyService:
 
     @staticmethod
     async def _get_api_key_from_db(repo: APIKeyRepository, token: str) -> Optional[APIKey]:
-        """DB fallback for a Redis miss. ``repo`` eager-loads user/tenant so
+        """DB fallback for a Redis miss. ``repo`` eager-loads application/tenant so
         eligibility can be checked without further queries."""
         return await repo.get_by_api_key_if_valid(token)
 
     def _is_key_eligible(self, db_key: APIKey) -> bool:
         """Beyond is_active/expiry (already filtered in the DB query): the
-        owning user and tenant must still allow API-key authentication."""
-        if db_key.user is None:
+        owning application and tenant must still allow API-key authentication."""
+        if db_key.application is None:
             logger.warning(
-                "API key %s has no owning user row; treating as ineligible", db_key.api_key
+                "API key %s has no owning application row; treating as ineligible", db_key.api_key
             )
             return False
-        return self.user_may_use_api_keys(db_key.user, db_key.user.tenant)
+        return self.application_may_use_api_keys(db_key.application, db_key.application.tenant)
 
     async def _rehydrate_cache_from_db(self, db_key: APIKey) -> dict:
         """Repopulate Redis for an eligible key found on a cache miss —
         verbatim from its persisted ``cached_data`` snapshot, the only source
         of truth for this path (write-through: cached_data is kept in sync on
-        every create/update; never synthesized here — the PPU tier lookup it
-        can carry isn't safe to redo on this hot path)."""
+        every create/update; never synthesized here — the tier_id it can
+        carry isn't safe to redo on this hot path)."""
         if not db_key.cached_data:
             raise InvalidAPIKeyError()
         payload = db_key.cached_data
@@ -656,7 +641,8 @@ class APIKeyService:
     async def revoke_api_key(
         self,
         api_key_value: str,
-        user_id: Optional[UUID] = None,
+        *,
+        caller_tenant_id: Optional[int] = None,
     ) -> None:
         if not self._is_api_key(api_key_value):
             raise ValidationError(
@@ -666,18 +652,23 @@ class APIKeyService:
         db_key = await self._repo.get_by_api_key(api_key_value)
         if not db_key:
             raise EntityNotFoundError("API key")
-        if user_id is not None and db_key.user_id != user_id:
-            raise AuthorizationError(
-                message="You do not have permission to revoke this API key. API keys can only be revoked by their owner.",
-                code="UNAUTHORIZED_API_KEY_REVOCATION",
+        if caller_tenant_id is not None:
+            application = await self._applications.get_by_id_for_tenant(
+                db_key.application_id, caller_tenant_id
             )
+            if application is None:
+                raise AuthorizationError(
+                    message="You do not have permission to revoke this API key.",
+                    code="UNAUTHORIZED_API_KEY_REVOCATION",
+                )
         await self.revoke_by_obj(db_key)
 
     async def update_key(
         self,
         api_key_value: str,
         data: dict,
-        user_id: Optional[UUID] = None,
+        *,
+        caller_tenant_id: Optional[int] = None,
     ) -> APIKey:
         if not self._is_api_key(api_key_value):
             raise ValidationError(
@@ -687,28 +678,34 @@ class APIKeyService:
         db_key = await self._repo.get_by_api_key(api_key_value)
         if not db_key:
             raise EntityNotFoundError("API key")
-        if user_id is not None and db_key.user_id != user_id:
-            raise AuthorizationError(
-                message="You do not have permission to update this API key. API keys can only be updated by their owner.",
-                code="UNAUTHORIZED_API_KEY_UPDATE",
+        if caller_tenant_id is not None:
+            application = await self._applications.get_by_id_for_tenant(
+                db_key.application_id, caller_tenant_id
             )
-        return await self.update_key_by_obj(db_key, data, user_id)
+            if application is None:
+                raise AuthorizationError(
+                    message="You do not have permission to update this API key.",
+                    code="UNAUTHORIZED_API_KEY_UPDATE",
+                )
+        return await self.update_key_by_obj(db_key, data)
 
     async def revoke_by_obj(self, db_key: APIKey) -> None:
-        """Revoke a key that has already been fetched and ownership-verified by the caller.
+        """Revoke a key that has already been fetched and scope-verified by the caller.
         Skips the second get_by_api_key lookup that revoke_api_key() would otherwise perform."""
         await self._repo.revoke(db_key)
         await self._repo.commit()
         await self._cache.delete_api_key_cache(db_key.api_key)
-        logger.info("API key revoked: api_key=%s user=%s", db_key.api_key, db_key.user_id)
+        logger.info(
+            "API key revoked: api_key=%s application=%s", db_key.api_key, db_key.application_id
+        )
 
     async def update_key_by_obj(
         self,
         db_key: APIKey,
         data: dict,
-        user_id: Optional[UUID] = None,
+        updated_by: Optional[UUID] = None,
     ) -> APIKey:
-        """Update a key that has already been fetched and ownership-verified by the caller.
+        """Update a key that has already been fetched and scope-verified by the caller.
         Skips the second get_by_api_key lookup that update_key() would otherwise perform."""
         data = dict(data)  # avoid mutating the caller's dict
 
@@ -725,40 +722,112 @@ class APIKeyService:
                 )
             data["expires_at"] = datetime.now(timezone.utc) + timedelta(days=expires_days)
 
-        if user_id is not None:
-            data["updated_by"] = str(user_id)
+        if updated_by is not None:
+            data["updated_by"] = str(updated_by)
 
         await self._repo.update(db_key, data)
         await self._repo.commit()
 
         tenant_id_str: Optional[str] = None
-        if self._users is not None:
-            owner = await self._users.get_by_id(db_key.user_id)
-            tenant = None
-            if owner and owner.tenant_id is not None and self._tenants is not None:
-                tenant = await self._tenants.get_by_id(owner.tenant_id)
-                tenant_id_str = str(owner.tenant_id)
-            if owner and self.effective_is_active(db_key, owner, tenant):
-                await self._refresh_redis_cache(db_key, tenant_id_str)
-            else:
-                # Not currently eligible (revoked, or owner/tenant inactive) — Redis
-                # must stay evicted, but cached_data still has to mirror the edit
-                # just committed, or a later reactivation/DB-fallback rehydrate
-                # would serve stale permissions/expiry.
-                await self._cache.delete_api_key_cache(db_key.api_key)
-                await self._persist_current_state_to_cached_data(db_key, tenant_id_str)
-        elif data.get("is_active") is False:
+        application = None
+        tenant = None
+        if self._applications is not None:
+            application = await self._applications.get_by_id(db_key.application_id)
+        if application is not None and self._tenants is not None:
+            tenant = await self._tenants.get_by_id(application.tenant_id)
+            tenant_id_str = str(application.tenant_id)
+        if application is not None and self.effective_is_active(db_key, application, tenant):
+            await self._refresh_redis_cache(db_key, tenant_id_str)
+        else:
+            # Not currently eligible (revoked, or application/tenant inactive) — Redis
+            # must stay evicted, but cached_data still has to mirror the edit
+            # just committed, or a later reactivation/DB-fallback rehydrate
+            # would serve stale permissions/expiry.
             await self._cache.delete_api_key_cache(db_key.api_key)
+            await self._persist_current_state_to_cached_data(db_key, tenant_id_str)
 
         await self._repo.refresh(db_key)
-        logger.info("API key updated: api_key=%s user=%s", db_key.api_key, db_key.user_id)
+        logger.info(
+            "API key updated: api_key=%s application=%s", db_key.api_key, db_key.application_id
+        )
         return db_key
 
-    async def list_by_user(self, user_id: UUID) -> list[APIKey]:
-        return await self._repo.list_by_user(user_id)
+    async def list_by_application(self, application_id: int) -> list[APIKey]:
+        return await self._repo.list_by_application(application_id)
 
-    async def list_all_with_users(self, offset: int = 0, limit: int = 100) -> list:
-        return await self._repo.list_all_with_users(offset, limit)
+    async def list_grouped(
+        self, *, caller_tenant_id: Optional[int], application_id: Optional[int]
+    ) -> list[tuple[Application, list[APIKey]]]:
+        """Applications + their API keys, for GET /auth/api-keys.
+
+        ``caller_tenant_id=None`` means the caller is a platform ADMIN
+        (unscoped); otherwise the result — and any ``application_id`` filter
+        — is restricted to that tenant's applications, with a uniform 404
+        (APPLICATION_NOT_FOUND) whether the id doesn't exist at all or
+        belongs to a different tenant.
+        """
+        if application_id is not None:
+            if caller_tenant_id is not None:
+                application = await self._applications.get_by_id_for_tenant(
+                    application_id, caller_tenant_id
+                )
+            else:
+                application = await self._applications.get_by_id(application_id)
+            if application is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail={"code": "APPLICATION_NOT_FOUND", "message": "Application not found."},
+                )
+            keys = await self._repo.list_by_application(application_id)
+            return [(application, keys)]
+
+        if caller_tenant_id is not None:
+            applications = await self._applications.list_by_tenant(caller_tenant_id)
+        else:
+            applications = await self._applications.list_all()
+        app_ids = [a.id for a in applications]
+        keys = await self._repo.list_by_applications(app_ids)
+        keys_by_app: dict[int, list[APIKey]] = {}
+        for k in keys:
+            keys_by_app.setdefault(k.application_id, []).append(k)
+        return [(a, keys_by_app.get(a.id, [])) for a in applications]
+
+    async def list_all_with_applications(
+        self, offset: int = 0, limit: int = 100, application_id: Optional[int] = None
+    ) -> list[tuple[APIKey, Application]]:
+        return await self._repo.list_all_with_applications(offset, limit, application_id)
+
+    @staticmethod
+    async def fetch_budget_usage(
+        key_ids: list[int], platform_core_db: Optional[AsyncSession]
+    ) -> dict[int, tuple[Decimal, Decimal]]:
+        """Batch-fetch (used, snapshot) from platform-core's budget_usage
+        ledger for GET /auth/api-keys/all. There is no ORM relation across
+        the DB boundary — budget_usage.api_key_id is not a real FK (see
+        migration e9f0a1b2c3d4's comment on api_key_application_id_fkey) —
+        so this is a plain batched raw-SQL lookup, the same cross-DB pattern
+        create_api_key uses for tier_id. Missing entries mean "no usage
+        recorded yet"; callers treat that as used=0.
+        """
+        if not key_ids or platform_core_db is None:
+            return {}
+        try:
+            rows = (
+                await platform_core_db.execute(
+                    text(
+                        "SELECT api_key_id, api_key_budget_used, api_key_budget_snap"
+                        "   FROM budget_usage"
+                        "  WHERE api_key_id = ANY((:key_ids)::int[])"
+                    ),
+                    {"key_ids": key_ids},
+                )
+            ).all()
+        except Exception as exc:
+            logger.warning("Failed to fetch budget_usage for keys %s: %s", key_ids, exc)
+            return {}
+        return {
+            row.api_key_id: (row.api_key_budget_used, row.api_key_budget_snap) for row in rows
+        }
 
     async def get_by_api_key(self, api_key_value: str) -> Optional[APIKey]:
         return await self._repo.get_by_api_key(api_key_value)
@@ -766,5 +835,11 @@ class APIKeyService:
     async def get_by_id(self, key_id: int) -> Optional[APIKey]:
         return await self._repo.get_by_id(key_id)
 
-    async def get_by_id_for_owner(self, key_id: int, user_id: UUID) -> Optional[APIKey]:
-        return await self._repo.get_by_id_for_owner(key_id, user_id)
+    async def get_by_id_for_scope(
+        self, key_id: int, caller_tenant_id: Optional[int]
+    ) -> Optional[APIKey]:
+        """``caller_tenant_id=None`` (platform ADMIN) is unscoped; otherwise
+        the key's Application must belong to that tenant."""
+        if caller_tenant_id is None:
+            return await self._repo.get_by_id(key_id)
+        return await self._repo.get_by_id_for_tenant(key_id, caller_tenant_id)

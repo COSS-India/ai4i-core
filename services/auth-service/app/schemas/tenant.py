@@ -5,8 +5,9 @@ Tenant request/response schemas.
 import re
 import unicodedata
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
-from typing import Any, Optional, Union
+from typing import Any, Literal, Optional, Union
 from uuid import UUID
 
 from pydantic import AliasChoices, EmailStr, Field, StrictBool, field_serializer, field_validator, model_validator
@@ -123,6 +124,15 @@ class TenantCreate(BaseSchema):
     email: EmailStr
     phone_number: Optional[str] = None
     plan_id: Optional[UUID] = None
+    tier_id: Optional[UUID] = None
+    # No ge=0 here: a negative value must surface as the contract's named
+    # 422 INVALID_BUDGET (checked in TenantService.create_tenant), not a
+    # generic Pydantic field-constraint error.
+    allocated_budget: Optional[Decimal] = Field(
+        None, max_digits=15, decimal_places=2, description="Initial budget, INR."
+    )
+    budget_effective_from: Optional[datetime] = None
+    budget_effective_to: Optional[datetime] = None
 
     @field_validator("organisation", "contact_name", mode="before")
     @classmethod
@@ -201,6 +211,15 @@ class TenantResponse(BaseSchema):
     created_by: Optional[UUID] = None
     updated_at: Optional[datetime] = None
     updated_by: Optional[UUID] = None
+    tier_id: Optional[UUID] = None
+    allocated_budget: Optional[Decimal] = None
+    budget_effective_from: Optional[datetime] = None
+    budget_effective_to: Optional[datetime] = None
+    # Additive beyond the contract's sample response: PATCH .../budget's
+    # optional expected_version check is only usable if a client can learn
+    # the tenant's current version somewhere, and this is the only place
+    # that happens.
+    version: int = 1
 
 
 class TenantUserCreate(BaseSchema):
@@ -310,6 +329,60 @@ class DeleteTenantUserData(BaseSchema):
     deleted: bool
 
 
+# ── Tier / budget ──
+
+class TenantTierAssignRequest(BaseSchema):
+    # Deliberately str, not UUID: an invalid format must surface as the
+    # contract's named 400 (checked in TenantService.assign_tenant_tier),
+    # not FastAPI's automatic 422 for a failed UUID field parse.
+    tier_id: str
+
+
+class TenantTierAssignData(BaseSchema):
+    tenant_id: int
+    tier_id: UUID
+    updated_at: Optional[datetime] = None
+    updated_by: Optional[UUID] = None
+
+
+class TenantBudgetRequest(BaseSchema):
+    action: Literal["top-up", "top-down"]
+    amount: Decimal = Field(..., gt=0, max_digits=15, decimal_places=2)
+    expected_version: Optional[int] = Field(
+        None,
+        description=(
+            "Optimistic-lock check against the tenant's current version. "
+            "Omit to skip the check entirely (no version_conflict raised)."
+        ),
+    )
+
+
+class TenantBudgetData(BaseSchema):
+    """Unwrapped — no success/data envelope. Matches the endpoint this
+    replaces (platform-core-service's PATCH /pay-per-use/tenant/budget)."""
+
+    tenant_id: int
+    allocated_budget: Optional[Decimal] = None
+    applications_recomputed: Optional[int] = Field(
+        None, description="Not computed in this release; always null."
+    )
+    keys_recomputed: Optional[int] = Field(
+        None, description="Not computed in this release; always null."
+    )
+    updated_at: Optional[datetime] = None
+
+
+class TenantTierListItem(BaseSchema):
+    tenant_id: int
+    tenant_name: str
+    tier_id: UUID
+    tier_name: Optional[str] = None
+    allocated_budget: Optional[Decimal] = None
+    budget_effective_from: Optional[datetime] = None
+    budget_effective_to: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
 class CreateTenantResponse(SuccessResponse):
     """POST /auth/tenants"""
 
@@ -380,3 +453,15 @@ class DeleteTenantUserResponse(SuccessResponse):
     """DELETE /auth/tenants/{tenant_id}/users/{user_id}"""
 
     data: DeleteTenantUserData
+
+
+class TenantTierAssignResponse(SuccessResponse):
+    """PATCH /auth/tenants/{tenant_id}/tier"""
+
+    data: TenantTierAssignData
+
+
+class ListTenantTiersResponse(SuccessResponse):
+    """GET /auth/tenants/tier/list"""
+
+    data: list[TenantTierListItem]

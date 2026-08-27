@@ -40,6 +40,9 @@ class Tenant(Base):
     allocated_budget = Column(Numeric(15, 2), nullable=True)
     budget_effective_from = Column(DateTime(timezone=True), nullable=True)
     budget_effective_to = Column(DateTime(timezone=True), nullable=True)
+    # Optimistic-lock counter for PATCH /auth/tenants/{id}/budget's optional
+    # expected_version check. Incremented on every budget revision.
+    version = Column(Integer, nullable=False, server_default="1")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     created_by = Column(UUID(as_uuid=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

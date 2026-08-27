@@ -2,11 +2,15 @@
 APIKey table queries.
 
 No business logic, no Redis calls — Postgres only.
+
+Ownership: an API key belongs to an Application (application_id), not a
+User (migration e9f0a1b2c3d4 dropped api_key.user_id in favor of
+application_id). Tenant scoping therefore always goes through
+Application.tenant_id, not through users.
 """
 
 from datetime import datetime, timezone
 from typing import Optional
-from uuid import UUID
 
 from sqlalchemy import cast, func, or_, select, update
 from sqlalchemy.dialects.postgresql import ARRAY, TEXT
@@ -14,8 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from app.models.api_key import APIKey
+from app.models.application import Application
 from app.models.role import Permission
-from app.models.user import User
 from app.repositories.base import BaseRepository
 
 
@@ -29,11 +33,14 @@ class APIKeyRepository(BaseRepository):
         )
         return result.scalar_one_or_none()
 
-    async def get_by_id_for_owner(self, key_id: int, user_id: UUID) -> Optional[APIKey]:
-        """Ownership-scoped lookup: returns None whether the key doesn't exist or belongs
-        to a different user, so the caller cannot enumerate valid key IDs."""
+    async def get_by_id_for_tenant(self, key_id: int, tenant_id: int) -> Optional[APIKey]:
+        """Tenant-scoped lookup (via the key's Application): returns None whether
+        the key doesn't exist or its application belongs to a different tenant,
+        so a Tenant Admin caller cannot enumerate valid key IDs outside their tenant."""
         result = await self._db.execute(
-            select(APIKey).where(APIKey.id == key_id, APIKey.user_id == user_id)
+            select(APIKey)
+            .join(Application, APIKey.application_id == Application.id)
+            .where(APIKey.id == key_id, Application.tenant_id == tenant_id)
         )
         return result.scalar_one_or_none()
 
@@ -58,13 +65,14 @@ class APIKeyRepository(BaseRepository):
         return conditions
 
     async def get_by_api_key_if_valid(self, api_key_value: str) -> Optional[APIKey]:
-        """Validation-hot-path lookup: eager-loads user and user.tenant in one
-        query so the caller can check owner/tenant eligibility with zero
-        further queries. Filters is_active/expiry here; owner/tenant
-        eligibility itself stays a service-layer concern."""
+        """Validation-hot-path lookup: eager-loads application and
+        application.tenant in one query so the caller can check
+        application/tenant eligibility with zero further queries. Filters
+        is_active/expiry here; application/tenant eligibility itself stays a
+        service-layer concern."""
         result = await self._db.execute(
             select(APIKey)
-            .options(joinedload(APIKey.user).joinedload(User.tenant))
+            .options(joinedload(APIKey.application).joinedload(Application.tenant))
             .where(APIKey.api_key == api_key_value, *self._active_key_conditions())
         )
         return result.unique().scalar_one_or_none()
@@ -85,19 +93,63 @@ class APIKeyRepository(BaseRepository):
         )
         return {name: pid for name, pid in result.all()}
 
-    async def list_by_user(self, user_id: UUID) -> list[APIKey]:
+    async def list_by_application(self, application_id: int) -> list[APIKey]:
         result = await self._db.execute(
             select(APIKey)
-            .where(APIKey.user_id == user_id)
+            .where(APIKey.application_id == application_id)
             .order_by(APIKey.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def list_by_applications(self, application_ids: list[int]) -> list[APIKey]:
+        """Batch fetch for grouped list responses. Empty input short-circuits
+        to avoid an ``IN ()`` round trip."""
+        if not application_ids:
+            return []
+        result = await self._db.execute(
+            select(APIKey)
+            .where(APIKey.application_id.in_(application_ids))
+            .order_by(APIKey.application_id, APIKey.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def list_by_tenant(self, tenant_id: int) -> list[APIKey]:
+        """Every key under any Application belonging to tenant_id."""
+        result = await self._db.execute(
+            select(APIKey)
+            .join(Application, APIKey.application_id == Application.id)
+            .where(Application.tenant_id == tenant_id)
+            .order_by(APIKey.application_id, APIKey.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def list_active_keys_for_tenant(
+        self, tenant_id: int, *, after_id: int = 0, limit: int = 500
+    ) -> list[APIKey]:
+        """Keyset-paginated (id > after_id) active/non-expired keys for every
+        application belonging to tenant_id. Used by the tenant-wide cache
+        cascade operations (suspend/deactivate/reactivate, budget/quota flag
+        fan-out) so a large tenant's keys are walked in bounded batches
+        instead of one big IN() list."""
+        result = await self._db.execute(
+            select(APIKey)
+            .join(Application, APIKey.application_id == Application.id)
+            .where(
+                Application.tenant_id == tenant_id,
+                APIKey.id > after_id,
+                *self._active_key_conditions(),
+            )
+            .order_by(APIKey.id)
+            .limit(limit)
         )
         return list(result.scalars().all())
 
     async def list_active_keys(self, offset: int = 0, limit: int = 100) -> list[APIKey]:
         """Page directly over api_keys — active, non-expired, no join through
-        users. Used for operations that need every active key across every
-        tenant (e.g. the monthly quota-reset cron) so the caller doesn't have
-        to issue one query per user to reach the same keys."""
+        applications. Used for operations that need every active key across
+        every tenant (e.g. the monthly quota-reset cron) so the caller
+        doesn't have to issue one query per application to reach the same
+        keys."""
         result = await self._db.execute(
             select(APIKey)
             .where(*self._active_key_conditions())
@@ -111,10 +163,10 @@ class APIKeyRepository(BaseRepository):
         self, tenant_id: int, field: str, value: str
     ) -> int:
         """Set one top-level field inside cached_data for every active,
-        non-expired, already-backfilled key belonging to tenant_id's users —
-        a single UPDATE ... FROM, not a per-key round trip. Keys with no
-        cached_data snapshot yet are skipped (nothing to patch until the
-        backfill/an update populates one). Returns rows touched.
+        non-expired, already-backfilled key belonging to tenant_id's
+        applications — a single UPDATE ... FROM, not a per-key round trip.
+        Keys with no cached_data snapshot yet are skipped (nothing to patch
+        until the backfill/an update populates one). Returns rows touched.
 
         Mirrors the same field this call's Redis counterpart
         (CacheService.patch_api_key_cache_field) writes, so budget/quota
@@ -123,8 +175,8 @@ class APIKeyRepository(BaseRepository):
         result = await self._db.execute(
             update(APIKey)
             .where(
-                APIKey.user_id == User.id,
-                User.tenant_id == tenant_id,
+                APIKey.application_id == Application.id,
+                Application.tenant_id == tenant_id,
                 *self._active_key_conditions(require_cached_data=True),
             )
             .values(
@@ -139,15 +191,16 @@ class APIKeyRepository(BaseRepository):
         self, tenant_id: int, fields: list[str]
     ) -> int:
         """Remove multiple top-level fields from cached_data for every active,
-        non-expired, already-backfilled key belonging to tenant_id's users —
-        one UPDATE ... FROM. Mirrors CacheService.delete_api_key_cache_fields."""
+        non-expired, already-backfilled key belonging to tenant_id's
+        applications — one UPDATE ... FROM. Mirrors
+        CacheService.delete_api_key_cache_fields."""
         if not fields:
             return 0
         result = await self._db.execute(
             update(APIKey)
             .where(
-                APIKey.user_id == User.id,
-                User.tenant_id == tenant_id,
+                APIKey.application_id == Application.id,
+                Application.tenant_id == tenant_id,
                 *self._active_key_conditions(require_cached_data=True),
             )
             .values(cached_data=APIKey.cached_data.op("-")(cast(fields, ARRAY(TEXT))))
@@ -202,33 +255,37 @@ class APIKeyRepository(BaseRepository):
                 break
         return total
 
-    async def list_all_with_users(self, offset: int = 0, limit: int = 100) -> list[tuple[APIKey, User]]:
-        result = await self._db.execute(
-            select(APIKey, User)
-            .join(User, APIKey.user_id == User.id)
+    async def list_all_with_applications(
+        self, offset: int = 0, limit: int = 100, application_id: Optional[int] = None
+    ) -> list[tuple[APIKey, Application]]:
+        stmt = (
+            select(APIKey, Application)
+            .join(Application, APIKey.application_id == Application.id)
             .order_by(APIKey.created_at.desc())
-            .offset(offset)
-            .limit(limit)
         )
+        if application_id is not None:
+            stmt = stmt.where(APIKey.application_id == application_id)
+        stmt = stmt.offset(offset).limit(limit)
+        result = await self._db.execute(stmt)
         return list(result.all())
 
     async def revoke(self, api_key: APIKey) -> None:
         api_key.is_active = False
         await self._db.flush()
 
-    async def revoke_active_for_users(self, user_ids: list[UUID]) -> list[str]:
-        """Bulk-revoke active keys for the given users; return raw key values.
+    async def revoke_active_for_applications(self, application_ids: list[int]) -> list[str]:
+        """Bulk-revoke active keys for the given applications; return raw key values.
 
         Single ``UPDATE … RETURNING`` per call (no per-key flush). Callers
         must ``commit()`` before deleting Redis entries so a failed commit
         cannot leave Redis empty while ``is_active`` remains true.
         """
-        if not user_ids:
+        if not application_ids:
             return []
         result = await self._db.execute(
             update(APIKey)
             .where(
-                APIKey.user_id.in_(user_ids),
+                APIKey.application_id.in_(application_ids),
                 APIKey.is_active.is_(True),
             )
             .values(is_active=False)

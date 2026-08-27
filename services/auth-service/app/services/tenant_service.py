@@ -75,6 +75,9 @@ from app.utils.username import allocate_unique_username, derive_username_from_em
 
 logger = logging.getLogger(__name__)
 
+# tenants.allocated_budget is NUMERIC(15, 2).
+MAX_TENANT_BUDGET = Decimal("9999999999999.99")
+
 
 async def _assign_plan_to_tenant(tenant_id: int, plan_id: UUID, db: AsyncSession) -> None:
     base = (settings.platform_core_url or "").rstrip("/")
@@ -445,6 +448,11 @@ class TenantService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail={"code": "DUPLICATE_TENANT_ORGANISATION", "message": "A tenant with this organisation name already exists."},
             )
+        if body.allocated_budget is not None and body.allocated_budget < 0:
+            raise ValidationError(
+                message="allocated_budget must not be negative.",
+                code="INVALID_BUDGET",
+            )
 
         tenant = Tenant(
             name=body.contact_name,
@@ -453,6 +461,10 @@ class TenantService:
             phone_number=body.phone_number,
             status=TenantStatus.PENDING,
             created_by=current_user.id,
+            tier_id=body.tier_id,
+            allocated_budget=body.allocated_budget,
+            budget_effective_from=body.budget_effective_from,
+            budget_effective_to=body.budget_effective_to,
         )
         await self._tenants.create(tenant)  # flush only — tenant_id now populated
 
@@ -794,6 +806,232 @@ class TenantService:
             "allowed_services": plan.allowed_services or [],
         }
 
+    # ── Tenant tier / budget ─────────────────────────────────────────────
+    # Replaces the old platform-core-service pay-per-use endpoints
+    # (POST/PATCH /pay-per-use/tenant/tier[, /reassign], PATCH
+    # /pay-per-use/tenant/budget): tier and budget now live directly on
+    # tenants.tier_id / tenants.allocated_budget, so these operate on the
+    # local Tenant row with no cross-DB PPU-assignment bookkeeping and no
+    # HTTP round trip to another service.
+
+    async def assign_tenant_tier(
+        self,
+        current_user: User,
+        tenant_id: int,
+        tier_id_str: str,
+        platform_core_db: Optional[AsyncSession],
+    ) -> Tenant:
+        """Assign (or reassign) a tenant's tier — PATCH /auth/tenants/{id}/tier.
+
+        Restricted to ADMIN: this changes what a tenant is billed against,
+        the same trust level as PATCH /auth/tenants/{id}/budget.
+        """
+        roles = await self._roles.get_user_roles(current_user.id)
+        if RoleName.ADMIN.value not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "INSUFFICIENT_PERMISSIONS",
+                    "message": "Only administrators can assign a tenant's tier.",
+                },
+            )
+        try:
+            tier_uuid = UUID(tier_id_str)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "INVALID_TIER_ID", "message": "tier_id must be a valid UUID."},
+            )
+
+        tenant = await self._load_tenant_for_update_or_404(tenant_id)
+
+        if platform_core_db is None:
+            raise ValidationError(
+                message="Tier assignment cannot be verified: platform-core DB is not configured.",
+                code="PLATFORM_CORE_DB_NOT_CONFIGURED",
+            )
+        row = (
+            await platform_core_db.execute(
+                text("SELECT id, name FROM tiers WHERE id = :tid AND is_active = true"),
+                {"tid": tier_uuid},
+            )
+        ).first()
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "TIER_NOT_FOUND", "message": f"Tier '{tier_id_str}' not found."},
+            )
+
+        if tenant.tier_id == tier_uuid:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "TENANT_ALREADY_ON_TIER",
+                    "message": f"Tenant '{tenant_id}' is already on tier '{row.name}'.",
+                },
+            )
+
+        await self._tenants.update(
+            tenant, {"tier_id": tier_uuid, "updated_by": current_user.id}
+        )
+        await self._tenants.save_and_refresh(tenant)
+        return tenant
+
+    async def revise_tenant_budget(
+        self,
+        current_user: User,
+        tenant_id: int,
+        action: Literal["top-up", "top-down"],
+        amount: Decimal,
+        expected_version: Optional[int] = None,
+    ) -> Tenant:
+        """Top-up or top-down a tenant's budget — PATCH /auth/tenants/{id}/budget.
+
+        Restricted to ADMIN, same as assign_tenant_tier. Unlike the old
+        platform-core endpoint this replaces, there is no available_balance
+        (or any other spend-tracking figure) on ``tenants`` in this release —
+        budget/key allocation recompute is out of scope for this PR (see
+        applications_recomputed/keys_recomputed on the response, always
+        None here) — so the old "reject a top-down that would drop the
+        budget below cumulative spend to date" (409 budget_below_consumed)
+        check has no data to run against and is NOT enforced here. Only the
+        locally-computable guards (negative result, over the column's max)
+        are enforced.
+
+        Uses the error-body shape (``{"error": ..., "message": ...}``) the
+        contract specifies for this endpoint specifically, matching the old
+        endpoint it replaces — every other tenant endpoint in this file uses
+        ``{"code": ..., "message": ...}``.
+        """
+        roles = await self._roles.get_user_roles(current_user.id)
+        if RoleName.ADMIN.value not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "INSUFFICIENT_PERMISSIONS",
+                    "message": "Only administrators can revise a tenant's budget.",
+                },
+            )
+
+        tenant = await self._load_tenant_for_update_or_404(tenant_id)
+
+        if expected_version is not None and tenant.version != expected_version:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "version_conflict",
+                    "message": (
+                        f"expected_version {expected_version} does not match "
+                        f"current version {tenant.version}"
+                    ),
+                },
+            )
+
+        current_budget = tenant.allocated_budget or Decimal("0")
+        delta = amount if action == "top-up" else -amount
+        new_budget = current_budget + delta
+
+        if action == "top-up" and new_budget > MAX_TENANT_BUDGET:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "budget_limit_exceeded",
+                    "message": (
+                        f"Top-up would raise the budget to {new_budget}, exceeding "
+                        f"the maximum allowed ({MAX_TENANT_BUDGET})"
+                    ),
+                },
+            )
+        if action == "top-down" and new_budget < 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "budget_negative",
+                    "message": f"Top-down amount exceeds the current budget ({current_budget})",
+                },
+            )
+
+        await self._tenants.update(
+            tenant,
+            {
+                "allocated_budget": new_budget,
+                "version": tenant.version + 1,
+                "updated_by": current_user.id,
+            },
+        )
+        await self._tenants.save_and_refresh(tenant)
+        return tenant
+
+    async def list_tenant_tiers(
+        self,
+        current_user: User,
+        tier_id: Optional[str],
+        platform_core_db: Optional[AsyncSession],
+    ) -> list[dict]:
+        """GET /auth/tenants/tier/list. ADMIN-only, matching the old
+        GET /pay-per-use/tenant/tier's permission id (145, ppu.tenant.read)
+        — enforced in-code here too, not just via api_permissions.json,
+        the same defense-in-depth pattern as assign_tenant_tier /
+        revise_tenant_budget. tier_name is resolved from platform-core's
+        ``tiers`` table (no cross-DB FK is possible), batched for the set
+        of tier_ids actually in play — the same cross-DB pattern
+        create_api_key uses for tier_id lookups."""
+        roles = await self._roles.get_user_roles(current_user.id)
+        if RoleName.ADMIN.value not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "INSUFFICIENT_PERMISSIONS",
+                    "message": "Only administrators can list tenant tier assignments.",
+                },
+            )
+        tier_uuid: Optional[UUID] = None
+        if tier_id is not None:
+            try:
+                tier_uuid = UUID(tier_id)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"code": "INVALID_TIER_ID", "message": "tier_id must be a valid UUID."},
+                )
+            if platform_core_db is not None:
+                exists = (
+                    await platform_core_db.execute(
+                        text("SELECT 1 FROM tiers WHERE id = :tid"), {"tid": tier_uuid}
+                    )
+                ).first()
+                if exists is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail={"code": "TIER_NOT_FOUND", "message": f"Tier '{tier_id}' not found"},
+                    )
+
+        tenants = await self._tenants.list_with_tier(tier_uuid)
+
+        tier_names: dict[UUID, str] = {}
+        if tenants and platform_core_db is not None:
+            ids = list({t.tier_id for t in tenants})
+            rows = (
+                await platform_core_db.execute(
+                    text("SELECT id, name FROM tiers WHERE id = ANY((:ids)::uuid[])"), {"ids": ids}
+                )
+            ).all()
+            tier_names = {row.id: row.name for row in rows}
+
+        return [
+            {
+                "tenant_id": t.id,
+                "tenant_name": t.organisation,
+                "tier_id": str(t.tier_id),
+                "tier_name": tier_names.get(t.tier_id),
+                "allocated_budget": t.allocated_budget,
+                "budget_effective_from": t.budget_effective_from,
+                "budget_effective_to": t.budget_effective_to,
+                "updated_at": t.updated_at,
+            }
+            for t in tenants
+        ]
+
     # ── Tenant-user CRUD ─────────────────────────────────────────────────
 
     async def list_tenant_users(
@@ -898,8 +1136,9 @@ class TenantService:
 
         await self._users.update(target, payload)
         await self._users.save_and_refresh(target)
-        if self._api_keys is not None:
-            await self._api_keys.refresh_keys_cache_for_user(target, tenant)
+        # No per-user API key cache refresh: keys belong to Applications, not
+        # Users (migration e9f0a1b2c3d4) — one tenant user's status has no
+        # bearing on any key's eligibility.
         return target
 
     async def resend_tenant_user_setup_link(
@@ -1010,6 +1249,6 @@ class TenantService:
             self._email,
             lambda: render_account_deleted(deleted_email, deleted_full_name),
         )
-
-        if self._api_keys is not None:
-            await self._api_keys.evict_keys_for_user(target.id)
+        # No per-user API key eviction: keys belong to Applications, not
+        # Users (migration e9f0a1b2c3d4) — deleting a tenant user has no
+        # bearing on any key's cache.
