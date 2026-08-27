@@ -351,7 +351,7 @@ export default function AdminDataTable<T>({
   filters,
   hasActiveFilters = false,
   onClearFilters,
-  filterToolbarAlign = "flex-end",
+  filterToolbarAlign = "flex-start",
   filterToolbarRightContent,
   showFiltersHeading = false,
   filtersHeading = "Filters",

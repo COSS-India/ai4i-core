@@ -1,7 +1,7 @@
 import { SimpleGrid } from "@chakra-ui/react";
 import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
-import type { OverviewResponse, PlatformAdoption } from "../../types/metering";
+import type { OverviewResponse } from "../../types/metering";
 import {
   formatMeteringKpiValue,
   formatTenantLabel,
@@ -114,45 +114,52 @@ interface PlatformAdoptionSectionProps {
   data: OverviewResponse;
 }
 
+function formatGrowthPct(value: number | null | undefined): string {
+  if (value == null) return METERING.GRAPH.EMPTY_VALUE;
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(1)}%`;
+}
+
 export const PlatformAdoptionSection: React.FC<PlatformAdoptionSectionProps> = ({ data }) => {
   const adoption = data.platform_adoption;
-  const section = METERING.SECTIONS.PLATFORM_ADOPTION;
+  const section = METERING.SECTIONS.KEY_METRICS;
 
-  const activeByKey = useMemo(
-    () => Object.fromEntries((data.active_tenants ?? []).map((cell) => [cell.key, cell])),
-    [data.active_tenants],
-  );
+  if (!adoption) return null;
 
-  if (!adoption && !data.active_tenants?.length) return null;
-
-  const adoptionValues: Record<string, number | null | undefined> = {
-    total_tenants: adoption?.total_tenants,
-    new_tenants_7d: adoption?.new_tenants_7d,
-    active_24h: adoption?.active_24h,
-    active_7d: adoption?.active_7d,
-    active_30d: adoption?.active_30d,
+  const values: Record<string, number | null | undefined> = {
+    total_tenants: adoption.total_tenants,
+    new_tenants_15d: adoption.new_tenants_15d,
+    active_30d: adoption.active_30d,
+    total_models: adoption.total_models,
+    active_models_30d: adoption.active_models_30d,
+    tenants_budget_exhausted: adoption.tenants_budget_exhausted,
+    model_usage_growth_pct: adoption.model_usage_growth_pct,
   };
 
   return (
     <MeteringSectionCard title={section.TITLE} subtitle={section.SUBTITLE} sectionLabel bare>
-      <SimpleGrid columns={{ base: 1, sm: 2, lg: 5 }} spacing={4}>
+      <SimpleGrid columns={{ base: 1, sm: 2, lg: 4 }} spacing={4}>
         {section.CARDS.map((card) => {
-          const activeCell = activeByKey[card.key];
-          const adoptionValue = adoptionValues[card.key as keyof PlatformAdoption];
+          const raw = values[card.key];
+          const isGrowth = card.key === "model_usage_growth_pct";
+          const value = isGrowth ? formatGrowthPct(raw) : (raw ?? METERING.GRAPH.EMPTY_VALUE);
+          const valueColor =
+            isGrowth && raw != null
+              ? raw > 0
+                ? "green.500"
+                : raw < 0
+                  ? "red.500"
+                  : "gray.800"
+              : "gray.800";
 
           return (
             <KpiCard
               key={card.key}
               label={card.label}
-              value={
-                activeCell?.value ??
-                adoptionValue ??
-                METERING.GRAPH.EMPTY_VALUE
-              }
-              pctChange={activeCell?.pct_change}
+              value={value}
               helper={card.helper}
               tooltip={card.tooltip}
-              valueColor="gray.800"
+              valueColor={valueColor}
             />
           );
         })}

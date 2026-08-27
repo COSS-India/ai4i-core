@@ -54,6 +54,7 @@ import TelemetryTraceDetailModal from "@/components/observability/TelemetryTrace
 import { getPlatformName } from "../config/runtimeConfig";
 import { FIELD_HINTS } from "../config/fieldHints";
 import FieldHint from "../components/common/FieldHint";
+import FormFieldsRow from "../components/common/FormFieldsRow";
 
 /** Auto-refresh interval when enabled (within 30–45s range). */
 const AUTO_REFRESH_MS = 37_000;
@@ -657,7 +658,7 @@ const LogsPage: React.FC = () => {
                     onClearFilters={clearAllFilters}
                     filters={
                       <VStack align="stretch" spacing={3} flex="1" w="full">
-                        <HStack spacing={3} align="flex-end" flexWrap="wrap" rowGap={3} w="full">
+                        <FormFieldsRow spacing={3} w="full">
                           <TableSearchField
                             label="Search"
                             value={searchQuery}
@@ -753,10 +754,9 @@ const LogsPage: React.FC = () => {
                             <FieldHint>{FIELD_HINTS.logs.endTime.helper}</FieldHint>
                           </FormControl>
                           <Box flex="1" minW={0} display={{ base: "none", lg: "block" }} />
-                        </HStack>
+                        </FormFieldsRow>
                       </VStack>
                     }
-                    filterToolbarAlign="flex-end"
                     filterToolbarRightContent={
                       <HStack spacing={3} flexWrap="wrap">
                         <FormControl display="flex" alignItems="center" w="auto">

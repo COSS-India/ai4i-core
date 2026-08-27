@@ -8,6 +8,7 @@ import {
   HStack,
   VStack,
 } from "@chakra-ui/react";
+import FormFieldsRow from "../common/FormFieldsRow";
 import React from "react";
 import AdminDataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
@@ -87,7 +88,7 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
           onClearFilters={onClearFilters}
           filters={
             <VStack align="stretch" spacing={3} w="full">
-              <HStack flexWrap="wrap" spacing={3} align="flex-end">
+              <FormFieldsRow>
                 <TableSearchField
                   label="Search"
                   value={searchQuery}
@@ -117,7 +118,7 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
                     </option>
                   ))}
                 </TableSelectField>
-              </HStack>
+              </FormFieldsRow>
               {hasActiveFilters && (
                 <HStack spacing={2} flexWrap="wrap">
                   {searchQuery.trim() && (
