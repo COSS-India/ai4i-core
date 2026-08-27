@@ -117,6 +117,17 @@ class CoreSettings(BaseSettings):
     ppu_tier_cache_ttl_seconds: int = 600
     # Auto-refresh interval exposed to the dashboard (METERING_REFRESH_INTERVAL_SECONDS).
     metering_refresh_interval_seconds: int = 60
+    # How many days of history the deployment's Prometheus actually retains
+    # (its own --storage.tsdb.retention.time, or the effective window of a
+    # remote long-term-storage backend). Used by
+    # MeteringService.model_usage_growth_pct() to refuse a previous-month
+    # comparison it can't fully cover, rather than silently computing from
+    # whatever partial data survives retention. Defaults to Prometheus's own
+    # out-of-box default (15d) — deliberately conservative, since we can't
+    # know this repo's operator has raised it. Set
+    # PROMETHEUS_RETENTION_DAYS to match your actual retention (>= ~90d
+    # recommended) to get a real percentage instead of null.
+    prometheus_retention_days: int = 15
 
     # ── Model management business rules ──
     max_active_versions_per_model: int = 5
