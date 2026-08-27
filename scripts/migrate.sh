@@ -80,9 +80,12 @@ Examples:
   ./scripts/migrate.sh policy_db current
   ./scripts/migrate.sh ai4iplatform_core upgrade head
   ./scripts/migrate.sh alerting_db revision -m "manual migration"
+  ./scripts/migrate.sh ai4iplatform_core revision --autogenerate -m "add budget columns"
 
 Notes:
   - `revision` must target a single database.
+  - `upgrade` only applies committed migrations; it never writes revision files.
+    Generating one is always an explicit `revision --autogenerate` step.
   - For `upgrade`, the default Alembic target is `head`.
   - For `downgrade`, the default Alembic target is `-1`.
   - `model_management_db` is intentionally excluded from this script's managed
@@ -137,40 +140,6 @@ has_existing_revisions() {
   find "$PROJECT_ROOT/infrastructure/databases/migrations/postgres/alembic/versions/$vdir" -maxdepth 1 -type f -name "*.py" ! -name "__init__.py" | grep -q .
 }
 
-run_autogenerate_revision_if_supported() {
-  local db="$1"
-
-  # Autogenerate is opt-in. Applying migrations must never write revision files:
-  # a developer whose DB lags the models would get an `*_auto_<timestamp>.py`
-  # parented on whatever head existed at that moment, then have it applied
-  # immediately by the upgrade that follows. Generate deliberately instead:
-  #   ./scripts/migrate.sh <db> revision --autogenerate -m "<message>"
-  if [[ "${AUTOGENERATE:-false}" != "true" ]]; then
-    print_status "skipped" "autogenerate is opt-in (set AUTOGENERATE=true to enable)"
-    return 0
-  fi
-
-  if ! supports_autogenerate "$db"; then
-    print_status "skipped" "No models registered. Migration generation skipped."
-    return 0
-  fi
-
-  local revision_message
-  revision_message="auto_$(date +%Y%m%d_%H%M%S)"
-
-  local revision_args
-  # Let Alembic/env.py and the temp alembic.ini decide the correct version path
-  revision_args=(revision --autogenerate)
-
-  if ! has_existing_revisions "$db"; then
-    revision_args+=(--head base --splice)
-  fi
-
-  revision_args+=(-m "$revision_message")
-
-  run_alembic_with_db_config "$db" "${revision_args[@]}"
-}
-
 validate_current_revision() {
   # Detect stale revisions: the DB references a migration file that no longer
   # exists in the versions directory.  This happens when someone deletes a
@@ -201,13 +170,7 @@ run_upgrade_flow_for_db() {
 
   validate_current_revision "$db" || return 1
 
-  print_status "check" "Applying existing migrations..."
-  run_alembic_with_db_config "$db" upgrade "$@"
-
-  print_status "check" "Checking for model changes..."
-  run_autogenerate_revision_if_supported "$db"
-
-  print_status "check" "Applying latest migration state..."
+  print_status "check" "Applying migrations..."
   run_alembic_with_db_config "$db" upgrade "$@"
   echo
 }

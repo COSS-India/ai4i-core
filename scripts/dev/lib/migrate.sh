@@ -18,10 +18,10 @@ run_migrations() {
 
     export PYTHON_BIN="$venv/bin/python"
 
-    # Only apply committed migrations — never autogenerate. Bringing up the stack
-    # must not create new `*_auto_<timestamp>.py` revision files; that's a
-    # deliberate `migrate.sh ... revision` step a dev runs when they change models.
-    # migrate.sh defaults to apply-only, so no flag is needed here.
+    # Only apply committed migrations. `migrate.sh ... upgrade` never generates
+    # revision files, so bringing up the stack cannot create `*_auto_<timestamp>.py`;
+    # generating one is a deliberate `migrate.sh ... revision --autogenerate` step a
+    # dev runs when they change models.
     (
         cd "$ROOT_DIR"
         ./scripts/migrate.sh all upgrade
