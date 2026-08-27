@@ -1,10 +1,16 @@
 """Fix guest user role assignment.
 
-Some environments ended up with the guest account (matched by GUEST_EMAIL,
-default guest@ai4inclusion.org) holding the USER role instead of GUEST -
+Some environments ended up with the guest account (username 'guest', seeded
+by 2362774ac241_seed_default_data) holding the USER role instead of GUEST -
 e.g. the account existed with a different role before the GUEST-role seed
-step (2362774ac241_seed_default_data) ran, so its NOT-EXISTS-guarded insert
-into user_role became a no-op and never corrected it.
+step ran, so its NOT-EXISTS-guarded insert into user_role became a no-op and
+never corrected it.
+
+The account is matched by username rather than email: users.email is an
+EncryptedEmail column, and any row touched by the app (as opposed to a raw
+seed INSERT) stores AES-SIV ciphertext, not plaintext - matching on email
+would silently miss exactly the app-touched accounts this migration exists
+to fix. username is a plain, uniquely-indexed column and is never encrypted.
 
 This migration fixes the assignment directly: it drops any non-GUEST role
 on the guest account and ensures GUEST is assigned, regardless of the
@@ -15,7 +21,7 @@ Revises: d6e7f8a9b1c2
 Create Date: 2026-08-26 00:00:00.000000
 
 """
-import os
+import logging
 from typing import Sequence, Union
 
 from alembic import op
@@ -27,17 +33,23 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, None] = None
 
 SEEDER_ID = "5eed0000-0000-0000-0000-000000000000"
+GUEST_USERNAME = "guest"
+
+logger = logging.getLogger("alembic.runtime.migration")
 
 
 def upgrade() -> None:
     conn = op.get_bind()
-    guest_email = (os.getenv("GUEST_EMAIL") or "guest@ai4inclusion.org").strip()
 
     guest_user = conn.execute(
-        sa.text("SELECT id FROM users WHERE email = :email"),
-        {"email": guest_email},
+        sa.text("SELECT id FROM users WHERE username = :username"),
+        {"username": GUEST_USERNAME},
     ).fetchone()
     if not guest_user:
+        logger.warning(
+            "e2f3a4b5c6d7: no user found with username=%r; guest role fix skipped.",
+            GUEST_USERNAME,
+        )
         return
     guest_user_id = guest_user[0]
 
@@ -45,6 +57,9 @@ def upgrade() -> None:
         sa.text("SELECT id FROM roles WHERE name = 'GUEST'")
     ).fetchone()
     if not guest_role:
+        logger.warning(
+            "e2f3a4b5c6d7: no 'GUEST' role found in roles table; guest role fix skipped."
+        )
         return
     guest_role_id = guest_role[0]
 
