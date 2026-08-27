@@ -57,8 +57,8 @@ def upgrade() -> None:
         'budget_usage',
         sa.Column('id', postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column('api_key_id', sa.Integer(), nullable=False),
-        sa.Column('api_key_budget_snap', sa.Numeric(15, 8), nullable=True),
-        sa.Column('api_key_budget_used', sa.Numeric(15, 8), nullable=False, server_default=sa.text("0")),
+        sa.Column('api_key_budget_snap', sa.Numeric(15, 2), nullable=True),
+        sa.Column('api_key_budget_used', sa.Numeric(15, 2), nullable=False, server_default=sa.text("0")),
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('api_key_id', name='uq_budget_usage_api_key_id'),
     )

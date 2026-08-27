@@ -29,7 +29,7 @@ class APIKey(Base):
     # 32-char hex string — unique identifier returned to the caller.
     api_key = Column(String(32), unique=True, index=True, nullable=False)
     allocated_percentage = Column(Numeric(5, 2), nullable=True)
-    allocated_budget = Column(Numeric(15, 8), nullable=True)
+    allocated_budget = Column(Numeric(15, 2), nullable=True)
     # Flat list of permission IDs: [1, 2, 3]
     permissions = Column(JSON, default=list, nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=True)

@@ -23,7 +23,7 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     # 1. Add new columns to tenants
     op.add_column('tenants', sa.Column('tier_id', postgresql.UUID(as_uuid=True), nullable=True))
-    op.add_column('tenants', sa.Column('allocated_budget', sa.Numeric(15, 8), nullable=True))
+    op.add_column('tenants', sa.Column('allocated_budget', sa.Numeric(15, 2), nullable=True))
     op.add_column('tenants', sa.Column('budget_effective_from', sa.DateTime(timezone=True), nullable=True))
     op.add_column('tenants', sa.Column('budget_effective_to', sa.DateTime(timezone=True), nullable=True))
 
@@ -36,7 +36,7 @@ def upgrade() -> None:
         sa.Column('name', sa.String(255), nullable=False),
         sa.Column('domain', sa.String(255), nullable=True),
         sa.Column('allocated_percentage', sa.Numeric(5, 2), nullable=True),
-        sa.Column('allocated_budget', sa.Numeric(15, 8), nullable=True),
+        sa.Column('allocated_budget', sa.Numeric(15, 2), nullable=True),
         sa.Column(
             'status',
             postgresql.ENUM('ACTIVE', 'INACTIVE', name='application_status_enum', create_type=False),
@@ -72,7 +72,7 @@ def upgrade() -> None:
     # 4. Add application_id as nullable first to allow backfill
     op.add_column('api_key', sa.Column('application_id', sa.Integer(), nullable=True))
     op.add_column('api_key', sa.Column('allocated_percentage', sa.Numeric(5, 2), nullable=True))
-    op.add_column('api_key', sa.Column('allocated_budget', sa.Numeric(15, 8), nullable=True))
+    op.add_column('api_key', sa.Column('allocated_budget', sa.Numeric(15, 2), nullable=True))
 
     # 5. Backfill application_id on existing api_key rows via user_id → users → tenant
     result = conn.execute(sa.text("""

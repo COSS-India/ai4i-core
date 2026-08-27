@@ -37,7 +37,7 @@ class Tenant(Base):
         server_default=TenantStatus.PENDING.value,
     )
     tier_id = Column(UUID(as_uuid=True), nullable=True)
-    allocated_budget = Column(Numeric(15, 8), nullable=True)
+    allocated_budget = Column(Numeric(15, 2), nullable=True)
     budget_effective_from = Column(DateTime(timezone=True), nullable=True)
     budget_effective_to = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
