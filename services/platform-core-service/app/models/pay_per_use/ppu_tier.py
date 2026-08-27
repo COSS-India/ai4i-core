@@ -9,9 +9,9 @@ from app.models import Base
 
 
 class PPUTier(Base):
-    __tablename__ = "ppu_tiers"
+    __tablename__ = "tiers"
     __table_args__ = (
-        UniqueConstraint("name", name="uq_ppu_tiers_name"),
+        UniqueConstraint("name", name="uq_tiers_name"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -37,15 +37,15 @@ class PPUTier(Base):
 
 
 class PPUTierQuota(Base):
-    __tablename__ = "ppu_tier_quotas"
+    __tablename__ = "tier_quotas"
     __table_args__ = (
-        UniqueConstraint("tier_id", "inference_name", name="uq_ppu_tier_quotas_tier_inference"),
+        UniqueConstraint("tier_id", "inference_name", name="uq_tier_quotas_tier_inference"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tier_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("ppu_tiers.id", ondelete="CASCADE"),
+        ForeignKey("tiers.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
