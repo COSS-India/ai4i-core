@@ -187,6 +187,8 @@ class PPUUsageRepository:
                 PPUQuotaUsage.tier_id,
                 PPUQuotaUsage.inference_name,
                 func.sum(PPUQuotaUsage.monthly_quota_used).label("total_units"),
+                # cost_accum was removed; total_cost will be sourced from
+                # budget_usage.api_key_budget_used once that join is wired up.
                 literal(0).label("total_cost"),
                 func.max(PPUQuotaUsage.monthly_quota_snap).label("quota_snap"),
             )
@@ -236,15 +238,12 @@ class PPUUsageRepository:
         _tier_cache_loaded_at = now
         return dict(_tier_cache)
 
-    async def get_total_cost_for_month(
-        self, billing_month: str, task_types: list[str] | None = None
-    ) -> Decimal:
+    async def get_total_cost_for_month(self) -> Decimal:
         """Total api_key_budget_used across all API keys.
 
-        budget_usage is keyed by api_key_id with no billing_month column, so
-        this returns the all-time accumulated total. Callers use this for
-        month-over-month comparisons — the value will be refined once
-        billing_month tracking is added to budget_usage.
+        budget_usage has no billing_month or inference_name column, so no
+        per-month or per-task-type filtering is possible yet. Callers that
+        need those dimensions must use get_tenant_tier_usage_breakdown instead.
         """
         stmt = select(func.sum(BudgetUsage.api_key_budget_used))
         result = await self._db.execute(stmt)

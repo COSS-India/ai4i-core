@@ -165,7 +165,7 @@ class TestGetSummary:
 
         # (150 - 100) / 100 * 100 = 50.0
         assert result.spendChangePercent == 50.0
-        repo.get_total_cost_for_month.assert_called_once_with("2026-05")
+        repo.get_total_cost_for_month.assert_called_once_with()
         repo.get_tenant_tier_usage_breakdown.assert_called_once()  # current month only
 
     @pytest.mark.asyncio

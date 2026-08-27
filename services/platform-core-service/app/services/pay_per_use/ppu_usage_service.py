@@ -408,7 +408,7 @@ class PPUUsageService:
             # No tenant scoping needed, so skip tenant/tier resolution entirely and get
             # the same number from one lightweight aggregate query (task-type filtered).
             prev_total_spend = _to_decimal(
-                await self._repo.get_total_cost_for_month(prev_month, task_types)
+                await self._repo.get_total_cost_for_month()
             )
         spend_change_percent = (
             round((total_spend - prev_total_spend) / prev_total_spend * 100, 1)

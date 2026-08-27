@@ -60,13 +60,13 @@ def upgrade() -> None:
         sa.Column('api_key_budget_snap', sa.Numeric(15, 2), nullable=True),
         sa.Column('api_key_budget_used', sa.Numeric(15, 2), nullable=False, server_default=sa.text("0")),
         sa.PrimaryKeyConstraint('id'),
+        sa.UniqueConstraint('api_key_id', name='uq_budget_usage_api_key_id'),
     )
-    op.create_index('ix_budget_usage_api_key_id', 'budget_usage', ['api_key_id'])
 
 
 def downgrade() -> None:
     # Drop budget_usage
-    op.drop_index('ix_budget_usage_api_key_id', table_name='budget_usage')
+    op.drop_constraint('uq_budget_usage_api_key_id', 'budget_usage', type_='unique')
     op.drop_table('budget_usage')
 
     # Rename monthly_quota_used → units_used

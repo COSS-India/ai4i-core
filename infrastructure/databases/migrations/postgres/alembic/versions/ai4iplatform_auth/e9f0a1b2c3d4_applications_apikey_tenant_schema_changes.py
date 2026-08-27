@@ -5,7 +5,7 @@ from user_id ownership to application_id. Seeds one default application
 per tenant and backfills existing api_key rows before enforcing NOT NULL.
 
 Revision ID: e9f0a1b2c3d4
-Revises: fa469d0a7fbb
+Revises: c5d6e7f8a9b1
 Create Date: 2026-08-26 00:00:00.000000
 
 """
@@ -16,7 +16,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = 'e9f0a1b2c3d4'
-down_revision: Union[str, Sequence[str], None] = ('fa469d0a7fbb', 'c5d6e7f8a9b1')
+down_revision: Union[str, Sequence[str], None] = 'c5d6e7f8a9b1'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -57,12 +57,16 @@ def upgrade() -> None:
         "ON applications (tenant_id, lower(name))"
     )
 
-    # 3. Seed one default application per existing tenant
+    # 3. Seed one default application per existing tenant (idempotent)
     conn = op.get_bind()
     conn.execute(sa.text("""
         INSERT INTO applications (tenant_id, name, status, created_at)
         SELECT id, 'Default Application', 'ACTIVE', now()
-        FROM tenants
+        FROM tenants t
+        WHERE NOT EXISTS (
+            SELECT 1 FROM applications a
+            WHERE a.tenant_id = t.id AND lower(a.name) = 'default application'
+        )
     """))
 
     # 4. Add application_id as nullable first to allow backfill
@@ -71,25 +75,39 @@ def upgrade() -> None:
     op.add_column('api_key', sa.Column('allocated_budget', sa.Numeric(15, 2), nullable=True))
 
     # 5. Backfill application_id on existing api_key rows via user_id → users → tenant
-    conn.execute(sa.text("""
+    result = conn.execute(sa.text("""
         UPDATE api_key ak
         SET application_id = a.id
         FROM users u
         JOIN applications a
             ON a.tenant_id = u.tenant_id
-            AND a.name = 'Default Application'
+            AND lower(a.name) = 'default application'
         WHERE ak.user_id = u.id
           AND ak.application_id IS NULL
     """))
+
+    # Verify every api_key row resolved — a missed row would surface as an opaque NOT NULL violation
+    unresolved = conn.execute(sa.text(
+        "SELECT count(*) FROM api_key WHERE application_id IS NULL"
+    )).scalar()
+    if unresolved:
+        raise RuntimeError(
+            f"Backfill incomplete: {unresolved} api_key row(s) have no matching tenant application. "
+            "Check that every api_key.user_id references a user with a valid tenant_id."
+        )
 
     # 6. Enforce NOT NULL now that all rows are backfilled
     op.alter_column('api_key', 'application_id', nullable=False)
 
     # 7. Add FK and index on application_id
+    # RESTRICT prevents silent cascade that would orphan budget_usage rows in the core DB
+    # (cross-DB FK is not possible). When application-deletion service logic is implemented,
+    # it must explicitly delete budget_usage rows for the affected api_key_ids before
+    # deleting the api_keys themselves.
     op.create_index(op.f('ix_api_key_application_id'), 'api_key', ['application_id'])
     op.create_foreign_key(
         'api_key_application_id_fkey', 'api_key', 'applications',
-        ['application_id'], ['id'], ondelete='CASCADE',
+        ['application_id'], ['id'], ondelete='RESTRICT',
     )
 
     # 8. Drop user_id FK, index, and column

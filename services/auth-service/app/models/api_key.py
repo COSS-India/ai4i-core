@@ -21,7 +21,7 @@ class APIKey(Base):
     id = Column(Integer, primary_key=True, autoincrement=True, index=True)
     application_id = Column(
         Integer,
-        ForeignKey("applications.id", ondelete="CASCADE"),
+        ForeignKey("applications.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
