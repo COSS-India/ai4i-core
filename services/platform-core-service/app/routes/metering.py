@@ -339,15 +339,17 @@ def _platform_adoption_block(
     at24: Optional[dict],
     at7: Optional[dict],
     at30: Optional[dict],
+    model_usage_growth_pct: Optional[float] = None,
 ) -> Optional[PlatformAdoption]:
     if not (is_admin and tc):
         return None
     return PlatformAdoption(
         total_tenants=tc["total_tenants"],
-        new_tenants_7d=tc["new_tenants"],
+        new_tenants_15d=tc["new_tenants"],
         active_24h=at24["count"] if at24 else None,
         active_7d=at7["count"] if at7 else None,
         active_30d=at30["count"] if at30 else None,
+        model_usage_growth_pct=model_usage_growth_pct,
     )
 
 
@@ -586,6 +588,9 @@ async def get_overview(
         # Usage Concentration is platform-wide top-5; hide it when a tenant filter is applied.
         svc.usage_concentration(limit=5, time_range=window, task_types=task_type_filter)
         if (is_admin and not scope_tenant) else asyncio.sleep(0),
+        # Key Metrics KPI #7 (model_usage_growth_pct) is admin-only, fixed
+        # calendar-month comparison — independent of `window`.
+        svc.model_usage_growth_pct() if is_admin else asyncio.sleep(0),
         return_exceptions=True,
     )
     # Merge both result sets through one _partition_results call so a failure
@@ -595,13 +600,13 @@ async def get_overview(
     combined, degraded = _partition_results([
         active_by_range["24h"], active_by_range["7d"], active_by_range["30d"], *results,
     ])
-    at24, at7, at30, rt, chart, conc = combined
+    at24, at7, at30, rt, chart, conc, model_usage_growth_pct = combined
 
     org = scope_tenant_name
 
     kpis = _overview_kpis(rt)
     # Platform adoption / usage concentration are admin-only blocks.
-    platform_adoption = _platform_adoption_block(is_admin, tc, at24, at7, at30)
+    platform_adoption = _platform_adoption_block(is_admin, tc, at24, at7, at30, model_usage_growth_pct)
     usage_conc = _usage_concentration_block(is_admin, conc)
 
     generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
