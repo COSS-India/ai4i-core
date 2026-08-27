@@ -395,8 +395,21 @@ class TestModelUsageGrowthPct:
             result = await svc.model_usage_growth_pct()
         assert result == 50.0
         cur_q, prev_q = client.scalar.call_args_list[0][0][0], client.scalar.call_args_list[1][0][0]
-        assert "increase(" in cur_q and "offset" not in cur_q
-        assert "offset" in prev_q
+        # cur_q must go through the reset-aware sum_over_window() hybrid (an
+        # "unless ... offset" guard against increase() extrapolating a young
+        # series over a long month-to-date window) — its own internal offset
+        # is not the same thing as prev_q's outer offset into a past month.
+        assert "unless" in cur_q and "increase(" in cur_q
+        assert "unless" not in prev_q and "offset" in prev_q
+        # prev_q's window must be the SAME width as cur_q's elapsed-so-far
+        # (comparable days-into-month on both sides), not the previous
+        # month's full length — else e.g. 5 partial August days would be
+        # compared against all 31 July days and report a bogus ~-84% drop
+        # even with flat traffic. _FixedDatetime = 2026-08-27T10:30:00Z ->
+        # elapsed_s = 26d10h30m = 2284200s since Aug 1; prev_month_len_s =
+        # Jul 1 -> Aug 1 = 2678400s (the offset, not the window here).
+        assert "[2284200s]" in prev_q
+        assert "offset 2678400s" in prev_q
 
     async def test_returns_none_when_previous_month_had_no_traffic(self):
         client = MagicMock()

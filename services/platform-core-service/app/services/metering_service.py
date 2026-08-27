@@ -385,10 +385,30 @@ class MeteringService:
         `window`) and the pay-per-use "vs last month" comparison (spend, not
         request volume).
 
-        Uses `increase(...[Ns] offset Ms)` with exact elapsed-second widths
-        (not `@`, unsupported by some Prometheus deployments) to bound exact
-        calendar-month boundaries, the same offset-based technique
-        request_total() uses for its rolling-window comparison.
+        Uses exact elapsed-second widths (not `@`, unsupported by some
+        Prometheus deployments) to bound exact calendar-month boundaries,
+        the same offset-based technique request_total() uses for its
+        rolling-window comparison. `cur_q` goes through sum_over_window()
+        (the reset-aware `unless ... offset` hybrid) rather than a bare
+        increase(), same as request_total()'s "current" query — over a
+        ~30-day month-to-date window a mid-month pod redeploy is exactly
+        the kind of young series increase() would extrapolate up by
+        window/observed_duration, inflating cur_total.
+
+        `prev_q` deliberately compares the SAME width (`elapsed_s`) on both
+        sides, not the previous month's full length — comparing 5 days of
+        August against all 31 days of July would report ~-84% on Aug 5th
+        even with flat traffic. `[elapsed_s]s offset prev_month_len_s` looks
+        back `elapsed_s` from `now - prev_month_len_s`, which lands exactly
+        on `[prev_month_start, prev_month_start + elapsed_s]` — the same
+        number of days into July as `cur_q`'s days into August. Near
+        month-end this needs history back to `elapsed_s + prev_month_len_s`
+        (~60 days) — Prometheus retention must cover that or `prev_total`
+        silently under-counts instead of the `None` this method promises
+        when traffic is genuinely absent; see
+        `docker-compose-local.yml`'s `--storage.tsdb.retention.time`
+        (bumped to 90d locally for headroom — production must be sized the
+        same way).
 
         Returns None if it's too early in the month for a meaningful window,
         the previous month had no traffic (percentage undefined), or the
@@ -400,16 +420,15 @@ class MeteringService:
         if elapsed_s < 60:
             return None
 
-        prev_month_end = month_start
         prev_month_start = (month_start - timedelta(days=1)).replace(day=1)
-        prev_window_s = int((prev_month_end - prev_month_start).total_seconds())
+        prev_month_len_s = int((month_start - prev_month_start).total_seconds())
 
         sel = build_base_selectors(
             inference_only=True, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX, auth_type=API_KEY_AUTH_TYPE,
         )
         base = f"{_METRIC}{sel}"
-        cur_q = f"sum(increase({base}[{elapsed_s}s]))"
-        prev_q = f"sum(increase({base}[{prev_window_s}s] offset {elapsed_s}s))"
+        cur_q = sum_over_window(base, f"{elapsed_s}s")
+        prev_q = f"sum(increase({base}[{elapsed_s}s] offset {prev_month_len_s}s))"
 
         try:
             cur_v, prev_v = await asyncio.gather(self._client.scalar(cur_q), self._client.scalar(prev_q))
