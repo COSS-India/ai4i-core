@@ -17,7 +17,7 @@ on the guest account and ensures GUEST is assigned, regardless of the
 account's current state. Safe to run repeatedly and in any environment.
 
 Revision ID: e2f3a4b5c6d7
-Revises: d6e7f8a9b1c2
+Revises: d6e7f8a9b1c2, ba737c15e5ec
 Create Date: 2026-08-26 00:00:00.000000
 
 """
@@ -28,7 +28,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = 'e2f3a4b5c6d7'
-down_revision: Union[str, None] = 'd6e7f8a9b1c2'
+down_revision: Union[str, Sequence[str], None] = ('d6e7f8a9b1c2', 'ba737c15e5ec')
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, None] = None
 
