@@ -39,7 +39,7 @@ router = APIRouter(
     "",
     status_code=status.HTTP_201_CREATED,
     response_model=ApplicationResponse,
-    responses=error_responses(404, 409, 422),
+    responses=error_responses(403, 404, 409, 422),
 )
 async def create_application(
     tenant_id: int,
@@ -61,7 +61,7 @@ async def create_application(
 @router.get(
     "/{application_id}",
     response_model=ApplicationResponse,
-    responses=error_responses(404),
+    responses=error_responses(403, 404),
 )
 async def get_application(
     tenant_id: int,
@@ -77,7 +77,7 @@ async def get_application(
 @router.get(
     "",
     response_model=ApplicationListResponse,
-    responses=error_responses(404),
+    responses=error_responses(403, 404),
 )
 async def list_applications(
     tenant_id: int,
@@ -107,7 +107,7 @@ async def list_applications(
 @router.patch(
     "/{application_id}",
     response_model=ApplicationResponse,
-    responses=error_responses(404, 409, 422),
+    responses=error_responses(403, 404, 409, 422),
 )
 async def update_application(
     tenant_id: int,

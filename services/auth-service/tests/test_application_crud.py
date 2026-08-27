@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from app.models.application import Application, ApplicationStatus
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User
+from app.repositories.application_repository import _escape_like
 from app.schemas.application import ApplicationCreate, ApplicationUpdate
 from app.services.application_service import ApplicationService
 
@@ -351,3 +352,26 @@ class TestListApplications:
 
         assert exc_info.value.status_code == 403
         assert exc_info.value.code == "INSUFFICIENT_PERMISSIONS"
+
+
+class TestSearchWildcardEscaping:
+    """Bug scenario: an Application literally named e.g. "50%_off_promo" must
+    not have its '%'/'_' treated as SQL LIKE wildcards when a caller searches
+    for it — a search for "50%" must match only a literal '50%', not "50"
+    followed by anything.
+    """
+
+    def test_percent_sign_is_escaped(self) -> None:
+        assert _escape_like("50%") == "50\\%"
+
+    def test_underscore_is_escaped(self) -> None:
+        assert _escape_like("promo_code") == "promo\\_code"
+
+    def test_literal_backslash_is_escaped_first(self) -> None:
+        # Must escape '\' before '%'/'_', or an input like "50\%" would have
+        # its backslash left bare, changing what the DB interprets as an
+        # escape sequence versus a literal character.
+        assert _escape_like("50\\%") == "50\\\\\\%"
+
+    def test_plain_text_is_unchanged(self) -> None:
+        assert _escape_like("Marketing Bot") == "Marketing Bot"

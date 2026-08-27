@@ -140,14 +140,12 @@ class ApplicationService:
         return app
 
     async def _assert_allocation_within_cap(
-        self, tenant_id: int, new_percentage: Decimal, *, exclude_id: Optional[int] = None
+        self, tenant_id: int, new_percentage: Decimal
     ) -> None:
         # Locks every Application row for the tenant so a concurrent reallocation
         # can't read the same stale sum and also commit over 100%.
         await self._applications.list_all_for_tenant_for_update(tenant_id)
-        current_sum = await self._applications.sum_allocated_percentage(
-            tenant_id, exclude_id=exclude_id
-        )
+        current_sum = await self._applications.sum_allocated_percentage(tenant_id)
         total = current_sum + new_percentage
         if total > _HUNDRED:
             raise HTTPException(

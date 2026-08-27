@@ -8,6 +8,15 @@ from app.models.application import Application
 from app.repositories.base import BaseRepository
 
 
+def _escape_like(value: str) -> str:
+    """Escape LIKE metacharacters so a literal '%'/'_' in user input (e.g. an
+    Application named "50%_off_promo") isn't treated as a wildcard — same
+    escaping UserRepository.list_usernames_in_collision_family uses for the
+    same reason. Pair with ``.ilike(pattern, escape="\\\\")``.
+    """
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 class ApplicationRepository(BaseRepository):
     def __init__(self, db: AsyncSession) -> None:
         super().__init__(db)
@@ -15,13 +24,6 @@ class ApplicationRepository(BaseRepository):
     async def get_by_id(self, application_id: int) -> Optional[Application]:
         result = await self._db.execute(
             select(Application).where(Application.id == application_id)
-        )
-        return result.scalar_one_or_none()
-
-    async def get_by_id_for_update(self, application_id: int) -> Optional[Application]:
-        """Load with ``SELECT … FOR UPDATE`` — guards a single row during allocation writes."""
-        result = await self._db.execute(
-            select(Application).where(Application.id == application_id).with_for_update()
         )
         return result.scalar_one_or_none()
 
@@ -48,9 +50,12 @@ class ApplicationRepository(BaseRepository):
     ) -> tuple[list[Application], int]:
         filters = [Application.tenant_id == tenant_id]
         if search:
-            like = f"%{search.strip()}%"
+            like = f"%{_escape_like(search.strip())}%"
             filters.append(
-                or_(Application.name.ilike(like), Application.domain.ilike(like))
+                or_(
+                    Application.name.ilike(like, escape="\\"),
+                    Application.domain.ilike(like, escape="\\"),
+                )
             )
         if domain:
             filters.append(func.lower(Application.domain) == domain.strip().lower())
@@ -81,13 +86,10 @@ class ApplicationRepository(BaseRepository):
         )
         return list(result.scalars().all())
 
-    async def sum_allocated_percentage(
-        self, tenant_id: int, *, exclude_id: Optional[int] = None
-    ) -> Decimal:
-        filters = [Application.tenant_id == tenant_id]
-        if exclude_id is not None:
-            filters.append(Application.id != exclude_id)
+    async def sum_allocated_percentage(self, tenant_id: int) -> Decimal:
         result = await self._db.execute(
-            select(func.coalesce(func.sum(Application.allocated_percentage), 0)).where(*filters)
+            select(func.coalesce(func.sum(Application.allocated_percentage), 0)).where(
+                Application.tenant_id == tenant_id
+            )
         )
         return Decimal(result.scalar_one())
