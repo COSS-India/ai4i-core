@@ -4,7 +4,7 @@ APIKey ORM model.
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, JSON, String
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, JSON, Numeric, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -19,15 +19,17 @@ class APIKey(Base):
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True, index=True)
-    user_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+    application_id = Column(
+        Integer,
+        ForeignKey("applications.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
     key_name = Column(String(100), nullable=False)
     # 32-char hex string — unique identifier returned to the caller.
     api_key = Column(String(32), unique=True, index=True, nullable=False)
+    allocated_percentage = Column(Numeric(5, 2), nullable=True)
+    allocated_budget = Column(Numeric(15, 2), nullable=True)
     # Flat list of permission IDs: [1, 2, 3]
     permissions = Column(JSON, default=list, nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=True)
@@ -38,7 +40,7 @@ class APIKey(Base):
     updated_by = Column(UUID(as_uuid=True), nullable=True)
     cached_data = Column(JSONB, nullable=True)
 
-    user = relationship("User", back_populates="api_keys")
+    application = relationship("Application", back_populates="api_keys")
 
     def is_expired(self) -> bool:
         """True when ``expires_at`` is in the past. Revocation uses ``is_active``."""

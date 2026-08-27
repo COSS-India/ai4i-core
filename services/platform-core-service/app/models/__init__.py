@@ -43,6 +43,7 @@ from app.models.pii_management.tenant_map import TenantPiiDomainMap  # noqa: E40
 from app.models.pay_per_use.ppu_tier import PPUTier, PPUTierQuota  # noqa: E402
 from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssignment  # noqa: E402
 from app.models.pay_per_use.ppu_quota_usage import PPUQuotaUsage  # noqa: E402
+from app.models.pay_per_use.budget_usage import BudgetUsage  # noqa: E402
 
 __all__ = [
     "Base",
@@ -66,4 +67,5 @@ __all__ = [
     "PPUTierQuota",
     "PPUTenantTierAssignment",
     "PPUQuotaUsage",
+    "BudgetUsage",
 ]
