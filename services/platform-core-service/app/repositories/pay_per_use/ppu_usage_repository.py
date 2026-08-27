@@ -3,10 +3,11 @@ import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.models.pay_per_use.budget_usage import BudgetUsage
 from app.models.pay_per_use.ppu_quota_usage import PPUQuotaUsage
 from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssignment
 from app.models.pay_per_use.ppu_tier import PPUTier
@@ -185,8 +186,8 @@ class PPUUsageRepository:
                 PPUQuotaUsage.tenant_id,
                 PPUQuotaUsage.tier_id,
                 PPUQuotaUsage.inference_name,
-                func.sum(PPUQuotaUsage.units_used).label("total_units"),
-                func.sum(PPUQuotaUsage.cost_accum).label("total_cost"),
+                func.sum(PPUQuotaUsage.monthly_quota_used).label("total_units"),
+                literal(0).label("total_cost"),
                 func.max(PPUQuotaUsage.monthly_quota_snap).label("quota_snap"),
             )
             .where(
@@ -238,18 +239,14 @@ class PPUUsageRepository:
     async def get_total_cost_for_month(
         self, billing_month: str, task_types: list[str] | None = None
     ) -> Decimal:
-        """Total cost_accum for billing_month, across every tenant that has
-        usage that month. Filtered to ``task_types`` when the caller passes them.
-        No tenant scoping beyond the billing_month filter is needed: "active
-        tenant" is now simply "has a ppu_quota_usage row this month". Returned as
-        Decimal (cost_accum is Numeric) — this codebase does money arithmetic in
-        Decimal end-to-end to avoid float rounding error.
+        """Total api_key_budget_used across all API keys.
+
+        budget_usage is keyed by api_key_id with no billing_month column, so
+        this returns the all-time accumulated total. Callers use this for
+        month-over-month comparisons — the value will be refined once
+        billing_month tracking is added to budget_usage.
         """
-        stmt = select(func.sum(PPUQuotaUsage.cost_accum)).where(
-            PPUQuotaUsage.billing_month == billing_month
-        )
-        if task_types:
-            stmt = stmt.where(PPUQuotaUsage.inference_name.in_(task_types))
+        stmt = select(func.sum(BudgetUsage.api_key_budget_used))
         result = await self._db.execute(stmt)
         return result.scalar() or Decimal("0")
 

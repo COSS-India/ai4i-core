@@ -24,8 +24,8 @@ def upgrade() -> None:
     # 1. Add new columns to tenants
     op.add_column('tenants', sa.Column('tier_id', postgresql.UUID(as_uuid=True), nullable=True))
     op.add_column('tenants', sa.Column('allocated_budget', sa.Numeric(15, 2), nullable=True))
-    op.add_column('tenants', sa.Column('budget_effective_from', sa.Date(), nullable=True))
-    op.add_column('tenants', sa.Column('budget_effective_to', sa.Date(), nullable=True))
+    op.add_column('tenants', sa.Column('budget_effective_from', sa.DateTime(timezone=True), nullable=True))
+    op.add_column('tenants', sa.Column('budget_effective_to', sa.DateTime(timezone=True), nullable=True))
 
     # 2. Create application_status_enum type and applications table
     op.execute("CREATE TYPE application_status_enum AS ENUM ('ACTIVE', 'INACTIVE')")
@@ -47,11 +47,15 @@ def upgrade() -> None:
         sa.Column('created_by', postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
         sa.Column('updated_by', postgresql.UUID(as_uuid=True), nullable=True),
-        sa.ForeignKeyConstraint(['tenant_id'], ['tenants.id'], ondelete='CASCADE'),
+        sa.ForeignKeyConstraint(['tenant_id'], ['tenants.id'], ondelete='RESTRICT'),
         sa.PrimaryKeyConstraint('id'),
     )
     op.create_index(op.f('ix_applications_id'), 'applications', ['id'])
     op.create_index(op.f('ix_applications_tenant_id'), 'applications', ['tenant_id'])
+    op.execute(
+        "CREATE UNIQUE INDEX uq_applications_tenant_name_lower "
+        "ON applications (tenant_id, lower(name))"
+    )
 
     # 3. Seed one default application per existing tenant
     conn = op.get_bind()
@@ -66,7 +70,7 @@ def upgrade() -> None:
     op.add_column('api_key', sa.Column('allocated_percentage', sa.Numeric(5, 2), nullable=True))
     op.add_column('api_key', sa.Column('allocated_budget', sa.Numeric(15, 2), nullable=True))
 
-    # 5. Backfill application_id on existing api_key rows via created_by → users → tenant
+    # 5. Backfill application_id on existing api_key rows via user_id → users → tenant
     conn.execute(sa.text("""
         UPDATE api_key ak
         SET application_id = a.id
@@ -74,7 +78,7 @@ def upgrade() -> None:
         JOIN applications a
             ON a.tenant_id = u.tenant_id
             AND a.name = 'Default Application'
-        WHERE ak.created_by = u.id
+        WHERE ak.user_id = u.id
           AND ak.application_id IS NULL
     """))
 
@@ -111,6 +115,7 @@ def downgrade() -> None:
     op.drop_column('api_key', 'application_id')
 
     # Drop applications table and enum
+    op.execute("DROP INDEX IF EXISTS uq_applications_tenant_name_lower")
     op.drop_index(op.f('ix_applications_tenant_id'), table_name='applications')
     op.drop_index(op.f('ix_applications_id'), table_name='applications')
     op.drop_table('applications')

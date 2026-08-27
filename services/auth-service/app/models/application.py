@@ -1,6 +1,6 @@
 import enum
 
-from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, Numeric, String
+from sqlalchemy import Column, DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -15,11 +15,15 @@ class ApplicationStatus(str, enum.Enum):
 
 class Application(Base):
     __tablename__ = "applications"
+    __table_args__ = (
+        Index('uq_applications_tenant_name_lower', 'tenant_id', text('lower(name)'), unique=True),
+    )
 
+    # Integer PK (not UUID) — intentional; API schemas and routes must expose this as int.
     id = Column(Integer, primary_key=True, autoincrement=True, index=True)
     tenant_id = Column(
         Integer,
-        ForeignKey("tenants.id", ondelete="CASCADE"),
+        ForeignKey("tenants.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
@@ -31,6 +35,7 @@ class Application(Base):
         Enum(
             ApplicationStatus,
             name="application_status_enum",
+            create_type=False,
             values_callable=lambda x: [e.value for e in x],
         ),
         nullable=False,

@@ -58,7 +58,7 @@ def upgrade() -> None:
         sa.Column('id', postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column('api_key_id', sa.Integer(), nullable=False),
         sa.Column('api_key_budget_snap', sa.Numeric(15, 2), nullable=True),
-        sa.Column('api_key_budget_used', sa.Numeric(15, 2), nullable=True),
+        sa.Column('api_key_budget_used', sa.Numeric(15, 2), nullable=False, server_default=sa.text("0")),
         sa.PrimaryKeyConstraint('id'),
     )
     op.create_index('ix_budget_usage_api_key_id', 'budget_usage', ['api_key_id'])

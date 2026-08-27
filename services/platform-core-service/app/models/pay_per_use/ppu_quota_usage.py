@@ -35,7 +35,6 @@ class PPUQuotaUsage(Base):
         nullable=True,
         index=True,
     )
-    cost_accum = Column(Numeric(15, 8), nullable=False, default=0, server_default="0")
     created_by = Column(String(255), nullable=True)
     updated_by = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

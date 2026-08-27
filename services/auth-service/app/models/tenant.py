@@ -3,7 +3,7 @@ Tenant ORM model.
 """
 
 import enum
-from sqlalchemy import Column, Date, DateTime, Enum, Index, Integer, Numeric, String
+from sqlalchemy import Column, DateTime, Enum, Index, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -38,8 +38,8 @@ class Tenant(Base):
     )
     tier_id = Column(UUID(as_uuid=True), nullable=True)
     allocated_budget = Column(Numeric(15, 2), nullable=True)
-    budget_effective_from = Column(Date, nullable=True)
-    budget_effective_to = Column(Date, nullable=True)
+    budget_effective_from = Column(DateTime(timezone=True), nullable=True)
+    budget_effective_to = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     created_by = Column(UUID(as_uuid=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -59,4 +59,4 @@ class Tenant(Base):
     # Relationships
     users = relationship("User", back_populates="tenant")
     tenant_plans = relationship("TenantPlan", back_populates="tenant", cascade="all, delete-orphan")
-    applications = relationship("Application", back_populates="tenant", cascade="all, delete-orphan")
+    applications = relationship("Application", back_populates="tenant", cascade="save-update, merge")
