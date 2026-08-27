@@ -343,13 +343,25 @@ export function useServicesManagement() {
     fetchModels();
   }, []);
 
-  // Fetch tiers for the Create Service form dropdown
+  // Fetch tiers for the Create Service form dropdown, scoped to the task type
+  // currently selected in the form (mirrors GET pay-per-use/tiers?task_types=<type>).
+  // "pipeline" is a valid catalog/metering task type but is not a valid
+  // pay-per-use task type on the backend, so it must never be sent here.
+  const selectedTaskTypeForTiers =
+    (formData.task_type || "").trim().toLowerCase() === "pipeline"
+      ? ""
+      : formData.task_type || "";
+
   useEffect(() => {
     if (isLoadingTaskTypes) return;
-    fetchTiers(enabledTaskTypesParam)
+    if (!selectedTaskTypeForTiers) {
+      setAvailableTiers([]);
+      return;
+    }
+    fetchTiers(selectedTaskTypeForTiers)
       .then((res) => setAvailableTiers(res.data))
-      .catch(() => {});
-  }, [isLoadingTaskTypes, enabledTaskTypesParam]);
+      .catch(() => setAvailableTiers([]));
+  }, [isLoadingTaskTypes, selectedTaskTypeForTiers]);
 
   // Sync URL tab param to activeTab (e.g. when header back clears tab=2, show list)
   useEffect(() => {
@@ -491,6 +503,8 @@ export function useServicesManagement() {
       name: taskType.trim().toLowerCase() === "llm" ? "" : prev.name,
       serviceId: "",
     }));
+    // Tiers are scoped per task type — previously selected tiers no longer apply.
+    setSelectedTiers([]);
   };
 
   const toggleTier = (tier: string) => {
