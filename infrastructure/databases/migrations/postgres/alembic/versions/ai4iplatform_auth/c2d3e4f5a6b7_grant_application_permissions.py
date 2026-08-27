@@ -12,7 +12,7 @@ Ids 43/48/49 were reserved in api_permissions.json ahead of this migration
 free) — see POST/GET/PATCH .../applications entries there.
 
 Revision ID: c2d3e4f5a6b7
-Revises: b3c4d5e6f7a8
+Revises: a9b8c7d6e5f4
 Create Date: 2026-08-27 00:00:02.000000
 
 """
@@ -23,7 +23,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'c2d3e4f5a6b7'
-down_revision: Union[str, None] = 'b3c4d5e6f7a8'
+down_revision: Union[str, None] = 'a9b8c7d6e5f4'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, None] = None
 

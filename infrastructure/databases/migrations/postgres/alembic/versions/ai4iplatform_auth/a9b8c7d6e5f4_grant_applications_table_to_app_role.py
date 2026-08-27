@@ -10,7 +10,7 @@ applications fails with asyncpg.InsufficientPrivilegeError even though the
 table and rows are otherwise fine.
 
 Revision ID: a9b8c7d6e5f4
-Revises: ba737c15e5ec
+Revises: a170c093332e
 Create Date: 2026-08-27 00:00:00.000000
 
 """
@@ -20,7 +20,7 @@ from typing import Sequence, Union
 from alembic import op
 
 revision: str = 'a9b8c7d6e5f4'
-down_revision: Union[str, None] = 'ba737c15e5ec'
+down_revision: Union[str, None] = 'a170c093332e'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, None] = None
 
