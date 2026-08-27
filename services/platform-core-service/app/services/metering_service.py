@@ -1,6 +1,7 @@
 """Metering business logic — PromQL construction, Prometheus calls, result shaping."""
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Union
 
 from sqlalchemy import text
@@ -361,7 +362,7 @@ class MeteringService:
             # AsyncSession is not concurrency-safe — run sequentially, not via gather.
             total = await self._auth_db.execute(text("SELECT COUNT(*) FROM tenants"))
             new_tenants = await self._auth_db.execute(
-                text("SELECT COUNT(*) FROM tenants WHERE created_at >= NOW() - INTERVAL '7 days'")
+                text("SELECT COUNT(*) FROM tenants WHERE created_at >= NOW() - INTERVAL '15 days'")
             )
             return {
                 "total_tenants": total.scalar(),
@@ -375,6 +376,52 @@ class MeteringService:
                 "new_tenants": None,
                 "auth_db_available": False,
             }
+
+    async def model_usage_growth_pct(self) -> Optional[float]:
+        """Overall LLM request volume, current calendar month-to-date vs the
+        previous calendar month — fixed regardless of the dashboard's
+        `window` filter (Key Metrics KPI #7). Distinct from both
+        request_total()'s vs_previous_pct (a rolling window that follows
+        `window`) and the pay-per-use "vs last month" comparison (spend, not
+        request volume).
+
+        Uses `increase(...[Ns] offset Ms)` with exact elapsed-second widths
+        (not `@`, unsupported by some Prometheus deployments) to bound exact
+        calendar-month boundaries, the same offset-based technique
+        request_total() uses for its rolling-window comparison.
+
+        Returns None if it's too early in the month for a meaningful window,
+        the previous month had no traffic (percentage undefined), or the
+        Prometheus query fails.
+        """
+        now = datetime.now(timezone.utc)
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        elapsed_s = int((now - month_start).total_seconds())
+        if elapsed_s < 60:
+            return None
+
+        prev_month_end = month_start
+        prev_month_start = (month_start - timedelta(days=1)).replace(day=1)
+        prev_window_s = int((prev_month_end - prev_month_start).total_seconds())
+
+        sel = build_base_selectors(
+            inference_only=True, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX, auth_type=API_KEY_AUTH_TYPE,
+        )
+        base = f"{_METRIC}{sel}"
+        cur_q = f"sum(increase({base}[{elapsed_s}s]))"
+        prev_q = f"sum(increase({base}[{prev_window_s}s] offset {elapsed_s}s))"
+
+        try:
+            cur_v, prev_v = await asyncio.gather(self._client.scalar(cur_q), self._client.scalar(prev_q))
+        except Exception:
+            logger.warning("model_usage_growth_pct: Prometheus query failed", exc_info=True)
+            return None
+
+        prev_total = max(0, round(float(prev_v)))
+        cur_total = max(0, round(float(cur_v)))
+        if prev_total <= 0:
+            return None
+        return round((cur_total - prev_total) / prev_total * 100, 1)
 
     async def overview_tenant_data(
         self, time_ranges: list[str]

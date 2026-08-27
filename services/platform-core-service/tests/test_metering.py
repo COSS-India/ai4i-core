@@ -343,7 +343,7 @@ class TestTenantCount:
         assert result["new_tenants"] is None
         assert result["auth_db_available"] is False
 
-    async def test_always_uses_7d_for_new_tenants(self):
+    async def test_always_uses_15d_for_new_tenants(self):
         auth_db = AsyncMock()
         total_result = MagicMock()
         total_result.scalar.return_value = 50
@@ -359,9 +359,60 @@ class TestTenantCount:
         assert result["auth_db_available"] is True
 
         calls = auth_db.execute.call_args_list
-        # Second call (new tenants) must use 7 days, not a variable interval
+        # Second call (new tenants) must use 15 days, not a variable interval
         new_query_sql = str(calls[1][0][0])
-        assert "7 days" in new_query_sql.lower()
+        assert "15 days" in new_query_sql.lower()
+
+
+import datetime as _dt_module
+
+
+class _FixedDatetime(_dt_module.datetime):
+    """Freezes datetime.now() for model_usage_growth_pct's month-boundary math."""
+
+    _fixed: _dt_module.datetime = _dt_module.datetime(2026, 8, 27, 10, 30, 0, tzinfo=_dt_module.timezone.utc)
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls._fixed if tz is None else cls._fixed.astimezone(tz)
+
+
+@pytest.mark.asyncio
+class TestModelUsageGrowthPct:
+    async def test_returns_none_when_too_early_in_month(self):
+        svc = _make_service()
+        with patch("app.services.metering_service.datetime") as mock_dt:
+            mock_dt.now.return_value = _dt_module.datetime(2026, 8, 1, 0, 0, 30, tzinfo=_dt_module.timezone.utc)
+            result = await svc.model_usage_growth_pct()
+        assert result is None
+        svc._client.scalar.assert_not_called()
+
+    async def test_computes_growth_pct_from_calendar_month_windows(self):
+        client = MagicMock()
+        client.scalar = AsyncMock(side_effect=[150.0, 100.0])  # current MTD, previous month
+        svc = MeteringService(client=client, auth_db=None)
+        with patch("app.services.metering_service.datetime", _FixedDatetime):
+            result = await svc.model_usage_growth_pct()
+        assert result == 50.0
+        cur_q, prev_q = client.scalar.call_args_list[0][0][0], client.scalar.call_args_list[1][0][0]
+        assert "increase(" in cur_q and "offset" not in cur_q
+        assert "offset" in prev_q
+
+    async def test_returns_none_when_previous_month_had_no_traffic(self):
+        client = MagicMock()
+        client.scalar = AsyncMock(side_effect=[80.0, 0.0])
+        svc = MeteringService(client=client, auth_db=None)
+        with patch("app.services.metering_service.datetime", _FixedDatetime):
+            result = await svc.model_usage_growth_pct()
+        assert result is None
+
+    async def test_returns_none_on_prometheus_failure(self):
+        client = MagicMock()
+        client.scalar = AsyncMock(side_effect=Exception("boom"))
+        svc = MeteringService(client=client, auth_db=None)
+        with patch("app.services.metering_service.datetime", _FixedDatetime):
+            result = await svc.model_usage_growth_pct()
+        assert result is None
 
 
 @pytest.mark.asyncio
