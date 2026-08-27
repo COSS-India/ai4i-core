@@ -35,6 +35,11 @@
     { "endpoint": "PATCH:/api/v1/auth/tenants/{tenant_id}/users/{user_id}", "permissionRequired": 46, "description": "Update tenant user profile (tenant.users.update)" },
     { "endpoint": "DELETE:/api/v1/auth/tenants/{tenant_id}/users/{user_id}", "permissionRequired": 47, "description": "Soft-delete tenant user (tenant.users.delete)" },
 
+    { "endpoint": "POST:/api/v1/auth/tenants/{tenant_id}/applications",           "permissionRequired": 43, "description": "Create Application (application.create); ADMIN and TENANT ADMIN only" },
+    { "endpoint": "GET:/api/v1/auth/tenants/{tenant_id}/applications",            "permissionRequired": 48, "description": "List Applications (application.read); ADMIN and TENANT ADMIN only" },
+    { "endpoint": "GET:/api/v1/auth/tenants/{tenant_id}/applications/{application_id}", "permissionRequired": 48, "description": "Get Application by ID (application.read); ADMIN and TENANT ADMIN only" },
+    { "endpoint": "PATCH:/api/v1/auth/tenants/{tenant_id}/applications/{application_id}", "permissionRequired": 49, "description": "Update Application name/domain/status (application.update); ADMIN and TENANT ADMIN only" },
+
     { "endpoint": "GET:/api/v1/services",                                  "permissionRequired": 51, "description": "List all services (service.read)" },
     { "endpoint": "GET:/api/v1/services/{service_id}",                     "permissionRequired": 51, "description": "Get service by ID (service.read)" },
     { "endpoint": "POST:/api/v1/services",                                 "permissionRequired": 50, "description": "Create service (service.create)" },

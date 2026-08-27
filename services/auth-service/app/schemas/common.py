@@ -40,6 +40,7 @@ _ERROR_DESCRIPTIONS = {
     403: "Not authorized.",
     404: "Not found.",
     409: "Conflict.",
+    422: "Validation failed.",
     503: "Service unavailable.",
 }
 
