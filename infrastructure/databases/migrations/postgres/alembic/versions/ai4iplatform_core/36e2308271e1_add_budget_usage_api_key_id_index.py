@@ -1,17 +1,20 @@
 """add_budget_usage_api_key_id_index
 
 Revision ID: 36e2308271e1
-Revises: d4e5f6a7b8c9
+Revises: 9ae8275aebfd
 Create Date: 2026-08-27 15:00:00.000000
 
-Inserted ahead of 9ae8275aebfd. That migration does
-op.drop_index('ix_budget_usage_api_key_id', ...), but no index by that name
-was ever created — budget_usage.api_key_id only ever got a differently-named
-unique constraint (uq_budget_usage_api_key_id, from c3d4e5f6a7b8), so the
-drop fails. This migration creates the index 9ae8275aebfd expects to find,
-so its drop_index/create_unique_constraint pair can run as originally
-written. 9ae8275aebfd itself is otherwise unchanged, apart from its
-down_revision now pointing here instead of straight to d4e5f6a7b8c9.
+Sits AFTER 9ae8275aebfd (not before, as originally written) — this branch
+was reordered to avoid editing 9ae8275aebfd itself, which is a
+pre-existing/committed migration file. Consequence: 9ae8275aebfd's own
+op.drop_index('ix_budget_usage_api_key_id', ...) still runs before this
+migration ever creates that index — no index by that name was ever
+created (budget_usage.api_key_id only ever got a differently-named unique
+constraint, uq_budget_usage_api_key_id, from c3d4e5f6a7b8) — so
+9ae8275aebfd's drop_index will still fail the same way it originally did.
+This migration no longer fixes that; it's now just a same-shape index add
+that runs after the fact. The actual index-drop-order bug is unresolved
+again and needs a separate fix.
 """
 from typing import Sequence, Union
 
@@ -21,7 +24,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '36e2308271e1'
-down_revision: Union[str, None] = 'd4e5f6a7b8c9'
+down_revision: Union[str, None] = '9ae8275aebfd'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
