@@ -58,7 +58,7 @@ async def get_service_pricing(
         redis = get_redis_client()
     except RuntimeError:
         redis = None
-    cache_key = f"{Constants.PPU_PRICING_CACHE_PREFIX}{service_id}"
+    cache_key = f"{Constants.PRICING_CACHE_PREFIX}{service_id}"
 
     if redis is not None:
         cached = await redis.hgetall(cache_key)
@@ -101,7 +101,7 @@ async def get_service_pricing(
             "cost_per_unit": str(pricing.cost_per_unit) if pricing.cost_per_unit is not None else "",
             "unit_size": str(pricing.unit_size) if pricing.unit_size is not None else "",
         })
-        await pipe.expire(cache_key, Constants.PPU_PRICING_CACHE_TTL)
+        await pipe.expire(cache_key, Constants.PRICING_CACHE_TTL)
         await pipe.execute()
 
     return pricing
@@ -248,7 +248,7 @@ def _get_billing_data(message: Message) -> Optional[dict]:
 
 
 def _get_billed_key(correlation_id: str, span_id: str) -> str:
-    return f"{Constants.PPU_BILLED_KEY_PREFIX}{correlation_id}:{span_id}" if correlation_id else ""
+    return f"{Constants.BILLED_KEY_PREFIX}{correlation_id}:{span_id}" if correlation_id else ""
 
 
 async def _update_billing_on_cache(is_already_billed: bool, billed_key: str, correlation_id: str) -> None:
@@ -257,7 +257,7 @@ async def _update_billing_on_cache(is_already_billed: bool, billed_key: str, cor
     if is_already_billed is False:
         try:
             redis = get_redis_client()
-            await redis.set(billed_key, "1", ex=Constants.PPU_BILLED_KEY_TTL)
+            await redis.set(billed_key, "1", ex=Constants.BILLED_KEY_TTL)
         except Exception as exc:
             logger.warning(
                 "Failed to set Redis dedup key for correlation_id=%s: %s",

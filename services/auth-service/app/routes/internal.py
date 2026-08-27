@@ -4,10 +4,10 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from app.core.exceptions import EntityNotFoundError
-from app.dependencies.services import get_api_key_service, get_ppu_notification_service, get_tenant_service
-from app.schemas.ppu import QuotaLimitUpdatedRequest
+from app.dependencies.services import get_api_key_service, get_notification_service, get_tenant_service
+from app.schemas.quota import QuotaLimitUpdatedRequest
 from app.services.api_key_service import APIKeyService
-from app.services.ppu_notification_service import PPUNotificationService
+from app.services.notification_service import NotificationService
 from app.services.tenant_service import TenantService
 
 router = APIRouter(tags=["Internal"])
@@ -88,6 +88,6 @@ async def reset_tenant_quota(
 async def notify_quota_limit_updated(
     body: QuotaLimitUpdatedRequest,
     background_tasks: BackgroundTasks,
-    svc: PPUNotificationService = Depends(get_ppu_notification_service),
+    svc: NotificationService = Depends(get_notification_service),
 ):
     await svc.notify_quota_limit_updated(body.tier_name, body.tenant_ids, background_tasks)
