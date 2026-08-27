@@ -17,6 +17,11 @@ const NAME_TO_SERVICE_ID: Record<string, string> = {
   "audio-lang-detection": "audio-language-detection",
 };
 
+// "pipeline" is a real catalog/metering task type (the Speech-to-Speech
+// Pipeline feature), but the pay-per-use service (tiers, usage-summary,
+// usage-tenants, usage-tenant) doesn't recognize it and 422s if it's sent.
+const PAY_PER_USE_EXCLUDED_TASK_TYPES = new Set(["pipeline"]);
+
 const toServiceId = (name: string): string => {
   const n = name.trim().toLowerCase();
   return NAME_TO_SERVICE_ID[n] ?? n;
@@ -68,9 +73,21 @@ export function useInferenceTypes() {
     [taskTypeNames],
   );
 
+  // `taskTypeNames` minus "pipeline" — the set to send/offer wherever the
+  // pay-per-use service is involved (tiers, usage-summary, usage-tenants,
+  // usage-tenant, and the task-type filters that feed them).
+  const payPerUseTaskTypeNames = useMemo(
+    () =>
+      taskTypeNames.filter(
+        (n) => !PAY_PER_USE_EXCLUDED_TASK_TYPES.has(n.trim().toLowerCase()),
+      ),
+    [taskTypeNames],
+  );
+
   return {
     inferenceTypes,
     taskTypeNames,
+    payPerUseTaskTypeNames,
     unitByTaskType,
     enabledServiceIds,
     isLoading: query.isLoading,

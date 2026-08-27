@@ -115,6 +115,7 @@ export function useServicesManagement() {
   const [filterTaskType, setFilterTaskType] = useState<string>("");
   const {
     taskTypeNames,
+    payPerUseTaskTypeNames,
     unitByTaskType,
     isLoading: isLoadingTaskTypes,
   } = useInferenceTypes();
@@ -345,12 +346,13 @@ export function useServicesManagement() {
 
   // Fetch tiers for the Create Service form dropdown, scoped to the task type
   // currently selected in the form (mirrors GET pay-per-use/tiers?task_types=<type>).
-  // "pipeline" is a valid catalog/metering task type but is not a valid
-  // pay-per-use task type on the backend, so it must never be sent here.
-  const selectedTaskTypeForTiers =
-    (formData.task_type || "").trim().toLowerCase() === "pipeline"
-      ? ""
-      : formData.task_type || "";
+  // Only task types the pay-per-use service recognizes ("pipeline" is excluded
+  // — see useInferenceTypes) are ever sent here.
+  const selectedTaskTypeForTiers = payPerUseTaskTypeNames.includes(
+    formData.task_type || "",
+  )
+    ? formData.task_type || ""
+    : "";
 
   useEffect(() => {
     if (isLoadingTaskTypes) return;

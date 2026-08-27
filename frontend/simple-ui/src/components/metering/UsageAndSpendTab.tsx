@@ -53,10 +53,11 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const detailRequestIdRef = useRef(0);
   const { isOpen: isDetailOpen, onOpen: onDetailOpen, onClose: onDetailClose } = useDisclosure();
-  const { taskTypeNames } = useInferenceTypes();
-  // Same allowlist as list/summary (`ENABLED_TASK_TYPES`); omit ⇒ backend returns all.
+  const { payPerUseTaskTypeNames } = useInferenceTypes();
+  // Same allowlist as list/summary (`ENABLED_TASK_TYPES`), minus "pipeline"
+  // (not a valid pay-per-use task type); omit ⇒ backend returns all.
   const enabledTaskTypesParam =
-    taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
+    payPerUseTaskTypeNames.length > 0 ? payPerUseTaskTypeNames.join(",") : undefined;
 
   const data = useUsageAndSpendData({
     scopeTenantId,
@@ -67,7 +68,7 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
     filterTierId,
     filterTaskType,
     sortOrder,
-    taskTypeNames,
+    taskTypeNames: payPerUseTaskTypeNames,
   });
 
   const tenantDetail = isTenantView || data.isScoped ? (data.tenants[0] ?? null) : null;
