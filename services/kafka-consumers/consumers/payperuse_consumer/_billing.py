@@ -166,22 +166,21 @@ async def deduct_balance_and_update_quota(
             "    RETURNING available_balance, tier_id"
             "),"
             " quota_upsert AS ("
-            "    INSERT INTO ppu_quota_usage"
+            "    INSERT INTO quota_usage"
             "      (id, tenant_id, inference_name, billing_month, monthly_quota_snap,"
-            "       units_used, tier_id, cost_accum)"
+            "       monthly_quota_used, tier_id)"
             "    SELECT gen_random_uuid(), :tenant_id, :inference_name, :billing_month,"
-            "           ptq.monthly_quota, :units, wallet_update.tier_id, :cost"
+            "           ptq.monthly_quota, :units, wallet_update.tier_id"
             "    FROM wallet_update"
-            "    JOIN ppu_tier_quotas ptq"
+            "    JOIN tier_quotas ptq"
             "      ON ptq.tier_id = wallet_update.tier_id AND ptq.inference_name = :inference_name"
             "    ON CONFLICT (tenant_id, inference_name, billing_month, tier_id)"
-            "    DO UPDATE SET units_used = ppu_quota_usage.units_used + EXCLUDED.units_used,"
-            "                  cost_accum = ppu_quota_usage.cost_accum + EXCLUDED.cost_accum,"
+            "    DO UPDATE SET monthly_quota_used = quota_usage.monthly_quota_used + EXCLUDED.monthly_quota_used,"
             "                  updated_at = now()"
-            "    RETURNING units_used, monthly_quota_snap"
+            "    RETURNING monthly_quota_used, monthly_quota_snap"
             " )"
             " SELECT wallet_update.available_balance, wallet_update.tier_id,"
-            "        quota_upsert.units_used, quota_upsert.monthly_quota_snap"
+            "        quota_upsert.monthly_quota_used, quota_upsert.monthly_quota_snap"
             " FROM wallet_update"
             " LEFT JOIN quota_upsert ON true"
         ),
@@ -205,11 +204,11 @@ async def deduct_balance_and_update_quota(
             wallet_exhausted=False, quota_recorded=False, quota_exhausted=True,
         )
 
-    quota_recorded = row.units_used is not None
-    # Not recorded (no ppu_tier_quotas match) defaults to exhausted=True —
+    quota_recorded = row.monthly_quota_used is not None
+    # Not recorded (no tier_quotas match) defaults to exhausted=True —
     # the DB-level "not entitled" signal; empty-task_type callers override
     # this to False themselves (see the docstring above).
-    quota_exhausted = (not quota_recorded) or (row.units_used >= row.monthly_quota_snap)
+    quota_exhausted = (not quota_recorded) or (row.monthly_quota_used >= row.monthly_quota_snap)
     return BillingWriteResult(
         available_balance=row.available_balance,
         tier_id=str(row.tier_id),
