@@ -8,9 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.pay_per_use.budget_usage import BudgetUsage
-from app.models.pay_per_use.ppu_quota_usage import PPUQuotaUsage
-from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssignment
-from app.models.pay_per_use.ppu_tier import PPUTier
+from app.models.pay_per_use.quota_usage import QuotaUsage
+from app.models.pay_per_use.tenant_tier_assignment import TenantTierAssignment
+from app.models.pay_per_use.tier import Tier
 from app.utils.billing_month import shift_billing_month
 
 
@@ -42,7 +42,7 @@ def _budget_lookup_instant(billing_month: str) -> datetime:
     return _end_of_month(billing_month)
 
 
-# get_tier_names() cache: PPUUsageRepository is instantiated fresh per
+# get_tier_names() cache: UsageRepository is instantiated fresh per
 # request, so this state has to live at module scope to survive across
 # requests within the same process. TTL is configurable via
 # PPU_TIER_CACHE_TTL_SECONDS (settings.ppu_tier_cache_ttl_seconds).
@@ -55,7 +55,7 @@ def update_tier_cache(tier_id: str, name: str) -> None:
     _tier_cache[str(tier_id)] = name
 
 
-class PPUUsageRepository:
+class UsageRepository:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
@@ -88,33 +88,33 @@ class PPUUsageRepository:
         # pattern below).
         ranked_activity = (
             select(
-                PPUQuotaUsage.tenant_id,
-                PPUQuotaUsage.tier_id,
+                QuotaUsage.tenant_id,
+                QuotaUsage.tier_id,
                 func.row_number()
                 .over(
-                    partition_by=PPUQuotaUsage.tenant_id,
+                    partition_by=QuotaUsage.tenant_id,
                     # tier_id as a tie-break makes the pick deterministic when two
                     # tiers share the same max(updated_at) down to the microsecond.
                     # nullslast() matters here: Postgres sorts NULL first under a plain
                     # DESC, which would let a deleted tier (tier_id IS NULL) win a tie
                     # over a real tier instead of only ever being the deliberate fallback.
                     order_by=(
-                        func.max(PPUQuotaUsage.updated_at).desc(),
-                        PPUQuotaUsage.tier_id.desc().nullslast(),
+                        func.max(QuotaUsage.updated_at).desc(),
+                        QuotaUsage.tier_id.desc().nullslast(),
                     ),
                 )
                 .label("rn"),
             )
-            .where(PPUQuotaUsage.billing_month == billing_month)
-            .group_by(PPUQuotaUsage.tenant_id, PPUQuotaUsage.tier_id)
+            .where(QuotaUsage.billing_month == billing_month)
+            .group_by(QuotaUsage.tenant_id, QuotaUsage.tier_id)
         )
         # Query-level filter: only the task types the caller (frontend) requested.
         if task_types:
             ranked_activity = ranked_activity.where(
-                PPUQuotaUsage.inference_name.in_(task_types)
+                QuotaUsage.inference_name.in_(task_types)
             )
         if tenant_id:
-            ranked_activity = ranked_activity.where(PPUQuotaUsage.tenant_id == tenant_id)
+            ranked_activity = ranked_activity.where(QuotaUsage.tenant_id == tenant_id)
         ranked = ranked_activity.subquery()
 
         stmt = select(
@@ -150,21 +150,21 @@ class PPUUsageRepository:
         lookup_instant = _budget_lookup_instant(billing_month)
         ranked = (
             select(
-                PPUTenantTierAssignment.tenant_id,
-                PPUTenantTierAssignment.tier_id,
-                PPUTenantTierAssignment.budget_limit,
-                PPUTenantTierAssignment.available_balance,
+                TenantTierAssignment.tenant_id,
+                TenantTierAssignment.tier_id,
+                TenantTierAssignment.budget_limit,
+                TenantTierAssignment.available_balance,
                 func.row_number()
                 .over(
-                    partition_by=PPUTenantTierAssignment.tenant_id,
-                    order_by=PPUTenantTierAssignment.effective_from.desc(),
+                    partition_by=TenantTierAssignment.tenant_id,
+                    order_by=TenantTierAssignment.effective_from.desc(),
                 )
                 .label("rn"),
             )
             .where(
-                PPUTenantTierAssignment.effective_from <= lookup_instant,
-                PPUTenantTierAssignment.effective_to > lookup_instant,
-                PPUTenantTierAssignment.tenant_id.in_(tenant_ids),
+                TenantTierAssignment.effective_from <= lookup_instant,
+                TenantTierAssignment.effective_to > lookup_instant,
+                TenantTierAssignment.tenant_id.in_(tenant_ids),
             )
         ).subquery()
         stmt = select(ranked).where(ranked.c.rn == 1)
@@ -183,27 +183,27 @@ class PPUUsageRepository:
             return []
         stmt = (
             select(
-                PPUQuotaUsage.tenant_id,
-                PPUQuotaUsage.tier_id,
-                PPUQuotaUsage.inference_name,
-                func.sum(PPUQuotaUsage.monthly_quota_used).label("total_units"),
+                QuotaUsage.tenant_id,
+                QuotaUsage.tier_id,
+                QuotaUsage.inference_name,
+                func.sum(QuotaUsage.monthly_quota_used).label("total_units"),
                 # cost_accum was removed; total_cost will be sourced from
                 # budget_usage.api_key_budget_used once that join is wired up.
                 literal(0).label("total_cost"),
-                func.max(PPUQuotaUsage.monthly_quota_snap).label("quota_snap"),
+                func.max(QuotaUsage.monthly_quota_snap).label("quota_snap"),
             )
             .where(
-                PPUQuotaUsage.billing_month == billing_month,
-                PPUQuotaUsage.tenant_id.in_(tenant_ids),
+                QuotaUsage.billing_month == billing_month,
+                QuotaUsage.tenant_id.in_(tenant_ids),
             )
             .group_by(
-                PPUQuotaUsage.tenant_id,
-                PPUQuotaUsage.tier_id,
-                PPUQuotaUsage.inference_name,
+                QuotaUsage.tenant_id,
+                QuotaUsage.tier_id,
+                QuotaUsage.inference_name,
             )
         )
         if task_types:
-            stmt = stmt.where(PPUQuotaUsage.inference_name.in_(task_types))
+            stmt = stmt.where(QuotaUsage.inference_name.in_(task_types))
         result = await self._db.execute(stmt)
         return result.all()
 
@@ -232,7 +232,7 @@ class PPUUsageRepository:
         ):
             return dict(_tier_cache)
 
-        stmt = select(PPUTier.id, PPUTier.name)
+        stmt = select(Tier.id, Tier.name)
         result = await self._db.execute(stmt)
         _tier_cache = {str(row.id): row.name for row in result.all()}
         _tier_cache_loaded_at = now
@@ -262,12 +262,12 @@ class PPUUsageRepository:
             return []
         stmt = (
             select(
-                PPUQuotaUsage.tenant_id,
-                PPUQuotaUsage.tier_id,
-                func.min(PPUQuotaUsage.created_at).label("first_seen"),
+                QuotaUsage.tenant_id,
+                QuotaUsage.tier_id,
+                func.min(QuotaUsage.created_at).label("first_seen"),
             )
-            .where(PPUQuotaUsage.tenant_id.in_(tenant_ids))
-            .group_by(PPUQuotaUsage.tenant_id, PPUQuotaUsage.tier_id)
+            .where(QuotaUsage.tenant_id.in_(tenant_ids))
+            .group_by(QuotaUsage.tenant_id, QuotaUsage.tier_id)
         )
         result = await self._db.execute(stmt)
         return result.all()

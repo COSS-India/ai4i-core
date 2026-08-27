@@ -8,7 +8,7 @@ from sqlalchemy.sql import func
 from app.models import Base
 
 
-class PPUTenantTierAssignment(Base):
+class TenantTierAssignment(Base):
     __tablename__ = "ppu_tenant_tier_assignments"
     __table_args__ = (
         Index(
@@ -43,4 +43,4 @@ class PPUTenantTierAssignment(Base):
         onupdate=func.now(),
     )
 
-    tier = relationship("PPUTier", back_populates="tenant_assignments")
+    tier = relationship("Tier", back_populates="tenant_assignments")
