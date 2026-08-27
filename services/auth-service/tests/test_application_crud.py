@@ -82,6 +82,20 @@ class TestCreateApplication:
         svc._applications.create.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_create_persists_description(self) -> None:
+        svc = _make_service()
+        body = ApplicationCreate(name="Marketing Bot", description="Runs marketing campaigns")
+
+        app = await svc.create_application(101, body, _user())
+
+        assert app.description == "Runs marketing campaigns"
+
+    @pytest.mark.asyncio
+    async def test_create_blank_description_becomes_none(self) -> None:
+        body = ApplicationCreate(name="App", description="   ")
+        assert body.description is None
+
+    @pytest.mark.asyncio
     async def test_create_without_percentage_leaves_budget_null(self) -> None:
         svc = _make_service()
         body = ApplicationCreate(name="No Budget App")
@@ -177,7 +191,8 @@ class TestCreateApplication:
         with pytest.raises(HTTPException) as exc_info:
             await svc.create_application(101, body, caller)
 
-        assert exc_info.value.status_code == 404
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.code == "INSUFFICIENT_PERMISSIONS"
         svc._applications.create.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -189,7 +204,8 @@ class TestCreateApplication:
         with pytest.raises(HTTPException) as exc_info:
             await svc.create_application(101, body, caller)
 
-        assert exc_info.value.status_code == 404
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.code == "INSUFFICIENT_PERMISSIONS"
         svc._applications.create.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -272,6 +288,18 @@ class TestUpdateApplication:
             ApplicationUpdate(name="X", allocated_percentage=50.0)
 
     @pytest.mark.asyncio
+    async def test_description_can_be_updated(self) -> None:
+        svc = _make_service()
+        app = _application(12)
+        svc._applications.get_by_id = AsyncMock(return_value=app)
+        body = ApplicationUpdate(description="Updated description")
+
+        await svc.update_application(101, 12, body, _user())
+
+        called_data = svc._applications.update.call_args.args[1]
+        assert called_data["description"] == "Updated description"
+
+    @pytest.mark.asyncio
     async def test_status_can_be_set_to_inactive(self) -> None:
         svc = _make_service()
         app = _application(12)
@@ -293,7 +321,8 @@ class TestUpdateApplication:
         with pytest.raises(HTTPException) as exc_info:
             await svc.update_application(101, 12, body, _user(tenant_id=101))
 
-        assert exc_info.value.status_code == 404
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.code == "INSUFFICIENT_PERMISSIONS"
         svc._applications.update.assert_not_awaited()
 
 
@@ -320,4 +349,5 @@ class TestListApplications:
         with pytest.raises(HTTPException) as exc_info:
             await svc.list_applications(101, _user(tenant_id=101))
 
-        assert exc_info.value.status_code == 404
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.code == "INSUFFICIENT_PERMISSIONS"

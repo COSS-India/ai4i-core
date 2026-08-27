@@ -1,12 +1,11 @@
 """
 Application request/response schemas.
 
-Field set follows the API contract exactly (Onboard and Manage Applications):
-Application has no ``description`` column today — the ``applications`` table
-(migration e9f0a1b2c3d4) was built with id/tenant_id/name/domain/
-allocated_percentage/allocated_budget/status/audit-quad only, and the contract's
-request/response bodies mirror that. If Description needs to ship, it needs a
-migration + model column first — out of scope here.
+Field set follows the PRD (Onboard and Manage Applications / Edit Application):
+Name, Description, Domain, Budget on create; Name, Description, Domain
+editable, Budget excluded, on update. ``description`` is a later addition to
+the ``applications`` table (migration a170c093332e) — the original API
+contract predates it and didn't include it.
 """
 
 from datetime import datetime
@@ -24,6 +23,7 @@ _MAX_PERCENTAGE = Decimal("100")
 
 class ApplicationCreate(BaseSchema):
     name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = Field(None, max_length=500)
     domain: Optional[str] = Field(None, max_length=255)
     allocated_percentage: Optional[Decimal] = Field(None, ge=0, le=_MAX_PERCENTAGE)
 
@@ -41,9 +41,9 @@ class ApplicationCreate(BaseSchema):
             raise ValueError("must not be blank")
         return v
 
-    @field_validator("domain", mode="before")
+    @field_validator("domain", "description", mode="before")
     @classmethod
-    def _blank_domain_to_none(cls, v):
+    def _blank_to_none(cls, v):
         if isinstance(v, str):
             v = v.strip()
             if not v:
@@ -70,6 +70,7 @@ class ApplicationUpdate(BaseSchema):
     model_config = ConfigDict(extra="forbid")
 
     name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = Field(None, max_length=500)
     domain: Optional[str] = Field(None, max_length=255)
     status: Optional[ApplicationStatus] = None
 
@@ -87,9 +88,9 @@ class ApplicationUpdate(BaseSchema):
             raise ValueError("must not be blank")
         return v
 
-    @field_validator("domain", mode="before")
+    @field_validator("domain", "description", mode="before")
     @classmethod
-    def _blank_domain_to_none(cls, v):
+    def _blank_to_none(cls, v):
         if isinstance(v, str):
             v = v.strip()
             if not v:
@@ -103,6 +104,7 @@ class ApplicationResponse(BaseSchema):
     id: int
     tenant_id: int
     name: str
+    description: Optional[str] = None
     domain: Optional[str] = None
     allocated_percentage: Optional[Decimal] = None
     allocated_budget: Optional[Decimal] = None
@@ -115,6 +117,7 @@ class ApplicationListItem(BaseSchema):
 
     id: int
     name: str
+    description: Optional[str] = None
     domain: Optional[str] = None
     allocated_percentage: Optional[Decimal] = None
     allocated_budget: Optional[Decimal] = None

@@ -17,7 +17,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
-from app.core.exceptions import EntityNotFoundError
+from app.core.exceptions import EntityNotFoundError, InsufficientPermissionsError
 from app.models.application import Application
 from app.models.tenant import Tenant
 from app.models.user import User
@@ -56,19 +56,27 @@ class ApplicationService:
         the gateway-set X-Permission-IDs header for this, since auth-service
         can be reached directly, bypassing the gateway entirely.
 
-        404 (not 403) on rejection, matching the contract's "identical whether
-        the tenant doesn't exist or belongs to another tenant" — this also
-        uniformly covers a wrong-tenant TENANT_ADMIN and a non-admin role.
+        Two distinct rejections, matching TenantService's own split
+        (enforce_scope's 403 TENANT_FORBIDDEN vs _deny_moderator's 403
+        INSUFFICIENT_PERMISSIONS) rather than collapsing both into one code:
+          * No qualifying role at all -> 403 INSUFFICIENT_PERMISSIONS. The
+            tenant is real and the caller may even belong to it; they just
+            aren't the right role. Saying "not found" here would be false.
+          * TENANT_ADMIN, but a DIFFERENT tenant -> 404, masked per the
+            contract ("identical whether the tenant doesn't exist or belongs
+            to another tenant") — this is the enumeration-prevention case.
         """
         roles = await self._roles.get_user_roles(user.id)
         if RoleName.ADMIN.value in roles:
             return
-        if RoleName.TENANT_ADMIN.value in roles and user.tenant_id == tenant_id:
-            return
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "NOT_FOUND", "message": "Tenant not found."},
-        )
+        if RoleName.TENANT_ADMIN.value in roles:
+            if user.tenant_id == tenant_id:
+                return
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "NOT_FOUND", "message": "Tenant not found."},
+            )
+        raise InsufficientPermissionsError()
 
     async def _load_tenant_or_404(self, tenant_id: int) -> Tenant:
         tenant = await self._tenants.get_by_id(tenant_id)
@@ -120,6 +128,7 @@ class ApplicationService:
         app = Application(
             tenant_id=tenant_id,
             name=body.name,
+            description=body.description,
             domain=body.domain,
             allocated_percentage=body.allocated_percentage,
             allocated_budget=allocated_budget,
