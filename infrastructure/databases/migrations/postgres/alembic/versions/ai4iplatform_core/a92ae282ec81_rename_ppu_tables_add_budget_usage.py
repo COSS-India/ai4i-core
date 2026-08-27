@@ -4,7 +4,7 @@ Renames ppu_tiers, ppu_tier_quotas, ppu_quota_usage to drop the ppu_ prefix.
 Renames units_used to monthly_quota_used on quota_usage.
 Creates budget_usage table.
 
-Revision ID: c3d4e5f6a7b8
+Revision ID: a92ae282ec81
 Revises: f7e8d9c0b1a2
 Create Date: 2026-08-26 00:00:00.000000
 
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = 'c3d4e5f6a7b8'
+revision: str = 'a92ae282ec81'
 down_revision: Union[str, None] = '1edf17b191a7'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
