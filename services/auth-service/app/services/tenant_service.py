@@ -883,7 +883,6 @@ class TenantService:
         tenant_id: int,
         action: Literal["top-up", "top-down"],
         amount: Decimal,
-        expected_version: Optional[int] = None,
     ) -> Tenant:
         """Top-up or top-down a tenant's budget — PATCH /auth/tenants/{id}/budget.
 
@@ -896,7 +895,8 @@ class TenantService:
         budget below cumulative spend to date" (409 budget_below_consumed)
         check has no data to run against and is NOT enforced here. Only the
         locally-computable guards (negative result, over the column's max)
-        are enforced.
+        are enforced. No optimistic-locking (expected_version) either —
+        deemed unnecessary for this release.
 
         Uses the error-body shape (``{"error": ..., "message": ...}``) the
         contract specifies for this endpoint specifically, matching the old
@@ -914,18 +914,6 @@ class TenantService:
             )
 
         tenant = await self._load_tenant_for_update_or_404(tenant_id)
-
-        if expected_version is not None and tenant.version != expected_version:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "error": "version_conflict",
-                    "message": (
-                        f"expected_version {expected_version} does not match "
-                        f"current version {tenant.version}"
-                    ),
-                },
-            )
 
         current_budget = tenant.allocated_budget or Decimal("0")
         delta = amount if action == "top-up" else -amount
@@ -955,7 +943,6 @@ class TenantService:
             tenant,
             {
                 "allocated_budget": new_budget,
-                "version": tenant.version + 1,
                 "updated_by": current_user.id,
             },
         )

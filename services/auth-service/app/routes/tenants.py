@@ -232,7 +232,7 @@ async def assign_tenant_tier(
 @router.patch(
     "/{tenant_id}/budget",
     response_model=TenantBudgetData,
-    responses=error_responses(404, 409, 422),
+    responses=error_responses(404, 422),
 )
 async def revise_tenant_budget(
     tenant_id: int,
@@ -250,7 +250,7 @@ async def revise_tenant_budget(
     exists yet.
     """
     tenant = await svc.revise_tenant_budget(
-        current_user, tenant_id, body.action, body.amount, body.expected_version
+        current_user, tenant_id, body.action, body.amount
     )
     return TenantBudgetData(
         tenant_id=tenant.id,

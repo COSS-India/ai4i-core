@@ -215,11 +215,6 @@ class TenantResponse(BaseSchema):
     allocated_budget: Optional[Decimal] = None
     budget_effective_from: Optional[datetime] = None
     budget_effective_to: Optional[datetime] = None
-    # Additive beyond the contract's sample response: PATCH .../budget's
-    # optional expected_version check is only usable if a client can learn
-    # the tenant's current version somewhere, and this is the only place
-    # that happens.
-    version: int = 1
 
 
 class TenantUserCreate(BaseSchema):
@@ -348,13 +343,6 @@ class TenantTierAssignData(BaseSchema):
 class TenantBudgetRequest(BaseSchema):
     action: Literal["top-up", "top-down"]
     amount: Decimal = Field(..., gt=0, max_digits=15, decimal_places=2)
-    expected_version: Optional[int] = Field(
-        None,
-        description=(
-            "Optimistic-lock check against the tenant's current version. "
-            "Omit to skip the check entirely (no version_conflict raised)."
-        ),
-    )
 
 
 class TenantBudgetData(BaseSchema):
