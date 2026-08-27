@@ -92,7 +92,11 @@ def process_revision_directives(migration_context, revision, directives) -> None
         return
 
     # Strip the persistent cosmetic tenants.status ENUM drift before checking again.
+    # Both directions: autogenerate emits the reverse operation into downgrade_ops,
+    # so cleaning only the upgrade side leaves a spurious ALTER COLUMN in downgrade().
     _remove_tenants_status_drift(script.upgrade_ops)
+    if getattr(script, "downgrade_ops", None) is not None:
+        _remove_tenants_status_drift(script.downgrade_ops)
     if script.upgrade_ops.is_empty():
         directives[:] = []
         print(f"No schema changes detected for {target_db} (tenants.status drift suppressed).")
