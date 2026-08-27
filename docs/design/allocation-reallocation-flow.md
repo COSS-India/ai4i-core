@@ -41,7 +41,7 @@ for each Application under the Tenant:
 
 ## 2b. Redistribution mode — proportional vs directed
 
-Two modes, on `PATCH .../budget` and `PUT .../application-allocations`:
+Two modes, on `PATCH .../budget` and `PUT /auth/allocations` (Section 4.4):
 
 | Mode | Untouched children | Cascades to their own children? |
 |---|---|---|
@@ -87,7 +87,7 @@ INPUT:  new_parent_amount
           ELSE:
               FLOOR CHECK: resolved.amt ≥ child's already-spent?  → else reject ALLOCATION_BELOW_CONSUMED, name the child
 4. SIBLING CHECK: Σ resolved.amt (all children) ≤ new_parent_amount?  → else reject ALLOCATION_TOTAL_EXCEEDED
-5. Commit every row whose resolved value actually changed (version += 1) — including any grandchildren re-fitted in step 3d, in the same transaction; push new ceilings to budget_usage
+5. Commit every row that actually changed — including any grandchildren re-fitted in step 3d, in the same transaction; push new ceilings to budget_usage
 ```
 
 An increase can never fail the inner re-fit (step 3d) — growing a parent can only ever create more room for its children, never less. A decrease can, which is why `directed` mode still auto-re-fits a shrinking child's own children regardless of mode — protection never extends to correctness.
@@ -147,30 +147,14 @@ For both create and edit: the resulting ₹ ceiling has to be copied into `budge
     "allocated_budget": 100000.00,           // number, null if not set — NEW
     "tier_id": "3fa8b8b0-52a1-4d9a-9c1e",    // string (uuid), null if not set — NEW
     "budget_effective_from": "2026-09-01",   // string (date), null if not set — NEW
-    "budget_effective_to": "2027-08-31",     // string (date), null if not set — NEW
-    "version": 1                             // integer — NEW, pass back as expected_version on the first PATCH .../budget
+    "budget_effective_to": "2027-08-31"      // string (date), null if not set — NEW
   }
 }
 ```
 
 **Errors:** `409 ORGANISATION_ALREADY_EXISTS` (existing), `422 INVALID_BUDGET` (new — negative `allocated_budget`)
 
-#### `GET /auth/tenants/{tenant_id}/budget`
-
-**Response — 200 OK**
-```json
-{
-  "success": true,
-  "data": {
-    "tenant_id": 101,                        // integer
-    "allocated_budget": 100000.00,           // number — the root ₹ total
-    "tier_id": "3fa8b8b0-52a1-4d9a-9c1e",    // string (uuid)
-    "budget_effective_from": "2026-01-01",   // string (date)
-    "budget_effective_to": "2026-12-31",     // string (date)
-    "version": 3                             // integer — pass back as expected_version on the next PATCH
-  }
-}
-```
+**No separate GET.** Budget fields are ordinary columns on `tenants`, so the existing `GET /auth/tenants/{tenant_id}` already returns them — `allocated_budget`, `tier_id`, `budget_effective_from/to` — alongside the identity fields.
 
 #### `PATCH /auth/tenants/{tenant_id}/budget`
 
@@ -180,7 +164,6 @@ For both create and edit: the resulting ₹ ceiling has to be copied into `budge
   "allocated_budget": 60000.00,            // number, required — new root ₹ total
   "budget_effective_from": "2026-01-01",   // string (date), optional
   "budget_effective_to": "2026-12-31",     // string (date), optional
-  "expected_version": 3,                   // integer, required — must match current version
   "redistribution_mode": "directed",       // string, optional — "proportional" (default) | "directed" (Section 2b)
   "application_overrides": [               // array, optional — used only when mode = "directed"
     {
@@ -199,7 +182,6 @@ For both create and edit: the resulting ₹ ceiling has to be copied into `budge
   "data": {
     "tenant_id": 101,                 // integer
     "allocated_budget": 60000.00,     // number
-    "version": 4,                     // integer — incremented
     "applications_recomputed": 3,     // integer — count of Applications whose ₹ changed as a result
     "keys_recomputed": 7              // integer — count of Keys whose ₹ changed as a result
   }
@@ -236,7 +218,6 @@ Creates one Application, with an optional initial share of the Tenant's budget.
     "allocated_percentage": 30.0,           // number, null if not set
     "allocated_budget": 30000.00,           // number, derived — null if allocated_percentage is null
     "status": "ACTIVE",                     // string
-    "version": 1,                           // integer
     "created_at": "2026-08-26T09:00:00Z"    // string (datetime)
   }
 }
@@ -244,7 +225,7 @@ Creates one Application, with an optional initial share of the Tenant's budget.
 
 **Errors:** `404 NOT_FOUND` (tenant), `409 APPLICATION_NAME_ALREADY_EXISTS`, `422 ALLOCATION_TOTAL_EXCEEDED`, `422 PERCENTAGE_AMOUNT_MISMATCH` (both fields given, disagree)
 
-#### `GET /auth/tenants/{tenant_id}/application-allocations`
+#### `GET /auth/tenants/{tenant_id}/applications` (the general list Applications endpoint)
 
 **Response — 200 OK**
 ```json
@@ -259,65 +240,14 @@ Creates one Application, with an optional initial share of the Tenant's budget.
         "application_id": "3fa8b8b0-...",   // string (uuid)
         "name": "Marketing Bot",            // string
         "allocated_percentage": 50.0,       // number
-        "allocated_budget": 50000.00,       // number — derived
-        "version": 2                        // integer — pass back per-row on the next PUT
+        "allocated_budget": 50000.00        // number — derived
       }
     ]
   }
 }
 ```
 
-#### `PUT /auth/tenants/{tenant_id}/application-allocations`
-
-Accepts a **partial** list — only the Applications you include are changed. Unlisted Applications are read live from the database and left exactly as they are; they are never zeroed by omission. To remove an allocation, submit it explicitly with `allocated_percentage: 0`.
-
-**Request**
-```json
-{
-  "allocations": [
-    {
-      "application_id": "3fa8b8b0-...",  // string (uuid), required
-      "allocated_percentage": 40.0,      // number — exactly one of these two
-      "allocated_budget": 40000.00,      // number — exactly one of these two
-      "expected_version": 2              // integer, required — must match this Application's current version
-    }
-    // list only the Applications you're changing — anything left out is untouched
-    // to remove an allocation, send it explicitly with allocated_percentage: 0
-  ],
-  "redistribution_mode": "directed",   // string, optional — governs the mandatory cascade into any changed Application's own Keys (Section 2b)
-  "key_overrides": [                   // array, optional — flat, like application_overrides, keyed by api_key_id instead
-    {
-      "api_key_id": 4821,              // integer, required — the server resolves which Application owns it
-      "allocated_percentage": 75.0,    // number — exactly one of these two
-      "allocated_budget": 30000.00     // number — exactly one of these two
-    }
-    // any Key NOT listed here follows the normal per-mode cascade (proportional re-fit, or
-    // protected/re-fit-on-shrink for directed) against its own Application's new amount —
-    // key_overrides can hold entries for as many Keys as needed, even spread across several
-    // of the Applications being changed in this same call, exactly like application_overrides
-    // does for Applications within the Tenant-level call
-  ]
-}
-```
-
-**Response — 200 OK**
-```json
-{
-  "success": true,
-  "data": {
-    "tenant_id": 101,                     // integer
-    "total_allocated_percentage": 80.0,   // number
-    "allocations": [
-      {
-        "application_id": "3fa8b8b0-...",   // string (uuid)
-        "allocated_percentage": 40.0,       // number
-        "allocated_budget": 40000.00,       // number — recomputed
-        "version": 3                        // integer — incremented
-      }
-    ]
-  }
-}
-```
+**Bulk edit for Applications** is no longer its own endpoint — merged with the Key-level bulk edit into one `PUT /auth/allocations` (Section 4.4).
 
 ---
 
@@ -353,7 +283,6 @@ Two fields are added: `application_id`  and `allocated_percentage` (new, optiona
     "allocated_percentage": 30.0,          // number, null if not set — NEW
     "allocated_budget": 15000.00,          // number, derived, null if allocated_percentage is null — NEW
     "is_active": true,                     // boolean — existing field
-    "version": 1,                          // integer — NEW
     "created_by": "e2c9a4d1-...",          // string (uuid) — NEW, audit only; replaces the removed user_id field
     "created_at": "2026-08-26T09:00:00Z"   // string (datetime) — existing field
   }
@@ -362,7 +291,8 @@ Two fields are added: `application_id`  and `allocated_percentage` (new, optiona
 
 **Errors:** `404 NOT_FOUND` (application), `422 ALLOCATION_TOTAL_EXCEEDED`, `422 PERCENTAGE_AMOUNT_MISMATCH` (both fields given, disagree)
 
-#### `GET /auth/applications/{application_id}/key-allocations`
+#### `GET /auth/applications/{application_id}/api-keys` (the general admin-scoped list Keys endpoint)
+
 
 **Response — 200 OK**
 ```json
@@ -378,31 +308,70 @@ Two fields are added: `application_id`  and `allocated_percentage` (new, optiona
         "key_name": "reporting-bot",           // string — matches CreateAPIKeyData's field name
         "is_active": true,                     // boolean — revoked keys still appear, still count
         "allocated_percentage": 60.0,          // number
-        "allocated_budget": 24000.00,          // number — derived
-        "version": 2                           // integer — pass back per-row on the next PUT
+        "allocated_budget": 24000.00           // number — derived
       }
     ]
   }
 }
 ```
 
-#### `PUT /auth/applications/{application_id}/key-allocations`
+**Bulk edit for Keys** is no longer its own endpoint — merged with the Application-level bulk edit into one `PUT /auth/allocations`, below.
 
-List only the Keys you're changing, unlisted Keys are read live and left alone, removal must be explicit (`allocated_percentage: 0`).
+---
 
-**Request**
+### 4.4 Bulk Allocation Edit (merged)
+
+`PUT /auth/allocations` replaces both `PUT .../application-allocations` and `PUT .../key-allocations` — one endpoint, scoped by exactly one of two mutually-exclusive query params. New validation surface accepted deliberately in exchange for one endpoint instead of two, since the underlying validator was already shared code either way.
+
+**Scope (query params — exactly one required):**
+
+| Param | Scopes to | Rows must contain |
+|---|---|---|
+| `tenant_id` | Edge 1: Tenant → Applications | `application_id` |
+| `application_id` | Edge 2: Application → Keys | `api_key_id` |
+
+Accepts a **partial** list either way — only the rows you include are changed. Unlisted rows are read live and left exactly as they are; to remove an allocation, submit it explicitly with `allocated_percentage: 0`.
+
+**Request** (scoped by `tenant_id` — editing Applications)
+```
+PUT /auth/allocations?tenant_id=101
+```
 ```json
 {
   "allocations": [
     {
-      "api_key_id": 4821,              // integer, required
-      "allocated_percentage": 50.0,    // number — exactly one of these two
-      "allocated_budget": 20000.00,    // number — exactly one of these two
-      "expected_version": 2            // integer, required — must match this Key's current version
+      "application_id": "3fa8b8b0-...",  // required in this scope — api_key_id must be absent from every row
+      "allocated_percentage": 40.0,      // number — exactly one of these two
+      "allocated_budget": 40000.00       // number — exactly one of these two
     }
-    // list only the Keys you're changing — anything left out is untouched
-    // to remove an allocation, send it explicitly with allocated_percentage: 0
+  ],
+  "redistribution_mode": "directed",   // string, optional — governs the mandatory cascade into any changed Application's own Keys (Section 2b)
+  "key_overrides": [                   // array, optional — ONLY meaningful in this scope; must be omitted/empty when scoped by application_id (Keys have no children)
+    {
+      "api_key_id": 4821,              // integer, required — the server resolves which Application owns it
+      "allocated_percentage": 75.0,    // number — exactly one of these two
+      "allocated_budget": 30000.00     // number — exactly one of these two
+    }
+    // key_overrides can hold entries for as many Keys as needed, even spread across several
+    // of the Applications being changed in this same call
   ]
+}
+```
+
+**Request** (scoped by `application_id` — editing Keys)
+```
+PUT /auth/allocations?application_id=3fa8b8b0-...
+```
+```json
+{
+  "allocations": [
+    {
+      "api_key_id": 4821,              // required in this scope — application_id must be absent from every row
+      "allocated_percentage": 50.0,    // number — exactly one of these two
+      "allocated_budget": 20000.00     // number — exactly one of these two
+    }
+  ],
+  "redistribution_mode": "proportional"   // string, optional — Keys have no children, so this only affects how unlisted rows react, never a further cascade
 }
 ```
 
@@ -411,18 +380,27 @@ List only the Keys you're changing, unlisted Keys are read live and left alone, 
 {
   "success": true,
   "data": {
-    "application_id": "3fa8b8b0-...",     // string (uuid)
-    "total_allocated_percentage": 100.0,  // number
+    "scope": "applications",              // "applications" | "keys" — echoes which edge this call resolved
+    "parent_id": "101",                   // the tenant_id or application_id that scoped this call
+    "total_allocated_percentage": 80.0,   // number
     "allocations": [
       {
-        "api_key_id": 4821,               // integer
-        "allocated_percentage": 50.0,     // number
-        "allocated_budget": 20000.00,     // number — recomputed
-        "version": 3                      // integer — incremented
+        "application_id": "3fa8b8b0-...",   // or "api_key_id", matching scope
+        "allocated_percentage": 40.0,       // number
+        "allocated_budget": 40000.00        // number — recomputed
       }
     ]
   }
 }
 ```
+
+**New errors (on top of the shared table in Section 8):**
+
+| Status | Code | Meaning |
+|---|---|---|
+| 422 | `MISSING_SCOPE` | neither `tenant_id` nor `application_id` given |
+| 422 | `AMBIGUOUS_SCOPE` | both `tenant_id` and `application_id` given |
+| 422 | `ROW_SCOPE_MISMATCH` | a row's `application_id`/`api_key_id` doesn't match the endpoint's scope |
+| 422 | `OVERRIDES_NOT_APPLICABLE` | `key_overrides` given while scoped by `application_id` |
 
 ---

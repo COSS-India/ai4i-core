@@ -172,11 +172,11 @@ PUT   /auth/applications/{application_id}/key-allocations           ← Edge 2: 
 ```
 A plain `PATCH /auth/applications/{id}` or `PATCH /auth/api-keys/{id}` explicitly **rejects** an `allocated_percentage` field if one is sent — `422 ALLOCATION_FIELD_NOT_ALLOWED_ON_EDIT` — rather than silently ignoring it, so a client can't accidentally believe it changed the allocation when it didn't.
 
-Plus matching `GET`s to read current state before editing:
+Plus matching `GET`s to read current state before editing — none of them a separate "-allocations" endpoint (Section 8.1/8.2/8.3): Tenant budget is just part of `GET /auth/tenants/{tenant_id}`; Application and Key allocations are just part of their general list endpoints:
 ```
-GET /auth/tenants/{tenant_id}/budget
-GET /auth/tenants/{tenant_id}/application-allocations
-GET /auth/applications/{application_id}/key-allocations
+GET /auth/tenants/{tenant_id}
+GET /auth/tenants/{tenant_id}/applications
+GET /auth/applications/{application_id}/api-keys
 ```
 
 **Both entry points — the create call and the bulk call — run through the exact same shared validator:**
@@ -222,7 +222,7 @@ The Application-level and Key-level endpoints run the same six steps, just start
 
 Three resources, each with a `GET` (read current state) and a write endpoint.
 
-**A note on `version` / `expected_version`:** the lock (Section 4/5b) already fully guarantees the aggregate invariant — Σ% ≤ 100%, floor check — with or without this field, because the server re-reads siblings fresh under the lock on every write. `version` solves a *different* problem: two admins editing the **same single row** at once. Without it, the second write silently overwrites the first admin's change with no error to either side — the total stays valid, but one admin's edit just vanishes. With it, the second write gets `409 VERSION_CONFLICT` instead of silently clobbering the first. It's optional from a pure-safety standpoint; keep it if silent overwrites between admins are worth surfacing, drop it for a simpler contract if last-write-wins is acceptable.
+**No `version` / `expected_version` field.** Not maintained — the lock (Section 4/5b) already fully guarantees the aggregate invariant (Σ% ≤ 100%, floor check) on its own, because the server re-reads siblings fresh under the lock on every write. The one thing dropping this gives up: if two admins edit the **same single row** at once, the second write silently overwrites the first with no error to either side — last-write-wins, accepted as a fine trade-off for a simpler contract.
 
 ### 8.1 Tenant — Create & Budget
 
@@ -263,31 +263,14 @@ Three resources, each with a `GET` (read current state) and a write endpoint.
     "allocated_budget": 100000.00,           // number, null if not set — NEW
     "tier_id": "3fa8b8b0-52a1-4d9a-9c1e",    // string (uuid), null if not set — NEW
     "budget_effective_from": "2026-09-01",   // string (date), null if not set — NEW
-    "budget_effective_to": "2027-08-31",     // string (date), null if not set — NEW
-    "version": 1                             // integer — NEW, pass back as expected_version on the first PATCH .../budget
+    "budget_effective_to": "2027-08-31"      // string (date), null if not set — NEW
   }
 }
 ```
 
 **Errors:** `409 ORGANISATION_ALREADY_EXISTS` (existing), `422 INVALID_BUDGET` (new — negative `allocated_budget`)
 
-#### `GET /auth/tenants/{tenant_id}/budget`
-
-Reads just the budget slice — useful on its own since most screens that manage allocations don't need the full Tenant identity record alongside it.
-
-**Response — 200 OK**
-```json
-{
-  "success": true,
-  "data": {
-    "tenant_id": 101,                        // integer
-    "allocated_budget": 100000.00,           // number — the root ₹ total
-    "tier_id": "3fa8b8b0-52a1-4d9a-9c1e",    // string (uuid)
-    "budget_effective_from": "2026-01-01",   // string (date)
-    "budget_effective_to": "2026-12-31",     // string (date)
-    "version": 3                             // integer — pass back as expected_version on the next PATCH
-  }
-}
+**No separate GET.** An earlier version of this doc argued for `GET /auth/tenants/{tenant_id}/budget` as its own endpoint, on the grounds that allocation screens don't need the full Tenant identity record alongside it — not worth a whole separate route for a handful of fields already on the same row. `allocated_budget`, `tier_id`, `budget_effective_from/to` are ordinary columns, so `GET /auth/tenants/{tenant_id}` already returns them alongside identity fields.
 ```
 
 #### `PATCH /auth/tenants/{tenant_id}/budget`
@@ -298,7 +281,6 @@ Reads just the budget slice — useful on its own since most screens that manage
   "allocated_budget": 60000.00,            // number, required — new root ₹ total
   "budget_effective_from": "2026-01-01",   // string (date), optional
   "budget_effective_to": "2026-12-31",     // string (date), optional
-  "expected_version": 3,                   // integer, required — must match current version
   "redistribution_mode": "directed",       // string, optional — "proportional" (default) | "directed" (Section 3b)
   "application_overrides": [               // array, optional — used only when mode = "directed"
     {
@@ -317,7 +299,6 @@ Reads just the budget slice — useful on its own since most screens that manage
   "data": {
     "tenant_id": 101,                 // integer
     "allocated_budget": 60000.00,     // number
-    "version": 4,                     // integer — incremented
     "applications_recomputed": 3,     // integer — count of Applications whose ₹ changed as a result
     "keys_recomputed": 7              // integer — count of Keys whose ₹ changed as a result
   }
@@ -354,7 +335,6 @@ Creates one Application, with an optional initial share of the Tenant's budget. 
     "allocated_percentage": 30.0,           // number, null if not set
     "allocated_budget": 30000.00,           // number, derived — null if allocated_percentage is null
     "status": "ACTIVE",                     // string
-    "version": 1,                           // integer
     "created_at": "2026-08-26T09:00:00Z"    // string (datetime)
   }
 }
@@ -362,7 +342,9 @@ Creates one Application, with an optional initial share of the Tenant's budget. 
 
 **Errors:** `404 NOT_FOUND` (tenant), `409 APPLICATION_NAME_ALREADY_EXISTS`, `422 ALLOCATION_TOTAL_EXCEEDED`
 
-#### `GET /auth/tenants/{tenant_id}/application-allocations`
+#### `GET /auth/tenants/{tenant_id}/applications` (the general list Applications endpoint)
+
+**Not a separate "-allocations" endpoint.** `allocated_percentage`/`allocated_budget` are ordinary columns on `applications`; no other endpoint currently lists Applications under a Tenant, so this is that endpoint.
 
 **Response — 200 OK**
 ```json
@@ -377,8 +359,7 @@ Creates one Application, with an optional initial share of the Tenant's budget. 
         "application_id": "3fa8b8b0-...",   // string (uuid)
         "name": "Marketing Bot",            // string
         "allocated_percentage": 50.0,       // number
-        "allocated_budget": 50000.00,       // number — derived
-        "version": 2                        // integer — pass back per-row on the next PUT
+        "allocated_budget": 50000.00        // number — derived
       }
     ]
   }
@@ -396,8 +377,7 @@ Accepts a **partial** list — only the Applications you include are changed. Un
     {
       "application_id": "3fa8b8b0-...",  // string (uuid), required
       "allocated_percentage": 40.0,      // number — exactly one of these two
-      "allocated_budget": 40000.00,      // number — exactly one of these two
-      "expected_version": 2              // integer, required — must match this Application's current version
+      "allocated_budget": 40000.00       // number — exactly one of these two
     }
     // list only the Applications you're changing — anything left out is untouched
     // to remove an allocation, send it explicitly with allocated_percentage: 0
@@ -429,8 +409,7 @@ Accepts a **partial** list — only the Applications you include are changed. Un
       {
         "application_id": "3fa8b8b0-...",   // string (uuid)
         "allocated_percentage": 40.0,       // number
-        "allocated_budget": 40000.00,       // number — recomputed
-        "version": 3                        // integer — incremented
+        "allocated_budget": 40000.00        // number — recomputed
       }
     ]
   }
@@ -471,7 +450,6 @@ Accepts a **partial** list — only the Applications you include are changed. Un
     "allocated_percentage": 30.0,          // number, null if not set — NEW
     "allocated_budget": 15000.00,          // number, derived, null if allocated_percentage is null — NEW
     "is_active": true,                     // boolean — existing field
-    "version": 1,                          // integer — NEW
     "created_by": "e2c9a4d1-...",          // string (uuid) — NEW, audit only; replaces the removed user_id field
     "created_at": "2026-08-26T09:00:00Z"   // string (datetime) — existing field
   }
@@ -480,7 +458,9 @@ Accepts a **partial** list — only the Applications you include are changed. Un
 
 **Errors:** `404 NOT_FOUND` (application), `422 ALLOCATION_TOTAL_EXCEEDED`
 
-#### `GET /auth/applications/{application_id}/key-allocations`
+#### `GET /auth/applications/{application_id}/api-keys` (the general admin-scoped list Keys endpoint)
+
+**Not a separate "-allocations" endpoint.** The existing `GET /auth/api-keys` is self-service (a caller's own keys) — "list every Key under this Application" for an admin doesn't exist yet regardless of allocations, so this is that endpoint.
 
 **Response — 200 OK**
 ```json
@@ -496,8 +476,7 @@ Accepts a **partial** list — only the Applications you include are changed. Un
         "key_name": "reporting-bot",           // string — matches CreateAPIKeyData's field name
         "is_active": true,                     // boolean — revoked keys still appear, still count
         "allocated_percentage": 60.0,          // number
-        "allocated_budget": 24000.00,          // number — derived
-        "version": 2                           // integer — pass back per-row on the next PUT
+        "allocated_budget": 24000.00           // number — derived
       }
     ]
   }
@@ -515,8 +494,7 @@ Same partial-list rules as 8.2, one level down: list only the Keys you're changi
     {
       "api_key_id": 4821,              // integer, required
       "allocated_percentage": 50.0,    // number — exactly one of these two
-      "allocated_budget": 20000.00,    // number — exactly one of these two
-      "expected_version": 2            // integer, required — must match this Key's current version
+      "allocated_budget": 20000.00     // number — exactly one of these two
     }
     // list only the Keys you're changing — anything left out is untouched
     // to remove an allocation, send it explicitly with allocated_percentage: 0
@@ -535,8 +513,7 @@ Same partial-list rules as 8.2, one level down: list only the Keys you're changi
       {
         "api_key_id": 4821,               // integer
         "allocated_percentage": 50.0,     // number
-        "allocated_budget": 20000.00,     // number — recomputed
-        "version": 3                      // integer — incremented
+        "allocated_budget": 20000.00      // number — recomputed
       }
     ]
   }
@@ -552,7 +529,6 @@ Matches the real auth-service error envelope (`ai4i_core.exceptions.ErrorDetail`
 | Status | Code | Meaning |
 |---|---|---|
 | 404 | `NOT_FOUND` | Tenant / Application / Key id doesn't exist |
-| 409 | `VERSION_CONFLICT` | submitted `expected_version` is stale — someone else edited it first |
 | 422 | `ALLOCATION_TOTAL_EXCEEDED` | the submitted set adds up to more than 100% |
 | 422 | `ALLOCATION_BELOW_CONSUMED` | a new ceiling would sit below what's already been spent |
 | 409 | `BUDGET_OVERCOMMITTED` | the parent is already over its own budget (via overshoot) — fix that before re-slicing its children |
@@ -595,7 +571,7 @@ Three services are touched. auth-service carries almost all of it, because every
 |---|---|
 | **Data model** | new Budget Usage model — ceiling snapshot + spend |
 | **Internal API** | new route to receive ceiling-snapshot pushes from auth-service |
-| **Reconciliation job** (new) | periodic sweep comparing auth's version against the snapshot's version, re-syncing drift |
+| **Reconciliation job** (new) | periodic sweep comparing each ceiling's `updated_at` in auth against the snapshot's, re-syncing drift (no `version` column to compare instead — Section 8) |
 | **DB migration** | new `budget_usage` table |
 
 ### 9.3 kafka-consumers — enforcement at billing time
@@ -617,8 +593,8 @@ Three services are touched. auth-service carries almost all of it, because every
 **Database**
 - New table: `applications` (auth DB)
 - New table: `budget_usage` (core DB)
-- New columns: `tenants.allocated_budget`, `budget_effective_from/to`, `version` (auth DB)
-- New columns: `api_key.application_id`, `allocated_percentage`, `allocated_budget`, `version` (auth DB)
+- New columns: `tenants.allocated_budget`, `budget_effective_from/to` (auth DB)
+- New columns: `api_key.application_id`, `allocated_percentage`, `allocated_budget` (auth DB)
 - Removed: `api_key.user_id` → replaced by `created_by` (audit only)
 
 **Code**
@@ -642,8 +618,8 @@ Three services are touched. auth-service carries almost all of it, because every
 
 | File | Change |
 |---|---|
-| `app/models/tenant.py` | add `allocated_budget`, `budget_effective_from/to`, `version` |
-| `app/models/api_key.py` | add `application_id` (NOT NULL), `allocated_percentage`, `allocated_budget`, `version`; remove `user_id`, add `created_by` |
+| `app/models/tenant.py` | add `allocated_budget`, `budget_effective_from/to` |
+| `app/models/api_key.py` | add `application_id` (NOT NULL), `allocated_percentage`, `allocated_budget`; remove `user_id`, add `created_by` |
 | `app/models/application.py` | **new** — the Application model |
 | `app/repositories/tenant_repository.py` | add budget read/update queries |
 | `app/repositories/api_key_repository.py` | add sibling-sum + allocation queries |
@@ -652,9 +628,9 @@ Three services are touched. auth-service carries almost all of it, because every
 | `app/services/tenant_service.py` | add budget create/revise, calling the shared validator |
 | `app/services/api_key_service.py` | `create_api_key` takes `application_id`, `allocated_percentage`; calls the shared validator |
 | `app/services/application_service.py` | **new** — create/edit Application, calling the shared validator |
-| `app/routes/tenants.py` | add `GET`/`PATCH .../budget` |
+| `app/routes/tenants.py` | extend `GET /auth/tenants/{id}` with budget fields; add `PATCH .../budget` |
 | `app/routes/api_key.py` | extend `POST /api-keys` with `application_id` (required), `allocated_percentage` (optional) |
-| `app/routes/applications.py` | **new** — Application CRUD, `GET`/`PUT .../application-allocations`, and `GET`/`PUT .../{application_id}/key-allocations` (path lives under `/auth/applications`, not `/auth/api-keys`) |
+| `app/routes/applications.py` | **new** — Application CRUD; `GET .../applications` (list, includes allocation fields) + `PUT .../application-allocations` (bulk edit); `GET .../{application_id}/api-keys` (list) + `PUT .../{application_id}/key-allocations` (bulk edit) (path lives under `/auth/applications`, not `/auth/api-keys`) |
 | `app/schemas/*.py` | request/response models matching Section 8 |
 | DB migration | new `applications` table; new columns on `tenants`, `api_key` |
 
@@ -664,7 +640,7 @@ Three services are touched. auth-service carries almost all of it, because every
 |---|---|
 | `app/models/budget_usage.py` | **new** — `api_key_budget_snap`, `api_key_budget_used` |
 | `app/routes/internal.py` | add an internal route to receive ceiling-snapshot pushes from auth-service |
-| `app/services/` (new module) | reconciliation sweep — compares `version` (auth) vs snapshot version (core), re-syncs drift |
+| `app/services/` (new module) | reconciliation sweep — compares `updated_at` (auth) vs snapshot's last-synced timestamp (core), re-syncs drift |
 | DB migration | new `budget_usage` table |
 
 ### 11.3 kafka-consumers

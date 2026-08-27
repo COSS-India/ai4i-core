@@ -90,7 +90,7 @@ INPUT:  new_parent_amount
           ELSE:
               FLOOR CHECK: resolved.amt ≥ child's already-spent?  → else reject ALLOCATION_BELOW_CONSUMED, name the child
 4. SIBLING CHECK: Σ resolved.amt (all children) ≤ new_parent_amount?  → else reject ALLOCATION_TOTAL_EXCEEDED
-5. Commit every row whose resolved value actually changed (version += 1) — including any grandchildren re-fitted in step 3d, in the same transaction; push new ceilings to budget_usage
+5. Commit every row whose resolved value actually changed — including any grandchildren re-fitted in step 3d, in the same transaction; push new ceilings to budget_usage
 ```
 
 This is the *same* algorithm at Tenant→Application and at Application→Key — just called independently at each edge, per Section 3, **except** that step 3d now pulls the Application→Key cascade in automatically whenever it applies, rather than always deferring it to a second call.
@@ -110,8 +110,7 @@ This is the *same* algorithm at Tenant→Application and at Application→Key �
 ```
 PATCH /auth/tenants/{tenant_id}/budget
 {
-  "allocated_budget": 120000.00,
-  "expected_version": 5
+  "allocated_budget": 120000.00
 }
 ```
 
@@ -139,8 +138,7 @@ PATCH /auth/tenants/{tenant_id}/budget
   "redistribution_mode": "directed",
   "application_overrides": [
     { "application_id": "A", "allocated_budget": 70000.00 }
-  ],
-  "expected_version": 5
+  ]
 }
 ```
 
@@ -183,8 +181,7 @@ PATCH /auth/tenants/{tenant_id}/budget
   "redistribution_mode": "directed",
   "application_overrides": [
     { "application_id": "C", "allocated_budget": 10000.00 }
-  ],
-  "expected_version": 5
+  ]
 }
 ```
 
@@ -266,7 +263,7 @@ Everything from the companion doc still applies, unmodified, regardless of mode 
 - **Floor check** — no resolved ₹, overridden or protected, can ever fall below what's already spent. For a shrinking Application specifically, this check happens one level lower than usual: instead of comparing the Application's own new ₹ against a number, Section 4 step 3d re-fits its Keys proportionally against that new ₹ and checks *them* against their own spend — so the real constraint is "can the Keys still fit," not "does the Application's own figure look big enough." Protected children (unchanged ₹) never trigger this, since they're not shrinking; only overridden or proportionally-moved children can be.
 - **Sibling check** — Σ resolved ₹ ≤ parent ₹, always, checked after resolving every child, not before.
 - **Lock** — one lock per parent, held for the full resolve-and-write, exactly as already designed.
-- **Version** — every row that actually changes still bumps its `version`; `expected_version` conflicts still surface as `409 VERSION_CONFLICT`.
+- **No `version` / `expected_version`** — not maintained. The lock alone still guarantees the aggregate invariant; dropping this only gives up detecting two admins silently overwriting the same single row (companion doc, Section 8).
 - **Partial-list semantics still hold in `proportional` mode** — omitting a child there means "leave its % alone," which is exactly what it already meant. `directed` mode is what changes the meaning of "omitted" to "leave its ₹ alone" instead.
 
 ## 8. API contract — delta over the companion doc
@@ -276,7 +273,6 @@ Two fields added, both optional, both defaulting to today's behaviour so nothing
 ```json
 {
   "allocated_budget": 120000.00,           // number — unchanged from companion doc
-  "expected_version": 5,                   // integer — unchanged
   "redistribution_mode": "directed",       // string, optional — "proportional" (default) | "directed" — NEW
   "application_overrides": [               // array, optional, used only when mode = "directed" — NEW
     {
