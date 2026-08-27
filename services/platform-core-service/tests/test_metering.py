@@ -391,7 +391,8 @@ class TestModelUsageGrowthPct:
         client = MagicMock()
         client.scalar = AsyncMock(side_effect=[150.0, 100.0])  # current MTD, previous month
         svc = MeteringService(client=client, auth_db=None)
-        with patch("app.services.metering_service.datetime", _FixedDatetime):
+        with patch("app.services.metering_service.datetime", _FixedDatetime), \
+             patch("app.services.metering_service.settings.prometheus_retention_days", 90):
             result = await svc.model_usage_growth_pct()
         assert result == 50.0
         cur_q, prev_q = client.scalar.call_args_list[0][0][0], client.scalar.call_args_list[1][0][0]
@@ -415,7 +416,8 @@ class TestModelUsageGrowthPct:
         client = MagicMock()
         client.scalar = AsyncMock(side_effect=[80.0, 0.0])
         svc = MeteringService(client=client, auth_db=None)
-        with patch("app.services.metering_service.datetime", _FixedDatetime):
+        with patch("app.services.metering_service.datetime", _FixedDatetime), \
+             patch("app.services.metering_service.settings.prometheus_retention_days", 90):
             result = await svc.model_usage_growth_pct()
         assert result is None
 
@@ -423,9 +425,27 @@ class TestModelUsageGrowthPct:
         client = MagicMock()
         client.scalar = AsyncMock(side_effect=Exception("boom"))
         svc = MeteringService(client=client, auth_db=None)
-        with patch("app.services.metering_service.datetime", _FixedDatetime):
+        with patch("app.services.metering_service.datetime", _FixedDatetime), \
+             patch("app.services.metering_service.settings.prometheus_retention_days", 90):
             result = await svc.model_usage_growth_pct()
         assert result is None
+
+    async def test_returns_none_when_declared_retention_cannot_cover_lookback(self):
+        """The repo ships no production Prometheus config, so this guard —
+        not a docker-compose retention bump — is the actual fix for
+        'silently wrong instead of None if retention is too short': it
+        refuses the query outright rather than trusting whatever partial
+        data Prometheus has left after its own retention pruning."""
+        client = MagicMock()
+        client.scalar = AsyncMock(side_effect=[150.0, 100.0])
+        svc = MeteringService(client=client, auth_db=None)
+        with patch("app.services.metering_service.datetime", _FixedDatetime), \
+             patch("app.services.metering_service.settings.prometheus_retention_days", 15):
+            # needs ~57.4d (elapsed_s + prev_month_len_s), default/low
+            # retention of 15d can't cover it
+            result = await svc.model_usage_growth_pct()
+        assert result is None
+        client.scalar.assert_not_called()
 
 
 @pytest.mark.asyncio

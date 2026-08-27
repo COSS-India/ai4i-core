@@ -7,6 +7,7 @@ from typing import Optional, Union
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.repositories.model_management.model_repository import ModelRepository
 from app.repositories.model_management.service_repository import ServiceRepository
 from app.utils.prometheus_client import PrometheusClient
@@ -403,15 +404,26 @@ class MeteringService:
         on `[prev_month_start, prev_month_start + elapsed_s]` — the same
         number of days into July as `cur_q`'s days into August. Near
         month-end this needs history back to `elapsed_s + prev_month_len_s`
-        (~60 days) — Prometheus retention must cover that or `prev_total`
-        silently under-counts instead of the `None` this method promises
-        when traffic is genuinely absent; see
-        `docker-compose-local.yml`'s `--storage.tsdb.retention.time`
-        (bumped to 90d locally for headroom — production must be sized the
-        same way).
+        (~60 days).
+
+        This repo ships no production Prometheus config — every deployer
+        runs their own, with their own retention — so that requirement
+        can't be enforced from a config file here. Instead, before firing
+        `prev_q` this method compares how far back it needs against
+        `settings.prometheus_retention_days` (env `PROMETHEUS_RETENTION_DAYS`,
+        default 15 — Prometheus's own out-of-box default, deliberately
+        conservative) and returns None outright if the deployment hasn't
+        declared enough retention to cover it. Without this guard,
+        Prometheus would silently answer from whatever partial data
+        survived retention and `prev_total` would under-count rather than
+        the method returning the `None` it promises — an operator must
+        opt in (set `PROMETHEUS_RETENTION_DAYS` to match their actual
+        `--storage.tsdb.retention.time`, >= ~90d recommended) before this
+        KPI computes a real percentage.
 
         Returns None if it's too early in the month for a meaningful window,
-        the previous month had no traffic (percentage undefined), or the
+        the declared retention can't cover the previous-month lookback, the
+        previous month had no traffic (percentage undefined), or the
         Prometheus query fails.
         """
         now = datetime.now(timezone.utc)
@@ -422,6 +434,15 @@ class MeteringService:
 
         prev_month_start = (month_start - timedelta(days=1)).replace(day=1)
         prev_month_len_s = int((month_start - prev_month_start).total_seconds())
+
+        lookback_days_needed = (elapsed_s + prev_month_len_s) / 86400
+        if lookback_days_needed > settings.prometheus_retention_days:
+            logger.info(
+                "model_usage_growth_pct: skipping — needs %.1fd of history, "
+                "PROMETHEUS_RETENTION_DAYS=%d",
+                lookback_days_needed, settings.prometheus_retention_days,
+            )
+            return None
 
         sel = build_base_selectors(
             inference_only=True, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX, auth_type=API_KEY_AUTH_TYPE,
