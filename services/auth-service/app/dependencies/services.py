@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.redis import get_redis
 from app.repositories.api_key_repository import APIKeyRepository
+from app.repositories.application_repository import ApplicationRepository
 from app.repositories.credentials_repository import CredentialsRepository
 from app.repositories.refresh_token_repository import RefreshTokenRepository
 from app.repositories.role_repository import RoleRepository
@@ -82,7 +83,7 @@ def get_api_key_service(
     return APIKeyService(
         APIKeyRepository(db),
         cache,
-        user_repo=UserRepository(db),
+        application_repo=ApplicationRepository(db),
         tenant_repo=TenantRepository(db),
     )
 

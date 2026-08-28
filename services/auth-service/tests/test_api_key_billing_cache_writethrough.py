@@ -8,61 +8,53 @@ backs the tier-reassignment and monthly-cron quota-reset paths. All four
 previously patched Redis only, silently drifting from cached_data (the
 DB-fallback source of truth validate_api_key rehydrates from on a miss) —
 this locks in that both now stay in sync.
+
+Keys are owned by Applications, not Users (migration e9f0a1b2c3d4 dropped
+api_key.user_id in favor of api_key.application_id); the tenant-wide cache
+cascade (_for_each_active_tenant_key) walks api_keys directly via a
+join-through-Application query, not per-user.
 """
 
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
 
 import pytest
 from ai4i_core.ppu import get_inference_types
 
 from app.models.api_key import APIKey
-from app.models.user import User
 from app.repositories.api_key_repository import APIKeyRepository
 from app.services.api_key_service import APIKeyService
 
 _INFERENCE_FIELDS = [f"quota-{entry['name']}" for entry in get_inference_types()]
 
 
-def _api_key(*, is_active: bool = True) -> APIKey:
+def _api_key(*, is_active: bool = True, application_id: int = 1) -> APIKey:
     return APIKey(
         id=1,
-        user_id=uuid4(),
+        application_id=application_id,
         key_name="test",
-        api_key=uuid4().hex,
+        api_key="a" * 32,
         permissions=[1],
         is_active=is_active,
         cached_data={"api_key": "x"},
     )
 
 
-def _user() -> User:
-    return User(
-        id=uuid4(),
-        email="test-user@example.invalid",
-        username=uuid4().hex[:12],
-        tenant_id=1,
-        is_active=True,
-    )
-
-
 def _service_with_one_active_key():
-    """A repo/users pairing that yields exactly one active key for tenant_id=1,
-    wired the way _for_each_active_tenant_key walks it (users, then per-user keys)."""
+    """A repo yielding exactly one active key for tenant_id=1, wired the way
+    _for_each_active_tenant_key walks it (one keyset page, shorter than the
+    page size, so the loop stops after processing it)."""
     repo = AsyncMock()
-    users = AsyncMock()
     cache = AsyncMock()
     key = _api_key()
-    users.list_by_tenant = AsyncMock(side_effect=[[_user()], []])
-    repo.list_by_user = AsyncMock(return_value=[key])
-    svc = APIKeyService(repo, cache, user_repo=users)
-    return svc, repo, users, cache, key
+    repo.list_active_keys_for_tenant = AsyncMock(return_value=[key])
+    svc = APIKeyService(repo, cache)
+    return svc, repo, cache, key
 
 
 class TestSetBudgetExhaustedForTenant:
     @pytest.mark.asyncio
     async def test_patches_redis_and_cached_data(self) -> None:
-        svc, repo, _users, cache, key = _service_with_one_active_key()
+        svc, repo, cache, key = _service_with_one_active_key()
         await svc.set_budget_exhausted_for_tenant(1, True)
         cache.patch_api_key_cache_field.assert_awaited_once_with(key.api_key, "budget-exhausted", "1")
         repo.patch_cached_data_field_for_tenant.assert_awaited_once_with(1, "budget-exhausted", "1")
@@ -70,14 +62,14 @@ class TestSetBudgetExhaustedForTenant:
 
     @pytest.mark.asyncio
     async def test_clearing_writes_string_zero(self) -> None:
-        svc, repo, _users, _cache, _key = _service_with_one_active_key()
+        svc, repo, _cache, _key = _service_with_one_active_key()
         await svc.set_budget_exhausted_for_tenant(1, False)
         repo.patch_cached_data_field_for_tenant.assert_awaited_once_with(1, "budget-exhausted", "0")
 
     @pytest.mark.asyncio
     async def test_missing_repo_skips_everything(self) -> None:
         cache = AsyncMock()
-        svc = APIKeyService(None, cache, user_repo=AsyncMock())
+        svc = APIKeyService(None, cache)
         await svc.set_budget_exhausted_for_tenant(1, True)
         cache.patch_api_key_cache_field.assert_not_awaited()
 
@@ -85,7 +77,7 @@ class TestSetBudgetExhaustedForTenant:
 class TestSetQuotaExhaustedForTenant:
     @pytest.mark.asyncio
     async def test_patches_redis_and_cached_data(self) -> None:
-        svc, repo, _users, cache, key = _service_with_one_active_key()
+        svc, repo, cache, key = _service_with_one_active_key()
         await svc.set_quota_exhausted_for_tenant(1, "nmt")
         cache.patch_api_key_cache_field.assert_awaited_once_with(key.api_key, "quota-nmt", "1")
         repo.patch_cached_data_field_for_tenant.assert_awaited_once_with(1, "quota-nmt", "1")
@@ -95,7 +87,7 @@ class TestSetQuotaExhaustedForTenant:
 class TestClearQuotaFlagsForTenant:
     @pytest.mark.asyncio
     async def test_clears_redis_and_cached_data(self) -> None:
-        svc, repo, _users, cache, key = _service_with_one_active_key()
+        svc, repo, cache, key = _service_with_one_active_key()
         await svc.clear_quota_flags_for_tenant(1)
         cache.delete_api_key_cache_fields.assert_awaited_once_with(key.api_key, _INFERENCE_FIELDS)
         repo.remove_cached_data_fields_for_tenant.assert_awaited_once_with(1, _INFERENCE_FIELDS)
