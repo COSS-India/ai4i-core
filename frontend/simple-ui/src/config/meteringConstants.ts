@@ -364,7 +364,7 @@ export const METERING = {
       HEADER_TOTAL_REQUESTS: "Total requests",
       HEADER_RIGHT: "% of total",
       TOOLTIPS: {
-        TOTAL_REQUESTS: "Request count for this row in the selected time window.",
+        TOTAL_REQUESTS: "Request count for this institution in the selected time window.",
         PCT_OF_TOTAL: "This row's share of the total requests shown in the list.",
       },
     },
