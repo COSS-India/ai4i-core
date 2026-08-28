@@ -142,9 +142,15 @@ class ApplicationService:
     async def _assert_allocation_within_cap(
         self, tenant_id: int, new_percentage: Decimal
     ) -> None:
-        # Locks every Application row for the tenant so a concurrent reallocation
-        # can't read the same stale sum and also commit over 100%.
-        await self._applications.list_all_for_tenant_for_update(tenant_id)
+        # Locks the TENANT row, not the Application rows: "SELECT ... FOR
+        # UPDATE" takes no lock when it matches zero rows, so locking children
+        # doesn't serialize a tenant's first two concurrent creates (both see
+        # zero locked rows, both read sum=0, both pass, total exceeds 100%).
+        # The tenant row always exists, so locking it serializes every
+        # concurrent create for that tenant regardless of how many
+        # Applications currently exist — same pattern TenantRepository's own
+        # get_by_id_for_update already uses to serialize status changes.
+        await self._tenants.get_by_id_for_update(tenant_id)
         current_sum = await self._applications.sum_allocated_percentage(tenant_id)
         total = current_sum + new_percentage
         if total > _HUNDRED:

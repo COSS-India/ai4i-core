@@ -22,7 +22,6 @@ def _make_service(roles=("ADMIN",)) -> ApplicationService:
     application_repo.get_by_id = AsyncMock()
     application_repo.get_by_name = AsyncMock(return_value=None)
     application_repo.list_for_tenant = AsyncMock(return_value=([], 0))
-    application_repo.list_all_for_tenant_for_update = AsyncMock(return_value=[])
     application_repo.sum_allocated_percentage = AsyncMock(return_value=Decimal("0"))
     application_repo.create = AsyncMock()
     application_repo.update = AsyncMock()
@@ -31,6 +30,9 @@ def _make_service(roles=("ADMIN",)) -> ApplicationService:
 
     tenant_repo = MagicMock()
     tenant_repo.get_by_id = AsyncMock(
+        return_value=_tenant(101, allocated_budget=Decimal("100000.00"))
+    )
+    tenant_repo.get_by_id_for_update = AsyncMock(
         return_value=_tenant(101, allocated_budget=Decimal("100000.00"))
     )
 
@@ -129,6 +131,32 @@ class TestCreateApplication:
 
         assert exc_info.value.status_code == 422
         assert exc_info.value.detail["code"] == "ALLOCATION_TOTAL_EXCEEDED"
+
+    @pytest.mark.asyncio
+    async def test_budget_bearing_create_locks_the_tenant_row(self) -> None:
+        """Bug scenario: locking Application rows takes no lock when a tenant
+        has zero of them yet, so two concurrent first-creates both read
+        sum=0 and both pass the cap check. Locking the tenant row instead
+        serializes every concurrent create regardless of existing row count —
+        this asserts the fixed code path takes that lock, since a mocked
+        unit test can't reproduce the actual DB-level race the reviewer
+        measured live."""
+        svc = _make_service()
+        body = ApplicationCreate(name="App A", allocated_percentage=Decimal("60.0"))
+
+        await svc.create_application(101, body, _user())
+
+        svc._tenants.get_by_id_for_update.assert_awaited_once_with(101)
+
+    @pytest.mark.asyncio
+    async def test_create_without_percentage_does_not_lock_tenant_row(self) -> None:
+        """No budget means no cap to protect — shouldn't pay for a lock it doesn't need."""
+        svc = _make_service()
+        body = ApplicationCreate(name="App A")
+
+        await svc.create_application(101, body, _user())
+
+        svc._tenants.get_by_id_for_update.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_allocation_total_at_exactly_100_is_allowed(self) -> None:

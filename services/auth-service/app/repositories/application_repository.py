@@ -73,19 +73,6 @@ class ApplicationRepository(BaseRepository):
         result = await self._db.execute(stmt)
         return list(result.scalars().all()), total
 
-    async def list_all_for_tenant_for_update(self, tenant_id: int) -> list[Application]:
-        """Lock every Application row for a tenant — used before validating the
-        sum of allocation percentages, so two concurrent reallocation calls for
-        the same tenant can't both read a stale total and both commit over 100%.
-        """
-        result = await self._db.execute(
-            select(Application)
-            .where(Application.tenant_id == tenant_id)
-            .order_by(Application.id.asc())
-            .with_for_update()
-        )
-        return list(result.scalars().all())
-
     async def sum_allocated_percentage(self, tenant_id: int) -> Decimal:
         result = await self._db.execute(
             select(func.coalesce(func.sum(Application.allocated_percentage), 0)).where(
