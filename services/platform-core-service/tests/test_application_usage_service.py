@@ -42,6 +42,75 @@ def _make_repo(spend_by_key: dict) -> MagicMock:
     return repo
 
 
+class TestTenantIdIntegerCasting:
+    """Regression test for a real bug caught by live-DB testing (mocks don't
+    enforce parameter types, so this was invisible to every other test here).
+
+    tenants.id / applications.tenant_id are Postgres Integer columns.
+    tenant_id arrives as a str everywhere in this service (X-Tenant-Id header,
+    FastAPI Query str param). asyncpg — unlike psycopg2 — refuses to bind a
+    Python str against an Integer column, raising:
+      asyncpg.exceptions.DataError: invalid input for query argument $1: '2'
+      ('str' object cannot be interpreted as an integer)
+    This fake execute() reproduces that exact refusal so the regression is
+    caught without needing a live database.
+    """
+
+    @staticmethod
+    def _capturing_execute(captured: dict) -> AsyncMock:
+        """Records the actual bound params instead of just returning canned
+        rows — asserting on THIS is what actually distinguishes fixed from
+        buggy: the service's own `except Exception` swallows a real asyncpg
+        DataError and returns a graceful zero either way, so asserting only
+        on the method's return value passes even with the bug still present.
+        """
+        async def _execute(stmt, params=None):
+            captured.update(params or {})
+            return SimpleNamespace(all=lambda: [], first=lambda: None)
+
+        return AsyncMock(side_effect=_execute)
+
+    @pytest.mark.asyncio
+    async def test_load_tenant_budget_binds_int_not_str(self):
+        captured: dict = {}
+        auth_db = MagicMock()
+        auth_db.execute = self._capturing_execute(captured)
+
+        # The exact failing scenario: tenant_id="2" arrives as a str (from
+        # X-Tenant-Id/Query) and must be cast before binding — asyncpg
+        # rejects a str for an Integer column outright.
+        await ApplicationUsageService._load_tenant_budget("2", auth_db)
+
+        assert captured["tenant_id"] == 2
+        assert isinstance(captured["tenant_id"], int)
+
+    @pytest.mark.asyncio
+    async def test_load_tenant_applications_binds_int_not_str(self):
+        captured: dict = {}
+        auth_db = MagicMock()
+        auth_db.execute = self._capturing_execute(captured)
+
+        await ApplicationUsageService._load_tenant_applications("2", auth_db)
+
+        assert captured["tenant_id"] == 2
+        assert isinstance(captured["tenant_id"], int)
+
+    @pytest.mark.asyncio
+    async def test_non_digit_tenant_id_short_circuits_without_querying(self):
+        """A malformed tenant_id (not a digit string) must never reach the
+        database at all — not even as a query that could raise or, worse,
+        silently match the wrong row under a permissive driver."""
+        auth_db = MagicMock()
+        auth_db.execute = AsyncMock()
+
+        budget = await ApplicationUsageService._load_tenant_budget("not-a-number", auth_db)
+        apps = await ApplicationUsageService._load_tenant_applications("not-a-number", auth_db)
+
+        assert budget == Decimal("0")
+        assert apps == []
+        auth_db.execute.assert_not_called()
+
+
 class TestGetSummary:
     @pytest.mark.asyncio
     async def test_normal_case_computes_institution_level_percentages(self):
