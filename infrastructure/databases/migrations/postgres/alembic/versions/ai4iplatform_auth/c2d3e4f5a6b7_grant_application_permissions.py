@@ -42,12 +42,20 @@ def upgrade() -> None:
     conn = op.get_bind()
 
     for perm_id, name, resource, action in PERMISSIONS:
+        # name is this permission's real identity; perm_id is only this
+        # migration's preferred numbering. Guarding on name alone (not
+        # "id exists OR name exists") means: on a drifted DB where perm_id
+        # is already claimed by some unrelated permission, this INSERT is
+        # no longer silently skipped — it fails loudly on the primary key
+        # constraint. The previous double guard let that case skip the
+        # insert here while the role_permission grant below (joined by
+        # name) then matched nothing and granted nothing, with no error
+        # anywhere — the migration "succeeded" while granting nothing.
         conn.execute(
             sa.text("""
                 INSERT INTO permissions (id, name, resource, action, created_by)
                 SELECT :perm_id, :name, :resource, :action, :seeder_id
-                WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE id = :perm_id)
-                  AND NOT EXISTS (SELECT 1 FROM permissions WHERE name = :name)
+                WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE name = :name)
             """),
             {
                 "perm_id": perm_id,
