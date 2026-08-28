@@ -38,6 +38,11 @@ class CreateAPIKeyRequest(BaseSchema):
         decimal_places=2,
         description="Share of the Application's allocated_budget reserved for this key, as a percentage.",
     )
+    budget: Optional[Decimal] = Field(
+        None,
+        gt=0,
+        description="Budget ceiling for this key in currency units. Stored as api_key_budget_snap in budget_usage.",
+    )
 
 
 class UpdateAPIKeyRequest(BaseSchema):

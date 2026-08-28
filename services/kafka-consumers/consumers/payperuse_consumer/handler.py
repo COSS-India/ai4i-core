@@ -32,8 +32,10 @@ def _get_otel_attributes(attrs: dict):
     input_tokens: float = float(attrs.get("input_tokens") or 0)
     output_tokens: float = float(attrs.get("output_tokens") or 0)
     correlation_id: str = str(attrs.get("correlation_id") or "").strip()
+    api_key_id: int = int(attrs.get("api_key_id") or 0)
+    tier_id: str = str(attrs.get("tier_id") or "").strip()
 
-    return tenant_id, service_id, input_tokens, output_tokens, correlation_id
+    return tenant_id, service_id, input_tokens, output_tokens, correlation_id, api_key_id, tier_id
 
 
 async def _is_already_billed(billed_key: str, correlation_id: str, span_id: str, msg: Message) -> bool | None:
@@ -83,6 +85,8 @@ class BillingContext:
     is_already_billed: bool
     billing_month: str
     offset: int
+    api_key_id: int = 0
+    tier_id: str = ""
 
 
 @dataclass
@@ -121,7 +125,7 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
     # span_id reaching this consumer is valid and unique.
     attrs = data.get("attributes", {})
     # tenantId is camelCase in OTel attributes (set by ai4i_core.context middleware).
-    tenant_id, service_id, input_tokens, output_tokens, correlation_id = _get_otel_attributes(attrs)
+    tenant_id, service_id, input_tokens, output_tokens, correlation_id, api_key_id, tier_id = _get_otel_attributes(attrs)
     billed_key: str = _get_billed_key(correlation_id, span_id)
 
     is_already_billed = await _is_already_billed(billed_key, correlation_id, span_id, msg)
@@ -170,6 +174,8 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
         is_already_billed=is_already_billed,
         billing_month=billing_month,
         offset=msg.offset(),
+        api_key_id=api_key_id,
+        tier_id=tier_id,
     )
 
 
@@ -221,6 +227,8 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
         billing_month=ctx.billing_month,
         units=billed_units,
         cost=cost,
+        api_key_id=ctx.api_key_id,
+        tier_id=ctx.tier_id,
     )
 
     if write.tier_id is None:
@@ -233,10 +241,10 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
         quota_exhausted = True
     else:
         logger.debug(
-            "Balance deducted | tenant=%s tier_id=%s available_balance=%s exhausted=%s",
-            ctx.tenant_id, write.tier_id, write.available_balance, write.wallet_exhausted,
+            "Balance deducted | tenant=%s tier_id=%s budget_used=%s exhausted=%s",
+            ctx.tenant_id, write.tier_id, write.api_key_budget_used, write.budget_exhausted,
         )
-        wallet_exhausted = write.wallet_exhausted
+        wallet_exhausted = write.budget_exhausted
 
         if not pricing.task_type:
             logger.debug(
