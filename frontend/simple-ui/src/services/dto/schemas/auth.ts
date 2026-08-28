@@ -116,6 +116,9 @@ export const createApiKeyResponseSchema = z
     key_name: z.string(),
     permissions: z.array(z.string()),
     expires_at: z.string().nullable().optional(),
+    application_id: z.coerce.string().optional(),
+    allocated_percentage: z.coerce.number().nullable().optional(),
+    allocated_budget: z.coerce.number().nullable().optional(),
   })
   .passthrough()
   .transform((d) => ({
@@ -130,6 +133,10 @@ const apiKeyResponseRawSchema = z
     key_name: z.string(),
     api_key: z.string().optional(),
     user_id: z.string().optional(),
+    application_id: z.coerce.string().optional(),
+    allocated_percentage: z.coerce.number().nullable().optional(),
+    allocated_budget: z.coerce.number().nullable().optional(),
+    created_by: z.string().optional(),
     permissions: z.preprocess(
       (value) => (value == null ? [] : value),
       z.array(z.string()),
@@ -160,6 +167,16 @@ export const apiKeyListResponseSchema = z
     api_keys: z.array(apiKeyResponseSchema),
   })
   .passthrough();
+
+/** GET /api-keys — grouped by application_id (new contract). */
+export const apiKeyGroupedListSchema = z.array(
+  z
+    .object({
+      application_id: z.coerce.string(),
+      api_keys: z.array(apiKeyResponseRawSchema),
+    })
+    .passthrough(),
+);
 
 /** @deprecated Prefer apiKeyListResponseSchema — kept for legacy array-only payloads. */
 export const apiKeyListUnionSchema = z.union([

@@ -53,6 +53,7 @@ import {
   isPlatformAdminUser,
   isTenantAdminUser,
   isUsageDashboardOnlyUser,
+  userMayManageApiKeys,
 } from "../../utils/rbac";
 import AdopterLogo from "./AdopterLogo";
 import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
@@ -483,7 +484,7 @@ function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean 
     case TABS.tenantManagement:
       return ctx.showTenantManagement;
     case TABS.apiKeyManagement:
-      return ctx.isAdmin || ctx.isTenantAdmin;
+      return userMayManageApiKeys(ctx.userRoles);
     case TABS.logs:
       return !ctx.isUser && !ctx.isGuest && Boolean(ctx.tenantId || ctx.isAdmin);
     case TABS.usageDashboard:

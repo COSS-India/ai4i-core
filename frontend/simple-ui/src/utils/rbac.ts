@@ -17,6 +17,14 @@ export function isPlatformAdminUser(roles?: string[]): boolean {
   return userHasRole(roles, "ADMIN");
 }
 
+/**
+ * ADMIN or TENANT ADMIN — matches auth-service route gates for API key
+ * create / update / delete (keys are managed per Application by institution admins).
+ */
+export function userMayManageApiKeys(roles?: string[] | null): boolean {
+  return isPlatformAdminUser(roles ?? undefined) || isTenantAdminUser(roles ?? undefined);
+}
+
 /** Usage Viewer — restricted role, sees Usage Dashboard (and Profile) only. */
 export function isUsageViewerUser(roles?: string[]): boolean {
   return userHasRole(roles, "USAGE VIEWER");

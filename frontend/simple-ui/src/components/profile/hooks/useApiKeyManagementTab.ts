@@ -2,13 +2,19 @@ import { useState, useMemo, useCallback } from "react";
 import { showToast } from "../../../utils/toast";
 import authService from "../../../services/authService";
 import * as tenantService from "../../../services/tenantService";
+import { listApplications } from "../../../services/applicationService";
+import {
+  flattenApiKeyGroups,
+  listGroupedApiKeys,
+  toLegacyApiKeyResponse,
+} from "../../../services/apiKeyService";
 import type {
   User,
   Permission,
-  AdminAPIKeyWithUserResponse,
   APIKeyUpdate,
   APIKeyResponse,
 } from "../../../types/auth";
+import type { Application } from "../../../types/application";
 import {
   API_KEY,
   type ApiKeyAccessContext,
@@ -22,6 +28,10 @@ import {
 import { normalizeApiKeyRecord } from "../../../utils/apiKeyUtils";
 import { useInferenceTypes } from "../../../hooks/useInferenceTypes";
 import type { InferenceTypeItem } from "../../../services/inferenceTypesService";
+
+export interface ApiKeyTableRow extends APIKeyResponse {
+  application_name?: string;
+}
 
 export interface UseApiKeyManagementTabOptions {
   user: User | null;
@@ -41,7 +51,6 @@ function isPermissionEnabledForTaskTypes(
   return knownTaskTypes.has(prefix) ? enabled.has(prefix) : true;
 }
 
-/** Gate permission catalog by ENABLED_TASK_TYPES (same rules as create API key). */
 function filterPermissionsByEnabledTaskTypes(
   permissions: Permission[],
   taskTypeNames: string[],
@@ -55,37 +64,42 @@ function filterPermissionsByEnabledTaskTypes(
     .sort((a, b) => a.label.localeCompare(b.label));
 }
 
-function mapKeysToAdminRows(
+function mapKeysToRows(
   keys: APIKeyResponse[],
-  currentUser: User | null,
-): AdminAPIKeyWithUserResponse[] {
+  applications: Application[],
+): ApiKeyTableRow[] {
+  const appNameById = new Map(
+    applications.map((a) => [a.application_id, a.name]),
+  );
   return keys.map(normalizeApiKeyRecord).map((key) => ({
     ...key,
-    user_id: currentUser?.user_id ?? "",
-    user_email: currentUser?.email ?? "",
-    username: currentUser?.username ?? "",
+    application_name: key.application_id
+      ? appNameById.get(key.application_id) ?? key.application_id
+      : undefined,
   }));
 }
 
 export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) {
   const { taskTypeNames, inferenceTypes } = useInferenceTypes();
-  const [allApiKeys, setAllApiKeys] = useState<AdminAPIKeyWithUserResponse[]>([]);
+  const [allApiKeys, setAllApiKeys] = useState<ApiKeyTableRow[]>([]);
+  const [applications, setApplications] = useState<Application[]>([]);
   const [isLoadingAllApiKeys, setIsLoadingAllApiKeys] = useState(false);
   const [permissions, setPermissions] = useState<Permission[]>([]);
+  const [filterApplication, setFilterApplication] = useState("all");
   const [filterPermission, setFilterPermission] = useState("all");
   const [filterActive, setFilterActive] = useState<string>(API_KEY.FILTER_STATUS.ALL);
   const [keyNameSearch, setKeyNameSearch] = useState("");
-  const [selectedKeyForUpdate, setSelectedKeyForUpdate] = useState<AdminAPIKeyWithUserResponse | null>(null);
+  const [selectedKeyForUpdate, setSelectedKeyForUpdate] = useState<ApiKeyTableRow | null>(null);
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
   const [isRevokeModalOpen, setIsRevokeModalOpen] = useState(false);
-  const [keyToRevoke, setKeyToRevoke] = useState<AdminAPIKeyWithUserResponse | null>(null);
+  const [keyToRevoke, setKeyToRevoke] = useState<ApiKeyTableRow | null>(null);
   const [isRevoking, setIsRevoking] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateFormData, setUpdateFormData] = useState<APIKeyUpdate>({
     key_name: "",
     permissions: [],
   });
-  const [selectedKeyForView, setSelectedKeyForView] = useState<AdminAPIKeyWithUserResponse | null>(null);
+  const [selectedKeyForView, setSelectedKeyForView] = useState<ApiKeyTableRow | null>(null);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [tenantStatus, setTenantStatus] = useState<string | null>(null);
 
@@ -95,13 +109,13 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
       userTenantActive: user?.is_tenant_active,
       tenantStatus,
     }),
-    [user?.is_active, user?.is_tenant_active, tenantStatus]
+    [user?.is_active, user?.is_tenant_active, tenantStatus],
   );
 
   const resolveKeyDisplayStatus = useCallback(
     (key: APIKeyResponse): ApiKeyDisplayStatusValue =>
       resolveApiKeyDisplayStatus(key, apiKeyAccessContext),
-    [apiKeyAccessContext]
+    [apiKeyAccessContext],
   );
 
   const getKeyInactiveReason = useCallback(
@@ -113,7 +127,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
       }
       return getApiKeyInactiveReason(apiKeyAccessContext);
     },
-    [apiKeyAccessContext, resolveKeyDisplayStatus]
+    [apiKeyAccessContext, resolveKeyDisplayStatus],
   );
 
   const getKeyRevokedReason = useCallback(
@@ -122,7 +136,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
       if (status !== API_KEY.DISPLAY_STATUS.REVOKED) return null;
       return getApiKeyRevokedReason(apiKeyAccessContext);
     },
-    [apiKeyAccessContext, resolveKeyDisplayStatus]
+    [apiKeyAccessContext, resolveKeyDisplayStatus],
   );
 
   const loadTenantContext = useCallback(async () => {
@@ -140,6 +154,24 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     }
   }, [user?.tenant_id]);
 
+  const loadApplications = useCallback(async (): Promise<Application[]> => {
+    const tenantId = user?.tenant_id?.trim();
+    if (!tenantId) {
+      setApplications([]);
+      return [];
+    }
+    try {
+      const result = await listApplications(tenantId);
+      const apps = result.applications;
+      setApplications(apps);
+      return apps;
+    } catch (err) {
+      console.error("Failed to load applications for API keys:", err);
+      setApplications([]);
+      return [];
+    }
+  }, [user?.tenant_id]);
+
   const loadPermissionsCatalog = useCallback(async (): Promise<Permission[]> => {
     try {
       const permsList = await authService.getAllPermissions();
@@ -154,19 +186,30 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
 
   const handleFetchAllApiKeys = useCallback(
     async (options?: { silent?: boolean }) => {
+      const tenantId = user?.tenant_id?.trim();
+      if (!tenantId) {
+        setAllApiKeys([]);
+        return;
+      }
+
       setIsLoadingAllApiKeys(true);
       try {
-        const [response] = await Promise.all([
-          authService.listApiKeys(),
+        const [grouped, apps] = await Promise.all([
+          listGroupedApiKeys(tenantId),
+          applications.length > 0 ? Promise.resolve(applications) : loadApplications(),
+        ]);
+        await Promise.all([
           permissions.length > 0 ? Promise.resolve(permissions) : loadPermissionsCatalog(),
           loadTenantContext(),
         ]);
-        const keys = Array.isArray(response.api_keys) ? response.api_keys : [];
-        setAllApiKeys(mapKeysToAdminRows(keys, user));
+        const flat = flattenApiKeyGroups(grouped.groups).map((k) =>
+          toLegacyApiKeyResponse(k),
+        );
+        setAllApiKeys(mapKeysToRows(flat, apps));
         if (!options?.silent) {
           showToast({
             type: "success",
-            message: `Loaded ${keys.length} API key(s)`,
+            message: `Loaded ${flat.length} API key(s)`,
           });
         }
       } catch (error) {
@@ -178,14 +221,19 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
         setIsLoadingAllApiKeys(false);
       }
     },
-    [loadPermissionsCatalog, loadTenantContext, permissions, user],
+    [
+      applications,
+      loadApplications,
+      loadPermissionsCatalog,
+      loadTenantContext,
+      permissions,
+      user?.tenant_id,
+    ],
   );
 
-  const handleOpenUpdateModal = async (key: AdminAPIKeyWithUserResponse) => {
+  const handleOpenUpdateModal = async (key: ApiKeyTableRow) => {
     const catalog =
       permissions.length === 0 ? await loadPermissionsCatalog() : permissions;
-    // Same ENABLED_TASK_TYPES gate as create / filter dropdown — only show
-    // assignable permissions (e.g. llm-only when ENABLED_TASK_TYPES=llm).
     const allowedNames = new Set(
       filterPermissionsByEnabledTaskTypes(catalog, taskTypeNames, inferenceTypes).map(
         (p) => p.name,
@@ -214,6 +262,14 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
   const permissionFilterOptions = useMemo(
     () => filterPermissionsByEnabledTaskTypes(permissions, taskTypeNames, inferenceTypes),
     [permissions, taskTypeNames, inferenceTypes],
+  );
+
+  const applicationFilterOptions = useMemo(
+    () =>
+      [...applications]
+        .filter((a) => a.status === "ACTIVE")
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [applications],
   );
 
   const handleCloseUpdateModal = () => {
@@ -264,7 +320,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     }
   };
 
-  const handleOpenRevokeModal = (key: AdminAPIKeyWithUserResponse) => {
+  const handleOpenRevokeModal = (key: ApiKeyTableRow) => {
     setKeyToRevoke(key);
     setIsRevokeModalOpen(true);
     if (permissions.length === 0) {
@@ -277,7 +333,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     setKeyToRevoke(null);
   };
 
-  const handleOpenViewModal = (key: AdminAPIKeyWithUserResponse) => {
+  const handleOpenViewModal = (key: ApiKeyTableRow) => {
     setSelectedKeyForView(key);
     setIsViewModalOpen(true);
     if (permissions.length === 0) {
@@ -291,8 +347,9 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
   };
 
   const handleResetFilters = () => {
+    setFilterApplication("all");
     setFilterPermission("all");
-    setFilterActive("all");
+    setFilterActive(API_KEY.FILTER_STATUS.ALL);
     setKeyNameSearch("");
   };
 
@@ -314,7 +371,6 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     }
   };
 
-  /** Keys with at least one enabled-task permission (or no permissions). */
   const visibleApiKeys = useMemo(
     () =>
       allApiKeys.filter((key) => {
@@ -335,6 +391,9 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
           if (search && !(key.key_name ?? "").toLowerCase().includes(search)) {
             return false;
           }
+          if (filterApplication !== "all") {
+            if (key.application_id !== filterApplication) return false;
+          }
           if (filterPermission !== "all") {
             if (!(key.permissions ?? []).includes(filterPermission)) return false;
           }
@@ -344,10 +403,14 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
           }
           return true;
         })
-        .sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime()),
+        .sort(
+          (a, b) =>
+            new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime(),
+        ),
     [
       visibleApiKeys,
       apiKeyAccessContext,
+      filterApplication,
       filterPermission,
       filterActive,
       keyNameSearch,
@@ -357,7 +420,6 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
   const formatPermission = (permissionName: string) =>
     permissions.find((p) => p.name === permissionName)?.label ?? permissionName;
 
-  /** Hide badges for permissions outside the enabled task-type set. */
   const visiblePermissionsForKey = useCallback(
     (key: { permissions?: string[] | null }) =>
       (key.permissions ?? []).filter((name) =>
@@ -366,16 +428,27 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     [taskTypeNames, inferenceTypes],
   );
 
-  const formatKeyId = (key: AdminAPIKeyWithUserResponse) => key.api_key ?? "—";
+  const formatKeyId = (key: ApiKeyTableRow) => key.api_key ?? "—";
+
+  const formatBudgetPct = (key: ApiKeyTableRow): string => {
+    if (key.is_revoked || key.is_active === false) return "—";
+    if (key.allocated_percentage == null) return "No ceiling";
+    const rounded = Math.round(key.allocated_percentage * 100) / 100;
+    return `${rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(2)}%`;
+  };
 
   return {
     allApiKeys,
     visibleApiKeysCount: visibleApiKeys.length,
     isLoadingAllApiKeys,
     permissions,
+    applications: applicationFilterOptions,
     formatPermission,
     visiblePermissionsForKey,
     formatKeyId,
+    formatBudgetPct,
+    filterApplication,
+    setFilterApplication,
     filterPermission,
     setFilterPermission,
     filterActive,

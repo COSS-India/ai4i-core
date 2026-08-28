@@ -2,16 +2,10 @@
 
 import { useQuery } from "@tanstack/react-query";
 import * as tenantService from "../../../services/tenantService";
-import { fetchTenantUsageById } from "../../../services/usageSpendService";
 import { parseError } from "../../../utils/errorHandler";
-import { USAGE_SPEND_STALE_MS } from "../../../utils/usageSpendHelpers";
 import type { TenantView } from "../../../types/tenant";
 
 const INSTITUTION_STALE_MS = 2 * 60_000;
-
-/** Sentinels the usage endpoint reports when no assignment covers the billing period. */
-const UNASSIGNED_TIER_ID = "unassigned";
-const UNASSIGNED_TIER_NAME = "unassigned";
 
 export interface UseOwnInstitutionDetailsOptions {
   /** Signed-in user's tenant id. Queries stay idle until it resolves. */
@@ -31,9 +25,14 @@ export interface OwnInstitutionDetails {
   tierBudgetErrorMessage: string | null;
 }
 
+function parseBudget(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 /**
- * The Institution Admin's own institution, with its Tier and Budget.
- * PII stays masked. Tier/Budget use `usage-tenant` — `tenant/tier` is ADMIN-only.
+ * Institution Admin's own institution with Tier and Budget from GET /tenants/{id}.
  */
 export function useOwnInstitutionDetails({
   tenantId,
@@ -49,40 +48,19 @@ export function useOwnInstitutionDetails({
     staleTime: INSTITUTION_STALE_MS,
   });
 
-  const usageQuery = useQuery({
-    queryKey: ["own-institution-usage", id],
-    queryFn: () => fetchTenantUsageById(id),
-    enabled: isEnabled,
-    staleTime: USAGE_SPEND_STALE_MS,
-    retry: 1,
-  });
-
-  const usage = usageQuery.data;
-  const tier = usage?.tier?.trim() ?? "";
-  const hasAssignment = Boolean(usage) && usage?.tierId !== UNASSIGNED_TIER_ID;
-  const rawBudgetLimit = usage?.budget?.limit ?? null;
-
-  // Tier and Budget are read independently: the budget comes off the assignment
-  // row keyed by tenant, so a deleted tier row leaves the name as "Unassigned"
-  // while the budget is still real.
-  const tierName =
-    hasAssignment && tier.toLowerCase() !== UNASSIGNED_TIER_NAME ? tier || null : null;
-  const budgetLimit =
-    hasAssignment || (rawBudgetLimit ?? 0) > 0 ? rawBudgetLimit : null;
+  const institution = institutionQuery.data ?? null;
+  const tierName = institution?.tier_name?.trim() || null;
+  const budgetLimit = parseBudget(institution?.allocated_budget);
 
   return {
-    institution: institutionQuery.data ?? null,
-    // null (no assignment this period, or a failed call) renders as "—".
-    tierName,
-    budgetLimit,
-    currency: usage?.currency || "INR",
-    // Idle queries report "pending" too, hence the isEnabled guard.
-    isLoading: isEnabled && (institutionQuery.isPending || usageQuery.isPending),
+    institution,
+    tierName: institution?.tier_id ? tierName : null,
+    budgetLimit: institution?.tier_id || budgetLimit != null ? budgetLimit : null,
+    currency: "INR",
+    isLoading: isEnabled && institutionQuery.isPending,
     errorMessage: institutionQuery.error
       ? parseError(institutionQuery.error).message
       : null,
-    tierBudgetErrorMessage: usageQuery.error
-      ? parseError(usageQuery.error).message
-      : null,
+    tierBudgetErrorMessage: null,
   };
 }
