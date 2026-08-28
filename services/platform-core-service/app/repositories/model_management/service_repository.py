@@ -12,7 +12,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.model_management.model import Model
 from app.models.model_management.service import Service
-from app.models.pay_per_use.ppu_tier import PPUTier
+from app.models.pay_per_use.tier import Tier
 
 
 # flag_modified is only load-bearing for callers that mutate an
@@ -147,8 +147,8 @@ class ServiceRepository:
         if not tier_ids:
             return {}
         result = await self._db.execute(
-            select(cast(PPUTier.id, String).label("id_str"), PPUTier.name)
-            .where(cast(PPUTier.id, String).in_(tier_ids))
+            select(cast(Tier.id, String).label("id_str"), Tier.name)
+            .where(cast(Tier.id, String).in_(tier_ids))
         )
         return {row.id_str: row.name for row in result.all()}
 

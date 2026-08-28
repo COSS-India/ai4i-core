@@ -7,7 +7,7 @@ from sqlalchemy.sql import func
 from app.models import Base
 
 
-class PPUQuotaUsage(Base):
+class QuotaUsage(Base):
     __tablename__ = "quota_usage"
     __table_args__ = (
         UniqueConstraint(

@@ -9,7 +9,7 @@ from app.schemas.enums.model_management import resolve_task_type
 
 class TierQuotaIn(BaseModel):
     modelTaskType: str = Field(..., min_length=1)
-    # Ceiling is the largest integer PPUTierQuota.monthly_quota's Numeric(15, 4)
+    # Ceiling is the largest integer TierQuota.monthly_quota's Numeric(15, 4)
     # column can store exactly (11 integer digits), so an out-of-range limit is
     # rejected here instead of persisting and breaking on read-back.
     limit: int = Field(..., ge=0, le=99_999_999_999)
