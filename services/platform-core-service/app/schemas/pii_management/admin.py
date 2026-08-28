@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ── Simple acknowledgements ─────────────────────────────────────────────────
@@ -19,23 +19,60 @@ class StatusResponse(BaseModel):
 
 # ── Domain management ──────────────────────────────────────────────────────
 
+_NEW_DOMAIN_REQUEST_EXAMPLE = {
+    "domain_id": "healthcare",
+    "description": "PII redaction rules for healthcare-domain text (patient names, MRNs, diagnoses)",
+}
+
+
 class NewDomainRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": _NEW_DOMAIN_REQUEST_EXAMPLE})
+
     domain_id:   str = Field(..., max_length=50)
     description: str
 
 
+_DEPLOY_REQUEST_EXAMPLE = {
+    "domain_id": "healthcare",
+    "rules": [
+        {
+            "entity_type": "PATIENT_NAME",
+            "pattern": r"\b[A-Z][a-z]+ [A-Z][a-z]+\b",
+            "risk_score": 0.8,
+        }
+    ],
+}
+
+
 class DeployRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": _DEPLOY_REQUEST_EXAMPLE})
+
     domain_id: str
     rules:     List[Dict[str, Any]]
 
 
+_BULK_ACTIVATE_REQUEST_EXAMPLE = {
+    "domain_ids": ["healthcare", "finance"],
+}
+
+
 class BulkActivateRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": _BULK_ACTIVATE_REQUEST_EXAMPLE})
+
     domain_ids: List[str]
 
 
 # ── Tenant → domain mapping ────────────────────────────────────────────────
 
+_TENANT_DOMAIN_UPSERT_REQUEST_EXAMPLE = {
+    "tenant_id": "tenant-001",
+    "domain_id": "healthcare",
+}
+
+
 class TenantDomainUpsertRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": _TENANT_DOMAIN_UPSERT_REQUEST_EXAMPLE})
+
     tenant_id: str
     domain_id: str
 
@@ -48,7 +85,14 @@ class TenantDomainUpsertResponse(BaseModel):
     domain_id: str
 
 
+_TENANT_DOMAIN_DELETE_REQUEST_EXAMPLE = {
+    "tenant_id": "tenant-001",
+}
+
+
 class TenantDomainDeleteRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": _TENANT_DOMAIN_DELETE_REQUEST_EXAMPLE})
+
     tenant_id: str
 
 
@@ -60,7 +104,14 @@ class TenantDomainEntry(BaseModel):
 
 # ── Regex generation ───────────────────────────────────────────────────────
 
+_GENERATE_REGEX_REQUEST_EXAMPLE = {
+    "example_text": "Patient ID: PT-2024-00123",
+}
+
+
 class GenerateRegexRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": _GENERATE_REGEX_REQUEST_EXAMPLE})
+
     example_text: str
 
 
