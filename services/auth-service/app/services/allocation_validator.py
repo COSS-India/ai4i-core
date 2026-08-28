@@ -236,8 +236,20 @@ def resolve_level(
                 amount = Decimal("0")
             elif is_last:
                 # Absorbs whatever the independently-rounded amounts above left
-                # over, so the group's total is exact by construction.
-                amount = unlisted_target_total - running_total
+                # over, so the group's total is exact by construction — except
+                # when enough of the earlier children rounded UP that running_total
+                # already exceeds unlisted_target_total before the last child is
+                # even added (a handful of children each drifting up by up to half
+                # a cent can outrun a small last share — real at 8+ children).
+                # Floored at 0 rather than left negative: a negative amount here
+                # would otherwise fail THIS child's own floor-check against a
+                # non-negative consumed_amount with a nonsensical message ("would
+                # be re-fit to -0.02, below its already-consumed 0"). Flooring
+                # doesn't make the group's total fit — it's still running_total,
+                # which is already over — it just lets the sibling-sum gate below
+                # be the one to reject it, with an accurate ALLOCATION_TOTAL_EXCEEDED
+                # instead of a nonsensical one on an unrelated child.
+                amount = max(Decimal("0"), unlisted_target_total - running_total)
             else:
                 share = child.allocated_amount / unlisted_old_total
                 amount = _quantize(unlisted_target_total * share, _AMT_QUANT)
