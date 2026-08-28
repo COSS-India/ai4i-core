@@ -132,6 +132,47 @@ class TestAllocationCapLockOrdering:
         repo.create.assert_not_called()
 
 
+class TestBudgetDerivedFromLockedApplicationNotStaleRead:
+    """Same bug class as ApplicationService.create_application (vipuldeveloper
+    review, PR #1491): application is loaded unlocked first
+    (get_by_id_for_tenant), then again — locked — via get_by_id_for_update,
+    whose result is reassigned to `application` and later read for
+    allocated_budget. Without ApplicationRepository.get_by_id_for_update
+    forcing populate_existing(), a real AsyncSession would hand back the same
+    identity-mapped object for both reads regardless of a concurrent budget
+    revision landing in between. This pins the service-layer contract the
+    same way: allocated_budget must derive from whatever get_by_id_for_update
+    returns, not from the earlier get_by_id_for_tenant call."""
+
+    @pytest.mark.asyncio
+    async def test_uses_the_locked_read_not_the_earlier_unlocked_one(self) -> None:
+        stale_application = _application(allocated_budget=Decimal("0.00"))
+        # A concurrent tenant-budget revision recomputed this Application's
+        # ceiling between the two reads — the locked read must see it.
+        fresh_application = _application(allocated_budget=Decimal("1000.00"))
+        tenant = _tenant()
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=stale_application)
+        applications.get_by_id_for_update = AsyncMock(return_value=fresh_application)
+        applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("0"))
+        tenants = AsyncMock()
+        tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+
+        _, api_key = await svc.create_api_key(
+            actor_user_id=uuid4(),
+            key_name="test",
+            permissions=["nmt.inference"],
+            application_id=1,
+            allocated_percentage=Decimal("30"),
+            caller_tenant_id=1,
+        )
+
+        # 1000.00 * 30% = 300.00, not 0.00 (the stale pre-revision figure).
+        assert api_key.allocated_budget == Decimal("300.00")
+
+
 class TestInferenceOnlyPermissionRestriction:
     """API keys may only ever hold inference permissions — see
     APIKeyRepository.get_permission_ids_by_names' docstring on why (no

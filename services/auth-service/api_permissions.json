@@ -35,6 +35,11 @@
     { "endpoint": "PATCH:/api/v1/auth/tenants/{tenant_id}/users/{user_id}", "permissionRequired": 46, "description": "Update tenant user profile (tenant.users.update)" },
     { "endpoint": "DELETE:/api/v1/auth/tenants/{tenant_id}/users/{user_id}", "permissionRequired": 47, "description": "Soft-delete tenant user (tenant.users.delete)" },
 
+    { "endpoint": "POST:/api/v1/auth/tenants/{tenant_id}/applications",           "permissionRequired": 43, "description": "Create Application (application.create); ADMIN and TENANT ADMIN only" },
+    { "endpoint": "GET:/api/v1/auth/tenants/{tenant_id}/applications",            "permissionRequired": 48, "description": "List Applications (application.read); ADMIN and TENANT ADMIN only" },
+    { "endpoint": "GET:/api/v1/auth/tenants/{tenant_id}/applications/{application_id}", "permissionRequired": 48, "description": "Get Application by ID (application.read); ADMIN and TENANT ADMIN only" },
+    { "endpoint": "PATCH:/api/v1/auth/tenants/{tenant_id}/applications/{application_id}", "permissionRequired": 49, "description": "Update Application name/domain/status (application.update); ADMIN and TENANT ADMIN only" },
+
     { "endpoint": "GET:/api/v1/auth/tenants/tier/list",                    "permissionRequired": 145, "description": "List tenants with an assigned tier (ppu.tenant.read); replaces GET /pay-per-use/tenant/tier" },
     { "endpoint": "PATCH:/api/v1/auth/tenants/{tenant_id}/tier",           "permissionRequired": 144, "description": "Assign/reassign a tenant's tier (ppu.tenant.assign); replaces POST /pay-per-use/tenant/tier and PATCH .../tier/reassign" },
     { "endpoint": "PATCH:/api/v1/auth/tenants/{tenant_id}/budget",         "permissionRequired": 144, "description": "Revise tenant budget, top-up/top-down (ppu.tenant.assign); replaces PATCH /pay-per-use/tenant/budget" },

@@ -27,6 +27,7 @@ from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationRepository
 from app.services.api_key_service import APIKeyService
+from app.services.application_service import ApplicationService
 from app.services.auth_service import AuthService
 from app.services.cache_service import CacheService
 from app.services.oauth_service import OAuthService
@@ -83,7 +84,7 @@ def get_api_key_service(
     return APIKeyService(
         APIKeyRepository(db),
         cache,
-        application_repo=ApplicationRepository(db),
+        user_repo=UserRepository(db),
         tenant_repo=TenantRepository(db),
     )
 
@@ -133,6 +134,17 @@ def get_tenant_service(
         email_client=email_client,
         api_key_service=api_key_service,
         refresh_token_repo=RefreshTokenRepository(db),
+    )
+
+
+def get_application_service(
+    db: AsyncSession = Depends(get_db),
+) -> ApplicationService:
+    return ApplicationService(
+        application_repo=ApplicationRepository(db),
+        tenant_repo=TenantRepository(db),
+        role_repo=RoleRepository(db),
+        db=db,
     )
 
 

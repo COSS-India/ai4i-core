@@ -20,6 +20,7 @@ from app.routes.role import router as role_router
 from app.routes.permission import inference_router as inference_permission_router
 from app.routes.permission import router as permission_router
 from app.routes.api_key import router as api_key_router
+from app.routes.application import router as application_router
 from app.routes.tenants import router as tenants_router
 from app.routes.validation import router as validation_router
 from app.routes.internal import router as internal_router
@@ -51,6 +52,7 @@ v1_router.include_router(permission_router)
 v1_router.include_router(inference_permission_router)
 v1_router.include_router(api_key_router)
 v1_router.include_router(tenants_router)
+v1_router.include_router(application_router)
 
 # ── Top-level router ──
 api_router = APIRouter()
