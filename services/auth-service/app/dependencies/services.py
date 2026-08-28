@@ -84,7 +84,6 @@ def get_api_key_service(
     return APIKeyService(
         APIKeyRepository(db),
         cache,
-        user_repo=UserRepository(db),
         tenant_repo=TenantRepository(db),
     )
 
