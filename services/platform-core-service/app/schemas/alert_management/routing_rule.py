@@ -22,7 +22,7 @@ from app.schemas.common import (
 
 _ROUTING_RULE_CREATE_EXAMPLE = {
     "rule_name": "critical-app-alerts",
-    "receiver_id": 1,
+    "receiver_id": "<place your id here>",
     "match_severity": "critical",
     "match_category": "application",
     "group_by": ["alertname", "category", "severity"],

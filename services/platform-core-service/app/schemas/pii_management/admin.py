@@ -20,7 +20,7 @@ class StatusResponse(BaseModel):
 # ── Domain management ──────────────────────────────────────────────────────
 
 _NEW_DOMAIN_REQUEST_EXAMPLE = {
-    "domain_id": "healthcare",
+    "domain_id": "<place your id here>",
     "description": "PII redaction rules for healthcare-domain text (patient names, MRNs, diagnoses)",
 }
 
@@ -33,7 +33,7 @@ class NewDomainRequest(BaseModel):
 
 
 _DEPLOY_REQUEST_EXAMPLE = {
-    "domain_id": "healthcare",
+    "domain_id": "<place your id here>",
     "rules": [
         {
             "entity_type": "PATIENT_NAME",
@@ -52,7 +52,7 @@ class DeployRequest(BaseModel):
 
 
 _BULK_ACTIVATE_REQUEST_EXAMPLE = {
-    "domain_ids": ["healthcare", "finance"],
+    "domain_ids": ["<place your id here>"],
 }
 
 
@@ -65,8 +65,8 @@ class BulkActivateRequest(BaseModel):
 # ── Tenant → domain mapping ────────────────────────────────────────────────
 
 _TENANT_DOMAIN_UPSERT_REQUEST_EXAMPLE = {
-    "tenant_id": "tenant-001",
-    "domain_id": "healthcare",
+    "tenant_id": "<place your id here>",
+    "domain_id": "<place your id here>",
 }
 
 
@@ -86,7 +86,7 @@ class TenantDomainUpsertResponse(BaseModel):
 
 
 _TENANT_DOMAIN_DELETE_REQUEST_EXAMPLE = {
-    "tenant_id": "tenant-001",
+    "tenant_id": "<place your id here>",
 }
 
 
