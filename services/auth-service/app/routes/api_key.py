@@ -36,6 +36,7 @@ from app.schemas.api_key import (
     UpdateAPIKeyResponse,
 )
 from app.schemas.common import MessageData, error_responses
+from app.services import budget_usage
 from app.services.api_key_service import APIKeyService
 from app.utils.masking import mask_api_key
 
@@ -321,7 +322,7 @@ async def list_all_api_keys(
     results = await svc.list_all_with_applications(offset, limit)
     keys = [api_key for api_key, _application in results]
     items = await _key_items_for_response(svc, keys)
-    usage = await svc.fetch_budget_usage([k.id for k in keys], platform_core_db)
+    usage = await budget_usage.fetch_budget_usage([k.id for k in keys], platform_core_db)
 
     data = []
     for item, (api_key, _application) in zip(items, results):

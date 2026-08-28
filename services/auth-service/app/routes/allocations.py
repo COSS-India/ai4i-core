@@ -53,8 +53,8 @@ async def update_allocations(
     siblings you don't mention are left exactly as they are. Within a row
     you DID list and resize, its own un-listed children (an Application's
     un-listed Keys) DO go through the unconditional proportional re-fit —
-    see allocation-reallocation-flow.md Section 4.4 for the full two-rule
-    split and worked examples.
+    see AllocationService.update_tenant_application_allocations and
+    allocation_validator.resolve_level for the full two-rule split.
     """
     if tenant_id is not None and application_id is not None:
         raise ValidationError(

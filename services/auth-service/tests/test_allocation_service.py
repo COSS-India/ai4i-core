@@ -154,8 +154,8 @@ class TestTenantScopeResolution:
         body = AllocationUpdateRequest(application_allocations=[
             ApplicationAllocationInput(application_id=1, allocated_percentage=Decimal("45"))
         ])
-        with patch("app.services.allocation_service.APIKeyService.fetch_budget_usage", AsyncMock(return_value={})), \
-             patch("app.services.allocation_service.APIKeyService.write_budget_snapshot", AsyncMock()) as write_snap:
+        with patch("app.services.budget_usage.fetch_budget_usage", AsyncMock(return_value={})), \
+             patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()) as write_snap:
             data = await svc.update_tenant_application_allocations(101, body, _user(), None)
 
         assert [row.application_id for row in data.application_allocations] == [1]
@@ -163,6 +163,32 @@ class TestTenantScopeResolution:
         svc._applications.update.assert_awaited_once()
         write_snap.assert_awaited_once_with({}, None)
         svc._db.commit.assert_awaited_once()
+        # The listed Application (id=1) is locked before its Keys are read —
+        # same lock create_api_key takes, so a concurrent key create under it
+        # can't slip in between this call's read and write.
+        svc._applications.get_by_id_for_update.assert_awaited_once_with(1)
+
+    @pytest.mark.asyncio
+    async def test_only_listed_applications_are_locked(self) -> None:
+        """Apps 2 and 3 aren't mentioned in the request — no reason to take a
+        row lock on them; only the explicitly listed App 1 is locked."""
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant())
+        apps = _three_apps()
+        svc._applications.list_by_tenant = AsyncMock(return_value=apps)
+        svc._applications.update = AsyncMock()
+        svc._applications.sum_allocated_percentage = AsyncMock(return_value=Decimal("95"))
+        svc._api_keys.list_by_applications = AsyncMock(return_value=[])
+
+        body = AllocationUpdateRequest(application_allocations=[
+            ApplicationAllocationInput(application_id=1, allocated_percentage=Decimal("45"))
+        ])
+        with patch("app.services.budget_usage.fetch_budget_usage", AsyncMock(return_value={})), \
+             patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()):
+            await svc.update_tenant_application_allocations(101, body, _user(), None)
+
+        locked_ids = [call.args[0] for call in svc._applications.get_by_id_for_update.await_args_list]
+        assert locked_ids == [1]
 
     @pytest.mark.asyncio
     async def test_reduce_fully_exhausted_app_b_blocked(self) -> None:
@@ -177,7 +203,7 @@ class TestTenantScopeResolution:
             ApplicationAllocationInput(application_id=2, allocated_percentage=Decimal("25"))
         ])
         with patch(
-            "app.services.allocation_service.APIKeyService.fetch_budget_usage",
+            "app.services.budget_usage.fetch_budget_usage",
             AsyncMock(return_value={21: (Decimal("30000"), None)}),
         ):
             with pytest.raises(ValidationError) as exc:
@@ -202,8 +228,8 @@ class TestTenantScopeResolution:
         body = AllocationUpdateRequest(application_allocations=[
             ApplicationAllocationInput(application_id=1, allocated_budget=Decimal("40000"))
         ])
-        with patch("app.services.allocation_service.APIKeyService.fetch_budget_usage", AsyncMock(return_value={})), \
-             patch("app.services.allocation_service.APIKeyService.write_budget_snapshot", AsyncMock()) as write_snap:
+        with patch("app.services.budget_usage.fetch_budget_usage", AsyncMock(return_value={})), \
+             patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()) as write_snap:
             data = await svc.update_tenant_application_allocations(101, body, _user(), None)
 
         app_row = data.application_allocations[0]
@@ -221,8 +247,8 @@ class TestTenantScopeResolution:
     async def test_unchanged_application_with_explicit_key_edits_still_cascades(self) -> None:
         """App A's own amount stays 50000 (explicit but equal to current), yet
         the caller explicitly listed api_key_allocations under it — the cascade
-        must still run (Section 4.4: explicit key edits are never skipped just
-        because the parent's own total didn't move)."""
+        must still run: explicit Key edits are never skipped just because the
+        parent's own total didn't move."""
         svc = _svc()
         svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant())
         apps = _three_apps()
@@ -240,8 +266,8 @@ class TestTenantScopeResolution:
                 api_key_allocations=[APIKeyAllocationInput(api_key_id=11, allocated_budget=Decimal("35000"))],
             )
         ])
-        with patch("app.services.allocation_service.APIKeyService.fetch_budget_usage", AsyncMock(return_value={})), \
-             patch("app.services.allocation_service.APIKeyService.write_budget_snapshot", AsyncMock()):
+        with patch("app.services.budget_usage.fetch_budget_usage", AsyncMock(return_value={})), \
+             patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()):
             data = await svc.update_tenant_application_allocations(101, body, _user(), None)
 
         app_row = data.application_allocations[0]
@@ -269,7 +295,7 @@ class TestTenantScopeResolution:
                 api_key_allocations=[APIKeyAllocationInput(api_key_id=99, allocated_budget=Decimal("1000"))],
             )
         ])
-        with patch("app.services.allocation_service.APIKeyService.fetch_budget_usage", AsyncMock(return_value={})):
+        with patch("app.services.budget_usage.fetch_budget_usage", AsyncMock(return_value={})):
             with pytest.raises(ValidationError) as exc:
                 await svc.update_tenant_application_allocations(101, body, _user(), None)
         assert exc.value.code == "KEY_APPLICATION_MISMATCH"
@@ -290,6 +316,21 @@ class TestApplicationScope:
     async def test_application_not_found(self) -> None:
         svc = _svc()
         svc._applications.get_by_id = AsyncMock(return_value=None)
+        body = AllocationUpdateRequest(api_key_allocations=[
+            APIKeyAllocationInput(api_key_id=1, allocated_percentage=Decimal("50"))
+        ])
+        with pytest.raises(EntityNotFoundError):
+            await svc.update_application_key_allocations(1, body, _user(), None)
+
+    @pytest.mark.asyncio
+    async def test_application_deleted_between_unlocked_lookup_and_lock_is_not_found(self) -> None:
+        """get_by_id (unlocked) finds it; get_by_id_for_update (the actual
+        lock attempt) returns None because the row is gone by then — must
+        not silently fall back to the earlier, now-stale unlocked object."""
+        svc = _svc()
+        app = _application(1, allocated_budget=Decimal("50000"), allocated_percentage=Decimal("50"))
+        svc._applications.get_by_id = AsyncMock(return_value=app)
+        svc._applications.get_by_id_for_update = AsyncMock(return_value=None)
         body = AllocationUpdateRequest(api_key_allocations=[
             APIKeyAllocationInput(api_key_id=1, allocated_percentage=Decimal("50"))
         ])
@@ -324,8 +365,8 @@ class TestApplicationScope:
         body = AllocationUpdateRequest(api_key_allocations=[
             APIKeyAllocationInput(api_key_id=11, allocated_budget=Decimal("25000"))
         ])
-        with patch("app.services.allocation_service.APIKeyService.fetch_budget_usage", AsyncMock(return_value={})), \
-             patch("app.services.allocation_service.APIKeyService.write_budget_snapshot", AsyncMock()):
+        with patch("app.services.budget_usage.fetch_budget_usage", AsyncMock(return_value={})), \
+             patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()):
             data = await svc.update_application_key_allocations(1, body, _user(), None)
 
         assert data.parent_id == "1"

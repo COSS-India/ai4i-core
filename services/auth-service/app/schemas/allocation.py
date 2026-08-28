@@ -1,9 +1,12 @@
 """
 PUT /auth/allocations — request/response schemas.
 
-Matches allocation-reallocation-flow.md Section 4.4 exactly: one endpoint,
-scoped by exactly one of two mutually-exclusive query params, request/response
-array names mirroring each other, no "scope" discriminator field.
+One endpoint, scoped by exactly one of two mutually-exclusive query params
+(?tenant_id= for Institution->Applications, ?application_id= for
+Application->API Keys — see AllocationService/routes/allocations.py);
+request/response array names mirror each other (application_allocations /
+api_key_allocations), with no separate "scope" discriminator field, since
+which array is populated already says which scope answered the call.
 """
 
 from decimal import Decimal
