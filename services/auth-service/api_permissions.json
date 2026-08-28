@@ -132,6 +132,10 @@
     { "endpoint": "GET:/api/v1/pay-per-use/usage-tenants",                             "permissionRequired": 134, "description": "PPU usage tenant list (usage.read); admin only (platform-wide)" },
     { "endpoint": "GET:/api/v1/pay-per-use/usage-tenant",                              "permissionRequired": 135, "description": "PPU usage single-tenant detail (usage.tenant_read); admin platform-wide, role 5 own tenant only" },
 
+    { "endpoint": "GET:/api/v1/pay-per-use/usage-applications-summary",                "permissionRequired": 146, "description": "Metering dashboard Applications tab — institution summary (usage.application_read); admin platform-wide, role 5 own tenant only" },
+    { "endpoint": "GET:/api/v1/pay-per-use/usage-applications",                        "permissionRequired": 146, "description": "Metering dashboard Applications tab — per-application list (usage.application_read); admin platform-wide, role 5 own tenant only" },
+    { "endpoint": "GET:/api/v1/pay-per-use/usage-application",                         "permissionRequired": 146, "description": "Metering dashboard Applications tab — spend by API key (usage.application_read); admin platform-wide, role 5 own tenant only" },
+
     { "endpoint": "POST:/api/v1/alerts/definitions",                       "permissionRequired": 117, "description": "Create alert definition (alerts.create)" },
     { "endpoint": "GET:/api/v1/alerts/definitions",                        "permissionRequired": 116, "description": "List alert definitions (alerts.read)" },
     { "endpoint": "GET:/api/v1/alerts/definitions/{alert_id}",             "permissionRequired": 116, "description": "Get alert definition (alerts.read)" },
