@@ -593,8 +593,12 @@ class AuthService:
         await self._verifications.deactivate(token_obj)
         await self._activate_pending_tenant_for_contact_admin(user)
         await self._users.commit()
-        if self._api_keys is not None:
-            await self._api_keys.refresh_keys_cache_for_user(user)
+        # No per-user API key cache refresh here: API keys belong to
+        # Applications, not Users (migration e9f0a1b2c3d4) — a user setting
+        # their password has no bearing on any key's cache. The tenant-level
+        # refresh above (_activate_pending_tenant_for_contact_admin) already
+        # covers the one case where activation affects key eligibility: the
+        # tenant itself flipping PENDING → ACTIVE.
         logger.info("Password set via activation link for user id=%s", user.id)
         if was_inactive:
             enqueue_email(background_tasks, self._email, lambda: render_welcome(user))

@@ -36,11 +36,12 @@ class ErrorResponse(BaseSchema):
 
 
 _ERROR_DESCRIPTIONS = {
+    400: "Bad request.",
     401: "Not authenticated.",
     403: "Not authorized.",
     404: "Not found.",
     409: "Conflict.",
-    422: "Validation failed.",
+    422: "Validation error.",
     503: "Service unavailable.",
 }
 

@@ -4,8 +4,10 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleId
+from app.core.database import get_platform_core_db
 from app.core.responses import to_response
 from app.utils.auth_helper import has_permission_id
 from app.utils.masking import mask_pii_in_dict
@@ -22,11 +24,17 @@ from app.schemas.tenant import (
     GetTenantPlanResponse,
     GetTenantResponse,
     ListTenantsResponse,
+    ListTenantTiersResponse,
     ListTenantUsersResponse,
     ResendTenantUserSetupLinkResponse,
+    TenantBudgetData,
+    TenantBudgetRequest,
     TenantCreate,
     TenantResponse,
     TenantStatusUpdate,
+    TenantTierAssignData,
+    TenantTierAssignRequest,
+    TenantTierAssignResponse,
     TenantUpdate,
     TenantUserCreate,
     TenantUserCreateResponse,
@@ -50,21 +58,23 @@ router = APIRouter(
     "",
     status_code=status.HTTP_201_CREATED,
     response_model=CreateTenantResponse,
-    responses=error_responses(403, 409),
+    responses=error_responses(403, 404, 409, 422),
 )
 async def create_tenant(
     body: TenantCreate,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     svc: TenantService = Depends(get_tenant_service),
+    platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
 ):
     """Create a tenant and provision its first contact admin.
 
     The tenant starts PENDING. The contact admin receives a set-password
     email; the tenant becomes ACTIVE after they set a password. Duplicate
-    email or organisation returns 409. Returned contact PII is masked.
+    email or organisation returns 409. An unknown/inactive tier_id returns
+    404 TIER_NOT_FOUND. Returned contact PII is masked.
     """
-    tenant = await svc.create_tenant(body, current_user, background_tasks)
+    tenant = await svc.create_tenant(body, current_user, background_tasks, platform_core_db)
     return CreateTenantResponse(
         data=mask_pii_in_dict(to_response(tenant, TenantResponse))
     )
@@ -92,6 +102,27 @@ async def list_tenants(
     return ListTenantsResponse(
         data=[mask_pii_in_dict(to_response(t, TenantResponse)) for t in tenants]
     )
+
+
+@router.get(
+    "/tier/list",
+    response_model=ListTenantTiersResponse,
+    responses=error_responses(403, 404),
+)
+async def list_tenant_tiers(
+    tier_id: Optional[str] = Query(None, description="Filter to tenants on this tier (UUID)."),
+    current_user: User = Depends(get_current_user),
+    svc: TenantService = Depends(get_tenant_service),
+    platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
+):
+    """List tenants that have a tier assigned, optionally filtered to one tier.
+
+    ADMIN-only. ``/tier/list`` (not ``/tier``) so this path can never be
+    mistaken for a ``/{tenant_id}`` value — it always has two segments after
+    ``/tenants``.
+    """
+    data = await svc.list_tenant_tiers(current_user, tier_id, platform_core_db)
+    return ListTenantTiersResponse(data=data)
 
 
 @router.get(
@@ -169,6 +200,69 @@ async def update_tenant_status(
     )
     return UpdateTenantStatusResponse(
         data=mask_pii_in_dict(to_response(tenant, TenantResponse))
+    )
+
+
+@router.patch(
+    "/{tenant_id}/tier",
+    response_model=TenantTierAssignResponse,
+    responses=error_responses(400, 403, 404, 409),
+)
+async def assign_tenant_tier(
+    tenant_id: int,
+    body: TenantTierAssignRequest,
+    current_user: User = Depends(get_current_user),
+    svc: TenantService = Depends(get_tenant_service),
+    platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
+):
+    """Assign (or reassign) a tenant's tier. ADMIN-only.
+
+    Replaces the old POST /pay-per-use/tenant/tier and PATCH
+    /pay-per-use/tenant/tier/reassign — now a single idempotent PATCH.
+    """
+    tenant = await svc.assign_tenant_tier(current_user, tenant_id, str(body.tier_id), platform_core_db)
+    return TenantTierAssignResponse(
+        data=TenantTierAssignData(
+            tenant_id=tenant.id,
+            tier_id=tenant.tier_id,
+            updated_at=tenant.updated_at,
+            updated_by=tenant.updated_by,
+        )
+    )
+
+
+@router.patch(
+    "/{tenant_id}/budget",
+    response_model=TenantBudgetData,
+    responses=error_responses(404, 422),
+)
+async def revise_tenant_budget(
+    tenant_id: int,
+    body: TenantBudgetRequest,
+    current_user: User = Depends(get_current_user),
+    svc: TenantService = Depends(get_tenant_service),
+    platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
+):
+    """Top-up or top-down a tenant's budget by an amount, effective immediately. ADMIN-only.
+
+    Replaces platform-core-service's PATCH /pay-per-use/tenant/budget —
+    budget now lives on tenants.allocated_budget directly; available_balance
+    no longer exists. Response is unwrapped (no success/data envelope),
+    matching the endpoint it replaces. ``applications_recomputed`` /
+    ``keys_recomputed`` are always null in this release — no recompute logic
+    exists yet. Best-effort syncs the legacy ppu_tenant_tier_assignments
+    wallet and cached budget-exhausted flags so the actual enforcement path
+    reflects this revision too (see TenantService._sync_ppu_wallet_and_exhaustion).
+    """
+    tenant = await svc.revise_tenant_budget(
+        current_user, tenant_id, body.action, body.amount, platform_core_db
+    )
+    return TenantBudgetData(
+        tenant_id=tenant.id,
+        allocated_budget=tenant.allocated_budget,
+        applications_recomputed=None,
+        keys_recomputed=None,
+        updated_at=tenant.updated_at,
     )
 
 
