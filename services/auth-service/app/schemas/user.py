@@ -3,10 +3,10 @@ User request/response schemas.
 """
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Optional
 from uuid import UUID
 
-from pydantic import AliasChoices, EmailStr, Field, field_validator
+from pydantic import AliasChoices, EmailStr, Field
 
 from app.models.user import CreationType
 from app.schemas.base import BaseSchema
@@ -14,17 +14,12 @@ from app.schemas.common import SuccessResponse
 
 
 class UserUpdate(BaseSchema):
+    # BaseSchema sets str_strip_whitespace=True, so whitespace is trimmed
+    # before min_length is checked — "" and "   " are both rejected.
     full_name: Optional[str] = Field(None, min_length=1, max_length=255)
     phone_number: Optional[str] = Field(None, max_length=20)
     timezone: Optional[str] = Field(None, max_length=50)
     avatar_url: Optional[str] = Field(None, max_length=500)
-
-    @field_validator("full_name", mode="before")
-    @classmethod
-    def _strip_full_name(cls, v: Any) -> Any:
-        # Trim first so a whitespace-only value ("   ") also fails min_length,
-        # not just an outright empty string.
-        return v.strip() if isinstance(v, str) else v
 
 
 class UserListResponse(BaseSchema):
