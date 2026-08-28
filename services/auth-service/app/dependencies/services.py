@@ -26,6 +26,7 @@ from app.repositories.role_repository import RoleRepository
 from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationRepository
+from app.services.allocation_service import AllocationService
 from app.services.api_key_service import APIKeyService
 from app.services.application_service import ApplicationService
 from app.services.auth_service import AuthService
@@ -81,9 +82,16 @@ def get_api_key_service(
     db: AsyncSession = Depends(get_db),
     cache: CacheService = Depends(get_cache_service),
 ) -> APIKeyService:
+    # Pre-existing bug fixed in passing: this used to pass a nonexistent
+    # ``user_repo`` kwarg (APIKeyService.__init__ has no such parameter,
+    # only application_repo/tenant_repo) — every route depending on this
+    # factory (api_key.py, internal.py) would have raised TypeError at
+    # request time. application_repo is what create_api_key/list_grouped
+    # actually need.
     return APIKeyService(
         APIKeyRepository(db),
         cache,
+        application_repo=ApplicationRepository(db),
         tenant_repo=TenantRepository(db),
     )
 
@@ -141,6 +149,18 @@ def get_application_service(
 ) -> ApplicationService:
     return ApplicationService(
         application_repo=ApplicationRepository(db),
+        tenant_repo=TenantRepository(db),
+        role_repo=RoleRepository(db),
+        db=db,
+    )
+
+
+def get_allocation_service(
+    db: AsyncSession = Depends(get_db),
+) -> AllocationService:
+    return AllocationService(
+        application_repo=ApplicationRepository(db),
+        api_key_repo=APIKeyRepository(db),
         tenant_repo=TenantRepository(db),
         role_repo=RoleRepository(db),
         db=db,

@@ -3,9 +3,9 @@ Authentication request/response schemas.
 """
 
 import re
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
-from pydantic import EmailStr, Field
+from pydantic import EmailStr, Field, field_validator
 from pydantic.functional_validators import AfterValidator
 from pydantic import StringConstraints
 
@@ -38,6 +38,7 @@ from app.core.constants import (
 )
 from app.schemas.base import BaseSchema
 from app.schemas.common import MessageData, SuccessResponse
+from app.schemas.text_validators import check_name_chars, clean_text
 
 _PASSWORD_FIELD = Field(..., min_length=PASSWORD_MIN_LENGTH, max_length=PASSWORD_MAX_LENGTH)
 
@@ -48,13 +49,27 @@ class RegisterRequest(BaseSchema):
     email: EmailStr
     password: str = _PASSWORD_FIELD
     confirm_password: str = _PASSWORD_FIELD
-    full_name: Optional[str] = Field(None, max_length=FULL_NAME_MAX_LENGTH)
+    # Same rules TenantUserUpdate/UserUpdate apply to this column: cleaned of
+    # invisible characters and restricted to name-like text (tenant.py, user.py).
+    full_name: Optional[str] = Field(None, min_length=2, max_length=FULL_NAME_MAX_LENGTH)
     phone_number: Optional[str] = Field(None, max_length=PHONE_NUMBER_MAX_LENGTH)
     timezone: str = Field(default="UTC", max_length=TIMEZONE_MAX_LENGTH)
     tenant_id: Optional[int] = Field(
         None,
         description="Tenant integer ID to associate with the user.",
     )
+
+    @field_validator("full_name", mode="before")
+    @classmethod
+    def _clean_full_name(cls, v: Any) -> Any:
+        return clean_text(v)
+
+    @field_validator("full_name", mode="after")
+    @classmethod
+    def _validate_full_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return check_name_chars(v)
+        return v
 
 
 class LoginRequest(BaseSchema):
