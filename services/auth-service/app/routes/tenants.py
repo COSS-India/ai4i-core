@@ -58,21 +58,23 @@ router = APIRouter(
     "",
     status_code=status.HTTP_201_CREATED,
     response_model=CreateTenantResponse,
-    responses=error_responses(403, 409),
+    responses=error_responses(403, 404, 409, 422),
 )
 async def create_tenant(
     body: TenantCreate,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     svc: TenantService = Depends(get_tenant_service),
+    platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
 ):
     """Create a tenant and provision its first contact admin.
 
     The tenant starts PENDING. The contact admin receives a set-password
     email; the tenant becomes ACTIVE after they set a password. Duplicate
-    email or organisation returns 409. Returned contact PII is masked.
+    email or organisation returns 409. An unknown/inactive tier_id returns
+    404 TIER_NOT_FOUND. Returned contact PII is masked.
     """
-    tenant = await svc.create_tenant(body, current_user, background_tasks)
+    tenant = await svc.create_tenant(body, current_user, background_tasks, platform_core_db)
     return CreateTenantResponse(
         data=mask_pii_in_dict(to_response(tenant, TenantResponse))
     )
@@ -239,6 +241,7 @@ async def revise_tenant_budget(
     body: TenantBudgetRequest,
     current_user: User = Depends(get_current_user),
     svc: TenantService = Depends(get_tenant_service),
+    platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
 ):
     """Top-up or top-down a tenant's budget by an amount, effective immediately. ADMIN-only.
 
@@ -247,10 +250,12 @@ async def revise_tenant_budget(
     no longer exists. Response is unwrapped (no success/data envelope),
     matching the endpoint it replaces. ``applications_recomputed`` /
     ``keys_recomputed`` are always null in this release — no recompute logic
-    exists yet.
+    exists yet. Best-effort syncs the legacy ppu_tenant_tier_assignments
+    wallet and cached budget-exhausted flags so the actual enforcement path
+    reflects this revision too (see TenantService._sync_ppu_wallet_and_exhaustion).
     """
     tenant = await svc.revise_tenant_budget(
-        current_user, tenant_id, body.action, body.amount
+        current_user, tenant_id, body.action, body.amount, platform_core_db
     )
     return TenantBudgetData(
         tenant_id=tenant.id,

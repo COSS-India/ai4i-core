@@ -376,6 +376,19 @@ class APIKeyService:
             tenant_id, "budget-exhausted", "1" if exhausted else "0"
         )
 
+    async def set_tier_id_for_tenant(self, tenant_id: int, tier_id: str) -> None:
+        """Force every cached API key hash for the tenant onto ``tier_id``.
+
+        Needed specifically because _preserved_tier_id makes every other
+        cache writer (update, refresh, DB-fallback rehydrate) carry the
+        existing tier_id forward rather than recompute it — by design, since
+        it's normally only safe to compute once, at create_api_key time.
+        A tier reassignment is the one case that legitimately changes it for
+        already-issued keys, so it has to be force-written here instead of
+        going through the normal preserve-on-write path.
+        """
+        await self._patch_all_tenant_key_caches(tenant_id, "tier_id", tier_id)
+
     async def reset_all_quota_fields(self) -> None:
         """HDEL every quota-* field from all active API key hashes across all tenants,
         and remove the same fields from cached_data. Called by the monthly cron on
@@ -765,7 +778,12 @@ class APIKeyService:
         return await self._repo.list_by_application(application_id)
 
     async def list_grouped(
-        self, *, caller_tenant_id: Optional[int], application_id: Optional[int]
+        self,
+        *,
+        caller_tenant_id: Optional[int],
+        application_id: Optional[int],
+        offset: int = 0,
+        limit: int = 100,
     ) -> list[tuple[Application, list[APIKey]]]:
         """Applications + their API keys, for GET /auth/api-keys.
 
@@ -773,7 +791,11 @@ class APIKeyService:
         (unscoped); otherwise the result — and any ``application_id`` filter
         — is restricted to that tenant's applications, with a uniform 404
         (APPLICATION_NOT_FOUND) whether the id doesn't exist at all or
-        belongs to a different tenant.
+        belongs to a different tenant. ``offset``/``limit`` page the
+        platform-ADMIN unscoped listing (ApplicationRepository.list_all) —
+        previously unpaginated, returning every key on the platform in one
+        response; ignored for the ``application_id`` and tenant-scoped
+        (a tenant's own application count is bounded in practice) cases.
         """
         if application_id is not None:
             if caller_tenant_id is not None:
@@ -793,7 +815,7 @@ class APIKeyService:
         if caller_tenant_id is not None:
             applications = await self._applications.list_by_tenant(caller_tenant_id)
         else:
-            applications = await self._applications.list_all()
+            applications = await self._applications.list_all(offset=offset, limit=limit)
         app_ids = [a.id for a in applications]
         keys = await self._repo.list_by_applications(app_ids)
         keys_by_app: dict[int, list[APIKey]] = {}

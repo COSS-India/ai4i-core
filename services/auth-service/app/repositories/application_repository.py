@@ -61,11 +61,13 @@ class ApplicationRepository(BaseRepository):
         )
         return list(result.scalars().all())
 
-    async def list_all(self) -> list[Application]:
-        """Every application, across every tenant. Platform-ADMIN-only path
-        (GET /auth/api-keys with no application_id filter) — unpaginated,
-        matching the contract's own lack of offset/limit on that endpoint."""
-        result = await self._db.execute(select(Application).order_by(Application.id))
+    async def list_all(self, offset: int = 0, limit: int = 100) -> list[Application]:
+        """Every application, across every tenant, paginated — the
+        platform-ADMIN-only path for GET /auth/api-keys with no
+        application_id filter."""
+        result = await self._db.execute(
+            select(Application).order_by(Application.id).offset(offset).limit(limit)
+        )
         return list(result.scalars().all())
 
     async def sum_api_key_allocated_percentage(self, application_id: int) -> Decimal:

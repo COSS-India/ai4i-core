@@ -12,7 +12,7 @@ import logging
 from decimal import Decimal
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, Path, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_platform_core_db
@@ -56,6 +56,30 @@ def _is_admin(request: Request) -> bool:
     return RoleName.ADMIN.value in getattr(request.state, "user_roles", [])
 
 
+def _resolve_caller_tenant_scope(request: Request, current_user: User) -> Optional[int]:
+    """None means platform ADMIN — unscoped. Otherwise the caller's own
+    tenant_id, which must actually be set: User.tenant_id is nullable
+    (ON DELETE SET NULL on the tenants FK), so a non-admin caller with a
+    null tenant_id must be rejected outright here rather than falling
+    through to caller_tenant_id=None — every downstream lookup
+    (get_by_id_for_scope, list_grouped, create_api_key) reads None as
+    "platform admin, unscoped", which would let such a caller list/create
+    keys across every tenant. Same fail-closed convention as
+    TenantService.enforce_scope.
+    """
+    if _is_admin(request):
+        return None
+    if not current_user.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "TENANT_FORBIDDEN",
+                "message": "Cannot access a tenant you do not belong to.",
+            },
+        )
+    return current_user.tenant_id
+
+
 def _key_item(k, *, permission_names: list[str]) -> APIKeyItem:
     return APIKeyItem(
         id=k.id,
@@ -72,9 +96,10 @@ def _key_item(k, *, permission_names: list[str]) -> APIKeyItem:
     )
 
 
-async def _key_items_for_response(svc: APIKeyService, keys) -> list[APIKeyItem]:
-    """Batch-resolve stored permission IDs to names for list responses."""
-    id_to_name = await svc.permission_name_map_for_keys(keys)
+def _key_items_from_map(keys, id_to_name: dict[int, str]) -> list[APIKeyItem]:
+    """Shape keys into response items from an already-resolved id->name map —
+    the caller resolves the map once, so multi-group callers (list_api_keys)
+    don't issue one get_permission_names_by_ids query per group."""
 
     def names_for(key) -> list[str]:
         names = []
@@ -89,6 +114,14 @@ async def _key_items_for_response(svc: APIKeyService, keys) -> list[APIKeyItem]:
         return names
 
     return [_key_item(k, permission_names=names_for(k)) for k in keys]
+
+
+async def _key_items_for_response(svc: APIKeyService, keys) -> list[APIKeyItem]:
+    """Single-group convenience wrapper — resolves permission names for just
+    this one key list. Not used where multiple groups share one response
+    (see list_api_keys, which hoists the lookup across all of them instead)."""
+    id_to_name = await svc.permission_name_map_for_keys(keys)
+    return _key_items_from_map(keys, id_to_name)
 
 
 @router.post(
@@ -114,7 +147,7 @@ async def create_api_key(
     application. The Application's tenant must have an active tier
     (`tenants.tier_id`), or this returns 422 NO_ACTIVE_TIER.
     """
-    caller_tenant_id = None if _is_admin(request) else current_user.tenant_id
+    caller_tenant_id = _resolve_caller_tenant_scope(request, current_user)
     raw_key, api_key = await svc.create_api_key(
         actor_user_id=current_user.id,
         key_name=body.key_name,
@@ -152,25 +185,46 @@ async def list_api_keys(
     application_id: Optional[int] = Query(
         None, description="Restrict to one Application's keys."
     ),
+    offset: int = Query(
+        0, ge=0, description="Applications to skip. Ignored when application_id is set."
+    ),
+    limit: int = Query(
+        100, ge=1, le=500,
+        description="Maximum Applications to return (each with all its keys). Ignored when application_id is set.",
+    ),
     current_user: User = Depends(require_any_role(RoleName.ADMIN, RoleName.TENANT_ADMIN)),
     svc: APIKeyService = Depends(get_api_key_service),
 ):
     """List API keys, grouped by Application.
 
     TENANT_ADMIN sees every key under their own tenant's Applications; ADMIN
-    sees every key across every tenant. Either may narrow to one Application
-    via `application_id` — for TENANT_ADMIN it must belong to their tenant,
-    or this returns 404 APPLICATION_NOT_FOUND. Returned `api_key` values are
+    sees every key across every tenant, paginated by Application via
+    `offset`/`limit` (each page still returns every key under the
+    Applications it includes). Either may narrow to one Application via
+    `application_id` — for TENANT_ADMIN it must belong to their tenant, or
+    this returns 404 APPLICATION_NOT_FOUND. Returned `api_key` values are
     masked.
     """
-    caller_tenant_id = None if _is_admin(request) else current_user.tenant_id
+    caller_tenant_id = _resolve_caller_tenant_scope(request, current_user)
     groups = await svc.list_grouped(
-        caller_tenant_id=caller_tenant_id, application_id=application_id
+        caller_tenant_id=caller_tenant_id,
+        application_id=application_id,
+        offset=offset,
+        limit=limit,
     )
-    data = []
-    for application, keys in groups:
-        items = await _key_items_for_response(svc, keys)
-        data.append(ApplicationAPIKeysGroup(application_id=application.id, api_keys=items))
+    # Resolve permission names once across every group's keys combined,
+    # rather than once per group (get_permission_names_by_ids is otherwise
+    # one query per Application on top of a response already carrying every
+    # key it groups).
+    all_keys = [key for _application, keys in groups for key in keys]
+    id_to_name = await svc.permission_name_map_for_keys(all_keys)
+    data = [
+        ApplicationAPIKeysGroup(
+            application_id=application.id,
+            api_keys=_key_items_from_map(keys, id_to_name),
+        )
+        for application, keys in groups
+    ]
     return ListAPIKeysResponse(data=data)
 
 
@@ -201,7 +255,7 @@ async def update_api_key(
             code="NOTHING_TO_UPDATE",
         )
 
-    caller_tenant_id = None if _is_admin(request) else current_user.tenant_id
+    caller_tenant_id = _resolve_caller_tenant_scope(request, current_user)
     db_key = await svc.get_by_id_for_scope(key_id, caller_tenant_id)
     if not db_key:
         raise EntityNotFoundError("API key")
@@ -232,7 +286,7 @@ async def revoke_api_key(
     Scoped to the caller's tenant (via the key's Application) unless ADMIN;
     a key outside that scope returns 404, same as a nonexistent one.
     """
-    caller_tenant_id = None if _is_admin(request) else current_user.tenant_id
+    caller_tenant_id = _resolve_caller_tenant_scope(request, current_user)
     db_key = await svc.get_by_id_for_scope(key_id, caller_tenant_id)
     if not db_key:
         raise EntityNotFoundError("API key")

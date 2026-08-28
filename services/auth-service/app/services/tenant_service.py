@@ -9,6 +9,7 @@ repository access and provisioning lives in this file.
 
 import logging
 import re
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Callable, Dict, Literal, Optional
 from uuid import UUID
@@ -75,8 +76,21 @@ from app.utils.username import allocate_unique_username, derive_username_from_em
 
 logger = logging.getLogger(__name__)
 
-# tenants.allocated_budget is NUMERIC(15, 2).
-MAX_TENANT_BUDGET = Decimal("9999999999999.99")
+# Derived from tenants.allocated_budget's own column type (NUMERIC(15, 2))
+# rather than hand-computed, so widening that column can't silently leave
+# this stale — a stale literal here would keep rejecting valid budgets with
+# a confident-sounding "exceeds the maximum allowed" instead of the column
+# actually being able to hold them.
+_allocated_budget_type = Tenant.__table__.c.allocated_budget.type
+MAX_TENANT_BUDGET = Decimal(10) ** (
+    _allocated_budget_type.precision - _allocated_budget_type.scale
+) - Decimal(1).scaleb(-_allocated_budget_type.scale)
+
+# "Doesn't expire" for a ppu_tenant_tier_assignments row seeded without an
+# explicit tenants.budget_effective_to — that column is NOT NULL, so a
+# window has to be picked; effective_from/effective_to are documented on
+# TenantCreate as the intended source when set.
+_NO_EXPIRY_WINDOW = timedelta(days=365 * 100)
 
 
 async def _assign_plan_to_tenant(tenant_id: int, plan_id: UUID, db: AsyncSession) -> None:
@@ -428,6 +442,7 @@ class TenantService:
         body: TenantCreate,
         current_user: User,
         background_tasks: BackgroundTasks,
+        platform_core_db: Optional[AsyncSession] = None,
     ) -> Tenant:
         """Create a tenant and auto-provision its first admin user.
 
@@ -453,6 +468,28 @@ class TenantService:
                 message="allocated_budget must not be negative.",
                 code="INVALID_BUDGET",
             )
+        if body.tier_id is not None:
+            # Same lookup assign_tenant_tier uses — without it, a tenant
+            # created with an unknown/inactive tier id would pass
+            # create_api_key's NO_ACTIVE_TIER gate (which only checks
+            # tenants.tier_id is non-null) and have that id baked into every
+            # key's cache payload and emitted downstream as X-Tier-ID.
+            if platform_core_db is None:
+                raise ValidationError(
+                    message="tier_id cannot be verified: platform-core DB is not configured.",
+                    code="PLATFORM_CORE_DB_NOT_CONFIGURED",
+                )
+            tier_row = (
+                await platform_core_db.execute(
+                    text("SELECT id FROM tiers WHERE id = :tid AND is_active = true"),
+                    {"tid": body.tier_id},
+                )
+            ).first()
+            if tier_row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail={"code": "TIER_NOT_FOUND", "message": f"Tier '{body.tier_id}' not found."},
+                )
 
         tenant = Tenant(
             name=body.contact_name,
@@ -814,6 +851,83 @@ class TenantService:
     # local Tenant row with no cross-DB PPU-assignment bookkeeping and no
     # HTTP round trip to another service.
 
+    async def _upsert_ppu_tenant_tier_assignment(
+        self,
+        tenant: Tenant,
+        tier_uuid: UUID,
+        platform_core_db: AsyncSession,
+        actor_id: UUID,
+    ) -> None:
+        """Write-through to platform-core's ppu_tenant_tier_assignments —
+        the only table the billing consumer (kafka-consumers'
+        payperuse_consumer) reads or writes. Without this, a tenant
+        tier-assigned only through tenants.tier_id has no row there:
+        deduct_balance_and_update_quota's wallet_update CTE matches nothing,
+        so every inference request bills as "no active assignment" and the
+        consumer quota-flags every key in the tenant starting with the
+        second request.
+
+        Reassignment (an active row already covers now()): only tier_id
+        moves; budget_limit/available_balance carry over unchanged, matching
+        the old reassign_tier's documented behavior — usage/cost tracking is
+        keyed by tier_id and starts fresh under the new one regardless.
+
+        First assignment (no active row): a new one is created, seeded from
+        tenants.allocated_budget/budget_effective_from/to. This is also the
+        only place those budget_effective_* columns are read anywhere in the
+        codebase, and the only effective window tenants.tier_id gets at all
+        — tenants.tier_id itself is a bare column with no expiry, so once
+        this window lapses, enforcement correctly stops (the wallet row's
+        effective_to excludes it from wallet_update), but create_api_key's
+        NO_ACTIVE_TIER gate (which only checks tenants.tier_id is non-null)
+        does not notice and still allows new keys. Known gap, not closed by
+        this change — flagging rather than silently leaving undocumented.
+        """
+        now = datetime.now(timezone.utc)
+        existing = (
+            await platform_core_db.execute(
+                text(
+                    "SELECT id FROM ppu_tenant_tier_assignments"
+                    " WHERE tenant_id = :tenant_id"
+                    "   AND effective_from <= :now AND effective_to > :now"
+                    " FOR UPDATE"
+                ),
+                {"tenant_id": str(tenant.id), "now": now},
+            )
+        ).first()
+
+        if existing is not None:
+            await platform_core_db.execute(
+                text(
+                    "UPDATE ppu_tenant_tier_assignments"
+                    "   SET tier_id = :tier_id, updated_at = now(), updated_by = :actor"
+                    " WHERE id = :id"
+                ),
+                {"tier_id": tier_uuid, "actor": str(actor_id), "id": existing.id},
+            )
+        else:
+            budget = tenant.allocated_budget or Decimal("0")
+            effective_from = tenant.budget_effective_from or now
+            effective_to = tenant.budget_effective_to or (now + _NO_EXPIRY_WINDOW)
+            await platform_core_db.execute(
+                text(
+                    "INSERT INTO ppu_tenant_tier_assignments"
+                    "  (id, tenant_id, tier_id, budget_limit, available_balance,"
+                    "   effective_from, effective_to, created_by, updated_by)"
+                    " VALUES (gen_random_uuid(), :tenant_id, :tier_id, :budget, :budget,"
+                    "         :effective_from, :effective_to, :actor, :actor)"
+                ),
+                {
+                    "tenant_id": str(tenant.id),
+                    "tier_id": tier_uuid,
+                    "budget": budget,
+                    "effective_from": effective_from,
+                    "effective_to": effective_to,
+                    "actor": str(actor_id),
+                },
+            )
+        await platform_core_db.commit()
+
     async def assign_tenant_tier(
         self,
         current_user: User,
@@ -875,7 +989,82 @@ class TenantService:
             tenant, {"tier_id": tier_uuid, "updated_by": current_user.id}
         )
         await self._tenants.save_and_refresh(tenant)
+
+        # Reconnect to the actual enforcement path — see
+        # _upsert_ppu_tenant_tier_assignment's docstring for why this is
+        # required, not optional, here.
+        await self._upsert_ppu_tenant_tier_assignment(
+            tenant, tier_uuid, platform_core_db, current_user.id
+        )
+        if self._api_keys is not None:
+            # Quota is tier-scoped: flags earned under the old tier would
+            # otherwise keep 429'ing requests under the new one until the
+            # monthly cron. Cached tier_id also has to be force-written —
+            # every other cache writer preserves the existing value instead
+            # of recomputing it (see _preserved_tier_id), since a tier
+            # reassignment is the one case that legitimately changes it for
+            # already-issued keys.
+            await self._api_keys.clear_quota_flags_for_tenant(tenant_id)
+            await self._api_keys.set_tier_id_for_tenant(tenant_id, str(tier_uuid))
         return tenant
+
+    async def _sync_ppu_wallet_and_exhaustion(
+        self,
+        tenant_id: int,
+        delta: Decimal,
+        platform_core_db: AsyncSession,
+    ) -> None:
+        """Apply the same delta to the tenant's active
+        ppu_tenant_tier_assignments wallet, and mirror the resulting
+        exhaustion state onto every cached API key — the write-through the
+        old revise_budget endpoint did via its budget-exhausted webhook to
+        auth-service. Without this, a top-up moves tenants.allocated_budget
+        but the actual wallet the billing consumer deducts from
+        (available_balance) never changes, and a key already flagged
+        budget-exhausted=1 from a prior top-down has no path back to 0 —
+        auth-service's own /internal/ppu/tenant/{id}/budget-exhausted only
+        ever receives {"exhausted": true} from the consumer, never false.
+
+        Best-effort by design (unlike the tier write-through, which is
+        required): the primary write — tenants.allocated_budget — has
+        already committed by the time this runs, so a transient failure
+        here degrades to a stale legacy-table balance rather than rolling
+        back an otherwise-successful budget revision. No active assignment
+        (tenant never tier-assigned, or its window has lapsed) means there's
+        no wallet to sync and nothing is written — consistent with
+        create_api_key's NO_ACTIVE_TIER gate already blocking billing for
+        that tenant regardless.
+        """
+        try:
+            now = datetime.now(timezone.utc)
+            row = (
+                await platform_core_db.execute(
+                    text(
+                        "UPDATE ppu_tenant_tier_assignments"
+                        "   SET budget_limit = budget_limit + :delta,"
+                        "       available_balance = available_balance + :delta,"
+                        "       updated_at = now()"
+                        " WHERE tenant_id = :tenant_id"
+                        "   AND effective_from <= :now AND effective_to > :now"
+                        " RETURNING available_balance"
+                    ),
+                    {"delta": delta, "tenant_id": str(tenant_id), "now": now},
+                )
+            ).first()
+            await platform_core_db.commit()
+        except Exception:
+            logger.exception(
+                "Failed to sync ppu_tenant_tier_assignments wallet for tenant_id=%s "
+                "after budget revision; tenants.allocated_budget was still updated.",
+                tenant_id,
+            )
+            return
+        if row is None:
+            return
+        if self._api_keys is not None:
+            await self._api_keys.set_budget_exhausted_for_tenant(
+                tenant_id, row.available_balance <= 0
+            )
 
     async def revise_tenant_budget(
         self,
@@ -883,6 +1072,7 @@ class TenantService:
         tenant_id: int,
         action: Literal["top-up", "top-down"],
         amount: Decimal,
+        platform_core_db: Optional[AsyncSession] = None,
     ) -> Tenant:
         """Top-up or top-down a tenant's budget — PATCH /auth/tenants/{id}/budget.
 
@@ -902,6 +1092,12 @@ class TenantService:
         contract specifies for this endpoint specifically, matching the old
         endpoint it replaces — every other tenant endpoint in this file uses
         ``{"code": ..., "message": ...}``.
+
+        ``platform_core_db`` (best-effort, see
+        _sync_ppu_wallet_and_exhaustion) keeps the legacy
+        ppu_tenant_tier_assignments wallet and cached budget-exhausted flags
+        in sync with this revision — the actual enforcement path a top-up
+        or top-down needs to reach.
         """
         roles = await self._roles.get_user_roles(current_user.id)
         if RoleName.ADMIN.value not in roles:
@@ -947,6 +1143,9 @@ class TenantService:
             },
         )
         await self._tenants.save_and_refresh(tenant)
+
+        if platform_core_db is not None:
+            await self._sync_ppu_wallet_and_exhaustion(tenant_id, delta, platform_core_db)
         return tenant
 
     async def list_tenant_tiers(
@@ -972,6 +1171,20 @@ class TenantService:
                     "message": "Only administrators can list tenant tier assignments.",
                 },
             )
+        # Fail closed on a missing platform-core connection, same as
+        # assign_tenant_tier — previously this degraded silently instead:
+        # tier_name came back null for every row with no log line, and the
+        # tier_id filter's existence check was skipped outright, so
+        # filtering by a nonexistent tier returned an empty list (200)
+        # instead of 404. A misconfiguration should not present as "all
+        # tiers happen to be unnamed" / "this tier happens to have no
+        # tenants".
+        if platform_core_db is None:
+            raise ValidationError(
+                message="Tier data cannot be resolved: platform-core DB is not configured.",
+                code="PLATFORM_CORE_DB_NOT_CONFIGURED",
+            )
+
         tier_uuid: Optional[UUID] = None
         if tier_id is not None:
             try:
@@ -981,22 +1194,24 @@ class TenantService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail={"code": "INVALID_TIER_ID", "message": "tier_id must be a valid UUID."},
                 )
-            if platform_core_db is not None:
-                exists = (
-                    await platform_core_db.execute(
-                        text("SELECT 1 FROM tiers WHERE id = :tid"), {"tid": tier_uuid}
-                    )
-                ).first()
-                if exists is None:
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail={"code": "TIER_NOT_FOUND", "message": f"Tier '{tier_id}' not found"},
-                    )
+            # is_active = true, matching assign_tenant_tier's lookup — a tier
+            # listable here but rejected as not-found on assign would be a
+            # visible inconsistency between the two endpoints.
+            exists = (
+                await platform_core_db.execute(
+                    text("SELECT 1 FROM tiers WHERE id = :tid AND is_active = true"), {"tid": tier_uuid}
+                )
+            ).first()
+            if exists is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail={"code": "TIER_NOT_FOUND", "message": f"Tier '{tier_id}' not found"},
+                )
 
         tenants = await self._tenants.list_with_tier(tier_uuid)
 
         tier_names: dict[UUID, str] = {}
-        if tenants and platform_core_db is not None:
+        if tenants:
             ids = list({t.tier_id for t in tenants})
             rows = (
                 await platform_core_db.execute(
