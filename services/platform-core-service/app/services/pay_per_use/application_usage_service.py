@@ -45,18 +45,26 @@ def _mask_key(api_key: str) -> str:
     return api_key[-4:] if api_key else ""
 
 
+def _to_tenant_pk(tenant_id: str) -> Optional[int]:
+    """tenants.id/applications.tenant_id are Integer columns; asyncpg (unlike
+    psycopg2) won't coerce a string bind param, so this must be cast before
+    binding — same guard _resolve_tenant_names uses (.isdigit())."""
+    return int(tenant_id) if tenant_id and tenant_id.isdigit() else None
+
+
 class ApplicationUsageService:
     def __init__(self, repo: ApplicationUsageRepository) -> None:
         self._repo = repo
 
     @staticmethod
     async def _load_tenant_budget(tenant_id: str, auth_db: Optional[AsyncSession]) -> Decimal:
-        if not auth_db:
+        tenant_pk = _to_tenant_pk(tenant_id)
+        if not auth_db or tenant_pk is None:
             return Decimal("0")
         try:
             result = await auth_db.execute(
                 text("SELECT allocated_budget FROM tenants WHERE id = :tenant_id"),
-                {"tenant_id": tenant_id},
+                {"tenant_id": tenant_pk},
             )
             row = result.first()
             return row[0] if row and row[0] is not None else Decimal("0")
@@ -68,7 +76,8 @@ class ApplicationUsageService:
     async def _load_tenant_applications(
         tenant_id: str, auth_db: Optional[AsyncSession]
     ) -> list[dict]:
-        if not auth_db:
+        tenant_pk = _to_tenant_pk(tenant_id)
+        if not auth_db or tenant_pk is None:
             return []
         try:
             result = await auth_db.execute(
@@ -76,7 +85,7 @@ class ApplicationUsageService:
                     "SELECT id, name, domain, allocated_percentage, allocated_budget, status "
                     "FROM applications WHERE tenant_id = :tenant_id"
                 ),
-                {"tenant_id": tenant_id},
+                {"tenant_id": tenant_pk},
             )
             return [dict(row._mapping) for row in result.all()]
         except Exception as exc:
@@ -196,7 +205,14 @@ class ApplicationUsageService:
                     keyName=key["key_name"],
                     maskedKey=_mask_key(key["api_key"]),
                     isActive=key["is_active"],
-                    allocatedBudget=_money_percent(key_allocated, allocated_amount),
+                    # allocated_percentage is stored on the same scale as Application's
+                    # (% of the institution's total budget — the cap check in Story 4
+                    # sums key percentages directly against the app's own percentage,
+                    # e.g. 24% + 16% = the app's 40%), so it's used as-is, not
+                    # recomputed against the app's own allocation.
+                    allocatedBudget=MoneyPercent(
+                        amount=float(key_allocated), percentage=float(key["allocated_percentage"] or 0)
+                    ),
                     spendBudget=_money_percent(key_spend, key_allocated),
                     remainingBudget=_money_percent(key_remaining, key_allocated),
                 )

@@ -216,3 +216,8 @@ class TestGetApplicationDetail:
         keys_by_id = {k.keyId: k for k in result.apiKeys}
         assert keys_by_id[10].maskedKey == "a91d"
         assert keys_by_id[10].spendBudget.percentage == pytest.approx(29.1666, rel=1e-3)
+        # allocatedBudget.percentage must be the stored value as-is (institution scale,
+        # same as Application.allocated_percentage) — NOT recomputed against the
+        # parent application's own allocation (which would wrongly give 60.0 here).
+        assert keys_by_id[10].allocatedBudget.percentage == 24.0
+        assert keys_by_id[11].allocatedBudget.percentage == 16.0

@@ -35,7 +35,8 @@ class ApiKeyUsageItem(BaseModel):
     keyName: str
     maskedKey: str
     isActive: bool
-    # allocatedBudget.percentage is % of the parent application's allocation.
+    # allocatedBudget.percentage is % of the institution's total budget (same scale
+    # as Application.allocated_percentage — see Story 4's cap check).
     # spendBudget/remainingBudget.percentage are % of this key's OWN allocation.
     allocatedBudget: MoneyPercent
     spendBudget: MoneyPercent
