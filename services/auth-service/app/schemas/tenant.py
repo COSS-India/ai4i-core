@@ -15,15 +15,10 @@ from pydantic import AliasChoices, EmailStr, Field, StrictBool, field_serializer
 from app.models.user import CreationType
 from app.schemas.base import BaseSchema
 from app.schemas.common import MessageData, SuccessResponse
+from app.schemas.text_validators import check_name_chars as _check_name_chars
+from app.schemas.text_validators import clean_text as _clean_text
 from app.models.tenant import TenantStatus
 from app.core.constants import RoleName
-
-# Invisible Unicode characters that str.strip() does not remove:
-# soft hyphen, zero-width space/non-joiner/joiner, LTR/RTL marks,
-# line/paragraph separators, zero-width no-break space (BOM).
-_INVISIBLE_CHARS = re.compile(
-    "[­​‌‍‎‏﻿]+"
-)
 
 # E.164 phone: + followed by 2–15 digits
 _E164_RE = re.compile(r"^\+[1-9]\d{1,14}$")
@@ -33,17 +28,6 @@ _PHONE_FORMAT_RE = re.compile(r"[ \-()\.]")
 
 # Punctuation allowed in organisation names beyond letters/digits
 _ORG_PUNCT = frozenset(" -.'/&(),")
-
-# Punctuation allowed in personal name fields
-_NAME_PUNCT = frozenset(" -'")
-
-
-def _clean_text(v: Any) -> Any:
-    """Strip invisible chars, trim whitespace, and NFC-normalise."""
-    if isinstance(v, str):
-        v = _INVISIBLE_CHARS.sub("", v).strip()
-        v = unicodedata.normalize("NFC", v)
-    return v
 
 
 def _check_org_chars(v: str) -> str:
@@ -65,27 +49,6 @@ def _check_org_chars(v: str) -> str:
             )
     if not has_alnum:
         raise ValueError("must contain at least one letter or digit")
-    return v
-
-
-def _check_name_chars(v: str) -> str:
-    """Validate personal name character set.
-
-    Allows Unicode letters and combining marks (covers Indic scripts,
-    accented Latin, etc.) plus spaces, hyphens, and apostrophes.
-    Requires at least one letter so punctuation-only values are rejected.
-    """
-    has_letter = False
-    for c in v:
-        cat = unicodedata.category(c)
-        if cat.startswith(("L", "M")):
-            has_letter = True
-        elif c not in _NAME_PUNCT:
-            raise ValueError(
-                "may only contain letters, spaces, hyphens, and apostrophes"
-            )
-    if not has_letter:
-        raise ValueError("must contain at least one letter")
     return v
 
 
