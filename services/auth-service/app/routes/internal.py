@@ -7,7 +7,7 @@ from app.core.exceptions import EntityNotFoundError
 from app.dependencies.services import get_api_key_service, get_notification_service, get_tenant_service
 from app.schemas.quota import QuotaLimitUpdatedRequest
 from app.services.api_key_service import APIKeyService
-from app.services.notification_service import NotificationService
+from app.services.quota_notification_service import QuotaNotificationService
 from app.services.tenant_service import TenantService
 
 router = APIRouter(tags=["Internal"])
@@ -88,6 +88,6 @@ async def reset_tenant_quota(
 async def notify_quota_limit_updated(
     body: QuotaLimitUpdatedRequest,
     background_tasks: BackgroundTasks,
-    svc: NotificationService = Depends(get_notification_service),
+    svc: QuotaNotificationService = Depends(get_notification_service),
 ):
     await svc.notify_quota_limit_updated(body.tier_name, body.tenant_ids, background_tasks)

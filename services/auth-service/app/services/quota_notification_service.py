@@ -1,4 +1,4 @@
-"""PPU notification service — sends transactional emails for pay-per-use events."""
+"""Quota notification service — sends transactional emails for pay-per-use quota events."""
 
 import logging
 from typing import List
@@ -13,7 +13,7 @@ from app.services.email_helpers import enqueue_email
 logger = logging.getLogger(__name__)
 
 
-class NotificationService:
+class QuotaNotificationService:
     def __init__(self, role_repo: RoleRepository, email_client: EmailClient) -> None:
         self._role_repo = role_repo
         self._email_client = email_client
