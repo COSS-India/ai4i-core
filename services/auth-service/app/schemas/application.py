@@ -84,8 +84,22 @@ class ApplicationUpdate(BaseSchema):
     @field_validator("name", mode="after")
     @classmethod
     def _name_not_blank(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None and not v:
+        # ``Optional[str] = None`` only means "may be omitted" — an omitted
+        # field never reaches this validator (Pydantic skips validating an
+        # unset default), so rejecting None here only fires when the client
+        # sends an explicit "name": null, which name/status can't accept
+        # (NOT NULL columns) the way domain/description legitimately can.
+        if v is None:
+            raise ValueError("must not be null")
+        if not v:
             raise ValueError("must not be blank")
+        return v
+
+    @field_validator("status", mode="after")
+    @classmethod
+    def _status_not_null(cls, v: Optional[ApplicationStatus]) -> Optional[ApplicationStatus]:
+        if v is None:
+            raise ValueError("must not be null")
         return v
 
     @field_validator("domain", "description", mode="before")

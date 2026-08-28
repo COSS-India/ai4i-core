@@ -289,6 +289,43 @@ class TestUpdateApplication:
             ApplicationUpdate(name="X", allocated_percentage=50.0)
 
     @pytest.mark.asyncio
+    async def test_explicit_null_name_is_rejected_at_schema_level(self) -> None:
+        """Bug scenario: PATCH {"name": null} used to reach the service, where
+        None.strip() raised an unhandled AttributeError -> 500. name backs a
+        NOT NULL column, so an explicit null must 422 before the handler runs,
+        the same way the allocation-field-on-update case already does."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            ApplicationUpdate(name=None)
+
+    @pytest.mark.asyncio
+    async def test_explicit_null_status_is_rejected_at_schema_level(self) -> None:
+        """Bug scenario: PATCH {"status": null} used to reach the service and
+        set app.status = None, failing the NOT NULL column constraint as an
+        unhandled IntegrityError -> 500 at commit."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            ApplicationUpdate(status=None)
+
+    @pytest.mark.asyncio
+    async def test_explicit_null_domain_and_description_are_still_allowed(self) -> None:
+        """domain/description back NULLable columns — explicit null is the
+        legitimate way to clear them, and must keep working (this is not
+        the bug: only NOT NULL fields — name, status — must reject null)."""
+        svc = _make_service()
+        app = _application(12, domain="old-domain", description="old description")
+        svc._applications.get_by_id = AsyncMock(return_value=app)
+        body = ApplicationUpdate(domain=None, description=None)
+
+        await svc.update_application(101, 12, body, _user())
+
+        called_data = svc._applications.update.call_args.args[1]
+        assert called_data["domain"] is None
+        assert called_data["description"] is None
+
+    @pytest.mark.asyncio
     async def test_description_can_be_updated(self) -> None:
         svc = _make_service()
         app = _application(12)
