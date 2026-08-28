@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 
 from app.models.application import Application, ApplicationStatus
 from app.models.tenant import Tenant, TenantStatus
@@ -39,11 +40,14 @@ def _make_service(roles=("ADMIN",)) -> ApplicationService:
     role_repo = MagicMock()
     role_repo.get_user_roles = AsyncMock(return_value=list(roles))
 
+    db = MagicMock()
+    db.rollback = AsyncMock()
+
     return ApplicationService(
         application_repo=application_repo,
         tenant_repo=tenant_repo,
         role_repo=role_repo,
-        db=MagicMock(),
+        db=db,
     )
 
 
@@ -70,6 +74,19 @@ def _application(id: int, tenant_id: int = 101, name: str = "Marketing Bot", **k
 
 def _user(tenant_id=None) -> User:
     return User(id=uuid4(), email="a@b.com", username="u", tenant_id=tenant_id)
+
+
+def _unique_violation(constraint_name: str) -> IntegrityError:
+    """Build an IntegrityError shaped like the real one — verified live
+    against the actual DB: SQLAlchemy's IntegrityError.orig is the asyncpg
+    dbapi wrapper, whose __cause__ is the real asyncpg.exceptions.UniqueViolationError
+    carrying .constraint_name. Faking that exact shape (not just IntegrityError
+    generically) so the fix's constraint-name check is exercised for real."""
+    cause = MagicMock()
+    cause.constraint_name = constraint_name
+    orig = MagicMock()
+    orig.__cause__ = cause
+    return IntegrityError("INSERT ...", {}, orig)
 
 
 class TestCreateApplication:
@@ -119,6 +136,39 @@ class TestCreateApplication:
 
         assert exc_info.value.status_code == 409
         assert exc_info.value.detail["code"] == "APPLICATION_NAME_ALREADY_EXISTS"
+
+    @pytest.mark.asyncio
+    async def test_concurrent_same_name_create_raises_409_not_500(self) -> None:
+        """Bug scenario: two concurrent creates both pass get_by_name (neither
+        sees the other's uncommitted row); the second's commit() raises the
+        real unique-violation, which used to surface as an unhandled 500."""
+        svc = _make_service()
+        svc._applications.commit = AsyncMock(
+            side_effect=_unique_violation("uq_applications_tenant_name_lower")
+        )
+        body = ApplicationCreate(name="Marketing Bot")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.create_application(101, body, _user())
+
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail["code"] == "APPLICATION_NAME_ALREADY_EXISTS"
+        svc._db.rollback.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_unrelated_integrity_error_on_create_is_not_masked_as_409(self) -> None:
+        """Adversarial case: an IntegrityError on a DIFFERENT constraint must
+        NOT be reported as a name conflict — that would hide a real bug."""
+        svc = _make_service()
+        svc._applications.commit = AsyncMock(
+            side_effect=_unique_violation("some_other_constraint")
+        )
+        body = ApplicationCreate(name="Marketing Bot")
+
+        with pytest.raises(IntegrityError):
+            await svc.create_application(101, body, _user())
+
+        svc._db.rollback.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_allocation_total_exceeded_raises_422(self) -> None:
@@ -293,6 +343,24 @@ class TestUpdateApplication:
 
         assert exc_info.value.status_code == 409
         assert exc_info.value.detail["code"] == "APPLICATION_NAME_ALREADY_EXISTS"
+
+    @pytest.mark.asyncio
+    async def test_concurrent_rename_to_same_name_raises_409_not_500(self) -> None:
+        """Same race, rename path: two concurrent renames to the same new
+        name both pass get_by_name, second commit() hits the real constraint."""
+        svc = _make_service()
+        svc._applications.get_by_id = AsyncMock(return_value=_application(12, name="Old Name"))
+        svc._applications.commit = AsyncMock(
+            side_effect=_unique_violation("uq_applications_tenant_name_lower")
+        )
+        body = ApplicationUpdate(name="New Shared Name")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.update_application(101, 12, body, _user())
+
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail["code"] == "APPLICATION_NAME_ALREADY_EXISTS"
+        svc._db.rollback.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_rename_keeping_own_name_case_variant_is_allowed(self) -> None:

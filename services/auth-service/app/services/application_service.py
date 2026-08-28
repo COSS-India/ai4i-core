@@ -14,6 +14,7 @@ from decimal import Decimal
 from typing import Optional
 
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
@@ -28,6 +29,12 @@ from app.schemas.application import ApplicationCreate, ApplicationUpdate
 
 _HUNDRED = Decimal("100")
 _CENTS = Decimal("0.01")
+
+_NAME_CONFLICT_CONSTRAINT = "uq_applications_tenant_name_lower"
+_NAME_CONFLICT_DETAIL = {
+    "code": "APPLICATION_NAME_ALREADY_EXISTS",
+    "message": "This name is already used by another Application in this Institution.",
+}
 
 
 class ApplicationService:
@@ -112,13 +119,7 @@ class ApplicationService:
         tenant = await self._load_tenant_or_404(tenant_id)
 
         if await self._applications.get_by_name(tenant_id, body.name):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "APPLICATION_NAME_ALREADY_EXISTS",
-                    "message": "This name is already used by another Application in this Institution.",
-                },
-            )
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=dict(_NAME_CONFLICT_DETAIL))
 
         allocated_budget = None
         if body.allocated_percentage is not None:
@@ -135,9 +136,32 @@ class ApplicationService:
             created_by=current_user.id,
         )
         await self._applications.create(app)
-        await self._applications.commit()
+        await self._commit_or_raise_name_conflict()
         await self._applications.refresh(app)
         return app
+
+    async def _commit_or_raise_name_conflict(self) -> None:
+        """Commit, translating a raced unique-constraint violation into the
+        same 409 the pre-check (get_by_name) raises.
+
+        The pre-check is TOCTOU: two concurrent creates/renames with the same
+        name can both pass get_by_name (neither sees the other's uncommitted
+        row) and both reach here. Only uq_applications_tenant_name_lower is
+        translated — matched by constraint name off the real asyncpg
+        exception, verified live — so an unrelated IntegrityError (a
+        different constraint, a different bug) still surfaces as a 500
+        instead of being misreported as a name conflict.
+        """
+        try:
+            await self._applications.commit()
+        except IntegrityError as exc:
+            await self._db.rollback()
+            cause = getattr(exc.orig, "__cause__", None)
+            if getattr(cause, "constraint_name", None) == _NAME_CONFLICT_CONSTRAINT:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT, detail=dict(_NAME_CONFLICT_DETAIL)
+                ) from exc
+            raise
 
     async def _assert_allocation_within_cap(
         self, tenant_id: int, new_percentage: Decimal
@@ -201,16 +225,10 @@ class ApplicationService:
         if "name" in data and data["name"].strip().casefold() != app.name.strip().casefold():
             existing = await self._applications.get_by_name(tenant_id, data["name"])
             if existing and existing.id != application_id:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "code": "APPLICATION_NAME_ALREADY_EXISTS",
-                        "message": "This name is already used by another Application in this Institution.",
-                    },
-                )
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=dict(_NAME_CONFLICT_DETAIL))
 
         data["updated_by"] = current_user.id
         await self._applications.update(app, data)
-        await self._applications.commit()
+        await self._commit_or_raise_name_conflict()
         await self._applications.refresh(app)
         return app
