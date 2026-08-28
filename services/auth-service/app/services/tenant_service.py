@@ -930,7 +930,7 @@ class TenantService:
 
     @staticmethod
     async def _has_active_ppu_assignment(
-        tenant_id: int, platform_core_db: AsyncSession
+        tenant_id: int, tier_uuid: UUID, platform_core_db: AsyncSession
     ) -> bool:
         """Plain existence check (no lock — _upsert_ppu_tenant_tier_assignment
         takes its own FOR UPDATE lock if/when it actually writes) used to
@@ -939,16 +939,30 @@ class TenantService:
         attempt's write to ppu_tenant_tier_assignments never landed (core
         DB down, constraint, network — assign_tenant_tier does not swallow
         that failure, so the caller sees a 500 and may retry the identical
-        PATCH)."""
+        PATCH).
+
+        Scoped to tier_id, not just tenant_id: the upsert's reassignment
+        branch UPDATEs an existing row's tier_id in place rather than
+        inserting a new one, so a partial failure during a reassignment
+        (not just a first assignment) can leave an active row still
+        pointing at the OLD tier. Matching on tenant_id alone would treat
+        that stale row as "already on the requested tier" and 409 forever
+        — worse than the missing-row case, since it leaves auth, billing,
+        and the key cache disagreeing on the tier with no way to reconcile
+        through the API. Scoping to tier_id here (the sibling lookup inside
+        _upsert_ppu_tenant_tier_assignment deliberately stays untier'd — it
+        wants whatever row is active so it can move it) means a stale-tier
+        row reads the same as a missing one: fall through and repair.
+        """
         now = datetime.now(timezone.utc)
         row = (
             await platform_core_db.execute(
                 text(
                     "SELECT 1 FROM ppu_tenant_tier_assignments"
-                    " WHERE tenant_id = :tenant_id"
+                    " WHERE tenant_id = :tenant_id AND tier_id = :tier_id"
                     "   AND effective_from <= :now AND effective_to > :now"
                 ),
-                {"tenant_id": str(tenant_id), "now": now},
+                {"tenant_id": str(tenant_id), "tier_id": tier_uuid, "now": now},
             )
         ).first()
         return row is not None
@@ -1018,7 +1032,7 @@ class TenantService:
             # row actually exists — otherwise fall through and repair it,
             # so retrying the identical PATCH after a partial failure isn't
             # a dead end.
-            if await self._has_active_ppu_assignment(tenant_id, platform_core_db):
+            if await self._has_active_ppu_assignment(tenant_id, tier_uuid, platform_core_db):
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail={

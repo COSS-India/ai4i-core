@@ -157,6 +157,42 @@ class TestAssignTenantTierIdempotentRepair:
         svc._api_keys.set_tier_id_for_tenant.assert_awaited_once_with(1, str(tier_id))
 
     @pytest.mark.asyncio
+    async def test_retry_after_reassignment_partial_failure_repairs_stale_row(self) -> None:
+        """Worse than the missing-row case: tenants.tier_id committed to
+        the NEW tier on a failed reassignment attempt, but the upsert's
+        UPDATE (which moves an existing row's tier_id in place rather than
+        inserting) never landed — the active row still points at the OLD
+        tier. The existence check must be scoped to tier_id, not just
+        tenant_id, or this reads as "already on the requested tier" and
+        409s forever, leaving auth/billing/cache permanently disagreeing
+        with no repair path."""
+        old_tier_id, new_tier_id = uuid4(), uuid4()
+        # tenants.tier_id already committed to new_tier_id by the failed attempt.
+        tenant = _tenant(tier_id=new_tier_id)
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
+        tier_row = MagicMock(id=new_tier_id)
+        tier_row.name = "Platinum"
+        stale_row = MagicMock(id=uuid4())
+        # 1st execute: tier lookup. 2nd: has_active_ppu_assignment scoped to
+        # new_tier_id -> no match (the row that exists is still old_tier_id).
+        # 3rd: the upsert's own untier'd "existing row?" lookup -> finds the
+        # stale row. 4th: UPDATE it onto new_tier_id.
+        db = _core_db(tier_row=[tier_row, None, stale_row, None])
+
+        result = await svc.assign_tenant_tier(_admin_user(), 1, str(new_tier_id), db)
+
+        assert result is tenant
+        svc._tenants.update.assert_not_awaited()  # tier_id already correct
+        repair_call = db.execute.await_args_list[-1]
+        repair_sql = str(repair_call.args[0])
+        assert "UPDATE ppu_tenant_tier_assignments" in repair_sql
+        assert repair_call.args[1]["tier_id"] == new_tier_id
+        assert repair_call.args[1]["id"] == stale_row.id
+        svc._api_keys.clear_quota_flags_for_tenant.assert_awaited_once_with(1)
+        svc._api_keys.set_tier_id_for_tenant.assert_awaited_once_with(1, str(new_tier_id))
+
+    @pytest.mark.asyncio
     async def test_genuine_reassignment_still_updates_tenant_row(self) -> None:
         """Sanity check the repair path doesn't leak into the normal
         (different-tier) case: tenants.tier_id must still be updated when
