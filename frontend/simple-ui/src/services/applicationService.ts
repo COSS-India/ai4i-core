@@ -1,14 +1,6 @@
 import { apiService } from "./api";
 import { apiEndpoints } from "./apiEndpoints";
 import { USE_APPLICATION_MOCKS } from "../config/useApplicationMocks";
-import {
-  MOCK_TENANT_BUDGET,
-  mockCreateApplication,
-  mockGetApplication,
-  mockListApplications,
-  mockUpdateAllocations,
-  mockUpdateApplication,
-} from "./applicationMockStore";
 import type {
   AllocationUpdate,
   Application,
@@ -19,6 +11,12 @@ import type {
 } from "../types/application";
 
 const SILENT = { suppressErrorAlert: true as const };
+
+type ApplicationMockStore = typeof import("./applicationMockStore");
+
+async function loadApplicationMockStore(): Promise<ApplicationMockStore> {
+  return import("./applicationMockStore");
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -111,7 +109,10 @@ export async function listApplications(
   tenantId: string,
   params: ListApplicationsParams = {},
 ): Promise<ApplicationListResult> {
-  if (USE_APPLICATION_MOCKS) return mockListApplications(tenantId, params);
+  if (USE_APPLICATION_MOCKS) {
+    const mocks = await loadApplicationMockStore();
+    return mocks.mockListApplications(tenantId, params);
+  }
   const response = await apiService.get(apiEndpoints.tenants.applications(tenantId), {
     ...SILENT,
     params: {
@@ -128,7 +129,10 @@ export async function getApplication(
   tenantId: string,
   applicationId: string,
 ): Promise<Application> {
-  if (USE_APPLICATION_MOCKS) return mockGetApplication(tenantId, applicationId);
+  if (USE_APPLICATION_MOCKS) {
+    const mocks = await loadApplicationMockStore();
+    return mocks.mockGetApplication(tenantId, applicationId);
+  }
   const response = await apiService.get(
     apiEndpoints.tenants.application(tenantId, applicationId),
     SILENT,
@@ -141,7 +145,8 @@ export async function createApplication(
   payload: CreateApplicationPayload,
 ): Promise<Application> {
   if (USE_APPLICATION_MOCKS) {
-    return mockCreateApplication(tenantId, payload, MOCK_TENANT_BUDGET);
+    const mocks = await loadApplicationMockStore();
+    return mocks.mockCreateApplication(tenantId, payload, mocks.MOCK_TENANT_BUDGET);
   }
   const body: Record<string, unknown> = { name: payload.name };
   if (payload.description) body.description = payload.description;
@@ -163,7 +168,8 @@ export async function updateApplication(
   payload: UpdateApplicationPayload,
 ): Promise<Application> {
   if (USE_APPLICATION_MOCKS) {
-    return mockUpdateApplication(tenantId, applicationId, payload);
+    const mocks = await loadApplicationMockStore();
+    return mocks.mockUpdateApplication(tenantId, applicationId, payload);
   }
   const response = await apiService.patch(
     apiEndpoints.tenants.application(tenantId, applicationId),
@@ -178,7 +184,8 @@ export async function updateApplicationAllocations(
   allocations: AllocationUpdate[],
 ): Promise<Application[]> {
   if (USE_APPLICATION_MOCKS) {
-    return mockUpdateAllocations(tenantId, allocations, MOCK_TENANT_BUDGET);
+    const mocks = await loadApplicationMockStore();
+    return mocks.mockUpdateAllocations(tenantId, allocations, mocks.MOCK_TENANT_BUDGET);
   }
   const application_allocations = allocations.map((row) => ({
     application_id: Number(row.application_id),
