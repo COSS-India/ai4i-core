@@ -136,6 +136,7 @@ async def create_api_key(
     request: Request,
     current_user: User = Depends(require_any_role(RoleName.ADMIN, RoleName.TENANT_ADMIN)),
     svc: APIKeyService = Depends(get_api_key_service),
+    platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
 ):
     """Create an API key under an Application.
 
@@ -156,6 +157,7 @@ async def create_api_key(
         expires_days=body.expires_days,
         allocated_percentage=body.allocated_percentage,
         caller_tenant_id=caller_tenant_id,
+        platform_core_db=platform_core_db,
     )
     permission_names = await svc.permission_ids_to_names(
         api_key.permissions or [], api_key_id=api_key.id

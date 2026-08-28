@@ -462,6 +462,7 @@ class APIKeyService:
         allocated_percentage: Optional[Decimal] = None,
         *,
         caller_tenant_id: Optional[int] = None,
+        platform_core_db: Optional[AsyncSession] = None,
     ) -> tuple[str, APIKey]:
         """
         Generate a hex API key, persist to DB, cache in Redis.
@@ -564,6 +565,12 @@ class APIKeyService:
         )
         await self._repo.create(api_key)
         await self._repo.commit()
+
+        if allocated_budget is not None:
+            # Seed half of the write-through gap — see write_budget_snapshot's
+            # docstring. Best-effort: a platform-core outage here must not
+            # roll back the key that was just created.
+            await self.write_budget_snapshot({api_key.id: allocated_budget}, platform_core_db)
 
         if self.application_may_use_api_keys(application, tenant):
             payload = self._build_cache_payload(
@@ -827,6 +834,53 @@ class APIKeyService:
         self, offset: int = 0, limit: int = 100, application_id: Optional[int] = None
     ) -> list[tuple[APIKey, Application]]:
         return await self._repo.list_all_with_applications(offset, limit, application_id)
+
+    @staticmethod
+    async def write_budget_snapshot(
+        snapshots: dict[int, Decimal], platform_core_db: Optional[AsyncSession]
+    ) -> None:
+        """Upsert ``budget_usage.api_key_budget_snap`` for every api_key_id in
+        ``snapshots`` — the ₹ ceiling each key was actually resolved to.
+
+        Both design docs require this write-through ("the resulting ₹
+        ceiling has to be copied into budget_usage... seeded on create,
+        updated on edit") but until now nothing in auth-service ever wrote
+        this column (only ``fetch_budget_usage`` above ever read it) — a real
+        gap, closed here once and reused by both halves of that requirement:
+        ``create_api_key`` (seed) and AllocationService (edit).
+
+        ``api_key_budget_used`` defaults to 0 on insert (matches the column's
+        own server_default) and is left alone on conflict — this call only
+        ever touches the snapshot ceiling, never the running usage total a
+        different writer owns. id is generated here, not left to the DB,
+        since ``budget_usage.id`` has no server-side default (Python-side
+        ``default=uuid.uuid4`` only, on a model this service never
+        instantiates directly).
+
+        Best-effort, like ``fetch_budget_usage``'s read side: a platform-core
+        outage must not block the auth-service allocation write it mirrors —
+        the snapshot is a cache of the ceiling, not the ceiling's source of
+        truth (``application.allocated_budget`` / ``api_key.allocated_budget``
+        in auth-service's own DB are), so a missed write here self-heals the
+        next time this same key's allocation changes.
+        """
+        if not snapshots or platform_core_db is None:
+            return
+        try:
+            for api_key_id, snap in snapshots.items():
+                await platform_core_db.execute(
+                    text(
+                        "INSERT INTO budget_usage (id, api_key_id, api_key_budget_snap, api_key_budget_used)"
+                        "     VALUES (gen_random_uuid(), :api_key_id, :snap, 0)"
+                        "ON CONFLICT (api_key_id)"
+                        "   DO UPDATE SET api_key_budget_snap = EXCLUDED.api_key_budget_snap"
+                    ),
+                    {"api_key_id": api_key_id, "snap": snap},
+                )
+            await platform_core_db.commit()
+        except Exception as exc:
+            logger.warning("Failed to write budget_usage snapshot for keys %s: %s", list(snapshots), exc)
+            await platform_core_db.rollback()
 
     @staticmethod
     async def fetch_budget_usage(
