@@ -9,7 +9,7 @@ from app.models import Base
 
 
 class TenantTierAssignment(Base):
-    __tablename__ = "ppu_tenant_tier_assignments"
+    __tablename__ = "ppu_tenant_tier_assignments"  # ppu_ prefix kept intentionally; billing writes this table (_upsert_ppu_tenant_tier_assignment, #1488) — do not rename
     __table_args__ = (
         Index(
             "ix_ppu_tenant_tier_assignments_tenant_effective",
