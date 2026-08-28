@@ -631,3 +631,65 @@ class TestServiceServiceDelete:
         svc._services.get_by_service_id = AsyncMock(return_value=instance)
         await svc.delete_service("svc-del")
         svc._cache.invalidate_service.assert_awaited_once_with("svc-del")
+
+
+# ===========================================================================
+# Section 8 — _resolve_tier_names (AI4IDS: GET /services 500 on stale tier_id)
+# ===========================================================================
+#
+# A published service (e.g. google/gemma-4-31B-it) can reference a tier_id
+# whose row was since deleted from the tiers table. `get_tier_names_by_ids`
+# only returns names for tiers it actually finds, so such an id is simply
+# absent from the map — it must never surface as a literal `None` in
+# `tierNames`, since ServiceListItem.tierNames is `Optional[List[str]]`
+# (a list of strings, not a list that may contain None).
+#
+# A stale id is also never just dropped: the inference path still gates on
+# tier_ids and no live tier will ever match a deleted one, so that service
+# 403s every caller regardless. Dropping it would let tierNames end up
+# empty/None, which the admin UI renders the same as "no tier restriction" —
+# masking a service that is actually completely inaccessible. So a stale id
+# falls back to its own raw id in tierNames, keeping tierIds/tierNames the
+# same length and the mismatch visible.
+
+_resolve_tier_names = _svc_svc_mod._resolve_tier_names
+
+
+class TestResolveTierNames:
+    def test_no_tier_ids_returns_none(self):
+        assert _resolve_tier_names("svc-1", None, {}) is None
+        assert _resolve_tier_names("svc-1", [], {"tier-1": "Gold"}) is None
+
+    def test_all_known_ids_resolve_in_order(self):
+        tier_map = {"tier-1": "Gold", "tier-2": "Silver"}
+        assert _resolve_tier_names("svc-1", ["tier-1", "tier-2"], tier_map) == ["Gold", "Silver"]
+
+    def test_unknown_tier_id_falls_back_to_raw_id_not_none(self):
+        """The exact bug this guards against: a stale tier_id must never
+        surface as a None entry (fails response validation with
+        `services.N.tierNames.0 — Input should be a valid string, got
+        None`), and must not be silently dropped either — that would make
+        tierNames indistinguishable from "no tier restriction" while the
+        service is actually unreachable via any live tier."""
+        tier_map = {"tier-1": "Gold"}
+        result = _resolve_tier_names("svc-1", ["tier-1", "deleted-tier"], tier_map)
+        assert result == ["Gold", "deleted-tier"]
+        assert None not in result
+        assert len(result) == 2  # same length as tier_ids
+
+    def test_all_ids_unknown_falls_back_to_raw_ids(self):
+        result = _resolve_tier_names("svc-1", ["deleted-tier"], {})
+        assert result == ["deleted-tier"]
+
+    def test_missing_tier_logs_service_id_and_tier_id(self, caplog):
+        """Regression for the PR comment: the warning must name the
+        service, not just the stray tier id — otherwise whoever reads the
+        log still has to query mm_services to find the offending row."""
+        import logging as _logging
+
+        with caplog.at_level(_logging.WARNING):
+            _resolve_tier_names("svc-gemma-4-31b-it", ["deleted-tier"], {})
+        assert any(
+            "svc-gemma-4-31b-it" in rec.getMessage() and "deleted-tier" in rec.getMessage()
+            for rec in caplog.records
+        )
