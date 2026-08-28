@@ -86,10 +86,24 @@ class APIKeyRepository(BaseRepository):
         return {pid: name for pid, name in result.all()}
 
     async def get_permission_ids_by_names(self, permission_names: list[str]) -> dict[str, int]:
+        """Resolve permission names to ids — restricted to inference
+        permissions (``action == 'inference'``), the only kind an API key
+        may ever hold. Without this, nothing stopped an API key from being
+        created/updated with an admin permission like service.create —
+        request headers carry no owning user for API-key traffic (no
+        api_key.user_id any more), so any write that permission reached
+        would silently attribute to no one (created_by/updated_by left
+        NULL) instead of failing. A name that exists but isn't an
+        inference permission is therefore treated the same as an unknown
+        one by callers (_resolve_permission_names' INVALID_PERMISSION_NAMES
+        check doesn't distinguish "doesn't exist" from "not inference").
+        """
         if not permission_names:
             return {}
         result = await self._db.execute(
-            select(Permission.name, Permission.id).where(Permission.name.in_(permission_names))
+            select(Permission.name, Permission.id).where(
+                Permission.name.in_(permission_names), Permission.action == "inference"
+            )
         )
         return {name: pid for name, pid in result.all()}
 

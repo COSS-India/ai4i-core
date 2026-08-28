@@ -508,7 +508,16 @@ class APIKeyService:
         permission_ids = await self._resolve_permission_names(permissions)
 
         if allocated_percentage is not None:
-            existing_total = await self._applications.sum_allocated_percentage(application_id)
+            # Lock the application row for the rest of this transaction so a
+            # concurrent create_api_key call under the same application can't
+            # read the same existing_total before either commits — without
+            # this, two concurrent 60% requests both pass the check and the
+            # application ends up over-allocated. Held until this
+            # transaction commits below (self._repo.commit()).
+            locked_application = await self._applications.get_by_id_for_update(application_id)
+            if locked_application is not None:
+                application = locked_application
+            existing_total = await self._applications.sum_api_key_allocated_percentage(application_id)
             if existing_total + allocated_percentage > Decimal("100"):
                 raise ValidationError(
                     message=(

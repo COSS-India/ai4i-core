@@ -102,14 +102,6 @@ class ApplicationAPIKeysGroup(BaseSchema):
     api_keys: list[APIKeyItem]
 
 
-class APIKeyListData(BaseSchema):
-    """Kept for backward-compat call sites; GET /auth/api-keys itself now
-    returns ``list[ApplicationAPIKeysGroup]`` directly as ``data`` (see
-    ListAPIKeysResponse) rather than this single-application shape."""
-
-    api_keys: list[APIKeyItem]
-
-
 class APIKeyAdminItem(BaseSchema):
     """GET /auth/api-keys/all item — flat (not grouped by application), with
     the current budget position pulled from platform-core's per-key usage
