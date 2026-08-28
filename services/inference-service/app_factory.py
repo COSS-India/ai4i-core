@@ -160,7 +160,7 @@ def create_inference_app() -> FastAPI:
     app = FastAPI(
         title="AI4I Inference Service",
         description="Unified inference endpoint for NMT, ASR, OCR, NER, LLM and other task services",
-        version="1.0.0",
+        version=settings.SERVICE_VERSION,
         # API docs are opt-out: keep enabled for dev, disable in production
         # via ENABLE_DOCS=false (OWASP API8 — security misconfiguration).
         docs_url="/docs" if settings.ENABLE_DOCS else None,
