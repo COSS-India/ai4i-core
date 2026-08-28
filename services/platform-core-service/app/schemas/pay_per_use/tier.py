@@ -63,7 +63,7 @@ class TierCreate(BaseModel):
 
 
 _TIER_UPDATE_EXAMPLE = {
-    "tier_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "tier_id": "<place your uuid here>",
     "name": "Standard",
     "description": "Updated quota tier for translation and speech services",
     "quotas": [
