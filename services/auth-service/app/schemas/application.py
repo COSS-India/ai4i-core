@@ -23,6 +23,17 @@ _MAX_PERCENTAGE = Decimal("100")
 
 
 class ApplicationCreate(BaseSchema):
+    """POST body.
+
+    ``extra="forbid"`` — same reasoning as ApplicationUpdate: a client sending
+    e.g. ``allocated_budget`` (there is no such create field; only
+    allocated_percentage) or a mistyped key would otherwise have it silently
+    ignored, with the request still returning 201 — the client could
+    reasonably believe the value took effect.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = Field(None, max_length=500)
     domain: Optional[str] = Field(None, max_length=255)

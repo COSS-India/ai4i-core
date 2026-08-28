@@ -115,6 +115,27 @@ class TestCreateApplication:
 
         assert app.description == "Runs marketing campaigns"
 
+    def test_unknown_field_is_rejected_not_silently_dropped(self) -> None:
+        """Bug scenario: POST {"name": "App", "allocated_budget": 50000} used
+        to have allocated_budget silently ignored (Create has no such field —
+        only allocated_percentage on create) and still return 201, letting
+        the client believe the amount took effect. Must 422 instead, matching
+        ApplicationUpdate's existing "REJECTED, not silently dropped" behavior."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            ApplicationCreate(name="App", allocated_budget=50000)
+
+    def test_typo_field_is_rejected_not_silently_dropped(self) -> None:
+        """Same bug, more realistic trigger: a client typo like
+        'allocatedPercentage' instead of 'allocated_percentage' used to be
+        silently ignored — the Application would be created with NO budget
+        at all and no error, while the client believes it set one."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            ApplicationCreate(name="App", allocatedPercentage=30)
+
     @pytest.mark.asyncio
     async def test_create_blank_description_becomes_none(self) -> None:
         body = ApplicationCreate(name="App", description="   ")
