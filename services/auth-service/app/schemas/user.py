@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID
 
-from pydantic import AliasChoices, EmailStr, Field, field_validator
+from pydantic import AliasChoices, ConfigDict, EmailStr, Field, field_validator
 
 from app.models.user import CreationType
 from app.schemas.base import BaseSchema
@@ -14,7 +14,17 @@ from app.schemas.common import SuccessResponse
 from app.schemas.text_validators import check_name_chars, clean_text
 
 
+_USER_UPDATE_EXAMPLE = {
+    "full_name": "Jane Doe",
+    "phone_number": "+919876543210",
+    "timezone": "Asia/Kolkata",
+    "avatar_url": "https://example.com/avatars/jane-doe.png",
+}
+
+
 class UserUpdate(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"example": _USER_UPDATE_EXAMPLE})
+
     # Same rules TenantUserUpdate applies to this column (tenant.py): cleaned
     # of invisible characters and restricted to name-like text, so a value
     # accepted on one path can't be rejected on another.

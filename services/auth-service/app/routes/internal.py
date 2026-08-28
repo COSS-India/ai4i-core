@@ -1,7 +1,7 @@
 """Internal endpoints — service-to-service calls, not exposed to end users."""
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.core.exceptions import EntityNotFoundError
 from app.dependencies.services import get_api_key_service, get_quota_notification_service, get_tenant_service
@@ -26,10 +26,14 @@ async def get_tenant_plan(tenant_id: str, svc: TenantService = Depends(get_tenan
 
 
 class BudgetExhaustedRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": {"exhausted": True}})
+
     exhausted: bool
 
 
 class QuotaExhaustedRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": {"inference_name": "nmt"}})
+
     inference_name: str
 
 

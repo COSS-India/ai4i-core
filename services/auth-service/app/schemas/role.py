@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, ConfigDict, Field
 
 from app.core.constants import RoleName
 from app.schemas.base import BaseSchema
@@ -45,13 +45,29 @@ class InferencePermissionResponse(BaseSchema):
     label: str
 
 
+_ROLE_ASSIGN_REQUEST_EXAMPLE = {
+    "user_id": "<place your uuid here>",
+    "role_name": "USER",
+}
+
+
 class RoleAssignRequest(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"example": _ROLE_ASSIGN_REQUEST_EXAMPLE})
+
     user_id: UUID
     role_name: RoleName
 
 
+_GUEST_SERVICES_ASSIGN_REQUEST_EXAMPLE = {
+    "services": ["nmt.inference", "asr.inference"],
+}
+
+
 class GuestServicesAssignRequest(BaseSchema):
     """Replace GUEST role inference permissions; other GUEST permissions are unchanged."""
+
+    model_config = ConfigDict(json_schema_extra={"example": _GUEST_SERVICES_ASSIGN_REQUEST_EXAMPLE})
+
     services: list[str] = Field(default_factory=list)
 
 

@@ -17,7 +17,18 @@ from app.schemas.common import MessageData, SuccessResponse
 
 # ── Requests ──
 
+_CREATE_API_KEY_REQUEST_EXAMPLE = {
+    "key_name": "Production NMT Key",
+    "permissions": ["nmt.inference", "asr.inference"],
+    "expires_days": 365,
+    "application_id": "<place your id here>",
+    "allocated_percentage": 25.00,
+}
+
+
 class CreateAPIKeyRequest(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"example": _CREATE_API_KEY_REQUEST_EXAMPLE})
+
     key_name: str = Field(..., min_length=1, max_length=100)
     permissions: list[str] = Field(
         ...,
@@ -40,12 +51,20 @@ class CreateAPIKeyRequest(BaseSchema):
     )
 
 
+_UPDATE_API_KEY_REQUEST_EXAMPLE = {
+    "key_name": "Production NMT Key (renamed)",
+    "permissions": ["nmt.inference"],
+    "expires_days": 180,
+}
+
+
 class UpdateAPIKeyRequest(BaseSchema):
     model_config = ConfigDict(
         from_attributes=True,
         populate_by_name=True,
         str_strip_whitespace=True,
         extra="forbid",
+        json_schema_extra={"example": _UPDATE_API_KEY_REQUEST_EXAMPLE},
     )
 
     key_name: Optional[str] = Field(None, min_length=1, max_length=100)

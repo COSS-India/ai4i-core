@@ -72,13 +72,21 @@ class ApplicationAllocationInput(BaseSchema):
         return self
 
 
+_ALLOCATION_UPDATE_REQUEST_EXAMPLE = {
+    "application_allocations": [
+        {"application_id": "<place your id here>", "allocated_percentage": 60.00},
+        {"application_id": "<place your id here>", "allocated_percentage": 40.00},
+    ],
+}
+
+
 class AllocationUpdateRequest(BaseSchema):
     """Body shape is the same regardless of scope; which of the two fields is
     populated must match the ?tenant_id=/?application_id= query param — that
     cross-check needs the query param, so it happens in AllocationService,
     not here (a body-only validator can't see the query string)."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"example": _ALLOCATION_UPDATE_REQUEST_EXAMPLE})
 
     application_allocations: Optional[list[ApplicationAllocationInput]] = None
     api_key_allocations: Optional[list[APIKeyAllocationInput]] = None
