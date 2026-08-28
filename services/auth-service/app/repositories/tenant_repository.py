@@ -19,9 +19,21 @@ class TenantRepository(BaseRepository):
         return result.scalar_one_or_none()
 
     async def get_by_id_for_update(self, tenant_id: int) -> Optional[Tenant]:
-        """Load tenant with ``SELECT … FOR UPDATE`` (blocks concurrent status changes)."""
+        """Load tenant with ``SELECT … FOR UPDATE`` (blocks concurrent status changes).
+
+        ``populate_existing()`` — without it, a tenant already present in the
+        session's identity map (e.g. an earlier unlocked ``get_by_id`` in the
+        same request) is returned as-is: the lock is genuinely acquired on
+        the DB row, but the in-memory attributes are NOT refreshed from it,
+        so a caller reading e.g. ``allocated_budget`` off the "locked" object
+        can still see a pre-revision value. This forces a refresh from the
+        just-locked row every time.
+        """
         result = await self._db.execute(
-            select(Tenant).where(Tenant.id == tenant_id).with_for_update()
+            select(Tenant)
+            .where(Tenant.id == tenant_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 

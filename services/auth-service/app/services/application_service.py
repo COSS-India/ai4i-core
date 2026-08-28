@@ -123,8 +123,15 @@ class ApplicationService:
 
         allocated_budget = None
         if body.allocated_percentage is not None:
-            await self._assert_allocation_within_cap(tenant_id, body.allocated_percentage)
-            allocated_budget = self._derive_budget(tenant.allocated_budget, body.allocated_percentage)
+            locked_tenant = await self._assert_allocation_within_cap(
+                tenant_id, body.allocated_percentage
+            )
+            # Derive from the just-locked, just-refreshed row, not the
+            # earlier unlocked `tenant` read from _load_tenant_or_404 above —
+            # see _assert_allocation_within_cap's docstring.
+            allocated_budget = self._derive_budget(
+                locked_tenant.allocated_budget, body.allocated_percentage
+            )
 
         app = Application(
             tenant_id=tenant_id,
@@ -165,7 +172,7 @@ class ApplicationService:
 
     async def _assert_allocation_within_cap(
         self, tenant_id: int, new_percentage: Decimal
-    ) -> None:
+    ) -> Tenant:
         # Locks the TENANT row, not the Application rows: "SELECT ... FOR
         # UPDATE" takes no lock when it matches zero rows, so locking children
         # doesn't serialize a tenant's first two concurrent creates (both see
@@ -174,7 +181,22 @@ class ApplicationService:
         # concurrent create for that tenant regardless of how many
         # Applications currently exist — same pattern TenantRepository's own
         # get_by_id_for_update already uses to serialize status changes.
-        await self._tenants.get_by_id_for_update(tenant_id)
+        #
+        # Returns the locked tenant so the caller derives allocated_budget
+        # from it instead of an earlier unlocked read: get_by_id_for_update
+        # now uses populate_existing() so this return value is guaranteed
+        # fresh even if the tenant was already in the session's identity map
+        # (e.g. from _load_tenant_or_404 just above create_application's own
+        # call site) — without that, a concurrent PATCH .../budget commit
+        # between the two reads would lock the row but still hand back the
+        # pre-revision allocated_budget.
+        locked_tenant = await self._tenants.get_by_id_for_update(tenant_id)
+        if locked_tenant is None:
+            # Existence was already confirmed by _load_tenant_or_404 before
+            # this is ever called, and tenants are never hard-deleted — this
+            # is unreachable in practice, but fail loudly rather than let a
+            # caller silently derive a budget from a stale/absent tenant.
+            raise EntityNotFoundError(f"Tenant {tenant_id}")
         current_sum = await self._applications.sum_allocated_percentage(tenant_id)
         total = current_sum + new_percentage
         if total > _HUNDRED:
@@ -188,6 +210,7 @@ class ApplicationService:
                     ),
                 },
             )
+        return locked_tenant
 
     async def get_application(
         self, tenant_id: int, application_id: int, current_user: User

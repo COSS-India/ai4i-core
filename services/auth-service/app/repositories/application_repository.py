@@ -43,9 +43,21 @@ class ApplicationRepository(BaseRepository):
         current transaction — used before summing existing API-key
         allocations so two concurrent create_api_key calls under the same
         application serialize instead of both reading the same total and
-        both committing over 100%."""
+        both committing over 100%.
+
+        ``populate_existing()`` — same reasoning as
+        ``TenantRepository.get_by_id_for_update``: without it, an
+        application already in the session's identity map (e.g.
+        ``api_key_service.create_api_key``'s earlier unlocked
+        ``get_by_id``/``get_by_id_for_tenant`` lookup) is returned unchanged
+        by this locked query — the lock is real, but ``allocated_budget``
+        read off the result can still be the pre-lock, pre-revision value.
+        """
         result = await self._db.execute(
-            select(Application).where(Application.id == application_id).with_for_update()
+            select(Application)
+            .where(Application.id == application_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 

@@ -641,3 +641,67 @@ class TestSuccessEnvelope:
         body = resp.json()
         assert body["success"] is True
         assert body["data"]["domain"] == "new-domain"
+
+
+class TestBudgetDerivedFromLockedTenantNotStaleRead:
+    """Bug scenario (vipuldeveloper review, PR #1491): tenant is loaded
+    unlocked in _load_tenant_or_404, then again — locked — in
+    _assert_allocation_within_cap. SQLAlchemy's identity map hands back the
+    same Python object for the second read unless the query forces a
+    refresh, so if a concurrent PATCH .../tenants/{id}/budget commits
+    between the two reads, the lock is genuinely acquired but the derived
+    allocated_budget still comes from the pre-revision figure. Verified live
+    against Postgres by the reviewer: unlocked read saw allocated_budget=None,
+    the FOR UPDATE read returned "the same object" with the same stale None,
+    while the DB's actual value was 777.00.
+
+    This mock-repo test reproduces the same shape by giving the two repo
+    calls genuinely different return values (mocks don't share an identity
+    map the way a real AsyncSession does, so this doesn't exercise SQLAlchemy
+    itself — it pins the service-layer contract: create_application MUST
+    derive allocated_budget from whatever get_by_id_for_update returns, not
+    from the earlier get_by_id call). The repository-level fix
+    (execution_options(populate_existing=True) in both
+    TenantRepository.get_by_id_for_update and
+    ApplicationRepository.get_by_id_for_update) is what makes that return
+    value trustworthy against a real DB; it has no unit-testable surface of
+    its own beyond "the query executes," so it's covered by this contract
+    test plus the live-DB derivation this reviewer already ran.
+    """
+
+    @pytest.mark.asyncio
+    async def test_uses_the_locked_read_not_the_earlier_unlocked_one(self) -> None:
+        svc = _make_service()
+        # Unlocked read (the 404 check) sees the pre-revision figure.
+        svc._tenants.get_by_id = AsyncMock(
+            return_value=_tenant(101, allocated_budget=Decimal("0.00"))
+        )
+        # A concurrent PATCH .../budget committed between the two reads —
+        # the locked read must see its result.
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant(101, allocated_budget=Decimal("777.00"))
+        )
+        body = ApplicationCreate(name="Marketing Bot", allocated_percentage=Decimal("30.0"))
+
+        app = await svc.create_application(101, body, _user())
+
+        # 777.00 * 30% = 233.10, not 0.00 (which the stale pre-revision
+        # figure of 0.00 would have produced — same failure shape as the
+        # reviewer's repro: derived amount silently drifts from the actual
+        # tenant budget).
+        assert app.allocated_budget == Decimal("233.10")
+
+    @pytest.mark.asyncio
+    async def test_no_percentage_never_reads_stale_or_locked_tenant_budget(self) -> None:
+        """No allocation means no cap check, no lock, no derivation — the
+        unlocked tenant.allocated_budget is never even read for this path."""
+        svc = _make_service()
+        svc._tenants.get_by_id = AsyncMock(
+            return_value=_tenant(101, allocated_budget=Decimal("999999.00"))
+        )
+        body = ApplicationCreate(name="Marketing Bot")
+
+        app = await svc.create_application(101, body, _user())
+
+        assert app.allocated_budget is None
+        svc._tenants.get_by_id_for_update.assert_not_awaited()
