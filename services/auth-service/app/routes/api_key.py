@@ -36,6 +36,7 @@ from app.schemas.api_key import (
     UpdateAPIKeyResponse,
 )
 from app.schemas.common import MessageData, error_responses
+from app.services import budget_usage
 from app.services.api_key_service import APIKeyService
 from app.utils.masking import mask_api_key
 
@@ -136,6 +137,7 @@ async def create_api_key(
     request: Request,
     current_user: User = Depends(require_any_role(RoleName.ADMIN, RoleName.TENANT_ADMIN)),
     svc: APIKeyService = Depends(get_api_key_service),
+    platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
 ):
     """Create an API key under an Application.
 
@@ -156,6 +158,7 @@ async def create_api_key(
         expires_days=body.expires_days,
         allocated_percentage=body.allocated_percentage,
         caller_tenant_id=caller_tenant_id,
+        platform_core_db=platform_core_db,
     )
     permission_names = await svc.permission_ids_to_names(
         api_key.permissions or [], api_key_id=api_key.id
@@ -319,7 +322,7 @@ async def list_all_api_keys(
     results = await svc.list_all_with_applications(offset, limit)
     keys = [api_key for api_key, _application in results]
     items = await _key_items_for_response(svc, keys)
-    usage = await svc.fetch_budget_usage([k.id for k in keys], platform_core_db)
+    usage = await budget_usage.fetch_budget_usage([k.id for k in keys], platform_core_db)
 
     data = []
     for item, (api_key, _application) in zip(items, results):
