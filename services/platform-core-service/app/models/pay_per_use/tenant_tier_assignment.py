@@ -8,8 +8,8 @@ from sqlalchemy.sql import func
 from app.models import Base
 
 
-class PPUTenantTierAssignment(Base):
-    __tablename__ = "ppu_tenant_tier_assignments"
+class TenantTierAssignment(Base):
+    __tablename__ = "ppu_tenant_tier_assignments"  # ppu_ prefix kept intentionally; billing writes this table (_upsert_ppu_tenant_tier_assignment, #1488) — do not rename
     __table_args__ = (
         Index(
             "ix_ppu_tenant_tier_assignments_tenant_effective",
@@ -43,4 +43,4 @@ class PPUTenantTierAssignment(Base):
         onupdate=func.now(),
     )
 
-    tier = relationship("PPUTier", back_populates="tenant_assignments")
+    tier = relationship("Tier", back_populates="tenant_assignments")

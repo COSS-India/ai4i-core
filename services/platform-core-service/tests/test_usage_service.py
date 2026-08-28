@@ -1,4 +1,4 @@
-"""Unit tests for PPUUsageService — hierarchical tenant/tier/task-type aggregation.
+"""Unit tests for UsageService — hierarchical tenant/tier/task-type aggregation.
 
 All DB I/O is mocked via AsyncMock; no running services required.
 """
@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.services.pay_per_use.ppu_usage_service import PPUUsageService
+from app.services.pay_per_use.usage_service import UsageService
 
 
 class _Seq(list):
@@ -99,7 +99,7 @@ class TestGetSummary:
             get_tenant_budgets=_budgets(),
             get_total_cost_for_month=0.0,
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_summary("2026-06")
 
         assert result.totalSpend == 50.0
@@ -115,7 +115,7 @@ class TestGetSummary:
             get_tenant_budgets=_budgets(_budget_row(budget_limit=Decimal("10"))),
             get_total_cost_for_month=0.0,
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_summary("2026-06")
 
         assert result.budgetExceededTenants == 1
@@ -131,7 +131,7 @@ class TestGetSummary:
             get_tenant_budgets=_budgets(),  # no row for t1
             get_total_cost_for_month=0.0,
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_summary("2026-06")
 
         # unknown budget != a budget of 0 -- excluded from the count, not flagged as
@@ -147,7 +147,7 @@ class TestGetSummary:
             get_tenant_budgets=_budgets(),
             get_total_cost_for_month=0.0,
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_summary("2026-06")
 
         assert result.spendChangePercent is None
@@ -160,7 +160,7 @@ class TestGetSummary:
             get_tenant_budgets=_budgets(),
             get_total_cost_for_month=100.0,
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_summary("2026-06")
 
         # (150 - 100) / 100 * 100 = 50.0
@@ -179,7 +179,7 @@ class TestGetSummary:
             get_tenant_budgets=_budgets(),
             get_total_cost_for_month=0.0,
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_summary("2026-06")
 
         total_pct = sum(i.percentage for i in result.spendByModelTaskType)
@@ -199,7 +199,7 @@ class TestGetSummary:
             ),
             get_total_cost_for_month=0.0,
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_summary("2026-06")
 
         assert result.totalAllocatedBudget == 1500.0
@@ -215,7 +215,7 @@ class TestGetSummary:
             get_tenant_budgets=_budgets(),  # no row for t1
             get_total_cost_for_month=0.0,
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_summary("2026-06")
 
         assert result.totalAllocatedBudget == 0.0
@@ -232,7 +232,7 @@ class TestGetSummary:
             get_tenant_budgets=_budgets(),
             get_total_cost_for_month=0.0,
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_summary("2026-06")
 
         llm_item = next(i for i in result.spendByModelTaskType if i.modelTaskType == "llm")
@@ -247,7 +247,7 @@ class TestGetSummary:
             get_tenant_budgets=_budgets(),
             get_total_cost_for_month=0.0,
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_summary("2026-06")
 
         assert result.spendByModelTaskType[0].allocated is None
@@ -266,7 +266,7 @@ class TestGetSummary:
             get_tenant_budgets=_budgets(),
             get_total_cost_for_month=0.0,
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_summary("2026-06")
 
         by_type = {i.modelTaskType: i for i in result.spendByModelTaskType}
@@ -287,7 +287,7 @@ class TestGetSummary:
             get_tenant_budgets=_budgets(),
             get_total_cost_for_month=0.0,
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_summary("2026-06")
 
         assert result.spendByModelTaskType[0].consumption == 150.0
@@ -308,7 +308,7 @@ class TestGetSummaryFiltered:
             ]),
             get_tenant_budgets=_budgets(),
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_summary("2026-06", tier_id="1")
 
         assert result.spendChangePercent == 50.0
@@ -327,7 +327,7 @@ class TestGetTenantList:
             get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
             get_tenant_budgets=_budgets(_budget_row()),
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, None, auth_db=None)
 
         assert result.total == 1
@@ -354,7 +354,7 @@ class TestGetTenantList:
             get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
             get_tenant_budgets=_budgets(),
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, None, auth_db=None)
 
         item = result.data[0]
@@ -373,7 +373,7 @@ class TestGetTenantList:
             get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
             get_tenant_budgets=_budgets(),
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, None, auth_db=None)
 
         item = result.data[0]
@@ -395,7 +395,7 @@ class TestGetTenantList:
             get_tier_first_seen=[],
             get_tenant_budgets=_budgets(),
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, None, auth_db=None)
 
         usage = result.data[0].usage
@@ -416,7 +416,7 @@ class TestGetTenantList:
             get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
             get_tenant_budgets=_budgets(),
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, None, auth_db=None)
 
         usage = result.data[0].usage
@@ -434,7 +434,7 @@ class TestGetTenantList:
             get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
             get_tenant_budgets=_budgets(),
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, None, auth_db=None)
 
         assert result.data[0].usage.percentage == 0.0
@@ -455,7 +455,7 @@ class TestGetTenantList:
             ],
             get_tenant_budgets=_budgets(),
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, None, auth_db=None)
 
         item = result.data[0]
@@ -475,7 +475,7 @@ class TestGetTenantList:
             get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
             get_tenant_budgets=_budgets(),
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, "asr", auth_db=None)
 
         item = result.data[0]
@@ -503,7 +503,7 @@ class TestGetTenantList:
             get_tier_first_seen=[],
             get_tenant_budgets=_budgets(),
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_tenant_list(
             "2026-06", None, None, auth_db=None, sort_order="desc", limit=1, offset=0
         )
@@ -529,7 +529,7 @@ class TestGetTenantList:
             get_tier_first_seen=[],
             get_tenant_budgets=_budgets(),
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
 
         result_a = await svc.get_tenant_list("2026-06", None, None, auth_db=None, limit=2, offset=0)
         result_b = await svc.get_tenant_list("2026-06", None, None, auth_db=None, limit=2, offset=0)
@@ -550,7 +550,7 @@ class TestGetTenantList:
             get_tier_first_seen=[],
             get_tenant_budgets=_budgets(),
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, None, auth_db=None, sort_order="desc")
 
         assert [item.tenantId for item in result.data] == ["t2", "t1"]
@@ -569,7 +569,7 @@ class TestGetTenantList:
             get_tier_first_seen=[],
             get_tenant_budgets=_budgets(),
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, None, auth_db=None, sort_order="asc")
 
         assert [item.tenantId for item in result.data] == ["t1", "t2"]
@@ -577,7 +577,7 @@ class TestGetTenantList:
     @pytest.mark.asyncio
     async def test_no_assignments_returns_empty_response(self):
         repo = _make_repo(get_tenants_with_usage_tier=[])
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, None, auth_db=None)
 
         assert result.data == []
@@ -599,7 +599,7 @@ class TestGetTenantList:
             get_tier_first_seen=[],
             get_tenant_budgets=_budgets(),
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_tenant_list(
             "2026-06", None, None, auth_db=None, sort_order="desc", limit=1, offset=1
         )
@@ -616,7 +616,7 @@ class TestGetTenantList:
             get_tier_first_seen=[],
             get_tenant_budgets=_budgets(),
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, None, auth_db=None, offset=10, limit=10)
 
         assert result.data == []
@@ -631,7 +631,7 @@ class TestGetTenantDetail:
         # No usage this period is a valid tenant state (not an error) — the API
         # should return a zero-value item, not a 404.
         repo = _make_repo(get_tenants_with_usage_tier=[])
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
 
         assert result.tenantId == "t1"
@@ -652,7 +652,7 @@ class TestGetTenantDetail:
             get_tenants_with_usage_tier=[],
             get_tenant_budgets=_budgets(_budget_row(tenant_id="t1", tier_id="2")),
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
 
         assert result.tier == "Enterprise"
@@ -674,7 +674,7 @@ class TestGetTenantDetail:
                 _budget_row(tenant_id="t1", budget_limit=Decimal("1000"), available_balance=Decimal("700"))
             ),
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
 
         assert result.budget.limit == 1000.0
@@ -685,7 +685,7 @@ class TestGetTenantDetail:
         # auth_db confirms the tenant is real (just has no usage this period) — still
         # the zero-value empty state, not a 404.
         repo = _make_repo(get_tenants_with_usage_tier=[])
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         auth_db = MagicMock()
         auth_db.execute = AsyncMock(
             return_value=MagicMock(all=MagicMock(return_value=[(3, "No Tier Test Org")]))
@@ -705,7 +705,7 @@ class TestGetTenantDetail:
         from app.core.exceptions import EntityNotFoundError
 
         repo = _make_repo(get_tenants_with_usage_tier=[])
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         auth_db = MagicMock()
         auth_db.execute = AsyncMock(return_value=MagicMock(all=MagicMock(return_value=[])))
 
@@ -720,7 +720,7 @@ class TestGetTenantDetail:
             get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
             get_tenant_budgets=_budgets(_budget_row()),
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
 
         assert result.tenantId == "t1"
@@ -742,7 +742,7 @@ class TestGetTenantDetail:
             get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
             get_tenant_budgets=_budgets(),
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
 
         assert result.tier == "Pro"
@@ -761,7 +761,7 @@ class TestGetTenantDetail:
             get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
             get_tenant_budgets=_budgets(),
         )
-        svc = PPUUsageService(repo)
+        svc = UsageService(repo)
         result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
 
         task_types = result.tierBreakdown[0].taskTypes
@@ -782,12 +782,12 @@ class TestResolveTenantNames:
     async def test_logs_warning_on_auth_db_failure(self, caplog):
         """Auth DB exception must be logged, not silently swallowed."""
         import logging
-        from app.services.pay_per_use.ppu_usage_service import _resolve_tenant_names
+        from app.services.pay_per_use.usage_service import _resolve_tenant_names
 
         broken_db = MagicMock()
         broken_db.execute = AsyncMock(side_effect=Exception("connection refused"))
 
-        with caplog.at_level(logging.WARNING, logger="app.services.pay_per_use.ppu_usage_service"):
+        with caplog.at_level(logging.WARNING, logger="app.services.pay_per_use.usage_service"):
             result = await _resolve_tenant_names(["1", "2"], broken_db)
 
         assert result == {}
@@ -795,14 +795,14 @@ class TestResolveTenantNames:
 
     @pytest.mark.asyncio
     async def test_returns_empty_when_no_auth_db(self):
-        from app.services.pay_per_use.ppu_usage_service import _resolve_tenant_names
+        from app.services.pay_per_use.usage_service import _resolve_tenant_names
         result = await _resolve_tenant_names(["1"], auth_db=None)
         assert result == {}
 
     @pytest.mark.asyncio
     async def test_resolves_integer_tenant_ids(self):
         """Numeric string IDs must reach the DB and return the org name mapping."""
-        from app.services.pay_per_use.ppu_usage_service import _resolve_tenant_names
+        from app.services.pay_per_use.usage_service import _resolve_tenant_names
 
         db = MagicMock()
         db.execute = AsyncMock(
@@ -820,7 +820,7 @@ class TestResolveTenantNames:
     async def test_skips_db_when_no_valid_integer_ids(self):
         """Non-integer IDs are silently skipped — tenant_id is INTEGER in the PPU schema,
         so a string like 'abc' can never match a row and the DB round-trip is avoided."""
-        from app.services.pay_per_use.ppu_usage_service import _resolve_tenant_names
+        from app.services.pay_per_use.usage_service import _resolve_tenant_names
 
         db = MagicMock()
         result = await _resolve_tenant_names(["abc", "uuid-xyz"], auth_db=db)

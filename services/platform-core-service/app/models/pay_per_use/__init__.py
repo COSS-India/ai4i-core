@@ -1,8 +1,8 @@
 """Pay-per-use ORM models."""
 
-from app.models.pay_per_use.ppu_tier import PPUTier, PPUTierQuota
-from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssignment
-from app.models.pay_per_use.ppu_quota_usage import PPUQuotaUsage
+from app.models.pay_per_use.tier import Tier, TierQuota
+from app.models.pay_per_use.tenant_tier_assignment import TenantTierAssignment
+from app.models.pay_per_use.quota_usage import QuotaUsage
 from app.models.pay_per_use.budget_usage import BudgetUsage
 
-__all__ = ["PPUTier", "PPUTierQuota", "PPUTenantTierAssignment", "PPUQuotaUsage", "BudgetUsage"]
+__all__ = ["Tier", "TierQuota", "TenantTierAssignment", "QuotaUsage", "BudgetUsage"]
