@@ -16,6 +16,7 @@ from pydantic import ConfigDict, Field, field_validator
 
 from app.models.application import ApplicationStatus
 from app.schemas.base import BaseSchema
+from app.schemas.common import SuccessResponse
 
 # Matches applications.allocated_percentage — Numeric(5, 2): 0.00–100.00
 _MAX_PERCENTAGE = Decimal("100")
@@ -138,8 +139,33 @@ class ApplicationListItem(BaseSchema):
     status: ApplicationStatus
 
 
-class ApplicationListResponse(BaseSchema):
-    """GET /tenants/{tenant_id}/applications — unwrapped per contract."""
+class ApplicationListData(BaseSchema):
+    """Payload of GET /tenants/{tenant_id}/applications — nested under
+    ``data`` like every other list endpoint's payload (e.g. ListTenantsResponse)."""
 
     items: list[ApplicationListItem]
     total: int
+
+
+class CreateApplicationResponse(SuccessResponse):
+    """POST /tenants/{tenant_id}/applications"""
+
+    data: ApplicationResponse
+
+
+class GetApplicationResponse(SuccessResponse):
+    """GET /tenants/{tenant_id}/applications/{application_id}"""
+
+    data: ApplicationResponse
+
+
+class ListApplicationsResponse(SuccessResponse):
+    """GET /tenants/{tenant_id}/applications"""
+
+    data: ApplicationListData
+
+
+class UpdateApplicationResponse(SuccessResponse):
+    """PATCH /tenants/{tenant_id}/applications/{application_id}"""
+
+    data: ApplicationResponse

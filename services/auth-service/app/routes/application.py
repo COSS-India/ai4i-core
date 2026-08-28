@@ -16,10 +16,14 @@ from app.dependencies.services import get_application_service
 from app.models.user import User
 from app.schemas.application import (
     ApplicationCreate,
+    ApplicationListData,
     ApplicationListItem,
-    ApplicationListResponse,
     ApplicationResponse,
     ApplicationUpdate,
+    CreateApplicationResponse,
+    GetApplicationResponse,
+    ListApplicationsResponse,
+    UpdateApplicationResponse,
 )
 from app.schemas.common import error_responses
 from app.services.application_service import ApplicationService
@@ -38,7 +42,7 @@ router = APIRouter(
 @router.post(
     "",
     status_code=status.HTTP_201_CREATED,
-    response_model=ApplicationResponse,
+    response_model=CreateApplicationResponse,
     responses=error_responses(403, 404, 409, 422),
 )
 async def create_application(
@@ -55,12 +59,12 @@ async def create_application(
     this tenant must stay <= 100%.
     """
     app = await svc.create_application(tenant_id, body, current_user)
-    return to_response(app, ApplicationResponse)
+    return CreateApplicationResponse(data=to_response(app, ApplicationResponse))
 
 
 @router.get(
     "/{application_id}",
-    response_model=ApplicationResponse,
+    response_model=GetApplicationResponse,
     responses=error_responses(403, 404),
 )
 async def get_application(
@@ -71,12 +75,12 @@ async def get_application(
 ):
     """Return one Application by id. 404 whether it doesn't exist or belongs to another tenant."""
     app = await svc.get_application(tenant_id, application_id, current_user)
-    return to_response(app, ApplicationResponse)
+    return GetApplicationResponse(data=to_response(app, ApplicationResponse))
 
 
 @router.get(
     "",
-    response_model=ApplicationListResponse,
+    response_model=ListApplicationsResponse,
     responses=error_responses(403, 404),
 )
 async def list_applications(
@@ -98,15 +102,17 @@ async def list_applications(
         offset=offset,
         limit=size,
     )
-    return ApplicationListResponse(
-        items=[to_response(a, ApplicationListItem) for a in items],
-        total=total,
+    return ListApplicationsResponse(
+        data=ApplicationListData(
+            items=[to_response(a, ApplicationListItem) for a in items],
+            total=total,
+        )
     )
 
 
 @router.patch(
     "/{application_id}",
-    response_model=ApplicationResponse,
+    response_model=UpdateApplicationResponse,
     responses=error_responses(403, 404, 409, 422),
 )
 async def update_application(
@@ -121,4 +127,4 @@ async def update_application(
     Name stays unique within the tenant (case-insensitive) after edit.
     """
     app = await svc.update_application(tenant_id, application_id, body, current_user)
-    return to_response(app, ApplicationResponse)
+    return UpdateApplicationResponse(data=to_response(app, ApplicationResponse))

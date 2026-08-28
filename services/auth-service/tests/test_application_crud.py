@@ -2,6 +2,7 @@
 mirroring tests/test_tenant_organisation_uniqueness.py.
 """
 
+from datetime import datetime, timezone
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -74,6 +75,10 @@ def _application(id: int, tenant_id: int = 101, name: str = "Marketing Bot", **k
 
 def _user(tenant_id=None) -> User:
     return User(id=uuid4(), email="a@b.com", username="u", tenant_id=tenant_id)
+
+
+def _now() -> datetime:
+    return datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
 def _unique_violation(constraint_name: str) -> IntegrityError:
@@ -508,3 +513,110 @@ class TestSearchWildcardEscaping:
 
     def test_plain_text_is_unchanged(self) -> None:
         assert _escape_like("Marketing Bot") == "Marketing Bot"
+
+
+class TestSuccessEnvelope:
+    """Bug scenario: the 4 Application routes returned their payload bare
+    (response_model=ApplicationResponse directly), while every other
+    /auth/tenants/... route wraps in {"success": true, "data": ...} via a
+    SuccessResponse subclass. A client that unwraps .data uniformly across
+    tenant-admin screens got `undefined` for Applications specifically.
+
+    A schema-level check can't catch this — the schema was always correct,
+    the bug was the ROUTE returning the unwrapped type. Only a real HTTP
+    round-trip through the actual route (not calling the service directly)
+    proves the wire shape a client actually receives.
+    """
+
+    @staticmethod
+    def _client():
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.dependencies.auth import get_current_user
+        from app.dependencies.services import get_application_service
+        from app.routes.application import router
+
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+
+        svc = _make_service()
+        svc._applications.get_by_id = AsyncMock(
+            return_value=_application(12, name="Marketing Bot", domain="marketing", created_at=_now())
+        )
+
+        # Real BaseRepository.create/update set attributes on the passed
+        # object (create() populates server defaults on flush; update() does
+        # setattr per key) — a bare AsyncMock() doesn't, so the object
+        # returned to the route wouldn't reflect the write. Match that
+        # behavior so the wire-level assertions below check real values.
+        async def _fake_create(obj):
+            obj.id = obj.id or 99
+            obj.status = obj.status or ApplicationStatus.ACTIVE
+            obj.created_at = _now()
+            return obj
+
+        async def _fake_update(obj, data):
+            for k, v in data.items():
+                setattr(obj, k, v)
+            return obj
+
+        svc._applications.create = AsyncMock(side_effect=_fake_create)
+        svc._applications.update = AsyncMock(side_effect=_fake_update)
+
+        app.dependency_overrides[get_current_user] = lambda: _user(tenant_id=101)
+        app.dependency_overrides[get_application_service] = lambda: svc
+        return TestClient(app), svc
+
+    def test_create_response_is_wrapped_in_success_data_envelope(self) -> None:
+        client, _ = self._client()
+
+        resp = client.post(
+            "/api/v1/auth/tenants/101/applications", json={"name": "Marketing Bot"}
+        )
+
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["success"] is True
+        assert body["data"]["name"] == "Marketing Bot"
+        # Bare (unwrapped) would put "name" at the top level instead.
+        assert "name" not in body
+
+    def test_get_response_is_wrapped_in_success_data_envelope(self) -> None:
+        client, _ = self._client()
+
+        resp = client.get("/api/v1/auth/tenants/101/applications/12")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["data"]["id"] == 12
+
+    def test_list_response_wraps_items_and_total_under_data(self) -> None:
+        client, svc = self._client()
+        svc._applications.list_for_tenant = AsyncMock(
+            return_value=([_application(12, name="Marketing Bot", created_at=_now())], 1)
+        )
+
+        resp = client.get("/api/v1/auth/tenants/101/applications")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["data"]["total"] == 1
+        assert body["data"]["items"][0]["name"] == "Marketing Bot"
+        # Bare (unwrapped) would put "items"/"total" at the top level instead.
+        assert "items" not in body
+        assert "total" not in body
+
+    def test_update_response_is_wrapped_in_success_data_envelope(self) -> None:
+        client, _ = self._client()
+
+        resp = client.patch(
+            "/api/v1/auth/tenants/101/applications/12", json={"domain": "new-domain"}
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["data"]["domain"] == "new-domain"
