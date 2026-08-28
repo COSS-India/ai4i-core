@@ -19,6 +19,16 @@ from pathlib import Path
 
 import pytest
 
+_ALEMBIC_ENV_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "infrastructure"
+    / "databases"
+    / "migrations"
+    / "postgres"
+    / "alembic"
+    / ".env"
+)
+
 _MIGRATION_PATH = (
     Path(__file__).resolve().parents[3]
     / "infrastructure"
@@ -111,3 +121,120 @@ class TestResolveAppDbRole:
         role = migration._resolve_app_db_role()
         assert role
         assert isinstance(role, str)
+
+
+def _live_connection():
+    """A real connection to the local dev Postgres, inside a transaction that
+    is always rolled back — never committed. Skips (not fails) when no dev
+    DB is reachable, since this is the one test in the suite that needs one:
+    _table_owner()'s ownership check is exactly the kind of thing a mock
+    can't catch (the original bug was only found by testing against the
+    actual table owner on the live DB, not a simplified stand-in for it).
+    """
+    try:
+        from dotenv import dotenv_values
+    except ImportError:
+        pytest.skip("python-dotenv not installed")
+
+    if not _ALEMBIC_ENV_PATH.exists():
+        pytest.skip(f"no alembic .env at {_ALEMBIC_ENV_PATH}")
+    env = dotenv_values(_ALEMBIC_ENV_PATH)
+    required = ("AUTH_DB_HOST", "AUTH_DB_PORT", "AUTH_DB_USER", "AUTH_DB_PASSWORD", "AUTH_DB_NAME")
+    if any(not env.get(k) for k in required):
+        pytest.skip("alembic .env missing required AUTH_DB_* vars")
+
+    from sqlalchemy import create_engine
+
+    url = (
+        f"postgresql://{env['AUTH_DB_USER']}:{env['AUTH_DB_PASSWORD']}"
+        f"@{env['AUTH_DB_HOST']}:{env['AUTH_DB_PORT']}/{env['AUTH_DB_NAME']}"
+    )
+    try:
+        engine = create_engine(url)
+        conn = engine.connect()
+    except Exception as exc:
+        pytest.skip(f"could not connect to dev DB: {exc}")
+    return conn
+
+
+class TestDowngradeOwnershipGuard:
+    """Bug scenario: downgrade() used to unconditionally REVOKE, so if the
+    resolved role happens to OWN the table (ownership already implies full
+    DML — the upgrade() GRANT was a no-op for it), downgrade() stripped
+    privileges this migration never granted, leaving the DB with LESS access
+    than before it ran — the exact InsufficientPrivilegeError this migration
+    exists to prevent. Runs against the real dev DB (see _live_connection) —
+    a mock can't stand in for "does this role actually own this table."
+    """
+
+    def test_downgrade_is_a_noop_when_role_owns_the_table(self, migration, monkeypatch) -> None:
+        """An owner's access works via ownership regardless of any GRANT/
+        REVOKE bookkeeping, so "the owner can still query the table
+        afterward" proves nothing either way — REVOKE on an owner is
+        harmless but also pointless. The only real signal that downgrade()
+        actually skipped the REVOKE (not just that it was harmless) is that
+        no REVOKE statement was issued at all — checked here by spying on
+        op.execute rather than inferring it from downstream behavior.
+        """
+        from alembic.operations import Operations
+        from alembic.runtime.migration import MigrationContext
+
+        conn = _live_connection()
+        trans = conn.begin()
+        try:
+            owner = conn.exec_driver_sql(
+                "SELECT tableowner FROM pg_tables WHERE tablename = 'applications'"
+            ).scalar()
+            assert owner, "applications table not found on this dev DB"
+            monkeypatch.setenv("AUTH_DB_USER", owner)
+
+            executed = []
+            monkeypatch.setattr(migration.op, "execute", lambda sql: executed.append(sql))
+
+            ctx = MigrationContext.configure(conn)
+            with Operations.context(ctx):
+                migration.downgrade()
+
+            revoke_statements = [s for s in executed if "REVOKE" in s]
+            assert revoke_statements == [], (
+                f"downgrade() issued REVOKE for the table owner: {revoke_statements}"
+            )
+        finally:
+            trans.rollback()
+            conn.close()
+
+    def test_downgrade_revokes_when_role_is_not_the_owner(self, migration, monkeypatch) -> None:
+        from alembic.operations import Operations
+        from alembic.runtime.migration import MigrationContext
+
+        conn = _live_connection()
+        trans = conn.begin()
+        try:
+            owner = conn.exec_driver_sql(
+                "SELECT tableowner FROM pg_tables WHERE tablename = 'applications'"
+            ).scalar()
+            non_owner_role = "ai4i_user" if owner != "ai4i_user" else "postgres"
+            grantee_exists = conn.exec_driver_sql(
+                "SELECT 1 FROM pg_roles WHERE rolname = %s", (non_owner_role,)
+            ).scalar()
+            if not grantee_exists:
+                pytest.skip(f"role {non_owner_role!r} does not exist on this dev DB")
+
+            conn.exec_driver_sql(
+                f'GRANT SELECT, INSERT, UPDATE, DELETE ON applications TO "{non_owner_role}"'
+            )
+            monkeypatch.setenv("AUTH_DB_USER", non_owner_role)
+
+            ctx = MigrationContext.configure(conn)
+            with Operations.context(ctx):
+                migration.downgrade()
+
+            remaining = conn.exec_driver_sql(
+                "SELECT privilege_type FROM information_schema.role_table_grants "
+                "WHERE table_name = 'applications' AND grantee = %s",
+                (non_owner_role,),
+            ).fetchall()
+            assert remaining == [], f"expected no privileges left for {non_owner_role!r}, found {remaining}"
+        finally:
+            trans.rollback()
+            conn.close()
