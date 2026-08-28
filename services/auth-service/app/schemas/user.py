@@ -3,23 +3,37 @@ User request/response schemas.
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 from uuid import UUID
 
-from pydantic import AliasChoices, EmailStr, Field
+from pydantic import AliasChoices, EmailStr, Field, field_validator
 
 from app.models.user import CreationType
 from app.schemas.base import BaseSchema
 from app.schemas.common import SuccessResponse
+from app.schemas.text_validators import check_name_chars, clean_text
 
 
 class UserUpdate(BaseSchema):
-    # BaseSchema sets str_strip_whitespace=True, so whitespace is trimmed
-    # before min_length is checked — "" and "   " are both rejected.
-    full_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    # Same rules TenantUserUpdate applies to this column (tenant.py): cleaned
+    # of invisible characters and restricted to name-like text, so a value
+    # accepted on one path can't be rejected on another.
+    full_name: Optional[str] = Field(None, min_length=2, max_length=255)
     phone_number: Optional[str] = Field(None, max_length=20)
     timezone: Optional[str] = Field(None, max_length=50)
     avatar_url: Optional[str] = Field(None, max_length=500)
+
+    @field_validator("full_name", mode="before")
+    @classmethod
+    def _clean_full_name(cls, v: Any) -> Any:
+        return clean_text(v)
+
+    @field_validator("full_name", mode="after")
+    @classmethod
+    def _validate_full_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return check_name_chars(v)
+        return v
 
 
 class UserListResponse(BaseSchema):
