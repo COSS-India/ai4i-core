@@ -179,10 +179,10 @@ consumer gets.
 | `REDIS_TIMEOUT` | `10` | `10` | Socket timeout. Passed to `init_redis(socket_timeout=...)` by `bootstrap.lifecycle.infra()`; **inert for `payperuse_consumer`**, which does not pass it. |
 | `REDIS_MAX_CONNECTIONS` | `50` | `50` | **Currently inert in both** — `ai4i_core.bootstrap.init_redis` exposes no pool-size knob. |
 
-Cache prefixes and TTLs (`PPU_PRICING_CACHE_*`, `PPU_BILLED_KEY_*`) are
+Cache prefixes and TTLs (`PRICING_CACHE_*`, `BILLED_KEY_*`) are
 constants on `Constants` in the root `config.py`, not environment variables. The
 dedup key TTL is deliberately 1 hour — see the comment on
-`Constants.PPU_BILLED_KEY_TTL`.
+`Constants.BILLED_KEY_TTL`.
 
 The commit cadence (`COMMIT_BATCH_SIZE = 100`, `COMMIT_INTERVAL_S = 5.0`) is a
 module constant in `consumers/payperuse_consumer/main.py`, deliberately not a

@@ -30,7 +30,7 @@ from app.services.api_key_service import APIKeyService
 from app.services.auth_service import AuthService
 from app.services.cache_service import CacheService
 from app.services.oauth_service import OAuthService
-from app.services.ppu_notification_service import PPUNotificationService
+from app.services.quota_notification_service import QuotaNotificationService
 from app.services.role_service import RoleService
 from app.services.tenant_service import TenantService
 from app.services.token_service import TokenService
@@ -136,11 +136,11 @@ def get_tenant_service(
     )
 
 
-def get_ppu_notification_service(
+def get_quota_notification_service(
     db: AsyncSession = Depends(get_db),
     email_client: EmailClient = Depends(get_email_client),
-) -> PPUNotificationService:
-    return PPUNotificationService(
+) -> QuotaNotificationService:
+    return QuotaNotificationService(
         role_repo=RoleRepository(db),
         email_client=email_client,
     )

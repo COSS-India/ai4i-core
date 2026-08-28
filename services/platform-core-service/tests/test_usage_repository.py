@@ -1,8 +1,8 @@
-"""Unit tests for PPUUsageRepository.get_tier_names()'s in-process TTL cache,
+"""Unit tests for UsageRepository.get_tier_names()'s in-process TTL cache,
 and for the get_tenant_budgets lookup-instant selection.
 
-The cache lives at module scope (app.repositories.pay_per_use.ppu_usage_repository),
-not on the instance, since PPUUsageRepository is constructed fresh per request. That
+The cache lives at module scope (app.repositories.pay_per_use.usage_repository),
+not on the instance, since UsageRepository is constructed fresh per request. That
 means state can leak between test functions unless it's reset — hence the autouse
 fixture below.
 """
@@ -14,9 +14,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.repositories.pay_per_use import ppu_usage_repository as repo_module
-from app.repositories.pay_per_use.ppu_usage_repository import (
-    PPUUsageRepository,
+from app.repositories.pay_per_use import usage_repository as repo_module
+from app.repositories.pay_per_use.usage_repository import (
+    UsageRepository,
     _budget_lookup_instant,
     _end_of_month,
 )
@@ -34,7 +34,7 @@ def _reset_tier_cache():
 
 def _make_db(rows: list[SimpleNamespace]) -> AsyncMock:
     """Fake AsyncSession whose execute() returns rows shaped like the
-    (PPUTier.id, PPUTier.name) tuples get_tier_names() selects."""
+    (Tier.id, Tier.name) tuples get_tier_names() selects."""
     db = AsyncMock()
     result = SimpleNamespace(all=lambda: rows)
     db.execute = AsyncMock(return_value=result)

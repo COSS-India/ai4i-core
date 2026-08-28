@@ -8,7 +8,7 @@ from sqlalchemy.sql import func
 from app.models import Base
 
 
-class PPUTier(Base):
+class Tier(Base):
     __tablename__ = "tiers"
     __table_args__ = (
         UniqueConstraint("name", name="uq_tiers_name"),
@@ -29,14 +29,14 @@ class PPUTier(Base):
     )
 
     tier_quotas = relationship(
-        "PPUTierQuota",
+        "TierQuota",
         back_populates="tier",
         cascade="all, delete-orphan",
     )
-    tenant_assignments = relationship("PPUTenantTierAssignment", back_populates="tier")
+    tenant_assignments = relationship("TenantTierAssignment", back_populates="tier")
 
 
-class PPUTierQuota(Base):
+class TierQuota(Base):
     __tablename__ = "tier_quotas"
     __table_args__ = (
         UniqueConstraint("tier_id", "inference_name", name="uq_tier_quotas_tier_inference"),
@@ -62,4 +62,4 @@ class PPUTierQuota(Base):
         onupdate=func.now(),
     )
 
-    tier = relationship("PPUTier", back_populates="tier_quotas")
+    tier = relationship("Tier", back_populates="tier_quotas")

@@ -10,9 +10,9 @@ from pydantic_settings import BaseSettings
 
 
 class Constants:
-    PPU_PRICING_CACHE_PREFIX = "ppu:svc:"
-    PPU_PRICING_CACHE_TTL = 3600
-    PPU_BILLED_KEY_PREFIX = "ppu:billed:"
+    PRICING_CACHE_PREFIX = "ppu:svc:"
+    PRICING_CACHE_TTL = 3600
+    BILLED_KEY_PREFIX = "ppu:billed:"
     # Only needs to outlive the redelivery window after a consumer crash/
     # restart (one message, redelivered within seconds of the consumer group
     # rejoining under PER_MESSAGE commit) — 1h is generous headroom for that,
@@ -20,7 +20,7 @@ class Constants:
     # Redis's keyspace (2M+ keys, ~40% of maxmemory), risking allkeys-lru
     # evicting unrelated caches (auth:apikey:*, core:service:*) once memory
     # pressure hit.
-    PPU_BILLED_KEY_TTL = 3600
+    BILLED_KEY_TTL = 3600
     # §7.1 retry ladder: the in-hand Message is retried this many times before
     # being dropped with a CRITICAL log line.
     MAX_ATTEMPTS = 3
@@ -32,7 +32,7 @@ class Constants:
     CHUNK_DEADLINE_S = 120.0
 
 
-class PPUSettings(BaseSettings):
+class Settings(BaseSettings):
     TOPIC_PAY_PER_USE: str = Field(description="Kafka topic carrying OTel spans")
     AUTH_SERVICE_URL: str = Field(description="Base URL of auth-service for internal PPU state updates")
 
@@ -43,5 +43,5 @@ class PPUSettings(BaseSettings):
 
 
 @lru_cache(maxsize=1)
-def get_settings() -> PPUSettings:
-    return PPUSettings()
+def get_settings() -> Settings:
+    return Settings()
