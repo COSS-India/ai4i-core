@@ -1,4 +1,4 @@
-"""PPU usage service — computes spend summary from DB rows."""
+"""Usage service — computes spend summary from DB rows."""
 from __future__ import annotations
 
 import asyncio
@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai4i_core.ppu import get_inference_unit_map
 from app.core.exceptions import EntityNotFoundError
-from app.repositories.pay_per_use.ppu_usage_repository import PPUUsageRepository
+from app.repositories.pay_per_use.usage_repository import UsageRepository
 from app.utils.billing_month import shift_billing_month
 from app.schemas.pay_per_use.usage import (
     SpendItem,
@@ -293,8 +293,8 @@ async def _resolve_tenant_names(
         return {}
 
 
-class PPUUsageService:
-    def __init__(self, repo: PPUUsageRepository) -> None:
+class UsageService:
+    def __init__(self, repo: UsageRepository) -> None:
         self._repo = repo
 
     async def _tenant_assignments_and_usage(
