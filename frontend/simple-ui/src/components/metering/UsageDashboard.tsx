@@ -46,6 +46,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
     parseQueryError,
     refreshNonce,
     effectiveTenantId,
+    keyMetricsSupplement,
   } = dash;
 
   const requestVolumeSection = overview ? (
@@ -75,7 +76,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
       <MeteringAlerts errorMessage={primaryError} dataStateBanner={dataStateBanner} />
 
       {showKeyMetrics && overview ? (
-        <PlatformAdoptionSection data={overview} />
+        <PlatformAdoptionSection data={overview} supplement={keyMetricsSupplement} />
       ) : null}
 
       <MeteringControls

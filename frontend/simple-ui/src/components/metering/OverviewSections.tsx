@@ -1,7 +1,7 @@
 import { SimpleGrid } from "@chakra-ui/react";
 import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
-import type { OverviewResponse } from "../../types/metering";
+import type { KeyMetricsSupplement, OverviewResponse } from "../../types/metering";
 import {
   formatMeteringKpiValue,
   formatTenantLabel,
@@ -112,6 +112,7 @@ export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProp
 
 interface PlatformAdoptionSectionProps {
   data: OverviewResponse;
+  supplement?: KeyMetricsSupplement;
 }
 
 function formatGrowthPct(value: number | null | undefined): string {
@@ -120,7 +121,10 @@ function formatGrowthPct(value: number | null | undefined): string {
   return `${sign}${value.toFixed(1)}%`;
 }
 
-export const PlatformAdoptionSection: React.FC<PlatformAdoptionSectionProps> = ({ data }) => {
+export const PlatformAdoptionSection: React.FC<PlatformAdoptionSectionProps> = ({
+  data,
+  supplement,
+}) => {
   const adoption = data.platform_adoption;
   const section = METERING.SECTIONS.KEY_METRICS;
 
@@ -130,9 +134,9 @@ export const PlatformAdoptionSection: React.FC<PlatformAdoptionSectionProps> = (
     total_tenants: adoption.total_tenants,
     new_tenants_15d: adoption.new_tenants_15d,
     active_30d: adoption.active_30d,
-    total_models: adoption.total_models,
-    active_models_30d: adoption.active_models_30d,
-    tenants_budget_exhausted: adoption.tenants_budget_exhausted,
+    total_models: supplement?.total_models,
+    active_models_30d: supplement?.active_models_30d,
+    tenants_budget_exhausted: supplement?.tenants_budget_exhausted,
     model_usage_growth_pct: adoption.model_usage_growth_pct,
   };
 
