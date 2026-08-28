@@ -928,6 +928,31 @@ class TenantService:
             )
         await platform_core_db.commit()
 
+    @staticmethod
+    async def _has_active_ppu_assignment(
+        tenant_id: int, platform_core_db: AsyncSession
+    ) -> bool:
+        """Plain existence check (no lock — _upsert_ppu_tenant_tier_assignment
+        takes its own FOR UPDATE lock if/when it actually writes) used to
+        distinguish a genuine no-op reassignment from a partial-failure
+        state: tenants.tier_id committed on a prior attempt, but that
+        attempt's write to ppu_tenant_tier_assignments never landed (core
+        DB down, constraint, network — assign_tenant_tier does not swallow
+        that failure, so the caller sees a 500 and may retry the identical
+        PATCH)."""
+        now = datetime.now(timezone.utc)
+        row = (
+            await platform_core_db.execute(
+                text(
+                    "SELECT 1 FROM ppu_tenant_tier_assignments"
+                    " WHERE tenant_id = :tenant_id"
+                    "   AND effective_from <= :now AND effective_to > :now"
+                ),
+                {"tenant_id": str(tenant_id), "now": now},
+            )
+        ).first()
+        return row is not None
+
     async def assign_tenant_tier(
         self,
         current_user: User,
@@ -939,6 +964,13 @@ class TenantService:
 
         Restricted to ADMIN: this changes what a tenant is billed against,
         the same trust level as PATCH /auth/tenants/{id}/budget.
+
+        409 TENANT_ALREADY_ON_TIER is only raised when tenants.tier_id
+        already matches AND an active ppu_tenant_tier_assignments row
+        exists. If the row is missing (a prior attempt committed tier_id
+        then failed before writing it — see _upsert_ppu_tenant_tier_assignment,
+        which is required/unguarded on purpose), retrying the identical
+        PATCH repairs the missing row instead of dead-ending on 409.
         """
         roles = await self._roles.get_user_roles(current_user.id)
         if RoleName.ADMIN.value not in roles:
@@ -976,23 +1008,36 @@ class TenantService:
                 detail={"code": "TIER_NOT_FOUND", "message": f"Tier '{tier_id_str}' not found."},
             )
 
-        if tenant.tier_id == tier_uuid:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "TENANT_ALREADY_ON_TIER",
-                    "message": f"Tenant '{tenant_id}' is already on tier '{row.name}'.",
-                },
+        already_on_tier = tenant.tier_id == tier_uuid
+        if already_on_tier:
+            # Not necessarily a genuine no-op: a prior attempt may have
+            # committed tenants.tier_id and then failed before writing
+            # ppu_tenant_tier_assignments (that write is required, not
+            # best-effort, so a failure there propagates as a 500 rather
+            # than being swallowed). Reject only when an active assignment
+            # row actually exists — otherwise fall through and repair it,
+            # so retrying the identical PATCH after a partial failure isn't
+            # a dead end.
+            if await self._has_active_ppu_assignment(tenant_id, platform_core_db):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "TENANT_ALREADY_ON_TIER",
+                        "message": f"Tenant '{tenant_id}' is already on tier '{row.name}'.",
+                    },
+                )
+        else:
+            await self._tenants.update(
+                tenant, {"tier_id": tier_uuid, "updated_by": current_user.id}
             )
-
-        await self._tenants.update(
-            tenant, {"tier_id": tier_uuid, "updated_by": current_user.id}
-        )
-        await self._tenants.save_and_refresh(tenant)
+            await self._tenants.save_and_refresh(tenant)
 
         # Reconnect to the actual enforcement path — see
         # _upsert_ppu_tenant_tier_assignment's docstring for why this is
-        # required, not optional, here.
+        # required, not optional, here. Unguarded deliberately: a failure
+        # here must surface (500), not degrade silently — the repair path
+        # for a retry is the already_on_tier branch above, not a swallowed
+        # exception.
         await self._upsert_ppu_tenant_tier_assignment(
             tenant, tier_uuid, platform_core_db, current_user.id
         )

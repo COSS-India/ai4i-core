@@ -111,11 +111,70 @@ class TestAssignTenantTierAuthAndValidation:
         svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant(tier_id=tier_id))
         tier_row = MagicMock(id=tier_id)
         tier_row.name = "Gold"
-        db = _core_db(tier_row=tier_row)
+        # 1st execute: tier lookup. 2nd: an active assignment DOES exist —
+        # genuinely a no-op, must still 409.
+        active_row = MagicMock()
+        db = _core_db(tier_row=[tier_row, active_row])
         with pytest.raises(HTTPException) as exc_info:
             await svc.assign_tenant_tier(_admin_user(), 1, str(tier_id), db)
         assert exc_info.value.status_code == 409
         assert exc_info.value.detail["code"] == "TENANT_ALREADY_ON_TIER"
+        svc._tenants.update.assert_not_awaited()
+
+
+class TestAssignTenantTierIdempotentRepair:
+    """The failure mode of the write-through itself: tenants.tier_id can
+    commit on one PATCH, then the required ppu_tenant_tier_assignments
+    write can fail (core DB down, constraint, network) — unguarded on
+    purpose, so that failure surfaces as a 500 rather than being silently
+    swallowed. What must not happen is the retry becoming a dead end."""
+
+    @pytest.mark.asyncio
+    async def test_retry_after_partial_failure_repairs_missing_assignment_row(self) -> None:
+        """tenant.tier_id already equals the requested tier (committed by
+        the failed first attempt) but no active assignment row exists (that
+        attempt's ppu write never landed) — must repair by inserting the
+        row, not reject with TENANT_ALREADY_ON_TIER, or the admin has no
+        way to fix this tenant through the API at all."""
+        tier_id = uuid4()
+        tenant = _tenant(tier_id=tier_id, allocated_budget=Decimal("100"))
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
+        tier_row = MagicMock(id=tier_id)
+        tier_row.name = "Gold"
+        # 1st execute: tier lookup. 2nd: no active assignment (the repair
+        # case). 3rd: "existing row?" inside the upsert -> none. 4th: the
+        # INSERT itself.
+        db = _core_db(tier_row=[tier_row, None, None, None])
+
+        result = await svc.assign_tenant_tier(_admin_user(), 1, str(tier_id), db)
+
+        assert result is tenant
+        svc._tenants.update.assert_not_awaited()  # tier_id already correct — nothing to change there
+        insert_call = db.execute.await_args_list[-1]
+        assert "INSERT INTO ppu_tenant_tier_assignments" in str(insert_call.args[0])
+        svc._api_keys.clear_quota_flags_for_tenant.assert_awaited_once_with(1)
+        svc._api_keys.set_tier_id_for_tenant.assert_awaited_once_with(1, str(tier_id))
+
+    @pytest.mark.asyncio
+    async def test_genuine_reassignment_still_updates_tenant_row(self) -> None:
+        """Sanity check the repair path doesn't leak into the normal
+        (different-tier) case: tenants.tier_id must still be updated when
+        it's actually changing."""
+        old_tier_id, new_tier_id = uuid4(), uuid4()
+        tenant = _tenant(tier_id=old_tier_id)
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
+        svc._tenants.update = AsyncMock()
+        svc._tenants.save_and_refresh = AsyncMock()
+        tier_row = MagicMock(id=new_tier_id)
+        tier_row.name = "Platinum"
+        db = _core_db(tier_row=[tier_row, None, None])  # tier lookup, no existing assignment, INSERT
+
+        await svc.assign_tenant_tier(_admin_user(), 1, str(new_tier_id), db)
+
+        svc._tenants.update.assert_awaited_once()
+        assert svc._tenants.update.await_args.args[1]["tier_id"] == new_tier_id
 
 
 class TestAssignTenantTierEnforcementReconnection:
