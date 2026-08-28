@@ -29,7 +29,6 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai4i_core.ppu import get_inference_types
@@ -43,6 +42,7 @@ from app.models.tenant import Tenant, TenantStatus
 from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.application_repository import ApplicationRepository
 from app.repositories.tenant_repository import TenantRepository
+from app.services import budget_usage
 from app.services.cache_service import CacheService
 
 logger = logging.getLogger(__name__)
@@ -462,6 +462,7 @@ class APIKeyService:
         allocated_percentage: Optional[Decimal] = None,
         *,
         caller_tenant_id: Optional[int] = None,
+        platform_core_db: Optional[AsyncSession] = None,
     ) -> tuple[str, APIKey]:
         """
         Generate a hex API key, persist to DB, cache in Redis.
@@ -564,6 +565,12 @@ class APIKeyService:
         )
         await self._repo.create(api_key)
         await self._repo.commit()
+
+        if allocated_budget is not None:
+            # Seed half of the write-through gap — see budget_usage.write_budget_snapshot's
+            # docstring. Best-effort: a platform-core outage here must not
+            # roll back the key that was just created.
+            await budget_usage.write_budget_snapshot({api_key.id: allocated_budget}, platform_core_db)
 
         if self.application_may_use_api_keys(application, tenant):
             payload = self._build_cache_payload(
@@ -827,38 +834,6 @@ class APIKeyService:
         self, offset: int = 0, limit: int = 100, application_id: Optional[int] = None
     ) -> list[tuple[APIKey, Application]]:
         return await self._repo.list_all_with_applications(offset, limit, application_id)
-
-    @staticmethod
-    async def fetch_budget_usage(
-        key_ids: list[int], platform_core_db: Optional[AsyncSession]
-    ) -> dict[int, tuple[Decimal, Decimal]]:
-        """Batch-fetch (used, snapshot) from platform-core's budget_usage
-        ledger for GET /auth/api-keys/all. There is no ORM relation across
-        the DB boundary — budget_usage.api_key_id is not a real FK (see
-        migration e9f0a1b2c3d4's comment on api_key_application_id_fkey) —
-        so this is a plain batched raw-SQL lookup, the same cross-DB pattern
-        create_api_key uses for tier_id. Missing entries mean "no usage
-        recorded yet"; callers treat that as used=0.
-        """
-        if not key_ids or platform_core_db is None:
-            return {}
-        try:
-            rows = (
-                await platform_core_db.execute(
-                    text(
-                        "SELECT api_key_id, api_key_budget_used, api_key_budget_snap"
-                        "   FROM budget_usage"
-                        "  WHERE api_key_id = ANY((:key_ids)::int[])"
-                    ),
-                    {"key_ids": key_ids},
-                )
-            ).all()
-        except Exception as exc:
-            logger.warning("Failed to fetch budget_usage for keys %s: %s", key_ids, exc)
-            return {}
-        return {
-            row.api_key_id: (row.api_key_budget_used, row.api_key_budget_snap) for row in rows
-        }
 
     async def get_by_api_key(self, api_key_value: str) -> Optional[APIKey]:
         return await self._repo.get_by_api_key(api_key_value)
