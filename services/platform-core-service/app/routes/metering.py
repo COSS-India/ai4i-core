@@ -817,6 +817,11 @@ async def get_model_consumption(
     window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
     tenant_id: Optional[int] = Query(None, ge=1, description="Narrow to a specific tenant (admin only)"),
     limit: int = Query(10, ge=1, le=25, description="Max models to return in top_models"),
+    task_types: Optional[str] = Query(
+        None, description="Comma-separated Model Task Types to filter the drilldown/KPIs to "
+        "(e.g. llm,nmt). Defaults to all task types (LLM + NLP). Unsupported values are "
+        "rejected with 422."
+    ),
     svc: MeteringService = Depends(get_metering_service),
     redis: aioredis.Redis = Depends(get_redis),
 ):
@@ -824,21 +829,25 @@ async def get_model_consumption(
 
     is_admin = _is_platform_admin(request)
     scope_tenant, scope_tenant_name = await _resolve_tenant_scope(request, svc, tenant_id, is_admin)
+    task_type_filter = _parse_task_types(task_types)
 
-    # v3: TopModelRow/ServiceModelRow gained a required `model_id` field.
-    # Bumped from v2 so a payload cached just before this deploy (with no
-    # model_id) can't be served back and fail ModelConsumptionResponse
-    # validation with a 500 for up to the 60s TTL — it starts from a cold key.
+    # v4: no longer implicitly LLM-only — the endpoint now covers every task
+    # type (or the requested subset via `task_types`). Bumped from v3 so a
+    # payload cached under the old LLM-only behavior can't be served back
+    # under the new default.
     cache_key = (
-        f"metering:model-consumption:v3:{window}:{limit}:{scope_tenant_name or 'all'}:"
-        f"{_caller_role_label(request)}"
+        f"metering:model-consumption:v4:{window}:{limit}:{scope_tenant_name or 'all'}:"
+        f"{','.join(task_type_filter) if task_type_filter else 'all'}:{_caller_role_label(request)}"
     )
     cached = await _cache_get(redis, cache_key)
     if cached:
         return cached
 
     results = await asyncio.gather(
-        svc.model_breakdown(tenant=scope_tenant_name, time_range=window, tenant_id=scope_tenant),
+        svc.model_breakdown(
+            tenant=scope_tenant_name, time_range=window, tenant_id=scope_tenant,
+            task_types=task_type_filter,
+        ),
         return_exceptions=True,
     )
     (breakdown,), degraded = _partition_results(results)
@@ -847,7 +856,7 @@ async def get_model_consumption(
     # get_metering_service share `db`), and AsyncSession is not safe for
     # concurrent use — see the same note on tenant_count(). registry_model_count()
     # never raises (catches internally), so it can't regress `degraded`.
-    total_models = await svc.registry_model_count()
+    total_models = await svc.registry_model_count(task_types=task_type_filter)
 
     org = scope_tenant_name
 
@@ -866,7 +875,10 @@ async def get_model_consumption(
     generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     response = ModelConsumptionResponse(
-        scope=Scope(role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window),
+        scope=Scope(
+            role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window,
+            task_types=task_type_filter,
+        ),
         summary=summary,
         top_models=top_models,
         top_models_total_requests=top_models_total_requests,

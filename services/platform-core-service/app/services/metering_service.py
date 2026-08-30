@@ -527,8 +527,9 @@ class MeteringService:
     async def model_breakdown(
         self, tenant: Optional[str], time_range: Optional[str],
         tenant_id: Optional[str] = None,
+        task_types: Optional[list[str]] = None,
     ) -> dict:
-        """LLM usage grouped by BOTH `service_id` (the tenant-facing service
+        """Usage grouped by BOTH `service_id` (the tenant-facing service
         the client called — the OpenAI `model` field as sent) AND `model_id`
         (the Registry's stable identity for the model actually behind that
         service, stamped server-side by inference-service at MMS-resolution
@@ -546,6 +547,13 @@ class MeteringService:
         name — absent on failures, can differ between the buffered/streaming
         paths) is intentionally never grouped or filtered on; `model_name`
         below is always the Registry's name for `model_id`, not this label.
+
+        `task_types`, when given, scopes the query to those task types only
+        (LLM + NLP alike — same `build_task_type_selector` used by
+        service_breakdown/usage_concentration/etc); `None` covers every task
+        type. NOTE: native units below are still LLM-tokens-only — an NLP
+        row will report `native_units=0` until that's generalized to
+        SERVICE_BREAKDOWN_CONFIG's per-task-type metric (tracked separately).
 
         Fires 3 queries in one asyncio.gather: total requests, successful
         requests, and tokens processed — each grouped by `(service_id,
@@ -596,13 +604,21 @@ class MeteringService:
         self-heals as pre-upgrade series age out of the window; there's no
         after-the-fact fix, same reasoning as the tenant-id cutover.
         """
+        # No task_types filter -> every task type's endpoints (LLM chat AND
+        # every /api/v1/{task}/inference path), via the default
+        # INFERENCE_ENDPOINT_REGEX build_base_selectors already applies when
+        # endpoint_regex is omitted. A given task_types list narrows to just
+        # those tasks' endpoints, same selector build used elsewhere
+        # (service_breakdown, usage_concentration, /overview).
+        task_sel = build_task_type_selector(task_types)
         base_sel = build_base_selectors(
-            inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX,
+            inference_only=True, tenant=tenant, extra=[task_sel] if task_sel else None,
             tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE,
         )
         success_sel = build_base_selectors(
-            inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX,
-            extra=['status_code=~"2.."'], tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE,
+            inference_only=True, tenant=tenant,
+            extra=[task_sel, 'status_code=~"2.."'] if task_sel else ['status_code=~"2.."'],
+            tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE,
         )
         # telemetry_obsv_llm_tokens_processed_sum now carries tenant_id
         # alongside tenant (see metrics.py) — prefer it, same precedence as
@@ -619,14 +635,23 @@ class MeteringService:
         group_by = "service_id, model_id"
         total_q = sum_over_window_by(f"{_METRIC}{base_sel}", group_by, time_range)
         success_q = sum_over_window_by(f"{_METRIC}{success_sel}", group_by, time_range)
-        tokens_q = sum_over_window_by(
-            f"telemetry_obsv_llm_tokens_processed_sum{tokens_sel}", group_by, time_range
+        # Only fire the (LLM-only) tokens query when LLM is actually in
+        # scope. Firing it unconditionally under an explicit NLP-only
+        # task_types filter (e.g. ["nmt"]) would pull in an LLM model_id
+        # that has NO rows in total_q/success_q under that filter — model_ids
+        # below is a union across all three, so it'd surface a ghost
+        # "0 requests" row for a model that isn't even part of the requested
+        # task types.
+        include_llm_tokens = task_types is None or "llm" in task_types
+        tokens_q = (
+            sum_over_window_by(f"telemetry_obsv_llm_tokens_processed_sum{tokens_sel}", group_by, time_range)
+            if include_llm_tokens else None
         )
 
         raw = await asyncio.gather(
             self._client.query(total_q),
             self._client.query(success_q),
-            self._client.query(tokens_q),
+            self._client.query(tokens_q) if tokens_q else asyncio.sleep(0, result=[]),
             return_exceptions=True,
         )
 
@@ -736,22 +761,27 @@ class MeteringService:
             if m != ""
         }
 
+        # Same population the Prometheus query itself was scoped to: the
+        # requested task_types, or — when unfiltered — every task type this
+        # endpoint knows about (not just "llm"), so a model registered under
+        # any task type is validated rather than only LLM ones.
+        model_registry_task_types = task_types or list(SERVICE_BREAKDOWN_CONFIG)
         model_names: dict = {}
         model_registry_checked = False
         if self._model_repo is not None and model_ids:
             try:
                 model_names = await self._model_repo.get_model_names(
-                    list(model_ids), task_types=["llm"]
+                    list(model_ids), task_types=model_registry_task_types
                 )
                 model_registry_checked = True
             except Exception:
                 logger.warning("model_breakdown: model registry lookup failed", exc_info=True)
 
-        # model_id with no current Registry row UNDER task_types=["llm"] — a
-        # DEPRECATED model still has a row (see get_model_names) so it's not
-        # a ghost on that basis, only a hard-deleted/stale/never-existent id,
-        # OR one registered under a different task type, is. That second
-        # case matters here specifically: without the llm filter, a model_id
+        # model_id with no current Registry row under `model_registry_task_types`
+        # — a DEPRECATED model still has a row (see get_model_names) so it's
+        # not a ghost on that basis, only a hard-deleted/stale/never-existent
+        # id, OR one registered under a different task type, is. That second
+        # case matters here specifically: without this filter, a model_id
         # tagged e.g. "asr" in the Registry but actually serving /chat
         # traffic (a Registry data error, not a deletion) would land in
         # active_models without ever counting toward registry_model_count's
@@ -795,34 +825,34 @@ class MeteringService:
             "filters": {"tenant": tenant, "time_range": time_range or "all"},
         }
 
-    async def registry_model_count(self) -> Optional[int]:
-        """Count of registered LLM model VERSIONS (`mm_models` rows with
-        task.type == "llm") — ACTIVE and DEPRECATED both count (a deprecated
-        version is still "in the Registry", just not the currently-
-        recommended one to use).
+    async def registry_model_count(self, task_types: Optional[list[str]] = None) -> Optional[int]:
+        """Count of registered model VERSIONS (`mm_models` rows) — ACTIVE and
+        DEPRECATED both count (a deprecated version is still "in the
+        Registry", just not the currently-recommended one to use).
 
-        Scoped to task_types=["llm"] to match model_breakdown's own universe
-        (model_totals/model_consumption only ever cover LLM traffic — see
-        model_breakdown's LLM_CHAT_ENDPOINT_REGEX), and identity is model_id
-        (one row per version) to match model_totals' own grain, NOT distinct
-        model name — a model with 3 concurrently-registered versions counts
-        as 3 here, same as it does in the DEFAULT (no `include_deprecated`
-        override) `/api/v1/models?task_types=llm` call's `meta.total` (see
-        ModelRepository.count_models). NOT guaranteed to match every call to
-        that endpoint: ModelService.list_models never forwards its own
-        `include_deprecated` param to `count_models`, so `?task_types=llm&
-        include_deprecated=false` already returns an `items` list narrower
-        than its own `meta.total` — a pre-existing, separate bug this
-        method's parity claim inherits rather than causes.
+        Scoped to the SAME `task_types` model_breakdown's own query was
+        scoped to (or every known task type when unfiltered — see
+        model_breakdown's `model_registry_task_types`), and identity is
+        model_id (one row per version) to match model_totals' own grain, NOT
+        distinct model name — a model with 3 concurrently-registered versions
+        counts as 3 here, same as it does in the DEFAULT (no
+        `include_deprecated` override) `/api/v1/models?task_types=...`
+        call's `meta.total` (see ModelRepository.count_models). NOT
+        guaranteed to match every call to that endpoint: ModelService.
+        list_models never forwards its own `include_deprecated` param to
+        `count_models`, so `?task_types=llm&include_deprecated=false`
+        already returns an `items` list narrower than its own `meta.total`
+        — a pre-existing, separate bug this method's parity claim inherits
+        rather than causes.
 
         This keeps `total_models` and `model_consumption_kpis`'s
-        `active_models` (also model_id-grained and llm-scoped — see
-        get_model_names' `task_types` param and that KPI method's
+        `active_models` (also model_id-grained and identically task-scoped —
+        see get_model_names' `task_types` param and that KPI method's
         docstring) counting the same population MOST of the time — not
         guaranteed: a registry-lookup failure inside model_breakdown leaves
         model_totals' ghosts unfiltered (see model_breakdown's comment on
         `model_ghosts`), which is the one path where `active_models` can
-        still exceed this count even after the llm-scoping here.
+        still exceed this count even after the task-type scoping here.
 
         Not tenant-scoped: ``mm_models`` has no tenant column — the Registry is
         a shared catalog, not partitioned per institution — so this value is
@@ -834,7 +864,9 @@ class MeteringService:
         if self._model_repo is None:
             return None
         try:
-            return await self._model_repo.count_models(task_types=["llm"])
+            return await self._model_repo.count_models(
+                task_types=task_types or list(SERVICE_BREAKDOWN_CONFIG)
+            )
         except Exception:
             logger.warning("registry_model_count: DB query failed", exc_info=True)
             return None

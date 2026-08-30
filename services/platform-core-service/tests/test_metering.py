@@ -15,6 +15,7 @@ import pytest
 
 from app.utils.metering_promql_builder import (
     API_KEY_AUTH_TYPE,
+    INFERENCE_ENDPOINT_REGEX,
     LLM_CHAT_ENDPOINT_REGEX,
     PROMETHEUS_API_PATH_LABEL,
     SERVICE_BREAKDOWN_CONFIG,
@@ -719,7 +720,9 @@ class TestModelBreakdown:
             assert 'tenant_id="7"' in promql
             assert 'tenant="Acme Corp"' not in promql
 
-    async def test_llm_only_endpoint_selector_used(self):
+    async def test_unfiltered_selector_covers_every_task_type(self):
+        """No task_types filter -> every task type's endpoints (LLM chat AND
+        every /api/v1/{task}/inference path), not just LLM."""
         client = MagicMock()
         client.query = AsyncMock(return_value=[])
         svc = MeteringService(client=client)
@@ -732,9 +735,118 @@ class TestModelBreakdown:
         ]
         assert len(request_calls) == 2  # total + success
         for promql in request_calls:
-            assert LLM_CHAT_ENDPOINT_REGEX in promql
+            # Broad INFERENCE_ENDPOINT_REGEX, not narrowed to just the LLM
+            # chat pattern (which is itself a substring of the broad regex,
+            # so check the exact narrow selector form is absent instead).
+            assert f'{PROMETHEUS_API_PATH_LABEL}=~"{LLM_CHAT_ENDPOINT_REGEX}"' not in promql
+            assert INFERENCE_ENDPOINT_REGEX in promql
             assert "by(service_id, model_id)" in promql
             assert "by(model)" not in promql
+
+    async def test_task_types_filter_narrows_endpoint_selector(self):
+        """A task_types filter scopes the query to just those tasks'
+        endpoints, via the same build_task_type_selector used elsewhere."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=[])
+        svc = MeteringService(client=client)
+
+        await svc.model_breakdown(tenant=None, time_range="24h", task_types=["nmt"])
+
+        request_calls = [
+            call[0][0] for call in client.query.call_args_list
+            if "telemetry_obsv_requests_total" in call[0][0]
+        ]
+        assert len(request_calls) == 2  # total + success
+        for promql in request_calls:
+            assert "/api/v1/nmt/inference" in promql
+
+    async def test_task_types_filter_narrows_to_audio_task_type(self):
+        """Same as above, for an audio task type (asr) — Model Task Type
+        support isn't just LLM+text-NLP, audio tasks must filter correctly
+        too."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=[])
+        svc = MeteringService(client=client)
+
+        await svc.model_breakdown(tenant=None, time_range="24h", task_types=["asr"])
+
+        request_calls = [
+            call[0][0] for call in client.query.call_args_list
+            if "telemetry_obsv_requests_total" in call[0][0]
+        ]
+        assert len(request_calls) == 2  # total + success
+        for promql in request_calls:
+            assert "/api/v1/asr/inference" in promql
+
+    async def test_multi_task_types_filter_includes_llm_and_audio_excludes_nlp(self):
+        """A combined filter (e.g. ["llm", "asr"]) must scope to exactly
+        those task types' traffic — llm + asr rows returned, an nmt row
+        with traffic in the SAME window must NOT leak through."""
+        client = MagicMock()
+
+        async def fake_query(promql):
+            if "telemetry_obsv_llm_tokens_processed_sum" in promql:
+                return self._row("svc-llm", 999, model_id="hash-llm-model")
+            # Simulates Prometheus itself filtering server-side: only
+            # llm/asr rows match the combined endpoint regex, nmt doesn't.
+            return self._rows(
+                {"svc-llm": 10, "svc-asr": 20},
+                model_ids={"svc-llm": "hash-llm-model", "svc-asr": "hash-asr-model"},
+            )
+
+        client.query = AsyncMock(side_effect=fake_query)
+        model_repo = self._model_repo({
+            "hash-llm-model": "Gemma 3 27B", "hash-asr-model": "Whisper Large v3",
+        })
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h", task_types=["llm", "asr"])
+
+        model_ids = {m["model_id"] for m in result["model_totals"]}
+        assert model_ids == {"hash-llm-model", "hash-asr-model"}
+
+    async def test_llm_tokens_query_skipped_when_filtered_to_nlp_only(self):
+        """Regression: an explicit NLP-only task_types filter (e.g. ["nmt"])
+        must not fire the (LLM-only) tokens query at all — firing it
+        unconditionally would surface an unrelated LLM model_id (found only
+        via tokens_rows, absent from total_rows/success_rows under this
+        filter) as a ghost "0 requests" row in model_totals, since model_ids
+        is a union across all three row sets."""
+        client = MagicMock()
+
+        async def fake_query(promql):
+            if "telemetry_obsv_llm_tokens_processed_sum" in promql:
+                return self._row("svc-llm", 999, model_id="hash-llm-model")
+            return self._row("svc-nmt", 10, model_id="hash-nmt-model")
+
+        client.query = AsyncMock(side_effect=fake_query)
+        model_repo = self._model_repo({"hash-nmt-model": "IndicTrans2"})
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h", task_types=["nmt"])
+
+        tokens_calls = [
+            call[0][0] for call in client.query.call_args_list
+            if "telemetry_obsv_llm_tokens_processed_sum" in call[0][0]
+        ]
+        assert tokens_calls == []
+        assert len(result["model_totals"]) == 1
+        assert result["model_totals"][0]["model_id"] == "hash-nmt-model"
+
+    async def test_llm_tokens_query_fires_when_llm_in_scope(self):
+        """Unfiltered (or an explicit filter including "llm") still queries
+        LLM tokens, same as before this fix."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("svc-llm", 10, model_id="hash-llm-model"))
+        svc = MeteringService(client=client)
+
+        await svc.model_breakdown(tenant=None, time_range="24h", task_types=["llm", "nmt"])
+
+        tokens_calls = [
+            call[0][0] for call in client.query.call_args_list
+            if "telemetry_obsv_llm_tokens_processed_sum" in call[0][0]
+        ]
+        assert len(tokens_calls) == 1
 
     async def test_repo_not_queried_when_no_traffic(self):
         client = MagicMock()
@@ -875,15 +987,15 @@ class TestModelBreakdown:
         assert result["model_totals"][0]["model_name"] == "test-llm-aug6-3"
         assert result["model_totals"][0]["requests"] == 14
 
-    async def test_model_registry_lookup_scoped_to_llm_task_type(self):
-        """AI4IDS-2854 follow-up: get_model_names must be called with
-        task_types=["llm"] so a model_id registered under a DIFFERENT task
-        type (e.g. mistakenly tagged "asr" while actually serving /chat
-        traffic — a Registry data error, not a deletion) is excluded here
-        the same way a hard-deleted id is, keeping this method's output in
-        the same population as registry_model_count's total_models. Without
-        this filter, such a model would count toward active_models but
-        never toward total_models, breaking their subset relationship."""
+    async def test_model_registry_lookup_scoped_to_every_task_type_when_unfiltered(self):
+        """AI4IDS-2854 follow-up, extended for LLM+NLP support: when the
+        caller passes no task_types filter, get_model_names must still be
+        scoped to a defined population — every known task type, not just
+        "llm" — so a model_id registered under any task type is validated,
+        keeping this method's output in the same population as
+        registry_model_count's total_models. Without this filter, such a
+        model would count toward active_models but never toward
+        total_models, breaking their subset relationship."""
         client = MagicMock()
         client.query = AsyncMock(return_value=self._row("svc-1", 10, model_id="hash-gemma-v1"))
         model_repo = self._model_repo({"hash-gemma-v1": "Gemma 3 27B"})
@@ -892,13 +1004,29 @@ class TestModelBreakdown:
         await svc.model_breakdown(tenant=None, time_range="24h")
 
         model_repo.get_model_names.assert_awaited_once_with(
+            ["hash-gemma-v1"], task_types=list(SERVICE_BREAKDOWN_CONFIG)
+        )
+
+    async def test_model_registry_lookup_scoped_to_requested_task_types(self):
+        """A caller-supplied task_types filter (e.g. the Model Task Type
+        drilldown filter) narrows get_model_names to exactly that list,
+        same as it narrows the Prometheus query itself."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("svc-1", 10, model_id="hash-gemma-v1"))
+        model_repo = self._model_repo({"hash-gemma-v1": "Gemma 3 27B"})
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        await svc.model_breakdown(tenant=None, time_range="24h", task_types=["llm"])
+
+        model_repo.get_model_names.assert_awaited_once_with(
             ["hash-gemma-v1"], task_types=["llm"]
         )
 
     async def test_model_totals_excludes_model_registered_under_different_task_type(self):
         """The exact failure scenario the task_types filter closes: a
         model_id actively serving LLM-chat traffic whose Registry row is
-        tagged with a non-llm task type. `get_model_names(task_types=
+        tagged with a non-llm task type, while the caller has explicitly
+        filtered to task_types=["llm"]. `get_model_names(task_types=
         ["llm"])` won't return it (simulated here the same way a deleted
         model is — the repo call itself is mocked, so the real SQL filter
         is exercised by ModelRepository, not this test; this test pins the
@@ -914,7 +1042,7 @@ class TestModelBreakdown:
         model_repo = self._model_repo({})
         svc = MeteringService(client=client, model_repo=model_repo)
 
-        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        result = await svc.model_breakdown(tenant=None, time_range="24h", task_types=["llm"])
 
         assert result["model_totals"] == []
 
@@ -1044,12 +1172,20 @@ class TestRegistryModelCount:
         svc = MeteringService(client=MagicMock())
         assert await svc.registry_model_count() is None
 
-    async def test_delegates_to_model_repo_count_models_scoped_to_llm(self):
+    async def test_delegates_to_model_repo_scoped_to_every_task_type_when_unfiltered(self):
         repo = MagicMock()
         repo.count_models = AsyncMock(return_value=42)
         svc = MeteringService(client=MagicMock(), model_repo=repo)
 
         assert await svc.registry_model_count() == 42
+        repo.count_models.assert_awaited_once_with(task_types=list(SERVICE_BREAKDOWN_CONFIG))
+
+    async def test_delegates_to_model_repo_scoped_to_requested_task_types(self):
+        repo = MagicMock()
+        repo.count_models = AsyncMock(return_value=7)
+        svc = MeteringService(client=MagicMock(), model_repo=repo)
+
+        assert await svc.registry_model_count(task_types=["llm"]) == 7
         repo.count_models.assert_awaited_once_with(task_types=["llm"])
 
     async def test_db_failure_returns_none_not_raises(self):
@@ -1302,7 +1438,7 @@ class TestActiveModelsTotalModelsSubsetInvariant:
         repo = MagicMock()
         repo.count_models = AsyncMock(return_value=5)  # 5 registered llm versions
         svc = MeteringService(client=MagicMock(), model_repo=repo)
-        total_models = await svc.registry_model_count()
+        total_models = await svc.registry_model_count(task_types=["llm"])
         assert total_models == 5
         repo.count_models.assert_awaited_once_with(task_types=["llm"])
 
