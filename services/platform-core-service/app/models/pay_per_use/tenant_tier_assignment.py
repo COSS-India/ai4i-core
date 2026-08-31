@@ -9,7 +9,15 @@ from app.models import Base
 
 
 class TenantTierAssignment(Base):
-    __tablename__ = "ppu_tenant_tier_assignments"  # ppu_ prefix kept intentionally; billing writes this table (_upsert_ppu_tenant_tier_assignment, #1488) — do not rename
+    # AI4IDS-2923 dropped this table from the DB — billing was moved to
+    # per-API-key budget_usage deduction, driven by tenants.allocated_budget/
+    # tenants.tier_id (see UsageRepository.get_tenant_budgets). The former
+    # writer, _upsert_ppu_tenant_tier_assignment (#1488), was removed when
+    # auth-service's tier/budget PATCH endpoints were fixed to stop writing
+    # to this now-nonexistent table. This ORM class is retained only because
+    # nothing yet needs the table definition removed outright — it must not
+    # be queried or written to; doing so raises UndefinedTableError.
+    __tablename__ = "ppu_tenant_tier_assignments"
     __table_args__ = (
         Index(
             "ix_ppu_tenant_tier_assignments_tenant_effective",

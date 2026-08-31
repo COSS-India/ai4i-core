@@ -34,8 +34,9 @@ _FAR_FUTURE = datetime.max.replace(tzinfo=timezone.utc)
 
 class _TenantTierBudget(NamedTuple):
     """Merges a tenant's most-recently-used tier this billing_month (from
-    ppu_quota_usage) with their budget figures (from ppu_tenant_tier_assignments,
-    read purely for budget_limit/available_balance — see get_tenant_budgets).
+    ppu_quota_usage) with their budget figures — reconstructed by
+    get_tenant_budgets from tenants.allocated_budget minus budget_usage spend
+    (ppu_tenant_tier_assignments, the old source, was dropped in AI4IDS-2923).
     """
     tenant_id: str
     tier_id: str
@@ -61,9 +62,10 @@ def _resolve_tier_name(tier_id, tier_names: dict) -> str:
 def _resolve_budget(tenant_id: str, budgets_by_tenant: dict) -> tuple[Decimal, Decimal, bool]:
     """(budget_limit, available_balance, has_budget) for a tenant.
 
-    has_budget is False when no ppu_tenant_tier_assignments row covers this billing
-    month's end (see get_tenant_budgets) — the exact gap case this redesign exists to
-    handle correctly. budget_limit/available_balance default to 0 in that case so
+    has_budget is False when the tenant is absent from get_tenant_budgets' result —
+    unknown tenant_id, auth_db unavailable, or found but with allocated_budget still
+    NULL (never configured) — the exact gap case this redesign exists to handle
+    correctly. budget_limit/available_balance default to 0 in that case so
     display code has a concrete number to show, but has_budget is what callers must
     check before treating "no budget on file" as "exceeded a budget of 0" — those are
     different things (unknown vs. genuinely zero). The single place this default is
@@ -450,11 +452,14 @@ class UsageService:
         Only tenants with at least one ppu_quota_usage row this billing_month appear —
         a tenant with a budget/tier assignment but zero usage that month is omitted
         entirely, not shown as a zero-usage row. The tenant-level `tier` reflects
-        whichever tier they were most recently active under that month (derived from
-        usage, not from ppu_tenant_tier_assignments — see get_tenants_with_usage_tier).
-        `budget` is a separate lookup into ppu_tenant_tier_assignments, read purely for
-        budget_limit/available_balance as of the END of billing_month. tierBreakdown
-        covers every tier the tenant actually had usage under that month, oldest first —
+        whichever tier they were most recently active under that month, derived from
+        usage (see get_tenants_with_usage_tier), not from a separate assignment table.
+        `budget` is a separate lookup via get_tenant_budgets, reconstructed from
+        tenants.allocated_budget minus budget_usage spend — this is always the
+        tenant's CURRENT balance, not a frozen snapshot as of billing_month's end
+        (budget_usage has no per-billing-month dimension; see get_tenant_budgets'
+        own docstring). tierBreakdown covers every tier the tenant actually had
+        usage under that month, oldest first —
         a mid-month tier change surfaces as two entries.
 
         model_task_type does NOT filter which tenants appear, nor narrow their spend/budget/
@@ -549,22 +554,21 @@ class UsageService:
     ) -> TenantHierarchicalItem:
         """Same hierarchical shape as get_tenant_list, scoped to a single tenant — the
         tenant's `tier` reflects whichever tier they were most recently active under
-        this billing_month (derived from ppu_quota_usage, not ppu_tenant_tier_assignments
-        — see get_tenants_with_usage_tier), `budget` is a separate lookup into
-        ppu_tenant_tier_assignments for budget_limit/available_balance as of the
-        billing_month's lookup instant (now, if it's the current month; end of
-        month otherwise — see get_tenant_budgets/_budget_lookup_instant), and
-        tierBreakdown covers every tier they had usage under that month, oldest
-        first.
+        this billing_month, derived from usage (see get_tenants_with_usage_tier), not
+        from a separate assignment table. `budget` is a separate lookup via
+        get_tenant_budgets, reconstructed from tenants.allocated_budget minus
+        budget_usage spend — always the tenant's CURRENT balance regardless of
+        billing_month (budget_usage has no per-billing-month dimension; see
+        get_tenant_budgets' own docstring), and tierBreakdown covers every tier
+        they had usage under that month, oldest first.
 
         Unlike get_tenant_list, a tenant with zero ppu_quota_usage rows this
         billing_month is NOT omitted here — it falls into the zero-value branch
         below, so single-tenant lookups keep returning something for a valid
         tenant with no usage yet this period. `tier`/`tierId` in that branch
-        still reflect the tenant's actual current assignment (read from
-        ppu_tenant_tier_assignments, at the same lookup instant get_tenant_budgets
-        uses elsewhere) — falling back to "Unassigned" only when even that
-        assignment doesn't exist.
+        still reflect the tenant's actual current tier (tenants.tier_id, via
+        get_tenant_budgets) — falling back to "Unassigned" only when that
+        tenant has no budget row at all (see get_tenant_budgets).
         """
         assignments = await self._repo.get_tenants_with_usage_tier(
             billing_month, tenant_id=tenant_id, task_types=task_types

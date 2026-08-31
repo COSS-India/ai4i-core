@@ -827,3 +827,50 @@ class TestResolveTenantNames:
 
         assert result == {}
         db.execute.assert_not_called()
+
+
+class TestBudgetDocstringsDoNotClaimDroppedTableIsLive:
+    """Regression guard for stale documentation, not behavior: these
+    docstrings used to describe ppu_tenant_tier_assignments as the CURRENT
+    source of budget/has_budget, even after this module was rewritten to
+    reconstruct budget from tenants.allocated_budget + budget_usage (the
+    table was dropped in AI4IDS-2923). A reader trusting the stale docstring
+    could waste time debugging against a table that no longer exists, or
+    write new code assuming it's queryable.
+
+    This doesn't (and can't) catch every future doc-drift case, but it pins
+    the exact phrasing this fix corrected, so a careless revert of just the
+    comments (leaving the code alone) is caught even though it wouldn't
+    otherwise fail any behavioral test.
+    """
+
+    @staticmethod
+    def _doc(obj) -> str:
+        import inspect
+
+        return inspect.getdoc(obj) or ""
+
+    def test_tenant_tier_budget_namedtuple_credits_get_tenant_budgets(self):
+        from app.services.pay_per_use.usage_service import _TenantTierBudget
+
+        doc = self._doc(_TenantTierBudget)
+        assert "get_tenant_budgets" in doc
+        assert "read purely for budget_limit/available_balance — see get_tenant_budgets" not in doc
+
+    def test_resolve_budget_does_not_claim_assignment_row_semantics(self):
+        from app.services.pay_per_use.usage_service import _resolve_budget
+
+        doc = self._doc(_resolve_budget)
+        assert "ppu_tenant_tier_assignments" not in doc
+        assert "absent from get_tenant_budgets" in doc
+
+    def test_get_tenant_list_credits_get_tenant_budgets_not_assignment_table(self):
+        doc = self._doc(UsageService.get_tenant_list)
+        assert "ppu_tenant_tier_assignments" not in doc
+        assert "separate lookup via get_tenant_budgets" in doc
+
+    def test_get_tenant_detail_credits_get_tenant_budgets_not_assignment_table(self):
+        doc = self._doc(UsageService.get_tenant_detail)
+        assert "ppu_tenant_tier_assignments" not in doc
+        assert "separate lookup via" in doc
+        assert "get_tenant_budgets" in doc
