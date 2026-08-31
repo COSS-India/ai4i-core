@@ -205,6 +205,85 @@ class TestGetTenantBudgets:
         auth_db.execute.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_tenant_with_null_allocated_budget_is_absent_from_result(self):
+        """Regression: a tenant that EXISTS in auth-service's tenants table but has
+        never had a budget configured (allocated_budget IS NULL — the column is
+        nullable, and optional on tenant create/update) must be excluded from the
+        returned dict, not coalesced to budget_limit=0. Coalescing to 0 would make
+        _resolve_budget report has_budget=True with a limit of 0, so get_summary
+        would count this tenant's any-nonzero-spend as "budget exceeded" purely
+        because no budget was ever set — the exact "unknown vs. genuinely zero"
+        mixup this module's docstring says must not happen."""
+        auth_db = self._auth_db(
+            [
+                self._rows(
+                    [SimpleNamespace(id=42, allocated_budget=None, tier_id=None)]
+                ),  # tenants — exists, but no budget on file
+                self._rows(
+                    [SimpleNamespace(id=39, tenant_id=42)]
+                ),  # applications
+                self._rows(
+                    [SimpleNamespace(id=10, application_id=39)]
+                ),  # api_key
+            ]
+        )
+        db = AsyncMock()
+        db.execute = AsyncMock(
+            return_value=self._rows(
+                [SimpleNamespace(api_key_id=10, api_key_budget_used=Decimal("150.00"))]
+            )
+        )
+        repo = UsageRepository(db=db)
+
+        result = await repo.get_tenant_budgets("2026-08", ["42"], auth_db)
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_mixed_null_and_real_budgets_only_excludes_the_null_one(self):
+        """Same lookup batch, one tenant with a real budget and one with none on
+        file — only the NULL one should be dropped; the other must still resolve
+        normally with its own spend correctly attributed (not merged/lost)."""
+        auth_db = self._auth_db(
+            [
+                self._rows(
+                    [
+                        SimpleNamespace(id=2, allocated_budget=Decimal("1000.00"), tier_id=None),
+                        SimpleNamespace(id=42, allocated_budget=None, tier_id=None),
+                    ]
+                ),  # tenants
+                self._rows(
+                    [
+                        SimpleNamespace(id=39, tenant_id=2),
+                        SimpleNamespace(id=40, tenant_id=42),
+                    ]
+                ),  # applications
+                self._rows(
+                    [
+                        SimpleNamespace(id=10, application_id=39),
+                        SimpleNamespace(id=11, application_id=40),
+                    ]
+                ),  # api_key
+            ]
+        )
+        db = AsyncMock()
+        db.execute = AsyncMock(
+            return_value=self._rows(
+                [
+                    SimpleNamespace(api_key_id=10, api_key_budget_used=Decimal("300.00")),
+                    SimpleNamespace(api_key_id=11, api_key_budget_used=Decimal("150.00")),
+                ]
+            )
+        )
+        repo = UsageRepository(db=db)
+
+        result = await repo.get_tenant_budgets("2026-08", ["2", "42"], auth_db)
+
+        assert set(result.keys()) == {"2"}
+        assert result["2"].budget_limit == Decimal("1000.00")
+        assert result["2"].available_balance == Decimal("700.00")
+
+    @pytest.mark.asyncio
     async def test_auth_db_failure_degrades_to_empty_not_a_crash(self):
         """Unlike application_usage_service's money-figure loads (fixed
         separately to let failures propagate instead of swallowing them),

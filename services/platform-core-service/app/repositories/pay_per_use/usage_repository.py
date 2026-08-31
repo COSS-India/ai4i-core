@@ -165,9 +165,14 @@ class UsageRepository:
         reconstructable from data that was never captured.
 
         A tenant not found in auth-service's tenants table (unknown tenant_id,
-        or auth_db unavailable) is simply absent from the returned dict, same
-        as the old "no assignment row" case — callers already treat that as
-        budget_limit=0/available_balance=0/has_budget=False via _resolve_budget.
+        or auth_db unavailable), OR found but with allocated_budget still NULL
+        (never had a budget configured — the column is nullable), is simply
+        absent from the returned dict, same as the old "no assignment row"
+        case — callers already treat that as budget_limit=0/available_balance=0/
+        has_budget=False via _resolve_budget. Coalescing a NULL allocated_budget
+        to 0 here instead would make has_budget=True for a tenant with no budget
+        on file, which is the "unknown vs. genuinely zero" mixup _resolve_budget's
+        own docstring says must not happen.
         """
         if not tenant_ids or not auth_db:
             return {}
@@ -223,7 +228,12 @@ class UsageRepository:
 
         budgets: dict[str, SimpleNamespace] = {}
         for row in tenant_rows:
-            budget_limit = row.allocated_budget or Decimal("0")
+            if row.allocated_budget is None:
+                # No budget configured for this tenant — leave them absent from the
+                # dict so _resolve_budget reports has_budget=False (unknown), not a
+                # real allocated_budget=0 (genuinely zero and therefore "exceeded").
+                continue
+            budget_limit = row.allocated_budget
             spent = spent_by_tenant.get(row.id, Decimal("0"))
             budgets[str(row.id)] = SimpleNamespace(
                 tenant_id=str(row.id),
