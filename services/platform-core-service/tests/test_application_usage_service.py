@@ -111,6 +111,74 @@ class TestTenantIdIntegerCasting:
         auth_db.execute.assert_not_called()
 
 
+class TestAuthDbFailurePropagates:
+    """Regression test: a real auth_db query failure (mid-request, not
+    "auth_db is None") must surface as an actual error, not degrade into a
+    misleading 200-with-zeros or a false 404. Unlike _resolve_tenant_names
+    (safe to swallow — degrades a display name to an ID), these three loads
+    feed money figures / existence checks, so a real failure here must not
+    be indistinguishable from "institution has no applications" or
+    "application doesn't exist".
+    """
+
+    @pytest.mark.asyncio
+    async def test_get_summary_does_not_swallow_a_query_failure_as_zero(self):
+        auth_db = MagicMock()
+        # Tenant budget query succeeds; the very next query (applications)
+        # fails mid-request — e.g. connection drop, or a cascading abort from
+        # an unrelated statement on the same session.
+        auth_db.execute = AsyncMock(
+            side_effect=[
+                _budget_result(Decimal("1000000.00")),
+                RuntimeError("connection to auth_db lost"),
+            ]
+        )
+        repo = _make_repo({})
+        svc = ApplicationUsageService(repo)
+
+        # Pre-fix, this returned a normal ApplicationUsageSummaryResponse with
+        # totalApplications=0 and every budget zeroed — indistinguishable from
+        # a real empty institution. It must now raise instead.
+        with pytest.raises(RuntimeError, match="connection to auth_db lost"):
+            await svc.get_summary("1", auth_db)
+
+    @pytest.mark.asyncio
+    async def test_get_application_list_does_not_swallow_a_query_failure_as_empty(self):
+        auth_db = MagicMock()
+        auth_db.execute = AsyncMock(
+            side_effect=[
+                _budget_result(Decimal("1000000.00")),
+                RuntimeError("connection to auth_db lost"),
+            ]
+        )
+        repo = _make_repo({})
+        svc = ApplicationUsageService(repo)
+
+        with pytest.raises(RuntimeError, match="connection to auth_db lost"):
+            await svc.get_application_list("1", auth_db)
+
+    @pytest.mark.asyncio
+    async def test_get_application_detail_does_not_report_404_for_a_query_failure(self):
+        auth_db = MagicMock()
+        # Applications query itself fails — pre-fix, this was swallowed to [],
+        # the requested application_id was "not found" in that empty list, and
+        # the caller raised EntityNotFoundError: an application that genuinely
+        # exists would incorrectly 404 during a transient auth_db hiccup.
+        auth_db.execute = AsyncMock(
+            side_effect=[
+                _budget_result(Decimal("1000000.00")),
+                RuntimeError("connection to auth_db lost"),
+            ]
+        )
+        repo = _make_repo({})
+        svc = ApplicationUsageService(repo)
+
+        with pytest.raises(RuntimeError, match="connection to auth_db lost"):
+            await svc.get_application_detail(1, "1", auth_db)
+        # Specifically must NOT be reported as "not found" — that would hide
+        # a real infrastructure failure behind a client-facing 404.
+
+
 class TestGetSummary:
     @pytest.mark.asyncio
     async def test_normal_case_computes_institution_level_percentages(self):

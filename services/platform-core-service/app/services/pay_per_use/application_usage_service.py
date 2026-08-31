@@ -7,7 +7,6 @@ UsageService._resolve_tenant_names. Billing-period filtering is intentionally
 not supported: budget_usage has no billing_month/timestamp column, so all
 figures are lifetime-cumulative.
 """
-import logging
 from decimal import Decimal
 from typing import Optional
 
@@ -27,8 +26,6 @@ from app.schemas.pay_per_use.application_usage import (
     ApplicationUsageTotals,
     MoneyPercent,
 )
-
-logger = logging.getLogger(__name__)
 
 
 def _pct(amount: Decimal, denominator: Decimal) -> float:
@@ -58,58 +55,57 @@ class ApplicationUsageService:
 
     @staticmethod
     async def _load_tenant_budget(tenant_id: str, auth_db: Optional[AsyncSession]) -> Decimal:
+        # auth_db is None only when the feature/dependency isn't configured — a
+        # legitimate degrade-to-zero case. A query that raises once auth_db exists
+        # is a real failure (connection drop, aborted transaction) and must NOT be
+        # swallowed here: unlike _resolve_tenant_names (which degrades a display
+        # name to an ID — harmless), swallowing this would silently turn real
+        # money into a false zero. Let it propagate; the global exception handler
+        # turns it into a proper 500 instead of a misleading 200/404.
         tenant_pk = _to_tenant_pk(tenant_id)
         if not auth_db or tenant_pk is None:
             return Decimal("0")
-        try:
-            result = await auth_db.execute(
-                text("SELECT allocated_budget FROM tenants WHERE id = :tenant_id"),
-                {"tenant_id": tenant_pk},
-            )
-            row = result.first()
-            return row[0] if row and row[0] is not None else Decimal("0")
-        except Exception as exc:
-            logger.warning("Auth DB lookup failed — tenant budget defaults to 0: %s", exc)
-            return Decimal("0")
+        result = await auth_db.execute(
+            text("SELECT allocated_budget FROM tenants WHERE id = :tenant_id"),
+            {"tenant_id": tenant_pk},
+        )
+        row = result.first()
+        return row[0] if row and row[0] is not None else Decimal("0")
 
     @staticmethod
     async def _load_tenant_applications(
         tenant_id: str, auth_db: Optional[AsyncSession]
     ) -> list[dict]:
+        # See _load_tenant_budget: only "not configured" degrades gracefully here;
+        # a real query failure must propagate, not be reported as "zero applications".
         tenant_pk = _to_tenant_pk(tenant_id)
         if not auth_db or tenant_pk is None:
             return []
-        try:
-            result = await auth_db.execute(
-                text(
-                    "SELECT id, name, domain, allocated_percentage, allocated_budget, status "
-                    "FROM applications WHERE tenant_id = :tenant_id"
-                ),
-                {"tenant_id": tenant_pk},
-            )
-            return [dict(row._mapping) for row in result.all()]
-        except Exception as exc:
-            logger.warning("Auth DB lookup failed — no applications returned: %s", exc)
-            return []
+        result = await auth_db.execute(
+            text(
+                "SELECT id, name, domain, allocated_percentage, allocated_budget, status "
+                "FROM applications WHERE tenant_id = :tenant_id"
+            ),
+            {"tenant_id": tenant_pk},
+        )
+        return [dict(row._mapping) for row in result.all()]
 
     @staticmethod
     async def _load_application_api_keys(
         application_ids: list[int], auth_db: Optional[AsyncSession]
     ) -> list[dict]:
+        # See _load_tenant_budget: only "not configured"/"nothing to look up"
+        # degrades gracefully here; a real query failure must propagate.
         if not auth_db or not application_ids:
             return []
-        try:
-            result = await auth_db.execute(
-                text(
-                    "SELECT id, application_id, key_name, api_key, allocated_percentage, "
-                    "allocated_budget, is_active FROM api_key WHERE application_id = ANY(:app_ids)"
-                ),
-                {"app_ids": application_ids},
-            )
-            return [dict(row._mapping) for row in result.all()]
-        except Exception as exc:
-            logger.warning("Auth DB lookup failed — no API keys returned: %s", exc)
-            return []
+        result = await auth_db.execute(
+            text(
+                "SELECT id, application_id, key_name, api_key, allocated_percentage, "
+                "allocated_budget, is_active FROM api_key WHERE application_id = ANY(:app_ids)"
+            ),
+            {"app_ids": application_ids},
+        )
+        return [dict(row._mapping) for row in result.all()]
 
     async def _spend_by_application(
         self, applications: list[dict], auth_db: Optional[AsyncSession]
