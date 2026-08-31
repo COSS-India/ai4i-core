@@ -5,7 +5,13 @@ Identity/allocation (tenants/applications/api_key) lives in auth-service, read
 here via the auth_db cross-DB session — same pattern as
 UsageService._resolve_tenant_names. Billing-period filtering is intentionally
 not supported: budget_usage has no billing_month/timestamp column, so all
-figures are lifetime-cumulative.
+figures are lifetime-cumulative — unlike UsageService's sibling /usage-*
+endpoints, which are scoped to a billing_month. There is no time dimension to
+filter on here at all, so the route layer (app/routes/application_usage.py)
+deliberately does not declare a billing_period param, and
+ApplicationUsageSummaryResponse.billingPeriod is always the constant
+"lifetime", so a dashboard period selector can't mistake these totals for a
+period-scoped figure comparable to the Overview tab's.
 """
 from decimal import Decimal
 from typing import Optional
@@ -143,6 +149,7 @@ class ApplicationUsageService:
             allocatedBudget=_money_percent(allocated_amount, tenant_budget),
             spendBudget=_money_percent(spend_amount, tenant_budget),
             remainingBudget=_money_percent(remaining_amount, tenant_budget),
+            billingPeriod="lifetime",
         )
 
     async def get_application_list(

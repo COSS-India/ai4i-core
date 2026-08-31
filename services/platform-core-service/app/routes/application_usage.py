@@ -21,7 +21,14 @@ from app.services.pay_per_use.application_usage_service import ApplicationUsageS
 router = APIRouter(prefix="/pay-per-use", tags=["Usage"])
 
 
-@router.get("/usage-applications-summary", response_model=ApplicationUsageSummaryResponse)
+@router.get(
+    "/usage-applications-summary",
+    response_model=ApplicationUsageSummaryResponse,
+    description="Lifetime-cumulative totals for an institution's Applications. "
+    "No billing_period param — budget_usage has no time dimension to filter "
+    "on, so these figures are never period-scoped (see billingPeriod in the "
+    "response, always \"lifetime\").",
+)
 async def get_application_usage_summary(
     request: Request,
     tenant_id: str = Query(..., description="Institution (tenant) ID."),
@@ -33,7 +40,12 @@ async def get_application_usage_summary(
     return await svc.get_summary(tenant_id, auth_db)
 
 
-@router.get("/usage-applications", response_model=ApplicationUsageListResponse)
+@router.get(
+    "/usage-applications",
+    response_model=ApplicationUsageListResponse,
+    description="Lifetime-cumulative per-application totals for an institution. "
+    "No billing_period param — these figures are never period-scoped.",
+)
 async def get_application_usage_list(
     request: Request,
     tenant_id: str = Query(..., description="Institution (tenant) ID."),
@@ -48,7 +60,12 @@ async def get_application_usage_list(
     return await svc.get_application_list(tenant_id, auth_db, sortOrder, limit, offset)
 
 
-@router.get("/usage-application", response_model=ApplicationUsageDetailResponse)
+@router.get(
+    "/usage-application",
+    response_model=ApplicationUsageDetailResponse,
+    description="Lifetime-cumulative totals for one application. No "
+    "billing_period param — these figures are never period-scoped.",
+)
 async def get_application_usage_detail(
     request: Request,
     application_id: int = Query(..., description="Application ID."),

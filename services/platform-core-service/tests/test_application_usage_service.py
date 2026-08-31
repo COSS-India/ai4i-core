@@ -219,6 +219,21 @@ class TestGetSummary:
         assert result.remainingBudget.percentage == 50.0
 
     @pytest.mark.asyncio
+    async def test_summary_billing_period_is_always_lifetime(self):
+        """Regression: these figures are lifetime-cumulative (budget_usage has
+        no billing_month column, and there's no billing_period param on these
+        endpoints at all) — billingPeriod must say so explicitly rather than
+        being absent/ambiguous, so a dashboard period selector can't mistake
+        this for a period-scoped total comparable to the Overview tab's."""
+        auth_db = _make_auth_db([_budget_result(Decimal("1000000.00")), _rows_result([])])
+        repo = _make_repo({})
+        svc = ApplicationUsageService(repo)
+
+        result = await svc.get_summary("1", auth_db)
+
+        assert result.billingPeriod == "lifetime"
+
+    @pytest.mark.asyncio
     async def test_tenant_with_zero_applications(self):
         auth_db = _make_auth_db(
             [_budget_result(Decimal("1000000.00")), _rows_result([])]
