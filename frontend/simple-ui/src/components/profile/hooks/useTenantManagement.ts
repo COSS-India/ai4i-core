@@ -56,7 +56,12 @@ import {
   tenantUserMatchesSearch,
   TENANT_USER_ROLE_FILTER_LIST,
 } from "../../../utils/tenantUserRoles";
-import { userHasRole } from "../../../utils/rbac";
+import {
+  isAdopterInstitutionManager,
+  isPlatformAdminUser,
+  isTenantAdminUser,
+  userHasRole,
+} from "../../../utils/rbac";
 import {
   DEFAULT_ORG_USER_FORM_ROLE_OPTIONS,
   DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST,
@@ -99,9 +104,10 @@ export interface UseTenantManagementOptions {
 
 export function useTenantManagement(options: UseTenantManagementOptions) {
   const { user } = options;
-  const isTenantAdmin = Boolean(userHasRole(user?.roles, "TENANT ADMIN"));
-  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
-  const isTenantScopedUser = isTenantAdmin && !isAdmin;
+  const isTenantAdmin = isTenantAdminUser(user?.roles);
+  const isAdopterManager = isAdopterInstitutionManager(user?.roles);
+  const isAdmin = isPlatformAdminUser(user?.roles);
+  const isTenantScopedUser = isTenantAdmin && !isAdopterManager;
   const userIdStr = user?.user_id ?? null;
 
   // ----- State -----
@@ -419,7 +425,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     tenantIdOverride?: string,
     expectReady?: (rows: TenantView[]) => boolean,
   ) => {
-    if (isAdmin) {
+    if (isAdopterManager) {
       if (expectReady) {
         const rows = await refreshUntil(loadTenants, expectReady);
         commitTenants(rows);
@@ -464,7 +470,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setIsLoadingKnownEmails(true);
     try {
       let tenantRows: TenantView[] = tenants;
-      if (isAdmin) {
+      if (isAdopterManager) {
         tenantRows = (await tenantService.listTenants()).tenants ?? [];
       } else {
         const tenantId = user?.tenant_id?.trim();
@@ -499,7 +505,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       setIsLoadingKnownEmails(false);
     }
   }, [
-    isAdmin,
+    isAdopterManager,
     user?.tenant_id,
     tenants,
     tenantUsers,

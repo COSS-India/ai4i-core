@@ -1,5 +1,8 @@
 import React from "react";
 import {
+  Box,
+  Button,
+  HStack,
   Modal,
   ModalOverlay,
   ModalContent,
@@ -79,7 +82,13 @@ export default function StandardModal({
         <ModalBody pt={2} {...bodyProps}>
           {children}
         </ModalBody>
-        {footer !== undefined && <ModalFooter {...footerProps}>{footer}</ModalFooter>}
+        {footer !== undefined && (
+          <ModalFooter {...footerProps}>
+            <HStack spacing={3} justify="flex-end" w="full">
+              {footer}
+            </HStack>
+          </ModalFooter>
+        )}
       </ModalContent>
     </Modal>
   );

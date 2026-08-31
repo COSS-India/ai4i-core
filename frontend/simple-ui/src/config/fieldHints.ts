@@ -174,6 +174,10 @@ export const FIELD_HINTS = {
       helper:
         "Percentage of this Institution's total Budget. Cannot be reduced below already-consumed usage.",
     },
+    institutionBudgetNotSet:
+      "This Institution does not have a Budget (₹) assigned yet. Assign a Tier and Budget from Institution Management before saving Application budget allocations.",
+    amountRequiresInstitutionBudget:
+      "Assign an Institution Budget (₹) before entering amounts.",
     search: {
       placeholder: "Search by name or domain",
       helper: "Matches Application name or domain.",

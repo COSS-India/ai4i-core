@@ -32,6 +32,7 @@ import AdminDataTable, {
   type AdminTableColumn,
 } from "../common/AdminDataTable";
 import StandardModal from "../common/StandardModal";
+import ApplicationBulkBudgetModal from "./ApplicationBulkBudgetModal";
 import FieldHint from "../common/FieldHint";
 import InfoTip from "../common/InfoTip";
 import { FIELD_HINTS } from "../../config/fieldHints";
@@ -330,6 +331,15 @@ export default function ApplicationManagementTab({
             Refresh
           </Button>
           <Button
+            leftIcon={<FiSliders />}
+            size="sm"
+            variant="outline"
+            fontWeight="700"
+            onClick={() => void mgr.openBulkBudget()}
+          >
+            Edit Budget
+          </Button>
+          <Button
             leftIcon={<FiPlus />}
             size="sm"
             colorScheme="blue"
@@ -531,7 +541,7 @@ export default function ApplicationManagementTab({
             <Button
               colorScheme="blue"
               isLoading={mgr.isSaving}
-              isDisabled={Boolean(mgr.budgetFieldError)}
+              isDisabled={Boolean(mgr.budgetFieldError) || mgr.institutionBudgetUnset}
               onClick={() => void mgr.handleSaveBudget()}
             >
               Save changes
@@ -558,6 +568,12 @@ export default function ApplicationManagementTab({
               />
             </Box>
           </Box>
+          {mgr.institutionBudgetUnset && (
+            <Alert status="warning" borderRadius="md">
+              <AlertIcon />
+              {FIELD_HINTS.application.institutionBudgetNotSet}
+            </Alert>
+          )}
           {mgr.budgetBanner && (
             <Alert status="error" borderRadius="md">
               <AlertIcon />
@@ -594,6 +610,24 @@ export default function ApplicationManagementTab({
           </HStack>
         </VStack>
       </StandardModal>
+
+      <ApplicationBulkBudgetModal
+        isOpen={mgr.bulkBudgetOpen}
+        onClose={() => mgr.setBulkBudgetOpen(false)}
+        isLoading={mgr.bulkLoading}
+        isSaving={mgr.isSaving}
+        banner={mgr.bulkBanner}
+        tenantBudget={mgr.tenantBudget}
+        institutionBudgetUnset={mgr.institutionBudgetUnset}
+        currency={currency}
+        liveTotalPct={mgr.bulkLiveTotalPct}
+        rows={mgr.bulkRows}
+        onRowFocus={mgr.onBulkRowFocus}
+        onPctChange={mgr.onBulkPctChange}
+        onAmountChange={mgr.onBulkAmountChange}
+        onSave={() => void mgr.handleSaveBulkBudget()}
+        canSave={mgr.bulkCanSave}
+      />
     </VStack>
   );
 }
@@ -683,7 +717,7 @@ function ApplicationIdentityFields({
         </FormControl>
       ) : (
         <Text fontSize="sm" color="gray.500">
-          Budget is managed separately — use Edit Budget on this Application's row.
+          Budget is managed separately — use Edit Budget on the row or above the list.
         </Text>
       )}
     </VStack>

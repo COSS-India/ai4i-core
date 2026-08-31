@@ -111,6 +111,10 @@ import {
   resolveTenantUserDisplayStatus,
 } from "../../config/constants";
 import { replaceTenantCopy } from "../../utils/replaceTenantCopy";
+import {
+  isAdopterInstitutionManager,
+  isPlatformAdminUser,
+} from "../../utils/rbac";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import FieldHint from "../common/FieldHint";
 import {
@@ -173,13 +177,14 @@ export default function TenantManagementTab({
   const { user } = useAuth();
   const tm = useTenantManagement({ user });
 
-  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
+  const isAdmin = isPlatformAdminUser(user?.roles);
+  const isAdopterManager = isAdopterInstitutionManager(user?.roles);
   const tabCardBg = useColorModeValue("white", "gray.800");
   const tabCardBorder = useColorModeValue("gray.200", "gray.700");
   // Institution Admin view only — idle on the adopter path.
   const ownInstitution = useOwnInstitutionDetails({
     tenantId: user?.tenant_id,
-    enabled: !isAdmin,
+    enabled: !isAdopterManager,
   });
   const { taskTypeNames } = useInferenceTypes();
   const enabledTaskTypesParam =
@@ -592,13 +597,13 @@ export default function TenantManagementTab({
   // Initial fetch when this tab becomes active.
   useEffect(() => {
     if (!isActive || !user) return;
-    if (isAdmin) {
+    if (isAdopterManager) {
       void tm.handleFetchTenants();
     } else {
       void tm.handleFetchTenantUsers();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive, user, isAdmin]);
+  }, [isActive, user, isAdopterManager]);
 
   // Refresh users when tenant detail view changes.
   useEffect(() => {
@@ -740,9 +745,9 @@ export default function TenantManagementTab({
 
   return (
     <Box>
-      {isAdmin && !tm.tenantDetailView && renderAdopterView()}
+      {isAdopterManager && !tm.tenantDetailView && renderAdopterView()}
 
-      {!isAdmin && !tm.tenantDetailView && renderInstitutionAdminView()}
+      {!isAdopterManager && !tm.tenantDetailView && renderInstitutionAdminView()}
 
       {tm.tenantDetailView && renderTenantDetail()}
 
@@ -767,14 +772,16 @@ export default function TenantManagementTab({
           <HStack justify="space-between" align="center">
             <Heading size="md">{INSTITUTIONS}</Heading>
             <HStack>
-              <Button
-                leftIcon={<FiPlus />}
-                size="sm"
-                colorScheme="blue"
-                onClick={tm.openTenantModal}
-              >
-                Create {INSTITUTION}
-              </Button>
+              {isAdmin && (
+                <Button
+                  leftIcon={<FiPlus />}
+                  size="sm"
+                  colorScheme="blue"
+                  onClick={tm.openTenantModal}
+                >
+                  Create {INSTITUTION}
+                </Button>
+              )}
             </HStack>
           </HStack>
         </CardHeader>
