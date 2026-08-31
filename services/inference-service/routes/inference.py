@@ -205,6 +205,11 @@ async def run_nmt_inference(
     description="Anonymous try-it endpoint. Accepts either a TryItRequest envelope "
                 "({ service_name, serviceId?, payload: NMTPayload }) or a plain NMT "
                 "payload directly (for when APISIX has already unwrapped the envelope).",
+    openapi_extra={"requestBody": {"content": {"application/json": {"example": {
+        "serviceId": "your-service-id",
+        "input": [{"source": "hello world"}],
+        "config": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}},
+    }}}}},
 )
 async def run_nmt_try_it(
     request: Request,

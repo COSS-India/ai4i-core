@@ -16,7 +16,7 @@ testable.
 """
 
 from dataclasses import dataclass
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from typing import Optional
 
 from app.core.exceptions import EntityNotFoundError, ValidationError
@@ -30,8 +30,8 @@ _PCT_QUANT = Decimal("0.01")
 _AMT_QUANT = Decimal("0.01")
 
 
-def _quantize(value: Decimal, quant: Decimal) -> Decimal:
-    return value.quantize(quant, rounding=ROUND_HALF_UP)
+def _quantize(value: Decimal, quant: Decimal, rounding=ROUND_HALF_UP) -> Decimal:
+    return value.quantize(quant, rounding=rounding)
 
 
 @dataclass(frozen=True)
@@ -236,11 +236,20 @@ def resolve_level(
                 amount = Decimal("0")
             elif is_last:
                 # Absorbs whatever the independently-rounded amounts above left
-                # over, so the group's total is exact by construction.
+                # over, so the group's total is exact by construction. For a
+                # non-negative unlisted_target_total, this residual is also
+                # never negative: every non-last child below is rounded DOWN,
+                # so none of them is ever quantized above its own ideal share,
+                # which keeps running_total from ever exceeding the target.
                 amount = unlisted_target_total - running_total
             else:
+                # ROUND_DOWN, not the module's usual ROUND_HALF_UP — see the
+                # `is_last` branch above for why: truncating instead of
+                # rounding is what makes "the last child's residual is never
+                # negative" a guarantee rather than a fix bolted on after the
+                # fact.
                 share = child.allocated_amount / unlisted_old_total
-                amount = _quantize(unlisted_target_total * share, _AMT_QUANT)
+                amount = _quantize(unlisted_target_total * share, _AMT_QUANT, rounding=ROUND_DOWN)
             running_total += amount
             percentage = _quantize(
                 (amount / parent_new_amount * 100) if parent_new_amount else Decimal("0"), _PCT_QUANT
@@ -271,11 +280,17 @@ def resolve_level(
         sibling_total = explicit_total + sum((c.allocated_amount for c in unlisted), Decimal("0"))
 
     # Sibling-sum check. Should always hold by construction when
-    # refit_unlisted=True (unlisted_target_total is derived from — and never
-    # exceeds — room_remaining, and the last child absorbs rounding drift
-    # exactly) — kept as the final defensive gate, not the primary mechanism.
-    # When refit_unlisted=False it's the ONLY thing stopping an explicit
-    # increase from pushing the level over its parent's unchanged total.
+    # refit_unlisted=True and unlisted_target_total is non-negative:
+    # unlisted_target_total never exceeds room_remaining, and the group
+    # always resolves to EXACTLY unlisted_target_total — every non-last
+    # child's ROUND_DOWN amount never exceeds its own ideal share, so the
+    # last child's residual is never negative, so nothing is ever clamped or
+    # otherwise made inexact. This is kept as the final defensive gate, not
+    # the primary mechanism, precisely so a future change to the rounding
+    # above that breaks that guarantee fails loudly here instead of silently
+    # persisting an over-committed total. When refit_unlisted=False it's the
+    # ONLY thing stopping an explicit increase from pushing the level over
+    # its parent's unchanged total.
     if sibling_total > parent_new_amount:
         raise ValidationError(
             message=f"Resolved total ({sibling_total}) exceeds the parent's amount ({parent_new_amount}).",
