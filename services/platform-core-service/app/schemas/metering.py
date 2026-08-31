@@ -122,7 +122,7 @@ class ServiceModelRow(BaseModel):
     task_type: Optional[str] = None     # mm_models.task["type"] (Registry's TaskTypeEnum value, e.g. "nmt", "audio-lang-detection") — None when the model/task type couldn't be resolved
     requests: int
     native_units: float = 0.0
-    native_unit_suffix: Optional[str] = None  # e.g. "chars", "min", "tokens" — task-specific; None alongside an unresolved task_type
+    native_unit_suffix: str = "requests"  # e.g. "chars", "min", "tokens" — task-specific; never null on the wire (FE declares this z.string()) — "requests" is the generic fallback for an unresolved task_type
     success_pct: float
     failure_rate_pct: float = 0.0   # 100 - success_pct
 

@@ -999,12 +999,12 @@ class TestModelBreakdown:
         row = result["services"][0]
         assert row["task_type"] == "nmt"
         assert row["native_units"] == 4321.0
-        assert row["native_unit_suffix"] == "characters"
+        assert row["native_unit_suffix"] == "chars"
 
         model = result["model_totals"][0]
         assert model["task_type"] == "nmt"
         assert model["native_units"] == 4321.0
-        assert model["native_unit_suffix"] == "characters"
+        assert model["native_unit_suffix"] == "chars"
 
     async def test_asr_native_units_rounded_to_2dp(self):
         """ASR (and every other audio-minutes task) keeps 2dp precision —
@@ -1028,7 +1028,7 @@ class TestModelBreakdown:
 
         row = result["services"][0]
         assert row["native_units"] == 12.35
-        assert row["native_unit_suffix"] == "audio_minutes"
+        assert row["native_unit_suffix"] == "min"
 
     async def test_audio_lang_detection_endpoint_resolves_correct_task_and_unit(self):
         """audio-lang-detection is the one endpoint whose task key doesn't
@@ -1065,13 +1065,16 @@ class TestModelBreakdown:
         row = result["services"][0]
         assert row["task_type"] == "audio_language_detection"
         assert row["native_units"] == 2.5
-        assert row["native_unit_suffix"] == "audio_minutes"
+        assert row["native_unit_suffix"] == "min"
 
-    async def test_unknown_task_type_reports_zero_units_and_no_suffix(self):
+    async def test_unknown_task_type_reports_zero_units_and_generic_suffix(self):
         """A row whose endpoint label can't be resolved to any known task
         (e.g. missing/blank) — task_type can't be determined, so
-        native_units/native_unit_suffix stay at their "unknown" defaults
-        instead of guessing/defaulting to LLM tokens."""
+        native_units stays 0.0 instead of guessing/defaulting to LLM tokens.
+        native_unit_suffix, however, must NEVER be null on the wire — the
+        FE's Zod schema declares it z.string() and fails the whole response
+        on a type mismatch — so it falls back to a generic non-null string
+        instead."""
         client = MagicMock()
         client.query = AsyncMock(return_value=self._row("svc-x", 5, endpoint=""))
         svc = MeteringService(client=client)  # no model_repo
@@ -1081,7 +1084,7 @@ class TestModelBreakdown:
         row = result["services"][0]
         assert row["task_type"] is None
         assert row["native_units"] == 0.0
-        assert row["native_unit_suffix"] is None
+        assert row["native_unit_suffix"] == "requests"
 
     async def test_repo_not_queried_when_no_traffic(self):
         client = MagicMock()
@@ -1094,6 +1097,25 @@ class TestModelBreakdown:
 
         repo.get_names_and_models_by_service_ids.assert_not_called()
         model_repo.get_model_names.assert_not_called()
+
+    async def test_pipeline_only_filter_ghosts_every_model_without_querying_registry(self):
+        """task_types=["pipeline"] maps to [] via _to_registry_task_types
+        ("pipeline" has no Registry equivalent). get_model_names() gates on
+        `if task_types:`, so passing [] straight through would fetch every
+        model_id unfiltered (and none would be ghosted) instead of every
+        model_id correctly being treated as unregistered under this scope —
+        skip the query entirely and ghost everything directly."""
+        client = MagicMock()
+        client.query = AsyncMock(
+            return_value=self._row("svc-pipeline", 1, model_id="hash-pipeline-model")
+        )
+        model_repo = self._model_repo({"hash-pipeline-model": "Some Model"})
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h", task_types=["pipeline"])
+
+        model_repo.get_model_names.assert_not_called()
+        assert result["model_totals"] == []
 
     # ── model_totals: grouped/validated by model_id, from the Prometheus
     # label directly — see the ROLLOUT NOTEs on model_breakdown() ──────────
@@ -1453,6 +1475,20 @@ class TestRegistryModelCount:
         svc = MeteringService(client=MagicMock(), model_repo=repo)
 
         assert await svc.registry_model_count() is None
+
+    async def test_pipeline_only_filter_returns_zero_without_querying_registry(self):
+        """task_types=["pipeline"] maps to [] via _to_registry_task_types
+        ("pipeline" has no Registry equivalent at all). count_models() gates
+        on `if task_types:`, so passing [] straight through would apply NO
+        filter and count every mm_models row instead of zero — there are no
+        registrable models under this scope by definition, so the DB isn't
+        even queried."""
+        repo = MagicMock()
+        repo.count_models = AsyncMock(return_value=999)
+        svc = MeteringService(client=MagicMock(), model_repo=repo)
+
+        assert await svc.registry_model_count(task_types=["pipeline"]) == 0
+        repo.count_models.assert_not_called()
 
 
 class TestModelConsumptionRanking:
@@ -1848,6 +1884,25 @@ class TestMeteringQueriesRestrictToApiKeyTraffic:
         await svc.model_breakdown(tenant=None, time_range="24h")
         for call in svc._client.query.call_args_list:
             assert 'auth_type=~"api_key|"' in call[0][0]
+
+    async def test_model_breakdown_native_unit_queries_exclude_unknown_tenant(self):
+        """The tokens query model_breakdown's native-unit fan-out replaced
+        carried `tenant!="unknown"` explicitly (build_base_selectors already
+        applies it to total_q/success_q). Without it on the native-unit
+        queries too, the all-tenants view would count unresolved-tenant
+        traffic in native_units that the request counts exclude, and a
+        service with only unknown-tenant traffic could enter `service_ids`
+        via the native vector alone with 0 requests and an unresolved
+        task_type."""
+        svc = _make_service(query_return=[])
+        await svc.model_breakdown(tenant=None, time_range="24h")
+        native_calls = [
+            call[0][0] for call in svc._client.query.call_args_list
+            if "telemetry_obsv_requests_total" not in call[0][0]
+        ]
+        assert native_calls, "expected at least one native-unit query"
+        for promql in native_calls:
+            assert 'tenant!="unknown"' in promql
 
     async def test_request_total_when_caller_passes_api_key_filter(self):
         # request_total's auth_type is caller-supplied (routes/metering.py

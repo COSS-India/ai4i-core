@@ -70,26 +70,39 @@ def _to_registry_task_types(task_types: list[str]) -> list[str]:
 
 
 # get_inference_unit_map() (libs/ai4i_core/ai4i_core/ppu/inference_types.yaml)
-# is the ONE canonical PPU definition of each task type's consumption unit —
-# also the billing/quota source of truth. It's keyed by the Registry's own
-# task-type string (e.g. "ner" -> "characters", "audio-lang-detection" ->
-# "audio_minutes") — translated from this module's metering-key vocabulary
-# via _METERING_TASK_TO_REGISTRY_TASK_TYPE. Its unit string is returned as-is
-# (no relabeling to a shorter display form) — SERVICE_BREAKDOWN_CONFIG's OWN
-# `native_unit_suffix` field is NOT this module's second source of truth for
-# the unit label — it existed before this PPU config did and had drifted for
-# at least one task (ner: "tokens", when the model actually counts
-# characters) — it's kept only as a last-resort fallback for a task type this
-# yaml doesn't (yet) cover.
-def _native_unit_suffix_for_metering_task(task: Optional[str]) -> Optional[str]:
-    if not task:
-        return None
-    registry_task_type = _METERING_TASK_TO_REGISTRY_TASK_TYPE.get(task, task)
-    ppu_unit = get_inference_unit_map().get(registry_task_type)
-    if ppu_unit:
-        return ppu_unit
-    cfg = SERVICE_BREAKDOWN_CONFIG.get(task)
-    return cfg["native_unit_suffix"] if cfg else None
+# is the ONE canonical definition of which unit each task type BILLS in — the
+# yaml is kept as the source of truth for that decision — but its identifiers
+# (audio_minutes, characters, images, requests) are billing/quota vocabulary,
+# not display strings: the frontend (ModelConsumptionTab.tsx) renders this
+# value verbatim after the number, so passing "audio_minutes" through as-is
+# would render "12.35 audio_minutes" instead of "12.35 min". Translate to
+# SERVICE_BREAKDOWN_CONFIG's existing short display suffixes before this
+# reaches the wire — the yaml still decides WHICH unit a task uses, this
+# table only decides how that unit is spelled for display.
+_PPU_UNIT_TO_DISPLAY_SUFFIX: dict[str, str] = {
+    "tokens": "tokens",
+    "characters": "chars",
+    "audio_minutes": "min",
+    "images": "images",
+    "requests": "requests",
+}
+
+
+def _native_unit_suffix_for_metering_task(task: Optional[str]) -> str:
+    """Never returns None/empty for a resolvable task — the FE's Zod schema
+    declares this field a plain `z.string()`, and `parseResponseData` fails
+    the ENTIRE Model Consumption response (not just one cell) on a type
+    mismatch, so a null here for a single row's unresolved task type is far
+    worse than a generic fallback string."""
+    if task:
+        registry_task_type = _METERING_TASK_TO_REGISTRY_TASK_TYPE.get(task, task)
+        ppu_unit = get_inference_unit_map().get(registry_task_type)
+        if ppu_unit:
+            return _PPU_UNIT_TO_DISPLAY_SUFFIX.get(ppu_unit, ppu_unit)
+        cfg = SERVICE_BREAKDOWN_CONFIG.get(task)
+        if cfg:
+            return cfg["native_unit_suffix"]
+    return "requests"
 
 
 class _Unset:
@@ -907,7 +920,15 @@ class MeteringService:
         model_registry_task_types = _to_registry_task_types(task_types or list(SERVICE_BREAKDOWN_CONFIG))
         model_names: dict = {}
         model_registry_checked = False
-        if self._model_repo is not None and model_ids:
+        if not model_registry_task_types:
+            # e.g. task_types=["pipeline"] — see registry_model_count's
+            # comment on the same mapping. get_model_names() gates on
+            # `if task_types:`, so passing [] through would fetch every
+            # model_id unfiltered instead of none; there's no Registry
+            # equivalent for this scope at all, so every model_id is
+            # correctly treated as unregistered (ghosted) without a query.
+            model_registry_checked = True
+        elif self._model_repo is not None and model_ids:
             try:
                 model_names = await self._model_repo.get_model_names(
                     list(model_ids), task_types=model_registry_task_types
@@ -1059,10 +1080,19 @@ class MeteringService:
         """
         if self._model_repo is None:
             return None
+        registry_task_types = _to_registry_task_types(task_types or list(SERVICE_BREAKDOWN_CONFIG))
+        # e.g. task_types=["pipeline"] — the only metering task with no
+        # Registry equivalent (_to_registry_task_types drops it, never maps
+        # it to something real) — maps to []. count_models()/get_model_names()
+        # both gate on `if task_types:`, so passing [] through would apply NO
+        # filter at all and count every mm_models row instead of zero. There
+        # are no registrable models under this scope, by definition — skip
+        # the query and answer 0 directly rather than let an empty list
+        # silently disable the filter.
+        if not registry_task_types:
+            return 0
         try:
-            return await self._model_repo.count_models(
-                task_types=_to_registry_task_types(task_types or list(SERVICE_BREAKDOWN_CONFIG))
-            )
+            return await self._model_repo.count_models(task_types=registry_task_types)
         except Exception:
             logger.warning("registry_model_count: DB query failed", exc_info=True)
             return None
@@ -1527,6 +1557,16 @@ class MeteringService:
         ghost-avoidance reasoning `model_breakdown` already applies to its
         request-count queries); `None` covers every SERVICE_BREAKDOWN_CONFIG
         task that has a native metric.
+
+        Always excludes ``tenant="unknown"`` — the same guard
+        `build_base_selectors` applies to `total_q`/`success_q` above. Without
+        it, the all-tenants view would count unresolved-tenant traffic in
+        `native_units` that the request counts exclude, AND a service whose
+        only in-window traffic has no resolved tenant could enter
+        `service_ids` purely via this native vector with 0 requests and an
+        unresolved `task_type` — exactly the row shape the FE's Zod schema
+        rejects the whole response over (native_unit_suffix must stay a
+        string on the wire, never null).
         """
         native_tasks: list[str] = []
         native_coros = []
@@ -1537,12 +1577,11 @@ class MeteringService:
             if not native_metric:
                 continue
             extra = cfg.get("native_extra_labels") or []
+            parts = ['tenant!="unknown"']
             if tenant_id:
-                parts = [f'tenant_id="{escape_label_value(tenant_id)}"']
+                parts.append(f'tenant_id="{escape_label_value(tenant_id)}"')
             elif tenant:
-                parts = [f'tenant="{escape_label_value(tenant)}"']
-            else:
-                parts = []
+                parts.append(f'tenant="{escape_label_value(tenant)}"')
             parts.append(api_key_auth_type_selector())
             parts.extend(extra)
             sel = "{" + ",".join(parts) + "}" if parts else ""
@@ -1574,27 +1613,24 @@ class MeteringService:
         return SERVICE_BREAKDOWN_CONFIG.get(task)
 
     @classmethod
-    def _round_native(cls, task: Optional[str], raw_value: float) -> tuple[float, Optional[str]]:
+    def _round_native(cls, task: Optional[str], raw_value: float) -> tuple[float, str]:
         """Round an already-aggregated native-unit value per its task's
-        `round_2dp` config, returning (value, unit_suffix) — or (0.0, None)
-        when the task is unknown/unmapped."""
+        `round_2dp` config, returning (value, unit_suffix). `unit_suffix` is
+        never None/empty — see `_native_unit_suffix_for_metering_task` — a
+        0.0 value alongside its generic fallback suffix is how an
+        unknown/unmapped task is represented on the wire."""
         cfg = cls._metering_cfg_for_task(task)
-        if cfg is None:
-            return 0.0, None
-        rounded = round(raw_value, 2) if cfg.get("round_2dp") else round(raw_value)
+        rounded = round(raw_value, 2) if cfg and cfg.get("round_2dp") else round(raw_value)
         return float(rounded), _native_unit_suffix_for_metering_task(task)
 
     @classmethod
     def _native_units_for(
         cls, task: Optional[str],
         native_by_task: dict[str, dict[str, float]], service_id: str,
-    ) -> tuple[float, Optional[str]]:
+    ) -> tuple[float, str]:
         """(native_units, native_unit_suffix) for one service row, picking
         its value out of `native_by_task` by its own task."""
-        cfg = cls._metering_cfg_for_task(task)
-        if cfg is None:
-            return 0.0, None
-        raw_value = native_by_task.get(task, {}).get(service_id, 0.0)
+        raw_value = native_by_task.get(task, {}).get(service_id, 0.0) if task else 0.0
         return cls._round_native(task, raw_value)
 
     @staticmethod
@@ -1616,9 +1652,7 @@ class MeteringService:
                 "service": cfg["display_name"],
                 "requests": total_v,
                 "native_units": natives.get(task, 0),
-                "native_unit_suffix": (
-                    _native_unit_suffix_for_metering_task(task) or cfg["native_unit_suffix"]
-                ),
+                "native_unit_suffix": _native_unit_suffix_for_metering_task(task),
                 "success_pct": round(success_v / total_v * 100, 2) if total_v else 0.0,
             })
         services.sort(key=lambda s: s["requests"], reverse=True)
