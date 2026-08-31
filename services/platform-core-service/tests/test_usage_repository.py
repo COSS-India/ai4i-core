@@ -1,12 +1,9 @@
 """Unit tests for UsageRepository.get_tenant_budgets().
 
-ppu_tenant_tier_assignments (the only table this method ever read) has been
-dropped — there is no replacement budget-per-tenant data source in
-this service's own DB (budget_usage has no tenant_id column, only
-api_key_id). get_tenant_budgets now always returns {}; this pins that
-contract so it isn't accidentally reverted to querying the dropped table
-again (which raises "relation does not exist", not a graceful empty
-result — see UsageRepository.get_tenant_budgets's own docstring).
+Its real implementation is being rebuilt elsewhere; this pins the interim
+placeholder's contract (always {}, no DB call) so it isn't accidentally
+reverted to querying the dropped ppu_tenant_tier_assignments table again —
+see the method's own docstring.
 """
 from __future__ import annotations
 

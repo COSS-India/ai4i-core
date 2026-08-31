@@ -99,34 +99,13 @@ class UsageRepository:
         return result.all()
 
     async def get_tenant_budgets(self, billing_month: str, tenant_ids: list[str]) -> dict:
-        """Always empty — kept only so callers (get_summary, get_tenant_list,
-        get_tenant_detail) don't need their own "no budget data" branch.
-
-        This used to read budget_limit/available_balance/tier_id from
-        ppu_tenant_tier_assignments, since dropped. That table was the
-        ONLY source this service had for a tenant-level budget figure, and
-        there's no replacement available from this service's own DB:
-        budget_usage (the table introduced in its place) has no tenant_id
-        column at all, only api_key_id — a real tenant/key rollup would
-        require the api_key->application->tenant chain, which lives in
-        auth-service's DB, not here.
-
-        Every caller already has a designed fallback for "no budget row for
-        this tenant" (see usage_service._resolve_budget: has_budget=False,
-        0/0) — that was written for a tenant with no assignment row, but the
-        same fallback now correctly covers every tenant, since there is no
-        longer any assignment row for anyone. Returning {} makes that path
-        the only path, rather than a 500 from querying a dropped table.
-
-        This is a real, known gap in the usage-tenant(s) dashboard/reporting
-        endpoints (budget_limit/available_balance/percentageUsed there now
-        always read as 0, and get_tenant_detail's zero-usage tier fallback
-        can no longer show a tenant's actual tier — see its own comment).
-        Restoring real figures needs a product/eng decision on where
-        tenant-level budget reporting should now be sourced from (a call
-        into auth-service's tenants.allocated_budget, most likely) — flagged
-        here rather than guessed at.
-        """
+        """Placeholder: ppu_tenant_tier_assignments (the only source this
+        used to read) is dropped, and its real replacement — reconstructing
+        budget_limit/available_balance from tenants.allocated_budget and
+        budget_usage across the two DBs — is being done in a separate,
+        already-in-flight change. Not implemented here to avoid two PRs
+        racing to define this method; every caller already tolerates an
+        empty result (see usage_service._resolve_budget)."""
         return {}
 
     async def get_tenant_tier_usage_breakdown(

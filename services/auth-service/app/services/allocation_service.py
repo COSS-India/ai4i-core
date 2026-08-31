@@ -149,6 +149,7 @@ class AllocationService:
 
         request_row_by_id = {row.application_id: row for row in body.application_allocations}
         snapshot_writes: dict[int, Decimal] = {}
+        keys_to_clear_exhaustion: list[int] = []
         response_rows: list[ResolvedApplicationAllocation] = []
 
         for resolved in resolved_apps:
@@ -176,6 +177,7 @@ class AllocationService:
                     usage_map=usage_map,
                     current_user=current_user,
                     snapshot_writes=snapshot_writes,
+                    keys_to_clear_exhaustion=keys_to_clear_exhaustion,
                 )
 
             response_rows.append(
@@ -189,7 +191,7 @@ class AllocationService:
 
         await self._db.commit()
         await budget_usage.write_budget_snapshot(snapshot_writes, platform_core_db)
-        await self._clear_exhaustion_for_changed_keys(snapshot_writes)
+        await self._clear_exhaustion_for_changed_keys(keys_to_clear_exhaustion)
 
         total_pct = await self._applications.sum_allocated_percentage(tenant_id)
         return AllocationUpdateData(
@@ -260,6 +262,7 @@ class AllocationService:
         )
 
         snapshot_writes: dict[int, Decimal] = {}
+        keys_to_clear_exhaustion: list[int] = []
         response_rows = await self._resolve_and_persist_keys(
             parent_amount=application.allocated_budget,
             nested_explicit=body.api_key_allocations,
@@ -267,12 +270,13 @@ class AllocationService:
             usage_map=usage_map,
             current_user=current_user,
             snapshot_writes=snapshot_writes,
+            keys_to_clear_exhaustion=keys_to_clear_exhaustion,
             refit_unlisted=False,
         )
 
         await self._db.commit()
         await budget_usage.write_budget_snapshot(snapshot_writes, platform_core_db)
-        await self._clear_exhaustion_for_changed_keys(snapshot_writes)
+        await self._clear_exhaustion_for_changed_keys(keys_to_clear_exhaustion)
 
         total_pct = await self._applications.sum_api_key_allocated_percentage(application_id)
         return AllocationUpdateData(
@@ -283,22 +287,31 @@ class AllocationService:
 
     # ── Shared helpers ───────────────────────────────────────────────────
 
-    async def _clear_exhaustion_for_changed_keys(self, snapshot_writes: dict[int, Decimal]) -> None:
+    async def _clear_exhaustion_for_changed_keys(self, key_ids: list[int]) -> None:
         """Clear budget-exhausted for exactly the Keys whose ceiling this
-        call actually raised — not a standalone "un-exhaust" action, a
-        direct consequence of one: resolve_level's own floor-check
-        (ALLOCATION_BELOW_CONSUMED) already guarantees every id in
-        ``snapshot_writes`` was resolved to an amount >= what it's
-        consumed, so a Key that was exhausted under its OLD ceiling cannot
-        still be exhausted under this new one. Without this, raising an
-        exhausted Key's own allocation here would leave it permanently
-        stuck at 429 from /auth/validate — nothing else in the system ever
-        clears this flag (see set_budget_exhausted_for_key's docstring).
+        call actually raised past what they've consumed — not a standalone
+        "un-exhaust" action, a direct consequence of one. ``key_ids`` is
+        already filtered by the caller to amount > consumed (strictly, not
+        resolve_level's own >= floor-check — a reallocation that lands
+        EXACTLY on a Key's current consumption still leaves it with zero
+        headroom, so clearing the flag there would let exactly one more
+        request through before the next billed request re-trips it; see
+        _resolve_and_persist_keys). Without this, raising an exhausted
+        Key's own allocation here would leave it permanently stuck at 429
+        from /auth/validate — nothing else in the system ever clears this
+        flag (see set_budget_exhausted_for_key's docstring).
+
+        One batched call, not a per-key loop: set_budget_exhausted_for_keys
+        does a single UPDATE + commit for the whole set (see its own
+        docstring) — a wide reallocation can change many Keys across many
+        Applications in one request, and looping set_budget_exhausted_for_key
+        here would pay a get_by_id + Redis write + update + commit per key
+        serially, with no rollback if a failure landed mid-loop.
+
         Runs after write_budget_snapshot, not instead of it — this only
         touches auth-service's own Redis/cached_data, independent of
         whether the cross-DB platform-core write landed."""
-        for key_id in snapshot_writes:
-            await self._api_key_service.set_budget_exhausted_for_key(key_id, False)
+        await self._api_key_service.set_budget_exhausted_for_keys(key_ids, False)
 
     async def _load_keys_and_usage(
         self, application_ids: list[int], platform_core_db: Optional[AsyncSession]
@@ -333,6 +346,7 @@ class AllocationService:
         usage_map: dict[int, tuple[Decimal, Decimal]],
         current_user: User,
         snapshot_writes: dict[int, Decimal],
+        keys_to_clear_exhaustion: list[int],
     ) -> list[ResolvedAPIKeyAllocation]:
         """This Application's own un-listed Keys are NOT left untouched just
         because the caller didn't mention them — every Key under it is
@@ -350,6 +364,7 @@ class AllocationService:
             usage_map=usage_map,
             current_user=current_user,
             snapshot_writes=snapshot_writes,
+            keys_to_clear_exhaustion=keys_to_clear_exhaustion,
             refit_unlisted=True,
             owning_application_id=application_id,
         )
@@ -363,6 +378,7 @@ class AllocationService:
         usage_map: dict[int, tuple[Decimal, Decimal]],
         current_user: User,
         snapshot_writes: dict[int, Decimal],
+        keys_to_clear_exhaustion: list[int],
         refit_unlisted: bool,
         owning_application_id: Optional[int] = None,
         parent_old_amount: Optional[Decimal] = None,
@@ -425,6 +441,14 @@ class AllocationService:
                     },
                 )
                 snapshot_writes[resolved.id] = resolved.amount
+                # Strictly greater than, not resolve_level's own >= floor-check:
+                # a Key resolved to EXACTLY its current consumption still has
+                # zero headroom, so clearing its exhaustion flag here would let
+                # one more request through before its next billed request
+                # re-trips it. Only a real cushion above consumption clears it.
+                consumed = usage_map.get(resolved.id, (_ZERO, None))[0]
+                if resolved.amount > consumed:
+                    keys_to_clear_exhaustion.append(resolved.id)
             response_rows.append(
                 ResolvedAPIKeyAllocation(
                     api_key_id=resolved.id,

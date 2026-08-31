@@ -380,7 +380,8 @@ class TestApplicationScope:
         """resolve_level's own floor-check already guarantees the new
         ceiling is >= what's consumed, so a Key that was exhausted under
         its OLD ceiling cannot still be exhausted under this new one —
-        set_budget_exhausted_for_key(..., False) must run for it."""
+        set_budget_exhausted_for_keys(..., False) must run for it, batched
+        in one call rather than a per-key loop."""
         svc = _svc()
         app = _application(1, allocated_budget=Decimal("50000"), allocated_percentage=Decimal("50"))
         key1 = _key(11, 1, allocated_budget=Decimal("20000"), allocated_percentage=Decimal("40"))
@@ -401,12 +402,14 @@ class TestApplicationScope:
             await svc.update_application_key_allocations(1, body, _user(), None)
 
         # Only Key 11 changed (Key 12 stays untouched at this scope) — only
-        # its flag is cleared, not a tenant- or application-wide sweep.
-        svc._api_key_service.set_budget_exhausted_for_key.assert_awaited_once_with(11, False)
+        # its id is in the batch, not a tenant- or application-wide sweep.
+        svc._api_key_service.set_budget_exhausted_for_keys.assert_awaited_once_with([11], False)
 
     @pytest.mark.asyncio
     async def test_unchanged_keys_have_no_exhaustion_call(self) -> None:
-        """No write_budget_snapshot entry -> nothing to clear for that Key."""
+        """No write_budget_snapshot entry -> nothing to clear for that Key —
+        the batch call still runs (uniformly, not conditionally skipped),
+        just with an empty id list."""
         svc = _svc()
         app = _application(1, allocated_budget=Decimal("50000"), allocated_percentage=Decimal("50"))
         key1 = _key(11, 1, allocated_budget=Decimal("30000"), allocated_percentage=Decimal("60"))
@@ -424,4 +427,39 @@ class TestApplicationScope:
              patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()):
             await svc.update_application_key_allocations(1, body, _user(), None)
 
-        svc._api_key_service.set_budget_exhausted_for_key.assert_not_awaited()
+        svc._api_key_service.set_budget_exhausted_for_keys.assert_awaited_once_with([], False)
+
+    @pytest.mark.asyncio
+    async def test_key_raised_to_exactly_its_consumed_amount_is_not_cleared(self) -> None:
+        """resolve_level's floor-check only requires amount >= consumed —
+        exactly equal passes it, but a Key sitting exactly at its own
+        consumption still has zero headroom. Clearing it here would let one
+        more request slip through before its next billed request re-trips
+        the flag, so it must be excluded from the cleared set even though
+        it's a real, persisted change."""
+        svc = _svc()
+        app = _application(1, allocated_budget=Decimal("50000"), allocated_percentage=Decimal("50"))
+        key1 = _key(11, 1, allocated_budget=Decimal("20000"), allocated_percentage=Decimal("40"))
+        svc._applications.get_by_id = AsyncMock(return_value=app)
+        svc._applications.get_by_id_for_update = AsyncMock(return_value=app)
+        svc._applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("60"))
+        svc._api_keys.list_by_application = AsyncMock(return_value=[key1])
+        svc._api_keys.update = AsyncMock()
+
+        # Key 11 has consumed exactly 30000 — raising its ceiling to exactly
+        # 30000 changes it (old was 20000) and passes the floor-check
+        # (30000 >= 30000), but leaves zero headroom.
+        body = AllocationUpdateRequest(api_key_allocations=[
+            APIKeyAllocationInput(api_key_id=11, allocated_budget=Decimal("30000"))
+        ])
+        with patch(
+            "app.services.budget_usage.fetch_budget_usage",
+            AsyncMock(return_value={11: (Decimal("30000"), None)}),
+        ), patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()) as write_snap:
+            await svc.update_application_key_allocations(1, body, _user(), None)
+
+        # The reallocation itself still happened...
+        svc._api_keys.update.assert_awaited_once()
+        write_snap.assert_awaited_once_with({11: Decimal("30000.00")}, None)
+        # ...but the exhaustion flag is not cleared for a Key with no real headroom.
+        svc._api_key_service.set_budget_exhausted_for_keys.assert_awaited_once_with([], False)

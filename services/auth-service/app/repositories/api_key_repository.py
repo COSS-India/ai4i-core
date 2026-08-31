@@ -201,6 +201,35 @@ class APIKeyRepository(BaseRepository):
         )
         return result.rowcount
 
+    async def patch_cached_data_field_for_keys(
+        self, key_ids: list[int], field: str, value: str
+    ) -> list[str]:
+        """Set one top-level field inside cached_data for every id in
+        key_ids that's still active, non-expired, and already-backfilled —
+        one UPDATE, not a per-key round trip (the id-list analogue of
+        patch_cached_data_field_for_tenant, for callers that already have
+        the exact key ids in hand instead of a tenant to walk). Returns the
+        api_key values of the rows actually touched (via RETURNING), so the
+        caller can mirror the same field into Redis without a separate
+        SELECT to look up which ids were eligible.
+        """
+        if not key_ids:
+            return []
+        result = await self._db.execute(
+            update(APIKey)
+            .where(
+                APIKey.id.in_(key_ids),
+                *self._active_key_conditions(require_cached_data=True),
+            )
+            .values(
+                cached_data=func.jsonb_set(
+                    APIKey.cached_data, cast([field], ARRAY(TEXT)), func.to_jsonb(value)
+                )
+            )
+            .returning(APIKey.api_key)
+        )
+        return list(result.scalars().all())
+
     async def remove_cached_data_fields_for_tenant(
         self, tenant_id: int, fields: list[str]
     ) -> int:

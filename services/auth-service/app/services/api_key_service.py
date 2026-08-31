@@ -412,6 +412,31 @@ class APIKeyService:
         await self._repo.update(key, {"cached_data": {**key.cached_data, "budget-exhausted": value}})
         await self._repo.commit()
 
+    async def set_budget_exhausted_for_keys(self, key_ids: list[int], exhausted: bool) -> None:
+        """Batched sibling of set_budget_exhausted_for_key, for a caller that
+        already has every affected key id in hand (e.g. a reallocation that
+        raised several Keys' ceilings across one or more Applications at
+        once) — one UPDATE plus one commit for the whole set, instead of a
+        get_by_id + Redis write + update + commit round trip per key
+        (patch_cached_data_field_for_keys is the id-list analogue of
+        patch_cached_data_field_for_tenant, which the tenant-wide cache
+        cascade already batches the same way).
+
+        Same eligibility filter as the singular method (active, non-expired,
+        already has a cached_data snapshot) — applied inside the UPDATE
+        itself via patch_cached_data_field_for_keys rather than a Python
+        loop, so a key missing that filter is silently skipped rather than
+        looked up individually first."""
+        if self._repo is None or not key_ids:
+            return
+        value = "1" if exhausted else "0"
+        touched_api_keys = await self._repo.patch_cached_data_field_for_keys(
+            key_ids, "budget-exhausted", value
+        )
+        for api_key in touched_api_keys:
+            await self._cache.patch_api_key_cache_field(api_key, "budget-exhausted", value)
+        await self._repo.commit()
+
     async def set_tier_id_for_tenant(self, tenant_id: int, tier_id: str) -> None:
         """Force every cached API key hash for the tenant onto ``tier_id``.
 

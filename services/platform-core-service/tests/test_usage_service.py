@@ -58,15 +58,10 @@ def _tier_row(**kwargs):
 
 
 def _budget_row(**kwargs):
-    """Stand-in for a get_tenant_budgets value — budget_limit/available_balance/tier_id.
-    tier_id is only consumed by get_tenant_detail's zero-usage fallback (to show the
-    tenant's actual assigned tier instead of "Unassigned"); every other caller ignores it.
-
-    The real UsageRepository.get_tenant_budgets always returns {} now (its one data
-    source, ppu_tenant_tier_assignments, has been dropped — see that method's own
-    docstring), so a non-empty dict here is a scenario the real repo can no longer
-    produce. Kept for tests that exercise _resolve_budget/_merge_tier_and_budget's own
-    render logic directly, independent of what the repo currently returns."""
+    """Stand-in for a get_tenant_budgets value — budget_limit/available_balance/tier_id,
+    read from ppu_tenant_tier_assignments. tier_id is only consumed by
+    get_tenant_detail's zero-usage fallback (to show the tenant's actual assigned
+    tier instead of "Unassigned"); every other caller ignores it."""
     defaults = dict(
         tenant_id="t1", budget_limit=Decimal("1000"), available_balance=Decimal("700"),
         tier_id="1",
@@ -127,9 +122,9 @@ class TestGetSummary:
 
     @pytest.mark.asyncio
     async def test_tenant_with_no_budget_row_is_not_falsely_exceeded(self):
-        """A tenant with usage but no budget row (the only case now — see
-        _budget_row) has no budget figure at all — must not be treated as
-        budget=0 and therefore always 'exceeded' the moment they have any spend."""
+        """A tenant with usage but no ppu_tenant_tier_assignments row covering this
+        period's end has no budget figure at all — must not be treated as budget=0
+        and therefore always 'exceeded' the moment they have any spend."""
         repo = _make_repo(
             get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[_usage_row(total_cost=Decimal("50"))],
@@ -351,8 +346,8 @@ class TestGetTenantList:
 
     @pytest.mark.asyncio
     async def test_tenant_with_no_budget_row_shows_zero_budget(self):
-        """A tenant with usage this month but no budget row (the only case now
-        — see _budget_row) must show budget=0, not error/crash."""
+        """A tenant with usage this month but no ppu_tenant_tier_assignments row
+        covering this period's end must show budget=0, not error/crash."""
         repo = _make_repo(
             get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[_usage_row()],
@@ -651,10 +646,8 @@ class TestGetTenantDetail:
     @pytest.mark.asyncio
     async def test_zero_usage_shows_current_tier_assignment_when_one_exists(self):
         """A tenant with no usage yet this billing_month (e.g. just onboarded) but a
-        budget row present (see _budget_row — the real repo can no longer produce
-        one, but this pins _resolve_tier_name's own render logic) must show that
-        tier, not "Unassigned" — there's no usage to derive a tier from, but the
-        tenant does have one."""
+        live ppu_tenant_tier_assignments row must show that tier, not "Unassigned" —
+        there's no usage to derive a tier from, but the tenant does have one."""
         repo = _make_repo(
             get_tenants_with_usage_tier=[],
             get_tenant_budgets=_budgets(_budget_row(tenant_id="t1", tier_id="2")),
@@ -740,8 +733,9 @@ class TestGetTenantDetail:
 
     @pytest.mark.asyncio
     async def test_tenant_with_no_budget_row_shows_zero_budget(self):
-        """A tenant with usage this month but no budget row (the only case now —
-        see _budget_row) must still show usage/tier data, just with budget=0."""
+        """A tenant with usage this month but no ppu_tenant_tier_assignments row
+        covering this period's end (e.g. the exact off-by-a-day case that motivated
+        this redesign) must still show usage/tier data, just with budget=0."""
         repo = _make_repo(
             get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[_usage_row()],
