@@ -1,17 +1,21 @@
 """PPU usage repository — reads usage and accrued cost data."""
+import logging
 import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from types import SimpleNamespace
+from typing import Optional
 
-from sqlalchemy import func, literal, select
+from sqlalchemy import func, literal, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.pay_per_use.budget_usage import BudgetUsage
 from app.models.pay_per_use.quota_usage import QuotaUsage
-from app.models.pay_per_use.tenant_tier_assignment import TenantTierAssignment
 from app.models.pay_per_use.tier import Tier
 from app.utils.billing_month import shift_billing_month
+
+logger = logging.getLogger(__name__)
 
 
 def _end_of_month(billing_month: str) -> datetime:
@@ -129,47 +133,105 @@ class UsageRepository:
         result = await self._db.execute(stmt)
         return result.all()
 
-    async def get_tenant_budgets(self, billing_month: str, tenant_ids: list[str]) -> dict:
-        """budget_limit/available_balance/tier_id per tenant_id, read from whichever
-        ppu_tenant_tier_assignments row was in effect at the lookup instant for
-        billing_month (now, for the current month; end of month, for a past one —
-        see _budget_lookup_instant).
+    async def get_tenant_budgets(
+        self,
+        billing_month: str,
+        tenant_ids: list[str],
+        auth_db: Optional[AsyncSession] = None,
+    ) -> dict:
+        """budget_limit/available_balance/tier_id per tenant_id.
 
-        This is the one place ppu_tenant_tier_assignments is still read for
-        the usage-tenant(s) endpoints — mainly for these budget columns,
-        never to decide which tenants/tiers are shown when there's usage
-        (that comes from get_tenants_with_usage_tier). tier_id is only
-        consumed by get_tenant_detail's zero-usage fallback, to show a
-        tenant's actual assigned tier instead of "Unassigned" when they
-        simply have no usage yet this billing_month. A tenant with no
-        assignment covering that instant is simply absent from the returned
-        dict; callers treat that as budget_limit=0/available_balance=0.
+        ppu_tenant_tier_assignments was dropped (AI4IDS-2923) when billing moved to
+        per-API-key budget_usage deduction — reconstructed here from tables that
+        still exist, split across two databases the same way _resolve_tenant_names
+        already does:
+          - budget_limit = tenants.allocated_budget (auth-service, via auth_db)
+          - available_balance = budget_limit - SUM(budget_usage.api_key_budget_used)
+            across every api_key belonging to one of the tenant's applications
+            (api_key/applications live in auth-service too; budget_usage is local)
+          - tier_id = tenants.tier_id (auth-service) — matches the old contract
+            exactly: this was ONLY ever consumed by get_tenant_detail's zero-usage
+            fallback, never to decide which tenants/tiers have usage (that's
+            get_tenants_with_usage_tier, sourced from ppu_quota_usage, unaffected
+            by any of this).
+
+        billing_month is accepted for interface compatibility but no longer
+        narrows this particular lookup: budget_usage carries no per-month
+        dimension (a single lifetime-cumulative row per key, unlike the old
+        assignment row's effective_from/to window), so for a PAST billing_month
+        this now reflects the tenant's CURRENT balance, not a frozen snapshot as
+        of that month's end. Accepted, not fixed here — that's a schema gap
+        upstream of this repository (see budget_usage's model), not something
+        reconstructable from data that was never captured.
+
+        A tenant not found in auth-service's tenants table (unknown tenant_id,
+        or auth_db unavailable) is simply absent from the returned dict, same
+        as the old "no assignment row" case — callers already treat that as
+        budget_limit=0/available_balance=0/has_budget=False via _resolve_budget.
         """
-        if not tenant_ids:
+        if not tenant_ids or not auth_db:
             return {}
-        lookup_instant = _budget_lookup_instant(billing_month)
-        ranked = (
-            select(
-                TenantTierAssignment.tenant_id,
-                TenantTierAssignment.tier_id,
-                TenantTierAssignment.budget_limit,
-                TenantTierAssignment.available_balance,
-                func.row_number()
-                .over(
-                    partition_by=TenantTierAssignment.tenant_id,
-                    order_by=TenantTierAssignment.effective_from.desc(),
+        numeric_ids = [int(t) for t in tenant_ids if t and t.isdigit()]
+        if not numeric_ids:
+            return {}
+        try:
+            tenant_rows = (
+                await auth_db.execute(
+                    text("SELECT id, allocated_budget, tier_id FROM tenants WHERE id = ANY(:ids)"),
+                    {"ids": numeric_ids},
                 )
-                .label("rn"),
+            ).all()
+            if not tenant_rows:
+                return {}
+
+            app_rows = (
+                await auth_db.execute(
+                    text("SELECT id, tenant_id FROM applications WHERE tenant_id = ANY(:ids)"),
+                    {"ids": [row.id for row in tenant_rows]},
+                )
+            ).all()
+            app_to_tenant = {row.id: row.tenant_id for row in app_rows}
+
+            key_to_tenant: dict[int, int] = {}
+            if app_to_tenant:
+                key_rows = (
+                    await auth_db.execute(
+                        text("SELECT id, application_id FROM api_key WHERE application_id = ANY(:app_ids)"),
+                        {"app_ids": list(app_to_tenant)},
+                    )
+                ).all()
+                for row in key_rows:
+                    tenant_for_key = app_to_tenant.get(row.application_id)
+                    if tenant_for_key is not None:
+                        key_to_tenant[row.id] = tenant_for_key
+        except Exception as exc:
+            logger.warning("Auth DB lookup failed — tenant budgets unavailable: %s", exc)
+            return {}
+
+        spent_by_tenant: dict[int, Decimal] = {}
+        if key_to_tenant:
+            spend_stmt = select(BudgetUsage.api_key_id, BudgetUsage.api_key_budget_used).where(
+                BudgetUsage.api_key_id.in_(key_to_tenant)
             )
-            .where(
-                TenantTierAssignment.effective_from <= lookup_instant,
-                TenantTierAssignment.effective_to > lookup_instant,
-                TenantTierAssignment.tenant_id.in_(tenant_ids),
+            spend_rows = (await self._db.execute(spend_stmt)).all()
+            for row in spend_rows:
+                tenant_for_key = key_to_tenant.get(row.api_key_id)
+                if tenant_for_key is not None:
+                    spent_by_tenant[tenant_for_key] = spent_by_tenant.get(
+                        tenant_for_key, Decimal("0")
+                    ) + (row.api_key_budget_used or Decimal("0"))
+
+        budgets: dict[str, SimpleNamespace] = {}
+        for row in tenant_rows:
+            budget_limit = row.allocated_budget or Decimal("0")
+            spent = spent_by_tenant.get(row.id, Decimal("0"))
+            budgets[str(row.id)] = SimpleNamespace(
+                tenant_id=str(row.id),
+                tier_id=row.tier_id,
+                budget_limit=budget_limit,
+                available_balance=budget_limit - spent,
             )
-        ).subquery()
-        stmt = select(ranked).where(ranked.c.rn == 1)
-        result = await self._db.execute(stmt)
-        return {row.tenant_id: row for row in result.all()}
+        return budgets
 
     async def get_tenant_tier_usage_breakdown(
         self, billing_month: str, tenant_ids: list[str], task_types: list[str] | None = None

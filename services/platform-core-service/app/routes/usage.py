@@ -90,12 +90,13 @@ async def get_usage_summary(
     tier_id: Optional[str] = Query(None, description="Filter by tier ID."),
     task_types: Optional[str] = Query(None, description="Comma-separated task types to include (frontend allowlist)."),
     db: AsyncSession = Depends(get_db),
+    auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ):
     _require_admin(request)
     tier_id = _validate_tier_id(tier_id)
     month = billing_period or datetime.now(timezone.utc).strftime("%Y-%m")
     svc = UsageService(UsageRepository(db))
-    return await svc.get_summary(month, tier_id, _parse_task_types(task_types))
+    return await svc.get_summary(month, tier_id, _parse_task_types(task_types), auth_db)
 
 
 @router.get("/usage-tenants", response_model=TenantHierarchicalListResponse)

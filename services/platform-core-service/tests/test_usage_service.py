@@ -512,7 +512,7 @@ class TestGetTenantList:
         assert result.total == 3
         # only the top-1 tenant (t2) should have been resolved/built, not t1/t3
         repo.get_tier_first_seen.assert_called_once_with(["t2"])
-        repo.get_tenant_budgets.assert_called_once_with("2026-06", ["t2"])
+        repo.get_tenant_budgets.assert_called_once_with("2026-06", ["t2"], None)
 
     @pytest.mark.asyncio
     async def test_tied_spend_breaks_deterministically_by_tenant_id(self):

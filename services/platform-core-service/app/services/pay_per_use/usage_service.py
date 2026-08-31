@@ -323,9 +323,15 @@ class UsageService:
         billing_month: str,
         tier_id: str | None = None,
         task_types: list[str] | None = None,
+        auth_db: Optional[AsyncSession] = None,
     ) -> UsageSummaryResponse:
         """``task_types`` (from the frontend) filters the spend to those task types at
         the query level; tier_id narrows which tenants are counted.
+
+        auth_db is optional (defaults to None, matching every existing caller/test
+        that predates get_tenant_budgets needing cross-DB access) — without it,
+        budget/remaining figures degrade to 0 the same way a tenant with no budget
+        on file already does (see _resolve_budget), rather than raising.
         """
         assignments, usage_rows = await self._tenant_assignments_and_usage(
             billing_month, tier_id, task_types
@@ -377,7 +383,7 @@ class UsageService:
 
         active_tenants = len(assignments)
         tenant_ids = [a.tenant_id for a in assignments]
-        budgets = await self._repo.get_tenant_budgets(billing_month, tenant_ids)
+        budgets = await self._repo.get_tenant_budgets(billing_month, tenant_ids, auth_db)
         # A tenant with no budget row on file has an unknown limit, not a limit of 0 —
         # they must not count as "exceeded" just for having any spend at all. This keeps
         # the summary card consistent with the tenant list/detail view, which shows the
@@ -492,19 +498,26 @@ class UsageService:
 
         page_tenant_ids = [a.tenant_id for a in page_assignments]
 
-        async def _fetch_page_data():
+        async def _fetch_self_db_data():
             tier_first_seen = await self._repo.get_tier_first_seen(page_tenant_ids)
-            budgets = await self._repo.get_tenant_budgets(billing_month, page_tenant_ids)
             tier_names = await self._repo.get_tier_names()
-            return tier_first_seen, budgets, tier_names
+            return tier_first_seen, tier_names
 
-        # _resolve_tenant_names runs on auth_db, a separate session from self._db — the
-        # three self._db calls above must stay sequential (an AsyncSession can't run
-        # concurrent queries), but that whole group has no dependency on auth_db, so it
-        # runs concurrently with it instead of after it.
-        (tier_first_seen, budgets, tier_names), org_map = await asyncio.gather(
-            _fetch_page_data(),
-            _resolve_tenant_names(page_tenant_ids, auth_db),
+        # get_tenant_budgets now also reads auth_db (AI4IDS-2923 rework), so it can no
+        # longer run inside the same concurrent group as a self._db-only fetch without
+        # risking two coroutines hitting the same AsyncSession at once — an
+        # AsyncSession supports sequential awaits, never concurrent ones. Grouped here
+        # with _resolve_tenant_names (which already used auth_db) instead: the two
+        # auth_db calls run sequentially with each other, while this whole group still
+        # runs concurrently against the self._db group above.
+        async def _fetch_auth_db_data():
+            org_map = await _resolve_tenant_names(page_tenant_ids, auth_db)
+            budgets = await self._repo.get_tenant_budgets(billing_month, page_tenant_ids, auth_db)
+            return org_map, budgets
+
+        (tier_first_seen, tier_names), (org_map, budgets) = await asyncio.gather(
+            _fetch_self_db_data(),
+            _fetch_auth_db_data(),
         )
 
         order_by_tenant: dict[str, dict[str, datetime]] = {}
@@ -573,7 +586,7 @@ class UsageService:
             # No usage to derive a tier from, but the tenant may still have a live
             # tier assignment (e.g. just onboarded, hasn't made any calls yet) — show
             # that instead of "Unassigned" so the tier isn't blank for no reason.
-            budgets = await self._repo.get_tenant_budgets(billing_month, [tenant_id])
+            budgets = await self._repo.get_tenant_budgets(billing_month, [tenant_id], auth_db)
             budget_row = budgets.get(tenant_id)
             if budget_row is not None:
                 tier_names = await self._repo.get_tier_names()
@@ -608,20 +621,28 @@ class UsageService:
                 tierBreakdown=[],
             )
 
-        async def _fetch_tenant_data():
+        async def _fetch_self_db_data():
             usage_rows = await self._repo.get_tenant_tier_usage_breakdown(
                 billing_month, [tenant_id], task_types=task_types
             )
             tier_first_seen = await self._repo.get_tier_first_seen([tenant_id])
-            budgets = await self._repo.get_tenant_budgets(billing_month, [tenant_id])
             tier_names = await self._repo.get_tier_names()
-            return usage_rows, tier_first_seen, budgets, tier_names
+            return usage_rows, tier_first_seen, tier_names
 
-        # Same reasoning as get_tenant_list: the self._db calls stay sequential among
-        # themselves, but run concurrently with the auth_db-backed name resolution.
-        (usage_rows, tier_first_seen, budgets, tier_names), org_map = await asyncio.gather(
-            _fetch_tenant_data(),
-            _resolve_tenant_names([tenant_id], auth_db),
+        # get_tenant_budgets now also reads auth_db (AI4IDS-2923 rework) — see
+        # get_tenant_list's identical restructuring for why it can no longer share a
+        # concurrent group with a self._db-only fetch. Grouped with
+        # _resolve_tenant_names instead: both auth_db calls run sequentially with
+        # each other, while this whole group still runs concurrently against the
+        # self._db group above.
+        async def _fetch_auth_db_data():
+            org_map = await _resolve_tenant_names([tenant_id], auth_db)
+            budgets = await self._repo.get_tenant_budgets(billing_month, [tenant_id], auth_db)
+            return org_map, budgets
+
+        (usage_rows, tier_first_seen, tier_names), (org_map, budgets) = await asyncio.gather(
+            _fetch_self_db_data(),
+            _fetch_auth_db_data(),
         )
         tier_order = {str(row.tier_id): row.first_seen for row in tier_first_seen}
         assignment = _merge_tier_and_budget(assignments, budgets, tier_names)[0]
