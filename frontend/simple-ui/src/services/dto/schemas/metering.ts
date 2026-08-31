@@ -107,6 +107,7 @@ export const modelConsumptionRowSchema = z.object({
   service_id: z.string(),
   name: z.string(),
   model_name: z.string().nullable().optional(),
+  task_type: z.string().nullable().optional(),
   requests: z.number(),
   native_units: z.number(),
   native_unit_suffix: z.string(),
@@ -117,6 +118,7 @@ export const modelConsumptionRowSchema = z.object({
 export const topModelRowSchema = z.object({
   rank: z.number(),
   model_name: z.string(),
+  task_type: z.string().nullable().optional(),
   consumption_pct: z.number(),
   requests: z.number(),
   formatted_requests: z.string(),

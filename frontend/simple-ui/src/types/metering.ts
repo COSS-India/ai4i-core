@@ -112,11 +112,13 @@ export interface OverviewResponse extends MeteringResponseMeta {
   throughput?: ThroughputData;
 }
 
-/** Per-service LLM row from GET /metering/model-consumption (no roll-up by model_name). */
+/** Per-service row from GET /metering/model-consumption (no roll-up by model_name). */
 export interface ModelConsumptionRow {
   service_id: string;
   name: string;
   model_name?: string | null;
+  /** Registry task type from `mm_models.task["type"]`; null when unresolved. */
+  task_type?: string | null;
   requests: number;
   native_units: number;
   native_unit_suffix: string;
@@ -128,6 +130,8 @@ export interface ModelConsumptionRow {
 export interface TopModelRow {
   rank: number;
   model_name: string;
+  /** From API when available; used for task-type filtering on the ranked list. */
+  task_type?: string | null;
   consumption_pct: number;
   requests: number;
   formatted_requests: string;
@@ -136,7 +140,7 @@ export interface TopModelRow {
 export type ModelTopN = 5 | 10;
 
 export interface ModelConsumptionSummary {
-  /** Registered LLM model VERSIONS in the Registry (task_types=llm; platform-wide, not tenant-scoped). */
+  /** Registered model versions for enabled task types (platform-wide, not tenant-scoped). */
   total_models?: number | null;
   /** Distinct model_ids among model_totals with traffic in-window — same version grain as total_models. */
   active_models?: number | null;

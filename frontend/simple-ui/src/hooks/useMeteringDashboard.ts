@@ -153,6 +153,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
   const overview = overviewQuery.data;
 
   const modelQueryEnabled =
+    enabledServicesReady &&
     subTab === METERING.SUB_TAB.MODEL &&
     (isAdopterView || tenantOverviewEnabled);
 
@@ -175,9 +176,11 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       queryTenantId,
       roleViewConfig.defaultView,
       isAdopterView,
+      enabledServicesKey,
       refreshNonce,
     ),
-    queryFn: () => fetchMeteringModelConsumption(timeWindow, ctx, queryTenantId),
+    queryFn: () =>
+      fetchMeteringModelConsumption(timeWindow, ctx, queryTenantId, enabledServices),
     enabled: modelQueryEnabled,
     ...meteringQueryDefaults,
   });

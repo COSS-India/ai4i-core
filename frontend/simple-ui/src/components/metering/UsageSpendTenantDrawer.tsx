@@ -7,17 +7,14 @@ import {
   DrawerContent,
   DrawerHeader,
   DrawerOverlay,
-  FormControl,
   HStack,
-  Select,
   Spinner,
   Text,
   VStack,
 } from "@chakra-ui/react";
 import React from "react";
-import { METERING } from "../../config/meteringConstants";
 import { INSTITUTION } from "../../config/constants";
-import { billingPeriodLabel, type BillingPeriodKey } from "../../utils/usageSpendHelpers";
+import { billingPeriodLabel } from "../../utils/usageSpendHelpers";
 import type { TenantUsageDetail } from "../../types/usageSpend";
 import SpendByTaskTypeTable from "./SpendByTaskTypeTable";
 import { BudgetCell, TenantAvatar, TierBadge } from "./UsageSpendCells";
@@ -27,11 +24,6 @@ interface UsageSpendTenantDrawerProps {
   onClose: () => void;
   detail: TenantUsageDetail | null;
   isLoading: boolean;
-  /** Value shown in the period selector (may be pending while loading). */
-  periodKey: BillingPeriodKey;
-  /** Period that `detail` was fetched for — used for the spend section label. */
-  loadedPeriodKey: BillingPeriodKey;
-  onPeriodChange: (periodKey: BillingPeriodKey) => void;
 }
 
 const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
@@ -39,12 +31,9 @@ const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
   onClose,
   detail,
   isLoading,
-  periodKey,
-  loadedPeriodKey,
-  onPeriodChange,
 }) => {
   const hasMultiTier = (detail?.tierBreakdown?.length ?? 0) > 1;
-  const periodLabel = billingPeriodLabel(loadedPeriodKey);
+  const periodLabel = billingPeriodLabel("current");
 
   let body: React.ReactNode = null;
   if (isLoading && !detail) {
@@ -63,30 +52,6 @@ const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
           </Text>
           <TierBadge label={detail.tier} />
         </HStack>
-
-        <FormControl>
-          <Text
-            fontSize="11px"
-            letterSpacing="0.04em"
-            color="gray.600"
-            fontWeight="semibold"
-            mb={2}
-          >
-            {METERING.USAGE_SPEND.BILLING_PERIOD}
-          </Text>
-          <Select
-            size="sm"
-            value={periodKey}
-            onChange={(e) => onPeriodChange(e.target.value as BillingPeriodKey)}
-            borderRadius="8px"
-            bg="white"
-            maxW="220px"
-            isDisabled={isLoading}
-          >
-            <option value="current">{METERING.USAGE_SPEND.CURRENT_MONTH}</option>
-            <option value="last">{METERING.USAGE_SPEND.LAST_MONTH}</option>
-          </Select>
-        </FormControl>
 
         <Box>
           <Text fontSize="11px" letterSpacing="0.04em" color="gray.600" fontWeight="semibold" mb="10px">

@@ -14,7 +14,7 @@ import SegmentedTabBar from "./SegmentedTabBar";
 
 interface OverviewKpiCardsProps {
   data: OverviewResponse;
-  /** When false, omit the all-institutions helper on Total LLM Requests. */
+  /** When false, omit the all-institutions helper on Total Requests. */
   isPlatformWide?: boolean;
 }
 
@@ -26,7 +26,7 @@ const KPI_VALUE_COLORS: Record<string, string> = {
   avg_rps: "gray.800",
 };
 
-/** Top-row summary KPI cards (Total LLM Requests, Successful, Failed, Average RPS). */
+/** Top-row summary KPI cards (Total Requests, Successful, Failed, Average RPS). */
 export const OverviewKpiCards: React.FC<OverviewKpiCardsProps> = ({
   data,
   isPlatformWide = true,

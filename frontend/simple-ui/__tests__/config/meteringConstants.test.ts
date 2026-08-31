@@ -1,5 +1,7 @@
 import { METERING } from '../../src/config/meteringConstants';
 import { meteringColorAt } from '../../src/utils/meteringColors';
+import { normalizeModelTaskType } from '../../src/utils/meteringTaskType';
+import { buildTaskTypeConsumptionChart } from '../../src/utils/meteringFormatters';
 
 describe('Usage Dashboard v2.0 (AI4IDS-2908)', () => {
   it('exposes three tabs with renamed labels', () => {
@@ -30,25 +32,76 @@ describe('Usage Dashboard v2.0 (AI4IDS-2908)', () => {
   });
 });
 
-describe('Model Consumption tooltips (AI4IDS-2854)', () => {
-  const { TOTAL_MODELS, ACTIVE_MODELS } = METERING.SECTIONS.MODEL.TOOLTIPS;
+describe('Model Consumption tooltips (AI4IDS-2854, AI4IDS-2957)', () => {
+  const { TOTAL_MODELS, ACTIVE_MODELS, TOKEN_CONSUMPTION } = METERING.SECTIONS.MODEL.TOOLTIPS;
 
   it('does not describe the removed name-collapsed identity', () => {
-    // Backend now counts LLM model VERSIONS (model_id-grained), not distinct
-    // names — this phrasing described the old, replaced behaviour and must
-    // not silently come back.
     expect(TOTAL_MODELS.toLowerCase()).not.toContain('collapsed by name');
     expect(TOTAL_MODELS.toLowerCase()).not.toContain('distinct model');
     expect(ACTIVE_MODELS.toLowerCase()).not.toContain('distinct model');
   });
 
-  it('states the LLM-only scope for both cards', () => {
-    expect(TOTAL_MODELS.toLowerCase()).toContain('llm');
-    expect(ACTIVE_MODELS.toLowerCase()).toContain('llm');
+  it('scopes model KPI tooltips to enabled task types, not LLM-only', () => {
+    expect(TOTAL_MODELS.toLowerCase()).not.toContain('llm');
+    expect(ACTIVE_MODELS.toLowerCase()).not.toContain('llm');
+    expect(TOTAL_MODELS.toLowerCase()).toContain('enabled task type');
+    expect(ACTIVE_MODELS.toLowerCase()).toContain('enabled task type');
+  });
+
+  it('uses Native units wording for the native column tooltip (AI4IDS-2956)', () => {
+    expect(TOKEN_CONSUMPTION).toContain('Native units');
+    expect(TOKEN_CONSUMPTION.toLowerCase()).not.toContain('tokens');
   });
 
   it('describes model VERSIONS, matching the version-grained KPI values', () => {
     expect(TOTAL_MODELS.toLowerCase()).toContain('version');
     expect(ACTIVE_MODELS.toLowerCase()).toContain('version');
+  });
+});
+
+describe('Overview KPI labels (AI4IDS-2957)', () => {
+  it('uses task-type-neutral request labels', () => {
+    expect(METERING.KPI.LABELS.total_requests).toBe('Total Requests');
+    expect(METERING.KPI.LABELS.total_requests.toLowerCase()).not.toContain('llm');
+  });
+
+  it('uses AI Model wording in overview KPI tooltips', () => {
+    expect(METERING.KPI.TOOLTIPS.total_requests.toLowerCase()).toContain('ai model');
+    expect(METERING.KPI.TOOLTIPS.successful.toLowerCase()).toContain('ai model');
+  });
+});
+
+describe('Budget summary tooltips (AI4IDS-2957)', () => {
+  it('describes budget-only totals', () => {
+    const tips = METERING.USAGE_SPEND.TOOLTIPS;
+    expect(tips.TOTAL_ALLOCATED.toLowerCase()).toContain('budget');
+    expect(tips.TOTAL_ALLOCATED.toLowerCase()).not.toContain('token');
+    expect(tips.TOTAL_USED.toLowerCase()).toContain('budget');
+    expect(tips.TOTAL_REMAINING.toLowerCase()).toContain('budget');
+  });
+});
+
+describe('normalizeModelTaskType (AI4IDS-2980)', () => {
+  it('normalizes underscore keys to hyphen form', () => {
+    expect(normalizeModelTaskType('language_detection')).toBe('language-detection');
+  });
+
+  it('returns empty string for null or blank values', () => {
+    expect(normalizeModelTaskType(null)).toBe('');
+    expect(normalizeModelTaskType('  ')).toBe('');
+  });
+});
+
+describe('buildTaskTypeConsumptionChart (AI4IDS-2980)', () => {
+  it('aggregates requests by task type', () => {
+    const { slices, totalRequests } = buildTaskTypeConsumptionChart([
+      { task_type: 'llm', requests: 60 },
+      { task_type: 'nmt', requests: 40 },
+      { task_type: 'llm', requests: 20 },
+    ]);
+    expect(totalRequests).toBe(120);
+    expect(slices).toHaveLength(2);
+    expect(slices[0]?.name).toBe('LLM');
+    expect(slices[0]?.value).toBe(80);
   });
 });

@@ -9,7 +9,6 @@ import {
   formatSpendUnit,
   hasPopulatedQuotaUsage,
   isMultiTaskQuotaTenant,
-  summarizeSpendTokens,
   taskTypeColor,
   USAGE_SPEND_ACCENT,
   USAGE_SPEND_DANGER,
@@ -38,16 +37,11 @@ function moneyOrDash(value: number | null | undefined, currency: string): string
   return value == null ? "—" : formatSpendMoney(value, currency);
 }
 
-function tokensOrDash(value: number | null | undefined, unit: string): string {
-  return value == null ? "—" : formatSpendUnit(value, unit);
-}
-
 function SpendTotalCard({
   label,
   money,
-  tokens,
   tooltip,
-}: Readonly<{ label: string; money: string; tokens: string; tooltip?: string }>) {
+}: Readonly<{ label: string; money: string; tooltip?: string }>) {
   return (
     <Box
       bg={SPEND_CARD_BG}
@@ -71,9 +65,6 @@ function SpendTotalCard({
       </HStack>
       <Text fontSize="22px" fontWeight="bold" lineHeight="1.1" color="gray.800" noOfLines={1}>
         {money}
-      </Text>
-      <Text fontSize="12.5px" color="gray.500" mt="6px" noOfLines={1}>
-        {tokens}
       </Text>
     </Box>
   );
@@ -250,26 +241,21 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
   }));
 
   const totalCards = useMemo(() => {
-    const rows = summary?.spendByModelTaskType ?? [];
-    const tokens = summarizeSpendTokens(rows);
     const tips = METERING.USAGE_SPEND.TOOLTIPS;
     return [
       {
         label: METERING.USAGE_SPEND.TOTAL_ALLOCATED,
         money: moneyOrDash(summary?.totalAllocatedBudget, currency),
-        tokens: tokensOrDash(tokens.tokensAllocated, tokens.unit),
         tooltip: tips.TOTAL_ALLOCATED,
       },
       {
         label: METERING.USAGE_SPEND.TOTAL_USED,
         money: moneyOrDash(summary?.totalSpend, currency),
-        tokens: tokensOrDash(tokens.tokensUsed, tokens.unit),
         tooltip: tips.TOTAL_USED,
       },
       {
         label: METERING.USAGE_SPEND.TOTAL_REMAINING,
         money: moneyOrDash(summary?.totalRemainingBudget, currency),
-        tokens: tokensOrDash(tokens.tokensRemaining, tokens.unit),
         tooltip: tips.TOTAL_REMAINING,
       },
     ];
@@ -303,7 +289,6 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
             key={card.label}
             label={card.label}
             money={card.money}
-            tokens={card.tokens}
             tooltip={card.tooltip}
           />
         ))}
