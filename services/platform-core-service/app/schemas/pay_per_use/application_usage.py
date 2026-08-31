@@ -35,8 +35,11 @@ class ApiKeyUsageItem(BaseModel):
     keyName: str
     maskedKey: str
     isActive: bool
-    # allocatedBudget.percentage is % of the institution's total budget (same scale
-    # as Application.allocated_percentage — see Story 4's cap check).
+    # allocatedBudget.percentage is % of the institution's total budget, computed
+    # from the amount — NOT the raw api_key.allocated_percentage column, which is
+    # stored as % of the parent APPLICATION's budget instead (see
+    # application_usage_service.py's get_application_detail for why the two must
+    # not be conflated under this one field).
     # spendBudget/remainingBudget.percentage are % of this key's OWN allocation.
     allocatedBudget: MoneyPercent
     spendBudget: MoneyPercent

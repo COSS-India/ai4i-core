@@ -184,6 +184,7 @@ class ApplicationUsageService:
     async def get_application_detail(
         self, application_id: int, tenant_id: str, auth_db: Optional[AsyncSession]
     ) -> ApplicationUsageDetailResponse:
+        tenant_budget = await self._load_tenant_budget(tenant_id, auth_db)
         applications = await self._load_tenant_applications(tenant_id, auth_db)
         application = next((a for a in applications if a["id"] == application_id), None)
         if application is None:
@@ -205,14 +206,18 @@ class ApplicationUsageService:
                     keyName=key["key_name"],
                     maskedKey=_mask_key(key["api_key"]),
                     isActive=key["is_active"],
-                    # allocated_percentage is stored on the same scale as Application's
-                    # (% of the institution's total budget — the cap check in Story 4
-                    # sums key percentages directly against the app's own percentage,
-                    # e.g. 24% + 16% = the app's 40%), so it's used as-is, not
-                    # recomputed against the app's own allocation.
-                    allocatedBudget=MoneyPercent(
-                        amount=float(key_allocated), percentage=float(key["allocated_percentage"] or 0)
-                    ),
+                    # api_key.allocated_percentage is stored as % of the PARENT
+                    # APPLICATION's budget (api_key_service.py:547: allocated_budget =
+                    # application.allocated_budget * allocated_percentage / 100, capped
+                    # at 100% per application by sum_api_key_allocated_percentage) — a
+                    # different scale than Application.allocated_percentage (% of the
+                    # institution). Returning the raw stored value here under the same
+                    # field name the Application object uses for institution-scale %
+                    # would show e.g. a key at 60% sitting under its own app at 40%.
+                    # Recompute against the institution total so both objects in this
+                    # response share one scale, like get_application_list already does
+                    # for applications.
+                    allocatedBudget=_money_percent(key_allocated, tenant_budget),
                     spendBudget=_money_percent(key_spend, key_allocated),
                     remainingBudget=_money_percent(key_remaining, key_allocated),
                 )
@@ -222,9 +227,7 @@ class ApplicationUsageService:
             applicationId=application["id"],
             applicationName=application["name"],
             domain=application["domain"],
-            allocatedBudget=MoneyPercent(
-                amount=float(allocated_amount), percentage=float(application["allocated_percentage"] or 0)
-            ),
+            allocatedBudget=_money_percent(allocated_amount, tenant_budget),
             spendBudget=_money_percent(spend_amount, allocated_amount),
             remainingBudget=_money_percent(remaining_amount, allocated_amount),
             apiKeys=api_key_items,

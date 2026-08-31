@@ -248,7 +248,9 @@ class TestGetApplicationList:
 class TestGetApplicationDetail:
     @pytest.mark.asyncio
     async def test_application_not_found_raises(self):
-        auth_db = _make_auth_db([_rows_result([])])
+        # get_application_detail loads the tenant budget before the applications
+        # list, so the mock must supply that result first even for the not-found path.
+        auth_db = _make_auth_db([_budget_result(Decimal("1000000.00")), _rows_result([])])
         repo = _make_repo({})
         svc = ApplicationUsageService(repo)
 
@@ -257,8 +259,20 @@ class TestGetApplicationDetail:
 
     @pytest.mark.asyncio
     async def test_detail_includes_masked_keys_and_totals(self):
+        # Institution budget = 1,000,000; Citizen Services holds 40% of it (400,000).
+        #
+        # Key allocated_percentage is a share of the PARENT APPLICATION's budget, not
+        # the institution's (api_key_service.py:547: allocated_budget =
+        # application.allocated_budget * allocated_percentage / 100, capped at 100%
+        # per application by sum_api_key_allocated_percentage). So a key holding
+        # 240,000 of Citizen Services' 400,000 is stored as 60.00 (240000/400000),
+        # NOT 24.00 (240000/1000000) — this fixture derives allocated_percentage from
+        # the real write-path formula so it's a row create_api_key could actually
+        # produce, not one that only happens to match the expected institution-scale
+        # output by coincidence.
         auth_db = _make_auth_db(
             [
+                _budget_result(Decimal("1000000.00")),
                 _rows_result(
                     [
                         _Row(id=1, name="Citizen Services", domain="cs.gov", allocated_percentage=Decimal("40.00"), allocated_budget=Decimal("400000.00"), status="ACTIVE"),
@@ -266,8 +280,8 @@ class TestGetApplicationDetail:
                 ),
                 _rows_result(
                     [
-                        _Row(id=10, application_id=1, key_name="Web Frontend", api_key="0" * 28 + "a91d", allocated_percentage=Decimal("24.00"), allocated_budget=Decimal("240000.00"), is_active=True),
-                        _Row(id=11, application_id=1, key_name="Batch Processing", api_key="0" * 28 + "44f2", allocated_percentage=Decimal("16.00"), allocated_budget=Decimal("160000.00"), is_active=True),
+                        _Row(id=10, application_id=1, key_name="Web Frontend", api_key="0" * 28 + "a91d", allocated_percentage=Decimal("60.00"), allocated_budget=Decimal("240000.00"), is_active=True),
+                        _Row(id=11, application_id=1, key_name="Batch Processing", api_key="0" * 28 + "44f2", allocated_percentage=Decimal("40.00"), allocated_budget=Decimal("160000.00"), is_active=True),
                     ]
                 ),
             ]
@@ -285,8 +299,11 @@ class TestGetApplicationDetail:
         keys_by_id = {k.keyId: k for k in result.apiKeys}
         assert keys_by_id[10].maskedKey == "a91d"
         assert keys_by_id[10].spendBudget.percentage == pytest.approx(29.1666, rel=1e-3)
-        # allocatedBudget.percentage must be the stored value as-is (institution scale,
-        # same as Application.allocated_percentage) — NOT recomputed against the
-        # parent application's own allocation (which would wrongly give 60.0 here).
+        # allocatedBudget.percentage must be recomputed on the institution scale
+        # (240000/1000000=24, 160000/1000000=16) — NOT the raw stored
+        # api_key.allocated_percentage (60/40, the app scale), which would make a
+        # key appear to hold more of the budget than its own parent application
+        # (40%). This is the exact scale-mixing bug: the row's stored percentage
+        # (60/40) must differ from the response's percentage (24/16).
         assert keys_by_id[10].allocatedBudget.percentage == 24.0
         assert keys_by_id[11].allocatedBudget.percentage == 16.0
