@@ -14,10 +14,13 @@ Nothing here needs a broker, database, or Redis.
 """
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from consumers.payperuse_consumer.handler import (
     _get_otel_attributes,
+    _post_billing,
     _to_float,
     _to_int,
 )
@@ -150,3 +153,47 @@ class TestGetOtelAttributes:
         assert corr == ""
         assert aki == 0
         assert tier is None
+
+
+class TestPostBilling:
+    """_post_billing had no coverage on either side of the per-key rescope —
+    the whole point of the change (one Key's own usage notifying by
+    api_key_id, not tenant_id, and skipping entirely when there's no key on
+    the span) had nothing pinning it."""
+
+    async def test_key_exhausted_notifies_by_api_key_id_not_tenant_id(self):
+        with patch("consumers.payperuse_consumer.handler._notify_auth", AsyncMock()) as notify:
+            await _post_billing(True, False, "tenant-1", 42, "nmt")
+        notify.assert_awaited_once_with(
+            "/internal/ppu/api-key/42/budget-exhausted", {"exhausted": True}
+        )
+
+    async def test_key_exhausted_but_no_api_key_id_is_skipped(self):
+        """api_key_id=0 means no Key on this span (a JWT-authenticated
+        request, or the gateway not yet forwarding X-API-Key-ID) — nothing
+        to flag; must not notify about api_key_id "0"."""
+        with patch("consumers.payperuse_consumer.handler._notify_auth", AsyncMock()) as notify:
+            await _post_billing(True, False, "tenant-1", 0, "nmt")
+        notify.assert_not_awaited()
+
+    async def test_not_exhausted_never_notifies_regardless_of_api_key_id(self):
+        with patch("consumers.payperuse_consumer.handler._notify_auth", AsyncMock()) as notify:
+            await _post_billing(False, False, "tenant-1", 42, "nmt")
+        notify.assert_not_awaited()
+
+    async def test_quota_exhausted_still_notifies_by_tenant_id(self):
+        """Unaffected by the per-key rescope — quota is a tier-wide
+        entitlement, not a per-Key ₹ ceiling, so it stays tenant-scoped."""
+        with patch("consumers.payperuse_consumer.handler._notify_auth", AsyncMock()) as notify:
+            await _post_billing(False, True, "tenant-1", 0, "nmt")
+        notify.assert_awaited_once_with(
+            "/internal/ppu/tenant/tenant-1/quota-exhausted", {"inference_name": "nmt"}
+        )
+
+    async def test_both_exhausted_notifies_both_paths(self):
+        with patch("consumers.payperuse_consumer.handler._notify_auth", AsyncMock()) as notify:
+            await _post_billing(True, True, "tenant-1", 42, "nmt")
+        assert notify.await_count == 2
+        calls = [c.args for c in notify.await_args_list]
+        assert ("/internal/ppu/api-key/42/budget-exhausted", {"exhausted": True}) in calls
+        assert ("/internal/ppu/tenant/tenant-1/quota-exhausted", {"inference_name": "nmt"}) in calls

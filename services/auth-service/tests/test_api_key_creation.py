@@ -276,11 +276,45 @@ class TestBudgetParam:
         assert api_key.allocated_percentage == Decimal("30.00")
         assert api_key.allocated_budget == Decimal("15000.00")
         applications.sum_api_key_allocated_percentage.assert_awaited_once_with(1)
-        # Snapshotted value is the RE-DERIVED allocated_budget (round-tripped
-        # through the canonical percentage), not the raw request value —
-        # they happen to match here since 50000 divides evenly, but the code
-        # path taken is the shared one, not an independent pass-through.
+        # Snapshotted value is the requested budget, unaffected by rounding
+        # here since 50000 divides evenly into it — see the dedicated
+        # rounding test below for the case where that's not true.
         write_snap.assert_awaited_once_with({api_key.id: Decimal("15000.00")}, None)
+
+    @pytest.mark.asyncio
+    async def test_budget_is_kept_exact_even_when_percentage_rounds(self) -> None:
+        """allocated_percentage is quantized to 0.01 for the cap check/display,
+        but allocated_budget (and the snapshot) must stay exactly what was
+        requested — not re-derived from that rounded percentage, which would
+        be off by up to application.allocated_budget / 20000. Same rule
+        allocation_validator.convert() applies on the same shape of input:
+        given an amount, keep the amount, derive only the percentage."""
+        application = _application(allocated_budget=Decimal("50000"))
+        tenant = _tenant()
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        applications.get_by_id_for_update = AsyncMock(return_value=application)
+        applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("0"))
+        tenants = AsyncMock()
+        tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+
+        with patch("app.services.api_key_service.budget_usage.write_budget_snapshot", AsyncMock()) as write_snap:
+            _raw_key, api_key = await svc.create_api_key(
+                actor_user_id=uuid4(),
+                key_name="test",
+                permissions=["nmt.inference"],
+                application_id=1,
+                # 15001.23 / 50000 * 100 = 30.00246% -> rounds to 30.00%.
+                # Re-deriving from 30.00% would give 15000.00, not 15001.23.
+                budget=Decimal("15001.23"),
+                caller_tenant_id=1,
+            )
+
+        assert api_key.allocated_percentage == Decimal("30.00")
+        assert api_key.allocated_budget == Decimal("15001.23")
+        write_snap.assert_awaited_once_with({api_key.id: Decimal("15001.23")}, None)
 
     @pytest.mark.asyncio
     async def test_budget_goes_through_the_same_total_exceeded_cap(self) -> None:

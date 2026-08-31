@@ -57,6 +57,7 @@ def _svc(*, roles=("ADMIN",)) -> AllocationService:
         tenant_repo=AsyncMock(),
         role_repo=AsyncMock(),
         db=AsyncMock(),
+        api_key_service=AsyncMock(),
     )
     svc._roles.get_user_roles = AsyncMock(return_value=list(roles))
     return svc
@@ -373,3 +374,54 @@ class TestApplicationScope:
         assert [r.api_key_id for r in data.api_key_allocations] == [11]
         assert data.api_key_allocations[0].allocated_budget == Decimal("25000.00")
         svc._api_keys.update.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_raising_a_keys_ceiling_clears_its_exhaustion_flag(self) -> None:
+        """resolve_level's own floor-check already guarantees the new
+        ceiling is >= what's consumed, so a Key that was exhausted under
+        its OLD ceiling cannot still be exhausted under this new one —
+        set_budget_exhausted_for_key(..., False) must run for it."""
+        svc = _svc()
+        app = _application(1, allocated_budget=Decimal("50000"), allocated_percentage=Decimal("50"))
+        key1 = _key(11, 1, allocated_budget=Decimal("20000"), allocated_percentage=Decimal("40"))
+        key2 = _key(12, 1, allocated_budget=Decimal("15000"), allocated_percentage=Decimal("30"))
+        svc._applications.get_by_id = AsyncMock(return_value=app)
+        svc._applications.get_by_id_for_update = AsyncMock(return_value=app)
+        svc._applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("100"))
+        svc._api_keys.list_by_application = AsyncMock(return_value=[key1, key2])
+        svc._api_keys.update = AsyncMock()
+
+        # Key 12 stays fixed at 15000 (untouched at this scope); raising Key
+        # 11 to 35000 leaves the total exactly at the Application's 50000.
+        body = AllocationUpdateRequest(api_key_allocations=[
+            APIKeyAllocationInput(api_key_id=11, allocated_budget=Decimal("35000"))
+        ])
+        with patch("app.services.budget_usage.fetch_budget_usage", AsyncMock(return_value={})), \
+             patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()):
+            await svc.update_application_key_allocations(1, body, _user(), None)
+
+        # Only Key 11 changed (Key 12 stays untouched at this scope) — only
+        # its flag is cleared, not a tenant- or application-wide sweep.
+        svc._api_key_service.set_budget_exhausted_for_key.assert_awaited_once_with(11, False)
+
+    @pytest.mark.asyncio
+    async def test_unchanged_keys_have_no_exhaustion_call(self) -> None:
+        """No write_budget_snapshot entry -> nothing to clear for that Key."""
+        svc = _svc()
+        app = _application(1, allocated_budget=Decimal("50000"), allocated_percentage=Decimal("50"))
+        key1 = _key(11, 1, allocated_budget=Decimal("30000"), allocated_percentage=Decimal("60"))
+        svc._applications.get_by_id = AsyncMock(return_value=app)
+        svc._applications.get_by_id_for_update = AsyncMock(return_value=app)
+        svc._applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("60"))
+        svc._api_keys.list_by_application = AsyncMock(return_value=[key1])
+        svc._api_keys.update = AsyncMock()
+
+        # Same value as it already has -> resolved.changed is False.
+        body = AllocationUpdateRequest(api_key_allocations=[
+            APIKeyAllocationInput(api_key_id=11, allocated_budget=Decimal("30000"))
+        ])
+        with patch("app.services.budget_usage.fetch_budget_usage", AsyncMock(return_value={})), \
+             patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()):
+            await svc.update_application_key_allocations(1, body, _user(), None)
+
+        svc._api_key_service.set_budget_exhausted_for_key.assert_not_awaited()

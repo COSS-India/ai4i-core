@@ -7,9 +7,11 @@ set_budget_exhausted_for_key) and quota-exhausted (per tenant, via
 set_quota_exhausted_for_tenant). budget-exhausted used to also be
 tenant-wide (set_budget_exhausted_for_tenant, patching every key under the
 tenant from a single key's own usage) — re-scoped to one key, since budget
-is now tracked per key (budget_usage), not a shared tenant wallet; see
-set_budget_exhausted_for_key's docstring for why there's deliberately no
-"clear" path. quota-exhausted stays tenant-wide (the same tenant-cache-
+is now tracked per key (budget_usage), not a shared tenant wallet. Cleared
+back to false only as a side effect of AllocationService/create_api_key
+raising that same key's own ceiling (write_budget_snapshot's callers) —
+never as a standalone admin action; see set_budget_exhausted_for_key's
+docstring. quota-exhausted stays tenant-wide (the same tenant-cache-
 patching helper also backs the tier-reassignment and monthly-cron
 quota-reset paths) — quota is still a tier-wide entitlement, not a per-key
 ceiling. All of these previously patched Redis only, silently drifting from
@@ -22,6 +24,7 @@ cascade (_for_each_active_tenant_key) walks api_keys directly via a
 join-through-Application query, not per-user.
 """
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -58,14 +61,19 @@ def _service_with_one_active_key():
     return svc, repo, cache, key
 
 
-def _service_with_one_key(*, cached_data=None) -> tuple:
+_UNSET = object()
+
+
+def _service_with_one_key(*, cached_data=_UNSET) -> tuple:
     """A repo yielding exactly one key by id — the shape
     set_budget_exhausted_for_key looks it up with, not the tenant-wide
-    keyset-paginated walk the other setters below use."""
+    keyset-paginated walk the other setters below use. cached_data=None is a
+    real, distinct case (a key with no snapshot yet) from "not passed" —
+    hence the sentinel rather than defaulting the param to None itself."""
     repo = AsyncMock()
     cache = AsyncMock()
     key = _api_key()
-    if cached_data is not None:
+    if cached_data is not _UNSET:
         key.cached_data = cached_data
     repo.get_by_id = AsyncMock(return_value=key)
     svc = APIKeyService(repo, cache)
@@ -114,6 +122,48 @@ class TestSetBudgetExhaustedForKey:
         svc = APIKeyService(None, cache)
         await svc.set_budget_exhausted_for_key(1, True)
         cache.patch_api_key_cache_field.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_key_with_no_cached_data_snapshot_is_skipped(self) -> None:
+        """Migration 75a838d63699 added cached_data nullable with no
+        backfill — a key issued before it can still have NULL here.
+        Writing {"budget-exhausted": value} as its first-ever snapshot
+        would drop every other field (permissions, application_id, ...);
+        _rehydrate_cache_from_db serves that verbatim on a later Redis
+        miss, and /auth/validate then answers with an empty permission
+        list instead of failing loudly. Matches
+        patch_cached_data_field_for_tenant's require_cached_data=True
+        filter on the tenant-wide path this replaced."""
+        svc, repo, cache, _key = _service_with_one_key(cached_data=None)
+        await svc.set_budget_exhausted_for_key(1, True)
+        cache.patch_api_key_cache_field.assert_not_awaited()
+        repo.update.assert_not_awaited()
+        repo.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_inactive_key_is_skipped(self) -> None:
+        repo = AsyncMock()
+        cache = AsyncMock()
+        key = _api_key(is_active=False)
+        key.cached_data = {"api_key": key.api_key}
+        repo.get_by_id = AsyncMock(return_value=key)
+        svc = APIKeyService(repo, cache)
+        await svc.set_budget_exhausted_for_key(1, True)
+        cache.patch_api_key_cache_field.assert_not_awaited()
+        repo.update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_expired_key_is_skipped(self) -> None:
+        repo = AsyncMock()
+        cache = AsyncMock()
+        key = _api_key()
+        key.cached_data = {"api_key": key.api_key}
+        key.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
+        repo.get_by_id = AsyncMock(return_value=key)
+        svc = APIKeyService(repo, cache)
+        await svc.set_budget_exhausted_for_key(1, True)
+        cache.patch_api_key_cache_field.assert_not_awaited()
+        repo.update.assert_not_awaited()
 
 
 class TestSetQuotaExhaustedForTenant:

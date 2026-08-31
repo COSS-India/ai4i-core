@@ -377,15 +377,27 @@ class APIKeyService:
         a shared tenant wallet), so one key crossing its own ceiling must
         not block every other key under the same tenant.
 
-        Deliberately no "un-exhaust" caller anywhere in this codebase:
-        exhaustion is meant to be terminal for a key, the same way
-        revocation is — a tenant recovers by using its other keys or
-        creating a new one with a fresh allocation, never by clearing this
-        flag back to false. The ``exhausted`` param stays a bool (matching
+        No arbitrary "un-exhaust" call anywhere in this codebase: flipping
+        this back to false is never done as a standalone admin action —
+        it only ever happens as a side effect of genuinely raising the
+        key's own ceiling (see write_budget_snapshot's callers, which clear
+        it for exactly the key whose snapshot they just wrote). The
+        ``exhausted`` param stays a bool (matching
         set_tier_id_for_tenant/set_budget_exhausted_for_tenant's own
-        precedent) rather than being narrowed to a one-way "mark exhausted"
-        call, in case a future admin override legitimately needs the other
-        direction — but nothing calls it that way today.
+        precedent) rather than a one-way "mark exhausted" call, since both
+        directions are real callers now.
+
+        Skips a key with no ``cached_data`` snapshot yet, or one that's
+        already inactive/expired — same filter
+        ``patch_cached_data_field_for_tenant`` (the tenant-wide path this
+        replaced) applied via ``_active_key_conditions(require_cached_data=True)``.
+        Migration 75a838d63699 added ``cached_data`` nullable with no
+        backfill, so an already-issued key can still have it NULL;
+        writing ``{"budget-exhausted": value}`` as its first-ever snapshot
+        would leave every OTHER field (permissions, application_id, ...)
+        missing, and ``_rehydrate_cache_from_db`` serves that verbatim on
+        a later Redis miss — ``/auth/validate`` then answers with an
+        empty permission list instead of failing loudly.
         """
         if self._repo is None:
             return
@@ -393,9 +405,11 @@ class APIKeyService:
         if key is None:
             logger.warning("set_budget_exhausted_for_key: unknown api_key_id=%s", key_id)
             return
+        if not key.is_active or key.is_expired() or not key.cached_data:
+            return
         value = "1" if exhausted else "0"
         await self._cache.patch_api_key_cache_field(key.api_key, "budget-exhausted", value)
-        await self._repo.update(key, {"cached_data": {**(key.cached_data or {}), "budget-exhausted": value}})
+        await self._repo.update(key, {"cached_data": {**key.cached_data, "budget-exhausted": value}})
         await self._repo.commit()
 
     async def set_tier_id_for_tenant(self, tenant_id: int, tier_id: str) -> None:
@@ -595,7 +609,17 @@ class APIKeyService:
                 )
 
         allocated_budget: Optional[Decimal] = None
-        if allocated_percentage is not None and application.allocated_budget is not None:
+        if budget is not None:
+            # Keep exactly what was requested (rounded to cents only) — NOT
+            # re-derived from the rounded allocated_percentage above, which
+            # would be off by up to application.allocated_budget / 20000
+            # whenever `budget` isn't an exact 0.01% multiple of it.
+            # allocation_validator.convert() (cited above) does the same
+            # thing on the same shape of input: given an amount, it keeps
+            # the amount and derives only the percentage from it, never
+            # the reverse.
+            allocated_budget = budget.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        elif allocated_percentage is not None and application.allocated_budget is not None:
             allocated_budget = (application.allocated_budget * allocated_percentage) / Decimal("100")
 
         raw_key = self.generate_api_key()
@@ -618,12 +642,18 @@ class APIKeyService:
         await self._repo.create(api_key)
         await self._repo.commit()
 
-        # budget (if given) was converted to allocated_percentage above and
-        # allocated_budget re-derived from it — the same figure that just
-        # went through the ALLOCATION_TOTAL_EXCEEDED cap check, not the raw
-        # request value, is what gets snapshotted.
+        # allocated_budget is the requested budget verbatim (rounded to
+        # cents) when `budget` was given, or derived from allocated_percentage
+        # otherwise — either way, it's what gets snapshotted.
         if allocated_budget is not None:
             await budget_usage.write_budget_snapshot({api_key.id: allocated_budget}, platform_core_db)
+            # No set_budget_exhausted_for_key(..., False) here, unlike every
+            # other write_budget_snapshot call site: this key was just
+            # created, so there is no prior cached_data for it to hold a
+            # stale exhausted flag in the first place — the call would be a
+            # guaranteed no-op (set_budget_exhausted_for_key itself returns
+            # immediately for a key with no cached_data yet) paid for with a
+            # real DB round trip on every single key creation.
 
         if self.application_may_use_api_keys(application, tenant):
             payload = self._build_cache_payload(

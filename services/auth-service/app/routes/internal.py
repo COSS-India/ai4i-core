@@ -1,5 +1,7 @@
 """Internal endpoints — service-to-service calls, not exposed to end users."""
 
+import logging
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel
 
@@ -9,6 +11,8 @@ from app.schemas.quota import QuotaLimitUpdatedRequest
 from app.services.api_key_service import APIKeyService
 from app.services.quota_notification_service import QuotaNotificationService
 from app.services.tenant_service import TenantService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Internal"])
 
@@ -49,6 +53,39 @@ async def set_api_key_budget_exhausted(
     except (ValueError, TypeError):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid api_key_id")
     await svc.set_budget_exhausted_for_key(kid, body.exhausted)
+
+
+@router.post("/ppu/tenant/{tenant_id}/budget-exhausted", status_code=status.HTTP_204_NO_CONTENT)
+async def set_budget_exhausted_deprecated_tenant_scoped(tenant_id: str, body: BudgetExhaustedRequest):
+    """DEPRECATED — kept only so a rolling deploy doesn't 404 an
+    old-code kafka-consumers instance still posting here. auth-service and
+    kafka-consumers deploy separately; _notify_auth treats a 404 as
+    permanent (no retry), so removing this in the same commit that
+    introduces /ppu/api-key/{id}/budget-exhausted would silently drop every
+    exhaustion flag raised during whichever side of the rollout lands
+    first.
+
+    Deliberately a no-op, not a restoration of the old tenant-wide
+    fan-out (git history has that if it's ever genuinely needed again):
+    fanning out from here would reintroduce exactly the bug
+    /ppu/api-key/{id}/budget-exhausted exists to fix — one Key's own usage
+    blocking every sibling Key under the same tenant. A flag missed during
+    the rollout window self-heals on that Key's own next billed request
+    once kafka-consumers is deployed onto the new per-key path.
+
+    Remove once kafka-consumers is confirmed running the version that
+    posts to /ppu/api-key/{id}/budget-exhausted instead of this path.
+    """
+    try:
+        int(tenant_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid tenant_id")
+    logger.warning(
+        "Deprecated /ppu/tenant/%s/budget-exhausted hit (exhausted=%s) — "
+        "kafka-consumers is still posting the old tenant-scoped path; "
+        "no-op until it's redeployed onto /ppu/api-key/{id}/budget-exhausted.",
+        tenant_id, body.exhausted,
+    )
 
 
 @router.post("/ppu/tenant/{tenant_id}/quota-exhausted", status_code=status.HTTP_204_NO_CONTENT)

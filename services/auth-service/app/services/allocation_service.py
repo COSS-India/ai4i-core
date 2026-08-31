@@ -36,6 +36,7 @@ from app.schemas.allocation import (
 )
 from app.services import budget_usage
 from app.services.allocation_validator import AllocationRow, ExplicitInput, ResolvedRow, resolve_level
+from app.services.api_key_service import APIKeyService
 from app.services.authorization import authorize_institution_scope
 
 _ZERO = Decimal("0")
@@ -49,12 +50,14 @@ class AllocationService:
         tenant_repo: TenantRepository,
         role_repo: RoleRepository,
         db: AsyncSession,
+        api_key_service: APIKeyService,
     ) -> None:
         self._applications = application_repo
         self._api_keys = api_key_repo
         self._tenants = tenant_repo
         self._roles = role_repo
         self._db = db
+        self._api_key_service = api_key_service
 
     # ── Scope 1: tenant_id -> Applications ──────────────────────────────
 
@@ -186,6 +189,7 @@ class AllocationService:
 
         await self._db.commit()
         await budget_usage.write_budget_snapshot(snapshot_writes, platform_core_db)
+        await self._clear_exhaustion_for_changed_keys(snapshot_writes)
 
         total_pct = await self._applications.sum_allocated_percentage(tenant_id)
         return AllocationUpdateData(
@@ -268,6 +272,7 @@ class AllocationService:
 
         await self._db.commit()
         await budget_usage.write_budget_snapshot(snapshot_writes, platform_core_db)
+        await self._clear_exhaustion_for_changed_keys(snapshot_writes)
 
         total_pct = await self._applications.sum_api_key_allocated_percentage(application_id)
         return AllocationUpdateData(
@@ -277,6 +282,23 @@ class AllocationService:
         )
 
     # ── Shared helpers ───────────────────────────────────────────────────
+
+    async def _clear_exhaustion_for_changed_keys(self, snapshot_writes: dict[int, Decimal]) -> None:
+        """Clear budget-exhausted for exactly the Keys whose ceiling this
+        call actually raised — not a standalone "un-exhaust" action, a
+        direct consequence of one: resolve_level's own floor-check
+        (ALLOCATION_BELOW_CONSUMED) already guarantees every id in
+        ``snapshot_writes`` was resolved to an amount >= what it's
+        consumed, so a Key that was exhausted under its OLD ceiling cannot
+        still be exhausted under this new one. Without this, raising an
+        exhausted Key's own allocation here would leave it permanently
+        stuck at 429 from /auth/validate — nothing else in the system ever
+        clears this flag (see set_budget_exhausted_for_key's docstring).
+        Runs after write_budget_snapshot, not instead of it — this only
+        touches auth-service's own Redis/cached_data, independent of
+        whether the cross-DB platform-core write landed."""
+        for key_id in snapshot_writes:
+            await self._api_key_service.set_budget_exhausted_for_key(key_id, False)
 
     async def _load_keys_and_usage(
         self, application_ids: list[int], platform_core_db: Optional[AsyncSession]

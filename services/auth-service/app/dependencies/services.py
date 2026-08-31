@@ -157,6 +157,7 @@ def get_application_service(
 
 def get_allocation_service(
     db: AsyncSession = Depends(get_db),
+    api_key_service: APIKeyService = Depends(get_api_key_service),
 ) -> AllocationService:
     return AllocationService(
         application_repo=ApplicationRepository(db),
@@ -164,6 +165,7 @@ def get_allocation_service(
         tenant_repo=TenantRepository(db),
         role_repo=RoleRepository(db),
         db=db,
+        api_key_service=api_key_service,
     )
 
 
