@@ -123,7 +123,7 @@ async def deduct_balance_and_update_quota(
     units: Decimal,
     cost: Decimal,
     api_key_id: int = 0,
-    tier_id: str = "",
+    tier_id: Optional[str] = None,
 ) -> BillingWriteResult:
     """
     Single round-trip fusing budget deduction (budget_usage) + quota upsert
@@ -135,8 +135,13 @@ async def deduct_balance_and_update_quota(
 
     quota_upsert: looks up monthly_quota_snap from tier_quotas using tier_id
     passed directly from the OTel span (set by auth service, propagated via
-    X-Tier-ID header → context → span attribute). Produces no row when tier_id
-    is empty or tier_quotas has no matching (tier_id, inference_name) row.
+    X-Tier-ID header → context → span attribute). Produces no row when
+    tier_id is None or tier_quotas has no matching (tier_id, inference_name)
+    row. CAST(:tier_id AS uuid) with a SQL NULL evaluates the WHERE condition
+    to UNKNOWN (never TRUE), so the INSERT selects no rows — safe no-op.
+    Passing an empty string instead of None would raise
+    "invalid input syntax for type uuid" in Postgres; callers must normalise
+    "" to None before calling (handler._get_otel_attributes does this).
     """
     result = await db.execute(
         text(
@@ -174,14 +179,15 @@ async def deduct_balance_and_update_quota(
             "billing_month": billing_month,
             "units": units,
             "cost": cost,
-            "tier_id": tier_id or None,
+            "tier_id": tier_id,
         },
     )
     row = result.first()
 
     budget_used = row.api_key_budget_used if row and row.api_key_budget_used is not None else Decimal(0)
     budget_snap = row.api_key_budget_snap if row and row.api_key_budget_snap is not None else None
-    tier_id = str(row.tier_id) if row and row.tier_id is not None else None
+    tier_id_from_row = str(row.tier_id) if row and row.tier_id is not None else None
+    tier_id = tier_id_from_row or tier_id or None
 
     if tier_id is None:
         logger.warning("deduct_balance: tenant=%s has no active tier — quota upsert skipped", tenant_id)

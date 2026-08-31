@@ -24,16 +24,34 @@ from consumers.payperuse_consumer._billing import (
 logger = get_logger(__name__)
 
 
+def _to_float(val, fallback: float = 0.0) -> float:
+    try:
+        return float(val or 0)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _to_int(val, fallback: int = 0) -> int:
+    try:
+        return int(val or 0)
+    except (TypeError, ValueError):
+        return fallback
+
+
 def _get_otel_attributes(attrs: dict):
     tenant_id: str = str(attrs.get("tenantId") or "").strip()
     service_id: str = str(attrs.get("service_id") or "").strip()
     # Both LLM and Triton spans write real counts to input_tokens/output_tokens
     # (see trace/request_span.py and services/base/task_service.py).
-    input_tokens: float = float(attrs.get("input_tokens") or 0)
-    output_tokens: float = float(attrs.get("output_tokens") or 0)
+    input_tokens: float = _to_float(attrs.get("input_tokens"))
+    output_tokens: float = _to_float(attrs.get("output_tokens"))
     correlation_id: str = str(attrs.get("correlation_id") or "").strip()
-    api_key_id: int = int(attrs.get("api_key_id") or 0)
-    tier_id: str = str(attrs.get("tier_id") or "").strip()
+    api_key_id: int = _to_int(attrs.get("api_key_id"))
+    # Normalise to None so callers never have to guard against "" vs None.
+    # validation.py ships X-Tier-ID="" for keyless-tier requests; that empty
+    # string propagates here via the OTel span attribute.
+    raw_tier = str(attrs.get("tier_id") or "").strip()
+    tier_id: Optional[str] = raw_tier or None
 
     return tenant_id, service_id, input_tokens, output_tokens, correlation_id, api_key_id, tier_id
 
@@ -86,7 +104,7 @@ class BillingContext:
     billing_month: str
     offset: int
     api_key_id: int = 0
-    tier_id: str = ""
+    tier_id: Optional[str] = None
 
 
 @dataclass
@@ -159,6 +177,17 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
             msg.offset(), tenant_id, service_id, total_tokens,
         )
         return None
+
+    if tier_id is None:
+        # Normal for api_key requests whose cached auth payload has no tier
+        # (validation.py ships X-Tier-ID="" in that case). Budget is still
+        # deducted (resources were consumed); quota upsert is skipped because
+        # there is no tier to look up — see deduct_balance_and_update_quota.
+        logger.warning(
+            "api_key span missing tier_id — budget deducted, quota upsert skipped"
+            " | offset=%d tenant=%s api_key_id=%s",
+            msg.offset(), tenant_id, api_key_id,
+        )
 
     billing_month = _resolve_billing_month(data.get("end_time"))
     logger.debug("Billing month resolved | tenant=%s billing_month=%s", tenant_id, billing_month)
