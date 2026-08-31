@@ -1,7 +1,7 @@
 """drop ppu_tenant_tier_assignments
 
 Revision ID: a1b3c5d7e9f0
-Revises: 021f3168f9c8
+Revises: 7986f2b0a159
 Create Date: 2026-08-28
 
 """
