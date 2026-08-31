@@ -541,6 +541,7 @@ WindowParam = Literal["1h", "24h", "7d", "30d"]
 async def get_overview(
     request: Request,
     window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
+    limit: int = Query(10, ge=1, le=50, description="Max tenants in usage concentration ranking"),
     tenant_id: Optional[int] = Query(None, ge=1, description="Narrow to a specific tenant (admin only)"),
     task_types: Optional[str] = Query(
         None, description="Comma-separated task types to scope KPIs, the request-volume "
@@ -561,7 +562,7 @@ async def get_overview(
     auth_type_filter = API_KEY_AUTH_TYPE
 
     cache_key = (
-        f"metering:overview:v2:{window}:{scope_tenant_name or 'all'}:"
+        f"metering:overview:v2:{window}:{limit}:{scope_tenant_name or 'all'}:"
         f"{_caller_role_label(request)}:{','.join(task_type_filter) if task_type_filter else 'all'}"
     )
     cached = await _cache_get(redis, cache_key)
@@ -585,8 +586,8 @@ async def get_overview(
             svc, window, scope_tenant_name, task_type_filter,
             tenant_id=scope_tenant, auth_type=auth_type_filter,
         ),
-        # Usage Concentration is platform-wide top-5; hide it when a tenant filter is applied.
-        svc.usage_concentration(limit=5, time_range=window, task_types=task_type_filter)
+        # Usage Concentration is platform-wide; hide it when a tenant filter is applied.
+        svc.usage_concentration(limit=limit, time_range=window, task_types=task_type_filter)
         if (is_admin and not scope_tenant) else asyncio.sleep(0),
         # Key Metrics KPI #7 (model_usage_growth_pct) is admin-only, fixed
         # calendar-month comparison — independent of `window`.
