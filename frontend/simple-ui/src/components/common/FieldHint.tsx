@@ -15,7 +15,12 @@ type FieldHintProps = {
   show?: boolean;
 } & Omit<FormHelperTextProps, "children" | "color">;
 
-/** Always-visible field guidance. Copy belongs in `FIELD_HINTS`. */
+/**
+ * Always-visible field guidance. Copy belongs in `FIELD_HINTS`.
+ *
+ * Hints add height under the input. Put fields in `FormFieldsRow` (or
+ * `align="flex-start"`), never `align="flex-end"`, or shorter fields drop.
+ */
 export default function FieldHint({
   children,
   tone = "muted",

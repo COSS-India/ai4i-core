@@ -260,7 +260,7 @@ export type AdminDataTableProps<T> = {
   filters?: React.ReactNode;
   hasActiveFilters?: boolean;
   onClearFilters?: () => void;
-  filterToolbarAlign?: "flex-start" | "flex-end" | "center";
+  filterToolbarAlign?: "flex-start" | "center";
   filterToolbarRightContent?: React.ReactNode;
   showFiltersHeading?: boolean;
   filtersHeading?: string;
@@ -351,7 +351,7 @@ export default function AdminDataTable<T>({
   filters,
   hasActiveFilters = false,
   onClearFilters,
-  filterToolbarAlign = "flex-end",
+  filterToolbarAlign = "flex-start",
   filterToolbarRightContent,
   showFiltersHeading = false,
   filtersHeading = "Filters",

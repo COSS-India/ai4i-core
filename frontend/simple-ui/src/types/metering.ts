@@ -47,10 +47,18 @@ export interface MeteringScope {
 
 export interface PlatformAdoption {
   total_tenants?: number | null;
-  new_tenants_7d?: number | null;
+  new_tenants_15d?: number | null;
   active_24h?: number | null;
   active_7d?: number | null;
   active_30d?: number | null;
+  model_usage_growth_pct?: number | null;
+}
+
+/** Composed client-side from model-consumption (30d) and usage-summary APIs. */
+export interface KeyMetricsSupplement {
+  total_models?: number | null;
+  active_models_30d?: number | null;
+  tenants_budget_exhausted?: number | null;
 }
 
 export interface TenantRow {

@@ -2,7 +2,7 @@ import { Box, Center, Flex, HStack, Spinner, Text, VStack } from "@chakra-ui/rea
 import React, { useMemo, useState } from "react";
 import { Cell, Pie, PieChart } from "recharts";
 import { METERING } from "../../config/meteringConstants";
-import { INSTITUTION, INSTITUTIONS } from "../../config/constants";
+import { INSTITUTIONS } from "../../config/constants";
 import {
   aggregateTasks,
   formatSpendMoney,
@@ -32,11 +32,6 @@ function spendChangeArrow(spendChangePercent: number): string {
   if (spendChangePercent > 0) return "↑";
   if (spendChangePercent < 0) return "↓";
   return "→";
-}
-
-function budgetExceededLabel(count: number | null | undefined): string {
-  if (count == null) return "—";
-  return `${count} ${count === 1 ? INSTITUTION.toLowerCase() : INSTITUTIONS.toLowerCase()}`;
 }
 
 function moneyOrDash(value: number | null | undefined, currency: string): string {
@@ -326,16 +321,6 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
               <Text color="gray.500">Active {INSTITUTIONS.toLowerCase()}:</Text>
               <InfoTip message={METERING.USAGE_SPEND.TOOLTIPS.ACTIVE_TENANTS} />
               <Text fontWeight="semibold" color="gray.800">{summary?.activeTenants ?? "—"}</Text>
-            </HStack>
-            <HStack spacing={1.5}>
-              <Text color="gray.500">Budget exceeded:</Text>
-              <InfoTip message={METERING.USAGE_SPEND.TOOLTIPS.BUDGET_EXCEEDED} />
-              <Text
-                fontWeight="semibold"
-                color={(summary?.budgetExceededTenants ?? 0) > 0 ? USAGE_SPEND_DANGER : "gray.800"}
-              >
-                {budgetExceededLabel(summary?.budgetExceededTenants)}
-              </Text>
             </HStack>
             <HStack spacing={1.5}>
               <Text color="gray.500">vs last month:</Text>

@@ -36,10 +36,11 @@ export const meteringScopeSchema = z.object({
 
 export const platformAdoptionSchema = z.object({
   total_tenants: z.number().nullable().optional(),
-  new_tenants_7d: z.number().nullable().optional(),
+  new_tenants_15d: z.number().nullable().optional(),
   active_24h: z.number().nullable().optional(),
   active_7d: z.number().nullable().optional(),
   active_30d: z.number().nullable().optional(),
+  model_usage_growth_pct: z.number().nullable().optional(),
 });
 
 export const tenantRowSchema = z.object({

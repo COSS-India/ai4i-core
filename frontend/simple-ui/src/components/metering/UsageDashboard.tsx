@@ -5,7 +5,7 @@ import { useMeteringDashboard } from "../../hooks/useMeteringDashboard";
 import LoadingSpinner from "../common/LoadingSpinner";
 import { MeteringAlerts } from "./MeteringAsyncState";
 import MeteringControls from "./MeteringControls";
-import { PlatformAdoptionSection } from "./OverviewSections";
+import { KeyMetricsSection } from "./OverviewSections";
 import RequestVolumeSection from "./RequestVolumeSection";
 import {
   AdopterDashboardPanels,
@@ -46,6 +46,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
     parseQueryError,
     refreshNonce,
     effectiveTenantId,
+    keyMetricsSupplement,
   } = dash;
 
   const requestVolumeSection = overview ? (
@@ -55,9 +56,8 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
     />
   ) : null;
 
-  const showPlatformAdoption =
-    isTenantView === false &&
-    Boolean(overview?.platform_adoption || overview?.active_tenants?.length);
+  const showKeyMetrics =
+    isTenantView === false && Boolean(overview?.platform_adoption);
 
   if (isLoading) {
     return (
@@ -75,8 +75,8 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
 
       <MeteringAlerts errorMessage={primaryError} dataStateBanner={dataStateBanner} />
 
-      {showPlatformAdoption && overview ? (
-        <PlatformAdoptionSection data={overview} />
+      {showKeyMetrics && overview ? (
+        <KeyMetricsSection data={overview} supplement={keyMetricsSupplement} />
       ) : null}
 
       <MeteringControls

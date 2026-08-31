@@ -150,7 +150,6 @@ export const METERING = {
       SPEND: "Monetary spend for this model task type in the selected billing period.",
       SHARE: "This row's spend as a percentage of the institution's total spend in the period.",
       ACTIVE_TENANTS: `${INSTITUTIONS} with spend recorded in the selected billing period.`,
-      BUDGET_EXCEEDED: `Number of ${INSTITUTIONS.toLowerCase()} whose spend has exceeded their allocated budget for this period.`,
       VS_LAST_MONTH:
         "Percentage change in total spend compared with the previous billing period.",
       USAGE_BREAKDOWN: `Number of tiers or task types this ${INSTITUTION.toLowerCase()} consumed under in the selected period — expand to see the breakdown.`,
@@ -230,39 +229,53 @@ export const METERING = {
       DONUT_PRIMARY: "Top 5",
       DONUT_SECONDARY: INSTITUTIONS.toLowerCase(),
     },
-    PLATFORM_ADOPTION: {
-      TITLE: "Platform adoption",
-      SUBTITLE: `${INSTITUTION} overview`,
-      CARDS: [
+    KEY_METRICS: {
+      TITLE: "Key Metrics",
+      SUBTITLE: "Platform snapshot · independent of the selected time window",
+      INSTITUTION_CARDS: [
         {
           key: "total_tenants",
           label: `Total ${INSTITUTIONS.toLowerCase()}`,
-          helper: "registered on platform",
-          tooltip: `${INSTITUTIONS} registered on the platform, regardless of status.`,
-        },
-        {
-          key: "active_24h",
-          label: `Active ${INSTITUTIONS.toLowerCase()}`,
-          helper: "last 24 hours",
-          tooltip: `${INSTITUTIONS} with at least one request in the last 24 hours.`,
-        },
-        {
-          key: "active_7d",
-          label: `Active ${INSTITUTIONS.toLowerCase()}`,
-          helper: "last 7 days",
-          tooltip: `${INSTITUTIONS} with at least one request in the last 7 days.`,
+          helper: "all-time",
+          tooltip: `Count of ${INSTITUTIONS.toLowerCase()} registered on the platform.`,
         },
         {
           key: "active_30d",
-          label: `Active ${INSTITUTIONS.toLowerCase()}`,
+          label: `30d active ${INSTITUTIONS.toLowerCase()}`,
           helper: "last 30 days",
-          tooltip: `${INSTITUTIONS} with at least one request in the last 30 days.`,
+          tooltip: `${INSTITUTIONS} with at least one LLM request in the last 30 days.`,
         },
         {
-          key: "new_tenants_7d",
+          key: "new_tenants_15d",
           label: `New ${INSTITUTIONS.toLowerCase()}`,
-          helper: "onboarded in last 7 days",
-          tooltip: `${INSTITUTIONS} onboarded to the platform in the last 7 days.`,
+          helper: "last 15 days",
+          tooltip: `${INSTITUTIONS} onboarded in the last 15 days, independent of usage.`,
+        },
+        {
+          key: "tenants_budget_exhausted",
+          label: `${INSTITUTIONS} exhausted budget`,
+          helper: "current state",
+          tooltip: `${INSTITUTIONS} that have consumed 100% of their allocated budget.`,
+        },
+      ] as const,
+      MODEL_CARDS: [
+        {
+          key: "total_models",
+          label: "Total models",
+          helper: "all-time",
+          tooltip: "Total number of models registered on the platform.",
+        },
+        {
+          key: "active_models_30d",
+          label: "Active models",
+          helper: "last 30 days",
+          tooltip: "Models that have received at least one request in the last 30 days.",
+        },
+        {
+          key: "model_usage_growth_pct",
+          label: "Model usage (growth %)",
+          helper: "current month vs last month",
+          tooltip: "Percentage change in overall model usage compared to the previous calendar month.",
         },
       ] as const,
     },
@@ -299,8 +312,6 @@ export const METERING = {
       BREAKDOWN_SUBTITLE_PREFIX: "Consumption across LLM services ·",
       DONUT_PRIMARY: "All",
       DONUT_SECONDARY: "Models",
-      TOTAL_MODELS: "Total models",
-      ACTIVE_MODELS: "Active models",
       MOST_USED: "Most used model",
       OVERALL_SUCCESS: "Overall success rate %",
       SUCCESS_RATE_SUFFIX: "across all models",

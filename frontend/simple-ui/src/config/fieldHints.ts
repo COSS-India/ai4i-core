@@ -142,7 +142,10 @@ export const FIELD_HINTS = {
       helper: "e.g. Enterprise tier for high usage.",
     },
     quotaUnit: { helper: "Auto-filled based on Model Task Type (e.g., tokens for LLM)" },
-    quotaLimit: { placeholder: "Enter quota limit", helper: "e.g. 10000. Must be greater than 0" },
+    quotaLimit: {
+      placeholder: "Enter quota limit",
+      helper: "e.g. 1000000 (1M is standard). Must be greater than 0",
+    },
   },
   apiKey: {
     expiry: {

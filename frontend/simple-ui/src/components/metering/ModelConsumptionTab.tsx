@@ -84,19 +84,7 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
       {data ? (
         <VStack align="stretch" spacing={6}>
           {insights ? (
-            <SimpleGrid columns={{ base: 1, sm: 2, lg: 4 }} spacing={4}>
-              <KpiCard
-                label={section.TOTAL_MODELS}
-                value={insights.totalModels ?? METERING.GRAPH.EMPTY_VALUE}
-                tooltip={section.TOOLTIPS.TOTAL_MODELS}
-                valueColor="gray.800"
-              />
-              <KpiCard
-                label={section.ACTIVE_MODELS}
-                value={insights.activeModels ?? METERING.GRAPH.EMPTY_VALUE}
-                tooltip={section.TOOLTIPS.ACTIVE_MODELS}
-                valueColor="gray.800"
-              />
+            <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={4}>
               <KpiCard
                 label={section.OVERALL_SUCCESS}
                 value={
