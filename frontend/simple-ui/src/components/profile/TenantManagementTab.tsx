@@ -21,7 +21,6 @@ import {
   DrawerOverlay,
   FormControl,
   FormErrorMessage,
-  FormHelperText,
   FormLabel,
   HStack,
   Heading,
@@ -67,6 +66,7 @@ import {
   FiArrowLeft,
   FiCheckCircle,
   FiEdit2,
+  FiHome,
   FiMail,
   FiPauseCircle,
   FiPlus,
@@ -83,6 +83,8 @@ import {
 import { useAuth } from "../../hooks/useAuth";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { useTenantManagement } from "./hooks/useTenantManagement";
+import { useOwnInstitutionDetails } from "./hooks/useOwnInstitutionDetails";
+import InstitutionDetailsPanel from "./InstitutionDetailsPanel";
 import ConfirmDialog from "../common/ConfirmDialog";
 import ConsentCheckbox, {
   getConsentValidationError,
@@ -109,7 +111,8 @@ import {
   resolveTenantUserDisplayStatus,
 } from "../../config/constants";
 import { replaceTenantCopy } from "../../utils/replaceTenantCopy";
-import { EMAIL_AVAILABLE_MSG } from "../../utils/tenantEmailValidation";
+import { FIELD_HINTS } from "../../config/fieldHints";
+import FieldHint from "../common/FieldHint";
 import {
   DEFAULT_ORG_USER_FORM_ROLE_OPTIONS,
   formatPlatformRoleLabel,
@@ -120,6 +123,7 @@ import {
   dateInputToStartOfDayIso,
   dateInputToEndOfDayIso,
 } from "../../utils/helpers";
+import { dash, fmtDate } from "../../utils/valueFormatters";
 import type { TenantUserView, TenantView } from "../../types/tenant";
 
 const BUDGET_MAX_INTEGER_DIGITS = 7;
@@ -136,19 +140,6 @@ function clampBudgetInput(raw: string): string {
   );
   const decimalPart = dotIndex === -1 ? "" : raw.slice(dotIndex);
   return intPart + decimalPart;
-}
-
-function dash(v?: string | null): string {
-  return v && v.trim() ? v : "—";
-}
-
-function fmtDate(v?: string | null): string {
-  if (!v) return "—";
-  try {
-    return new Date(v).toLocaleString();
-  } catch {
-    return v;
-  }
 }
 
 export interface TenantManagementTabProps {
@@ -183,6 +174,11 @@ export default function TenantManagementTab({
   const tm = useTenantManagement({ user });
 
   const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
+  // Institution Admin view only — idle on the adopter path.
+  const ownInstitution = useOwnInstitutionDetails({
+    tenantId: user?.tenant_id,
+    enabled: !isAdmin,
+  });
   const { taskTypeNames } = useInferenceTypes();
   const enabledTaskTypesParam =
     taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
@@ -235,10 +231,12 @@ export default function TenantManagementTab({
     onClose: onViewTierClose,
   } = useDisclosure();
 
+  // Adopter-only: the tier modals need this, and ppu.tier.read is ADMIN-only.
   const tiersQuery = useQuery({
     queryKey: ["tiers"],
     queryFn: () => fetchTiers(),
     staleTime: 5 * 60_000,
+    enabled: isAdmin,
   });
   const tierOptions = tiersQuery.data?.data ?? [];
 
@@ -742,7 +740,7 @@ export default function TenantManagementTab({
     <Box>
       {isAdmin && !tm.tenantDetailView && renderAdopterView()}
 
-      {!isAdmin && !tm.tenantDetailView && renderTenantView()}
+      {!isAdmin && !tm.tenantDetailView && renderInstitutionAdminView()}
 
       {tm.tenantDetailView && renderTenantDetail()}
 
@@ -820,6 +818,39 @@ export default function TenantManagementTab({
           />
         </CardBody>
       </Card>
+    );
+  }
+
+  // ── Institution Admin landing view (own institution + its users) ────────
+  // One institution, so no list to drill into — tabs are the first screen.
+  function renderInstitutionAdminView() {
+    return (
+      <Tabs>
+        <TabList>
+          <Tab>
+            <FiHome style={{ marginRight: 6 }} />
+            {`My ${INSTITUTION.toLowerCase()}`}
+          </Tab>
+          <Tab>
+            <FiUsers style={{ marginRight: 6 }} />
+            Users
+          </Tab>
+        </TabList>
+        <TabPanels>
+          <TabPanel px={0}>
+            <InstitutionDetailsPanel
+              institution={ownInstitution.institution}
+              tierName={ownInstitution.tierName}
+              budgetLimit={ownInstitution.budgetLimit}
+              currency={ownInstitution.currency}
+              isLoading={ownInstitution.isLoading}
+              errorMessage={ownInstitution.errorMessage}
+              tierBudgetErrorMessage={ownInstitution.tierBudgetErrorMessage}
+            />
+          </TabPanel>
+          <TabPanel px={0}>{renderTenantView()}</TabPanel>
+        </TabPanels>
+      </Tabs>
     );
   }
 
@@ -1460,10 +1491,14 @@ export default function TenantManagementTab({
                   onBlur={(e) =>
                     tm.handleTenantOrganisationBlur(e.target.value)
                   }
+                  placeholder={FIELD_HINTS.tenant.organisation.placeholder}
                 />
                 <FormErrorMessage>
                   {tm.tenantFormErrors.organisation}
                 </FormErrorMessage>
+                <FieldHint show={!tm.tenantFormErrors.organisation}>
+                  {FIELD_HINTS.tenant.organisation.helper}
+                </FieldHint>
               </FormControl>
               <FormControl
                 isInvalid={Boolean(tm.tenantFormErrors.contact_name)}
@@ -1476,10 +1511,14 @@ export default function TenantManagementTab({
                     tm.handleTenantContactNameChange(e.target.value)
                   }
                   onBlur={(e) => tm.handleTenantContactNameBlur(e.target.value)}
+                  placeholder={FIELD_HINTS.tenant.contactName.placeholder}
                 />
                 <FormErrorMessage>
                   {tm.tenantFormErrors.contact_name}
                 </FormErrorMessage>
+                <FieldHint show={!tm.tenantFormErrors.contact_name}>
+                  {FIELD_HINTS.tenant.contactName.helper}
+                </FieldHint>
               </FormControl>
               <FormControl
                 isInvalid={Boolean(tm.tenantFormErrors.email)}
@@ -1491,20 +1530,19 @@ export default function TenantManagementTab({
                   value={tm.tenantForm.email}
                   onChange={(e) => tm.handleTenantEmailChange(e.target.value)}
                   onBlur={tm.handleTenantEmailBlur}
+                  placeholder={FIELD_HINTS.tenant.email.placeholder}
                 />
                 <FormErrorMessage>{tm.tenantFormErrors.email}</FormErrorMessage>
-                {tm.tenantEmailStatus === "checking" &&
-                  !tm.tenantFormErrors.email && (
-                    <FormHelperText color="gray.500">
-                      Checking if email exists…
-                    </FormHelperText>
-                  )}
-                {tm.tenantEmailStatus === "available" &&
-                  !tm.tenantFormErrors.email && (
-                    <FormHelperText color="green.600">
-                      {EMAIL_AVAILABLE_MSG}
-                    </FormHelperText>
-                  )}
+                <FieldHint
+                  show={!tm.tenantFormErrors.email}
+                  tone={tm.tenantEmailStatus === "available" ? "success" : "muted"}
+                >
+                  {tm.tenantEmailStatus === "checking"
+                    ? FIELD_HINTS.tenant.emailChecking
+                    : tm.tenantEmailStatus === "available"
+                      ? FIELD_HINTS.tenant.emailAvailable
+                      : FIELD_HINTS.tenant.email.helper}
+                </FieldHint>
               </FormControl>
               <FormControl
                 isInvalid={Boolean(tm.tenantFormErrors.phone_number)}
@@ -1513,10 +1551,14 @@ export default function TenantManagementTab({
                 <Input
                   value={tm.tenantForm.phone_number}
                   onChange={(e) => tm.handleTenantPhoneChange(e.target.value)}
+                  placeholder={FIELD_HINTS.tenant.phone.placeholder}
                 />
                 <FormErrorMessage>
                   {tm.tenantFormErrors.phone_number}
                 </FormErrorMessage>
+                <FieldHint show={!tm.tenantFormErrors.phone_number}>
+                  {FIELD_HINTS.tenant.phone.helper}
+                </FieldHint>
               </FormControl>
               <ConsentCheckbox
                 isChecked={tenantConsentAccepted}
@@ -1583,6 +1625,9 @@ export default function TenantManagementTab({
                 <FormErrorMessage>
                   {tm.editTenantFormErrors.organisation}
                 </FormErrorMessage>
+                <FieldHint show={!tm.editTenantFormErrors.organisation}>
+                  {FIELD_HINTS.tenant.organisation.helper}
+                </FieldHint>
               </FormControl>
               <FormControl
                 isInvalid={Boolean(tm.editTenantFormErrors.contact_name)}
@@ -1597,6 +1642,9 @@ export default function TenantManagementTab({
                 <FormErrorMessage>
                   {tm.editTenantFormErrors.contact_name}
                 </FormErrorMessage>
+                <FieldHint show={!tm.editTenantFormErrors.contact_name}>
+                  {FIELD_HINTS.tenant.contactName.helper}
+                </FieldHint>
               </FormControl>
               <FormControl
                 isRequired={tm.isEditTenantEmailEditable}
@@ -1618,32 +1666,30 @@ export default function TenantManagementTab({
                     <FormErrorMessage>
                       {tm.editTenantFormErrors.email}
                     </FormErrorMessage>
-                    {tm.editTenantEmailStatus === "checking" &&
-                      !tm.editTenantFormErrors.email && (
-                        <FormHelperText color="gray.500">
-                          Checking if email exists…
-                        </FormHelperText>
-                      )}
-                    {tm.editTenantEmailStatus === "available" &&
-                      !tm.editTenantFormErrors.email && (
-                        <FormHelperText color="green.600">
-                          {EMAIL_AVAILABLE_MSG}
-                        </FormHelperText>
-                      )}
-                    <FormHelperText>
-                      If you change the contact email, the update takes effect
-                      only after the new address is verified.
-                    </FormHelperText>
+                    <FieldHint show={!tm.editTenantFormErrors.email}>
+                      {FIELD_HINTS.tenant.emailVerifyOnChange}
+                    </FieldHint>
+                    <FieldHint
+                      show={
+                        !tm.editTenantFormErrors.email &&
+                        (tm.editTenantEmailStatus === "checking" ||
+                          tm.editTenantEmailStatus === "available")
+                      }
+                      tone={
+                        tm.editTenantEmailStatus === "available" ? "success" : "muted"
+                      }
+                    >
+                      {tm.editTenantEmailStatus === "checking"
+                        ? FIELD_HINTS.tenant.emailChecking
+                        : FIELD_HINTS.tenant.emailAvailable}
+                    </FieldHint>
                   </>
                 ) : (
                   <>
                     <Text fontSize="md" color="gray.700" py={1}>
                       {dash(tm.editTenantForm.email)}
                     </Text>
-                    <FormHelperText>
-                      The contact email can only be corrected while the tenant
-                      is pending verification.
-                    </FormHelperText>
+                    <FieldHint>{FIELD_HINTS.tenant.emailPendingOnly}</FieldHint>
                   </>
                 )}
               </FormControl>
@@ -1660,6 +1706,9 @@ export default function TenantManagementTab({
                 <FormErrorMessage>
                   {tm.editTenantFormErrors.phone_number}
                 </FormErrorMessage>
+                <FieldHint show={!tm.editTenantFormErrors.phone_number}>
+                  {FIELD_HINTS.tenant.phone.helper}
+                </FieldHint>
               </FormControl>
             </VStack>
           </ModalBody>
@@ -1706,6 +1755,7 @@ export default function TenantManagementTab({
                   <FormErrorMessage>
                     {tm.userFormErrors.tenant_id}
                   </FormErrorMessage>
+                  <FieldHint>{FIELD_HINTS.tenantUser.tenant.helper}</FieldHint>
                 </FormControl>
               )}
               {isAdmin && !tm.lockedUserFormTenantId && (
@@ -1740,20 +1790,19 @@ export default function TenantManagementTab({
                   value={tm.userForm.email}
                   onChange={(e) => tm.handleUserEmailChange(e.target.value)}
                   onBlur={tm.handleUserEmailBlur}
+                  placeholder={FIELD_HINTS.tenantUser.email.placeholder}
                 />
                 <FormErrorMessage>{tm.userFormErrors.email}</FormErrorMessage>
-                {tm.userEmailStatus === "checking" &&
-                  !tm.userFormErrors.email && (
-                    <FormHelperText color="gray.500">
-                      Checking if email exists…
-                    </FormHelperText>
-                  )}
-                {tm.userEmailStatus === "available" &&
-                  !tm.userFormErrors.email && (
-                    <FormHelperText color="green.600">
-                      {EMAIL_AVAILABLE_MSG}
-                    </FormHelperText>
-                  )}
+                <FieldHint
+                  show={!tm.userFormErrors.email}
+                  tone={tm.userEmailStatus === "available" ? "success" : "muted"}
+                >
+                  {tm.userEmailStatus === "checking"
+                    ? FIELD_HINTS.tenant.emailChecking
+                    : tm.userEmailStatus === "available"
+                      ? FIELD_HINTS.tenant.emailAvailable
+                      : FIELD_HINTS.tenantUser.email.helper}
+                </FieldHint>
               </FormControl>
               <FormControl
                 isRequired
@@ -1764,10 +1813,14 @@ export default function TenantManagementTab({
                   value={tm.userForm.full_name}
                   onChange={(e) => tm.handleUserFullNameChange(e.target.value)}
                   onBlur={(e) => tm.handleUserFullNameBlur(e.target.value)}
+                  placeholder={FIELD_HINTS.tenantUser.fullName.placeholder}
                 />
                 <FormErrorMessage>
                   {tm.userFormErrors.full_name}
                 </FormErrorMessage>
+                <FieldHint show={!tm.userFormErrors.full_name}>
+                  {FIELD_HINTS.tenantUser.fullName.helper}
+                </FieldHint>
               </FormControl>
               <FormControl isRequired>
                 <FormLabel>Role</FormLabel>
@@ -1786,16 +1839,21 @@ export default function TenantManagementTab({
                     </option>
                   ))}
                 </Select>
+                <FieldHint>{FIELD_HINTS.tenantUser.role.helper}</FieldHint>
               </FormControl>
               <FormControl isInvalid={Boolean(tm.userFormErrors.phone_number)}>
                 <FormLabel>Phone Number</FormLabel>
                 <Input
                   value={tm.userForm.phone_number}
                   onChange={(e) => tm.handleUserPhoneChange(e.target.value)}
+                  placeholder={FIELD_HINTS.tenantUser.phone.placeholder}
                 />
                 <FormErrorMessage>
                   {tm.userFormErrors.phone_number}
                 </FormErrorMessage>
+                <FieldHint show={!tm.userFormErrors.phone_number}>
+                  {FIELD_HINTS.tenantUser.phone.helper}
+                </FieldHint>
               </FormControl>
               <ConsentCheckbox
                 isChecked={userConsentAccepted}
@@ -1859,16 +1917,16 @@ export default function TenantManagementTab({
                 <FormErrorMessage>
                   {tm.editUserFormErrors.username}
                 </FormErrorMessage>
+                <FieldHint show={!tm.editUserFormErrors.username}>
+                  {FIELD_HINTS.tenantUser.username.helper}
+                </FieldHint>
               </FormControl>
               <FormControl>
                 <FormLabel>Email</FormLabel>
                 <Text fontSize="md" color="gray.700" py={1}>
                   {dash(tm.editUserRow?.email)}
                 </Text>
-                <Text fontSize="xs" color="gray.500" mt={1}>
-                  Email cannot be changed. Suspend or delete the account if the
-                  user has left the organisation.
-                </Text>
+                <FieldHint>{FIELD_HINTS.tenantUser.emailLocked}</FieldHint>
               </FormControl>
               <FormControl isInvalid={Boolean(tm.editUserFormErrors.full_name)}>
                 <FormLabel>Full Name</FormLabel>
@@ -1881,6 +1939,9 @@ export default function TenantManagementTab({
                 <FormErrorMessage>
                   {tm.editUserFormErrors.full_name}
                 </FormErrorMessage>
+                <FieldHint show={!tm.editUserFormErrors.full_name}>
+                  {FIELD_HINTS.tenantUser.fullName.helper}
+                </FieldHint>
               </FormControl>
               <FormControl isRequired>
                 <FormLabel>Role</FormLabel>
@@ -1901,15 +1962,13 @@ export default function TenantManagementTab({
                   ))}
                 </Select>
                 {!tm.editUserRolesLoaded && (
-                  <FormHelperText>
-                    Roles could not be loaded; role changes are disabled.
-                  </FormHelperText>
+                  <FieldHint>{FIELD_HINTS.tenantUser.rolesLoadFailed}</FieldHint>
                 )}
                 {tm.isEditUserOnlyAdmin && (
-                  <FormHelperText>
-                    You are the only Admin in the default organisation and
-                    cannot change your role.
-                  </FormHelperText>
+                  <FieldHint>{FIELD_HINTS.tenantUser.onlyAdminLocked}</FieldHint>
+                )}
+                {!tm.isEditUserOnlyAdmin && tm.editUserRolesLoaded && (
+                  <FieldHint>{FIELD_HINTS.tenantUser.role.helper}</FieldHint>
                 )}
               </FormControl>
               <FormControl
@@ -1923,6 +1982,9 @@ export default function TenantManagementTab({
                 <FormErrorMessage>
                   {tm.editUserFormErrors.phone_number}
                 </FormErrorMessage>
+                <FieldHint show={!tm.editUserFormErrors.phone_number}>
+                  {FIELD_HINTS.tenantUser.phone.helper}
+                </FieldHint>
               </FormControl>
             </VStack>
           </ModalBody>
@@ -2181,7 +2243,7 @@ export default function TenantManagementTab({
                     onChange={(e) =>
                       setAssignBudget(clampBudgetInput(e.target.value))
                     }
-                    placeholder="e.g. 500000"
+                    placeholder={FIELD_HINTS.assignTier.budget.placeholder}
                     type="number"
                     min={0}
                     step="any"
@@ -2191,6 +2253,9 @@ export default function TenantManagementTab({
                 <FormErrorMessage>
                   Budget must be a positive value.
                 </FormErrorMessage>
+                <FieldHint show={!isBudgetInvalid}>
+                  {FIELD_HINTS.assignTier.budget.helper}
+                </FieldHint>
               </FormControl>
 
               <HStack spacing={4} align="flex-start">
@@ -2206,6 +2271,7 @@ export default function TenantManagementTab({
                     onChange={(e) => setAssignEffectiveFrom(e.target.value)}
                     isDisabled={isAssigning}
                   />
+                  <FieldHint>{FIELD_HINTS.assignTier.effectiveFrom.helper}</FieldHint>
                 </FormControl>
                 <FormControl isRequired>
                   <FormLabel fontWeight="semibold" fontSize="sm">
@@ -2219,6 +2285,7 @@ export default function TenantManagementTab({
                     onChange={(e) => setAssignEffectiveTo(e.target.value)}
                     isDisabled={isAssigning}
                   />
+                  <FieldHint>{FIELD_HINTS.assignTier.effectiveTo.helper}</FieldHint>
                 </FormControl>
               </HStack>
             </VStack>
@@ -2319,9 +2386,7 @@ export default function TenantManagementTab({
                     </HStack>
                   )}
                   {isEditingTier && manageTierHasNoServices && (
-                      <FormHelperText color="red.500">
-                        {TIER_NO_SERVICES_MSG}
-                      </FormHelperText>
+                      <FieldHint tone="error">{TIER_NO_SERVICES_MSG}</FieldHint>
                     )}
                 </FormControl>
 
@@ -2395,9 +2460,9 @@ export default function TenantManagementTab({
                     </HStack>
                   </Box>
 
-                  <FormHelperText mt={3}>
-                    Tier and Budget changes apply immediately.
-                  </FormHelperText>
+                  <FieldHint mt={3}>
+                    {FIELD_HINTS.tenant.planAppliesImmediately}
+                  </FieldHint>
                 </FormControl>
               </VStack>
             ) : (

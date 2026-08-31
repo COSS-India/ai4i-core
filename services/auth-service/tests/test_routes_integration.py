@@ -72,10 +72,14 @@ class TestAuthSchemas:
             key_name="test",
             permissions=["nmt.inference", "asr.inference"],
             expires_days=7,
+            application_id=1,
+            allocated_percentage=30,
         )
         assert req.key_name == "test"
         assert req.permissions == ["nmt.inference", "asr.inference"]
         assert req.expires_days == 7
+        assert req.application_id == 1
+        assert req.allocated_percentage == 30
 
 
 class TestDependencyFactories:

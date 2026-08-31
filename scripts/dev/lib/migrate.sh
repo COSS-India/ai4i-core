@@ -18,13 +18,13 @@ run_migrations() {
 
     export PYTHON_BIN="$venv/bin/python"
 
-    # APPLY_ONLY=true: only apply committed migrations — do NOT autogenerate.
-    # Bringing up the stack should never create new `*_auto_<timestamp>.py`
-    # revision files; that's a deliberate `migrate.sh ... revision` step a dev
-    # runs when they actually change models.
+    # Only apply committed migrations. `migrate.sh ... upgrade` never generates
+    # revision files, so bringing up the stack cannot create `*_auto_<timestamp>.py`;
+    # generating one is a deliberate `migrate.sh ... revision --autogenerate` step a
+    # dev runs when they change models.
     (
         cd "$ROOT_DIR"
-        APPLY_ONLY=true ./scripts/migrate.sh all upgrade
+        ./scripts/migrate.sh all upgrade
     )
 
     ok "Database migrations complete"

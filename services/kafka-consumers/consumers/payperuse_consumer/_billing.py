@@ -10,7 +10,7 @@ from confluent_kafka.cimpl import Message
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import Constants
+from consumers.payperuse_consumer.config import Constants
 
 logger = get_logger(__name__)
 
@@ -25,26 +25,21 @@ class ServicePricing:
 
 @dataclass
 class BillingWriteResult:
-    """Result of the fused wallet-deduction + quota-upsert write.
+    """Result of the fused budget-deduction + quota-upsert write.
 
-    tier_id is None when the tenant has no active tier assignment — nothing
-    was written to either table (wallet_exhausted is forced False here,
-    matching the caller's existing convention of using quota_exhausted
-    rather than wallet_exhausted to signal "no active assignment", so a
-    missing assignment doesn't fire the budget-exhausted auth-service call).
+    tier_id is None when the span carried no tier_id (non-API-key request or
+    missing header) — quota_upsert produces no row. budget_exhausted is False
+    when api_key_id is 0/absent (no budget row to check) or when the key has
+    no snap set (NULL ceiling = unlimited).
 
-    quota_recorded=False with tier_id set means no ppu_tier_quotas row
-    matches this tier/tasktype (or the caller passed an empty
-    inference_name because pricing.task_type was unset) — quota_exhausted
-    is True in that case as the DB-level default (not entitled), but
-    callers whose pricing.task_type was empty must override it to False
-    themselves, since that's a different "no quota constraint configured"
-    case that's indistinguishable from "not entitled" at the SQL level
-    (both yield zero matching rows).
+    quota_recorded=False with tier_id set means no tier_quotas row matches
+    this tier/tasktype — quota_exhausted defaults to True ("not entitled"),
+    but callers whose pricing.task_type was empty must override it to False.
     """
-    available_balance: Decimal
+    api_key_budget_used: Decimal
+    api_key_budget_snap: Optional[Decimal]
     tier_id: Optional[str]
-    wallet_exhausted: bool
+    budget_exhausted: bool
     quota_recorded: bool
     quota_exhausted: bool
 
@@ -58,7 +53,7 @@ async def get_service_pricing(
         redis = get_redis_client()
     except RuntimeError:
         redis = None
-    cache_key = f"{Constants.PPU_PRICING_CACHE_PREFIX}{service_id}"
+    cache_key = f"{Constants.PRICING_CACHE_PREFIX}{service_id}"
 
     if redis is not None:
         cached = await redis.hgetall(cache_key)
@@ -95,13 +90,13 @@ async def get_service_pricing(
     # a stale empty entry would block billing for 1 hour after admin adds pricing.
     if redis is not None and pricing.task_type:
         pipe = redis.pipeline()
-        pipe.hset(cache_key, mapping={
+        await pipe.hset(cache_key, mapping={
             "task_type": pricing.task_type,
             "unit_rate": str(pricing.unit_rate) if pricing.unit_rate is not None else "",
             "cost_per_unit": str(pricing.cost_per_unit) if pricing.cost_per_unit is not None else "",
             "unit_size": str(pricing.unit_size) if pricing.unit_size is not None else "",
         })
-        pipe.expire(cache_key, Constants.PPU_PRICING_CACHE_TTL)
+        await pipe.expire(cache_key, Constants.PRICING_CACHE_TTL)
         await pipe.execute()
 
     return pricing
@@ -127,93 +122,88 @@ async def deduct_balance_and_update_quota(
     billing_month: str,
     units: Decimal,
     cost: Decimal,
+    api_key_id: int = 0,
+    tier_id: Optional[str] = None,
 ) -> BillingWriteResult:
     """
-    Single round-trip fusing what were two sequential writes:
-      1. deduct_balance — debit the tenant's active tier assignment.
-      2. update_quota_usage — UPSERT this tenant/inference/month/tier's
-         accumulated usage, sourcing monthly_quota from ppu_tier_quotas.
+    Single round-trip fusing budget deduction (budget_usage) + quota upsert
+    (quota_usage).
 
-    A writable-CTE chain lets both writes commit as one statement in one
-    round-trip instead of two, with the same atomicity as before — both
-    succeed or both roll back together with the session's transaction.
+    budget_update: plain UPDATE on budget_usage keyed by api_key_id. Produces
+    no row when api_key_id=0 or no budget_usage row exists for the key —
+    budget tracking is silently skipped (key has no budget ceiling).
 
-    wallet_update always attempts the deduction. quota_upsert only
-    produces a row when wallet_update produced one (an active assignment
-    exists) *and* ppu_tier_quotas has a matching (tier_id, inference_name)
-    row — if either is missing, quota_upsert's FROM/JOIN yields zero rows,
-    so nothing is inserted there, mirroring the old code's "no assignment"
-    and "not entitled" branches respectively. ppu_tier_quotas has a unique
-    constraint on (tier_id, inference_name), so quota_upsert never yields
-    more than one row when it does match.
-
-    inference_name='' (pricing.task_type unset) simply never matches a
-    ppu_tier_quotas row either, so quota_upsert naturally does nothing in
-    that case too — quota_recorded=False either way, and it's the
-    caller's job to distinguish "task_type unset" (not exhausted) from
-    "genuinely not entitled" (exhausted) using pricing.task_type, same as
-    the old _check_quota's early return did.
+    quota_upsert: looks up monthly_quota_snap from tier_quotas using tier_id
+    passed directly from the OTel span (set by auth service, propagated via
+    X-Tier-ID header → context → span attribute). Produces no row when
+    tier_id is None or tier_quotas has no matching (tier_id, inference_name)
+    row. CAST(:tier_id AS uuid) with a SQL NULL evaluates the WHERE condition
+    to UNKNOWN (never TRUE), so the INSERT selects no rows — safe no-op.
+    Passing an empty string instead of None would raise
+    "invalid input syntax for type uuid" in Postgres; callers must normalise
+    "" to None before calling (handler._get_otel_attributes does this).
     """
     result = await db.execute(
         text(
-            "WITH wallet_update AS ("
-            "    UPDATE ppu_tenant_tier_assignments"
-            "       SET available_balance = available_balance - :cost,"
+            "WITH budget_update AS ("
+            "    UPDATE budget_usage"
+            "       SET api_key_budget_used = api_key_budget_used + :cost,"
             "           updated_at = now()"
-            "     WHERE tenant_id = :tenant_id"
-            "       AND effective_from <= now()"
-            "       AND effective_to   >  now()"
-            "    RETURNING available_balance, tier_id"
+            "     WHERE api_key_id = :api_key_id"
+            "    RETURNING api_key_budget_used, api_key_budget_snap"
             "),"
             " quota_upsert AS ("
-            "    INSERT INTO ppu_quota_usage"
+            "    INSERT INTO quota_usage"
             "      (id, tenant_id, inference_name, billing_month, monthly_quota_snap,"
-            "       units_used, tier_id, cost_accum)"
-            "    SELECT gen_random_uuid(), :tenant_id, :inference_name, :billing_month,"
-            "           ptq.monthly_quota, :units, wallet_update.tier_id, :cost"
-            "    FROM wallet_update"
-            "    JOIN ppu_tier_quotas ptq"
-            "      ON ptq.tier_id = wallet_update.tier_id AND ptq.inference_name = :inference_name"
+            "       monthly_quota_used, tier_id)"
+            "    SELECT gen_random_uuid(), :tenant_id, CAST(:inference_name AS text), :billing_month,"
+            "           tq.monthly_quota, :units, :tier_id"
+            "    FROM tier_quotas tq"
+            "    WHERE tq.tier_id = CAST(:tier_id AS uuid) AND tq.inference_name = CAST(:inference_name AS text)"
             "    ON CONFLICT (tenant_id, inference_name, billing_month, tier_id)"
-            "    DO UPDATE SET units_used = ppu_quota_usage.units_used + EXCLUDED.units_used,"
-            "                  cost_accum = ppu_quota_usage.cost_accum + EXCLUDED.cost_accum,"
+            "    DO UPDATE SET monthly_quota_used = quota_usage.monthly_quota_used + EXCLUDED.monthly_quota_used,"
             "                  updated_at = now()"
-            "    RETURNING units_used, monthly_quota_snap"
+            "    RETURNING monthly_quota_used, monthly_quota_snap, tier_id"
             " )"
-            " SELECT wallet_update.available_balance, wallet_update.tier_id,"
-            "        quota_upsert.units_used, quota_upsert.monthly_quota_snap"
-            " FROM wallet_update"
+            " SELECT budget_update.api_key_budget_used, budget_update.api_key_budget_snap,"
+            "        quota_upsert.monthly_quota_used, quota_upsert.monthly_quota_snap,"
+            "        quota_upsert.tier_id"
+            " FROM (SELECT 1) _dual"
+            " LEFT JOIN budget_update ON true"
             " LEFT JOIN quota_upsert ON true"
         ),
         {
+            "api_key_id": api_key_id,
             "tenant_id": tenant_id,
             "inference_name": inference_name,
             "billing_month": billing_month,
             "units": units,
             "cost": cost,
+            "tier_id": tier_id,
         },
     )
     row = result.first()
-    if row is None:
-        # wallet_update itself produced no row — no active tier assignment.
-        # wallet_exhausted stays False here (not True) so this doesn't fire
-        # the budget-exhausted auth-service call; quota_exhausted=True is
-        # the signal callers use instead to block further requests.
-        logger.warning("deduct_balance: no active assignment for tenant=%s", tenant_id)
-        return BillingWriteResult(
-            available_balance=Decimal(0), tier_id=None,
-            wallet_exhausted=False, quota_recorded=False, quota_exhausted=True,
-        )
 
-    quota_recorded = row.units_used is not None
-    # Not recorded (no ppu_tier_quotas match) defaults to exhausted=True —
-    # the DB-level "not entitled" signal; empty-task_type callers override
-    # this to False themselves (see the docstring above).
-    quota_exhausted = (not quota_recorded) or (row.units_used >= row.monthly_quota_snap)
+    budget_used = row.api_key_budget_used if row and row.api_key_budget_used is not None else Decimal(0)
+    budget_snap = row.api_key_budget_snap if row and row.api_key_budget_snap is not None else None
+    tier_id_from_row = str(row.tier_id) if row and row.tier_id is not None else None
+    tier_id = tier_id_from_row or tier_id or None
+
+    if tier_id is None:
+        logger.warning("deduct_balance: tenant=%s has no active tier — quota upsert skipped", tenant_id)
+
+    budget_exhausted = (
+        budget_snap is not None and budget_used >= budget_snap
+    )
+
+    quota_recorded = row is not None and row.monthly_quota_used is not None
+    quota_exhausted = (not quota_recorded) or (row.monthly_quota_used >= row.monthly_quota_snap)
+
     return BillingWriteResult(
-        available_balance=row.available_balance,
-        tier_id=str(row.tier_id),
-        wallet_exhausted=row.available_balance <= 0,
+        api_key_budget_used=budget_used,
+        api_key_budget_snap=budget_snap,
+        tier_id=tier_id,
+        budget_exhausted=budget_exhausted,
         quota_recorded=quota_recorded,
         quota_exhausted=quota_exhausted,
     )
@@ -249,7 +239,7 @@ def _get_billing_data(message: Message) -> Optional[dict]:
 
 
 def _get_billed_key(correlation_id: str, span_id: str) -> str:
-    return f"{Constants.PPU_BILLED_KEY_PREFIX}{correlation_id}:{span_id}" if correlation_id else ""
+    return f"{Constants.BILLED_KEY_PREFIX}{correlation_id}:{span_id}" if correlation_id else ""
 
 
 async def _update_billing_on_cache(is_already_billed: bool, billed_key: str, correlation_id: str) -> None:
@@ -258,7 +248,7 @@ async def _update_billing_on_cache(is_already_billed: bool, billed_key: str, cor
     if is_already_billed is False:
         try:
             redis = get_redis_client()
-            await redis.set(billed_key, "1", ex=Constants.PPU_BILLED_KEY_TTL)
+            await redis.set(billed_key, "1", ex=Constants.BILLED_KEY_TTL)
         except Exception as exc:
             logger.warning(
                 "Failed to set Redis dedup key for correlation_id=%s: %s",

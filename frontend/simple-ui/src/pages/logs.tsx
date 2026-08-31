@@ -52,6 +52,8 @@ import AdminDataTable, {
 } from "../components/common/AdminDataTable";
 import TelemetryTraceDetailModal from "@/components/observability/TelemetryTraceDetailModal";
 import { getPlatformName } from "../config/runtimeConfig";
+import { FIELD_HINTS } from "../config/fieldHints";
+import FieldHint from "../components/common/FieldHint";
 
 /** Auto-refresh interval when enabled (within 30–45s range). */
 const AUTO_REFRESH_MS = 37_000;
@@ -660,7 +662,7 @@ const LogsPage: React.FC = () => {
                             label="Search"
                             value={searchQuery}
                             onChange={setSearchQuery}
-                            placeholder="Trace ID, URL, task type…"
+                            placeholder={FIELD_HINTS.logs.search.placeholder}
                             formControlProps={{ w: { base: "full", md: "280px" } }}
                           />
                           {canPickTenant && (
@@ -668,6 +670,7 @@ const LogsPage: React.FC = () => {
                               label={INSTITUTION}
                               value={selectedTenantId}
                               onChange={setSelectedTenantId}
+                              helper={FIELD_HINTS.logs.tenant.helper}
                               formControlProps={{ w: { base: "full", sm: "200px" } }}
                               selectProps={{ isDisabled: tenantsLoading }}
                             >
@@ -731,6 +734,7 @@ const LogsPage: React.FC = () => {
                               }}
                               bg={cardBg}
                             />
+                            <FieldHint>{FIELD_HINTS.logs.startTime.helper}</FieldHint>
                           </FormControl>
                           <FormControl w={{ base: "full", sm: "220px" }}>
                             <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
@@ -746,6 +750,7 @@ const LogsPage: React.FC = () => {
                               }}
                               bg={cardBg}
                             />
+                            <FieldHint>{FIELD_HINTS.logs.endTime.helper}</FieldHint>
                           </FormControl>
                           <Box flex="1" minW={0} display={{ base: "none", lg: "block" }} />
                         </HStack>
@@ -771,6 +776,9 @@ const LogsPage: React.FC = () => {
                             isChecked={autoRefresh}
                             onChange={(e) => setAutoRefresh(e.target.checked)}
                           />
+                          <FieldHint ml={2} mt={0}>
+                            {FIELD_HINTS.logs.autoRefresh.helper}
+                          </FieldHint>
                         </FormControl>
                         <Tooltip label="Refresh now" placement="top" hasArrow>
                           <IconButton

@@ -16,7 +16,6 @@ import {
   VStack,
   Link,
   FormErrorMessage,
-  FormHelperText,
 } from "@chakra-ui/react";
 import { ViewIcon, ViewOffIcon } from "@chakra-ui/icons";
 import { useAuth } from "../../hooks/useAuth";
@@ -37,6 +36,8 @@ import PasswordRequirements, {
   passwordPasses,
 } from "./password/PasswordRequirements";
 import authService from "../../services/authService";
+import { FIELD_HINTS } from "../../config/fieldHints";
+import FieldHint from "../common/FieldHint";
 
 const SIGNUP_EMAIL_ALREADY_EXISTS_MSG =
   "An account with this email already exists. Please use a different email or sign in.";
@@ -400,11 +401,9 @@ const RegisterForm: React.FC<RegisterFormProps> = ({
               autoComplete="off"
               data-form-type="other"
             />
-            {isCheckingEmail && !validationErrors.email && (
-              <FormHelperText color="gray.500">
-                Checking if email exists…
-              </FormHelperText>
-            )}
+            <FieldHint show={isCheckingEmail && !validationErrors.email}>
+              {FIELD_HINTS.register.emailChecking}
+            </FieldHint>
             {validationErrors.email && (
               <FormErrorMessage>{validationErrors.email}</FormErrorMessage>
             )}

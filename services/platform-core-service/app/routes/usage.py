@@ -15,14 +15,14 @@ from app.core.permissions import (
     ROLE_TENANT_ADMIN as _ROLE_TENANT_ADMIN,
     permission_ids as _permission_ids,
 )
-from app.repositories.pay_per_use.ppu_usage_repository import PPUUsageRepository
+from app.repositories.pay_per_use.usage_repository import UsageRepository
 from app.schemas.enums.model_management import resolve_task_type
 from app.schemas.pay_per_use.usage import (
     TenantHierarchicalItem,
     TenantHierarchicalListResponse,
     UsageSummaryResponse,
 )
-from app.services.pay_per_use.ppu_usage_service import PPUUsageService
+from app.services.pay_per_use.usage_service import UsageService
 
 router = APIRouter(prefix="/pay-per-use", tags=["Usage"])
 
@@ -94,7 +94,7 @@ async def get_usage_summary(
     _require_admin(request)
     tier_id = _validate_tier_id(tier_id)
     month = billing_period or datetime.now(timezone.utc).strftime("%Y-%m")
-    svc = PPUUsageService(PPUUsageRepository(db))
+    svc = UsageService(UsageRepository(db))
     return await svc.get_summary(month, tier_id, _parse_task_types(task_types))
 
 
@@ -117,7 +117,7 @@ async def get_tenant_usage_list(
     _require_admin(request)
     tier_id = _validate_tier_id(tier_id)
     month = billing_period or datetime.now(timezone.utc).strftime("%Y-%m")
-    svc = PPUUsageService(PPUUsageRepository(db))
+    svc = UsageService(UsageRepository(db))
     return await svc.get_tenant_list(
         month, tier_id, modelTaskType.lower() if modelTaskType else None, auth_db,
         sortOrder, limit, offset, task_types=_parse_task_types(task_types),
@@ -149,5 +149,5 @@ async def get_tenant_usage_detail(
             raise InsufficientPermissionsError()
 
     month = billing_period or datetime.now(timezone.utc).strftime("%Y-%m")
-    svc = PPUUsageService(PPUUsageRepository(db))
+    svc = UsageService(UsageRepository(db))
     return await svc.get_tenant_detail(tenant_id, month, auth_db, task_types=_parse_task_types(task_types))

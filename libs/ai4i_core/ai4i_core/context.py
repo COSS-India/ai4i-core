@@ -17,6 +17,8 @@ _tenant_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("
 _user_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("user_id", default=None)
 _endpoint_path_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("endpoint_path", default=None)
 _auth_type_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("auth_type", default=None)
+_api_key_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("api_key_id", default=None)
+_tier_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("tier_id", default=None)
 _llm_usage_input_tokens_var: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar("llm_usage_input_tokens", default=None)
 _llm_usage_output_tokens_var: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar("llm_usage_output_tokens", default=None)
 _llm_usage_model_name_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("llm_usage_model_name", default=None)
@@ -83,6 +85,22 @@ def set_auth_type(auth_type: str) -> contextvars.Token:
 
 def get_auth_type() -> Optional[str]:
     return _auth_type_var.get()
+
+
+def set_api_key_id(api_key_id: str) -> contextvars.Token:
+    return _api_key_id_var.set(api_key_id)
+
+
+def get_api_key_id() -> Optional[str]:
+    return _api_key_id_var.get()
+
+
+def set_tier_id(tier_id: str) -> contextvars.Token:
+    return _tier_id_var.set(tier_id)
+
+
+def get_tier_id() -> Optional[str]:
+    return _tier_id_var.get()
 
 
 def set_llm_usage_input_tokens(input_tokens: Optional[int]) -> contextvars.Token:

@@ -19,17 +19,20 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.redis import get_redis
 from app.repositories.api_key_repository import APIKeyRepository
+from app.repositories.application_repository import ApplicationRepository
 from app.repositories.credentials_repository import CredentialsRepository
 from app.repositories.refresh_token_repository import RefreshTokenRepository
 from app.repositories.role_repository import RoleRepository
 from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationRepository
+from app.services.allocation_service import AllocationService
 from app.services.api_key_service import APIKeyService
+from app.services.application_service import ApplicationService
 from app.services.auth_service import AuthService
 from app.services.cache_service import CacheService
 from app.services.oauth_service import OAuthService
-from app.services.ppu_notification_service import PPUNotificationService
+from app.services.quota_notification_service import QuotaNotificationService
 from app.services.role_service import RoleService
 from app.services.tenant_service import TenantService
 from app.services.token_service import TokenService
@@ -79,10 +82,16 @@ def get_api_key_service(
     db: AsyncSession = Depends(get_db),
     cache: CacheService = Depends(get_cache_service),
 ) -> APIKeyService:
+    # Pre-existing bug fixed in passing: this used to pass a nonexistent
+    # ``user_repo`` kwarg (APIKeyService.__init__ has no such parameter,
+    # only application_repo/tenant_repo) — every route depending on this
+    # factory (api_key.py, internal.py) would have raised TypeError at
+    # request time. application_repo is what create_api_key/list_grouped
+    # actually need.
     return APIKeyService(
         APIKeyRepository(db),
         cache,
-        user_repo=UserRepository(db),
+        application_repo=ApplicationRepository(db),
         tenant_repo=TenantRepository(db),
     )
 
@@ -135,11 +144,34 @@ def get_tenant_service(
     )
 
 
-def get_ppu_notification_service(
+def get_application_service(
+    db: AsyncSession = Depends(get_db),
+) -> ApplicationService:
+    return ApplicationService(
+        application_repo=ApplicationRepository(db),
+        tenant_repo=TenantRepository(db),
+        role_repo=RoleRepository(db),
+        db=db,
+    )
+
+
+def get_allocation_service(
+    db: AsyncSession = Depends(get_db),
+) -> AllocationService:
+    return AllocationService(
+        application_repo=ApplicationRepository(db),
+        api_key_repo=APIKeyRepository(db),
+        tenant_repo=TenantRepository(db),
+        role_repo=RoleRepository(db),
+        db=db,
+    )
+
+
+def get_quota_notification_service(
     db: AsyncSession = Depends(get_db),
     email_client: EmailClient = Depends(get_email_client),
-) -> PPUNotificationService:
-    return PPUNotificationService(
+) -> QuotaNotificationService:
+    return QuotaNotificationService(
         role_repo=RoleRepository(db),
         email_client=email_client,
     )

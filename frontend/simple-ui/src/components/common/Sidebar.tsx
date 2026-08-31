@@ -44,7 +44,7 @@ import { useGuestServices } from "../../hooks/useGuestServices";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { getTenantIdFromToken } from "../../utils/helpers";
-import { getUsageDashboardOverviewPath } from "../../utils/navigation";
+import { getHomePath, getUsageDashboardOverviewPath } from "../../utils/navigation";
 import {
   canAccessServicesManagement,
   canAccessUsageDashboard,
@@ -208,7 +208,7 @@ interface NavItem {
   requiresAuth?: boolean;
 }
 
-// Home and Model Management (always visible)
+// Unsigned-in users only see Home. Remaining top-nav items are role-gated.
 const topNavItems: NavItem[] = [
   {
     id: TABS.home,
@@ -448,6 +448,7 @@ const baseNavItems: NavItem[] = [
 ];
 
 interface TopNavFilterContext {
+  isAuthenticated: boolean;
   isGuest: boolean;
   isUser: boolean;
   isAdmin: boolean;
@@ -458,6 +459,10 @@ interface TopNavFilterContext {
 }
 
 function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean {
+  if (!ctx.isAuthenticated) {
+    return itemId === TABS.home;
+  }
+
   if (isUsageDashboardOnlyUser(ctx.userRoles)) {
     return itemId === TABS.usageDashboard;
   }
@@ -495,7 +500,7 @@ function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean 
 
 const Sidebar: React.FC = () => {
   const router = useRouter();
-  const { isLoading, user } = useAuth();
+  const { isLoading, user, isAuthenticated } = useAuth();
   const { isGuest: isGuestFromAccess, isLoading: guestServicesLoading, allowedServiceIds } = useGuestServices();
   const { enabledServiceIds, isLoading: inferenceTypesLoading } = useInferenceTypes();
   const { checkSessionExpiry } = useSessionExpiry();
@@ -522,6 +527,7 @@ const Sidebar: React.FC = () => {
 
   const topNavFilterContext = useMemo<TopNavFilterContext>(
     () => ({
+      isAuthenticated,
       isGuest,
       isUser,
       isAdmin,
@@ -530,7 +536,16 @@ const Sidebar: React.FC = () => {
       tenantId,
       userRoles: user?.roles,
     }),
-    [isGuest, isUser, isAdmin, isTenantAdmin, showTenantManagement, tenantId, user?.roles],
+    [
+      isAuthenticated,
+      isGuest,
+      isUser,
+      isAdmin,
+      isTenantAdmin,
+      showTenantManagement,
+      tenantId,
+      user?.roles,
+    ],
   );
 
   const topItems = useMemo(
@@ -577,9 +592,10 @@ const Sidebar: React.FC = () => {
     setIsServicesExpanded(false);
   }, []);
 
+  // Role-aware: the Usage-Dashboard-only role has no access to "/".
   const goHome = useCallback(() => {
-    router.push("/");
-  }, [router]);
+    router.push(getHomePath(user?.roles));
+  }, [router, user?.roles]);
 
   const onTopNavClick = useCallback(
     (e: React.MouseEvent, path: string, requiresAuth: boolean, itemId: string) => {

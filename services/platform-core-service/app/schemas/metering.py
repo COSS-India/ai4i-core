@@ -73,10 +73,13 @@ class UsageConcentration(BaseModel):
 
 class PlatformAdoption(BaseModel):
     total_tenants: Optional[int] = None
-    new_tenants_7d: Optional[int] = None
+    new_tenants_15d: Optional[int] = None
     active_24h: Optional[int] = None
     active_7d: Optional[int] = None
     active_30d: Optional[int] = None
+    # Overall LLM request volume, current calendar month (MTD) vs previous
+    # calendar month — null when the previous month had no traffic.
+    model_usage_growth_pct: Optional[float] = None
 
 
 class ServiceEntry(BaseModel):

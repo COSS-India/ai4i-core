@@ -28,6 +28,8 @@ import {
 import { CopyIcon, CloseIcon } from "@chakra-ui/icons";
 import { useCreateApiKeyTab } from "./hooks/useCreateApiKeyTab";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { FIELD_HINTS } from "../../config/fieldHints";
+import FieldHint from "../common/FieldHint";
 
 export interface CreateApiKeyTabProps {
   onApiKeyCreated?: () => void;
@@ -113,9 +115,9 @@ export default function CreateApiKeyTab({ onApiKeyCreated }: CreateApiKeyTabProp
 
             <FormControl isRequired>
               <FormLabel fontWeight="semibold">Permissions</FormLabel>
-              <Text fontSize="sm" color="gray.600" mb={3}>
-                Select permissions for this API key
-              </Text>
+              <FieldHint mb={3} mt={0} fontSize="sm">
+                {FIELD_HINTS.apiKey.permissions.helper}
+              </FieldHint>
               <Box borderWidth="1px" borderRadius="md" p={4} bg="white" maxH="300px" overflowY="auto">
                 <CheckboxGroup
                   value={create.selectedPermissions}
@@ -176,13 +178,9 @@ export default function CreateApiKeyTab({ onApiKeyCreated }: CreateApiKeyTabProp
                 min={1}
                 max={365}
                 bg="white"
+                placeholder={FIELD_HINTS.apiKey.expiry.placeholder}
               />
-              <Text fontSize="xs" color="gray.500" mt={1}>
-                API key will expire after{" "}
-                {create.apiKeyForm.expires_days === ""
-                  ? "—"
-                  : `${create.apiKeyForm.expires_days} day(s)`}
-              </Text>
+              <FieldHint>{FIELD_HINTS.apiKey.expiry.helper}</FieldHint>
             </FormControl>
 
             <Button

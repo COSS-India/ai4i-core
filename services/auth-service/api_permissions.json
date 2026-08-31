@@ -35,6 +35,16 @@
     { "endpoint": "PATCH:/api/v1/auth/tenants/{tenant_id}/users/{user_id}", "permissionRequired": 46, "description": "Update tenant user profile (tenant.users.update)" },
     { "endpoint": "DELETE:/api/v1/auth/tenants/{tenant_id}/users/{user_id}", "permissionRequired": 47, "description": "Soft-delete tenant user (tenant.users.delete)" },
 
+    { "endpoint": "POST:/api/v1/auth/tenants/{tenant_id}/applications",           "permissionRequired": 43, "description": "Create Application (application.create); ADMIN and TENANT ADMIN only" },
+    { "endpoint": "GET:/api/v1/auth/tenants/{tenant_id}/applications",            "permissionRequired": 48, "description": "List Applications (application.read); ADMIN and TENANT ADMIN only" },
+    { "endpoint": "GET:/api/v1/auth/tenants/{tenant_id}/applications/{application_id}", "permissionRequired": 48, "description": "Get Application by ID (application.read); ADMIN and TENANT ADMIN only" },
+    { "endpoint": "PATCH:/api/v1/auth/tenants/{tenant_id}/applications/{application_id}", "permissionRequired": 49, "description": "Update Application name/domain/status (application.update); ADMIN and TENANT ADMIN only" },
+    { "endpoint": "PUT:/api/v1/auth/allocations",                              "permissionRequired": 49, "description": "Rebalance Budget across Applications or API Keys (application.update); ADMIN and TENANT ADMIN only — reuses Application Management's permission since Budget allocation is that same Institution-scope concern (see AllocationService.authorize_institution_scope, the same check application.update's own routes use)" },
+
+    { "endpoint": "GET:/api/v1/auth/tenants/tier/list",                    "permissionRequired": 145, "description": "List tenants with an assigned tier (ppu.tenant.read); replaces GET /pay-per-use/tenant/tier" },
+    { "endpoint": "PATCH:/api/v1/auth/tenants/{tenant_id}/tier",           "permissionRequired": 144, "description": "Assign/reassign a tenant's tier (ppu.tenant.assign); replaces POST /pay-per-use/tenant/tier and PATCH .../tier/reassign" },
+    { "endpoint": "PATCH:/api/v1/auth/tenants/{tenant_id}/budget",         "permissionRequired": 144, "description": "Revise tenant budget, top-up/top-down (ppu.tenant.assign); replaces PATCH /pay-per-use/tenant/budget" },
+
     { "endpoint": "GET:/api/v1/services",                                  "permissionRequired": 51, "description": "List all services (service.read)" },
     { "endpoint": "GET:/api/v1/services/{service_id}",                     "permissionRequired": 51, "description": "Get service by ID (service.read)" },
     { "endpoint": "POST:/api/v1/services",                                 "permissionRequired": 50, "description": "Create service (service.create)" },
@@ -118,10 +128,6 @@
     { "endpoint": "POST:/api/v1/pay-per-use/tier",                         "permissionRequired": 141, "description": "Create PPU tier (ppu.tier.create)" },
     { "endpoint": "PATCH:/api/v1/pay-per-use/tier",                        "permissionRequired": 142, "description": "Update PPU tier (ppu.tier.update)" },
     { "endpoint": "DELETE:/api/v1/pay-per-use/tier",                       "permissionRequired": 143, "description": "Delete PPU tier (ppu.tier.delete)" },
-    { "endpoint": "GET:/api/v1/pay-per-use/tenant/tier",                   "permissionRequired": 145, "description": "Get assigned PPU tier for tenant (ppu.tenant.read)" },
-    { "endpoint": "POST:/api/v1/pay-per-use/tenant/tier",                  "permissionRequired": 144, "description": "Assign PPU tier to tenant (ppu.tenant.assign)" },
-    { "endpoint": "PATCH:/api/v1/pay-per-use/tenant/tier/reassign",        "permissionRequired": 144, "description": "Reassign PPU tier for tenant (ppu.tenant.assign)" },
-    { "endpoint": "PATCH:/api/v1/pay-per-use/tenant/budget",               "permissionRequired": 144, "description": "Revise tenant PPU budget, top-up/top-down (ppu.tenant.assign); admin (Adopter Admin) only" },
 
     { "endpoint": "GET:/api/v1/pay-per-use/usage-summary",                             "permissionRequired": 134, "description": "PPU usage platform summary (usage.read); admin only (platform-wide)" },
     { "endpoint": "GET:/api/v1/pay-per-use/usage-tenants",                             "permissionRequired": 134, "description": "PPU usage tenant list (usage.read); admin only (platform-wide)" },

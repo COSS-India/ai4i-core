@@ -9,8 +9,11 @@ export const INSTITUTION_ADMIN_GUIDE_HREF =
 export const ADOPTER_ADMIN_GUIDE_HREF =
   "/onboarding-guide/adopter-admin-guide.html";
 
-/** Signed-out home page uses the Institution Admin guide. */
-export const ONBOARDING_GUIDE_HREF = INSTITUTION_ADMIN_GUIDE_HREF;
+/** Signed-out home: both guides, so users can orient before their account is active. */
+export const PRE_LOGIN_GUIDE_OPTIONS = [
+  { label: "Adopter Admin Guide", href: ADOPTER_ADMIN_GUIDE_HREF },
+  { label: "Institution Admin Guide", href: INSTITUTION_ADMIN_GUIDE_HREF },
+] as const;
 
 /** Platform ADMIN and Tenant Admin only; plain MODERATOR (no TENANT ADMIN) is excluded. */
 export function canSeeOnboardingGuide(roles?: string[]): boolean {

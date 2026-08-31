@@ -9,7 +9,6 @@ import {
   Checkbox,
   FormControl,
   FormErrorMessage,
-  FormHelperText,
   FormLabel,
   Heading,
   HStack,
@@ -30,6 +29,8 @@ import {
 import { ChevronDownIcon, SearchIcon } from "@chakra-ui/icons";
 import React, { useMemo, useState } from "react";
 import { formatModelTaskTypeLabel } from "../../config/constants";
+import { FIELD_HINTS } from "../../config/fieldHints";
+import FieldHint from "../common/FieldHint";
 import type { Service } from "../../services/servicesManagementService";
 import type { ModelDetails } from "../../types/platform";
 import type { Tier } from "../../types/tierManagement";
@@ -38,9 +39,6 @@ import {
   INFRA_DESCRIPTION_MIN_LEN,
   SERVICE_DESCRIPTION_MAX_LEN,
   SERVICE_DESCRIPTION_MIN_LEN,
-  SERVICE_ID_MIN_LEN,
-  SERVICE_NAME_MAX_LEN,
-  SERVICE_NAME_MIN_LEN,
   sanitizeServiceName,
 } from "./serviceFormValidation";
 
@@ -196,7 +194,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   <Select
                     value={formData.task_type || ""}
                     onChange={(e) => onTaskTypeChange(e.target.value)}
-                    placeholder="Select a task type"
+                    placeholder={FIELD_HINTS.service.taskType.placeholder}
                     bg="white"
                   >
                     {taskTypeNames?.map((t) => (
@@ -222,10 +220,10 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                     onChange={(e) => onModelNameChange(e.target.value)}
                     placeholder={
                       isLoadingModels
-                        ? "Loading models..."
+                        ? FIELD_HINTS.service.modelName.loading
                         : !formData.task_type
-                          ? "Select a task type first"
-                          : "Select a model"
+                          ? FIELD_HINTS.service.modelName.needTaskType
+                          : FIELD_HINTS.service.modelName.placeholder
                     }
                     bg="white"
                     isDisabled={isLoadingModels || !formData.task_type}
@@ -245,21 +243,18 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
 
             {/* 3. Model ID + Model Submission Date — FYI plain text (not disabled inputs) */}
             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-              <Box>
-                <Text fontSize="sm" fontWeight="semibold" color="gray.700" mb={1}>
-                  Model ID
-                </Text>
+              <FormControl>
+                <FormLabel fontWeight="semibold">Model ID</FormLabel>
                 <Text
                   fontSize="sm"
                   color={isCreateFormModelSelected ? "gray.800" : "gray.500"}
                 >
-                  {formData.modelId || "Select a model above"}
+                  {formData.modelId || FIELD_HINTS.service.modelId.empty}
                 </Text>
-              </Box>
-              <Box>
-                <Text fontSize="sm" fontWeight="semibold" color="gray.700" mb={1}>
-                  Model Submission Date
-                </Text>
+                <FieldHint>{FIELD_HINTS.service.modelId.helper}</FieldHint>
+              </FormControl>
+              <FormControl>
+                <FormLabel fontWeight="semibold">Model Submission Date</FormLabel>
                 <Text
                   fontSize="sm"
                   color={
@@ -270,9 +265,10 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                     ? formatSubmissionDateDisplay(
                         formData.modelSubmissionDate as string | undefined,
                       )
-                    : "Select a model above"}
+                    : FIELD_HINTS.service.modelId.empty}
                 </Text>
-              </Box>
+                <FieldHint>{FIELD_HINTS.service.submissionDate.helper}</FieldHint>
+              </FormControl>
             </SimpleGrid>
 
             {/* Service Name (non-LLM) + Service ID */}
@@ -285,20 +281,17 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   onChange={(e) =>
                     onInputChange("name", sanitizeServiceName(e.target.value))
                   }
-                  placeholder="Enter service name e.g. asr-conformer-gpu"
+                  placeholder={FIELD_HINTS.service.name.placeholder}
                   bg={editingService ? "gray.50" : "white"}
                   isReadOnly={!!editingService}
                 />
-                {!editingService &&
-                  (nameError ? (
-                    <FormErrorMessage>{nameError}</FormErrorMessage>
-                  ) : (
-                    <FormHelperText fontSize="xs" color="gray.500">
-                      {SERVICE_NAME_MIN_LEN}-{SERVICE_NAME_MAX_LEN} characters.
-                      Letters, numbers, - and / only (no spaces) — e.g.
-                      asr-conformer-gpu.
-                    </FormHelperText>
-                  ))}
+                {nameError ? (
+                  <FormErrorMessage>{nameError}</FormErrorMessage>
+                ) : (
+                  <FieldHint show={!editingService}>
+                    {FIELD_HINTS.service.name.helper}
+                  </FieldHint>
+                )}
               </FormControl>
             )}
 
@@ -318,23 +311,20 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 placeholder={
                   isLlmTaskType && formData.modelName
                     ? `${formData.modelName}/…`
-                    : "Enter service id"
+                    : FIELD_HINTS.service.serviceId.placeholder
                 }
                 bg={editingService ? "gray.50" : "white"}
                 isReadOnly={!!editingService}
               />
-              {isLlmTaskType && !editingService && (
-                <Text fontSize="xs" color="gray.500" mt={1}>
-                  Pre-filled with the selected model name as a prefix. Complete
-                  the Service ID; it is also used as the Service Name.
-                </Text>
+              {idError ? (
+                <FormErrorMessage>{idError}</FormErrorMessage>
+              ) : (
+                <FieldHint show={!editingService}>
+                  {isLlmTaskType
+                    ? FIELD_HINTS.service.serviceId.llmHelper
+                    : FIELD_HINTS.service.serviceId.helper}
+                </FieldHint>
               )}
-              {!editingService && !idError && (
-                <FormHelperText fontSize="xs" color="gray.500">
-                  At least {SERVICE_ID_MIN_LEN} characters.
-                </FormHelperText>
-              )}
-              {idError && <FormErrorMessage>{idError}</FormErrorMessage>}
             </FormControl>
 
             {/* Service Description */}
@@ -349,21 +339,21 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   onInputChange("serviceDescription", e.target.value)
                 }
                 onBlur={() => markBlurred("serviceDescription")}
-                placeholder="Provide a brief description of what this service does"
+                placeholder={FIELD_HINTS.service.description.placeholder}
                 bg="white"
                 rows={4}
               />
-              {!editingService &&
-                (descriptionError ? (
-                  <FormErrorMessage>{descriptionError}</FormErrorMessage>
-                ) : (
-                  <FormHelperText fontSize="xs" color="gray.500">
-                    Required. {SERVICE_DESCRIPTION_MIN_LEN}-
-                    {SERVICE_DESCRIPTION_MAX_LEN} characters —{" "}
-                    {(formData.serviceDescription || "").trim().length}/
-                    {SERVICE_DESCRIPTION_MAX_LEN} entered.
-                  </FormHelperText>
-                ))}
+              {descriptionError ? (
+                <FormErrorMessage>{descriptionError}</FormErrorMessage>
+              ) : (
+                <FieldHint show={!editingService}>
+                  {FIELD_HINTS.service.description.helper(
+                    (formData.serviceDescription || "").trim().length,
+                    SERVICE_DESCRIPTION_MIN_LEN,
+                    SERVICE_DESCRIPTION_MAX_LEN,
+                  )}
+                </FieldHint>
+              )}
             </FormControl>
 
             {/* Endpoint */}
@@ -374,16 +364,16 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 onChange={(e) => onInputChange("endpoint", e.target.value)}
                 placeholder={
                   isLlmTaskType
-                    ? "e.g. http://host:port"
-                    : "Enter endpoint URL, e.g. http://localhost:8088"
+                    ? FIELD_HINTS.service.endpoint.llmPlaceholder
+                    : FIELD_HINTS.service.endpoint.placeholder
                 }
                 bg="white"
               />
-              <Text fontSize="xs" color="gray.500" mt={1}>
+              <FieldHint>
                 {isLlmTaskType
-                  ? "Enter the model host URL (host:port only)."
-                  : "Enter the full HTTP endpoint where this service is hosted."}
-              </Text>
+                  ? FIELD_HINTS.service.endpoint.llmHelper
+                  : FIELD_HINTS.service.endpoint.helper}
+              </FieldHint>
             </FormControl>
 
             {/* Hardware Description → inferenceEndPoint.infraDescription */}
@@ -395,20 +385,20 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   onInputChange("hardwareDescription", e.target.value)
                 }
                 onBlur={() => markBlurred("hardwareDescription")}
-                placeholder="e.g. Auto-scalable deployment, using T4 GPUs"
+                placeholder={FIELD_HINTS.service.hardware.placeholder}
                 bg={editingService ? "gray.50" : "white"}
                 isReadOnly={!!editingService}
               />
-              {!editingService &&
-                (infraError ? (
-                  <FormErrorMessage>{infraError}</FormErrorMessage>
-                ) : (
-                  <FormHelperText fontSize="xs" color="gray.500">
-                    {INFRA_DESCRIPTION_MIN_LEN}-{INFRA_DESCRIPTION_MAX_LEN}{" "}
-                    characters. Describes the infrastructure this service runs
-                    on.
-                  </FormHelperText>
-                ))}
+              {infraError ? (
+                <FormErrorMessage>{infraError}</FormErrorMessage>
+              ) : (
+                <FieldHint show={!editingService}>
+                  {FIELD_HINTS.service.hardware.helper(
+                    INFRA_DESCRIPTION_MIN_LEN,
+                    INFRA_DESCRIPTION_MAX_LEN,
+                  )}
+                </FieldHint>
+              )}
             </FormControl>
 
             {/* 4. Unit Type (derived) + Unit Size */}
@@ -426,9 +416,10 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                     placeholder={
                       formData.task_type
                         ? "—"
-                        : "Select a task type first"
+                        : FIELD_HINTS.service.unitType.needTaskType
                     }
                   />
+                  <FieldHint>{FIELD_HINTS.service.unitType.helper}</FieldHint>
                 </FormControl>
 
                 <FormControl isRequired>
@@ -436,7 +427,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   <Select
                     value={unitSize}
                     onChange={(e) => onUnitSizeChange(e.target.value)}
-                    placeholder="Select unit size"
+                    placeholder={FIELD_HINTS.service.unitSize.placeholder}
                     bg="white"
                   >
                     {unitSizeSelectOptions.map((size) => (
@@ -445,6 +436,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                       </option>
                     ))}
                   </Select>
+                  <FieldHint>{FIELD_HINTS.service.unitSize.helper}</FieldHint>
                 </FormControl>
               </SimpleGrid>
             </Box>
@@ -460,11 +452,12 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   <Input
                     value={pricePerUnit}
                     onChange={(e) => onPricePerUnitChange(e.target.value)}
-                    placeholder="e.g. 600"
+                    placeholder={FIELD_HINTS.service.price.placeholder}
                     type="number"
                     min={0}
                     bg="white"
                   />
+                  <FieldHint>{FIELD_HINTS.service.price.helper}</FieldHint>
                 </FormControl>
 
                 <FormControl isRequired>
@@ -523,7 +516,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                               id,
                           )
                           .join(", ")
-                      : "Select Tiers"}
+                      : FIELD_HINTS.service.tier.placeholder}
                   </Text>
                 </MenuButton>
                 <Portal>
@@ -539,7 +532,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                           <SearchIcon color="gray.400" />
                         </InputLeftElement>
                         <Input
-                          placeholder="Search tiers..."
+                          placeholder={FIELD_HINTS.service.tierSearch.placeholder}
                           value={tierSearch}
                           onChange={(e) => setTierSearch(e.target.value)}
                           onClick={(e) => e.stopPropagation()}
@@ -581,6 +574,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   </MenuList>
                 </Portal>
               </Menu>
+              <FieldHint>{FIELD_HINTS.service.tier.helper}</FieldHint>
             </FormControl>
 
             <HStack justify="flex-end" spacing={4} pt={4}>

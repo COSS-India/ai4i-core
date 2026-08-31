@@ -205,6 +205,11 @@ async def run_nmt_inference(
     description="Anonymous try-it endpoint. Accepts either a TryItRequest envelope "
                 "({ service_name, serviceId?, payload: NMTPayload }) or a plain NMT "
                 "payload directly (for when APISIX has already unwrapped the envelope).",
+    openapi_extra={"requestBody": {"content": {"application/json": {"example": {
+        "serviceId": "your-service-id",
+        "input": [{"source": "hello world"}],
+        "config": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}},
+    }}}}},
 )
 async def run_nmt_try_it(
     request: Request,
@@ -549,7 +554,7 @@ async def _run_llm_chat_stream(
     opened inside the generator and kept alive until the stream ends, the same
     trick proxy_traced_stream() uses for the model/ai-inference spans.
     """
-    kind, status_code, result = await OpenAIProxyService().proxy_traced_stream(
+    kind, status_code, result, model_ctx = await OpenAIProxyService().proxy_traced_stream(
         path=path, payload=payload, request=request,
     )
 
@@ -560,6 +565,18 @@ async def _run_llm_chat_stream(
             req_attrs.update(get_context_attributes())
             req_attrs["status"] = "failure"
             req_attrs["status_code"] = status_code
+            # Built here, inside "request" (now the active OTel context),
+            # instead of inside proxy_traced_stream() — which returns before
+            # this span exists, so a "model" span opened there would have no
+            # parent and export as its own disconnected root. See
+            # proxy_traced_stream()'s docstring for the full reasoning.
+            with traced_span("model") as model_attrs:
+                OpenAIProxyService._seed_model_attrs(
+                    model_attrs,
+                    model_ctx.get("service_id", ""),
+                    model_ctx.get("model_name"),
+                    failure_status_code=status_code,
+                )
         # Unlike the success path below, this branch never reaches the
         # generator's post-stream bridge call — without this, a failed
         # streaming request carries no model_id (model_breakdown drops the
@@ -719,6 +736,17 @@ async def _proxy_audio_upload(
     `include[]`, etc.) are serialised on the wire."""
     file_bytes = await file.read()
     if len(file_bytes) > _AUDIO_MAX_BYTES:
+        # This returns before OpenAIProxyService().proxy_multipart() is ever
+        # called — the only place in this flow that creates any span — so
+        # without emitting one here, an oversized upload produces zero trace
+        # rows at all (not even a mismarked one). service_id comes straight
+        # off the form data, same field proxy_multipart() itself reads it
+        # from; no "request" span is opened here, matching proxy_multipart's
+        # own rejection branches, which have never had one either.
+        with traced_span("model") as model_attrs:
+            OpenAIProxyService._seed_model_attrs(
+                model_attrs, data.get("model", "") or "", failure_status_code=413,
+            )
         return _audio_error(
             413,
             message=(

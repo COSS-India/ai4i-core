@@ -1,6 +1,7 @@
 """Metering business logic — PromQL construction, Prometheus calls, result shaping."""
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Union
 
 from sqlalchemy import text
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai4i_core.ppu import get_inference_unit_map
 
+from app.core.config import settings
 from app.repositories.model_management.model_repository import ModelRepository
 from app.repositories.model_management.service_repository import ServiceRepository
 from app.utils.prometheus_client import PrometheusClient
@@ -422,7 +424,7 @@ class MeteringService:
             # AsyncSession is not concurrency-safe — run sequentially, not via gather.
             total = await self._auth_db.execute(text("SELECT COUNT(*) FROM tenants"))
             new_tenants = await self._auth_db.execute(
-                text("SELECT COUNT(*) FROM tenants WHERE created_at >= NOW() - INTERVAL '7 days'")
+                text("SELECT COUNT(*) FROM tenants WHERE created_at >= NOW() - INTERVAL '15 days'")
             )
             return {
                 "total_tenants": total.scalar(),
@@ -436,6 +438,91 @@ class MeteringService:
                 "new_tenants": None,
                 "auth_db_available": False,
             }
+
+    async def model_usage_growth_pct(self) -> Optional[float]:
+        """Overall LLM request volume, current calendar month-to-date vs the
+        previous calendar month — fixed regardless of the dashboard's
+        `window` filter (Key Metrics KPI #7). Distinct from both
+        request_total()'s vs_previous_pct (a rolling window that follows
+        `window`) and the pay-per-use "vs last month" comparison (spend, not
+        request volume).
+
+        Uses exact elapsed-second widths (not `@`, unsupported by some
+        Prometheus deployments) to bound exact calendar-month boundaries,
+        the same offset-based technique request_total() uses for its
+        rolling-window comparison. `cur_q` goes through sum_over_window()
+        (the reset-aware `unless ... offset` hybrid) rather than a bare
+        increase(), same as request_total()'s "current" query — over a
+        ~30-day month-to-date window a mid-month pod redeploy is exactly
+        the kind of young series increase() would extrapolate up by
+        window/observed_duration, inflating cur_total.
+
+        `prev_q` deliberately compares the SAME width (`elapsed_s`) on both
+        sides, not the previous month's full length — comparing 5 days of
+        August against all 31 days of July would report ~-84% on Aug 5th
+        even with flat traffic. `[elapsed_s]s offset prev_month_len_s` looks
+        back `elapsed_s` from `now - prev_month_len_s`, which lands exactly
+        on `[prev_month_start, prev_month_start + elapsed_s]` — the same
+        number of days into July as `cur_q`'s days into August. Near
+        month-end this needs history back to `elapsed_s + prev_month_len_s`
+        (~60 days).
+
+        This repo ships no production Prometheus config — every deployer
+        runs their own, with their own retention — so that requirement
+        can't be enforced from a config file here. Instead, before firing
+        `prev_q` this method compares how far back it needs against
+        `settings.prometheus_retention_days` (env `PROMETHEUS_RETENTION_DAYS`,
+        default 15 — Prometheus's own out-of-box default, deliberately
+        conservative) and returns None outright if the deployment hasn't
+        declared enough retention to cover it. Without this guard,
+        Prometheus would silently answer from whatever partial data
+        survived retention and `prev_total` would under-count rather than
+        the method returning the `None` it promises — an operator must
+        opt in (set `PROMETHEUS_RETENTION_DAYS` to match their actual
+        `--storage.tsdb.retention.time`, >= ~90d recommended) before this
+        KPI computes a real percentage.
+
+        Returns None if it's too early in the month for a meaningful window,
+        the declared retention can't cover the previous-month lookback, the
+        previous month had no traffic (percentage undefined), or the
+        Prometheus query fails.
+        """
+        now = datetime.now(timezone.utc)
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        elapsed_s = int((now - month_start).total_seconds())
+        if elapsed_s < 60:
+            return None
+
+        prev_month_start = (month_start - timedelta(days=1)).replace(day=1)
+        prev_month_len_s = int((month_start - prev_month_start).total_seconds())
+
+        lookback_days_needed = (elapsed_s + prev_month_len_s) / 86400
+        if lookback_days_needed > settings.prometheus_retention_days:
+            logger.info(
+                "model_usage_growth_pct: skipping — needs %.1fd of history, "
+                "PROMETHEUS_RETENTION_DAYS=%d",
+                lookback_days_needed, settings.prometheus_retention_days,
+            )
+            return None
+
+        sel = build_base_selectors(
+            inference_only=True, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX, auth_type=API_KEY_AUTH_TYPE,
+        )
+        base = f"{_METRIC}{sel}"
+        cur_q = sum_over_window(base, f"{elapsed_s}s")
+        prev_q = f"sum(increase({base}[{elapsed_s}s] offset {prev_month_len_s}s))"
+
+        try:
+            cur_v, prev_v = await asyncio.gather(self._client.scalar(cur_q), self._client.scalar(prev_q))
+        except Exception:
+            logger.warning("model_usage_growth_pct: Prometheus query failed", exc_info=True)
+            return None
+
+        prev_total = max(0, round(float(prev_v)))
+        cur_total = max(0, round(float(cur_v)))
+        if prev_total <= 0:
+            return None
+        return round((cur_total - prev_total) / prev_total * 100, 1)
 
     async def overview_tenant_data(
         self, time_ranges: list[str]

@@ -1,16 +1,17 @@
+from dataclasses import dataclass
 import asyncio
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
 import httpx
-from ai4i_core.bootstrap import get_redis_client, get_db
+from ai4i_core.bootstrap import get_redis_client
 from ai4i_core.logging import get_logger
 from confluent_kafka.cimpl import Message
 
-from config import settings
+from bootstrap.lifecycle import session_scope
+from consumers.payperuse_consumer import config as cfg
 from consumers.payperuse_consumer._billing import (
     ServicePricing,
     calculate_cost,
@@ -19,15 +20,22 @@ from consumers.payperuse_consumer._billing import (
     _get_billing_data,
     _get_billed_key, _update_billing_on_cache,
 )
-from consumers.registry import kafka_listener
 
 logger = get_logger(__name__)
 
 
-@asynccontextmanager
-async def get_session():
-    async for db in get_db():
-        yield db
+def _to_float(val, fallback: float = 0.0) -> float:
+    try:
+        return float(val or 0)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _to_int(val, fallback: int = 0) -> int:
+    try:
+        return int(val or 0)
+    except (TypeError, ValueError):
+        return fallback
 
 
 def _get_otel_attributes(attrs: dict):
@@ -35,11 +43,17 @@ def _get_otel_attributes(attrs: dict):
     service_id: str = str(attrs.get("service_id") or "").strip()
     # Both LLM and Triton spans write real counts to input_tokens/output_tokens
     # (see trace/request_span.py and services/base/task_service.py).
-    input_tokens: float = float(attrs.get("input_tokens") or 0)
-    output_tokens: float = float(attrs.get("output_tokens") or 0)
+    input_tokens: float = _to_float(attrs.get("input_tokens"))
+    output_tokens: float = _to_float(attrs.get("output_tokens"))
     correlation_id: str = str(attrs.get("correlation_id") or "").strip()
+    api_key_id: int = _to_int(attrs.get("api_key_id"))
+    # Normalise to None so callers never have to guard against "" vs None.
+    # validation.py ships X-Tier-ID="" for keyless-tier requests; that empty
+    # string propagates here via the OTel span attribute.
+    raw_tier = str(attrs.get("tier_id") or "").strip()
+    tier_id: Optional[str] = raw_tier or None
 
-    return tenant_id, service_id, input_tokens, output_tokens, correlation_id
+    return tenant_id, service_id, input_tokens, output_tokens, correlation_id, api_key_id, tier_id
 
 
 async def _is_already_billed(billed_key: str, correlation_id: str, span_id: str, msg: Message) -> bool | None:
@@ -89,6 +103,8 @@ class BillingContext:
     is_already_billed: bool
     billing_month: str
     offset: int
+    api_key_id: int = 0
+    tier_id: Optional[str] = None
 
 
 @dataclass
@@ -127,7 +143,7 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
     # span_id reaching this consumer is valid and unique.
     attrs = data.get("attributes", {})
     # tenantId is camelCase in OTel attributes (set by ai4i_core.context middleware).
-    tenant_id, service_id, input_tokens, output_tokens, correlation_id = _get_otel_attributes(attrs)
+    tenant_id, service_id, input_tokens, output_tokens, correlation_id, api_key_id, tier_id = _get_otel_attributes(attrs)
     billed_key: str = _get_billed_key(correlation_id, span_id)
 
     is_already_billed = await _is_already_billed(billed_key, correlation_id, span_id, msg)
@@ -162,6 +178,17 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
         )
         return None
 
+    if tier_id is None:
+        # Normal for api_key requests whose cached auth payload has no tier
+        # (validation.py ships X-Tier-ID="" in that case). Budget is still
+        # deducted (resources were consumed); quota upsert is skipped because
+        # there is no tier to look up — see deduct_balance_and_update_quota.
+        logger.warning(
+            "api_key span missing tier_id — budget deducted, quota upsert skipped"
+            " | offset=%d tenant=%s api_key_id=%s",
+            msg.offset(), tenant_id, api_key_id,
+        )
+
     billing_month = _resolve_billing_month(data.get("end_time"))
     logger.debug("Billing month resolved | tenant=%s billing_month=%s", tenant_id, billing_month)
 
@@ -176,6 +203,8 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
         is_already_billed=is_already_billed,
         billing_month=billing_month,
         offset=msg.offset(),
+        api_key_id=api_key_id,
+        tier_id=tier_id,
     )
 
 
@@ -227,6 +256,8 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
         billing_month=ctx.billing_month,
         units=billed_units,
         cost=cost,
+        api_key_id=ctx.api_key_id,
+        tier_id=ctx.tier_id,
     )
 
     if write.tier_id is None:
@@ -239,10 +270,10 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
         quota_exhausted = True
     else:
         logger.debug(
-            "Balance deducted | tenant=%s tier_id=%s available_balance=%s exhausted=%s",
-            ctx.tenant_id, write.tier_id, write.available_balance, write.wallet_exhausted,
+            "Balance deducted | tenant=%s tier_id=%s budget_used=%s exhausted=%s",
+            ctx.tenant_id, write.tier_id, write.api_key_budget_used, write.budget_exhausted,
         )
-        wallet_exhausted = write.wallet_exhausted
+        wallet_exhausted = write.budget_exhausted
 
         if not pricing.task_type:
             logger.debug(
@@ -280,13 +311,12 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
     )
 
 
-@kafka_listener(settings.topics.TOPIC_PAY_PER_USE)
 async def handle_ppu_usage(msg: Message) -> None:
     ctx = await _prepare_billing_context(msg)
     if ctx is None:
         return
 
-    async with get_session() as db:
+    async with session_scope() as db:
         outcome = await _bill_usage(db, ctx)
 
     if outcome is None:
@@ -351,7 +381,7 @@ async def _notify_auth(path: str, body: dict) -> None:
     One AsyncClient is reused across attempts (shared connection pool)
     rather than opened fresh per attempt.
     """
-    url = f"{settings.AUTH_SERVICE_URL}{path}"
+    url = f"{cfg.get_settings().AUTH_SERVICE_URL}{path}"
     deadline = asyncio.get_running_loop().time() + _NOTIFY_AUTH_DEADLINE_S
     async with httpx.AsyncClient(timeout=_NOTIFY_AUTH_TIMEOUT_S) as client:
         for attempt in range(1, _NOTIFY_AUTH_MAX_ATTEMPTS + 1):
