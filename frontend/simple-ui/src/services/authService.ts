@@ -33,6 +33,7 @@ import { ApiValidationError } from './dto/apiValidationError';
 import { authUnwrappedSchema } from './dto/authUnwrappedSchema';
 import {
   adminApiKeyWithUserSchema,
+  apiKeyGroupedListSchema,
   apiKeyListResponseSchema,
   apiKeyListUnionSchema,
   apiKeyResponseSchema,
@@ -511,32 +512,51 @@ class AuthService {
 
   // API Key management
   async createApiKey(data: APIKeyCreate): Promise<APIKeyResponse> {
-    return this.validatedRequest(authPath.apiKeys, authUnwrappedSchema(createApiKeyResponseSchema), {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async createApiKeyForUser(data: APIKeyCreate & { user_id: string }): Promise<APIKeyResponse> {
-    const payload = {
+    const body: Record<string, unknown> = {
       key_name: data.key_name,
       permissions: data.permissions,
-      expires_days: data.expires_days,
-      user_id: data.user_id,
+      application_id: data.application_id,
     };
+    if (data.expires_days != null) body.expires_days = data.expires_days;
+    if (data.allocated_percentage != null) {
+      body.allocated_percentage = data.allocated_percentage;
+    }
     return this.validatedRequest(authPath.apiKeys, authUnwrappedSchema(createApiKeyResponseSchema), {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: JSON.stringify(body),
     });
   }
 
+  /**
+   * @deprecated Backend no longer accepts `user_id` on POST /api-keys.
+   * Use {@link createApiKey} with `application_id` (institution admin flow).
+   */
+  async createApiKeyForUser(data: APIKeyCreate): Promise<APIKeyResponse> {
+    return this.createApiKey(data);
+  }
+
+  /** GET /api-keys — grouped by application_id; flattened for legacy callers. */
   async listApiKeys(): Promise<APIKeyListResponse> {
-    const data = await this.validatedRequest(
-      authPath.apiKeys,
-      authUnwrappedSchema(apiKeyListResponseSchema),
-      { method: 'GET' }
+    const groups = await this.listApiKeysGrouped();
+    const api_keys: APIKeyResponse[] = [];
+    if (Array.isArray(groups)) {
+      for (const group of groups) {
+        const row = group as { api_keys?: APIKeyResponse[] };
+        if (Array.isArray(row.api_keys)) {
+          api_keys.push(...row.api_keys);
+        }
+      }
+    }
+    return { api_keys };
+  }
+
+  /** GET /api-keys — `data: ApplicationAPIKeysGroup[]` (optional `?application_id=`). */
+  async listApiKeysGrouped(query = ''): Promise<unknown> {
+    return this.validatedRequest(
+      `${authPath.apiKeys}${query}`,
+      authUnwrappedSchema(apiKeyGroupedListSchema),
+      { method: 'GET' },
     );
-    return { api_keys: Array.isArray(data?.api_keys) ? data.api_keys : [] };
   }
 
   async listAllApiKeys(): Promise<AdminAPIKeyWithUserResponse[]> {

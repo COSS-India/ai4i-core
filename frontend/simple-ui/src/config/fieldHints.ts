@@ -31,6 +31,17 @@ export const FIELD_HINTS = {
       "If you change the contact email, the update takes effect only after the new address is verified.",
     emailPendingOnly: `The contact email can only be corrected while the ${org} is pending verification.`,
     planAppliesImmediately: "Tier and Budget changes apply immediately.",
+    onboardTier: { helper: "Optional. Tier applies when the institution is activated." },
+    onboardBudget: {
+      placeholder: "Enter initial budget amount",
+      helper: "Optional initial ₹ total. Must be greater than 0 when provided.",
+    },
+    onboardBudgetEffectiveFrom: {
+      helper: "Optional. Defaults to today; cannot be backdated.",
+    },
+    onboardBudgetEffectiveTo: {
+      helper: "Optional. Must be after Effective From.",
+    },
   },
   tenantUser: {
     tenant: { helper: `Auto-filled from selected ${org}` },
@@ -150,6 +161,21 @@ export const FIELD_HINTS = {
       helper: "e.g. 30. Must be between 1 and 365",
     },
     permissions: { helper: "Select at least one permission" },
+    application: {
+      helper: "Required. Keys are scoped to one Application.",
+    },
+    budget: {
+      placeholder: "0",
+      helper: "Optional. Percentage of the parent Application's Budget.",
+    },
+    search: {
+      placeholder: "Search by key name",
+      helper: "Matches API key name.",
+    },
+    tooltips: {
+      budgetAllocation:
+        "Share of the parent Application's Budget reserved for this key. Active keys cannot exceed 100% combined per Application.",
+    },
   },
   application: {
     name: {

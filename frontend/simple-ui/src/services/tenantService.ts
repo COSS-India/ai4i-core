@@ -6,6 +6,8 @@ import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
 import {
   tenantDeleteUserDataSchema,
+  tenantCreateResponseSchema,
+  tenantListDataSchema,
   tenantSuccessEnvelopeSchema,
   tenantUserViewSchema,
   tenantViewSchema,
@@ -32,6 +34,20 @@ import type {
 
 const BASE = apiEndpoints.tenants.base;
 
+function unwrapTenantView(payload: unknown): TenantView {
+  const parsed = tenantCreateResponseSchema.parse(payload);
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    "data" in parsed &&
+    parsed.data &&
+    typeof parsed.data === "object"
+  ) {
+    return tenantViewSchema.parse(parsed.data);
+  }
+  return tenantViewSchema.parse(parsed);
+}
+
 export async function listTenants(params?: {
   status?: TenantStatus;
   offset?: number;
@@ -40,9 +56,13 @@ export async function listTenants(params?: {
   const response = await apiService.get(BASE, {
     params,
     suppressErrorAlert: true,
-    responseSchema: tenantSuccessEnvelopeSchema(z.array(tenantViewSchema)),
+    responseSchema: z.union([
+      tenantSuccessEnvelopeSchema(z.array(tenantViewSchema)),
+      tenantListDataSchema,
+    ]),
   });
-  const tenants = response.data.data ?? [];
+  const root = response.data as { data?: TenantView[] };
+  const tenants = Array.isArray(root?.data) ? root.data : [];
   return { count: tenants.length, tenants };
 }
 
@@ -63,9 +83,9 @@ export async function registerTenant(
 ): Promise<TenantRegisterResponse> {
   const response = await apiService.post(BASE, payload, {
     suppressErrorAlert: true,
-    responseSchema: tenantSuccessEnvelopeSchema(tenantViewSchema),
+    responseSchema: tenantCreateResponseSchema,
   });
-  return response.data.data;
+  return unwrapTenantView(response.data);
 }
 
 export async function updateTenant(
