@@ -74,14 +74,19 @@ export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProp
   const section = METERING.SECTIONS.CONSUMPTION_OVERVIEW;
   const donutPrimary = `${METERING.CONTROLS.TOP_N_PREFIX} ${topN}`;
 
+  const visibleTenants = useMemo(
+    () => (conc?.top_tenants ?? []).slice(0, topN),
+    [conc?.top_tenants, topN],
+  );
+
   const pieData = useMemo(
     () =>
-      (conc?.top_tenants ?? []).map((t, i) => ({
+      visibleTenants.map((t, i) => ({
         name: formatTenantLabel(t.tenant, t.organisation, tenantOrganisationById),
         value: t.requests,
         color: meteringColorAt(i),
       })),
-    [conc?.top_tenants, tenantOrganisationById],
+    [visibleTenants, tenantOrganisationById],
   );
 
   if (!conc) return null;
@@ -115,7 +120,7 @@ export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProp
         }
         list={
           <RankedShareList
-            rows={conc.top_tenants.map((row) => ({
+            rows={visibleTenants.map((row) => ({
               rank: row.rank,
               label: formatTenantLabel(row.tenant, row.organisation, tenantOrganisationById),
               formattedValue: row.formatted_requests,

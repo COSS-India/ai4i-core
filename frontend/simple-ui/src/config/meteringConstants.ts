@@ -26,7 +26,6 @@ export const METERING = {
     SCOPES: {
       TENANT_DIRECTORY: "tenant-directory",
       OVERVIEW: "overview",
-      TENANT: "tenant",
       MODEL: "model",
     },
     SCROLL_ROOT_MARGIN: "100px",
@@ -35,8 +34,6 @@ export const METERING = {
     TIME_WINDOW: "24h" satisfies MeteringWindow,
     TOP_N: 10 satisfies MeteringTopN,
     SUB_TAB: "overview" as const,
-    /** Tenant Admin lands on Overview (same as Adopter Admin). */
-    TENANT_SUB_TAB: "overview" as const,
     ASYNC_STATE_HEIGHT: "300px",
     LOADING_MIN_HEIGHT: "400px",
   },
@@ -94,6 +91,8 @@ export const METERING = {
     { id: "10", label: "Top 10" },
     { id: "25", label: "Top 25" },
   ] as const,
+  /** Max institutions fetched for usage concentration; UI slices to the selected Top N. */
+  USAGE_CONCENTRATION_FETCH_LIMIT: 25 as const,
   /** Model Usage tab — Top 5 / Top 10 ranking toggle (API `limit`). */
   MODEL_TOP_N_SEGMENT_OPTIONS: [
     { id: "5", label: "Top 5" },
@@ -101,11 +100,6 @@ export const METERING = {
   ] as const,
   MODEL_TOP_N_DEFAULT: 10 as const,
   SUB_TABS: [
-    { id: "overview", label: INSTITUTION },
-    { id: "model", label: "Model" },
-    { id: "usage-spend", label: "Budget" },
-  ] as const,
-  TENANT_SUB_TABS: [
     { id: "overview", label: INSTITUTION },
     { id: "model", label: "Model" },
     { id: "usage-spend", label: "Budget" },
@@ -154,6 +148,7 @@ export const METERING = {
   },
   COLORS: {
     RANK: ["#DD6B20", "#3182CE", "#38A169", "#805AD5", "#00B5D8"] as const,
+    /** Ranked-list / donut colours — one per Top-N row (up to USAGE_CONCENTRATION_FETCH_LIMIT). */
     PALETTE: [
       "#DD6B20",
       "#3182CE",
@@ -165,6 +160,21 @@ export const METERING = {
       "#718096",
       "#B7791F",
       "#4FD1C5",
+      "#9F7AEA",
+      "#ED64A6",
+      "#48BB78",
+      "#4299E1",
+      "#ECC94B",
+      "#F56565",
+      "#667EEA",
+      "#38B2AC",
+      "#ED8936",
+      "#A0AEC0",
+      "#FC8181",
+      "#68D391",
+      "#63B3ED",
+      "#B794F4",
+      "#F6AD55",
     ] as const,
     SERVICE: {
       nmt: "#38A169",

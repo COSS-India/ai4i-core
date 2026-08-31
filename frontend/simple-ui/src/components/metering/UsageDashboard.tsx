@@ -89,7 +89,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
         selectedTenantId={scopeTenantId}
         onTenantChange={setScopeTenantId}
         showSubTabs
-        subTabs={isTenantView ? METERING.TENANT_SUB_TABS : METERING.SUB_TABS}
+        subTabs={METERING.SUB_TABS}
         subTab={subTab}
         onSubTabChange={setSubTab}
         topN={topN}

@@ -5,14 +5,11 @@ import { apiEndpoints } from "./apiEndpoints";
 import {
   modelConsumptionResponseSchema,
   overviewResponseSchema,
-  tenantConsumptionResponseSchema,
 } from "./dto/schemas/metering";
 import type {
-  MeteringTopN,
   MeteringWindow,
   ModelConsumptionResponse,
   OverviewResponse,
-  TenantConsumptionResponse,
 } from "../types/metering";
 
 export interface MeteringContext {
@@ -79,7 +76,7 @@ export async function fetchMeteringOverview(
   ctx: MeteringContext,
   tenantId?: string | null,
   taskTypes?: string[] | null,
-  limit: MeteringTopN = METERING.DEFAULTS.TOP_N,
+  limit: number = METERING.USAGE_CONCENTRATION_FETCH_LIMIT,
 ): Promise<OverviewResponse> {
   const params = buildMeteringParams(timeWindow, ctx, tenantId, {
     limit: String(limit),
@@ -88,26 +85,6 @@ export async function fetchMeteringOverview(
   const { data } = await apiService.get<OverviewResponse>(
     withQuery(apiEndpoints.metering.overview, params),
     { responseSchema: overviewResponseSchema },
-  );
-  return data;
-}
-
-/** GET /api/v1/metering/tenant-consumption — platform admin only. */
-export async function fetchMeteringTenantConsumption(
-  timeWindow: MeteringWindow,
-  limit: MeteringTopN,
-  taskTypes?: string[] | null,
-  tenantId?: string | null,
-): Promise<TenantConsumptionResponse> {
-  const extra: Record<string, string> = { limit: String(limit) };
-  const params = new URLSearchParams({ window: timeWindow, ...extra });
-  appendTaskTypesParam(params, taskTypes);
-  if (tenantId?.trim()) {
-    params.set("tenant_id", tenantId.trim());
-  }
-  const { data } = await apiService.get<TenantConsumptionResponse>(
-    withQuery(apiEndpoints.metering.tenantConsumption, params),
-    { responseSchema: tenantConsumptionResponseSchema },
   );
   return data;
 }

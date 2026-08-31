@@ -561,9 +561,11 @@ async def get_overview(
     # payperuse_consumer/handler.py already restricts billing.
     auth_type_filter = API_KEY_AUTH_TYPE
 
+    ranking_active = is_admin and not scope_tenant
     cache_key = (
-        f"metering:overview:v2:{window}:{limit}:{scope_tenant_name or 'all'}:"
+        f"metering:overview:v2:{window}:{scope_tenant_name or 'all'}:"
         f"{_caller_role_label(request)}:{','.join(task_type_filter) if task_type_filter else 'all'}"
+        + (f":{limit}" if ranking_active else "")
     )
     cached = await _cache_get(redis, cache_key)
     if cached:
@@ -588,7 +590,7 @@ async def get_overview(
         ),
         # Usage Concentration is platform-wide; hide it when a tenant filter is applied.
         svc.usage_concentration(limit=limit, time_range=window, task_types=task_type_filter)
-        if (is_admin and not scope_tenant) else asyncio.sleep(0),
+        if ranking_active else asyncio.sleep(0),
         # Key Metrics KPI #7 (model_usage_growth_pct) is admin-only, fixed
         # calendar-month comparison — independent of `window`.
         svc.model_usage_growth_pct() if is_admin else asyncio.sleep(0),

@@ -64,13 +64,9 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     [taskTypeNames],
   );
 
-  const availableSubTabs = isTenantView ? METERING.TENANT_SUB_TABS : METERING.SUB_TABS;
+  const availableSubTabs = METERING.SUB_TABS;
 
-  const [subTab, setSubTab] = useState<MeteringSubTab>(() =>
-    getMeteringRoleViewConfig(userRoles).defaultView === "tenant"
-      ? METERING.DEFAULTS.TENANT_SUB_TAB
-      : METERING.DEFAULTS.SUB_TAB,
-  );
+  const [subTab, setSubTab] = useState<MeteringSubTab>(METERING.DEFAULTS.SUB_TAB);
   const [timeWindow, setTimeWindow] = useState<MeteringWindow>(METERING.DEFAULTS.TIME_WINDOW);
   const [topN, setTopN] = useState<MeteringTopN>(METERING.DEFAULTS.TOP_N);
   const [scopeTenantId, setScopeTenantId] = useState("");
@@ -136,7 +132,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     queryKey: meteringQueryKey(
       METERING.QUERY.SCOPES.OVERVIEW,
       timeWindow,
-      topN,
       queryTenantId,
       roleViewConfig.defaultView,
       isAdopterView,
@@ -144,7 +139,13 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       refreshNonce,
     ),
     queryFn: () =>
-      fetchMeteringOverview(timeWindow, ctx, queryTenantId, enabledServices, topN),
+      fetchMeteringOverview(
+        timeWindow,
+        ctx,
+        queryTenantId,
+        enabledServices,
+        METERING.USAGE_CONCENTRATION_FETCH_LIMIT,
+      ),
     enabled: enabledServicesReady && (isAdopterView || tenantOverviewEnabled),
     ...meteringQueryDefaults,
   });
