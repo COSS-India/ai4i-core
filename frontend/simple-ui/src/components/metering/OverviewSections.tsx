@@ -150,7 +150,7 @@ function keyMetricValueColor(
   key: string,
   raw: number | null | undefined,
 ): string {
-  if (key === "tenants_budget_exhausted" && raw != null) return "red.500";
+  if (key === "tenants_budget_exhausted" && raw != null && raw > 0) return "red.500";
   if (key === "model_usage_growth_pct" && raw != null) {
     if (raw > 0) return "green.500";
     if (raw < 0) return "red.500";

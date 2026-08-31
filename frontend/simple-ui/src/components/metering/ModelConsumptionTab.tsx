@@ -21,7 +21,6 @@ import type { ModelConsumptionResponse, ModelTopN } from "../../types/metering";
 import {
   buildModelBreakdownChart,
   buildTaskTypeConsumptionChart,
-  buildTaskTypeUsageChart,
   buildTopModelsChart,
   deriveModelInsights,
   formatCompactNumber,
@@ -67,7 +66,6 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
 
   const breakdown = data?.breakdown ?? [];
   const topModels = data?.top_models ?? [];
-  const usageByTaskType = data?.usage_by_task_type ?? [];
 
   const allTaskTypesSelected =
     taskTypeNames.length === 0 ||
@@ -81,13 +79,6 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
         selectedTaskTypes.has(normalizeModelTaskType(row.task_type)),
     );
   }, [breakdown, selectedTaskTypes, allTaskTypesSelected]);
-
-  const filteredUsageByTaskType = useMemo(() => {
-    if (allTaskTypesSelected) return usageByTaskType;
-    return usageByTaskType.filter((row) =>
-      selectedTaskTypes.has(normalizeModelTaskType(row.task_type)),
-    );
-  }, [usageByTaskType, selectedTaskTypes, allTaskTypesSelected]);
 
   const visibleTopModels = useMemo(() => {
     const filtered = allTaskTypesSelected
@@ -110,12 +101,10 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
     [data?.summary, filteredBreakdown],
   );
 
-  const taskTypeChart = useMemo(() => {
-    if (filteredUsageByTaskType.length > 0) {
-      return buildTaskTypeUsageChart(filteredUsageByTaskType);
-    }
-    return buildTaskTypeConsumptionChart(filteredBreakdown);
-  }, [filteredUsageByTaskType, filteredBreakdown]);
+  const taskTypeChart = useMemo(
+    () => buildTaskTypeConsumptionChart(filteredBreakdown),
+    [filteredBreakdown],
+  );
 
   const sortAccessors = useMemo(
     () => ({
@@ -237,7 +226,7 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
                 list={
                   <RankedShareList
                     rows={taskTypeChart.slices.map((slice, i) => ({
-                      rank: filteredUsageByTaskType[i]?.rank ?? i + 1,
+                      rank: i + 1,
                       label: slice.name,
                       formattedValue: formatCompactNumber(slice.value, "indian"),
                       percentage: slice.pct,
