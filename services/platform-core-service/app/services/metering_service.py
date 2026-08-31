@@ -1146,7 +1146,10 @@ class MeteringService:
                 {
                     "model_id": m["model_id"],
                     "model_name": m["model_name"],
+                    "task_type": m.get("task_type"),
                     "requests": m["requests"],
+                    "native_units": m.get("native_units", 0.0),
+                    "native_unit_suffix": m.get("native_unit_suffix", ""),
                     "consumption_pct": round(m["requests"] / grand_total * 100, 2),
                 }
                 for m in active

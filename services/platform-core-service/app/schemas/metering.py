@@ -154,8 +154,11 @@ class TopModelRow(BaseModel):
     rank: int
     model_id: str
     model_name: str
+    task_type: Optional[str] = None  # mm_models.task["type"] — same field ServiceModelRow.task_type carries, for the donut chart
     consumption_pct: float
     requests: int
+    native_units: float = 0.0
+    native_unit_suffix: str = ""  # e.g. "chars", "min", "tokens" — never null on the wire; "" for an unresolved task_type (see ServiceModelRow.native_unit_suffix)
     formatted_requests: str
 
 

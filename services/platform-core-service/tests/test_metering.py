@@ -1521,7 +1521,9 @@ class TestModelConsumptionRanking:
         most_used, ranked, grand_total = MeteringService.model_consumption_ranking(model_totals, limit=10)
 
         assert most_used == {
-            "model_id": "id-gemma", "model_name": "gemma", "requests": 300, "consumption_pct": 75.0,
+            "model_id": "id-gemma", "model_name": "gemma", "task_type": None,
+            "requests": 300, "native_units": 0.0, "native_unit_suffix": "",
+            "consumption_pct": 75.0,
         }
         assert grand_total == 400
         assert [m["model_name"] for m in ranked] == ["gemma", "llama"]
@@ -1529,6 +1531,27 @@ class TestModelConsumptionRanking:
         assert ranked[0]["consumption_pct"] == 75.0
         assert ranked[1]["consumption_pct"] == 25.0
         assert ranked[0]["formatted_requests"] == "300"
+
+    def test_task_type_and_native_units_survive_into_top_models(self):
+        """PR #1506 review: model_breakdown's model_totals carries task_type/
+        native_units/native_unit_suffix per model (Subtask 2), but this
+        method used to rebuild each ranked row from only 4 keys — silently
+        dropping all three before they ever reached TopModelRow/the donut
+        chart. They must now flow through unchanged."""
+        model_totals = [{
+            "model_id": "id-nmt", "model_name": "indictrans",
+            "task_type": "nmt", "requests": 8,
+            "native_units": 212.0, "native_unit_suffix": "chars",
+            "success_pct": 100.0,
+        }]
+        most_used, ranked, _ = MeteringService.model_consumption_ranking(model_totals, limit=10)
+
+        assert most_used["task_type"] == "nmt"
+        assert most_used["native_units"] == 212.0
+        assert most_used["native_unit_suffix"] == "chars"
+        assert ranked[0]["task_type"] == "nmt"
+        assert ranked[0]["native_units"] == 212.0
+        assert ranked[0]["native_unit_suffix"] == "chars"
 
     def test_most_used_always_agrees_with_top_ranked_model(self):
         model_totals = [
