@@ -460,6 +460,7 @@ class APIKeyService:
         application_id: int,
         expires_days: Optional[int] = None,
         allocated_percentage: Optional[Decimal] = None,
+        budget: Optional[Decimal] = None,
         *,
         caller_tenant_id: Optional[int] = None,
         platform_core_db: Optional[AsyncSession] = None,
@@ -566,11 +567,9 @@ class APIKeyService:
         await self._repo.create(api_key)
         await self._repo.commit()
 
-        if allocated_budget is not None:
-            # Seed half of the write-through gap — see budget_usage.write_budget_snapshot's
-            # docstring. Best-effort: a platform-core outage here must not
-            # roll back the key that was just created.
-            await budget_usage.write_budget_snapshot({api_key.id: allocated_budget}, platform_core_db)
+        budget_snap = budget if budget is not None else allocated_budget
+        if budget_snap is not None:
+            await budget_usage.write_budget_snapshot({api_key.id: budget_snap}, platform_core_db)
 
         if self.application_may_use_api_keys(application, tenant):
             payload = self._build_cache_payload(
