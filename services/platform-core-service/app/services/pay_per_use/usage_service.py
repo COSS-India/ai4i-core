@@ -292,6 +292,18 @@ async def _resolve_tenant_names(
         return {str(r[0]): r[1] for r in rows.all()}
     except Exception as exc:
         logger.warning("Auth DB lookup failed — tenant names will show as IDs: %s", exc)
+        # A raising query leaves auth_db's transaction aborted; every caller
+        # here reuses this same session afterward (get_tenant_budgets, which
+        # does NOT swallow its own errors by design — see its docstring), so
+        # without this rollback a degraded-but-recoverable name lookup would
+        # turn the next, unrelated query into an uncaught PendingRollbackError.
+        # The rollback itself is best-effort too — it must never turn this
+        # already-degraded path into a harder failure than the one it's
+        # recovering from.
+        try:
+            await auth_db.rollback()
+        except Exception:
+            logger.warning("Auth DB rollback after failed lookup also failed", exc_info=True)
         return {}
 
 

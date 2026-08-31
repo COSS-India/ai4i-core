@@ -363,6 +363,21 @@ class TestTenantCount:
         new_query_sql = str(calls[1][0][0])
         assert "15 days" in new_query_sql.lower()
 
+    async def test_query_failure_rolls_back_so_the_session_stays_usable(self):
+        """A raising execute() aborts the session's transaction at the DB
+        level — swallowing the exception in Python doesn't undo that. Without
+        the rollback, overview_tenant_data()'s next auth_db call
+        (_fetch_valid_tenant_ids, sharing this same session) would inherit
+        the failure as an unrelated PendingRollbackError."""
+        auth_db = AsyncMock()
+        auth_db.execute = AsyncMock(side_effect=RuntimeError("connection reset by peer"))
+
+        svc = _make_service(auth_db=auth_db)
+        result = await svc.tenant_count()
+
+        assert result["auth_db_available"] is False
+        auth_db.rollback.assert_awaited_once()
+
 
 import datetime as _dt_module
 
@@ -1761,6 +1776,51 @@ class TestOverviewTenantData:
         assert isinstance(active_by_range["24h"], RuntimeError)
         assert isinstance(active_by_range["7d"], RuntimeError)
         assert tc["auth_db_available"] is True
+
+    async def test_tenant_count_failure_does_not_poison_valid_ids_fetch(self):
+        """Exact bug scenario: tenant_count()'s first query (total_tenants)
+        fails; overview_tenant_data() then reuses the SAME self._auth_db for
+        _fetch_valid_tenant_ids() right after. A bare AsyncMock would let that
+        second query succeed regardless — hiding the bug — so this uses a
+        fake session that reproduces Postgres' real aborted-transaction
+        behavior: every statement after a raising one fails too, until
+        .rollback() runs."""
+
+        class _PoisonableAuthDB:
+            def __init__(self) -> None:
+                self._call_count = 0
+                self._poisoned = False
+                self.rollback = AsyncMock(side_effect=self._clear_poison)
+
+            def _clear_poison(self) -> None:
+                self._poisoned = False
+
+            async def execute(self, *args, **kwargs):
+                self._call_count += 1
+                if self._poisoned:
+                    raise RuntimeError(
+                        "This Session's transaction has been rolled back due to a "
+                        "previous exception during flush."  # PendingRollbackError
+                    )
+                if self._call_count == 1:
+                    self._poisoned = True
+                    raise RuntimeError("connection reset by peer")
+                result = MagicMock()
+                result.scalar.return_value = 1
+                result.all.return_value = [(1,)]
+                return result
+
+        auth_db = _PoisonableAuthDB()
+        svc = _make_service(query_return=[], auth_db=auth_db)
+
+        tc, _ = await svc.overview_tenant_data(["24h"])
+
+        # tenant_count() degrades (its own failing query) — expected.
+        assert tc["auth_db_available"] is False
+        # But the valid-ids fetch right after it, on the same session, must
+        # not inherit that failure — it's an independent, otherwise-healthy
+        # query once the rollback has run.
+        assert auth_db._call_count == 2  # tenant_count's 1st query + valid-ids fetch
 
 
 @pytest.mark.asyncio
