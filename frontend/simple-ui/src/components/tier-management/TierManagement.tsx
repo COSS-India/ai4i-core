@@ -45,6 +45,7 @@ import AdminDataTable, {
   type AdminTableColumn,
 } from "../common/AdminDataTable";
 import ConfirmDialog from "../common/ConfirmDialog";
+import { FORM_LABEL_TO_INPUT_PT } from "../common/FormFieldsRow";
 import StandardModal from "../common/StandardModal";
 import { useTierManagement } from "../../hooks/useTierManagement";
 import type { Tier } from "../../services/tierManagementService";
@@ -438,7 +439,7 @@ function QuotaEditor({
                       variant="ghost"
                       colorScheme="blue"
                       onClick={() => onSchedule(quota)}
-                      mt={6}
+                      mt={FORM_LABEL_TO_INPUT_PT}
                     />
                   </Tooltip>
                 )}
@@ -457,7 +458,7 @@ function QuotaEditor({
                         removingTaskType !== quota.modelTaskType
                       }
                       onClick={() => onRemove(quota)}
-                      mt={6}
+                      mt={FORM_LABEL_TO_INPUT_PT}
                     />
                   </Tooltip>
                 )}
@@ -470,7 +471,7 @@ function QuotaEditor({
                     variant="ghost"
                     colorScheme="red"
                     onClick={() => removeQuota(idx)}
-                    mt={6}
+                    mt={FORM_LABEL_TO_INPUT_PT}
                   />
                 )}
               </HStack>

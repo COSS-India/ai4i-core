@@ -1,5 +1,6 @@
 import React from "react";
 import { Button, HStack, IconButton, Select, Text, Tooltip, useColorModeValue } from "@chakra-ui/react";
+import { FORM_LABEL_TO_INPUT_PT } from "./FormFieldsRow";
 
 export {
   default as AdminDataTable,
@@ -181,7 +182,7 @@ export function TableFilterToolbar({
 }) {
   const actions =
     (hasActiveFilters && onClear) || rightContent ? (
-      <HStack spacing={2} pt={6} align="center" flexShrink={0}>
+      <HStack spacing={2} pt={FORM_LABEL_TO_INPUT_PT} align="center" flexShrink={0}>
         {hasActiveFilters && onClear ? (
           <Button size="sm" variant="outline" onClick={onClear}>
             {clearLabel}
@@ -194,7 +195,7 @@ export function TableFilterToolbar({
   return (
     <HStack
       spacing={spacing}
-      align={align === "flex-end" ? "flex-start" : align}
+      align={align}
       justify={justify}
       flexWrap="wrap"
       rowGap={3}

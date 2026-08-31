@@ -150,7 +150,6 @@ export const METERING = {
       SPEND: "Monetary spend for this model task type in the selected billing period.",
       SHARE: "This row's spend as a percentage of the institution's total spend in the period.",
       ACTIVE_TENANTS: `${INSTITUTIONS} with spend recorded in the selected billing period.`,
-      BUDGET_EXCEEDED: `Number of ${INSTITUTIONS.toLowerCase()} whose spend has exceeded their allocated budget for this period.`,
       VS_LAST_MONTH:
         "Percentage change in total spend compared with the previous billing period.",
       USAGE_BREAKDOWN: `Number of tiers or task types this ${INSTITUTION.toLowerCase()} consumed under in the selected period — expand to see the breakdown.`,
@@ -313,8 +312,6 @@ export const METERING = {
       BREAKDOWN_SUBTITLE_PREFIX: "Consumption across LLM services ·",
       DONUT_PRIMARY: "All",
       DONUT_SECONDARY: "Models",
-      TOTAL_MODELS: "Total models",
-      ACTIVE_MODELS: "Active models",
       MOST_USED: "Most used model",
       OVERALL_SUCCESS: "Overall success rate %",
       SUCCESS_RATE_SUFFIX: "across all models",

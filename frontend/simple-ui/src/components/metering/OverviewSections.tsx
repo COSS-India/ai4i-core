@@ -110,7 +110,7 @@ export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProp
   );
 };
 
-interface PlatformAdoptionSectionProps {
+interface KeyMetricsSectionProps {
   data: OverviewResponse;
   supplement?: KeyMetricsSupplement;
 }
@@ -150,7 +150,7 @@ function renderKeyMetricCard(
   );
 }
 
-export const PlatformAdoptionSection: React.FC<PlatformAdoptionSectionProps> = ({
+export const KeyMetricsSection: React.FC<KeyMetricsSectionProps> = ({
   data,
   supplement,
 }) => {
