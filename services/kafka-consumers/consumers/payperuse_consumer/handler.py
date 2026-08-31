@@ -24,16 +24,36 @@ from consumers.payperuse_consumer._billing import (
 logger = get_logger(__name__)
 
 
+def _to_float(val, fallback: float = 0.0) -> float:
+    try:
+        return float(val or 0)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _to_int(val, fallback: int = 0) -> int:
+    try:
+        return int(val or 0)
+    except (TypeError, ValueError):
+        return fallback
+
+
 def _get_otel_attributes(attrs: dict):
     tenant_id: str = str(attrs.get("tenantId") or "").strip()
     service_id: str = str(attrs.get("service_id") or "").strip()
     # Both LLM and Triton spans write real counts to input_tokens/output_tokens
     # (see trace/request_span.py and services/base/task_service.py).
-    input_tokens: float = float(attrs.get("input_tokens") or 0)
-    output_tokens: float = float(attrs.get("output_tokens") or 0)
+    input_tokens: float = _to_float(attrs.get("input_tokens"))
+    output_tokens: float = _to_float(attrs.get("output_tokens"))
     correlation_id: str = str(attrs.get("correlation_id") or "").strip()
+    api_key_id: int = _to_int(attrs.get("api_key_id"))
+    # Normalise to None so callers never have to guard against "" vs None.
+    # validation.py ships X-Tier-ID="" for keyless-tier requests; that empty
+    # string propagates here via the OTel span attribute.
+    raw_tier = str(attrs.get("tier_id") or "").strip()
+    tier_id: Optional[str] = raw_tier or None
 
-    return tenant_id, service_id, input_tokens, output_tokens, correlation_id
+    return tenant_id, service_id, input_tokens, output_tokens, correlation_id, api_key_id, tier_id
 
 
 async def _is_already_billed(billed_key: str, correlation_id: str, span_id: str, msg: Message) -> bool | None:
@@ -83,6 +103,8 @@ class BillingContext:
     is_already_billed: bool
     billing_month: str
     offset: int
+    api_key_id: int = 0
+    tier_id: Optional[str] = None
 
 
 @dataclass
@@ -121,7 +143,7 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
     # span_id reaching this consumer is valid and unique.
     attrs = data.get("attributes", {})
     # tenantId is camelCase in OTel attributes (set by ai4i_core.context middleware).
-    tenant_id, service_id, input_tokens, output_tokens, correlation_id = _get_otel_attributes(attrs)
+    tenant_id, service_id, input_tokens, output_tokens, correlation_id, api_key_id, tier_id = _get_otel_attributes(attrs)
     billed_key: str = _get_billed_key(correlation_id, span_id)
 
     is_already_billed = await _is_already_billed(billed_key, correlation_id, span_id, msg)
@@ -156,6 +178,17 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
         )
         return None
 
+    if tier_id is None:
+        # Normal for api_key requests whose cached auth payload has no tier
+        # (validation.py ships X-Tier-ID="" in that case). Budget is still
+        # deducted (resources were consumed); quota upsert is skipped because
+        # there is no tier to look up — see deduct_balance_and_update_quota.
+        logger.warning(
+            "api_key span missing tier_id — budget deducted, quota upsert skipped"
+            " | offset=%d tenant=%s api_key_id=%s",
+            msg.offset(), tenant_id, api_key_id,
+        )
+
     billing_month = _resolve_billing_month(data.get("end_time"))
     logger.debug("Billing month resolved | tenant=%s billing_month=%s", tenant_id, billing_month)
 
@@ -170,6 +203,8 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
         is_already_billed=is_already_billed,
         billing_month=billing_month,
         offset=msg.offset(),
+        api_key_id=api_key_id,
+        tier_id=tier_id,
     )
 
 
@@ -221,6 +256,8 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
         billing_month=ctx.billing_month,
         units=billed_units,
         cost=cost,
+        api_key_id=ctx.api_key_id,
+        tier_id=ctx.tier_id,
     )
 
     if write.tier_id is None:
@@ -233,10 +270,10 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
         quota_exhausted = True
     else:
         logger.debug(
-            "Balance deducted | tenant=%s tier_id=%s available_balance=%s exhausted=%s",
-            ctx.tenant_id, write.tier_id, write.available_balance, write.wallet_exhausted,
+            "Balance deducted | tenant=%s tier_id=%s budget_used=%s exhausted=%s",
+            ctx.tenant_id, write.tier_id, write.api_key_budget_used, write.budget_exhausted,
         )
-        wallet_exhausted = write.wallet_exhausted
+        wallet_exhausted = write.budget_exhausted
 
         if not pricing.task_type:
             logger.debug(
