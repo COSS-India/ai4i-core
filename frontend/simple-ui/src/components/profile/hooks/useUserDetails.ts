@@ -105,12 +105,15 @@ export function useUserDetails({ user, updateUser, checkSessionExpiry }: UseUser
     if (!validateForm()) return;
     setIsSaving(true);
     try {
+      const trimmedFullName = userFormData.full_name?.trim() || "";
       const updateData: UserUpdateRequest = {
-        full_name: userFormData.full_name?.trim() || "",
         phone_number: userFormData.phone_number?.trim() || "",
         timezone: userFormData.timezone || "UTC",
         preferences: userFormData.preferences || {},
       };
+      if (trimmedFullName) {
+        updateData.full_name = trimmedFullName;
+      }
       await updateUser(updateData as Partial<User>);
       showToast({
         type: "success",
