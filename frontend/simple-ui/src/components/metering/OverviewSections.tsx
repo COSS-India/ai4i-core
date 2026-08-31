@@ -1,4 +1,4 @@
-import { SimpleGrid } from "@chakra-ui/react";
+import { SimpleGrid, VStack } from "@chakra-ui/react";
 import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
 import type { KeyMetricsSupplement, OverviewResponse } from "../../types/metering";
@@ -121,6 +121,35 @@ function formatGrowthPct(value: number | null | undefined): string {
   return `${sign}${value.toFixed(1)}%`;
 }
 
+function renderKeyMetricCard(
+  card: (typeof METERING.SECTIONS.KEY_METRICS.INSTITUTION_CARDS)[number] |
+    (typeof METERING.SECTIONS.KEY_METRICS.MODEL_CARDS)[number],
+  values: Record<string, number | null | undefined>,
+) {
+  const raw = values[card.key];
+  const isGrowth = card.key === "model_usage_growth_pct";
+  const value = isGrowth ? formatGrowthPct(raw) : (raw ?? METERING.GRAPH.EMPTY_VALUE);
+  const valueColor =
+    isGrowth && raw != null
+      ? raw > 0
+        ? "green.500"
+        : raw < 0
+          ? "red.500"
+          : "gray.800"
+      : "gray.800";
+
+  return (
+    <KpiCard
+      key={card.key}
+      label={card.label}
+      value={value}
+      helper={card.helper}
+      tooltip={card.tooltip}
+      valueColor={valueColor}
+    />
+  );
+}
+
 export const PlatformAdoptionSection: React.FC<PlatformAdoptionSectionProps> = ({
   data,
   supplement,
@@ -142,32 +171,14 @@ export const PlatformAdoptionSection: React.FC<PlatformAdoptionSectionProps> = (
 
   return (
     <MeteringSectionCard title={section.TITLE} subtitle={section.SUBTITLE} sectionLabel bare>
-      <SimpleGrid columns={{ base: 1, sm: 2, lg: 4 }} spacing={4}>
-        {section.CARDS.map((card) => {
-          const raw = values[card.key];
-          const isGrowth = card.key === "model_usage_growth_pct";
-          const value = isGrowth ? formatGrowthPct(raw) : (raw ?? METERING.GRAPH.EMPTY_VALUE);
-          const valueColor =
-            isGrowth && raw != null
-              ? raw > 0
-                ? "green.500"
-                : raw < 0
-                  ? "red.500"
-                  : "gray.800"
-              : "gray.800";
-
-          return (
-            <KpiCard
-              key={card.key}
-              label={card.label}
-              value={value}
-              helper={card.helper}
-              tooltip={card.tooltip}
-              valueColor={valueColor}
-            />
-          );
-        })}
-      </SimpleGrid>
+      <VStack align="stretch" spacing={4}>
+        <SimpleGrid columns={{ base: 1, sm: 2, lg: 4 }} spacing={4}>
+          {section.INSTITUTION_CARDS.map((card) => renderKeyMetricCard(card, values))}
+        </SimpleGrid>
+        <SimpleGrid columns={{ base: 1, sm: 2, lg: 3 }} spacing={4}>
+          {section.MODEL_CARDS.map((card) => renderKeyMetricCard(card, values))}
+        </SimpleGrid>
+      </VStack>
     </MeteringSectionCard>
   );
 };

@@ -233,7 +233,7 @@ export const METERING = {
     KEY_METRICS: {
       TITLE: "Key Metrics",
       SUBTITLE: "Platform snapshot · independent of the selected time window",
-      CARDS: [
+      INSTITUTION_CARDS: [
         {
           key: "total_tenants",
           label: `Total ${INSTITUTIONS.toLowerCase()}`,
@@ -242,7 +242,7 @@ export const METERING = {
         },
         {
           key: "active_30d",
-          label: `Active ${INSTITUTIONS.toLowerCase()}`,
+          label: `30d active ${INSTITUTIONS.toLowerCase()}`,
           helper: "last 30 days",
           tooltip: `${INSTITUTIONS} with at least one LLM request in the last 30 days.`,
         },
@@ -252,6 +252,14 @@ export const METERING = {
           helper: "last 15 days",
           tooltip: `${INSTITUTIONS} onboarded in the last 15 days, independent of usage.`,
         },
+        {
+          key: "tenants_budget_exhausted",
+          label: `${INSTITUTIONS} exhausted budget`,
+          helper: "current state",
+          tooltip: `${INSTITUTIONS} that have consumed 100% of their allocated budget.`,
+        },
+      ] as const,
+      MODEL_CARDS: [
         {
           key: "total_models",
           label: "Total models",
@@ -263,12 +271,6 @@ export const METERING = {
           label: "Active models",
           helper: "last 30 days",
           tooltip: "Models that have received at least one request in the last 30 days.",
-        },
-        {
-          key: "tenants_budget_exhausted",
-          label: `${INSTITUTIONS} exhausted budget`,
-          helper: "current state",
-          tooltip: `${INSTITUTIONS} that have consumed 100% of their allocated budget.`,
         },
         {
           key: "model_usage_growth_pct",
