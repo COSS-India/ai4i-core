@@ -236,18 +236,11 @@ def resolve_level(
                 amount = Decimal("0")
             elif is_last:
                 # Absorbs whatever the independently-rounded amounts above left
-                # over, so the group's total is exact by construction. Never
-                # negative: every non-last child below is rounded DOWN, so
-                # none of them can ever be quantized to MORE than its own
-                # ideal (pre-rounding) share — which guarantees running_total
-                # never exceeds unlisted_target_total, which guarantees this
-                # residual is always >= 0. (A single request-shape mistake
-                # here — rounding non-last shares UP instead — cost 32 green
-                # tests their meaning: it let running_total overshoot, forcing
-                # THIS child negative, which then failed its own floor-check
-                # against a non-negative consumed_amount with a message that
-                # made no sense for a request that was otherwise entirely
-                # valid — see git history on this line.)
+                # over, so the group's total is exact by construction. For a
+                # non-negative unlisted_target_total, this residual is also
+                # never negative: every non-last child below is rounded DOWN,
+                # so none of them is ever quantized above its own ideal share,
+                # which keeps running_total from ever exceeding the target.
                 amount = unlisted_target_total - running_total
             else:
                 # ROUND_DOWN, not the module's usual ROUND_HALF_UP — see the
@@ -287,16 +280,17 @@ def resolve_level(
         sibling_total = explicit_total + sum((c.allocated_amount for c in unlisted), Decimal("0"))
 
     # Sibling-sum check. Should always hold by construction when
-    # refit_unlisted=True: unlisted_target_total never exceeds room_remaining,
-    # and the group always resolves to EXACTLY unlisted_target_total — every
-    # non-last child's ROUND_DOWN amount never exceeds its own ideal share,
-    # so the last child's residual is never negative, so nothing is ever
-    # clamped or otherwise made inexact. This is kept as the final defensive
-    # gate, not the primary mechanism, precisely so a future change to the
-    # rounding above that breaks that guarantee fails loudly here instead of
-    # silently persisting an over-committed total. When refit_unlisted=False
-    # it's the ONLY thing stopping an explicit increase from pushing the
-    # level over its parent's unchanged total.
+    # refit_unlisted=True and unlisted_target_total is non-negative:
+    # unlisted_target_total never exceeds room_remaining, and the group
+    # always resolves to EXACTLY unlisted_target_total — every non-last
+    # child's ROUND_DOWN amount never exceeds its own ideal share, so the
+    # last child's residual is never negative, so nothing is ever clamped or
+    # otherwise made inexact. This is kept as the final defensive gate, not
+    # the primary mechanism, precisely so a future change to the rounding
+    # above that breaks that guarantee fails loudly here instead of silently
+    # persisting an over-committed total. When refit_unlisted=False it's the
+    # ONLY thing stopping an explicit increase from pushing the level over
+    # its parent's unchanged total.
     if sibling_total > parent_new_amount:
         raise ValidationError(
             message=f"Resolved total ({sibling_total}) exceeds the parent's amount ({parent_new_amount}).",
