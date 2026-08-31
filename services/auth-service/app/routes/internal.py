@@ -132,4 +132,19 @@ async def notify_quota_limit_updated(
     background_tasks: BackgroundTasks,
     svc: QuotaNotificationService = Depends(get_quota_notification_service),
 ):
-    await svc.notify_quota_limit_updated(body.tier_name, body.tenant_ids, background_tasks)
+    await svc.notify_quota_limit_updated(
+        body.tier_name, body.tenant_ids, background_tasks, tier_id=body.tier_id
+    )
+
+
+@router.get("/tenants/tier/{tier_id}/count")
+async def get_tenant_count_for_tier(
+    tier_id: str,
+    svc: TenantService = Depends(get_tenant_service),
+) -> dict:
+    """Backs platform-core-service's delete_tier "is this tier assigned to
+    any tenant" check — tenant<->tier assignment lives solely on
+    tenants.tier_id now that ppu_tenant_tier_assignments is dropped, so
+    platform-core-service (which owns the tier itself, not the assignment)
+    has to ask auth-service rather than querying its own DB."""
+    return {"count": await svc.tenant_count_for_tier(tier_id)}

@@ -284,3 +284,40 @@ class TestListTenantTiers:
 
         assert result[0]["tenant_id"] == 1
         assert result[0]["tier_name"] == "Gold"
+
+
+class TestTenantCountForTier:
+    """Backs GET /internal/tenants/tier/{tier_id}/count — platform-core-service's
+    delete_tier in-use check now asks auth-service this, since tier<->tenant
+    assignment lives solely on tenants.tier_id and platform-core-service has no
+    DB-local way to answer it any more (ppu_tenant_tier_assignments dropped)."""
+
+    @pytest.mark.asyncio
+    async def test_counts_tenants_on_the_tier(self) -> None:
+        tier_id = uuid4()
+        svc = _svc()
+        svc._tenants.list_with_tier = AsyncMock(return_value=[_tenant(), _tenant()])
+
+        count = await svc.tenant_count_for_tier(str(tier_id))
+
+        assert count == 2
+        svc._tenants.list_with_tier.assert_awaited_once_with(tier_id)
+
+    @pytest.mark.asyncio
+    async def test_zero_when_no_tenants_on_the_tier(self) -> None:
+        svc = _svc()
+        svc._tenants.list_with_tier = AsyncMock(return_value=[])
+
+        count = await svc.tenant_count_for_tier(str(uuid4()))
+
+        assert count == 0
+
+    @pytest.mark.asyncio
+    async def test_invalid_uuid_returns_zero_without_querying(self) -> None:
+        svc = _svc()
+        svc._tenants.list_with_tier = AsyncMock(return_value=[])
+
+        count = await svc.tenant_count_for_tier("not-a-uuid")
+
+        assert count == 0
+        svc._tenants.list_with_tier.assert_not_awaited()

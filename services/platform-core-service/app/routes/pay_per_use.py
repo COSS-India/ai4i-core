@@ -78,10 +78,16 @@ async def update_tier(
     responses={204: {"description": "Tier deleted successfully. No content is returned."}},
 )
 async def delete_tier(
+    request: Request,
     tier_id: str = Query(...),
     session: AsyncSession = Depends(get_db),
 ):
     """Delete a PPU tier. Returns 204 No Content on success — a delete never
     has a response body."""
-    await tier_service.delete_tier(tier_id, session)
+    await tier_service.delete_tier(
+        tier_id,
+        session,
+        auth_service_url=settings.auth_service_url,
+        http_client=request.app.state.http_client,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

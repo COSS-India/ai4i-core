@@ -176,6 +176,7 @@ def get_quota_notification_service(
     return QuotaNotificationService(
         role_repo=RoleRepository(db),
         email_client=email_client,
+        tenant_repo=TenantRepository(db),
     )
 
 

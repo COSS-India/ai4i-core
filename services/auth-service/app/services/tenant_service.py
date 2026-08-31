@@ -1113,6 +1113,27 @@ class TenantService:
             for t in tenants
         ]
 
+    async def tenant_count_for_tier(self, tier_id: str) -> int:
+        """How many tenants currently have ``tier_id`` (tenants.tier_id is the
+        live source of truth now — there's no separate assignment
+        table anymore). Backs GET /internal/tenants/tier/{tier_id}/count,
+        which platform-core-service's delete_tier calls for its "tier is
+        assigned to one or more tenants" in-use check — that check used to
+        query the now-dropped ppu_tenant_tier_assignments directly; it has
+        no DB of its own to answer this from any more, auth-service does.
+
+        No permission check: this is an internal, service-to-service route,
+        not exposed to end users (see app/routes/internal.py). An invalid
+        UUID string is treated as "0 tenants" rather than raising — a
+        malformed tier_id should fail delete_tier's own tier lookup first;
+        this endpoint has no tier existence to validate against.
+        """
+        try:
+            tier_uuid = UUID(tier_id)
+        except ValueError:
+            return 0
+        return len(await self._tenants.list_with_tier(tier_uuid))
+
     # ── Tenant-user CRUD ─────────────────────────────────────────────────
 
     async def list_tenant_users(

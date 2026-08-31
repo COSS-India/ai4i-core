@@ -1,6 +1,5 @@
 """PPU usage repository — reads usage and accrued cost data."""
 import time
-from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import func, literal, select
@@ -9,37 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.pay_per_use.budget_usage import BudgetUsage
 from app.models.pay_per_use.quota_usage import QuotaUsage
-from app.models.pay_per_use.tenant_tier_assignment import TenantTierAssignment
 from app.models.pay_per_use.tier import Tier
-from app.utils.billing_month import shift_billing_month
-
-
-def _end_of_month(billing_month: str) -> datetime:
-    """Last instant (UTC) of the given YYYY-MM billing month."""
-    year, month = shift_billing_month(billing_month, 1)
-    next_month_start = datetime(year, month, 1, tzinfo=timezone.utc)
-    return next_month_start - timedelta(microseconds=1)
-
-
-def _budget_lookup_instant(billing_month: str) -> datetime:
-    """Instant to check assignment coverage against for a given billing_month.
-
-    For the current, still-open month there is no "end of month" yet, so we
-    need the tenant's budget as of right now — matching the instant
-    _lock_active_assignment uses when top-up/top-down writes to this same
-    table. For a past, closed month, _end_of_month gives the correct frozen
-    snapshot. Using _end_of_month for the current month would require an
-    assignment's effective_to to already reach the last microsecond of a
-    month that hasn't happened yet, which real assignment windows (typically
-    written as midnight on their intended last day) never satisfy — that
-    mismatch was showing budgets as 0 for tenants with a perfectly valid,
-    currently-active assignment.
-    """
-    now = datetime.now(timezone.utc)
-    current_billing_month = f"{now.year:04d}-{now.month:02d}"
-    if billing_month == current_billing_month:
-        return now
-    return _end_of_month(billing_month)
 
 
 # get_tier_names() cache: UsageRepository is instantiated fresh per
@@ -130,46 +99,35 @@ class UsageRepository:
         return result.all()
 
     async def get_tenant_budgets(self, billing_month: str, tenant_ids: list[str]) -> dict:
-        """budget_limit/available_balance/tier_id per tenant_id, read from whichever
-        ppu_tenant_tier_assignments row was in effect at the lookup instant for
-        billing_month (now, for the current month; end of month, for a past one —
-        see _budget_lookup_instant).
+        """Always empty — kept only so callers (get_summary, get_tenant_list,
+        get_tenant_detail) don't need their own "no budget data" branch.
 
-        This is the one place ppu_tenant_tier_assignments is still read for
-        the usage-tenant(s) endpoints — mainly for these budget columns,
-        never to decide which tenants/tiers are shown when there's usage
-        (that comes from get_tenants_with_usage_tier). tier_id is only
-        consumed by get_tenant_detail's zero-usage fallback, to show a
-        tenant's actual assigned tier instead of "Unassigned" when they
-        simply have no usage yet this billing_month. A tenant with no
-        assignment covering that instant is simply absent from the returned
-        dict; callers treat that as budget_limit=0/available_balance=0.
+        This used to read budget_limit/available_balance/tier_id from
+        ppu_tenant_tier_assignments, since dropped. That table was the
+        ONLY source this service had for a tenant-level budget figure, and
+        there's no replacement available from this service's own DB:
+        budget_usage (the table introduced in its place) has no tenant_id
+        column at all, only api_key_id — a real tenant/key rollup would
+        require the api_key->application->tenant chain, which lives in
+        auth-service's DB, not here.
+
+        Every caller already has a designed fallback for "no budget row for
+        this tenant" (see usage_service._resolve_budget: has_budget=False,
+        0/0) — that was written for a tenant with no assignment row, but the
+        same fallback now correctly covers every tenant, since there is no
+        longer any assignment row for anyone. Returning {} makes that path
+        the only path, rather than a 500 from querying a dropped table.
+
+        This is a real, known gap in the usage-tenant(s) dashboard/reporting
+        endpoints (budget_limit/available_balance/percentageUsed there now
+        always read as 0, and get_tenant_detail's zero-usage tier fallback
+        can no longer show a tenant's actual tier — see its own comment).
+        Restoring real figures needs a product/eng decision on where
+        tenant-level budget reporting should now be sourced from (a call
+        into auth-service's tenants.allocated_budget, most likely) — flagged
+        here rather than guessed at.
         """
-        if not tenant_ids:
-            return {}
-        lookup_instant = _budget_lookup_instant(billing_month)
-        ranked = (
-            select(
-                TenantTierAssignment.tenant_id,
-                TenantTierAssignment.tier_id,
-                TenantTierAssignment.budget_limit,
-                TenantTierAssignment.available_balance,
-                func.row_number()
-                .over(
-                    partition_by=TenantTierAssignment.tenant_id,
-                    order_by=TenantTierAssignment.effective_from.desc(),
-                )
-                .label("rn"),
-            )
-            .where(
-                TenantTierAssignment.effective_from <= lookup_instant,
-                TenantTierAssignment.effective_to > lookup_instant,
-                TenantTierAssignment.tenant_id.in_(tenant_ids),
-            )
-        ).subquery()
-        stmt = select(ranked).where(ranked.c.rn == 1)
-        result = await self._db.execute(stmt)
-        return {row.tenant_id: row for row in result.all()}
+        return {}
 
     async def get_tenant_tier_usage_breakdown(
         self, billing_month: str, tenant_ids: list[str], task_types: list[str] | None = None

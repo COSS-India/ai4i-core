@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.pay_per_use.tier import Tier, TierQuota
-from app.models.pay_per_use.tenant_tier_assignment import TenantTierAssignment
 from app.repositories.pay_per_use.usage_repository import update_tier_cache
 from app.schemas.pay_per_use.tier import TierCreate, TierOut, TierQuotaOut, TierUpdate
 from app.schemas.enums.model_management import resolve_task_type
@@ -121,17 +120,6 @@ async def create_tier(body: TierCreate, session: AsyncSession, created_by: Optio
     return _build_out(tier, quotas)
 
 
-async def _fetch_tenant_ids_for_tier(tier_id, session: AsyncSession) -> list:
-    result = await session.execute(
-        select(TenantTierAssignment.tenant_id).where(
-            TenantTierAssignment.tier_id == tier_id,
-            TenantTierAssignment.effective_from <= func.now(),
-            TenantTierAssignment.effective_to > func.now(),
-        )
-    )
-    return [row.tenant_id for row in result.all()]
-
-
 async def _resolve_tier_for_update(body: TierUpdate, session: AsyncSession) -> Tier:
     try:
         uid = UUID(body.tier_id)
@@ -182,19 +170,21 @@ async def _cancel_pending_quotas(
 
 
 async def _notify_tier_updated(
-    session: AsyncSession,
     tier: Tier,
     auth_service_url: str,
     http_client: Optional[httpx.AsyncClient],
 ) -> None:
+    """Tells auth-service which tier changed; auth-service resolves the
+    affected tenants itself from tenants.tier_id (the live source of truth
+    now that ppu_tenant_tier_assignments is dropped — this service has no
+    DB-local way to compute "which tenants are on this tier" any more)."""
     if not (auth_service_url and http_client):
         return
 
-    tenant_ids = await _fetch_tenant_ids_for_tier(tier.id, session)
     try:
         resp = await http_client.post(
             f"{auth_service_url}/internal/ppu/tier/quota-limit-updated",
-            json={"tier_name": tier.name, "tenant_ids": tenant_ids},
+            json={"tier_name": tier.name, "tier_id": str(tier.id)},
             timeout=5.0,
         )
         resp.raise_for_status()
@@ -228,7 +218,7 @@ async def update_tier(
     update_tier_cache(tier.id, tier.name)
 
     if body.quotas is not None or body.cancel_pending_quota:
-        await _notify_tier_updated(session, tier, auth_service_url, http_client)
+        await _notify_tier_updated(tier, auth_service_url, http_client)
 
     q_result = await session.execute(select(TierQuota).where(TierQuota.tier_id == tier.id))
     quotas = list(q_result.scalars().all())
@@ -251,7 +241,47 @@ async def apply_pending_quotas(session: AsyncSession) -> int:
     return len(rows)
 
 
-async def delete_tier(tier_id: str, session: AsyncSession) -> None:
+async def _tenant_count_for_tier(
+    tier_id: UUID, auth_service_url: str, http_client: Optional[httpx.AsyncClient]
+) -> int:
+    """Tenant<->tier assignment lives solely on auth-service's tenants.tier_id
+    now that ppu_tenant_tier_assignments is dropped — this service has no
+    DB-local way to answer "is this tier in use" any more, so delete_tier's
+    safety check has to ask auth-service instead of querying its own DB.
+
+    Raises (rather than returning 0) when auth-service can't be reached:
+    silently treating "unknown" as "not in use" would let a tier still
+    assigned to real tenants get deleted, breaking their /auth/validate
+    tier lookups. Fail closed, same as list_tenant_tiers's platform_core_db
+    check on the auth-service side of this same boundary.
+    """
+    if not (auth_service_url and http_client):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cannot verify tier usage: auth-service is not configured",
+        )
+    try:
+        resp = await http_client.get(
+            f"{auth_service_url}/internal/tenants/tier/{tier_id}/count", timeout=5.0
+        )
+        resp.raise_for_status()
+        return resp.json()["count"]
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("tenant-count-for-tier lookup failed for tier %s: %s", tier_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cannot verify tier usage: auth-service lookup failed",
+        )
+
+
+async def delete_tier(
+    tier_id: str,
+    session: AsyncSession,
+    auth_service_url: str = "",
+    http_client: Optional[httpx.AsyncClient] = None,
+) -> None:
     try:
         uid = UUID(tier_id)
     except ValueError:
@@ -264,13 +294,7 @@ async def delete_tier(tier_id: str, session: AsyncSession) -> None:
     if not tier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tier '{tier_id}' not found")
 
-    assigned = await session.execute(
-        select(TenantTierAssignment).where(
-            TenantTierAssignment.tier_id == uid,
-            TenantTierAssignment.effective_to > func.now(),
-        ).limit(1)
-    )
-    if assigned.scalar_one_or_none():
+    if await _tenant_count_for_tier(uid, auth_service_url, http_client) > 0:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Tier is assigned to one or more tenants and cannot be deleted",
