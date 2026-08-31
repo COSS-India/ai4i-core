@@ -29,6 +29,41 @@ logger = logging.getLogger(__name__)
 
 _METRIC = "telemetry_obsv_requests_total"
 
+# SERVICE_BREAKDOWN_CONFIG's task keys (underscore-separated, matching the
+# metering module's own PromQL/endpoint conventions — see ENDPOINT_TO_TASK)
+# are NOT always the same string mm_models.task["type"] stores in the DB.
+# The Registry's canonical values come from TaskTypeEnum
+# (app/schemas/enums/model_management.py), which uses hyphens for compound
+# names and, for audio-lang-detection, an outright different (abbreviated)
+# word — NOT a straightforward underscore->hyphen swap. Passing a metering
+# key straight into ModelRepository's Model.task["type"].astext.in_(...)
+# filter would silently match zero rows for these four, undercounting
+# total_models/active_models for exactly the task types this mapping
+# exists to fix. "pipeline" has no Registry/TaskTypeEnum equivalent at all
+# (it's a metering-only bucket, not a registrable model task) and is
+# deliberately omitted — see _to_registry_task_types.
+_METERING_TASK_TO_REGISTRY_TASK_TYPE: dict[str, str] = {
+    "language_detection": "language-detection",
+    "speaker_diarization": "speaker-diarization",
+    "audio_language_detection": "audio-lang-detection",
+    "language_diarization": "language-diarization",
+}
+
+
+def _to_registry_task_types(task_types: list[str]) -> list[str]:
+    """Map metering task-type keys to the Registry's own task-type strings
+    (see `_METERING_TASK_TO_REGISTRY_TASK_TYPE`) for use in ModelRepository
+    calls. Keys with no Registry mapping needed (llm, nmt, asr, ... — already
+    identical to their TaskTypeEnum value) pass through unchanged; "pipeline"
+    (no Registry equivalent) is dropped rather than passed through as a
+    literal string that can never match any mm_models row.
+    """
+    return [
+        _METERING_TASK_TO_REGISTRY_TASK_TYPE.get(t, t)
+        for t in task_types
+        if t != "pipeline"
+    ]
+
 class _Unset:
     """Sentinel type distinguishing "caller didn't pass valid_names" from an
     explicit `None` (a legitimate "auth DB was unavailable" value returned
@@ -764,8 +799,11 @@ class MeteringService:
         # Same population the Prometheus query itself was scoped to: the
         # requested task_types, or — when unfiltered — every task type this
         # endpoint knows about (not just "llm"), so a model registered under
-        # any task type is validated rather than only LLM ones.
-        model_registry_task_types = task_types or list(SERVICE_BREAKDOWN_CONFIG)
+        # any task type is validated rather than only LLM ones. Converted to
+        # the Registry's own task-type strings — see
+        # _to_registry_task_types — since e.g. "audio_language_detection"
+        # (this module's key) is stored in mm_models as "audio-lang-detection".
+        model_registry_task_types = _to_registry_task_types(task_types or list(SERVICE_BREAKDOWN_CONFIG))
         model_names: dict = {}
         model_registry_checked = False
         if self._model_repo is not None and model_ids:
@@ -865,7 +903,7 @@ class MeteringService:
             return None
         try:
             return await self._model_repo.count_models(
-                task_types=task_types or list(SERVICE_BREAKDOWN_CONFIG)
+                task_types=_to_registry_task_types(task_types or list(SERVICE_BREAKDOWN_CONFIG))
             )
         except Exception:
             logger.warning("registry_model_count: DB query failed", exc_info=True)

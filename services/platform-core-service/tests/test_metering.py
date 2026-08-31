@@ -324,7 +324,7 @@ class TestPrometheusClientQuery:
 
 # ── MeteringService tests ─────────────────────────────────────────────────────
 
-from app.services.metering_service import MeteringService
+from app.services.metering_service import MeteringService, _to_registry_task_types
 
 
 def _make_service(query_return=None, scalar_return=0.0, range_return=None, auth_db=None):
@@ -516,6 +516,29 @@ class TestServiceBreakdown:
         for call in client.query.call_args_list:
             promql = call[0][0]
             assert 'tenant!="unknown"' in promql
+
+
+class TestToRegistryTaskTypes:
+    """Metering task-type keys (SERVICE_BREAKDOWN_CONFIG, underscore-separated)
+    are NOT always identical to the Registry's own task-type strings
+    (TaskTypeEnum, app/schemas/enums/model_management.py) — hyphenated for
+    compound names, and "audio-lang-detection" is an outright abbreviation,
+    not a mechanical underscore->hyphen swap of "audio_language_detection"."""
+
+    def test_passthrough_for_keys_already_matching_registry(self):
+        assert _to_registry_task_types(["llm", "nmt", "asr", "tts", "ocr", "transliteration", "ner"]) == [
+            "llm", "nmt", "asr", "tts", "ocr", "transliteration", "ner",
+        ]
+
+    def test_maps_compound_keys_to_registry_strings(self):
+        assert _to_registry_task_types(["language_detection"]) == ["language-detection"]
+        assert _to_registry_task_types(["speaker_diarization"]) == ["speaker-diarization"]
+        assert _to_registry_task_types(["language_diarization"]) == ["language-diarization"]
+        assert _to_registry_task_types(["audio_language_detection"]) == ["audio-lang-detection"]
+
+    def test_drops_pipeline_with_no_registry_equivalent(self):
+        assert _to_registry_task_types(["llm", "pipeline"]) == ["llm"]
+        assert _to_registry_task_types(["pipeline"]) == []
 
 
 @pytest.mark.asyncio
@@ -1004,8 +1027,30 @@ class TestModelBreakdown:
         await svc.model_breakdown(tenant=None, time_range="24h")
 
         model_repo.get_model_names.assert_awaited_once_with(
-            ["hash-gemma-v1"], task_types=list(SERVICE_BREAKDOWN_CONFIG)
+            ["hash-gemma-v1"], task_types=_to_registry_task_types(list(SERVICE_BREAKDOWN_CONFIG))
         )
+
+    async def test_task_type_mapping_translates_to_registry_values_not_raw_metering_keys(self):
+        """Regression: SERVICE_BREAKDOWN_CONFIG's underscore keys are NOT
+        always what mm_models.task["type"] stores (e.g. TaskTypeEnum stores
+        "language-detection", "audio-lang-detection" — the latter isn't even
+        a simple underscore->hyphen swap of "audio_language_detection").
+        Passing the raw metering keys straight through would silently match
+        zero rows for these, undercounting total_models/active_models."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("svc-1", 10, model_id="hash-x"))
+        model_repo = self._model_repo({"hash-x": "Some Model"})
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        await svc.model_breakdown(tenant=None, time_range="24h")
+
+        called_task_types = model_repo.get_model_names.call_args.kwargs["task_types"]
+        assert "language-detection" in called_task_types
+        assert "speaker-diarization" in called_task_types
+        assert "audio-lang-detection" in called_task_types
+        assert "language-diarization" in called_task_types
+        assert "audio_language_detection" not in called_task_types  # raw metering key, never passed through
+        assert "pipeline" not in called_task_types  # no Registry/TaskTypeEnum equivalent
 
     async def test_model_registry_lookup_scoped_to_requested_task_types(self):
         """A caller-supplied task_types filter (e.g. the Model Task Type
@@ -1178,7 +1223,9 @@ class TestRegistryModelCount:
         svc = MeteringService(client=MagicMock(), model_repo=repo)
 
         assert await svc.registry_model_count() == 42
-        repo.count_models.assert_awaited_once_with(task_types=list(SERVICE_BREAKDOWN_CONFIG))
+        repo.count_models.assert_awaited_once_with(
+            task_types=_to_registry_task_types(list(SERVICE_BREAKDOWN_CONFIG))
+        )
 
     async def test_delegates_to_model_repo_scoped_to_requested_task_types(self):
         repo = MagicMock()
