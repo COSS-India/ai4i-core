@@ -543,15 +543,30 @@ class TestToRegistryTaskTypes:
 
 @pytest.mark.asyncio
 class TestModelBreakdown:
-    def _row(self, service_id: str, value: float, model_id: str = ""):
-        return [{"metric": {"service_id": service_id, "model_id": model_id}, "value": [0, str(value)]}]
+    def _row(self, service_id: str, value: float, model_id: str = "", endpoint: str = "/api/v1/chat"):
+        """`endpoint` defaults to the LLM chat path — task_type in
+        model_breakdown is resolved from this label (via _resolve_task_key),
+        same as service_breakdown/usage_by_tenant_service already do
+        elsewhere; most existing tests here exercise an LLM/Gemma model, so
+        that's the default unless a test overrides it for a different task."""
+        return [{
+            "metric": {"service_id": service_id, "model_id": model_id, PROMETHEUS_API_PATH_LABEL: endpoint},
+            "value": [0, str(value)],
+        }]
 
-    def _rows(self, pairs: dict, model_ids: dict = None):
+    def _rows(self, pairs: dict, model_ids: dict = None, endpoint: str = "/api/v1/chat"):
         """pairs: {service_id: value}. model_ids: optional {service_id: model_id},
-        defaulting to "" (no Prometheus label — e.g. a pre-upgrade series)."""
+        defaulting to "" (no Prometheus label — e.g. a pre-upgrade series).
+        `endpoint`: see _row — same task_type resolution, applied to every row."""
         model_ids = model_ids or {}
         return [
-            {"metric": {"service_id": s, "model_id": model_ids.get(s, "")}, "value": [0, str(v)]}
+            {
+                "metric": {
+                    "service_id": s, "model_id": model_ids.get(s, ""),
+                    PROMETHEUS_API_PATH_LABEL: endpoint,
+                },
+                "value": [0, str(v)],
+            }
             for s, v in pairs.items()
         ]
 
@@ -577,7 +592,8 @@ class TestModelBreakdown:
 
         client.query = AsyncMock(side_effect=fake_query)
         repo = self._repo({"MH-gemma-32b": ("Mahavistaar Gemma 32B", "hash-gemma-v1", "gemma-3-27b-it")})
-        svc = MeteringService(client=client, service_repo=repo)
+        model_repo = self._model_repo({"hash-gemma-v1": "gemma-3-27b-it"})
+        svc = MeteringService(client=client, service_repo=repo, model_repo=model_repo)
 
         result = await svc.model_breakdown(tenant=None, time_range="24h")
         row = next(s for s in result["services"] if s["service_id"] == "MH-gemma-32b")
@@ -624,7 +640,8 @@ class TestModelBreakdown:
 
         client.query = AsyncMock(side_effect=fake_query)
         repo = self._repo({"live-service": ("Live Service", "hash-gemma-v1", "gemma-3-27b-it")})
-        svc = MeteringService(client=client, service_repo=repo)
+        model_repo = self._model_repo({"hash-gemma-v1": "gemma-3-27b-it"})
+        svc = MeteringService(client=client, service_repo=repo, model_repo=model_repo)
 
         result = await svc.model_breakdown(tenant=None, time_range="24h")
         service_ids = [s["service_id"] for s in result["services"]]
@@ -763,7 +780,7 @@ class TestModelBreakdown:
             # so check the exact narrow selector form is absent instead).
             assert f'{PROMETHEUS_API_PATH_LABEL}=~"{LLM_CHAT_ENDPOINT_REGEX}"' not in promql
             assert INFERENCE_ENDPOINT_REGEX in promql
-            assert "by(service_id, model_id)" in promql
+            assert f"by(service_id, model_id, {PROMETHEUS_API_PATH_LABEL})" in promql
             assert "by(model)" not in promql
 
     async def test_task_types_filter_narrows_endpoint_selector(self):
@@ -870,6 +887,117 @@ class TestModelBreakdown:
             if "telemetry_obsv_llm_tokens_processed_sum" in call[0][0]
         ]
         assert len(tokens_calls) == 1
+
+    async def test_nmt_row_reports_characters_not_tokens(self):
+        """AI4IDS follow-up: a row's own task type — resolved from the
+        request's endpoint label, NOT the presence of an LLM-tokens metric —
+        picks its native-unit metric and suffix. An NMT model must report
+        its own characters-translated total (and the PPU-canonical
+        "characters" unit) — never fall back to the LLM tokens metric or the
+        literal "tokens" suffix the route used to hardcode."""
+        client = MagicMock()
+
+        async def fake_query(promql):
+            if 'status_code=~"2.."' in promql:
+                return self._row("svc-nmt", 9, model_id="hash-nmt-model", endpoint="/api/v1/nmt/inference")
+            if "telemetry_obsv_nmt_characters_translated_sum" in promql:
+                return self._row("svc-nmt", 4321)
+            if "telemetry_obsv_requests_total" in promql:
+                return self._row("svc-nmt", 10, model_id="hash-nmt-model", endpoint="/api/v1/nmt/inference")
+            return []  # every other native-unit metric: no data for this service
+
+        client.query = AsyncMock(side_effect=fake_query)
+        model_repo = self._model_repo({"hash-nmt-model": "IndicTrans2"})
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h", task_types=["nmt"])
+
+        row = result["services"][0]
+        assert row["task_type"] == "nmt"
+        assert row["native_units"] == 4321.0
+        assert row["native_unit_suffix"] == "characters"
+
+        model = result["model_totals"][0]
+        assert model["task_type"] == "nmt"
+        assert model["native_units"] == 4321.0
+        assert model["native_unit_suffix"] == "characters"
+
+    async def test_asr_native_units_rounded_to_2dp(self):
+        """ASR (and every other audio-minutes task) keeps 2dp precision —
+        SERVICE_BREAKDOWN_CONFIG's `round_2dp`, same as service_breakdown."""
+        client = MagicMock()
+
+        async def fake_query(promql):
+            if 'status_code=~"2.."' in promql:
+                return self._row("svc-asr", 1, model_id="hash-asr-model", endpoint="/api/v1/asr/inference")
+            if "telemetry_obsv_asr_audio_minutes_processed_sum" in promql:
+                return self._row("svc-asr", 12.345)
+            if "telemetry_obsv_requests_total" in promql:
+                return self._row("svc-asr", 1, model_id="hash-asr-model", endpoint="/api/v1/asr/inference")
+            return []
+
+        client.query = AsyncMock(side_effect=fake_query)
+        model_repo = self._model_repo({"hash-asr-model": "Whisper"})
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h", task_types=["asr"])
+
+        row = result["services"][0]
+        assert row["native_units"] == 12.35
+        assert row["native_unit_suffix"] == "audio_minutes"
+
+    async def test_audio_lang_detection_endpoint_resolves_correct_task_and_unit(self):
+        """audio-lang-detection is the one endpoint whose task key doesn't
+        follow the standard /api/v1/{task}/inference->task mapping (see
+        ENDPOINT_TO_TASK) — task_type must still resolve to this module's
+        own "audio_language_detection" key (not the raw endpoint path) and
+        pick the right native metric/unit, not silently report
+        native_units=0 because of the naming mismatch."""
+        client = MagicMock()
+
+        async def fake_query(promql):
+            if 'status_code=~"2.."' in promql:
+                return self._row(
+                    "svc-ald", 1, model_id="hash-ald-model",
+                    endpoint="/api/v1/audio-lang-detection/inference",
+                )
+            if "telemetry_obsv_audio_lang_detection_minutes_processed_sum" in promql:
+                return self._row("svc-ald", 2.5)
+            if "telemetry_obsv_requests_total" in promql:
+                return self._row(
+                    "svc-ald", 1, model_id="hash-ald-model",
+                    endpoint="/api/v1/audio-lang-detection/inference",
+                )
+            return []
+
+        client.query = AsyncMock(side_effect=fake_query)
+        model_repo = self._model_repo({"hash-ald-model": "ALD"})
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        result = await svc.model_breakdown(
+            tenant=None, time_range="24h", task_types=["audio_language_detection"]
+        )
+
+        row = result["services"][0]
+        assert row["task_type"] == "audio_language_detection"
+        assert row["native_units"] == 2.5
+        assert row["native_unit_suffix"] == "audio_minutes"
+
+    async def test_unknown_task_type_reports_zero_units_and_no_suffix(self):
+        """A row whose endpoint label can't be resolved to any known task
+        (e.g. missing/blank) — task_type can't be determined, so
+        native_units/native_unit_suffix stay at their "unknown" defaults
+        instead of guessing/defaulting to LLM tokens."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("svc-x", 5, endpoint=""))
+        svc = MeteringService(client=client)  # no model_repo
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+
+        row = result["services"][0]
+        assert row["task_type"] is None
+        assert row["native_units"] == 0.0
+        assert row["native_unit_suffix"] is None
 
     async def test_repo_not_queried_when_no_traffic(self):
         client = MagicMock()

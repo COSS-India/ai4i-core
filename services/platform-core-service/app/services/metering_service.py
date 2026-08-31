@@ -6,6 +6,8 @@ from typing import Optional, Union
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai4i_core.ppu import get_inference_unit_map
+
 from app.repositories.model_management.model_repository import ModelRepository
 from app.repositories.model_management.service_repository import ServiceRepository
 from app.utils.prometheus_client import PrometheusClient
@@ -63,6 +65,30 @@ def _to_registry_task_types(task_types: list[str]) -> list[str]:
         for t in task_types
         if t != "pipeline"
     ]
+
+
+# get_inference_unit_map() (libs/ai4i_core/ai4i_core/ppu/inference_types.yaml)
+# is the ONE canonical PPU definition of each task type's consumption unit —
+# also the billing/quota source of truth. It's keyed by the Registry's own
+# task-type string (e.g. "ner" -> "characters", "audio-lang-detection" ->
+# "audio_minutes") — translated from this module's metering-key vocabulary
+# via _METERING_TASK_TO_REGISTRY_TASK_TYPE. Its unit string is returned as-is
+# (no relabeling to a shorter display form) — SERVICE_BREAKDOWN_CONFIG's OWN
+# `native_unit_suffix` field is NOT this module's second source of truth for
+# the unit label — it existed before this PPU config did and had drifted for
+# at least one task (ner: "tokens", when the model actually counts
+# characters) — it's kept only as a last-resort fallback for a task type this
+# yaml doesn't (yet) cover.
+def _native_unit_suffix_for_metering_task(task: Optional[str]) -> Optional[str]:
+    if not task:
+        return None
+    registry_task_type = _METERING_TASK_TO_REGISTRY_TASK_TYPE.get(task, task)
+    ppu_unit = get_inference_unit_map().get(registry_task_type)
+    if ppu_unit:
+        return ppu_unit
+    cfg = SERVICE_BREAKDOWN_CONFIG.get(task)
+    return cfg["native_unit_suffix"] if cfg else None
+
 
 class _Unset:
     """Sentinel type distinguishing "caller didn't pass valid_names" from an
@@ -586,13 +612,23 @@ class MeteringService:
         `task_types`, when given, scopes the query to those task types only
         (LLM + NLP alike — same `build_task_type_selector` used by
         service_breakdown/usage_concentration/etc); `None` covers every task
-        type. NOTE: native units below are still LLM-tokens-only — an NLP
-        row will report `native_units=0` until that's generalized to
-        SERVICE_BREAKDOWN_CONFIG's per-task-type metric (tracked separately).
+        type. Each row's own `task_type` is resolved from the SAME
+        `PROMETHEUS_API_PATH_LABEL` (endpoint) label the request itself
+        carries on `telemetry_obsv_requests_total`, via `_resolve_task_key`
+        — the same endpoint->task resolution service_breakdown/
+        usage_by_tenant_service already use elsewhere in this module — NOT a
+        separate Model Registry lookup. That task_type then picks the row's
+        native-unit metric and suffix from SERVICE_BREAKDOWN_CONFIG, same
+        per-task-type metrics service_breakdown() already uses — an NLP row
+        reports its own unit (chars/min/images/...), not LLM tokens.
 
-        Fires 3 queries in one asyncio.gather: total requests, successful
-        requests, and tokens processed — each grouped by `(service_id,
-        model_id)`.
+        Fires 2 fixed queries (total requests, successful requests, each
+        grouped by `(service_id, model_id, endpoint)` — the endpoint dimension
+        is what task_type is read from) plus one additional query per
+        native-unit metric in scope (task_types, or every
+        SERVICE_BREAKDOWN_CONFIG task when unfiltered), each grouped by
+        `service_id` alone since none of those per-task Histograms carry a
+        `model_id` label (see metrics.py) — all in one asyncio.gather.
 
         ROLLOUT NOTE (service-level ghosts): per-service rows are
         cross-checked against the Service Registry (mm_services) via
@@ -655,38 +691,25 @@ class MeteringService:
             extra=[task_sel, 'status_code=~"2.."'] if task_sel else ['status_code=~"2.."'],
             tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE,
         )
-        # telemetry_obsv_llm_tokens_processed_sum now carries tenant_id
-        # alongside tenant (see metrics.py) — prefer it, same precedence as
-        # build_base_selectors/_native_unit_queries, so tokens stay
-        # continuous across a rename instead of resetting next to request
-        # counts (from base_sel/success_sel above) that stay continuous.
-        tokens_parts = ['token_type="total"', 'tenant!="unknown"', api_key_auth_type_selector()]
-        if tenant_id:
-            tokens_parts.append(f'tenant_id="{escape_label_value(tenant_id)}"')
-        elif tenant:
-            tokens_parts.append(f'tenant="{escape_label_value(tenant)}"')
-        tokens_sel = "{" + ",".join(tokens_parts) + "}"
-
-        group_by = "service_id, model_id"
+        group_by = f"service_id, model_id, {PROMETHEUS_API_PATH_LABEL}"
         total_q = sum_over_window_by(f"{_METRIC}{base_sel}", group_by, time_range)
         success_q = sum_over_window_by(f"{_METRIC}{success_sel}", group_by, time_range)
-        # Only fire the (LLM-only) tokens query when LLM is actually in
-        # scope. Firing it unconditionally under an explicit NLP-only
-        # task_types filter (e.g. ["nmt"]) would pull in an LLM model_id
-        # that has NO rows in total_q/success_q under that filter — model_ids
-        # below is a union across all three, so it'd surface a ghost
-        # "0 requests" row for a model that isn't even part of the requested
-        # task types.
-        include_llm_tokens = task_types is None or "llm" in task_types
-        tokens_q = (
-            sum_over_window_by(f"telemetry_obsv_llm_tokens_processed_sum{tokens_sel}", group_by, time_range)
-            if include_llm_tokens else None
+        # One additional query per native-unit metric IN SCOPE (task_types,
+        # or every SERVICE_BREAKDOWN_CONFIG task when unfiltered) — mirrors
+        # service_breakdown's _native_unit_queries, but grouped by service_id
+        # (not a single scalar) since each row here needs its OWN value, not
+        # a tenant-wide total. Restricting to task_types avoids the same
+        # ghost-row problem the old LLM-only gating existed to prevent: an
+        # explicit NLP-only filter (e.g. ["nmt"]) must not pull in, say, an
+        # LLM model_id that has no rows in total_q/success_q under that filter.
+        native_tasks, native_coros = self._model_native_unit_queries(
+            tenant, tenant_id, time_range, task_types
         )
 
         raw = await asyncio.gather(
             self._client.query(total_q),
             self._client.query(success_q),
-            self._client.query(tokens_q) if tokens_q else asyncio.sleep(0, result=[]),
+            *native_coros,
             return_exceptions=True,
         )
 
@@ -695,24 +718,50 @@ class MeteringService:
 
         total_rows = _safe_list(raw[0])
         success_rows = _safe_list(raw[1])
-        tokens_rows = _safe_list(raw[2])
+        # task -> {service_id: raw float value} — unrounded; each row rounds
+        # its own value below per SERVICE_BREAKDOWN_CONFIG's `round_2dp`.
+        native_by_task: dict[str, dict[str, float]] = {
+            task: self._native_units_by_service(_safe_list(raw[2 + i]))
+            for i, task in enumerate(native_tasks)
+        }
 
         # ── Per-service view (collapses across model_id — see class docstring
         # on why a service_id can transiently carry more than one model_id
         # label value; the per-service TOTAL must not fragment because of it).
         totals = self._label_dict(total_rows, "service_id")
         successes = self._label_dict(success_rows, "service_id")
-        tokens = self._label_dict(tokens_rows, "service_id")
+
+        # task_type per service_id, read straight off the SAME endpoint label
+        # every request already carries (PROMETHEUS_API_PATH_LABEL) — the
+        # same source of truth _resolve_task_key backs elsewhere in this
+        # module (service_breakdown, usage_by_tenant_service's heatmap). No
+        # Model Registry lookup involved: a service serves exactly one task
+        # (its endpoint never varies), so the first row seen for a
+        # service_id settles it.
+        service_task: dict[str, str] = {}
+        for r in (*total_rows, *success_rows):
+            sid = r["metric"].get("service_id", "")
+            if not sid or sid in service_task:
+                continue
+            task = self._resolve_task_key(r["metric"].get(PROMETHEUS_API_PATH_LABEL, ""))
+            if task:
+                service_task[sid] = task
 
         # "" means the client sent no `model` field at all — not a real service.
-        service_ids = {s for s in (set(totals) | set(successes) | set(tokens)) if s != ""}
+        service_ids = {
+            s for s in (
+                set(totals) | set(successes)
+                | {sid for by_service in native_by_task.values() for sid in by_service}
+            )
+            if s != ""
+        }
 
         # Representative model_id per service_id, straight from Prometheus —
         # first non-empty value seen wins (a service's model_id is an
         # immutable FK, so in steady state there's only ever one; see the
         # ROLLOUT NOTE above for the transitional exception).
         prom_model_id: dict = {}
-        for r in (*total_rows, *success_rows, *tokens_rows):
+        for r in (*total_rows, *success_rows):
             sid = r["metric"].get("service_id", "")
             mid = r["metric"].get("model_id", "") or ""
             if sid and mid and sid not in prom_model_id:
@@ -741,48 +790,14 @@ class MeteringService:
                 len(ghosts), sorted(ghosts),
             )
 
-        services = []
-        for service_id in service_ids:
-            if service_id in ghosts:
-                continue
-            total_v = totals.get(service_id, 0)
-            success_v = successes.get(service_id, 0)
-            name, db_model_id, model_name = svc_info.get(service_id, (service_id, None, None))
-            model_id = prom_model_id.get(service_id) or db_model_id
-            services.append({
-                "service_id": service_id,
-                "name": name,
-                "model_id": model_id,
-                "model_name": model_name,
-                "requests": total_v,
-                "native_units": float(tokens.get(service_id, 0)),
-                "success_pct": round(success_v / total_v * 100, 2) if total_v else 0.0,
-            })
-
-        services.sort(key=lambda s: s["requests"], reverse=True)
-
-        # ── Model-level view (collapses across service_id) — the
-        # authoritative source for model_consumption_ranking/kpis; see the
-        # model-level ROLLOUT NOTE above for why this is independent of the
-        # service-existence filtering `services` above went through.
-        #
-        # Grouped by EFFECTIVE model_id, resolved PER service_id (reusing
-        # prom_model_id, computed above) — Prometheus label first, falling
-        # back to the DB-joined value from svc_info — same precedence AND
-        # same granularity the per-service view already applies at line
-        # ~612 (`prom_model_id.get(service_id) or db_model_id`). Resolving
-        # per ROW instead (i.e. only from that row's own label) would let a
-        # service with some labeled and some unlabeled rows split across
-        # two model_totals entries whenever the label and the DB FK
-        # disagree during the rollout window, while `services` still shows
-        # it as one — this keeps the two views in agreement. Without the
-        # fallback at all, any series recorded before a service's model_id
-        # label existed (pre-ai4i-core-1.0.18, or before that service's
-        # traffic was first labeled) groups under the empty-string bucket
-        # and is silently excluded from model_totals entirely, even though
-        # the exact same service resolves fine in `services` via svc_info —
-        # real traffic in the per-service breakdown vanishing completely
-        # from the Model Consumption chart.
+        # ── Model registry lookup (names only — task_type comes from
+        # service_task above, not the Registry) — computed here, before the
+        # per-model rollup below, so `model_ids` is resolved the same way the
+        # model-level rollup groups by EFFECTIVE model_id (Prometheus label
+        # first, falling back to the DB-joined value from svc_info) — see
+        # the ROLLOUT NOTE on model-level totals above for why this is
+        # independent of the service-existence filtering `services` goes
+        # through.
         def _effective_model_id(row: dict) -> str:
             sid = row["metric"].get("service_id", "")
             _, db_model_id, _ = svc_info.get(sid, (None, None, None))
@@ -790,9 +805,8 @@ class MeteringService:
 
         model_totals_raw = self._label_dict(total_rows, _effective_model_id)
         model_successes_raw = self._label_dict(success_rows, _effective_model_id)
-        model_tokens_raw = self._label_dict(tokens_rows, _effective_model_id)
         model_ids = {
-            m for m in (set(model_totals_raw) | set(model_successes_raw) | set(model_tokens_raw))
+            m for m in (set(model_totals_raw) | set(model_successes_raw))
             if m != ""
         }
 
@@ -815,6 +829,37 @@ class MeteringService:
             except Exception:
                 logger.warning("model_breakdown: model registry lookup failed", exc_info=True)
 
+        services = []
+        for service_id in service_ids:
+            if service_id in ghosts:
+                continue
+            total_v = totals.get(service_id, 0)
+            success_v = successes.get(service_id, 0)
+            name, db_model_id, model_name = svc_info.get(service_id, (service_id, None, None))
+            model_id = prom_model_id.get(service_id) or db_model_id
+            task = service_task.get(service_id)
+            native_units, native_unit_suffix = self._native_units_for(
+                task, native_by_task, service_id
+            )
+            services.append({
+                "service_id": service_id,
+                "name": name,
+                "model_id": model_id,
+                "model_name": model_name,
+                "task_type": task,
+                "requests": total_v,
+                "native_units": native_units,
+                "native_unit_suffix": native_unit_suffix,
+                "success_pct": round(success_v / total_v * 100, 2) if total_v else 0.0,
+            })
+
+        services.sort(key=lambda s: s["requests"], reverse=True)
+
+        # ── Model-level view (collapses across service_id) — the
+        # authoritative source for model_consumption_ranking/kpis; see the
+        # model-level ROLLOUT NOTE above for why this is independent of the
+        # service-existence filtering `services` above went through.
+        #
         # model_id with no current Registry row under `model_registry_task_types`
         # — a DEPRECATED model still has a row (see get_model_names) so it's
         # not a ghost on that basis, only a hard-deleted/stale/never-existent
@@ -843,17 +888,43 @@ class MeteringService:
                 len(model_ghosts), sorted(model_ghosts),
             )
 
+        # Native units + task per model_id: summed/resolved from every
+        # service_id that resolves to it (same _effective_model_id grouping
+        # the request counts above use) — the per-task Histograms have no
+        # model_id label of their own (see metrics.py), so this is the only
+        # way to roll a native-unit value up from service_id to model_id. A
+        # model is fronted by services that all share its one task, so the
+        # first task seen for the model settles it, same as service_task
+        # does per service_id above.
+        model_native_raw: dict[str, float] = {}
+        model_task: dict[str, str] = {}
+        for service_id in service_ids:
+            mid = _effective_model_id({"metric": {"service_id": service_id}})
+            if not mid:
+                continue
+            task = service_task.get(service_id)
+            v = native_by_task.get(task, {}).get(service_id, 0.0) if task else 0.0
+            model_native_raw[mid] = model_native_raw.get(mid, 0.0) + v
+            if task:
+                model_task.setdefault(mid, task)
+
         model_totals = []
         for model_id in model_ids:
             if model_id in model_ghosts:
                 continue
             total_v = model_totals_raw.get(model_id, 0)
             success_v = model_successes_raw.get(model_id, 0)
+            task = model_task.get(model_id)
+            native_units, native_unit_suffix = self._round_native(
+                task, model_native_raw.get(model_id, 0.0)
+            )
             model_totals.append({
                 "model_id": model_id,
                 "model_name": model_names.get(model_id, model_id),
+                "task_type": task,
                 "requests": total_v,
-                "native_units": float(model_tokens_raw.get(model_id, 0)),
+                "native_units": native_units,
+                "native_unit_suffix": native_unit_suffix,
                 "success_pct": round(success_v / total_v * 100, 2) if total_v else 0.0,
             })
 
@@ -1355,6 +1426,90 @@ class MeteringService:
                 natives[task] = round(v, 2) if cfg.get("round_2dp") else round(v)
         return natives
 
+    def _model_native_unit_queries(
+        self, tenant: Optional[str], tenant_id: Optional[str], time_range: Optional[str],
+        task_types: Optional[list[str]],
+    ) -> tuple[list[str], list]:
+        """Per-task-type native-unit query coroutines for model_breakdown.
+
+        Same selector precedence and task-metric config as
+        `_native_unit_queries` (service_breakdown's own version), but grouped
+        by `service_id` — every row here needs its OWN native-unit value,
+        not one tenant-wide scalar — via `query()`, not `scalar()`.
+        `task_types`, when given, restricts to just those tasks (same
+        ghost-avoidance reasoning `model_breakdown` already applies to its
+        request-count queries); `None` covers every SERVICE_BREAKDOWN_CONFIG
+        task that has a native metric.
+        """
+        native_tasks: list[str] = []
+        native_coros = []
+        for task, cfg in SERVICE_BREAKDOWN_CONFIG.items():
+            if task_types is not None and task not in task_types:
+                continue
+            native_metric = cfg.get("native_metric")
+            if not native_metric:
+                continue
+            extra = cfg.get("native_extra_labels") or []
+            if tenant_id:
+                parts = [f'tenant_id="{escape_label_value(tenant_id)}"']
+            elif tenant:
+                parts = [f'tenant="{escape_label_value(tenant)}"']
+            else:
+                parts = []
+            parts.append(api_key_auth_type_selector())
+            parts.extend(extra)
+            sel = "{" + ",".join(parts) + "}" if parts else ""
+            q = sum_over_window_by(f"{native_metric}{sel}", "service_id", time_range)
+            native_tasks.append(task)
+            native_coros.append(self._client.query(q))
+        return native_tasks, native_coros
+
+    @staticmethod
+    def _native_units_by_service(rows: list) -> dict[str, float]:
+        """Map service_id -> raw (unrounded) native-unit value from a `sum
+        by(service_id)` result vector. One row per service_id — rounding is
+        deferred to the caller since the correct precision (whole unit vs
+        2dp for audio-minutes) depends on which task the SERVICE consuming
+        this value belongs to, not the metric itself."""
+        return {
+            r["metric"].get("service_id", ""): float(r["value"][1])
+            for r in rows
+        }
+
+    @staticmethod
+    def _metering_cfg_for_task(task: Optional[str]) -> Optional[dict]:
+        """SERVICE_BREAKDOWN_CONFIG entry for a metering task key (e.g.
+        "nmt", "audio_language_detection"), or None when there isn't one
+        (unknown task, or no task resolved for the row at all — see
+        service_task/model_task in model_breakdown)."""
+        if not task:
+            return None
+        return SERVICE_BREAKDOWN_CONFIG.get(task)
+
+    @classmethod
+    def _round_native(cls, task: Optional[str], raw_value: float) -> tuple[float, Optional[str]]:
+        """Round an already-aggregated native-unit value per its task's
+        `round_2dp` config, returning (value, unit_suffix) — or (0.0, None)
+        when the task is unknown/unmapped."""
+        cfg = cls._metering_cfg_for_task(task)
+        if cfg is None:
+            return 0.0, None
+        rounded = round(raw_value, 2) if cfg.get("round_2dp") else round(raw_value)
+        return float(rounded), _native_unit_suffix_for_metering_task(task)
+
+    @classmethod
+    def _native_units_for(
+        cls, task: Optional[str],
+        native_by_task: dict[str, dict[str, float]], service_id: str,
+    ) -> tuple[float, Optional[str]]:
+        """(native_units, native_unit_suffix) for one service row, picking
+        its value out of `native_by_task` by its own task."""
+        cfg = cls._metering_cfg_for_task(task)
+        if cfg is None:
+            return 0.0, None
+        raw_value = native_by_task.get(task, {}).get(service_id, 0.0)
+        return cls._round_native(task, raw_value)
+
     @staticmethod
     def _service_breakdown_rows(
         totals: dict, successes: dict, natives: dict,
@@ -1374,7 +1529,9 @@ class MeteringService:
                 "service": cfg["display_name"],
                 "requests": total_v,
                 "native_units": natives.get(task, 0),
-                "native_unit_suffix": cfg["native_unit_suffix"],
+                "native_unit_suffix": (
+                    _native_unit_suffix_for_metering_task(task) or cfg["native_unit_suffix"]
+                ),
                 "success_pct": round(success_v / total_v * 100, 2) if total_v else 0.0,
             })
         services.sort(key=lambda s: s["requests"], reverse=True)

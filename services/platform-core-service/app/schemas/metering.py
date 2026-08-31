@@ -116,9 +116,10 @@ class ServiceModelRow(BaseModel):
     name: str                           # mm_services.name, falls back to service_id when unresolved
     model_id: Optional[str] = None      # mm_models.model_id — stable (name, version) hash; the model-level grouping key (FE: group rows by this, not model_name)
     model_name: Optional[str] = None    # mm_models.name — the actual model behind the service; display only, not an identity
+    task_type: Optional[str] = None     # mm_models.task["type"] (Registry's TaskTypeEnum value, e.g. "nmt", "audio-lang-detection") — None when the model/task type couldn't be resolved
     requests: int
     native_units: float = 0.0
-    native_unit_suffix: str = "tokens"
+    native_unit_suffix: Optional[str] = None  # e.g. "chars", "min", "tokens" — task-specific; None alongside an unresolved task_type
     success_pct: float
     failure_rate_pct: float = 0.0   # 100 - success_pct
 

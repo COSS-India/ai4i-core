@@ -888,9 +888,10 @@ async def get_model_consumption(
                 name=s["name"],
                 model_id=s["model_id"],
                 model_name=s["model_name"],
+                task_type=s["task_type"],
                 requests=s["requests"],
                 native_units=s["native_units"],
-                native_unit_suffix="tokens",
+                native_unit_suffix=s["native_unit_suffix"],
                 success_pct=s["success_pct"],
                 # No traffic → nothing succeeded AND nothing failed. Without this
                 # guard, success_pct=0 for a 0-request service makes 100-0=100%
