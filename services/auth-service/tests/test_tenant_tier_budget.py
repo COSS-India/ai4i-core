@@ -4,14 +4,23 @@ revise_tenant_budget, list_tenant_tiers) — added because the PR that
 introduced them deleted the 509-line test file covering the endpoints they
 replace without adding coverage of its own.
 
-Focus is the reviewer-flagged enforcement-path reconnection: assigning a
-tier must write a ppu_tenant_tier_assignments row (or the billing consumer
-never sees an active assignment and quota-flags the tenant after its first
-request), a budget top-up must clear a stale budget-exhausted flag, and a
-reassignment must clear stale quota flags and force-refresh cached tier_id.
+These endpoints used to also write through to platform-core's
+``ppu_tenant_tier_assignments`` — a per-tenant wallet the old billing
+consumer read to find an active assignment and deduct spend from, with its
+own idempotent-repair logic for a partial failure between the two writes,
+and a budget revision would sync that wallet's balance and recompute a
+tenant-wide cached budget-exhausted flag from it. That table was dropped
+(migration a1b3c5d7e9f0 / PR #1505, AI4IDS-2923): billing now reads
+``tenants.tier_id`` live per request (via the X-Tier-ID header -> OTel span)
+and tracks spend per API Key in ``budget_usage``, not per tenant. So there
+is no second write left to reconnect, no partial-failure window, and no
+tenant-level wallet to sync — assign_tenant_tier and revise_tenant_budget
+only ever touch the ``tenants`` row (plus the tier-scoped quota/cache calls
+that are still meaningful) now. The tests that used to pin the
+now-removed write-through/repair/sync behaviour are gone with it; what's
+left here covers what those two endpoints actually still do.
 """
 
-from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -106,15 +115,15 @@ class TestAssignTenantTierAuthAndValidation:
 
     @pytest.mark.asyncio
     async def test_already_on_tier_rejected(self) -> None:
+        """tenants.tier_id already matches — unconditionally a 409 now,
+        since there's no second write whose partial failure could make this
+        state ambiguous (see the module docstring)."""
         tier_id = uuid4()
         svc = _svc()
         svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant(tier_id=tier_id))
         tier_row = MagicMock(id=tier_id)
         tier_row.name = "Gold"
-        # 1st execute: tier lookup. 2nd: an active assignment DOES exist —
-        # genuinely a no-op, must still 409.
-        active_row = MagicMock()
-        db = _core_db(tier_row=[tier_row, active_row])
+        db = _core_db(tier_row=tier_row)  # only the tier lookup — one execute
         with pytest.raises(HTTPException) as exc_info:
             await svc.assign_tenant_tier(_admin_user(), 1, str(tier_id), db)
         assert exc_info.value.status_code == 409
@@ -122,141 +131,37 @@ class TestAssignTenantTierAuthAndValidation:
         svc._tenants.update.assert_not_awaited()
 
 
-class TestAssignTenantTierIdempotentRepair:
-    """The failure mode of the write-through itself: tenants.tier_id can
-    commit on one PATCH, then the required ppu_tenant_tier_assignments
-    write can fail (core DB down, constraint, network) — unguarded on
-    purpose, so that failure surfaces as a 500 rather than being silently
-    swallowed. What must not happen is the retry becoming a dead end."""
+class TestAssignTenantTierEffects:
+    """What a genuine (different-tier) assignment/reassignment actually does
+    now: update tenants.tier_id, clear stale quota flags, force-write the
+    new tier_id into cached API key data. No second write anywhere else —
+    see the module docstring for what used to happen here and why it
+    doesn't any more."""
 
     @pytest.mark.asyncio
-    async def test_retry_after_partial_failure_repairs_missing_assignment_row(self) -> None:
-        """tenant.tier_id already equals the requested tier (committed by
-        the failed first attempt) but no active assignment row exists (that
-        attempt's ppu write never landed) — must repair by inserting the
-        row, not reject with TENANT_ALREADY_ON_TIER, or the admin has no
-        way to fix this tenant through the API at all."""
-        tier_id = uuid4()
-        tenant = _tenant(tier_id=tier_id, allocated_budget=Decimal("100"))
+    async def test_first_assignment_updates_tenant_and_cache(self) -> None:
+        new_tier_id = uuid4()
+        tenant = _tenant(tier_id=None, allocated_budget=Decimal("1000.00"))
         svc = _svc()
         svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
-        tier_row = MagicMock(id=tier_id)
-        tier_row.name = "Gold"
-        # 1st execute: tier lookup. 2nd: no active assignment (the repair
-        # case). 3rd: "existing row?" inside the upsert -> none. 4th: the
-        # INSERT itself.
-        db = _core_db(tier_row=[tier_row, None, None, None])
-
-        result = await svc.assign_tenant_tier(_admin_user(), 1, str(tier_id), db)
-
-        assert result is tenant
-        svc._tenants.update.assert_not_awaited()  # tier_id already correct — nothing to change there
-        insert_call = db.execute.await_args_list[-1]
-        assert "INSERT INTO ppu_tenant_tier_assignments" in str(insert_call.args[0])
-        svc._api_keys.clear_quota_flags_for_tenant.assert_awaited_once_with(1)
-        svc._api_keys.set_tier_id_for_tenant.assert_awaited_once_with(1, str(tier_id))
-
-    @pytest.mark.asyncio
-    async def test_retry_after_reassignment_partial_failure_repairs_stale_row(self) -> None:
-        """Worse than the missing-row case: tenants.tier_id committed to
-        the NEW tier on a failed reassignment attempt, but the upsert's
-        UPDATE (which moves an existing row's tier_id in place rather than
-        inserting) never landed — the active row still points at the OLD
-        tier. The existence check must be scoped to tier_id, not just
-        tenant_id, or this reads as "already on the requested tier" and
-        409s forever, leaving auth/billing/cache permanently disagreeing
-        with no repair path."""
-        old_tier_id, new_tier_id = uuid4(), uuid4()
-        # tenants.tier_id already committed to new_tier_id by the failed attempt.
-        tenant = _tenant(tier_id=new_tier_id)
-        svc = _svc()
-        svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
+        svc._tenants.update = AsyncMock()
+        svc._tenants.save_and_refresh = AsyncMock()
         tier_row = MagicMock(id=new_tier_id)
-        tier_row.name = "Platinum"
-        stale_row = MagicMock(id=uuid4())
-        # 1st execute: tier lookup. 2nd: has_active_ppu_assignment scoped to
-        # new_tier_id -> no match (the row that exists is still old_tier_id).
-        # 3rd: the upsert's own untier'd "existing row?" lookup -> finds the
-        # stale row. 4th: UPDATE it onto new_tier_id.
-        db = _core_db(tier_row=[tier_row, None, stale_row, None])
+        tier_row.name = "Gold"
+        db = _core_db(tier_row=tier_row)  # only the tier lookup — one execute
 
         result = await svc.assign_tenant_tier(_admin_user(), 1, str(new_tier_id), db)
 
         assert result is tenant
-        svc._tenants.update.assert_not_awaited()  # tier_id already correct
-        repair_call = db.execute.await_args_list[-1]
-        repair_sql = str(repair_call.args[0])
-        assert "UPDATE ppu_tenant_tier_assignments" in repair_sql
-        assert repair_call.args[1]["tier_id"] == new_tier_id
-        assert repair_call.args[1]["id"] == stale_row.id
-        svc._api_keys.clear_quota_flags_for_tenant.assert_awaited_once_with(1)
-        svc._api_keys.set_tier_id_for_tenant.assert_awaited_once_with(1, str(new_tier_id))
-
-    @pytest.mark.asyncio
-    async def test_genuine_reassignment_still_updates_tenant_row(self) -> None:
-        """Sanity check the repair path doesn't leak into the normal
-        (different-tier) case: tenants.tier_id must still be updated when
-        it's actually changing."""
-        old_tier_id, new_tier_id = uuid4(), uuid4()
-        tenant = _tenant(tier_id=old_tier_id)
-        svc = _svc()
-        svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
-        svc._tenants.update = AsyncMock()
-        svc._tenants.save_and_refresh = AsyncMock()
-        tier_row = MagicMock(id=new_tier_id)
-        tier_row.name = "Platinum"
-        db = _core_db(tier_row=[tier_row, None, None])  # tier lookup, no existing assignment, INSERT
-
-        await svc.assign_tenant_tier(_admin_user(), 1, str(new_tier_id), db)
-
         svc._tenants.update.assert_awaited_once()
         assert svc._tenants.update.await_args.args[1]["tier_id"] == new_tier_id
-
-
-class TestAssignTenantTierEnforcementReconnection:
-    @pytest.mark.asyncio
-    async def test_first_assignment_inserts_ppu_assignment_row(self) -> None:
-        """No active row exists yet — must INSERT one seeded from the
-        tenant's own budget fields, or the billing consumer's wallet_update
-        CTE matches nothing on this tenant's very next inference request."""
-        new_tier_id = uuid4()
-        tenant = _tenant(
-            tier_id=None,
-            allocated_budget=Decimal("1000.00"),
-            budget_effective_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            budget_effective_to=datetime(2027, 1, 1, tzinfo=timezone.utc),
-        )
-        svc = _svc()
-        svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
-        svc._tenants.update = AsyncMock()
-        svc._tenants.save_and_refresh = AsyncMock()
-        tier_row = MagicMock(id=new_tier_id)
-        tier_row.name = "Gold"
-        # 1st execute: tier lookup. 2nd: "existing active assignment?" -> none.
-        # 3rd: the INSERT itself (return value unused).
-        db = _core_db(tier_row=[tier_row, None, None])
-
-        await svc.assign_tenant_tier(_admin_user(), 1, str(new_tier_id), db)
-
-        insert_call = db.execute.await_args_list[-1]
-        insert_sql = str(insert_call.args[0])
-        assert "INSERT INTO ppu_tenant_tier_assignments" in insert_sql
-        params = insert_call.args[1]
-        assert params["tenant_id"] == "1"
-        assert params["tier_id"] == new_tier_id
-        assert params["budget"] == Decimal("1000.00")
-        assert params["effective_from"] == tenant.budget_effective_from
-        assert params["effective_to"] == tenant.budget_effective_to
-        db.commit.assert_awaited()
         svc._api_keys.clear_quota_flags_for_tenant.assert_awaited_once_with(1)
         svc._api_keys.set_tier_id_for_tenant.assert_awaited_once_with(1, str(new_tier_id))
+        # Nothing else was ever queried from platform-core beyond the tier lookup.
+        assert db.execute.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_reassignment_updates_existing_row_not_insert(self) -> None:
-        """An active row already covers now() — must UPDATE its tier_id in
-        place, carrying budget_limit/available_balance over unchanged
-        (matches the old reassign_tier's documented behavior), not insert
-        a second row."""
+    async def test_reassignment_updates_tenant_and_cache(self) -> None:
         old_tier_id, new_tier_id = uuid4(), uuid4()
         tenant = _tenant(tier_id=old_tier_id)
         svc = _svc()
@@ -265,19 +170,11 @@ class TestAssignTenantTierEnforcementReconnection:
         svc._tenants.save_and_refresh = AsyncMock()
         tier_row = MagicMock(id=new_tier_id)
         tier_row.name = "Platinum"
-        existing_row = MagicMock(id=uuid4())
-        # 1st execute: tier lookup. 2nd: existing active assignment found.
-        # 3rd: the UPDATE itself (return value unused).
-        db = _core_db(tier_row=[tier_row, existing_row, None])
+        db = _core_db(tier_row=tier_row)
 
         await svc.assign_tenant_tier(_admin_user(), 1, str(new_tier_id), db)
 
-        update_call = db.execute.await_args_list[-1]
-        update_sql = str(update_call.args[0])
-        assert "UPDATE ppu_tenant_tier_assignments" in update_sql
-        assert "INSERT" not in update_sql
-        assert update_call.args[1]["tier_id"] == new_tier_id
-        assert update_call.args[1]["id"] == existing_row.id
+        assert svc._tenants.update.await_args.args[1]["tier_id"] == new_tier_id
         svc._api_keys.clear_quota_flags_for_tenant.assert_awaited_once_with(1)
         svc._api_keys.set_tier_id_for_tenant.assert_awaited_once_with(1, str(new_tier_id))
 
@@ -315,59 +212,10 @@ class TestReviseTenantBudget:
         assert exc_info.value.detail["error"] == "budget_negative"
 
     @pytest.mark.asyncio
-    async def test_top_up_clears_budget_exhausted_flag(self) -> None:
-        """Closes the gap the endpoint this replaces didn't have: the
-        consumer only ever posts {"exhausted": true}, so a key already
-        flagged budget-exhausted=1 needs this call to have any path back."""
-        svc = _svc()
-        svc._tenants.get_by_id_for_update = AsyncMock(
-            return_value=_tenant(allocated_budget=Decimal("0"))
-        )
-        svc._tenants.update = AsyncMock()
-        svc._tenants.save_and_refresh = AsyncMock()
-        wallet_row = MagicMock(available_balance=Decimal("500.00"))
-        db = _core_db(tier_row=wallet_row)
-
-        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), db)
-
-        svc._api_keys.set_budget_exhausted_for_tenant.assert_awaited_once_with(1, False)
-
-    @pytest.mark.asyncio
-    async def test_top_down_to_zero_sets_budget_exhausted_flag(self) -> None:
-        svc = _svc()
-        svc._tenants.get_by_id_for_update = AsyncMock(
-            return_value=_tenant(allocated_budget=Decimal("500"))
-        )
-        svc._tenants.update = AsyncMock()
-        svc._tenants.save_and_refresh = AsyncMock()
-        wallet_row = MagicMock(available_balance=Decimal("0"))
-        db = _core_db(tier_row=wallet_row)
-
-        await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("500"), db)
-
-        svc._api_keys.set_budget_exhausted_for_tenant.assert_awaited_once_with(1, True)
-
-    @pytest.mark.asyncio
-    async def test_no_active_assignment_skips_flag_sync(self) -> None:
-        """Tenant has never been tier-assigned (or its window lapsed) — no
-        wallet row to update, so nothing is written and the cache flag is
-        left alone rather than guessed at."""
-        svc = _svc()
-        svc._tenants.get_by_id_for_update = AsyncMock(
-            return_value=_tenant(allocated_budget=Decimal("0"))
-        )
-        svc._tenants.update = AsyncMock()
-        svc._tenants.save_and_refresh = AsyncMock()
-        db = _core_db(tier_row=None)  # UPDATE ... RETURNING matched no row
-
-        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), db)
-
-        svc._api_keys.set_budget_exhausted_for_tenant.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_platform_core_db_none_still_updates_tenant_budget(self) -> None:
-        """The ppu-wallet sync is best-effort — an unconfigured/unreachable
-        platform-core DB must not block the primary allocated_budget write."""
+    async def test_top_up_updates_allocated_budget_only(self) -> None:
+        """No platform-core dependency at all any more — a top-up only
+        touches tenants.allocated_budget. See the module docstring for why
+        there's nothing left to sync alongside it."""
         svc = _svc()
         svc._tenants.get_by_id_for_update = AsyncMock(
             return_value=_tenant(allocated_budget=Decimal("0"))
@@ -375,13 +223,11 @@ class TestReviseTenantBudget:
         svc._tenants.update = AsyncMock()
         svc._tenants.save_and_refresh = AsyncMock()
 
-        tenant = await svc.revise_tenant_budget(
-            _admin_user(), 1, "top-up", Decimal("500"), None
-        )
+        tenant = await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"))
 
         svc._tenants.update.assert_awaited_once()
         assert svc._tenants.update.await_args.args[1]["allocated_budget"] == Decimal("500")
-        svc._api_keys.set_budget_exhausted_for_tenant.assert_not_awaited()
+        assert tenant is not None
 
 
 class TestListTenantTiers:

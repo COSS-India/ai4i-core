@@ -77,10 +77,21 @@ async def _is_already_billed(billed_key: str, correlation_id: str, span_id: str,
         return None
 
 
-async def _post_billing(wallet_exhausted: bool, quota_exhausted: bool, tenant_id, billing_unit_type: str):
-    if wallet_exhausted:
+async def _post_billing(
+    key_budget_exhausted: bool, quota_exhausted: bool, tenant_id, api_key_id: int, billing_unit_type: str
+):
+    """budget-exhausted is scoped to the ONE API Key that hit its own
+    ceiling — never the whole tenant. Each key's budget is tracked
+    independently (budget_usage.api_key_budget_snap/api_key_budget_used, per
+    key), so flagging every key under the tenant from a single key's own
+    usage would incorrectly block keys nowhere near their own ceiling.
+    quota-exhausted stays tenant-scoped: quota is a tier-wide entitlement,
+    not a per-key ₹ ceiling. api_key_id=0 (no key on this span — a JWT-
+    authenticated request, or the gateway not yet forwarding X-API-Key-ID)
+    means there is no key to flag; skip rather than notify about key "0"."""
+    if key_budget_exhausted and api_key_id:
         await _notify_auth(
-            f"/internal/ppu/tenant/{tenant_id}/budget-exhausted",
+            f"/internal/ppu/api-key/{api_key_id}/budget-exhausted",
             {"exhausted": True},
         )
 
@@ -332,7 +343,9 @@ async def handle_ppu_usage(msg: Message) -> None:
         "Billing applied | tenant=%s service=%s billed_units=%s cost=%s exhausted=%s",
         ctx.tenant_id, ctx.service_id, outcome.billed_units, outcome.cost, outcome.wallet_exhausted,
     )
-    await _post_billing(outcome.wallet_exhausted, outcome.quota_exhausted, ctx.tenant_id, outcome.pricing.task_type)
+    await _post_billing(
+        outcome.wallet_exhausted, outcome.quota_exhausted, ctx.tenant_id, ctx.api_key_id, outcome.pricing.task_type
+    )
 
 
 _NOTIFY_AUTH_MAX_ATTEMPTS = 3

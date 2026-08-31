@@ -70,15 +70,24 @@ async def write_budget_snapshot(
     Both design docs require this write-through ("the resulting ₹ ceiling
     has to be copied into budget_usage... seeded on create, updated on
     edit") — closed here once, reused by both halves of that requirement:
-    ``create_api_key`` (seed) and AllocationService (edit).
+    ``create_api_key`` (seed) and AllocationService (edit). No longer
+    inert: since migration a1b3c5d7e9f0/PR #1505, the Kafka billing
+    consumer's ``deduct_balance_and_update_quota`` reads this exact column
+    (``budget_exhausted = api_key_budget_used >= api_key_budget_snap``) to
+    gate real per-key billing — a stale or missing snapshot here directly
+    over- or under-enforces a key's ceiling in production, not just a
+    display value.
 
     ``api_key_budget_used`` defaults to 0 on insert (matches the column's
     own server_default) and is left alone on conflict — this call only ever
-    touches the snapshot ceiling, never the running usage total a different
-    writer owns. id is generated here, not left to the DB, since
+    touches the snapshot ceiling, never the running usage total the billing
+    consumer owns. id is generated here, not left to the DB, since
     ``budget_usage.id`` has no server-side default (Python-side
     ``default=uuid.uuid4`` only, on a model neither caller instantiates
-    directly).
+    directly). ``updated_at`` has no ON UPDATE trigger (server_default only
+    fires on INSERT), so the conflict branch sets it explicitly — otherwise
+    it would silently freeze at whatever the row's first INSERT recorded,
+    even though the snapshot itself keeps changing on every reallocation.
 
     Best-effort, like ``fetch_budget_usage``'s read side: a platform-core
     outage must not block the auth-service allocation write it mirrors —
@@ -96,7 +105,8 @@ async def write_budget_snapshot(
                     "INSERT INTO budget_usage (id, api_key_id, api_key_budget_snap, api_key_budget_used)"
                     "     VALUES (gen_random_uuid(), :api_key_id, :snap, 0)"
                     "ON CONFLICT (api_key_id)"
-                    "   DO UPDATE SET api_key_budget_snap = EXCLUDED.api_key_budget_snap"
+                    "   DO UPDATE SET api_key_budget_snap = EXCLUDED.api_key_budget_snap,"
+                    "                 updated_at = now()"
                 ),
                 {"api_key_id": api_key_id, "snap": snap},
             )

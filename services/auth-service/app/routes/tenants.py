@@ -241,7 +241,6 @@ async def revise_tenant_budget(
     body: TenantBudgetRequest,
     current_user: User = Depends(get_current_user),
     svc: TenantService = Depends(get_tenant_service),
-    platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
 ):
     """Top-up or top-down a tenant's budget by an amount, effective immediately. ADMIN-only.
 
@@ -250,12 +249,13 @@ async def revise_tenant_budget(
     no longer exists. Response is unwrapped (no success/data envelope),
     matching the endpoint it replaces. ``applications_recomputed`` /
     ``keys_recomputed`` are always null in this release — no recompute logic
-    exists yet. Best-effort syncs the legacy ppu_tenant_tier_assignments
-    wallet and cached budget-exhausted flags so the actual enforcement path
-    reflects this revision too (see TenantService._sync_ppu_wallet_and_exhaustion).
+    exists yet. No platform-core DB dependency any more — it used to
+    best-effort sync a legacy PPU wallet table that migration
+    a1b3c5d7e9f0 (PR #1505) dropped; see TenantService.revise_tenant_budget's
+    docstring for why there's no replacement sync to do in its place.
     """
     tenant = await svc.revise_tenant_budget(
-        current_user, tenant_id, body.action, body.amount, platform_core_db
+        current_user, tenant_id, body.action, body.amount
     )
     return TenantBudgetData(
         tenant_id=tenant.id,

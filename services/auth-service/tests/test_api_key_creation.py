@@ -6,14 +6,17 @@ green build otherwise).
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
 
+import pydantic
+
 from app.core.exceptions import ValidationError
 from app.models.application import Application, ApplicationStatus
 from app.models.tenant import Tenant, TenantStatus
+from app.schemas.api_key import CreateAPIKeyRequest
 from app.services.api_key_service import APIKeyService
 
 
@@ -234,3 +237,157 @@ class TestInferenceOnlyPermissionRestriction:
 
         assert api_key.permissions == [12]
         repo.create.assert_awaited_once()
+
+
+class TestBudgetParam:
+    """create_api_key's ``budget`` param (a raw ₹ ceiling, alternative to
+    allocated_percentage — added by PR #1505/AI4IDS-2923) must never be
+    persisted independently of the canonical allocated_percentage
+    representation, same rule allocation_validator.convert() enforces
+    everywhere else: a budget-only key was previously invisible to
+    sum_api_key_allocated_percentage (the ALLOCATION_TOTAL_EXCEEDED cap
+    check both this method and PUT /auth/allocations depend on), letting
+    an Application's committed budget silently exceed 100%."""
+
+    @pytest.mark.asyncio
+    async def test_budget_is_converted_to_allocated_percentage_and_budget(self) -> None:
+        application = _application(allocated_budget=Decimal("50000"))
+        tenant = _tenant()
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        applications.get_by_id_for_update = AsyncMock(return_value=application)
+        applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("0"))
+        tenants = AsyncMock()
+        tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+
+        with patch("app.services.api_key_service.budget_usage.write_budget_snapshot", AsyncMock()) as write_snap:
+            _raw_key, api_key = await svc.create_api_key(
+                actor_user_id=uuid4(),
+                key_name="test",
+                permissions=["nmt.inference"],
+                application_id=1,
+                budget=Decimal("15000"),
+                caller_tenant_id=1,
+            )
+
+        # 15000 / 50000 * 100 = 30% — same cap check as an allocated_percentage=30 call.
+        assert api_key.allocated_percentage == Decimal("30.00")
+        assert api_key.allocated_budget == Decimal("15000.00")
+        applications.sum_api_key_allocated_percentage.assert_awaited_once_with(1)
+        # Snapshotted value is the RE-DERIVED allocated_budget (round-tripped
+        # through the canonical percentage), not the raw request value —
+        # they happen to match here since 50000 divides evenly, but the code
+        # path taken is the shared one, not an independent pass-through.
+        write_snap.assert_awaited_once_with({api_key.id: Decimal("15000.00")}, None)
+
+    @pytest.mark.asyncio
+    async def test_budget_goes_through_the_same_total_exceeded_cap(self) -> None:
+        application = _application(allocated_budget=Decimal("50000"))
+        tenant = _tenant()
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        applications.get_by_id_for_update = AsyncMock(return_value=application)
+        # 80% already allocated to other keys; a 15000/50000=30% request must be rejected.
+        applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("80"))
+        tenants = AsyncMock()
+        tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+
+        with pytest.raises(ValidationError) as exc_info:
+            await svc.create_api_key(
+                actor_user_id=uuid4(),
+                key_name="test",
+                permissions=["nmt.inference"],
+                application_id=1,
+                budget=Decimal("15000"),
+                caller_tenant_id=1,
+            )
+
+        assert exc_info.value.code == "ALLOCATION_TOTAL_EXCEEDED"
+        repo.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_budget_without_application_budget_set_is_rejected(self) -> None:
+        application = _application(allocated_budget=None)
+        tenant = _tenant()
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        tenants = AsyncMock()
+        tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+
+        with pytest.raises(ValidationError) as exc_info:
+            await svc.create_api_key(
+                actor_user_id=uuid4(),
+                key_name="test",
+                permissions=["nmt.inference"],
+                application_id=1,
+                budget=Decimal("15000"),
+                caller_tenant_id=1,
+            )
+
+        assert exc_info.value.code == "APPLICATION_BUDGET_NOT_SET"
+        repo.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_percentage_and_budget_together_is_rejected(self) -> None:
+        """Service-level defence-in-depth — CreateAPIKeyRequest's own
+        model_validator rejects this first for real HTTP callers, but
+        create_api_key is also callable directly (tests, other code), so
+        the rule holds at this layer too."""
+        application = _application(allocated_budget=Decimal("50000"))
+        tenant = _tenant()
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        tenants = AsyncMock()
+        tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+
+        with pytest.raises(ValidationError) as exc_info:
+            await svc.create_api_key(
+                actor_user_id=uuid4(),
+                key_name="test",
+                permissions=["nmt.inference"],
+                application_id=1,
+                allocated_percentage=Decimal("30"),
+                budget=Decimal("15000"),
+                caller_tenant_id=1,
+            )
+
+        assert exc_info.value.code == "PERCENTAGE_AMOUNT_MISMATCH"
+        repo.create.assert_not_called()
+
+
+class TestCreateAPIKeyRequestSchema:
+    """The fast, pre-DB rejection for the same rule — real HTTP callers hit
+    this before create_api_key's own service-level guard is ever reached."""
+
+    def test_percentage_alone_is_valid(self) -> None:
+        CreateAPIKeyRequest(
+            key_name="k", permissions=["nmt.inference"], application_id=1,
+            allocated_percentage=Decimal("30"),
+        )
+
+    def test_budget_alone_is_valid(self) -> None:
+        CreateAPIKeyRequest(
+            key_name="k", permissions=["nmt.inference"], application_id=1,
+            budget=Decimal("15000"),
+        )
+
+    def test_neither_is_valid(self) -> None:
+        """Neither field is required — a key with no ceiling at all is a
+        valid request (unbounded, matches the existing allocated_percentage
+        Optional convention)."""
+        CreateAPIKeyRequest(key_name="k", permissions=["nmt.inference"], application_id=1)
+
+    def test_both_together_is_rejected(self) -> None:
+        with pytest.raises(pydantic.ValidationError):
+            CreateAPIKeyRequest(
+                key_name="k", permissions=["nmt.inference"], application_id=1,
+                allocated_percentage=Decimal("30"), budget=Decimal("15000"),
+            )
