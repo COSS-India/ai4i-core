@@ -11,7 +11,7 @@ Import order:
   - Alert tables next — AlertDefinition before AlertAnnotation (FK), then
     NotificationReceiver before RoutingRule (FK), then AlertHistory (no FKs).
   - PII tables last (no FKs into other domains).
-  - Pay-per-use tables last (Tier before TierQuota/TenantTierAssignment FK).
+  - Pay-per-use tables last (Tier before TierQuota FK).
 """
 
 from sqlalchemy.orm import declarative_base
@@ -39,9 +39,8 @@ from app.models.pii_management.domain_policy import DomainPolicy  # noqa: E402
 from app.models.pii_management.pattern import GeoLibrary, PatternLibrary  # noqa: E402
 from app.models.pii_management.tenant_map import TenantPiiDomainMap  # noqa: E402
 
-# Pay-per-use tables (Tier before TierQuota/TenantTierAssignment FK)
+# Pay-per-use tables (Tier before TierQuota FK)
 from app.models.pay_per_use.tier import Tier, TierQuota  # noqa: E402
-from app.models.pay_per_use.tenant_tier_assignment import TenantTierAssignment  # noqa: E402
 from app.models.pay_per_use.quota_usage import QuotaUsage  # noqa: E402
 from app.models.pay_per_use.budget_usage import BudgetUsage  # noqa: E402
 
@@ -65,7 +64,6 @@ __all__ = [
     # pay-per-use
     "Tier",
     "TierQuota",
-    "TenantTierAssignment",
     "QuotaUsage",
     "BudgetUsage",
 ]
