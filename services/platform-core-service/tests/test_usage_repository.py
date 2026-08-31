@@ -284,18 +284,38 @@ class TestGetTenantBudgets:
         assert result["2"].available_balance == Decimal("700.00")
 
     @pytest.mark.asyncio
-    async def test_auth_db_failure_degrades_to_empty_not_a_crash(self):
-        """Unlike application_usage_service's money-figure loads (fixed
-        separately to let failures propagate instead of swallowing them),
-        get_tenant_budgets keeps this method's own pre-existing graceful-
-        degrade contract: a tenant absent from the returned dict already
-        reads as budget_limit=0/available_balance=0/has_budget=False via
-        _resolve_budget — that's this method's original behavior, preserved
-        here, not a new decision introduced by this fix."""
+    async def test_auth_db_failure_propagates_instead_of_degrading_to_empty(self):
+        """Regression: a real auth_db failure (connection drop, aborted
+        transaction) must NOT be swallowed into `{}` — that made _resolve_budget
+        report has_budget=False for every tenant, so /usage-summary answered
+        200 OK with totalAllocatedBudget=0 during an actual outage, exactly the
+        false zero application_usage_service._load_tenant_budget already
+        refuses to produce (see its docstring). The caller-side route/global
+        exception handler is what turns this into a 500 — this repository
+        method's job is only to not hide it."""
         auth_db = MagicMock()
         auth_db.execute = AsyncMock(side_effect=RuntimeError("connection lost"))
         repo = UsageRepository(db=AsyncMock())
 
-        result = await repo.get_tenant_budgets("2026-08", ["2"], auth_db)
+        with pytest.raises(RuntimeError, match="connection lost"):
+            await repo.get_tenant_budgets("2026-08", ["2"], auth_db)
 
-        assert result == {}
+    @pytest.mark.asyncio
+    async def test_auth_db_failure_mid_sequence_also_propagates(self):
+        """The tenants query can succeed and the transaction still abort on the
+        very next statement (applications query) — a realistic partial-failure
+        shape, not just a first-call failure. Must propagate exactly the same
+        as a failure on the first query, not be masked by having already
+        fetched some rows."""
+        auth_db = self._auth_db(
+            [
+                self._rows(
+                    [SimpleNamespace(id=2, allocated_budget=Decimal("1000.00"), tier_id=None)]
+                ),  # tenants — succeeds
+                RuntimeError("transaction aborted"),  # applications — fails
+            ]
+        )
+        repo = UsageRepository(db=AsyncMock())
+
+        with pytest.raises(RuntimeError, match="transaction aborted"):
+            await repo.get_tenant_budgets("2026-08", ["2"], auth_db)

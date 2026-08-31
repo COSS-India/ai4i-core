@@ -1,5 +1,4 @@
 """PPU usage repository — reads usage and accrued cost data."""
-import logging
 import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -14,8 +13,6 @@ from app.models.pay_per_use.budget_usage import BudgetUsage
 from app.models.pay_per_use.quota_usage import QuotaUsage
 from app.models.pay_per_use.tier import Tier
 from app.utils.billing_month import shift_billing_month
-
-logger = logging.getLogger(__name__)
 
 
 def _end_of_month(billing_month: str) -> datetime:
@@ -165,53 +162,62 @@ class UsageRepository:
         reconstructable from data that was never captured.
 
         A tenant not found in auth-service's tenants table (unknown tenant_id,
-        or auth_db unavailable), OR found but with allocated_budget still NULL
-        (never had a budget configured — the column is nullable), is simply
-        absent from the returned dict, same as the old "no assignment row"
-        case — callers already treat that as budget_limit=0/available_balance=0/
-        has_budget=False via _resolve_budget. Coalescing a NULL allocated_budget
-        to 0 here instead would make has_budget=True for a tenant with no budget
-        on file, which is the "unknown vs. genuinely zero" mixup _resolve_budget's
-        own docstring says must not happen.
+        or the auth_db param itself not passed/None), OR found but with
+        allocated_budget still NULL (never had a budget configured — the column
+        is nullable), is simply absent from the returned dict, same as the old
+        "no assignment row" case — callers already treat that as
+        budget_limit=0/available_balance=0/has_budget=False via _resolve_budget.
+        Coalescing a NULL allocated_budget to 0 here instead would make
+        has_budget=True for a tenant with no budget on file, which is the
+        "unknown vs. genuinely zero" mixup _resolve_budget's own docstring says
+        must not happen.
+
+        A query against auth_db that raises (connection drop, aborted
+        transaction) is NOT one of those graceful-degrade cases and is left to
+        propagate — see application_usage_service._load_tenant_budget for the
+        same rule. Swallowing it here would turn a DB outage into a false
+        all-tenants-zero-budget response instead of the 500 it should be.
         """
         if not tenant_ids or not auth_db:
             return {}
         numeric_ids = [int(t) for t in tenant_ids if t and t.isdigit()]
         if not numeric_ids:
             return {}
-        try:
-            tenant_rows = (
-                await auth_db.execute(
-                    text("SELECT id, allocated_budget, tier_id FROM tenants WHERE id = ANY(:ids)"),
-                    {"ids": numeric_ids},
-                )
-            ).all()
-            if not tenant_rows:
-                return {}
-
-            app_rows = (
-                await auth_db.execute(
-                    text("SELECT id, tenant_id FROM applications WHERE tenant_id = ANY(:ids)"),
-                    {"ids": [row.id for row in tenant_rows]},
-                )
-            ).all()
-            app_to_tenant = {row.id: row.tenant_id for row in app_rows}
-
-            key_to_tenant: dict[int, int] = {}
-            if app_to_tenant:
-                key_rows = (
-                    await auth_db.execute(
-                        text("SELECT id, application_id FROM api_key WHERE application_id = ANY(:app_ids)"),
-                        {"app_ids": list(app_to_tenant)},
-                    )
-                ).all()
-                for row in key_rows:
-                    tenant_for_key = app_to_tenant.get(row.application_id)
-                    if tenant_for_key is not None:
-                        key_to_tenant[row.id] = tenant_for_key
-        except Exception as exc:
-            logger.warning("Auth DB lookup failed — tenant budgets unavailable: %s", exc)
+        # No try/except around this auth_db lookup: a query that raises here is a
+        # real failure (connection drop, aborted transaction), not "no budget on
+        # file" — swallowing it would silently turn a DB outage into a false
+        # all-tenants-zero-budget response (see application_usage_service's
+        # _load_tenant_budget for the same rule already applied there). Let it
+        # propagate; the global exception handler turns it into a proper 500.
+        tenant_rows = (
+            await auth_db.execute(
+                text("SELECT id, allocated_budget, tier_id FROM tenants WHERE id = ANY(:ids)"),
+                {"ids": numeric_ids},
+            )
+        ).all()
+        if not tenant_rows:
             return {}
+
+        app_rows = (
+            await auth_db.execute(
+                text("SELECT id, tenant_id FROM applications WHERE tenant_id = ANY(:ids)"),
+                {"ids": [row.id for row in tenant_rows]},
+            )
+        ).all()
+        app_to_tenant = {row.id: row.tenant_id for row in app_rows}
+
+        key_to_tenant: dict[int, int] = {}
+        if app_to_tenant:
+            key_rows = (
+                await auth_db.execute(
+                    text("SELECT id, application_id FROM api_key WHERE application_id = ANY(:app_ids)"),
+                    {"app_ids": list(app_to_tenant)},
+                )
+            ).all()
+            for row in key_rows:
+                tenant_for_key = app_to_tenant.get(row.application_id)
+                if tenant_for_key is not None:
+                    key_to_tenant[row.id] = tenant_for_key
 
         spent_by_tenant: dict[int, Decimal] = {}
         if key_to_tenant:
