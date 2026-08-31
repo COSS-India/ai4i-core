@@ -394,6 +394,34 @@ class TestReviseTenantBudget:
         svc._api_keys.set_budget_exhausted_for_tenant.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_budget_usage_query_failure_does_not_clear_exhausted_flag(self) -> None:
+        """Regression: unlike list_key_ids_for_tenant failing (covered by
+        test_budget_usage_fetch_failure_degrades_without_raising), this is
+        fetch_budget_usage's OWN query failing after key_ids was fetched
+        fine. fetch_budget_usage used to swallow that and return {}, which
+        is indistinguishable from "these keys genuinely have zero spend" —
+        so a platform-core hiccup mid-sync computed total_spent=0,
+        exhausted=False, and overwrote an over-budget tenant's
+        budget-exhausted=1 flag with 0. The fix makes fetch_budget_usage
+        raise here (raise_on_error=True) so this method's existing
+        best-effort except catches it and skips the write instead, matching
+        test_budget_usage_fetch_failure_degrades_without_raising's contract."""
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant(allocated_budget=Decimal("1000"))
+        )
+        svc._tenants.update = AsyncMock()
+        svc._tenants.save_and_refresh = AsyncMock()
+        svc._api_keys.list_key_ids_for_tenant = AsyncMock(return_value=[10, 11])
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=RuntimeError("platform-core unreachable"))
+
+        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("0"), db)
+
+        assert svc._tenants.update.await_args.args[1]["allocated_budget"] == Decimal("1000")
+        svc._api_keys.set_budget_exhausted_for_tenant.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_api_keys_service_missing_skips_sync_without_error(self) -> None:
         """A deployment without api_key_service wired up must still let the
         budget revision itself succeed."""

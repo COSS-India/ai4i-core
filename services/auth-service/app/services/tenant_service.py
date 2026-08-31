@@ -969,7 +969,7 @@ class TenantService:
             return
         try:
             key_ids = await self._api_keys.list_key_ids_for_tenant(tenant_id)
-            usage = await fetch_budget_usage(key_ids, platform_core_db)
+            usage = await fetch_budget_usage(key_ids, platform_core_db, raise_on_error=True)
             total_spent = sum((used for used, _snap in usage.values()), Decimal("0"))
             exhausted = (allocated_budget - total_spent) <= 0
         except Exception:
