@@ -589,17 +589,20 @@ class APIKeyService:
                 code="PERCENTAGE_AMOUNT_MISMATCH",
             )
         if budget is not None:
-            # A raw ₹ ceiling is never persisted as given — converted to the
-            # canonical allocated_percentage representation immediately, same
-            # rule allocation_validator.convert() already enforces everywhere
-            # else in this system ("server always computes the other from
-            # it... nothing from a request body is ever trusted for both").
-            # Once converted, this key is indistinguishable from one created
-            # with allocated_percentage directly: it goes through the same
-            # ALLOCATION_TOTAL_EXCEEDED cap check below and the same
-            # allocated_budget re-derivation, so auth-service's own columns
-            # and the budget_usage snapshot can never disagree with each
-            # other the way an independently-persisted raw budget could.
+            # allocated_percentage is derived from the raw ₹ ceiling here
+            # purely to run the same ALLOCATION_TOTAL_EXCEEDED cap check
+            # every allocated_percentage-created key goes through — it is
+            # NOT the value persisted as this key's allocated_budget (see
+            # below, which keeps the exact requested amount instead). The
+            # two columns can therefore disagree by up to
+            # application.allocated_budget / 20000, and the FIRST reallocation
+            # that cascades into this key (PUT /auth/allocations re-fitting
+            # every Key under the Application, even one it didn't explicitly
+            # list) re-derives allocated_budget from this rounded percentage,
+            # silently moving the ceiling away from what was originally
+            # requested at create time. There's no "pinned exact amount"
+            # concept in this system — allocated_percentage is the only
+            # value a reallocation ever treats as authoritative.
             if not application.allocated_budget:
                 raise ValidationError(
                     message="This Application has no Budget allocation yet — it must be given "
@@ -638,11 +641,11 @@ class APIKeyService:
             # Keep exactly what was requested (rounded to cents only) — NOT
             # re-derived from the rounded allocated_percentage above, which
             # would be off by up to application.allocated_budget / 20000
-            # whenever `budget` isn't an exact 0.01% multiple of it.
-            # allocation_validator.convert() (cited above) does the same
-            # thing on the same shape of input: given an amount, it keeps
-            # the amount and derives only the percentage from it, never
-            # the reverse.
+            # whenever `budget` isn't an exact 0.01% multiple of it. This is
+            # a create-time-only guarantee, not a standing invariant — see
+            # the warning above the percentage conversion: any later
+            # reallocation cascade re-derives allocated_budget from
+            # allocated_percentage and moves it away from this exact value.
             allocated_budget = budget.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         elif allocated_percentage is not None and application.allocated_budget is not None:
             allocated_budget = (application.allocated_budget * allocated_percentage) / Decimal("100")

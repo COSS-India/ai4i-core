@@ -44,12 +44,16 @@ class CreateAPIKeyRequest(BaseSchema):
         max_digits=15,
         decimal_places=2,
         description=(
-            "₹ ceiling for this key, as an alternative to allocated_percentage — the server "
-            "converts it to the equivalent allocated_percentage of the Application's own "
-            "Budget immediately (same 'never trust a raw amount independently of the "
-            "canonical percentage' rule as PUT /auth/allocations), so it goes through the "
-            "same ALLOCATION_TOTAL_EXCEEDED cap check and ends up stored the same way. "
-            "Give at most one of allocated_percentage / budget."
+            "₹ ceiling for this key, as an alternative to allocated_percentage. The server "
+            "derives an equivalent allocated_percentage of the Application's own Budget "
+            "immediately to run the same ALLOCATION_TOTAL_EXCEEDED cap check every "
+            "allocated_percentage-created key goes through, but stores this exact requested "
+            "amount as allocated_budget — the two can therefore round differently by a "
+            "fraction of a percent. This exact amount is a create-time snapshot only: the "
+            "first later reallocation that cascades into this key (PUT /auth/allocations) "
+            "re-derives allocated_budget from allocated_percentage instead, which can move "
+            "the ceiling slightly away from what was originally requested here. Give at "
+            "most one of allocated_percentage / budget."
         ),
     )
 
@@ -92,7 +96,15 @@ class CreateAPIKeyData(BaseSchema):
     application_id: int
     allocated_percentage: Optional[Decimal] = None
     allocated_budget: Optional[Decimal] = Field(
-        None, description="Derived: application.allocated_budget * allocated_percentage / 100."
+        None,
+        description=(
+            "The requested ₹ ceiling verbatim (rounded to cents) when this key was "
+            "created via `budget`; otherwise derived as application.allocated_budget * "
+            "allocated_percentage / 100. Not a standing invariant either way — the next "
+            "reallocation that cascades into this key re-derives it from "
+            "allocated_percentage, which can move it away from an originally-exact "
+            "`budget` value."
+        ),
     )
 
 
