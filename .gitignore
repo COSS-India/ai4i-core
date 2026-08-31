@@ -192,6 +192,3 @@ docs/AI4IDS-1844-ENDPOINT-VALIDATION-ANALYSIS.md
 scripts/llm-load-test-100-110-tokens-results.csv
 scripts/llm-load-test-500-plus-tokens-results.csv
 scripts/llm-load-test-results.csv
-allocation-reallocation-flow-design.md
-allocation-reallocation-flow.md
-flexible-allocation-logic-design.md
