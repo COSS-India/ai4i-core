@@ -32,6 +32,48 @@ describe('Usage Dashboard v2.0 (AI4IDS-2908)', () => {
   });
 });
 
+});
+
+describe('Key Metrics copy (AI4IDS-2870)', () => {
+  const { INSTITUTION_CARDS, MODEL_CARDS } = METERING.SECTIONS.KEY_METRICS;
+
+  it('uses screenshot helper copy for institution and model KPIs', () => {
+    expect(INSTITUTION_CARDS.find((c) => c.key === 'total_tenants')?.helper).toBe(
+      'registered on platform',
+    );
+    expect(INSTITUTION_CARDS.find((c) => c.key === 'active_30d')?.helper).toBe('in last 30 days');
+    expect(INSTITUTION_CARDS.find((c) => c.key === 'new_tenants_15d')?.helper).toBe(
+      'in last 15 days',
+    );
+    expect(MODEL_CARDS.find((c) => c.key === 'total_models')?.helper).toBe('on platform');
+    expect(MODEL_CARDS.find((c) => c.key === 'active_models_30d')?.helper).toBe('in last 30 days');
+    expect(MODEL_CARDS.find((c) => c.key === 'model_usage_growth_pct')?.helper).toBe(
+      'vs last month',
+    );
+  });
+
+  it('uses screenshot labels for institution and model KPIs', () => {
+    expect(INSTITUTION_CARDS.find((c) => c.key === 'active_30d')?.label).toBe(
+      'Active institutions',
+    );
+    expect(INSTITUTION_CARDS.find((c) => c.key === 'tenants_budget_exhausted')?.label).toBe(
+      'Budget exhausted',
+    );
+    expect(MODEL_CARDS.find((c) => c.key === 'model_usage_growth_pct')?.label).toBe(
+      'Model usage growth',
+    );
+  });
+
+  it('matches ticket tooltip copy for institution KPIs', () => {
+    expect(INSTITUTION_CARDS.find((c) => c.key === 'active_30d')?.tooltip).toContain(
+      'AI Model request',
+    );
+    expect(INSTITUTION_CARDS.find((c) => c.key === 'tenants_budget_exhausted')?.tooltip).toContain(
+      'consumed 100%',
+    );
+  });
+});
+
 describe('Model Consumption tooltips (AI4IDS-2854, AI4IDS-2957)', () => {
   const { TOTAL_MODELS, ACTIVE_MODELS, TOKEN_CONSUMPTION } = METERING.SECTIONS.MODEL.TOOLTIPS;
 

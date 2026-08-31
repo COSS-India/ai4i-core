@@ -137,6 +137,15 @@ export interface TopModelRow {
   formatted_requests: string;
 }
 
+/** Task-type rollup from GET /metering/model-consumption (`usage_by_task_type`). */
+export interface TaskTypeUsageRow {
+  rank: number;
+  task_type: string;
+  consumption_pct: number;
+  requests: number;
+  formatted_requests: string;
+}
+
 export type ModelTopN = 5 | 10;
 
 export interface ModelConsumptionSummary {
@@ -160,5 +169,7 @@ export interface ModelConsumptionResponse extends MeteringResponseMeta {
   top_models?: TopModelRow[];
   /** Denominator for `top_models[].consumption_pct` (resolved-model traffic only). */
   top_models_total_requests?: number;
+  /** Request share by model task type — powers the Model consumption donut (AI4IDS-2979). */
+  usage_by_task_type?: TaskTypeUsageRow[];
   breakdown: ModelConsumptionRow[];
 }

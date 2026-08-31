@@ -124,6 +124,14 @@ export const topModelRowSchema = z.object({
   formatted_requests: z.string(),
 });
 
+export const taskTypeUsageRowSchema = z.object({
+  rank: z.number(),
+  task_type: z.string(),
+  consumption_pct: z.number(),
+  requests: z.number(),
+  formatted_requests: z.string(),
+});
+
 export const modelConsumptionSummarySchema = z.object({
   total_models: z.number().nullable().optional(),
   active_models: z.number().nullable().optional(),
@@ -143,6 +151,7 @@ export const modelConsumptionResponseSchema = z.object({
   summary: modelConsumptionSummarySchema.nullable().optional(),
   top_models: z.array(topModelRowSchema).optional().default([]),
   top_models_total_requests: z.number().optional().default(0),
+  usage_by_task_type: z.array(taskTypeUsageRowSchema).optional().default([]),
   breakdown: z.array(modelConsumptionRowSchema),
   ...meteringResponseMetaSchema,
 });

@@ -13,6 +13,7 @@ export interface RankedShareRow {
   subtitle?: string;
   formattedValue: string;
   percentage: number;
+  color?: string;
 }
 
 interface RankedShareListProps {
@@ -23,6 +24,7 @@ interface RankedShareListProps {
   headerRight?: string;
   tipTotal?: string;
   tipRight?: string;
+  formatLabel?: (label: string) => React.ReactNode;
 }
 
 const RankedShareList: React.FC<RankedShareListProps> = ({
@@ -33,6 +35,7 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
   headerRight = METERING.SECTIONS.RANKED_SHARE.HEADER_RIGHT,
   tipTotal = METERING.SECTIONS.RANKED_SHARE.TOOLTIPS.TOTAL_REQUESTS,
   tipRight = METERING.SECTIONS.RANKED_SHARE.TOOLTIPS.PCT_OF_TOTAL,
+  formatLabel,
 }) => (
   <VStack align="stretch" spacing={4} flex="1.5" w="full">
     <HStack justify="space-between" fontSize="xs" color="gray.500" px={1}>
@@ -58,7 +61,7 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
       </HStack>
     </HStack>
     {rows.map((row, i) => {
-      const color = meteringColorAt(i);
+      const color = row.color ?? meteringColorAt(i);
       return (
         <Box key={row.rank}>
           <HStack justify="space-between" mb={1.5} spacing={3}>
@@ -68,9 +71,13 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
               </Text>
               <Box w={2} h={2} borderRadius="full" bg={color} flexShrink={0} />
               <VStack align="flex-start" spacing={0} minW={0} flex="1">
-                <MeteringTableText flex={1} minW={0} maxW="unset">
-                  {row.label}
-                </MeteringTableText>
+                {formatLabel ? (
+                  formatLabel(row.label)
+                ) : (
+                  <MeteringTableText flex={1} minW={0} maxW="unset">
+                    {row.label}
+                  </MeteringTableText>
+                )}
                 {row.subtitle ? (
                   <Text fontSize="xs" color="gray.500" noOfLines={1}>
                     {row.subtitle}

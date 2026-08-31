@@ -4,6 +4,7 @@ import type {
   MeteringWindow,
   ModelConsumptionRow,
   ModelConsumptionSummary,
+  TaskTypeUsageRow,
   TopModelRow,
 } from "../types/metering";
 import { formatModelTaskTypeLabel } from "../config/constants";
@@ -269,7 +270,7 @@ export function buildTopModelsChart(topModels: TopModelRow[]): {
   return { slices, totalRequests };
 }
 
-/** Donut + legend data aggregated by model task type (AI4IDS-2980). */
+/** Donut + legend data aggregated by model task type from breakdown rows (AI4IDS-2980). */
 export function buildTaskTypeConsumptionChart(
   breakdown: Array<{ task_type?: string | null; requests: number }>,
 ): {
@@ -293,6 +294,21 @@ export function buildTaskTypeConsumptionChart(
     pct: totalRequests > 0 ? (value / totalRequests) * 100 : 0,
   }));
 
+  return { slices, totalRequests };
+}
+
+/** Donut + legend data for task-type usage rollup (`usage_by_task_type`, AI4IDS-2979). */
+export function buildTaskTypeUsageChart(rows: TaskTypeUsageRow[]): {
+  slices: ServiceChartSlice[];
+  totalRequests: number;
+} {
+  const totalRequests = rows.reduce((sum, row) => sum + row.requests, 0);
+  const slices = rows.map((row, i) => ({
+    name: formatModelTaskTypeLabel(row.task_type),
+    value: row.requests,
+    color: taskTypeColor(row.task_type, i),
+    pct: row.consumption_pct,
+  }));
   return { slices, totalRequests };
 }
 
