@@ -60,6 +60,33 @@ def is_truly_exhausted(used, snap) -> bool:
     return snap is not None and used is not None and used >= snap
 
 
+class UsageLookupFailedError(RuntimeError):
+    """Raised when the budget_usage lookup can't be trusted."""
+
+
+def check_usage_lookup_succeeded(flagged_ids: list, usage_by_key: dict) -> None:
+    """fetch_budget_usage is deliberately best-effort: it returns {} on ANY
+    platform-core failure, and get_platform_core_db yields None outright
+    when PLATFORM_CORE_DB_NAME is unset in the environment this script
+    runs from — both are silent from this script's point of view. If they
+    happened, every flagged key would classify as (None, None) -> "not
+    exhausted" -> cleared, wiping real exhaustion flags on an outage, with
+    a dry run that reads identically to a legitimate "nothing is
+    exhausted" result.
+
+    A genuinely still-exhausted key always has a budget_usage row (it can
+    only have gotten flagged by actually being billed against its own
+    ceiling), so an entirely empty result for a non-empty flagged_ids is
+    never legitimate — abort rather than guess which case this is."""
+    if flagged_ids and not usage_by_key:
+        raise UsageLookupFailedError(
+            "budget_usage lookup returned nothing for %d flagged key(s) — platform-core may "
+            "be unreachable, or PLATFORM_CORE_DB_NAME may be unset in this environment. "
+            "Refusing to treat that as 'nothing is exhausted': aborting without writing "
+            "anything. Re-run once platform-core is confirmed reachable from here." % len(flagged_ids)
+        )
+
+
 async def _run(*, apply: bool) -> None:
     await init_database(
         db_url=settings.get_database_url(),
@@ -90,6 +117,7 @@ async def _run(*, apply: bool) -> None:
                     return
 
                 usage_by_key = await budget_usage.fetch_budget_usage(list(flagged_ids), platform_core_db)
+                check_usage_lookup_succeeded(list(flagged_ids), usage_by_key)
 
                 to_clear: list[int] = []
                 still_exhausted: list[int] = []
@@ -120,7 +148,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Actually write changes (default: dry run).")
     args = parser.parse_args()
-    asyncio.run(_run(apply=args.apply))
+    try:
+        asyncio.run(_run(apply=args.apply))
+    except UsageLookupFailedError as exc:
+        logger.error(str(exc))
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":
