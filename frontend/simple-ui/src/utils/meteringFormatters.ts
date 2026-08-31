@@ -269,7 +269,7 @@ export function buildTopModelsChart(topModels: TopModelRow[]): {
   return { slices, totalRequests };
 }
 
-/** Donut + legend data aggregated by model task type (AI4IDS-2980). */
+/** Donut + legend data aggregated by model task type from breakdown rows (AI4IDS-2980). */
 export function buildTaskTypeConsumptionChart(
   breakdown: Array<{ task_type?: string | null; requests: number }>,
 ): {

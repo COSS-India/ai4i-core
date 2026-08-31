@@ -230,6 +230,7 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
                       label: slice.name,
                       formattedValue: formatCompactNumber(slice.value, "indian"),
                       percentage: slice.pct,
+                      color: slice.color,
                     }))}
                     headerLeft={section.TABLE_TASK_TYPE}
                     headerTotal={METERING.SECTIONS.RANKED_SHARE.HEADER_TOTAL_REQUESTS}

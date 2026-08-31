@@ -13,6 +13,7 @@ export interface RankedShareRow {
   subtitle?: string;
   formattedValue: string;
   percentage: number;
+  color?: string;
 }
 
 interface RankedShareListProps {
@@ -58,7 +59,7 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
       </HStack>
     </HStack>
     {rows.map((row, i) => {
-      const color = meteringColorAt(i);
+      const color = row.color ?? meteringColorAt(i);
       return (
         <Box key={row.rank}>
           <HStack justify="space-between" mb={1.5} spacing={3}>
