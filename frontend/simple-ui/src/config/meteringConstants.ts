@@ -42,7 +42,6 @@ export const METERING = {
   },
   SUB_TAB: {
     OVERVIEW: "overview",
-    TENANT: "tenant",
     MODEL: "model",
     USAGE_SPEND: "usage-spend",
   } as const,
@@ -102,16 +101,14 @@ export const METERING = {
   ] as const,
   MODEL_TOP_N_DEFAULT: 10 as const,
   SUB_TABS: [
-    { id: "overview", label: "Overview" },
-    { id: "tenant", label: `${INSTITUTION} Consumption` },
-    // Extra tab — per-service LLM via /model-consumption
-    { id: "model", label: "Model Usage" },
-    { id: "usage-spend", label: "Budget and usage" },
+    { id: "overview", label: INSTITUTION },
+    { id: "model", label: "Model" },
+    { id: "usage-spend", label: "Budget" },
   ] as const,
   TENANT_SUB_TABS: [
-    { id: "overview", label: "Overview" },
-    { id: "model", label: "Model Usage" },
-    { id: "usage-spend", label: "Budget and usage" },
+    { id: "overview", label: INSTITUTION },
+    { id: "model", label: "Model" },
+    { id: "usage-spend", label: "Budget" },
   ] as const,
   ROLE_VIEWS: {
     adopter: "Adopter Admin",
@@ -224,9 +221,7 @@ export const METERING = {
   SECTIONS: {
     CONSUMPTION_OVERVIEW: {
       TITLE: "Usage concentration",
-      SUBTITLE:
-        "Top 5 Institutions by request volume · reflects selected time window",
-      DONUT_PRIMARY: "Top 5",
+      SUBTITLE: `${INSTITUTIONS} by request volume · reflects selected time window`,
       DONUT_SECONDARY: INSTITUTIONS.toLowerCase(),
     },
     KEY_METRICS: {

@@ -1,5 +1,23 @@
 import { METERING } from '../../src/config/meteringConstants';
 
+describe('Usage Dashboard v2.0 (AI4IDS-2908)', () => {
+  it('exposes three adopter tabs with renamed labels', () => {
+    expect(METERING.SUB_TABS).toHaveLength(3);
+    expect(METERING.SUB_TABS.map((t) => t.label)).toEqual(['Institution', 'Model', 'Budget']);
+    expect(METERING.SUB_TABS.map((t) => t.id)).toEqual(['overview', 'model', 'usage-spend']);
+  });
+
+  it('defaults usage concentration to Top 10', () => {
+    expect(METERING.DEFAULTS.TOP_N).toBe(10);
+    expect(METERING.TOP_N_OPTIONS).toEqual([10, 25]);
+  });
+
+  it('does not reference Top 5 in usage concentration copy', () => {
+    const { SUBTITLE } = METERING.SECTIONS.CONSUMPTION_OVERVIEW;
+    expect(SUBTITLE.toLowerCase()).not.toContain('top 5');
+  });
+});
+
 describe('Model Consumption tooltips (AI4IDS-2854)', () => {
   const { TOTAL_MODELS, ACTIVE_MODELS } = METERING.SECTIONS.MODEL.TOOLTIPS;
 

@@ -79,8 +79,11 @@ export async function fetchMeteringOverview(
   ctx: MeteringContext,
   tenantId?: string | null,
   taskTypes?: string[] | null,
+  limit: MeteringTopN = METERING.DEFAULTS.TOP_N,
 ): Promise<OverviewResponse> {
-  const params = buildMeteringParams(timeWindow, ctx, tenantId);
+  const params = buildMeteringParams(timeWindow, ctx, tenantId, {
+    limit: String(limit),
+  });
   appendTaskTypesParam(params, taskTypes);
   const { data } = await apiService.get<OverviewResponse>(
     withQuery(apiEndpoints.metering.overview, params),

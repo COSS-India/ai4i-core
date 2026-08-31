@@ -13,7 +13,6 @@ import type {
 import {
   fetchMeteringModelConsumption,
   fetchMeteringOverview,
-  fetchMeteringTenantConsumption,
   parseMeteringError,
   type MeteringContext,
 } from "../services/meteringService";
@@ -137,6 +136,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     queryKey: meteringQueryKey(
       METERING.QUERY.SCOPES.OVERVIEW,
       timeWindow,
+      topN,
       queryTenantId,
       roleViewConfig.defaultView,
       isAdopterView,
@@ -144,35 +144,12 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       refreshNonce,
     ),
     queryFn: () =>
-      fetchMeteringOverview(timeWindow, ctx, queryTenantId, enabledServices),
+      fetchMeteringOverview(timeWindow, ctx, queryTenantId, enabledServices, topN),
     enabled: enabledServicesReady && (isAdopterView || tenantOverviewEnabled),
     ...meteringQueryDefaults,
   });
 
   const overview = overviewQuery.data;
-
-  const tenantQuery = useQuery({
-    queryKey: meteringQueryKey(
-      METERING.QUERY.SCOPES.TENANT,
-      timeWindow,
-      topN,
-      enabledServicesKey,
-      queryTenantId,
-      refreshNonce,
-    ),
-    queryFn: () =>
-      fetchMeteringTenantConsumption(
-        timeWindow,
-        topN,
-        enabledServices,
-        queryTenantId,
-      ),
-    enabled:
-      enabledServicesReady &&
-      isAdopterView &&
-      subTab === METERING.SUB_TAB.TENANT,
-    ...meteringQueryDefaults,
-  });
 
   const modelQueryEnabled =
     subTab === METERING.SUB_TAB.MODEL &&
@@ -243,14 +220,11 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
   ]);
 
   const primaryMeteringResponse = useMemo((): MeteringResponseMeta | null => {
-    if (isAdopterView && subTab === METERING.SUB_TAB.TENANT && tenantQuery.data) {
-      return tenantQuery.data;
-    }
     if (subTab === METERING.SUB_TAB.MODEL && modelQuery.data) {
       return modelQuery.data;
     }
     return overview ?? null;
-  }, [isAdopterView, subTab, tenantQuery.data, modelQuery.data, overview]);
+  }, [subTab, modelQuery.data, overview]);
 
   const dataStateBanner = useMemo(() => {
     if (subTab === METERING.SUB_TAB.USAGE_SPEND) return null;
@@ -265,7 +239,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     const err =
       overviewQuery.error ||
       modelQuery.error ||
-      tenantQuery.error ||
       (isAdopterView && keyMetricsModelQuery.error) ||
       (isAdopterView && keyMetricsBudgetQuery.error);
     return err ? parseMeteringError(err) : null;
@@ -274,7 +247,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     isAdopterView,
     overviewQuery.error,
     modelQuery.error,
-    tenantQuery.error,
     keyMetricsModelQuery.error,
     keyMetricsBudgetQuery.error,
   ]);
@@ -291,7 +263,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
 
   const isRefreshing =
     overviewQuery.isFetching ||
-    (isAdopterView && subTab === METERING.SUB_TAB.TENANT && tenantQuery.isFetching) ||
     (modelQueryEnabled && modelQuery.isFetching) ||
     (isAdopterView && keyMetricsModelQuery.isFetching) ||
     (isAdopterView && keyMetricsBudgetQuery.isFetching);
@@ -299,9 +270,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
   const handleRefresh = () => {
     setRefreshNonce((n) => n + 1);
     overviewQuery.refetch();
-    if (isAdopterView && subTab === METERING.SUB_TAB.TENANT) {
-      tenantQuery.refetch();
-    }
     if (modelQueryEnabled) {
       modelQuery.refetch();
     }
@@ -317,17 +285,12 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     () =>
       resolveMeteringGeneratedAt([
         (isAdopterView || tenantOverviewEnabled) ? overview?.generated_at : null,
-        isAdopterView && subTab === METERING.SUB_TAB.TENANT
-          ? tenantQuery.data?.generated_at
-          : null,
         modelQueryEnabled ? modelQuery.data?.generated_at : null,
       ]),
     [
       isAdopterView,
       tenantOverviewEnabled,
       overview?.generated_at,
-      subTab,
-      tenantQuery.data?.generated_at,
       modelQueryEnabled,
       modelQuery.data?.generated_at,
     ],
@@ -351,7 +314,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     previewTenants,
     tenantOrganisationById,
     overview,
-    tenantQuery,
     modelQuery,
     isLoading,
     isRefreshing,

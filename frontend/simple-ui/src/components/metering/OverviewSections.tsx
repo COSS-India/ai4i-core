@@ -1,7 +1,7 @@
 import { SimpleGrid, VStack } from "@chakra-ui/react";
 import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
-import type { KeyMetricsSupplement, OverviewResponse } from "../../types/metering";
+import type { KeyMetricsSupplement, MeteringTopN, OverviewResponse } from "../../types/metering";
 import {
   formatMeteringKpiValue,
   formatTenantLabel,
@@ -10,6 +10,7 @@ import { meteringColorAt } from "../../utils/meteringColors";
 import MeteringDonutChart, { DonutRankedLayout } from "./MeteringDonutChart";
 import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
 import RankedShareList from "./RankedShareList";
+import SegmentedTabBar from "./SegmentedTabBar";
 
 interface OverviewKpiCardsProps {
   data: OverviewResponse;
@@ -55,15 +56,23 @@ export const OverviewKpiCards: React.FC<OverviewKpiCardsProps> = ({
 interface ConsumptionOverviewSectionProps {
   data: OverviewResponse;
   tenantOrganisationById?: Record<string, string>;
+  topN: MeteringTopN;
+  onTopNChange: (n: MeteringTopN) => void;
+  /** True when the All Institutions filter is narrowed to one institution. */
+  isScopedTenant?: boolean;
 }
 
 /** Usage concentration — donut + top-institution list. */
 export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProps> = ({
   data,
   tenantOrganisationById = {},
+  topN,
+  onTopNChange,
+  isScopedTenant = false,
 }) => {
   const conc = data.usage_concentration;
   const section = METERING.SECTIONS.CONSUMPTION_OVERVIEW;
+  const donutPrimary = `${METERING.CONTROLS.TOP_N_PREFIX} ${topN}`;
 
   const pieData = useMemo(
     () =>
@@ -82,6 +91,15 @@ export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProp
       title={section.TITLE}
       subtitle={section.SUBTITLE}
       sectionLabel
+      action={
+        isScopedTenant ? undefined : (
+          <SegmentedTabBar
+            options={[...METERING.TOP_N_SEGMENT_OPTIONS]}
+            activeId={String(topN)}
+            onChange={(id) => onTopNChange(Number(id) as MeteringTopN)}
+          />
+        )
+      }
     >
       <DonutRankedLayout
         chart={
@@ -91,7 +109,7 @@ export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProp
             innerRadius={65}
             outerRadius={100}
             showTooltip
-            centerPrimary={section.DONUT_PRIMARY}
+            centerPrimary={donutPrimary}
             centerSecondary={section.DONUT_SECONDARY}
           />
         }
