@@ -103,33 +103,6 @@ export const overviewResponseSchema = z.object({
   ...meteringResponseMetaSchema,
 });
 
-export const serviceEntrySchema = z.object({
-  display_name: z.string(),
-  requests: z.number(),
-  formatted_requests: z.string(),
-  percentage: z.number().optional().default(0),
-});
-
-export const tenantServiceRowSchema = z.object({
-  rank: z.number(),
-  tenant: z.string(),
-  organisation: z.string().nullable().optional(),
-  services: z.record(z.string(), serviceEntrySchema),
-  total: z.number(),
-  formatted_total: z.string(),
-  percentage: z.number().optional().default(0),
-});
-
-export const tenantConsumptionResponseSchema = z.object({
-  scope: meteringScopeSchema,
-  avg_requests_per_tenant: meteringCellSchema.nullable().optional(),
-  tenant_ranking: z.array(tenantRowSchema),
-  usage_by_service: z.array(tenantServiceRowSchema),
-  throughput: throughputDataSchema.optional(),
-  request_volume: meteringGraphSchema.nullable().optional(),
-  ...meteringResponseMetaSchema,
-});
-
 export const modelConsumptionRowSchema = z.object({
   service_id: z.string(),
   name: z.string(),
