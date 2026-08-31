@@ -137,6 +137,11 @@ _db_stub.get_primary_session_factory = MagicMock()
 _db_stub.get_auth_session_factory = MagicMock(return_value=None)
 _db_stub.get_db = MagicMock()
 _db_stub.get_engine = MagicMock()
+# get_auth_db/get_auth_db_optional: imported by app/routes/usage.py and
+# app/routes/application_usage.py — needed so those route modules can be
+# loaded directly by file path (see test_application_usage_routes.py).
+_db_stub.get_auth_db = MagicMock()
+_db_stub.get_auth_db_optional = MagicMock()
 
 # Stub app.dependencies.services so route modules (app/routes/model.py,
 # app/routes/service.py, ...) can be loaded directly by file path without
