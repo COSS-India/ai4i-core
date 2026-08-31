@@ -246,15 +246,13 @@ export function summaryFromDetail(detail: TenantUsageDetail): UsageSummaryRespon
 }
 
 export function resolveSpendChangePercent(params: {
-  periodKey: BillingPeriodKey;
   isScoped: boolean;
   apiValue?: number;
   currentTotal?: number;
   prevTotal?: number;
   prevReady: boolean;
 }): number | null {
-  const { periodKey, isScoped, apiValue, currentTotal, prevTotal, prevReady } = params;
-  if (periodKey !== "current") return null;
+  const { isScoped, apiValue, currentTotal, prevTotal, prevReady } = params;
   if (typeof apiValue === "number" && Number.isFinite(apiValue)) return apiValue;
   if (isScoped || !prevReady || currentTotal == null) return null;
   if (prevTotal == null || prevTotal <= 0) return currentTotal > 0 ? 100 : 0;

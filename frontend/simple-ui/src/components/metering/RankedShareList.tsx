@@ -9,6 +9,8 @@ import MeteringTableText from "./MeteringTableText";
 export interface RankedShareRow {
   rank: number;
   label: string;
+  /** Model task type shown beside the model name (Model Usage donut list). */
+  subtitle?: string;
   formattedValue: string;
   percentage: number;
 }
@@ -16,6 +18,7 @@ export interface RankedShareRow {
 interface RankedShareListProps {
   rows: RankedShareRow[];
   headerLeft?: string;
+  headerTaskType?: string;
   headerTotal?: string;
   headerRight?: string;
   tipTotal?: string;
@@ -25,6 +28,7 @@ interface RankedShareListProps {
 const RankedShareList: React.FC<RankedShareListProps> = ({
   rows,
   headerLeft = METERING.SECTIONS.RANKED_SHARE.HEADER_LEFT,
+  headerTaskType,
   headerTotal = METERING.SECTIONS.RANKED_SHARE.HEADER_TOTAL_REQUESTS,
   headerRight = METERING.SECTIONS.RANKED_SHARE.HEADER_RIGHT,
   tipTotal = METERING.SECTIONS.RANKED_SHARE.TOOLTIPS.TOTAL_REQUESTS,
@@ -32,7 +36,14 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
 }) => (
   <VStack align="stretch" spacing={4} flex="1.5" w="full">
     <HStack justify="space-between" fontSize="xs" color="gray.500" px={1}>
-      <Text fontWeight="medium">{replaceTenantCopy(headerLeft)}</Text>
+      <HStack spacing={3} minW={0} flex="1">
+        <Text fontWeight="medium">{replaceTenantCopy(headerLeft)}</Text>
+        {headerTaskType ? (
+          <Text fontWeight="medium" flexShrink={0}>
+            {headerTaskType}
+          </Text>
+        ) : null}
+      </HStack>
       <HStack spacing={2} flexShrink={0}>
         <HStack spacing={1} minW="88px" justify="flex-end">
           <Text fontWeight="medium" textAlign="right">
@@ -56,9 +67,16 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
                 #{row.rank}
               </Text>
               <Box w={2} h={2} borderRadius="full" bg={color} flexShrink={0} />
-              <MeteringTableText flex={1} minW={0} maxW="unset">
-                {row.label}
-              </MeteringTableText>
+              <VStack align="flex-start" spacing={0} minW={0} flex="1">
+                <MeteringTableText flex={1} minW={0} maxW="unset">
+                  {row.label}
+                </MeteringTableText>
+                {row.subtitle ? (
+                  <Text fontSize="xs" color="gray.500" noOfLines={1}>
+                    {row.subtitle}
+                  </Text>
+                ) : null}
+              </VStack>
             </HStack>
             <HStack spacing={2} flexShrink={0}>
               <Badge

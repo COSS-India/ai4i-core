@@ -89,13 +89,15 @@ export async function fetchMeteringOverview(
   return data;
 }
 
-/** GET /api/v1/metering/model-consumption — LLM-only; no task_types param. */
+/** GET /api/v1/metering/model-consumption — scoped via frontend enabled task types. */
 export async function fetchMeteringModelConsumption(
   timeWindow: MeteringWindow,
   ctx: MeteringContext,
   tenantId?: string | null,
+  taskTypes?: string[] | null,
 ): Promise<ModelConsumptionResponse> {
   const params = buildMeteringParams(timeWindow, ctx, tenantId);
+  appendTaskTypesParam(params, taskTypes);
   const { data } = await apiService.get<ModelConsumptionResponse>(
     withQuery(apiEndpoints.metering.modelConsumption, params),
     { responseSchema: modelConsumptionResponseSchema },

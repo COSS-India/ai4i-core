@@ -6,8 +6,11 @@ import type {
   ModelConsumptionSummary,
   TopModelRow,
 } from "../types/metering";
+import { formatModelTaskTypeLabel } from "../config/constants";
 import { METERING } from "../config/meteringConstants";
 import { meteringServiceColor, meteringColorAt } from "./meteringColors";
+import { normalizeModelTaskType } from "./meteringTaskType";
+import { taskTypeColor } from "./usageSpendHelpers";
 
 export const getWindowLabel = (window: MeteringWindow): string =>
   METERING.TIME_WINDOW_LABELS[window] ?? window;
@@ -263,6 +266,33 @@ export function buildTopModelsChart(topModels: TopModelRow[]): {
     color: meteringColorAt(i),
     pct: m.consumption_pct,
   }));
+  return { slices, totalRequests };
+}
+
+/** Donut + legend data aggregated by model task type (AI4IDS-2980). */
+export function buildTaskTypeConsumptionChart(
+  breakdown: Array<{ task_type: string; requests: number }>,
+): {
+  slices: ServiceChartSlice[];
+  totalRequests: number;
+} {
+  const totals = new Map<string, number>();
+  for (const row of breakdown) {
+    const key = normalizeModelTaskType(row.task_type);
+    if (!key) continue;
+    totals.set(key, (totals.get(key) ?? 0) + row.requests);
+  }
+
+  const totalRequests = Array.from(totals.values()).reduce((sum, v) => sum + v, 0);
+  const sorted = Array.from(totals.entries()).sort((a, b) => b[1] - a[1]);
+
+  const slices = sorted.map(([taskType, value], i) => ({
+    name: formatModelTaskTypeLabel(taskType),
+    value,
+    color: taskTypeColor(taskType, i),
+    pct: totalRequests > 0 ? (value / totalRequests) * 100 : 0,
+  }));
+
   return { slices, totalRequests };
 }
 

@@ -1,5 +1,6 @@
 import {
   Box,
+  Checkbox,
   HStack,
   SimpleGrid,
   Tbody,
@@ -9,12 +10,17 @@ import {
   Tooltip,
   Tr,
   VStack,
+  Wrap,
+  WrapItem,
 } from "@chakra-ui/react";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { formatModelTaskTypeLabel } from "../../config/constants";
 import { METERING } from "../../config/meteringConstants";
+import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import type { ModelConsumptionResponse, ModelTopN } from "../../types/metering";
 import {
   buildModelBreakdownChart,
+  buildTaskTypeConsumptionChart,
   buildTopModelsChart,
   deriveModelInsights,
   formatCompactNumber,
@@ -22,13 +28,20 @@ import {
   getWindowLabel,
 } from "../../utils/meteringFormatters";
 import { meteringServiceColor } from "../../utils/meteringColors";
+import {
+  enrichModelConsumptionRows,
+  normalizeModelTaskType,
+  taskTypeByModelName,
+} from "../../utils/meteringTaskType";
+import { useMeteringTableSort } from "../../utils/meteringTableSort";
 import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
 import MeteringDonutChart, { DonutRankedLayout } from "./MeteringDonutChart";
-import { ThWithTip } from "../common/InfoTip";
 import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
 import RankedShareList from "./RankedShareList";
 import SegmentedTabBar from "./SegmentedTabBar";
+import SortableTh from "./SortableTh";
+import { TaskTypeLabel } from "./UsageSpendCells";
 
 interface ModelConsumptionTabProps {
   data?: ModelConsumptionResponse;
@@ -45,21 +58,96 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
   isPlatformWide = true,
 }) => {
   const section = METERING.SECTIONS.MODEL;
+  const { taskTypeNames } = useInferenceTypes();
   const [topN, setTopN] = useState<ModelTopN>(METERING.MODEL_TOP_N_DEFAULT);
+  const [selectedTaskTypes, setSelectedTaskTypes] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (taskTypeNames.length > 0) {
+      setSelectedTaskTypes(new Set(taskTypeNames.map(normalizeModelTaskType)));
+    }
+  }, [taskTypeNames]);
+
   const breakdown = data?.breakdown ?? [];
   const topModels = data?.top_models ?? [];
 
-  const visibleTopModels = useMemo(() => topModels.slice(0, topN), [topModels, topN]);
+  const enrichedBreakdown = useMemo(
+    () => enrichModelConsumptionRows(breakdown),
+    [breakdown],
+  );
+
+  const allTaskTypesSelected =
+    taskTypeNames.length === 0 ||
+    selectedTaskTypes.size === 0 ||
+    selectedTaskTypes.size >= taskTypeNames.length;
+
+  const filteredBreakdown = useMemo(() => {
+    if (allTaskTypesSelected) return enrichedBreakdown;
+    return enrichedBreakdown.filter((row) =>
+      selectedTaskTypes.has(normalizeModelTaskType(row.task_type)),
+    );
+  }, [enrichedBreakdown, selectedTaskTypes, allTaskTypesSelected]);
+
+  const modelTaskTypeMap = useMemo(
+    () => taskTypeByModelName(enrichedBreakdown),
+    [enrichedBreakdown],
+  );
+
+  const visibleTopModels = useMemo(() => {
+    const sliced = topModels.slice(0, topN);
+    if (allTaskTypesSelected) return sliced;
+    return sliced.filter((row) => {
+      const tt = modelTaskTypeMap.get(row.model_name.trim());
+      return tt ? selectedTaskTypes.has(normalizeModelTaskType(tt)) : false;
+    });
+  }, [topModels, topN, allTaskTypesSelected, selectedTaskTypes, modelTaskTypeMap]);
 
   const { slices } = useMemo(() => {
     if (visibleTopModels.length) return buildTopModelsChart(visibleTopModels);
-    return buildModelBreakdownChart(breakdown);
-  }, [visibleTopModels, breakdown]);
+    return buildModelBreakdownChart(filteredBreakdown);
+  }, [visibleTopModels, filteredBreakdown]);
 
   const insights = useMemo(
-    () => deriveModelInsights(data?.summary, breakdown),
-    [data?.summary, breakdown],
+    () => deriveModelInsights(data?.summary, filteredBreakdown),
+    [data?.summary, filteredBreakdown],
   );
+
+  const taskTypeChart = useMemo(
+    () => buildTaskTypeConsumptionChart(filteredBreakdown),
+    [filteredBreakdown],
+  );
+
+  const sortAccessors = useMemo(
+    () => ({
+      task_type: (row: (typeof filteredBreakdown)[number]) =>
+        formatModelTaskTypeLabel(row.task_type),
+      model_name: (row: (typeof filteredBreakdown)[number]) =>
+        row.model_name?.trim() || "",
+      name: (row: (typeof filteredBreakdown)[number]) => row.name,
+      requests: (row: (typeof filteredBreakdown)[number]) => row.requests,
+      native_units: (row: (typeof filteredBreakdown)[number]) => row.native_units,
+      success_pct: (row: (typeof filteredBreakdown)[number]) => row.success_pct,
+      failure_rate_pct: (row: (typeof filteredBreakdown)[number]) =>
+        row.failure_rate_pct,
+    }),
+    [],
+  );
+
+  const { sortedRows, sortKey, sortDirection, toggleSort } = useMeteringTableSort(
+    filteredBreakdown,
+    "requests",
+    sortAccessors,
+  );
+
+  const toggleTaskType = (taskType: string) => {
+    const key = normalizeModelTaskType(taskType);
+    setSelectedTaskTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   const mostUsedHelper =
     insights && insights.mostUsedRequests > 0
@@ -123,6 +211,48 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
             </SimpleGrid>
           ) : null}
 
+          {taskTypeChart.slices.length > 0 ? (
+            <MeteringSectionCard
+              title={section.TASK_TYPE_DONUT_TITLE}
+              subtitle={section.TASK_TYPE_DONUT_SUBTITLE}
+              sectionLabel
+            >
+              <DonutRankedLayout
+                chart={
+                  <MeteringDonutChart
+                    data={taskTypeChart.slices.map(({ name, value, color }) => ({
+                      name,
+                      value,
+                      color,
+                    }))}
+                    height={260}
+                    innerRadius={65}
+                    outerRadius={100}
+                    showTooltip
+                    centerPrimary={section.TASK_TYPE_DONUT_PRIMARY}
+                    centerSecondary={section.TASK_TYPE_DONUT_SECONDARY}
+                    total={taskTypeChart.totalRequests}
+                  />
+                }
+                list={
+                  <RankedShareList
+                    rows={taskTypeChart.slices.map((slice, i) => ({
+                      rank: i + 1,
+                      label: slice.name,
+                      formattedValue: formatCompactNumber(slice.value, "indian"),
+                      percentage: slice.pct,
+                    }))}
+                    headerLeft={section.TABLE_TASK_TYPE}
+                    headerTotal={METERING.SECTIONS.RANKED_SHARE.HEADER_TOTAL_REQUESTS}
+                    headerRight={METERING.SECTIONS.RANKED_SHARE.HEADER_RIGHT}
+                    tipTotal={METERING.SECTIONS.RANKED_SHARE.TOOLTIPS.TOTAL_REQUESTS}
+                    tipRight={METERING.SECTIONS.RANKED_SHARE.TOOLTIPS.PCT_OF_TOTAL}
+                  />
+                }
+              />
+            </MeteringSectionCard>
+          ) : null}
+
           <MeteringSectionCard
             title={section.TITLE}
             subtitle={section.SUBTITLE}
@@ -158,12 +288,18 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
                   rows={visibleTopModels.map((row) => ({
                     rank: row.rank,
                     label: row.model_name,
+                    subtitle: modelTaskTypeMap.get(row.model_name.trim())
+                      ? formatModelTaskTypeLabel(
+                          modelTaskTypeMap.get(row.model_name.trim())!,
+                        )
+                      : undefined,
                     formattedValue:
                       row.formatted_requests ||
                       formatCompactNumber(row.requests, "indian"),
                     percentage: row.consumption_pct,
                   }))}
                   headerLeft="Model"
+                  headerTaskType={section.TABLE_TASK_TYPE}
                   headerTotal={METERING.SECTIONS.RANKED_SHARE.HEADER_TOTAL_REQUESTS}
                   headerRight={METERING.SECTIONS.RANKED_SHARE.HEADER_RIGHT}
                   tipTotal={METERING.SECTIONS.RANKED_SHARE.TOOLTIPS.TOTAL_REQUESTS}
@@ -179,34 +315,125 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
             sectionLabel
             bare
           >
+            {taskTypeNames.length > 0 ? (
+              <Box mb={4}>
+                <Text fontSize="xs" fontWeight="semibold" color="gray.600" mb={2}>
+                  {section.FILTER_TASK_TYPES}
+                </Text>
+                <Wrap spacing={3}>
+                  {taskTypeNames.map((taskType) => {
+                    const key = normalizeModelTaskType(taskType);
+                    const checked = selectedTaskTypes.has(key);
+                    return (
+                      <WrapItem key={taskType}>
+                        <Checkbox
+                          size="sm"
+                          isChecked={checked}
+                          onChange={() => toggleTaskType(taskType)}
+                        >
+                          {formatModelTaskTypeLabel(taskType)}
+                        </Checkbox>
+                      </WrapItem>
+                    );
+                  })}
+                </Wrap>
+              </Box>
+            ) : null}
+
             <MeteringDataTable>
               <Thead bg="gray.50">
                 <Tr>
-                  <ThWithTip>{section.TABLE_MODEL}</ThWithTip>
-                  <ThWithTip>{section.TABLE_SERVICE}</ThWithTip>
-                  <ThWithTip message={section.TOOLTIPS.TOTAL_REQUESTS} isNumeric>
+                  <SortableTh
+                    sortKey="task_type"
+                    activeSortKey={sortKey}
+                    sortDirection={sortDirection}
+                    onSort={toggleSort}
+                    message={section.TOOLTIPS.TASK_TYPE}
+                  >
+                    {section.TABLE_TASK_TYPE}
+                  </SortableTh>
+                  <SortableTh
+                    sortKey="model_name"
+                    activeSortKey={sortKey}
+                    sortDirection={sortDirection}
+                    onSort={toggleSort}
+                  >
+                    {section.TABLE_MODEL}
+                  </SortableTh>
+                  <SortableTh
+                    sortKey="name"
+                    activeSortKey={sortKey}
+                    sortDirection={sortDirection}
+                    onSort={toggleSort}
+                  >
+                    {section.TABLE_SERVICE}
+                  </SortableTh>
+                  <SortableTh
+                    sortKey="requests"
+                    activeSortKey={sortKey}
+                    sortDirection={sortDirection}
+                    onSort={toggleSort}
+                    message={section.TOOLTIPS.TOTAL_REQUESTS}
+                    isNumeric
+                  >
                     {section.TABLE_TOTAL_REQUESTS}
-                  </ThWithTip>
-                  <ThWithTip message={section.TOOLTIPS.TOKEN_CONSUMPTION} isNumeric>
+                  </SortableTh>
+                  <SortableTh
+                    sortKey="native_units"
+                    activeSortKey={sortKey}
+                    sortDirection={sortDirection}
+                    onSort={toggleSort}
+                    message={section.TOOLTIPS.TOKEN_CONSUMPTION}
+                    isNumeric
+                  >
                     {section.TABLE_NATIVE}
-                  </ThWithTip>
-                  <ThWithTip message={section.TOOLTIPS.SUCCESS_RATE} isNumeric>
+                  </SortableTh>
+                  <SortableTh
+                    sortKey="success_pct"
+                    activeSortKey={sortKey}
+                    sortDirection={sortDirection}
+                    onSort={toggleSort}
+                    message={section.TOOLTIPS.SUCCESS_RATE}
+                    isNumeric
+                  >
                     {section.TABLE_SUCCESS}
-                  </ThWithTip>
-                  <ThWithTip message={section.TOOLTIPS.FAILURE_RATE} isNumeric>
+                  </SortableTh>
+                  <SortableTh
+                    sortKey="failure_rate_pct"
+                    activeSortKey={sortKey}
+                    sortDirection={sortDirection}
+                    onSort={toggleSort}
+                    message={section.TOOLTIPS.FAILURE_RATE}
+                    isNumeric
+                  >
                     {section.TABLE_FAILURE}
-                  </ThWithTip>
+                  </SortableTh>
                 </Tr>
               </Thead>
               <Tbody>
-                {breakdown.map((row, i) => (
+                {sortedRows.map((row, i) => (
                   <Tr key={`${row.service_id}-${row.model_name ?? i}`}>
+                    <Td fontSize="sm">
+                      {row.task_type ? (
+                        <TaskTypeLabel
+                          taskType={row.task_type}
+                          color={meteringServiceColor(row.name, i)}
+                        />
+                      ) : (
+                        METERING.GRAPH.EMPTY_VALUE
+                      )}
+                    </Td>
                     <Td fontSize="sm" color="gray.800" fontWeight="medium">
                       {row.model_name?.trim() || METERING.GRAPH.EMPTY_VALUE}
                     </Td>
                     <Td>
                       <HStack spacing={2}>
-                        <Box w={1} h={5} borderRadius="sm" bg={meteringServiceColor(row.name, i)} />
+                        <Box
+                          w={1}
+                          h={5}
+                          borderRadius="sm"
+                          bg={meteringServiceColor(row.name, i)}
+                        />
                         <Text fontWeight="medium" fontSize="sm">
                           {row.name}
                         </Text>

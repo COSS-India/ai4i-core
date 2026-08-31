@@ -7,9 +7,10 @@ import {
   taskTypeColor,
   type AggregatedTaskUsage,
 } from "../../utils/usageSpendHelpers";
+import { useMeteringTableSort } from "../../utils/meteringTableSort";
 import type { TenantTierBreakdown, TierTaskTypeUsage } from "../../types/usageSpend";
-import { ThWithTip } from "../common/InfoTip";
 import { TaskTypeLabel, TierBadge, UsageCell } from "./UsageSpendCells";
+import SortableTh from "./SortableTh";
 
 function quotaUsagePercentage(t: TierTaskTypeUsage | AggregatedTaskUsage): number {
   if ("percentage" in t && typeof t.percentage === "number") return t.percentage;
@@ -18,52 +19,73 @@ function quotaUsagePercentage(t: TierTaskTypeUsage | AggregatedTaskUsage): numbe
   return (t.consumed / limit) * 100;
 }
 
-type SpendRow =
-  | { kind: "tier"; tier: TenantTierBreakdown }
-  | { kind: "task"; task: TierTaskTypeUsage | AggregatedTaskUsage; tierName?: string };
+type TaskSpendRow = {
+  kind: "task";
+  task: TierTaskTypeUsage | AggregatedTaskUsage;
+  tierName?: string;
+};
+
+type SpendRow = { kind: "tier"; tier: TenantTierBreakdown } | TaskSpendRow;
 
 interface SpendByTaskTypeTableProps {
-  /** Tier breakdown to render — pass a pre-filtered subset to narrow the table. */
   tierBreakdown: TenantTierBreakdown[];
-  /** Denominator for each row's SHARE % — the tenant's overall (unfiltered) spend. */
   totalSpend: number;
   currency: string;
   emptyMessage?: string;
 }
 
-/**
- * Tier-grouped model-task-type spend table: one badge row per tier (when the
- * tenant has more than one), a row per task type with a usage bar, and a
- * Total row summing whatever is currently visible.
- */
 const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
   tierBreakdown,
   totalSpend,
   currency,
   emptyMessage = "No spend data for this period.",
 }) => {
-  const rows = useMemo<SpendRow[]>(() => {
-    if (tierBreakdown.length > 1) {
-      return tierBreakdown.flatMap((tier) => [
-        { kind: "tier" as const, tier },
-        ...(tier.taskTypes ?? []).map((t) => ({
+  const multiTier = tierBreakdown.length > 1;
+
+  const taskRows = useMemo<TaskSpendRow[]>(() => {
+    if (multiTier) {
+      return tierBreakdown.flatMap((tier) =>
+        (tier.taskTypes ?? []).map((t) => ({
           kind: "task" as const,
           task: t,
           tierName: tier.tierName,
         })),
-      ]);
+      );
     }
-    return aggregateTasks(tierBreakdown)
-      .sort((a, b) => b.spend - a.spend)
-      .map((t) => ({ kind: "task" as const, task: t }));
-  }, [tierBreakdown]);
+    return aggregateTasks(tierBreakdown).map((t) => ({ kind: "task" as const, task: t }));
+  }, [tierBreakdown, multiTier]);
 
-  const visibleSpend = useMemo(
-    () => rows.reduce((s, r) => (r.kind === "task" ? s + r.task.spend : s), 0),
-    [rows],
+  const sortAccessors = useMemo(
+    () => ({
+      taskType: (row: TaskSpendRow) => row.task.taskType,
+      consumed: (row: TaskSpendRow) => row.task.consumed,
+      spend: (row: TaskSpendRow) => row.task.spend,
+      share: (row: TaskSpendRow) =>
+        totalSpend > 0 ? (row.task.spend / totalSpend) * 100 : 0,
+    }),
+    [totalSpend],
   );
 
-  if (rows.length === 0) {
+  const { sortedRows, sortKey, sortDirection, toggleSort } = useMeteringTableSort(
+    taskRows,
+    "spend",
+    sortAccessors,
+  );
+
+  const displayRows = useMemo((): SpendRow[] => {
+    if (!multiTier) return sortedRows;
+    return tierBreakdown.flatMap((tier) => {
+      const tierTasks = sortedRows.filter((r) => r.tierName === tier.tierName);
+      return [{ kind: "tier" as const, tier }, ...tierTasks];
+    });
+  }, [multiTier, tierBreakdown, sortedRows]);
+
+  const visibleSpend = useMemo(
+    () => sortedRows.reduce((s, r) => s + r.task.spend, 0),
+    [sortedRows],
+  );
+
+  if (taskRows.length === 0) {
     return (
       <Text fontSize="sm" color="gray.400" py={8} textAlign="center">
         {emptyMessage}
@@ -71,44 +93,62 @@ const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
     );
   }
 
+  const thSx = { fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" } as const;
+
   return (
     <Box overflowX="auto" borderWidth="1px" borderColor="gray.200" borderRadius="md">
       <Table size="sm" variant="simple" minW="540px" sx={{ tableLayout: "fixed" }}>
         <Thead bg="gray.50">
           <Tr>
-            <ThWithTip
+            <SortableTh
+              sortKey="taskType"
+              activeSortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={toggleSort}
               w="28%"
-              sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
+              sx={thSx}
             >
               MODEL TASK TYPE
-            </ThWithTip>
-            <ThWithTip
+            </SortableTh>
+            <SortableTh
+              sortKey="consumed"
+              activeSortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={toggleSort}
               message={METERING.USAGE_SPEND.TOOLTIPS.USAGE}
               w="40%"
-              sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
+              sx={thSx}
             >
               USAGE
-            </ThWithTip>
-            <ThWithTip
+            </SortableTh>
+            <SortableTh
+              sortKey="spend"
+              activeSortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={toggleSort}
               message={METERING.USAGE_SPEND.TOOLTIPS.SPEND}
               w="18%"
               isNumeric
-              sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
+              sx={thSx}
             >
               SPEND
-            </ThWithTip>
-            <ThWithTip
+            </SortableTh>
+            <SortableTh
+              sortKey="share"
+              activeSortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={toggleSort}
               message={METERING.USAGE_SPEND.TOOLTIPS.SHARE}
               w="14%"
               isNumeric
-              sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
+              sx={thSx}
             >
               SHARE
-            </ThWithTip>
+            </SortableTh>
           </Tr>
         </Thead>
         <Tbody>
-          {rows.map((row, idx) => {
+          {displayRows.map((row, idx) => {
             if (row.kind === "tier") {
               return (
                 <Tr key={`tier-${row.tier.tierId}`}>
@@ -127,7 +167,7 @@ const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
             const share = totalSpend > 0 ? ((t.spend / totalSpend) * 100).toFixed(1) : "0.0";
             const color = taskTypeColor(t.taskType, idx);
             return (
-              <Tr key={`${"tierName" in row ? row.tierName : ""}-${t.taskType}-${idx}`}>
+              <Tr key={`${row.tierName ?? ""}-${t.taskType}-${idx}`}>
                 <Td>
                   <TaskTypeLabel
                     taskType={t.taskType}
