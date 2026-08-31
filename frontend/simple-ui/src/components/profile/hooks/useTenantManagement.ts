@@ -168,7 +168,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     null,
   );
   const [tenantDetailSubTab, setTenantDetailSubTab] = useState<
-    "overview" | "users"
+    "overview" | "users" | "applications"
   >("overview");
 
   // Edit tenant modal

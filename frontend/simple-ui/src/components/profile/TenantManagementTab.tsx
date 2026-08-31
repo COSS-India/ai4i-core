@@ -49,6 +49,7 @@ import {
   Text,
   Tooltip,
   VStack,
+  useColorModeValue,
   useDisclosure,
 } from "@chakra-ui/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -66,13 +67,11 @@ import {
   FiArrowLeft,
   FiCheckCircle,
   FiEdit2,
-  FiHome,
   FiMail,
   FiPauseCircle,
   FiPlus,
   FiPower,
   FiUserPlus,
-  FiUsers,
 } from "react-icons/fi";
 import {
   ChevronDownIcon,
@@ -85,6 +84,7 @@ import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 import { useOwnInstitutionDetails } from "./hooks/useOwnInstitutionDetails";
 import InstitutionDetailsPanel from "./InstitutionDetailsPanel";
+import ApplicationManagementTab from "./ApplicationManagementTab";
 import ConfirmDialog from "../common/ConfirmDialog";
 import ConsentCheckbox, {
   getConsentValidationError,
@@ -174,6 +174,8 @@ export default function TenantManagementTab({
   const tm = useTenantManagement({ user });
 
   const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
+  const tabCardBg = useColorModeValue("white", "gray.800");
+  const tabCardBorder = useColorModeValue("gray.200", "gray.700");
   // Institution Admin view only — idle on the adopter path.
   const ownInstitution = useOwnInstitutionDetails({
     tenantId: user?.tenant_id,
@@ -825,32 +827,36 @@ export default function TenantManagementTab({
   // One institution, so no list to drill into — tabs are the first screen.
   function renderInstitutionAdminView() {
     return (
-      <Tabs>
-        <TabList>
-          <Tab>
-            <FiHome style={{ marginRight: 6 }} />
-            {`My ${INSTITUTION.toLowerCase()}`}
-          </Tab>
-          <Tab>
-            <FiUsers style={{ marginRight: 6 }} />
-            Users
-          </Tab>
-        </TabList>
-        <TabPanels>
-          <TabPanel px={0}>
-            <InstitutionDetailsPanel
-              institution={ownInstitution.institution}
-              tierName={ownInstitution.tierName}
-              budgetLimit={ownInstitution.budgetLimit}
-              currency={ownInstitution.currency}
-              isLoading={ownInstitution.isLoading}
-              errorMessage={ownInstitution.errorMessage}
-              tierBudgetErrorMessage={ownInstitution.tierBudgetErrorMessage}
-            />
-          </TabPanel>
-          <TabPanel px={0}>{renderTenantView()}</TabPanel>
-        </TabPanels>
-      </Tabs>
+      <Card bg={tabCardBg} borderColor={tabCardBorder} borderWidth="1px">
+        <Tabs colorScheme="blue" variant="enclosed">
+          <TabList>
+            <Tab fontWeight="semibold">{`My ${INSTITUTION}`}</Tab>
+            <Tab fontWeight="semibold">Users</Tab>
+            <Tab fontWeight="semibold">Applications</Tab>
+          </TabList>
+          <TabPanels>
+            <TabPanel px={6} pt={6} pb={6}>
+              <InstitutionDetailsPanel
+                institution={ownInstitution.institution}
+                tierName={ownInstitution.tierName}
+                budgetLimit={ownInstitution.budgetLimit}
+                currency={ownInstitution.currency}
+                isLoading={ownInstitution.isLoading}
+                errorMessage={ownInstitution.errorMessage}
+                tierBudgetErrorMessage={ownInstitution.tierBudgetErrorMessage}
+              />
+            </TabPanel>
+            <TabPanel px={6} pt={6} pb={6}>{renderTenantView()}</TabPanel>
+            <TabPanel px={6} pt={6} pb={6}>
+              <ApplicationManagementTab
+                tenantId={user?.tenant_id ?? ""}
+                institutionBudget={ownInstitution.budgetLimit}
+                currency={ownInstitution.currency}
+              />
+            </TabPanel>
+          </TabPanels>
+        </Tabs>
+      </Card>
     );
   }
 
@@ -1015,20 +1021,28 @@ export default function TenantManagementTab({
         </CardHeader>
         <CardBody>
           <Tabs
-            index={tm.tenantDetailSubTab === "overview" ? 0 : 1}
+            colorScheme="blue"
+            variant="enclosed"
+            index={
+              tm.tenantDetailSubTab === "overview"
+                ? 0
+                : tm.tenantDetailSubTab === "users"
+                  ? 1
+                  : 2
+            }
             onChange={(idx) =>
-              tm.setTenantDetailSubTab(idx === 0 ? "overview" : "users")
+              tm.setTenantDetailSubTab(
+                idx === 0 ? "overview" : idx === 1 ? "users" : "applications",
+              )
             }
           >
             <TabList>
-              <Tab>Overview</Tab>
-              <Tab>
-                <FiUsers style={{ marginRight: 6 }} />
-                Users
-              </Tab>
+              <Tab fontWeight="semibold">Overview</Tab>
+              <Tab fontWeight="semibold">Users</Tab>
+              <Tab fontWeight="semibold">Applications</Tab>
             </TabList>
             <TabPanels>
-              <TabPanel px={0}>
+              <TabPanel px={0} pt={6}>
                 {isTenantStatus(t.status, TENANT.STATUS.PENDING) && (
                   <Alert
                     status="info"
@@ -1103,7 +1117,18 @@ export default function TenantManagementTab({
                   </Box>
                 </SimpleGrid>
               </TabPanel>
-              <TabPanel px={0}>{renderTenantUsersTable()}</TabPanel>
+              <TabPanel px={6} pt={6} pb={6}>{renderTenantUsersTable()}</TabPanel>
+              <TabPanel px={6} pt={6} pb={6}>
+                <ApplicationManagementTab
+                  tenantId={t.tenant_id}
+                  institutionBudget={
+                    tierAssignment
+                      ? Number.parseFloat(String(tierAssignment.budget_limit)) || null
+                      : null
+                  }
+                  currency="INR"
+                />
+              </TabPanel>
             </TabPanels>
           </Tabs>
         </CardBody>
