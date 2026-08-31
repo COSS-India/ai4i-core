@@ -421,24 +421,23 @@ class TestRoundingRemainderAbsorption:
         )
         assert sum(r.amount for r in result) == Decimal("100.01")
 
-    def test_last_child_never_goes_negative_when_earlier_rounding_outruns_it(self) -> None:
-        """8 Keys, an Application drastically cut from 702.09 to 18.96 (~2.7% of
-        its old size): each of the first 7 Keys' 1/7-ish share independently
-        rounds up to 2.71, so running_total (18.97) already exceeds the
-        18.96 target before the 8th Key — which only ever held 0.90 — is even
-        reached. Unclamped, that Key's residual is exactly -0.01: a negative
-        ₹ ceiling that would fail its own floor-check against its
-        non-negative consumed_amount with a nonsensical message ("would be
-        re-fit to -0.01, below its already-consumed 0"). Floored at 0
-        instead — the group's total (18.97) is still over its 18.96 target
-        (flooring one child to 0 can't retroactively fix seven others already
-        rounding up), so this now correctly fails via the sibling-sum gate's
-        ALLOCATION_TOTAL_EXCEEDED instead — an accurate rejection, not a
-        nonsensical one on an unrelated Key."""
+    def test_last_child_never_goes_negative_when_earlier_shares_are_awkward(self) -> None:
+        """8 Keys, an Application cut drastically from 702.09 to 18.96 (~2.7%
+        of its old size) — a genuinely valid request (every Key has consumed
+        0, so any split of 18.96 across them is fine). Each of the first 7
+        Keys' near-1/7th share rounds DOWN to 2.70 (never up — see
+        resolve_level's ROUND_DOWN on non-last shares), so running_total
+        after all seven is 18.90, and the 8th Key (which only ever held 0.90)
+        absorbs the exact remainder: 0.06. Never negative, and the group
+        still lands on exactly 18.96 — the bug this class exists to prevent
+        (drifting a cent or two off target) would have shown up here as
+        EITHER a negative last share OR a total past 18.96; neither happens."""
         children = [_row(f"Key{i}", "100.17", "0", consumed="0") for i in range(7)]
         children.append(_row("Key7", "0.90", "0", consumed="0"))
-        with pytest.raises(ValidationError) as exc:
-            resolve_level(
-                Decimal("18.96"), children, [], parent_old_amount=Decimal("702.09")
-            )
-        assert exc.value.code == "ALLOCATION_TOTAL_EXCEEDED"
+        result = resolve_level(
+            Decimal("18.96"), children, [], parent_old_amount=Decimal("702.09")
+        )
+        assert sum(r.amount for r in result) == Decimal("18.96")
+        assert all(r.amount >= 0 for r in result)
+        by_id = {r.id: r for r in result}
+        assert by_id["Key7"].amount == Decimal("0.06")

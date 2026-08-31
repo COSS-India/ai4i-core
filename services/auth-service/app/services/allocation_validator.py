@@ -16,7 +16,7 @@ testable.
 """
 
 from dataclasses import dataclass
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from typing import Optional
 
 from app.core.exceptions import EntityNotFoundError, ValidationError
@@ -30,8 +30,8 @@ _PCT_QUANT = Decimal("0.01")
 _AMT_QUANT = Decimal("0.01")
 
 
-def _quantize(value: Decimal, quant: Decimal) -> Decimal:
-    return value.quantize(quant, rounding=ROUND_HALF_UP)
+def _quantize(value: Decimal, quant: Decimal, rounding=ROUND_HALF_UP) -> Decimal:
+    return value.quantize(quant, rounding=rounding)
 
 
 @dataclass(frozen=True)
@@ -236,23 +236,27 @@ def resolve_level(
                 amount = Decimal("0")
             elif is_last:
                 # Absorbs whatever the independently-rounded amounts above left
-                # over, so the group's total is exact by construction — except
-                # when enough of the earlier children rounded UP that running_total
-                # already exceeds unlisted_target_total before the last child is
-                # even added (a handful of children each drifting up by up to half
-                # a cent can outrun a small last share — real at 8+ children).
-                # Floored at 0 rather than left negative: a negative amount here
-                # would otherwise fail THIS child's own floor-check against a
-                # non-negative consumed_amount with a nonsensical message ("would
-                # be re-fit to -0.02, below its already-consumed 0"). Flooring
-                # doesn't make the group's total fit — it's still running_total,
-                # which is already over — it just lets the sibling-sum gate below
-                # be the one to reject it, with an accurate ALLOCATION_TOTAL_EXCEEDED
-                # instead of a nonsensical one on an unrelated child.
-                amount = max(Decimal("0"), unlisted_target_total - running_total)
+                # over, so the group's total is exact by construction. Never
+                # negative: every non-last child below is rounded DOWN, so
+                # none of them can ever be quantized to MORE than its own
+                # ideal (pre-rounding) share — which guarantees running_total
+                # never exceeds unlisted_target_total, which guarantees this
+                # residual is always >= 0. (A single request-shape mistake
+                # here — rounding non-last shares UP instead — cost 32 green
+                # tests their meaning: it let running_total overshoot, forcing
+                # THIS child negative, which then failed its own floor-check
+                # against a non-negative consumed_amount with a message that
+                # made no sense for a request that was otherwise entirely
+                # valid — see git history on this line.)
+                amount = unlisted_target_total - running_total
             else:
+                # ROUND_DOWN, not the module's usual ROUND_HALF_UP — see the
+                # `is_last` branch above for why: truncating instead of
+                # rounding is what makes "the last child's residual is never
+                # negative" a guarantee rather than a fix bolted on after the
+                # fact.
                 share = child.allocated_amount / unlisted_old_total
-                amount = _quantize(unlisted_target_total * share, _AMT_QUANT)
+                amount = _quantize(unlisted_target_total * share, _AMT_QUANT, rounding=ROUND_DOWN)
             running_total += amount
             percentage = _quantize(
                 (amount / parent_new_amount * 100) if parent_new_amount else Decimal("0"), _PCT_QUANT
@@ -283,11 +287,16 @@ def resolve_level(
         sibling_total = explicit_total + sum((c.allocated_amount for c in unlisted), Decimal("0"))
 
     # Sibling-sum check. Should always hold by construction when
-    # refit_unlisted=True (unlisted_target_total is derived from — and never
-    # exceeds — room_remaining, and the last child absorbs rounding drift
-    # exactly) — kept as the final defensive gate, not the primary mechanism.
-    # When refit_unlisted=False it's the ONLY thing stopping an explicit
-    # increase from pushing the level over its parent's unchanged total.
+    # refit_unlisted=True: unlisted_target_total never exceeds room_remaining,
+    # and the group always resolves to EXACTLY unlisted_target_total — every
+    # non-last child's ROUND_DOWN amount never exceeds its own ideal share,
+    # so the last child's residual is never negative, so nothing is ever
+    # clamped or otherwise made inexact. This is kept as the final defensive
+    # gate, not the primary mechanism, precisely so a future change to the
+    # rounding above that breaks that guarantee fails loudly here instead of
+    # silently persisting an over-committed total. When refit_unlisted=False
+    # it's the ONLY thing stopping an explicit increase from pushing the
+    # level over its parent's unchanged total.
     if sibling_total > parent_new_amount:
         raise ValidationError(
             message=f"Resolved total ({sibling_total}) exceeds the parent's amount ({parent_new_amount}).",
