@@ -134,10 +134,18 @@ export default function ApplicationBulkBudgetModal({
                   ) : null}
                 </Td>
                 <Td>
-                  <Text fontSize="sm">{formatPct(row.consumed_percentage)}</Text>
-                  <Text fontSize="xs" color="gray.500">
-                    {formatSpendMoney(row.consumed_budget, currency)}
-                  </Text>
+                  {row.keysLoaded ? (
+                    <>
+                      <Text fontSize="sm">{formatPct(row.consumed_percentage)}</Text>
+                      <Text fontSize="xs" color="gray.500">
+                        {formatSpendMoney(row.consumed_budget ?? 0, currency)}
+                      </Text>
+                    </>
+                  ) : (
+                    <Text fontSize="sm" color="gray.400">
+                      {row.keysLoading ? "Loading…" : "Focus row to load"}
+                    </Text>
+                  )}
                 </Td>
                 <Td>
                   <FormControl isInvalid={Boolean(row.rowError)}>
@@ -145,7 +153,7 @@ export default function ApplicationBulkBudgetModal({
                       value={row.pctInput}
                       onChange={(next) => onPctChange(row.application_id, next)}
                       onFocus={() => onRowFocus(row.application_id)}
-                      min={row.consumed_percentage}
+                      min={row.keysLoaded && row.consumed_percentage != null ? row.consumed_percentage : 0}
                       max={100}
                     />
                   </FormControl>
@@ -208,7 +216,7 @@ export default function ApplicationBulkBudgetModal({
       title="Edit Budget"
       size="6xl"
       footer={
-        <>
+        <HStack spacing={3}>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button
             colorScheme="blue"
@@ -218,7 +226,7 @@ export default function ApplicationBulkBudgetModal({
           >
             Save changes
           </Button>
-        </>
+        </HStack>
       }
     >
       <VStack align="stretch" spacing={4}>

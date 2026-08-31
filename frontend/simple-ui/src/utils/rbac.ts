@@ -77,9 +77,9 @@ export function isAdopterInstitutionManager(roles?: string[]): boolean {
   return isDefaultAdminUser(roles) || isAdopterAdminUser(roles);
 }
 
-/** Institution Management nav/page — adopter managers or Institution Admin. */
+/** Institution Management nav/page — platform ADMIN or Institution Admin only. */
 export function canAccessInstitutionManagement(roles?: string[]): boolean {
-  return isAdopterInstitutionManager(roles) || isTenantAdminUser(roles);
+  return isDefaultAdminUser(roles) || isTenantAdminUser(roles);
 }
 
 /** Tenant Admin without platform ADMIN or MODERATOR. */

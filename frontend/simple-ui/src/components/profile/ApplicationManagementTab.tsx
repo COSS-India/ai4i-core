@@ -28,6 +28,7 @@ import {
 import { EditIcon, ViewIcon } from "@chakra-ui/icons";
 import { FiPlus, FiRefreshCw, FiSliders } from "react-icons/fi";
 import AdminDataTable, {
+  DEFAULT_PAGE_SIZE_OPTIONS,
   TableSearchField,
   type AdminTableColumn,
 } from "../common/AdminDataTable";
@@ -248,14 +249,6 @@ export default function ApplicationManagementTab({
       ),
     },
     {
-      id: "api_keys",
-      header: "API Keys",
-      cell: (app) => {
-        const count = app.api_key_count ?? 0;
-        return `${count} Key${count === 1 ? "" : "s"}`;
-      },
-    },
-    {
       id: "actions",
       header: "",
       tdProps: { onClick: (e) => e.stopPropagation() },
@@ -393,13 +386,23 @@ export default function ApplicationManagementTab({
         columns={columns}
         getRowKey={(app) => app.application_id}
         onRowClick={mgr.openView}
+        paginate="server"
+        paginationPosition="top"
+        pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
+        initialPageSize={mgr.pageSize}
+        serverPagination={{
+          page: mgr.page,
+          pageSize: mgr.pageSize,
+          totalItems: mgr.total,
+          onPageChange: mgr.setPage,
+          onPageSizeChange: mgr.setPageSize,
+        }}
         isLoading={mgr.isLoading}
         emptyMessage="No Applications onboarded yet."
         noResultsMessage="No Applications match your search."
         unfilteredCount={mgr.total}
         hasActiveFilters={mgr.searchInput.trim() !== ""}
         onClearFilters={() => mgr.setSearchInput("")}
-        paginate={false}
         tableContainerProps={{
           borderWidth: "1px",
           borderColor: "gray.300",
@@ -414,14 +417,14 @@ export default function ApplicationManagementTab({
         title="New Application"
         size="lg"
         footer={
-          <>
+          <HStack spacing={3}>
             <Button variant="ghost" onClick={() => mgr.setCreateOpen(false)}>
               Cancel
             </Button>
             <Button colorScheme="blue" isLoading={mgr.isSaving} onClick={() => void mgr.handleCreate()}>
               Create Application
             </Button>
-          </>
+          </HStack>
         }
       >
         <ApplicationIdentityFields
@@ -442,14 +445,14 @@ export default function ApplicationManagementTab({
         title={mgr.selected ? `Edit ${mgr.selected.name}` : "Edit Application"}
         size="lg"
         footer={
-          <>
+          <HStack spacing={3}>
             <Button variant="ghost" onClick={() => mgr.setEditOpen(false)}>
               Cancel
             </Button>
             <Button colorScheme="blue" isLoading={mgr.isSaving} onClick={() => void mgr.handleEdit()}>
               Save changes
             </Button>
-          </>
+          </HStack>
         }
       >
         <ApplicationIdentityFields
@@ -467,7 +470,7 @@ export default function ApplicationManagementTab({
         title="Application"
         size="lg"
         footer={
-          <>
+          <HStack spacing={3}>
             <Button variant="ghost" onClick={() => mgr.setViewOpen(false)}>
               Close
             </Button>
@@ -482,7 +485,7 @@ export default function ApplicationManagementTab({
                 Edit
               </Button>
             )}
-          </>
+          </HStack>
         }
       >
         {mgr.selected && (
@@ -498,32 +501,18 @@ export default function ApplicationManagementTab({
             {mgr.selected.description ? (
               <Text color="gray.600">{mgr.selected.description}</Text>
             ) : null}
-            <Box bg="blue.50" borderRadius="md" p={4}>
-              <HStack justify="space-between" mb={2}>
-                <Text fontWeight="bold">{formatPct(mgr.selected.consumed_percentage)} used</Text>
-                <Text fontSize="sm" color="gray.500">
-                  of {formatPct(mgr.selected.allocated_percentage)} allocated
+            <HStack justify="space-between">
+              <Text fontSize="sm" color="gray.500">Budget allocation</Text>
+              <Text fontWeight="semibold">{formatPct(mgr.selected.allocated_percentage)}</Text>
+            </HStack>
+            {mgr.selected.allocated_budget != null ? (
+              <HStack justify="space-between">
+                <Text fontSize="sm" color="gray.500">Budget amount</Text>
+                <Text fontWeight="semibold">
+                  {rupees(mgr.selected.allocated_budget, currency)}
                 </Text>
               </HStack>
-              <Box h="8px" bg="gray.200" borderRadius="full" overflow="hidden">
-                <Box
-                  h="100%"
-                  bg="blue.500"
-                  width={`${
-                    mgr.selected.allocated_percentage
-                      ? Math.min(
-                          100,
-                          (mgr.selected.consumed_percentage / mgr.selected.allocated_percentage) * 100,
-                        )
-                      : 0
-                  }%`}
-                />
-              </Box>
-              <Text fontSize="sm" color="gray.500" mt={2}>
-                {rupees(mgr.selected.consumed_budget, currency)} of{" "}
-                {rupees(mgr.selected.allocated_budget, currency)}
-              </Text>
-            </Box>
+            ) : null}
           </VStack>
         )}
       </StandardModal>
@@ -534,7 +523,7 @@ export default function ApplicationManagementTab({
         title={mgr.selected ? `Edit Budget — ${mgr.selected.name}` : "Edit Budget"}
         size="lg"
         footer={
-          <>
+          <HStack spacing={3}>
             <Button variant="ghost" onClick={() => mgr.setBudgetOpen(false)}>
               Cancel
             </Button>
@@ -546,7 +535,7 @@ export default function ApplicationManagementTab({
             >
               Save changes
             </Button>
-          </>
+          </HStack>
         }
       >
         <VStack align="stretch" spacing={4}>
@@ -585,7 +574,7 @@ export default function ApplicationManagementTab({
             <PercentageStepper
               value={mgr.budgetDraft}
               onChange={mgr.setBudgetDraft}
-              min={mgr.budgetFloor}
+              min={mgr.budgetFloor > 0 ? mgr.budgetFloor : 0}
               max={mgr.budgetAvailable}
               onBoundHit={mgr.onBudgetBoundHit}
             />
@@ -594,13 +583,15 @@ export default function ApplicationManagementTab({
               {FIELD_HINTS.application.budgetEdit.helper}
             </FieldHint>
           </FormControl>
-          <HStack justify="space-between">
-            <ViewLabelWithTip
-              label="Minimum allowed"
-              tooltip={FIELD_HINTS.application.tooltips.minimumAllowed}
-            />
-            <Text fontWeight="semibold">{formatPct(mgr.budgetFloor)}</Text>
-          </HStack>
+          {mgr.budgetFloor > 0 ? (
+            <HStack justify="space-between">
+              <ViewLabelWithTip
+                label="Minimum allowed"
+                tooltip={FIELD_HINTS.application.tooltips.minimumAllowed}
+              />
+              <Text fontWeight="semibold">{formatPct(mgr.budgetFloor)}</Text>
+            </HStack>
+          ) : null}
           <HStack justify="space-between">
             <ViewLabelWithTip
               label="Available at Institution level"

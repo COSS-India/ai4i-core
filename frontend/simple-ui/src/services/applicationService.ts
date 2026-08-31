@@ -37,12 +37,12 @@ function normalizeApplication(raw: unknown, fallbackTenantId: string): Applicati
     domain: asString(row.domain),
     allocated_percentage: asNumber(row.allocated_percentage),
     allocated_budget: asNumber(row.allocated_budget),
-    consumed_percentage: asNumber(row.consumed_percentage) ?? 0,
-    consumed_budget: asNumber(row.consumed_budget) ?? 0,
+    consumed_percentage: asNumber(row.consumed_percentage),
+    consumed_budget: asNumber(row.consumed_budget),
     status: row.status === "INACTIVE" ? "INACTIVE" : "ACTIVE",
     created_at: asString(row.created_at),
     updated_at: row.updated_at == null ? null : asString(row.updated_at),
-    api_key_count: asNumber(row.api_key_count) ?? 0,
+    api_key_count: asNumber(row.api_key_count),
   };
 }
 
@@ -176,13 +176,6 @@ export async function updateApplicationAllocations(
       ? data.allocations
       : [];
   return rows.map((row) => normalizeApplication(row, tenantId));
-}
-
-export async function listApplicationDomains(tenantId: string): Promise<string[]> {
-  const result = await listApplications(tenantId, { page: 1, size: 100 });
-  return Array.from(
-    new Set(result.applications.map((a) => a.domain).filter(Boolean)),
-  ).sort((a, b) => a.localeCompare(b));
 }
 
 export interface ApplicationApiKeyRow {

@@ -9,14 +9,14 @@ export interface Application {
   /** Null = no ceiling (uncapped). */
   allocated_percentage: number | null;
   allocated_budget: number | null;
-  /** Share of the Institution budget already consumed (same unit as allocated %). */
-  consumed_percentage: number;
-  consumed_budget: number;
+  /** Null when the list API does not include usage (do not treat as zero). */
+  consumed_percentage?: number | null;
+  consumed_budget?: number | null;
   status: ApplicationStatus;
   created_at: string;
   updated_at?: string | null;
-  /** Present when the list API includes key counts; 0 until keys ship. */
-  api_key_count?: number;
+  /** Null when the list API does not include key counts. */
+  api_key_count?: number | null;
 }
 
 export interface ApplicationListResult {
