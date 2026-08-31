@@ -125,8 +125,14 @@ class TestGetSummary:
                 ),  # applications
                 _rows_result(
                     [
-                        _Row(id=10, application_id=1, key_name="Web", api_key="a" * 28 + "a91d", allocated_percentage=Decimal("24.00"), allocated_budget=Decimal("240000.00"), is_active=True),
-                        _Row(id=11, application_id=2, key_name="Batch", api_key="b" * 28 + "44f2", allocated_percentage=Decimal("16.00"), allocated_budget=Decimal("160000.00"), is_active=True),
+                        # allocated_percentage is % of the PARENT APPLICATION's budget
+                        # (api_key_service.py:547), so 240000 of App 1's 400000 is
+                        # 60.00, not 24.00; 160000 of App 2's 200000 is 80.00, not
+                        # 16.00 — get_summary never reads this field (only the amount),
+                        # so the mismatch didn't mask a bug here, but it's the same
+                        # unrealistic-fixture class flagged for the detail endpoint.
+                        _Row(id=10, application_id=1, key_name="Web", api_key="a" * 28 + "a91d", allocated_percentage=Decimal("60.00"), allocated_budget=Decimal("240000.00"), is_active=True),
+                        _Row(id=11, application_id=2, key_name="Batch", api_key="b" * 28 + "44f2", allocated_percentage=Decimal("80.00"), allocated_budget=Decimal("160000.00"), is_active=True),
                     ]
                 ),  # api keys
             ]
