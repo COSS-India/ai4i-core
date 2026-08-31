@@ -1067,14 +1067,15 @@ class TestModelBreakdown:
         assert row["native_units"] == 2.5
         assert row["native_unit_suffix"] == "min"
 
-    async def test_unknown_task_type_reports_zero_units_and_generic_suffix(self):
+    async def test_unknown_task_type_reports_zero_units_and_empty_suffix(self):
         """A row whose endpoint label can't be resolved to any known task
         (e.g. missing/blank) — task_type can't be determined, so
         native_units stays 0.0 instead of guessing/defaulting to LLM tokens.
         native_unit_suffix, however, must NEVER be null on the wire — the
         FE's Zod schema declares it z.string() and fails the whole response
-        on a type mismatch — so it falls back to a generic non-null string
-        instead."""
+        on a type mismatch — so it falls back to "" (not a word like
+        "requests") so formatNativeConsumption prints the bare "0" instead
+        of a misleading unit label next to the row's real Requests count."""
         client = MagicMock()
         client.query = AsyncMock(return_value=self._row("svc-x", 5, endpoint=""))
         svc = MeteringService(client=client)  # no model_repo
@@ -1084,7 +1085,7 @@ class TestModelBreakdown:
         row = result["services"][0]
         assert row["task_type"] is None
         assert row["native_units"] == 0.0
-        assert row["native_unit_suffix"] == "requests"
+        assert row["native_unit_suffix"] == ""
 
     async def test_repo_not_queried_when_no_traffic(self):
         client = MagicMock()

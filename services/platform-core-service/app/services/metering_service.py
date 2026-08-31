@@ -89,11 +89,17 @@ _PPU_UNIT_TO_DISPLAY_SUFFIX: dict[str, str] = {
 
 
 def _native_unit_suffix_for_metering_task(task: Optional[str]) -> str:
-    """Never returns None/empty for a resolvable task — the FE's Zod schema
+    """Never returns None for a resolvable task — the FE's Zod schema
     declares this field a plain `z.string()`, and `parseResponseData` fails
     the ENTIRE Model Consumption response (not just one cell) on a type
     mismatch, so a null here for a single row's unresolved task type is far
-    worse than a generic fallback string."""
+    worse than a fallback string.
+
+    That fallback is `""`, not a word like "requests": `formatNativeConsumption`
+    prints the number alone when the suffix is empty, whereas any actual word
+    renders as a misleading unit label (e.g. "0 requests") sitting right next
+    to a Requests column already showing the real count for that row.
+    """
     if task:
         registry_task_type = _METERING_TASK_TO_REGISTRY_TASK_TYPE.get(task, task)
         ppu_unit = get_inference_unit_map().get(registry_task_type)
@@ -102,7 +108,7 @@ def _native_unit_suffix_for_metering_task(task: Optional[str]) -> str:
         cfg = SERVICE_BREAKDOWN_CONFIG.get(task)
         if cfg:
             return cfg["native_unit_suffix"]
-    return "requests"
+    return ""
 
 
 class _Unset:
