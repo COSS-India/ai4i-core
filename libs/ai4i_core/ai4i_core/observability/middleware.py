@@ -71,6 +71,16 @@ def _auth_type(request: Request) -> str:
     return (request.headers.get("X-Auth-Type") or "").strip()
 
 
+def _application_id_label(request: Request) -> str:
+    """Read the X-Application-ID header set by auth-service for API-key calls.
+
+    Returns "" when the header is absent (JWT auth, or pre-cutover series) so
+    the metering read-side can detect that case — same reasoning as
+    ``_tenant_id_label``.
+    """
+    return (request.headers.get("X-Application-ID") or "").strip()
+
+
 def _tenant_id_label(request: Request) -> str:
     """Read the ``tenant_id`` metric label from the gateway-injected
     X-Tenant-Id header (the tenant's immutable numeric id, set by
@@ -243,6 +253,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         # service_id is populated during request handling by model-management.
         tenant_label = _tenant_label(request)
         tenant_id_label = _tenant_id_label(request)
+        application_id_label = _application_id_label(request)
         auth_type = _auth_type(request)
         # service_id is set on request.state by the route handler for LLM
         # (from payload serviceId before proxy_traced is called) and by the
@@ -270,6 +281,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             service_type=service_type,
             tenant=tenant_label,
             tenant_id=tenant_id_label,
+            application_id=application_id_label,
             service_id=service_id,
             status_code=response.status_code,
             duration=duration,
@@ -320,6 +332,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             duration = time.time() - start_time
             tenant_label = _tenant_label(request)
             tenant_id_label = _tenant_id_label(request)
+            application_id_label = _application_id_label(request)
             service_id = getattr(request.state, "service_id", "") or ""
             self._schedule_metrics(
                 path=path,
@@ -327,6 +340,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 service_type="llm",
                 tenant=tenant_label,
                 tenant_id=tenant_id_label,
+                application_id=application_id_label,
                 service_id=service_id,
                 status_code=status_code,
                 duration=duration,
@@ -393,6 +407,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         service_id: str,
         status_code: int,
         duration: float,
+        application_id: str = "",
         auth_type: str = "",
         billed_input: Optional[float] = None,
         billed_output: Optional[float] = None,
@@ -420,6 +435,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 duration=duration,
                 tenant=tenant,
                 tenant_id=tenant_id,
+                application_id=application_id,
                 service_id=service_id,
                 model_id=model_id,
                 auth_type=auth_type,
@@ -440,6 +456,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         total_tokens=billed_input + (billed_output or 0),
                         tenant=tenant,
                         tenant_id=tenant_id,
+                        application_id=application_id,
                         service_id=service_id,
                         endpoint=path,
                         model_id=model_id,
@@ -455,6 +472,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     target_lang=target_lang,
                     tenant=tenant,
                     tenant_id=tenant_id,
+                    application_id=application_id,
                     service_id=service_id,
                     auth_type=auth_type,
                 )
@@ -472,6 +490,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         tenant: str,
         service_id: str,
         tenant_id: str = "",
+        application_id: str = "",
         auth_type: str = "",
     ) -> None:
         """Dispatch billed_input (the single count already used for billing
@@ -487,20 +506,20 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             if service_type == "tts":
                 self.metrics_collector.track_tts_characters(
                     language=source_lang, characters=billed_input,
-                    tenant=tenant, tenant_id=tenant_id, service_id=service_id,
-                    auth_type=auth_type,
+                    tenant=tenant, tenant_id=tenant_id, application_id=application_id,
+                    service_id=service_id, auth_type=auth_type,
                 )
             elif service_type == "translation":
                 self.metrics_collector.track_nmt_characters(
                     source_lang=source_lang, target_lang=target_lang,
                     characters=billed_input, tenant=tenant, tenant_id=tenant_id,
-                    service_id=service_id, auth_type=auth_type,
+                    application_id=application_id, service_id=service_id, auth_type=auth_type,
                 )
             elif service_type == "asr":
                 self.metrics_collector.track_asr_audio_length(
                     language=source_lang, audio_minutes=billed_input,
-                    tenant=tenant, tenant_id=tenant_id, service_id=service_id,
-                    auth_type=auth_type,
+                    tenant=tenant, tenant_id=tenant_id, application_id=application_id,
+                    service_id=service_id, auth_type=auth_type,
                 )
             elif service_type == "ocr":
                 # billed_input is an image COUNT (inference_types.yaml unit:
@@ -509,33 +528,33 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 # byte-size heuristic it used to compute independently.
                 self.metrics_collector.track_ocr_characters(
                     characters=billed_input, tenant=tenant, tenant_id=tenant_id,
-                    service_id=service_id, auth_type=auth_type,
+                    application_id=application_id, service_id=service_id, auth_type=auth_type,
                 )
             elif service_type == "transliteration":
                 self.metrics_collector.track_transliteration_characters(
                     source_lang=source_lang, target_lang=target_lang,
                     characters=billed_input, tenant=tenant, tenant_id=tenant_id,
-                    service_id=service_id, auth_type=auth_type,
+                    application_id=application_id, service_id=service_id, auth_type=auth_type,
                 )
             elif service_type == "language_detection":
                 self.metrics_collector.track_language_detection_characters(
                     characters=billed_input, tenant=tenant, tenant_id=tenant_id,
-                    service_id=service_id, auth_type=auth_type,
+                    application_id=application_id, service_id=service_id, auth_type=auth_type,
                 )
             elif service_type == "audio_lang_detection":
                 self.metrics_collector.track_audio_lang_detection_length(
                     audio_minutes=billed_input, tenant=tenant, tenant_id=tenant_id,
-                    service_id=service_id, auth_type=auth_type,
+                    application_id=application_id, service_id=service_id, auth_type=auth_type,
                 )
             elif service_type == "speaker_diarization":
                 self.metrics_collector.track_speaker_diarization_length(
                     audio_minutes=billed_input, tenant=tenant, tenant_id=tenant_id,
-                    service_id=service_id, auth_type=auth_type,
+                    application_id=application_id, service_id=service_id, auth_type=auth_type,
                 )
             elif service_type == "language_diarization":
                 self.metrics_collector.track_language_diarization_length(
                     audio_minutes=billed_input, tenant=tenant, tenant_id=tenant_id,
-                    service_id=service_id, auth_type=auth_type,
+                    application_id=application_id, service_id=service_id, auth_type=auth_type,
                 )
             elif service_type == "ner":
                 # billed_input is a CHARACTER count (inference_types.yaml
@@ -544,7 +563,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 # it now carries the same character count billing uses.
                 self.metrics_collector.track_ner_tokens(
                     tokens=billed_input, tenant=tenant, tenant_id=tenant_id,
-                    service_id=service_id, auth_type=auth_type,
+                    application_id=application_id, service_id=service_id, auth_type=auth_type,
                 )
         except Exception:
             if self.config.debug:
