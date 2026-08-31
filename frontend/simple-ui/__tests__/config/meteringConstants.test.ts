@@ -1,6 +1,6 @@
 import { METERING } from '../../src/config/meteringConstants';
 import { meteringColorAt } from '../../src/utils/meteringColors';
-import { inferModelTaskType, normalizeModelTaskType, resolveModelTaskType } from '../../src/utils/meteringTaskType';
+import { normalizeModelTaskType } from '../../src/utils/meteringTaskType';
 import { buildTaskTypeConsumptionChart } from '../../src/utils/meteringFormatters';
 
 describe('Usage Dashboard v2.0 (AI4IDS-2908)', () => {
@@ -81,26 +81,14 @@ describe('Budget summary tooltips (AI4IDS-2957)', () => {
   });
 });
 
-describe('inferModelTaskType', () => {
-  it('reads task type from service_id prefix', () => {
-    expect(inferModelTaskType('nmt/indic-en', 'NMT')).toBe('nmt');
-    expect(inferModelTaskType('llm/gemma', 'LLM Service')).toBe('llm');
-  });
-
+describe('normalizeModelTaskType (AI4IDS-2980)', () => {
   it('normalizes underscore keys to hyphen form', () => {
     expect(normalizeModelTaskType('language_detection')).toBe('language-detection');
   });
-});
 
-describe('resolveModelTaskType (AI4IDS-2980)', () => {
-  it('prefers API task_type over service_id inference', () => {
-    expect(
-      resolveModelTaskType({
-        service_id: 'llm/gemma',
-        name: 'LLM',
-        task_type: 'nmt',
-      }),
-    ).toBe('nmt');
+  it('returns empty string for null or blank values', () => {
+    expect(normalizeModelTaskType(null)).toBe('');
+    expect(normalizeModelTaskType('  ')).toBe('');
   });
 });
 

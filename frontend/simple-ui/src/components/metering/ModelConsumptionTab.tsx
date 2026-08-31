@@ -28,11 +28,7 @@ import {
   getWindowLabel,
 } from "../../utils/meteringFormatters";
 import { meteringServiceColor } from "../../utils/meteringColors";
-import {
-  enrichModelConsumptionRows,
-  normalizeModelTaskType,
-  taskTypeByModelName,
-} from "../../utils/meteringTaskType";
+import { normalizeModelTaskType } from "../../utils/meteringTaskType";
 import { useMeteringTableSort } from "../../utils/meteringTableSort";
 import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
@@ -71,36 +67,29 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
   const breakdown = data?.breakdown ?? [];
   const topModels = data?.top_models ?? [];
 
-  const enrichedBreakdown = useMemo(
-    () => enrichModelConsumptionRows(breakdown),
-    [breakdown],
-  );
-
   const allTaskTypesSelected =
     taskTypeNames.length === 0 ||
-    selectedTaskTypes.size === 0 ||
     selectedTaskTypes.size >= taskTypeNames.length;
 
   const filteredBreakdown = useMemo(() => {
-    if (allTaskTypesSelected) return enrichedBreakdown;
-    return enrichedBreakdown.filter((row) =>
-      selectedTaskTypes.has(normalizeModelTaskType(row.task_type)),
+    if (allTaskTypesSelected) return breakdown;
+    return breakdown.filter(
+      (row) =>
+        row.task_type &&
+        selectedTaskTypes.has(normalizeModelTaskType(row.task_type)),
     );
-  }, [enrichedBreakdown, selectedTaskTypes, allTaskTypesSelected]);
-
-  const modelTaskTypeMap = useMemo(
-    () => taskTypeByModelName(enrichedBreakdown),
-    [enrichedBreakdown],
-  );
+  }, [breakdown, selectedTaskTypes, allTaskTypesSelected]);
 
   const visibleTopModels = useMemo(() => {
-    const sliced = topModels.slice(0, topN);
-    if (allTaskTypesSelected) return sliced;
-    return sliced.filter((row) => {
-      const tt = modelTaskTypeMap.get(row.model_name.trim());
-      return tt ? selectedTaskTypes.has(normalizeModelTaskType(tt)) : false;
-    });
-  }, [topModels, topN, allTaskTypesSelected, selectedTaskTypes, modelTaskTypeMap]);
+    const filtered = allTaskTypesSelected
+      ? topModels
+      : topModels.filter((row) =>
+          row.task_type
+            ? selectedTaskTypes.has(normalizeModelTaskType(row.task_type))
+            : false,
+        );
+    return filtered.slice(0, topN);
+  }, [topModels, topN, allTaskTypesSelected, selectedTaskTypes]);
 
   const { slices } = useMemo(() => {
     if (visibleTopModels.length) return buildTopModelsChart(visibleTopModels);
@@ -120,7 +109,7 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
   const sortAccessors = useMemo(
     () => ({
       task_type: (row: (typeof filteredBreakdown)[number]) =>
-        formatModelTaskTypeLabel(row.task_type),
+        row.task_type ? formatModelTaskTypeLabel(row.task_type) : "",
       model_name: (row: (typeof filteredBreakdown)[number]) =>
         row.model_name?.trim() || "",
       name: (row: (typeof filteredBreakdown)[number]) => row.name,
@@ -288,10 +277,8 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
                   rows={visibleTopModels.map((row) => ({
                     rank: row.rank,
                     label: row.model_name,
-                    subtitle: modelTaskTypeMap.get(row.model_name.trim())
-                      ? formatModelTaskTypeLabel(
-                          modelTaskTypeMap.get(row.model_name.trim())!,
-                        )
+                    subtitle: row.task_type
+                      ? formatModelTaskTypeLabel(row.task_type)
                       : undefined,
                     formattedValue:
                       row.formatted_requests ||

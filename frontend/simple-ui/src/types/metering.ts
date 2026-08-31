@@ -117,7 +117,7 @@ export interface ModelConsumptionRow {
   service_id: string;
   name: string;
   model_name?: string | null;
-  /** From API when available; otherwise inferred on the client from service_id/name. */
+  /** Registry task type from `mm_models.task["type"]`; null when unresolved. */
   task_type?: string | null;
   requests: number;
   native_units: number;
@@ -130,6 +130,8 @@ export interface ModelConsumptionRow {
 export interface TopModelRow {
   rank: number;
   model_name: string;
+  /** From API when available; used for task-type filtering on the ranked list. */
+  task_type?: string | null;
   consumption_pct: number;
   requests: number;
   formatted_requests: string;

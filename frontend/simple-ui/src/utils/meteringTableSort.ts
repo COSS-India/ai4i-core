@@ -26,27 +26,35 @@ export function useMeteringTableSort<T>(
   accessors: Record<string, (row: T) => string | number>,
   defaultDirection: MeteringSortDirection = "desc",
 ) {
-  const [sortKey, setSortKey] = useState(defaultKey);
-  const [sortDirection, setSortDirection] = useState<MeteringSortDirection>(defaultDirection);
+  const [sort, setSort] = useState({
+    key: defaultKey,
+    direction: defaultDirection,
+  });
 
   const toggleSort = useCallback((key: string) => {
-    setSortKey((prev) => {
-      if (prev === key) {
-        setSortDirection((d) => (d === "desc" ? "asc" : "desc"));
-        return prev;
+    setSort((prev) => {
+      if (prev.key === key) {
+        return {
+          key,
+          direction: prev.direction === "desc" ? "asc" : "desc",
+        };
       }
-      setSortDirection("desc");
-      return key;
+      return { key, direction: "desc" as MeteringSortDirection };
     });
   }, []);
 
   const sortedRows = useMemo(() => {
-    const accessor = accessors[sortKey];
+    const accessor = accessors[sort.key];
     if (!accessor) return [...rows];
-    return sortMeteringRows(rows, accessor, sortDirection);
-  }, [rows, sortKey, sortDirection, accessors]);
+    return sortMeteringRows(rows, accessor, sort.direction);
+  }, [rows, sort.key, sort.direction, accessors]);
 
-  return { sortedRows, sortKey, sortDirection, toggleSort };
+  return {
+    sortedRows,
+    sortKey: sort.key,
+    sortDirection: sort.direction,
+    toggleSort,
+  };
 }
 
 export function sortIndicator(

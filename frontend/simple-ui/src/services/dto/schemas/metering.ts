@@ -118,6 +118,7 @@ export const modelConsumptionRowSchema = z.object({
 export const topModelRowSchema = z.object({
   rank: z.number(),
   model_name: z.string(),
+  task_type: z.string().nullable().optional(),
   consumption_pct: z.number(),
   requests: z.number(),
   formatted_requests: z.string(),
