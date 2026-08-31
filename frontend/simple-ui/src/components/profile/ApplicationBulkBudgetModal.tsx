@@ -171,7 +171,7 @@ export default function ApplicationBulkBudgetModal({
                     value={row.amountInput}
                     onFocus={() => onRowFocus(row.application_id)}
                     onChange={(e) => onAmountChange(row.application_id, e.target.value)}
-                    min={row.consumed_budget}
+                    min={row.consumed_budget ?? undefined}
                     step={0.01}
                     isDisabled={institutionBudgetUnset}
                     placeholder={institutionBudgetUnset ? "—" : undefined}
