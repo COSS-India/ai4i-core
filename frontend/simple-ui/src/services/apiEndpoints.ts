@@ -60,7 +60,14 @@ export const apiEndpoints = {
     /** POST — re-send set-password setup link to a not-yet-activated tenant user. */
     resendUserSetupLink: (tenantId: string, userId: string) =>
       `${API_V1}/auth/tenants/${tenantId}/users/${userId}/resend-setup-link`,
+    applications: (tenantId: string) =>
+      `${API_V1}/auth/tenants/${tenantId}/applications`,
+    application: (tenantId: string, applicationId: string) =>
+      `${API_V1}/auth/tenants/${tenantId}/applications/${applicationId}`,
   },
+
+  /** Bulk budget reallocation across Applications of a tenant. */
+  allocations: `${API_V1}/auth/allocations`,
 
   alerts: {
     base: `${API_V1}/alerts`,
@@ -218,6 +225,7 @@ export const apiEndpoints = {
   metering: {
     base: `${API_V1}/metering`,
     overview: `${API_V1}/metering/overview`,
+    tenantConsumption: `${API_V1}/metering/tenant-consumption`,
     modelConsumption: `${API_V1}/metering/model-consumption`,
   },
 

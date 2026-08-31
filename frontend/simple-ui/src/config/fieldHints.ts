@@ -142,10 +142,7 @@ export const FIELD_HINTS = {
       helper: "e.g. Enterprise tier for high usage.",
     },
     quotaUnit: { helper: "Auto-filled based on Model Task Type (e.g., tokens for LLM)" },
-    quotaLimit: {
-      placeholder: "Enter quota limit",
-      helper: "e.g. 1000000 (1M is standard). Must be greater than 0",
-    },
+    quotaLimit: { placeholder: "Enter quota limit", helper: "e.g. 10000. Must be greater than 0" },
   },
   apiKey: {
     expiry: {
@@ -153,6 +150,55 @@ export const FIELD_HINTS = {
       helper: "e.g. 30. Must be between 1 and 365",
     },
     permissions: { helper: "Select at least one permission" },
+  },
+  application: {
+    name: {
+      placeholder: "e.g. Citizen Services Portal",
+      helper:
+        "Required. Must be unique within this Institution (case-insensitive).",
+    },
+    description: {
+      placeholder: "What this Application is used for",
+      helper: "Optional plain text. Shown on the Application details view.",
+    },
+    domain: {
+      placeholder: "e.g. citizen-services.gov.in",
+      helper: "Optional. Used to search and filter this Application later.",
+    },
+    budget: {
+      placeholder: "0",
+      helper:
+        "Optional. Percentage of the Institution's Budget. Leave blank for no ceiling.",
+    },
+    budgetEdit: {
+      helper:
+        "Percentage of this Institution's total Budget. Cannot be reduced below already-consumed usage.",
+    },
+    institutionBudgetNotSet:
+      "This Institution does not have a Budget (₹) assigned yet. Assign a Tier and Budget from Institution Management before saving Application budget allocations.",
+    amountRequiresInstitutionBudget:
+      "Assign an Institution Budget (₹) before entering amounts.",
+    search: {
+      placeholder: "Search by name or domain",
+      helper: "Matches Application name or domain.",
+    },
+    domainFilter: {
+      helper: "Exact-match filter on Application domain.",
+    },
+    tooltips: {
+      totalApplications:
+        "Count of Applications onboarded under this Institution.",
+      allocatedBudget:
+        "Sum of Budget % assigned across all Applications, as a share of the Institution's total Budget.",
+      availableToAllocate:
+        "Institution Budget % not yet assigned to any Application. This share may stay unallocated.",
+      institutionBudgetAllocated:
+        "Total Budget % assigned across all Applications after this change.",
+      minimumAllowed:
+        "Lowest % allowed for this Application — already-consumed usage cannot be reduced.",
+      availableAtInstitution:
+        "Maximum % you can assign without exceeding 100% across all Applications.",
+    },
   },
   register: {
     emailChecking: "Checking if email exists…",

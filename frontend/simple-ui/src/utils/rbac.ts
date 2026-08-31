@@ -69,6 +69,19 @@ export function isAdopterAdminUser(roles?: string[]): boolean {
   return userHasRole(roles, "MODERATOR") && !isPlatformAdminUser(roles);
 }
 
+/**
+ * Adopter-side institution managers: Default Admin (platform ADMIN) or Adopter Admin
+ * (MODERATOR). They pick an institution, then manage users and applications there.
+ */
+export function isAdopterInstitutionManager(roles?: string[]): boolean {
+  return isDefaultAdminUser(roles) || isAdopterAdminUser(roles);
+}
+
+/** Institution Management nav/page — platform ADMIN or Institution Admin only. */
+export function canAccessInstitutionManagement(roles?: string[]): boolean {
+  return isDefaultAdminUser(roles) || isTenantAdminUser(roles);
+}
+
 /** Tenant Admin without platform ADMIN or MODERATOR. */
 export function isTenantAdminOnlyUser(roles?: string[]): boolean {
   return isTenantAdminUser(roles) && !canAccessPlatformMetering(roles);
