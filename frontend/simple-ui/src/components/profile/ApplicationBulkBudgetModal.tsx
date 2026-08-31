@@ -141,6 +141,10 @@ export default function ApplicationBulkBudgetModal({
                         {formatSpendMoney(row.consumed_budget ?? 0, currency)}
                       </Text>
                     </>
+                  ) : row.rowError ? (
+                    <Text fontSize="sm" color="red.500">
+                      Load failed — refocus to retry
+                    </Text>
                   ) : (
                     <Text fontSize="sm" color="gray.400">
                       {row.keysLoading ? "Loading…" : "Focus row to load"}

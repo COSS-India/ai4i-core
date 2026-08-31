@@ -21,7 +21,7 @@ import {
 import type { Application } from "../../../types/application";
 import { FIELD_HINTS } from "../../../config/fieldHints";
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 25;
 
 export type ApplicationForm = {
   name: string;
@@ -92,6 +92,14 @@ function consumedFromKeys(
   const consumed_percentage =
     tenantBudget > 0 ? roundPct((consumed_budget / tenantBudget) * 100) : 0;
   return { consumed_percentage, consumed_budget };
+}
+
+function rowHasBudgetChange(row: BulkBudgetDraft): boolean {
+  const orig = row.originalPct;
+  const next = row.resolvedPct;
+  if (orig == null && next == null) return false;
+  if (orig == null || next == null) return true;
+  return Math.abs(orig - next) > 1e-6;
 }
 
 function buildDraftFromApplication(app: Application): BulkBudgetDraft {
@@ -291,21 +299,17 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     if (bulkLoading || bulkRows.length === 0) return false;
     if (bulkLiveTotalPct > 100 + 1e-6) return false;
     if (bulkRows.some((row) => row.rowError)) return false;
-    const hasChange = bulkRows.some((row) => {
-      const orig = row.originalPct;
-      const next = row.resolvedPct;
-      if (orig == null && next == null) return false;
-      if (orig == null || next == null) return true;
-      return Math.abs(orig - next) > 1e-6;
-    });
-    return hasChange;
+    const changedRows = bulkRows.filter(rowHasBudgetChange);
+    if (changedRows.length === 0) return false;
+    if (changedRows.some((row) => !row.keysLoaded)) return false;
+    return true;
   }, [institutionBudgetUnset, bulkLoading, bulkRows, bulkLiveTotalPct]);
 
   const loadKeysForRow = useCallback(async (applicationId: string) => {
     setBulkRows((prev) =>
       prev.map((row) =>
         row.application_id === applicationId
-          ? { ...row, keysLoading: true }
+          ? { ...row, keysLoading: true, rowError: null }
           : row,
       ),
     );
@@ -332,11 +336,17 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
           return { ...next, rowError: evaluateRowError(next, tenantBudget) };
         }),
       );
-    } catch {
+    } catch (error) {
+      const message = parseError(error).message;
       setBulkRows((prev) =>
         prev.map((row) =>
           row.application_id === applicationId
-            ? { ...row, keysLoading: false, keysLoaded: true }
+            ? {
+                ...row,
+                keysLoading: false,
+                keysLoaded: false,
+                rowError: `Could not load API keys for this Application: ${message}`,
+              }
             : row,
         ),
       );
@@ -421,13 +431,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
   const handleSaveBulkBudget = async () => {
     if (!bulkCanSave) return;
     const changes = bulkRows
-      .filter((row) => {
-        const orig = row.originalPct;
-        const next = row.resolvedPct;
-        if (orig == null && next == null) return false;
-        if (orig == null || next == null) return true;
-        return Math.abs(orig - next) > 1e-6;
-      })
+      .filter(rowHasBudgetChange)
       .filter((row) => row.resolvedPct != null)
       .map((row) => ({
         application_id: row.application_id,
