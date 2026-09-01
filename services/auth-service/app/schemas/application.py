@@ -22,6 +22,14 @@ from app.schemas.common import SuccessResponse
 _MAX_PERCENTAGE = Decimal("100")
 
 
+_APPLICATION_CREATE_EXAMPLE = {
+    "name": "Customer Portal",
+    "description": "Public-facing translation widget for the customer portal",
+    "domain": "portal.example.com",
+    "allocated_percentage": 50.00,
+}
+
+
 class ApplicationCreate(BaseSchema):
     """POST body.
 
@@ -32,7 +40,7 @@ class ApplicationCreate(BaseSchema):
     reasonably believe the value took effect.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [_APPLICATION_CREATE_EXAMPLE]})
 
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = Field(None, max_length=500)
@@ -70,6 +78,14 @@ class ApplicationCreate(BaseSchema):
         return v.quantize(Decimal("0.01"))
 
 
+_APPLICATION_UPDATE_EXAMPLE = {
+    "name": "Customer Portal",
+    "description": "Updated description for the customer portal integration",
+    "domain": "portal.example.com",
+    "status": "ACTIVE",
+}
+
+
 class ApplicationUpdate(BaseSchema):
     """PATCH body: name / domain / status only.
 
@@ -79,7 +95,7 @@ class ApplicationUpdate(BaseSchema):
     Pydantic raises on the unknown key before the handler ever sees it.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [_APPLICATION_UPDATE_EXAMPLE]})
 
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = Field(None, max_length=500)

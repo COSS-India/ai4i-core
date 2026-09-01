@@ -167,9 +167,11 @@ export default function CreateApiKeyTab({
                 onChange={(e) =>
                   create.setApiKeyForm({ ...create.apiKeyForm, key_name: e.target.value })
                 }
-                placeholder="Enter a name for this API key"
+                placeholder={FIELD_HINTS.apiKey.keyName.placeholder}
                 bg="white"
+                maxLength={100}
               />
+              <FieldHint>{FIELD_HINTS.apiKey.keyName.helper}</FieldHint>
             </FormControl>
 
             <FormControl isRequired isInvalid={Boolean(create.fieldErrors.application_id)}>
@@ -244,11 +246,11 @@ export default function CreateApiKeyTab({
               </Box>
             </FormControl>
 
-            <FormControl isInvalid={Boolean(create.fieldErrors.budget)}>
+            <FormControl isRequired isInvalid={Boolean(create.fieldErrors.budget)}>
               <FormLabel fontWeight="semibold">
                 Budget Allocation{" "}
                 <Text as="span" fontWeight="normal" color="gray.500" fontSize="sm">
-                  (optional — % of the Application&apos;s Budget)
+                  (% of the Application&apos;s Budget)
                 </Text>
               </FormLabel>
               <PercentageStepper

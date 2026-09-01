@@ -134,7 +134,7 @@ export default function ApplicationBulkBudgetModal({
                   ) : null}
                 </Td>
                 <Td>
-                  {row.keysLoaded ? (
+                  {row.consumed_percentage != null ? (
                     <>
                       <Text fontSize="sm">{formatPct(row.consumed_percentage)}</Text>
                       <Text fontSize="xs" color="gray.500">
@@ -147,7 +147,7 @@ export default function ApplicationBulkBudgetModal({
                     </Text>
                   ) : (
                     <Text fontSize="sm" color="gray.400">
-                      {row.keysLoading ? "Loading…" : "Focus row to load"}
+                      {row.keysLoading ? "Loading…" : "Focus row to load keys"}
                     </Text>
                   )}
                 </Td>
@@ -157,7 +157,9 @@ export default function ApplicationBulkBudgetModal({
                       value={row.pctInput}
                       onChange={(next) => onPctChange(row.application_id, next)}
                       onFocus={() => onRowFocus(row.application_id)}
-                      min={row.keysLoaded && row.consumed_percentage != null ? row.consumed_percentage : 0}
+                      min={
+                        row.consumed_percentage != null ? row.consumed_percentage : 0
+                      }
                       max={100}
                     />
                   </FormControl>

@@ -1,13 +1,22 @@
 import { METERING } from '../../src/config/meteringConstants';
 import { meteringColorAt } from '../../src/utils/meteringColors';
 import { normalizeModelTaskType } from '../../src/utils/meteringTaskType';
-import { buildTaskTypeConsumptionChart } from '../../src/utils/meteringFormatters';
 
 describe('Usage Dashboard v2.0 (AI4IDS-2908)', () => {
-  it('exposes three tabs with renamed labels', () => {
-    expect(METERING.SUB_TABS).toHaveLength(3);
-    expect(METERING.SUB_TABS.map((t) => t.label)).toEqual(['Institution', 'Model', 'Budget']);
-    expect(METERING.SUB_TABS.map((t) => t.id)).toEqual(['overview', 'model', 'usage-spend']);
+  it('exposes four tabs including Applications usage', () => {
+    expect(METERING.SUB_TABS).toHaveLength(4);
+    expect(METERING.SUB_TABS.map((t) => t.label)).toEqual([
+      'Institution',
+      'Model',
+      'Budget',
+      'Applications',
+    ]);
+    expect(METERING.SUB_TABS.map((t) => t.id)).toEqual([
+      'overview',
+      'model',
+      'usage-spend',
+      'applications',
+    ]);
   });
 
   it('defaults usage concentration to Top 10', () => {
@@ -29,6 +38,13 @@ describe('Usage Dashboard v2.0 (AI4IDS-2908)', () => {
   it('does not reference Top 5 in usage concentration copy', () => {
     const { SUBTITLE } = METERING.SECTIONS.CONSUMPTION_OVERVIEW;
     expect(SUBTITLE.toLowerCase()).not.toContain('top 5');
+  });
+});
+
+describe('Application Usage tab (AI4IDS-2894)', () => {
+  it('documents lifetime-scoped application usage copy', () => {
+    expect(METERING.APPLICATION_USAGE.LIFETIME_NOTE.toLowerCase()).toContain('lifetime');
+    expect(METERING.SUB_TAB.APPLICATIONS).toBe('applications');
   });
 });
 
@@ -72,8 +88,14 @@ describe('Key Metrics copy (AI4IDS-2870)', () => {
   });
 });
 
-describe('Model Consumption tooltips (AI4IDS-2854, AI4IDS-2957)', () => {
-  const { TOTAL_MODELS, ACTIVE_MODELS, TOKEN_CONSUMPTION } = METERING.SECTIONS.MODEL.TOOLTIPS;
+describe('Model Consumption tooltips (AI4IDS-2854, AI4IDS-2957, AI4IDS-3000)', () => {
+  const { TOTAL_MODELS, ACTIVE_MODELS, TOKEN_CONSUMPTION, TASK_TYPE } =
+    METERING.SECTIONS.MODEL.TOOLTIPS;
+
+  it('uses Model Registry wording for model task type tooltip (AI4IDS-3000)', () => {
+    expect(TASK_TYPE).toContain('Model Registry');
+    expect(TASK_TYPE).toContain('task type this model performs');
+  });
 
   it('does not describe the removed name-collapsed identity', () => {
     expect(TOTAL_MODELS.toLowerCase()).not.toContain('collapsed by name');
@@ -129,30 +151,5 @@ describe('normalizeModelTaskType (AI4IDS-2980)', () => {
   it('returns empty string for null or blank values', () => {
     expect(normalizeModelTaskType(null)).toBe('');
     expect(normalizeModelTaskType('  ')).toBe('');
-  });
-});
-
-describe('buildTaskTypeConsumptionChart (AI4IDS-2980)', () => {
-  it('aggregates requests by task type', () => {
-    const { slices, totalRequests } = buildTaskTypeConsumptionChart([
-      { task_type: 'llm', requests: 60 },
-      { task_type: 'nmt', requests: 40 },
-      { task_type: 'llm', requests: 20 },
-    ]);
-    expect(totalRequests).toBe(120);
-    expect(slices).toHaveLength(2);
-    expect(slices[0]?.name).toBe('LLM');
-    expect(slices[0]?.value).toBe(80);
-    expect(slices[0]?.pct).toBeCloseTo(66.67, 1);
-    expect(slices[1]?.pct).toBeCloseTo(33.33, 1);
-  });
-
-  it('recomputes percentages for a filtered subset', () => {
-    const { slices, totalRequests } = buildTaskTypeConsumptionChart([
-      { task_type: 'nmt', requests: 40 },
-    ]);
-    expect(totalRequests).toBe(40);
-    expect(slices).toHaveLength(1);
-    expect(slices[0]?.pct).toBe(100);
   });
 });

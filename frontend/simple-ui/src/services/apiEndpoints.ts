@@ -70,9 +70,12 @@ export const apiEndpoints = {
     tenantTier: (tenantId: string) => `${API_V1}/auth/tenants/${tenantId}/tier`,
     /** PATCH — top-up / top-down tenant budget (delta, not edit total). */
     tenantBudget: (tenantId: string) => `${API_V1}/auth/tenants/${tenantId}/budget`,
+    /** PUT — rebalance Application budget allocations under a tenant. */
+    budgetAllocation: (tenantId: string) =>
+      `${API_V1}/auth/tenants/${tenantId}/budget-allocation`,
   },
 
-  /** Bulk budget reallocation across Applications of a tenant. */
+  /** @deprecated Use tenants.budgetAllocation instead. */
   allocations: `${API_V1}/auth/allocations`,
 
   alerts: {
@@ -247,6 +250,9 @@ export const apiEndpoints = {
     summary: `${API_V1}/pay-per-use/usage-summary`,
     tenants: `${API_V1}/pay-per-use/usage-tenants`,
     tenant: `${API_V1}/pay-per-use/usage-tenant`,
+    applicationsSummary: `${API_V1}/pay-per-use/usage-applications-summary`,
+    applications: `${API_V1}/pay-per-use/usage-applications`,
+    application: `${API_V1}/pay-per-use/usage-application`,
   },
 } as const;
 

@@ -88,6 +88,20 @@ class ApplicationAllocationRow(BaseSchema):
     api_keys: list[APIKeyAllocationRow] = Field(default_factory=list)
 
 
+_TENANT_BUDGET_ALLOCATION_REQUEST_EXAMPLE = {
+    "applications": [
+        {
+            "application_id": "<place your id here>",
+            "allocation": {"type": "PERCENTAGE", "value": 60.00},
+        },
+        {
+            "application_id": "<place your id here>",
+            "allocation": {"type": "PERCENTAGE", "value": 40.00},
+        },
+    ],
+}
+
+
 class TenantBudgetAllocationRequest(BaseSchema):
     """PUT /auth/tenants/{tenant_id}/budget-allocation.
 
@@ -96,7 +110,10 @@ class TenantBudgetAllocationRequest(BaseSchema):
     (unchanged) total, the same unconditional re-fit rule used at every
     other edge where a parent's children are being resolved."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"examples": [_TENANT_BUDGET_ALLOCATION_REQUEST_EXAMPLE]},
+    )
 
     applications: list[ApplicationAllocationRow] = Field(..., min_length=1)
 

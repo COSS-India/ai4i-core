@@ -514,6 +514,7 @@ function TierForm({
           value={formData.name}
           onChange={(e) => onChange({ ...formData, name: e.target.value })}
           placeholder={FIELD_HINTS.tier.name.placeholder}
+          maxLength={100}
         />
         <FieldHint>{FIELD_HINTS.tier.name.helper}</FieldHint>
       </FormControl>
@@ -794,16 +795,14 @@ const TierManagement: React.FC = () => {
         paginate="client"
         filterToolbarAlign="flex-start"
         filterToolbarRightContent={
-          <Box ml="auto">
-            <Button
-              leftIcon={<AddIcon />}
-              colorScheme="blue"
-              size="sm"
-              onClick={handleOpenCreate}
-            >
-              Create Tier
-            </Button>
-          </Box>
+          <Button
+            leftIcon={<AddIcon />}
+            colorScheme="blue"
+            size="sm"
+            onClick={handleOpenCreate}
+          >
+            Create Tier
+          </Button>
         }
         filters={
           <HStack spacing={3} flexWrap="wrap" align="flex-end">

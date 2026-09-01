@@ -240,8 +240,6 @@ export function summaryFromDetail(detail: TenantUsageDetail): UsageSummaryRespon
       ...i,
       percentage: total > 0 ? Number(((i.spend / total) * 100).toFixed(1)) : 0,
     })),
-    totalAllocatedBudget: detail.budget.limit,
-    totalRemainingBudget: detail.budget.remaining,
   };
 }
 

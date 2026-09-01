@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from pydantic import ConfigDict
+
 from ai4i_core.exceptions import ErrorDetail
 from app.schemas.base import BaseSchema
 
@@ -22,6 +24,15 @@ class MessageData(BaseSchema):
     message: str
 
 
+_ERROR_RESPONSE_EXAMPLE = {
+    "detail": {
+        "message": "The requested resource could not be found.",
+        "code": "NOT_FOUND",
+        "timestamp": 1735689600.0,
+    }
+}
+
+
 class ErrorResponse(BaseSchema):
     """Wire format of auth-service errors: ``{"detail": {code, message, timestamp}}``.
 
@@ -31,6 +42,8 @@ class ErrorResponse(BaseSchema):
     raw ``HTTPException(detail={"code", "message"})`` never gets a timestamp),
     so this must stay no stricter than what those handlers actually emit.
     """
+
+    model_config = ConfigDict(json_schema_extra={"examples": [_ERROR_RESPONSE_EXAMPLE]})
 
     detail: ErrorDetail
 
