@@ -8,7 +8,7 @@ Lifted from alert-management-service/alert_management.py:476-569. Changes:
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import Field, field_validator
+from pydantic import ConfigDict, Field, field_validator
 
 from app.schemas.base import BaseSchema
 from app.schemas.common import (
@@ -21,8 +21,21 @@ from app.schemas.common import (
 from app.schemas.enums.alert_management import VALID_RBAC_ROLES
 
 
+_NOTIFICATION_RECEIVER_CREATE_EXAMPLE = {
+    "category": "application",
+    "severity": "critical",
+    "alert_type": "Latency",
+    "description": "Notify platform on-call for critical application latency alerts",
+    "email_to": ["oncall@example.com"],
+    "email_subject_template": "[ALERT] {{ .CommonLabels.alertname }}",
+    "email_body_template": "<p>{{ .CommonAnnotations.summary }}</p>",
+}
+
+
 class NotificationReceiverCreate(BaseSchema):
     """Create payload — auto-generates receiver name + paired routing rule on the server side."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [_NOTIFICATION_RECEIVER_CREATE_EXAMPLE]})
 
     category: str = Field(..., description="'application' or 'infrastructure'")
     severity: str = Field(..., description="'critical', 'warning', or 'info'")
@@ -51,8 +64,17 @@ class NotificationReceiverCreate(BaseSchema):
             raise ValueError("Cannot provide both 'email_to' and 'rbac_role'. Use one or the other.")
 
 
+_NOTIFICATION_RECEIVER_UPDATE_EXAMPLE = {
+    "description": "Updated on-call distribution list",
+    "email_to": ["oncall@example.com", "backup-oncall@example.com"],
+    "enabled": True,
+}
+
+
 class NotificationReceiverUpdate(BaseSchema):
     """Patch payload — all fields optional."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [_NOTIFICATION_RECEIVER_UPDATE_EXAMPLE]})
 
     receiver_name: Optional[str] = None
     rule_name: Optional[str] = None

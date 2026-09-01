@@ -38,6 +38,15 @@ class SuccessResponseWithMeta(SuccessResponse):
 # ── Error envelope (shared across all platform-core domains) ────────────────
 
 
+_ERROR_RESPONSE_EXAMPLE = {
+    "detail": {
+        "message": "The requested resource could not be found.",
+        "code": "NOT_FOUND",
+        "timestamp": 1735689600.0,
+    }
+}
+
+
 class ErrorResponse(BaseModel):
     """Wire format of platform-core errors: ``{"detail": {code, message, timestamp}}``.
 
@@ -46,6 +55,8 @@ class ErrorResponse(BaseModel):
     ``ai4i_core.exceptions.handlers`` don't always populate every field (e.g. a
     raw ``HTTPException(detail={"code", "message"})`` never gets a timestamp).
     """
+
+    model_config = ConfigDict(json_schema_extra={"examples": [_ERROR_RESPONSE_EXAMPLE]})
 
     detail: ErrorDetail
 
