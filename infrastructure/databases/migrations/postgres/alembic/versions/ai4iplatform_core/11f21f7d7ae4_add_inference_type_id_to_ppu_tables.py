@@ -1,7 +1,5 @@
 """add_inference_type_id_to_ppu_tables
 
-AI4IDS-2933 phase 1 — additive only.
-
 Adds a NULLABLE ``inference_type_id`` FK to ``tier_quotas`` and ``quota_usage``
 and backfills it from ``inference_name``. Deliberately does NOT:
 
@@ -50,6 +48,11 @@ def upgrade() -> None:
             ["inference_type_id"],
             ["id"],
         )
+        op.create_index(
+            f"ix_{table}_inference_type_id",
+            table,
+            ["inference_type_id"],
+        )
         op.execute(
             f"UPDATE {table} t SET inference_type_id = it.id"
             "  FROM inference_types it"
@@ -59,5 +62,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     for table in _TABLES:
+        op.drop_index(f"ix_{table}_inference_type_id", table_name=table)
         op.drop_constraint(f"fk_{table}_inference_type_id", table, type_="foreignkey")
         op.drop_column(table, "inference_type_id")

@@ -54,6 +54,7 @@ class TierQuota(Base):
         Integer,
         ForeignKey("inference_types.id"),
         nullable=True,
+        index=True,
     )
     monthly_quota = Column(Numeric(15, 4), nullable=False)
     pending_monthly_quota = Column(Numeric(15, 4), nullable=True)
