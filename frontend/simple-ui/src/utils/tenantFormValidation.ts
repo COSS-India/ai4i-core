@@ -12,7 +12,7 @@ const NAME_PUNCT = new Set([" ", "-", "'"]);
 
 export const ORG_REQUIRED_MSG = "Organisation is required.";
 export const ORG_TOO_SHORT_MSG = "Organisation must be at least 2 characters.";
-export const ORG_TOO_LONG_MSG = "Organisation must be at most 100 characters.";
+export const ORG_TOO_LONG_MSG = "Organisation must not exceed 100 characters.";
 export const ORG_INVALID_CHARS_MSG =
   "Organisation may only contain letters, digits, spaces, hyphens, dots, and apostrophes.";
 export const ORG_NO_ALNUM_MSG = "Organisation must contain at least one letter or digit.";

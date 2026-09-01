@@ -41,6 +41,7 @@ export const METERING = {
     OVERVIEW: "overview",
     MODEL: "model",
     USAGE_SPEND: "usage-spend",
+    APPLICATIONS: "applications",
   } as const,
   KPI: {
     KEYS: {
@@ -104,6 +105,7 @@ export const METERING = {
     { id: "overview", label: INSTITUTION },
     { id: "model", label: "Model" },
     { id: "usage-spend", label: "Budget" },
+    { id: "applications", label: "Applications" },
   ] as const,
   ROLE_VIEWS: {
     adopter: "Adopter Admin",
@@ -145,6 +147,61 @@ export const METERING = {
       TASK_TYPES: `Number of model task types this ${INSTITUTION.toLowerCase()} consumed in the selected period.`,
     },
     TABLE_TASK_TYPES: "Task Types",
+  },
+  APPLICATION_USAGE: {
+    TENANT_SUBTITLE: "Application usage · lifetime totals",
+    LIFETIME_NOTE:
+      "Application budget figures are lifetime totals — not scoped to the time window or billing period used on other tabs.",
+    SUMMARY: {
+      TOTAL_APPLICATIONS: "TOTAL APPLICATIONS",
+      ALLOCATED: "ALLOCATED BUDGET",
+      SPENT: "SPEND BUDGET",
+      REMAINING: "REMAINING BUDGET",
+      SCOPE_ONBOARDED: "Onboarded under this Institution",
+      SCOPE_ACROSS_APPS: "Across all Applications",
+      PCT_OF_INSTITUTION: "of Institution Budget",
+    },
+    TOOLTIPS: {
+      TOTAL_APPLICATIONS: "Count of all Applications onboarded under the Institution.",
+      ALLOCATED:
+        "Sum of Budget allocated across all Applications. Equals 100% of the Institution's Budget when fully allocated.",
+      SPENT: "Sum of Budget consumed across all Applications.",
+      REMAINING:
+        "Allocated Budget minus Spend Budget, summed across all Applications.",
+      ALLOCATED_COL:
+        "% of the Institution's total Budget assigned to this Application, and its ₹ equivalent.",
+      SPEND_COL:
+        "% of this Application's own Allocated Budget consumed, and its ₹ equivalent.",
+      REMAINING_COL:
+        "This Application's Allocated Budget minus its Spend, as % of its own allocation and ₹.",
+      API_KEY_ALLOCATED:
+        "% of the Institution's total Budget assigned to this Key. Sums to this Application's own allocated %.",
+      API_KEY_SPEND: "% of this Key's own Allocated amount consumed.",
+      API_KEY_REMAINING:
+        "This Key's Allocated amount minus its Spend, as % of its own allocation.",
+    },
+    TABLE: {
+      APPLICATION: "APPLICATION",
+      DOMAIN: "DOMAIN",
+      ALLOCATED: "ALLOCATED BUDGET",
+      SPEND: "SPEND BUDGET",
+      REMAINING: "REMAINING BUDGET",
+      API_KEY: "API KEY",
+      ALLOCATED_SHORT: "ALLOCATED",
+      SPEND_SHORT: "SPEND",
+      REMAINING_SHORT: "REMAINING",
+      NO_BUDGET: "No Budget allocated",
+      REMAINING_OF_ALLOCATION: "of App allocation",
+      REMAINING_OF_KEY_ALLOCATION: "remaining",
+    },
+    DRAWER_TITLE: "Application Spend Details",
+    DRAWER_SPEND_BY_API_KEY: "Spend by API Key",
+    DRAWER_NO_BUDGET: "No Budget has been allocated to this Application yet.",
+    DRAWER_NO_KEYS: "No API keys have been issued against this Application yet.",
+    SELECT_INSTITUTION: "Select an institution from the filter above to view application usage.",
+    EMPTY: "No application usage data available for this institution.",
+    FOOTER:
+      "Table columns are sortable. Spend and remaining percentages are relative to each application's own allocation unless noted otherwise.",
   },
   COLORS: {
     RANK: ["#DD6B20", "#3182CE", "#38A169", "#805AD5", "#00B5D8"] as const,
@@ -364,7 +421,7 @@ export const METERING = {
       HEADER_TOTAL_REQUESTS: "Total requests",
       HEADER_RIGHT: "% of total",
       TOOLTIPS: {
-        TOTAL_REQUESTS: "Request count for this row in the selected time window.",
+        TOTAL_REQUESTS: "Request count for this institution in the selected time window.",
         PCT_OF_TOTAL: "This row's share of the total requests shown in the list.",
       },
     },

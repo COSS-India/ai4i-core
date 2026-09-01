@@ -10,7 +10,16 @@ from enum import Enum
 from typing import Any, Literal, Optional, Union
 from uuid import UUID
 
-from pydantic import AliasChoices, EmailStr, Field, StrictBool, field_serializer, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    ConfigDict,
+    EmailStr,
+    Field,
+    StrictBool,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from app.models.user import CreationType
 from app.schemas.base import BaseSchema
@@ -81,13 +90,33 @@ class TenantUserRole(str, Enum):
 
 
 
+_TENANT_CREATE_EXAMPLE = {
+    "contact_name": "Jane Doe",
+    "organisation": "Acme Language Services",
+    "email": "admin@example.com",
+    "phone_number": "+919876543210",
+    "allocated_budget": 10000.00,
+    # plan_id / tier_id omitted: both are optional and independent
+    # (TenantService.create_tenant only assigns/verifies each when given —
+    # see plan_id/tier_id field descriptions), and a placeholder here would
+    # fail UUID parsing and 422 the prefilled body instead of creating a
+    # tenant. Add either (with a real id) to test plan/tier assignment at creation.
+}
+
+
 class TenantCreate(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_CREATE_EXAMPLE]})
+
     contact_name: str = Field(..., min_length=2, max_length=80)
     organisation: str = Field(..., min_length=2, max_length=100)
     email: EmailStr
     phone_number: Optional[str] = None
-    plan_id: Optional[UUID] = None
-    tier_id: Optional[UUID] = None
+    plan_id: Optional[UUID] = Field(
+        None, description="Pricing plan UUID. Replace the example value with a real plan ID from your system."
+    )
+    tier_id: Optional[UUID] = Field(
+        None, description="Pay-per-use tier UUID. Replace the example value with a real tier ID from your system."
+    )
     # No ge=0 here: a negative value must surface as the contract's named
     # 422 INVALID_BUDGET (checked in TenantService.create_tenant), not a
     # generic Pydantic field-constraint error.
@@ -118,7 +147,17 @@ class TenantCreate(BaseSchema):
         return _normalize_phone(v, validate_e164=True)
 
 
+_TENANT_UPDATE_EXAMPLE = {
+    "contact_name": "Jane Doe",
+    "organisation": "Acme Language Services",
+    "email": "admin@example.com",
+    "phone_number": "+919876543210",
+}
+
+
 class TenantUpdate(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_UPDATE_EXAMPLE]})
+
     # max_length matches DB column (255) so existing stored values round-trip safely
     contact_name: Optional[str] = Field(None, min_length=2, max_length=255)
     organisation: Optional[str] = Field(None, min_length=2, max_length=255)
@@ -152,7 +191,14 @@ class TenantUpdate(BaseSchema):
         return _normalize_phone(v, validate_e164=False)
 
 
+_TENANT_STATUS_UPDATE_EXAMPLE = {
+    "status": "ACTIVE",
+}
+
+
 class TenantStatusUpdate(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_STATUS_UPDATE_EXAMPLE]})
+
     status: TenantStatus
 
 
@@ -180,7 +226,17 @@ class TenantResponse(BaseSchema):
     budget_effective_to: Optional[datetime] = None
 
 
+_TENANT_USER_CREATE_EXAMPLE = {
+    "email": "user@example.com",
+    "full_name": "Jane Doe",
+    "phone_number": "+919876543210",
+    "role": "USER",
+}
+
+
 class TenantUserCreate(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_USER_CREATE_EXAMPLE]})
+
     email: EmailStr
     full_name: str = Field(..., min_length=2, max_length=80)
     phone_number: Optional[str] = None
@@ -208,13 +264,29 @@ class TenantUserCreateResponse(BaseSchema):
     message: str = "Tenant user provisioned. Share the setup link to complete onboarding."
 
 
+_TENANT_USER_STATUS_UPDATE_EXAMPLE = {
+    "is_active": True,
+}
+
+
 class TenantUserStatusUpdate(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_USER_STATUS_UPDATE_EXAMPLE]})
+
     # is_tenant_active is intentionally NOT accepted here: it is managed by the
     # tenant status API (PATCH /tenants/{id}/status → SUSPENDED/DEACTIVATED/ACTIVE).
     is_active: Optional[StrictBool] = None
 
 
+_TENANT_USER_UPDATE_EXAMPLE = {
+    "full_name": "Jane Doe",
+    "phone_number": "+919876543210",
+    "role": "USER",
+}
+
+
 class TenantUserUpdate(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_USER_UPDATE_EXAMPLE]})
+
     email: Optional[EmailStr] = None
     # max_length matches DB column (255) so existing stored values round-trip safely
     full_name: Optional[str] = Field(None, min_length=2, max_length=255)
@@ -289,11 +361,20 @@ class DeleteTenantUserData(BaseSchema):
 
 # ── Tier / budget ──
 
+_TENANT_TIER_ASSIGN_REQUEST_EXAMPLE = {
+    "tier_id": "<place your uuid here>",
+}
+
+
 class TenantTierAssignRequest(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_TIER_ASSIGN_REQUEST_EXAMPLE]})
+
     # Deliberately str, not UUID: an invalid format must surface as the
     # contract's named 400 (checked in TenantService.assign_tenant_tier),
     # not FastAPI's automatic 422 for a failed UUID field parse.
-    tier_id: str
+    tier_id: str = Field(
+        ..., description="Tier UUID (as a string). Replace the example value with a real tier ID from your system."
+    )
 
 
 class TenantTierAssignData(BaseSchema):
@@ -303,7 +384,15 @@ class TenantTierAssignData(BaseSchema):
     updated_by: Optional[UUID] = None
 
 
+_TENANT_BUDGET_REQUEST_EXAMPLE = {
+    "action": "top-up",
+    "amount": 5000.00,
+}
+
+
 class TenantBudgetRequest(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_BUDGET_REQUEST_EXAMPLE]})
+
     action: Literal["top-up", "top-down"]
     amount: Decimal = Field(..., gt=0, max_digits=15, decimal_places=2)
 
