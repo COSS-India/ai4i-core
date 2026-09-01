@@ -185,6 +185,7 @@ class ValidateAPIKeyResponse(BaseSchema):
     application_id: Optional[str] = None
     permission_ids: list[int] = []
     token_type: str = "api_key"
+    user_id: Optional[str] = None
 
 
 class ValidateAPIKeyErrorResponse(BaseSchema):

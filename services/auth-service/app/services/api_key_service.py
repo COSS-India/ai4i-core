@@ -168,6 +168,7 @@ class APIKeyService:
             "permissions": db_key.permissions or [],
             "application_id": str(db_key.application_id),
             "tenant_id": tenant_id,
+            "user_id": str(db_key.created_by) if db_key.created_by else None,
             **(extra_fields or {}),
         }
 
