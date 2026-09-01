@@ -13,7 +13,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import get_auth_db_optional, get_db
 from app.schemas.pay_per_use.tier import ListTiersResponse, TierCreate, TierOut, TierUpdate
 from app.services.pay_per_use import tier_service
 from app.core.config import settings
@@ -59,6 +59,7 @@ async def update_tier(
     request: Request,
     body: TierUpdate,
     session: AsyncSession = Depends(get_db),
+    auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ):
     """Update an existing PPU tier."""
     updated_by = request.headers.get("X-User-Id")
@@ -68,6 +69,7 @@ async def update_tier(
         updated_by=updated_by,
         auth_service_url=settings.auth_service_url,
         http_client=request.app.state.http_client,
+        auth_db=auth_db,
     )
 
 
@@ -80,8 +82,9 @@ async def update_tier(
 async def delete_tier(
     tier_id: str = Query(...),
     session: AsyncSession = Depends(get_db),
+    auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ):
     """Delete a PPU tier. Returns 204 No Content on success — a delete never
     has a response body."""
-    await tier_service.delete_tier(tier_id, session)
+    await tier_service.delete_tier(tier_id, session, auth_db)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

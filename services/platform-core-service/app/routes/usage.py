@@ -12,7 +12,7 @@ from app.core.database import get_auth_db_optional, get_db
 from app.core.exceptions import InsufficientPermissionsError, ValidationError
 from app.core.permissions import (
     ROLE_ADMIN as _ROLE_ADMIN,
-    ROLE_TENANT_ADMIN as _ROLE_TENANT_ADMIN,
+    authorize_own_tenant_or_admin as _authorize_tenant,
     permission_ids as _permission_ids,
 )
 from app.repositories.pay_per_use.usage_repository import UsageRepository
@@ -30,19 +30,6 @@ router = APIRouter(prefix="/pay-per-use", tags=["Usage"])
 def _require_admin(request: Request) -> None:
     if not _permission_ids(request) & {_ROLE_ADMIN}:
         raise InsufficientPermissionsError()
-
-
-def _require_usage_access(request: Request) -> None:
-    if not _permission_ids(request) & {_ROLE_ADMIN, _ROLE_TENANT_ADMIN}:
-        raise InsufficientPermissionsError()
-
-
-def _is_admin(request: Request) -> bool:
-    return bool(_permission_ids(request) & {_ROLE_ADMIN})
-
-
-def _caller_tenant_id(request: Request) -> Optional[str]:
-    return request.headers.get("X-Tenant-Id") or None
 
 
 def _validate_tier_id(tier_id: Optional[str]) -> Optional[str]:
@@ -90,12 +77,13 @@ async def get_usage_summary(
     tier_id: Optional[str] = Query(None, description="Filter by tier ID."),
     task_types: Optional[str] = Query(None, description="Comma-separated task types to include (frontend allowlist)."),
     db: AsyncSession = Depends(get_db),
+    auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ):
     _require_admin(request)
     tier_id = _validate_tier_id(tier_id)
     month = billing_period or datetime.now(timezone.utc).strftime("%Y-%m")
     svc = UsageService(UsageRepository(db))
-    return await svc.get_summary(month, tier_id, _parse_task_types(task_types))
+    return await svc.get_summary(month, tier_id, _parse_task_types(task_types), auth_db)
 
 
 @router.get("/usage-tenants", response_model=TenantHierarchicalListResponse)
@@ -136,17 +124,7 @@ async def get_tenant_usage_detail(
     db: AsyncSession = Depends(get_db),
     auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ):
-    _require_usage_access(request)
-
-    if not _is_admin(request):
-        caller_tid = _caller_tenant_id(request)
-        if not caller_tid:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Tenant admin requires a tenant context (X-Tenant-Id).",
-            )
-        if caller_tid != tenant_id:
-            raise InsufficientPermissionsError()
+    _authorize_tenant(request, tenant_id)
 
     month = billing_period or datetime.now(timezone.utc).strftime("%Y-%m")
     svc = UsageService(UsageRepository(db))

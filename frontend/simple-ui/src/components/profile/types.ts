@@ -54,6 +54,10 @@ export interface TenantFormState {
   contact_name: string;
   email: string;
   phone_number: string;
+  tier_id: string;
+  allocated_budget: string;
+  budget_effective_from: string;
+  budget_effective_to: string;
 }
 
 export interface TenantUserFormState {

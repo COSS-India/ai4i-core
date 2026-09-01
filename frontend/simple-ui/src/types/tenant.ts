@@ -15,6 +15,11 @@ export interface TenantView {
   status: TenantStatus;
   /** Client-side flag for PENDING → Deactivate soft deletes (terminal). */
   onboarding_completed?: boolean;
+  tier_id?: string | null;
+  tier_name?: string | null;
+  allocated_budget?: number | null;
+  budget_effective_from?: string | null;
+  budget_effective_to?: string | null;
   created_at: string;
   created_by?: string | null;
   updated_at?: string | null;
@@ -55,6 +60,11 @@ export interface TenantRegisterRequest {
   organisation: string;
   email: string;
   phone_number?: string;
+  plan_id?: string;
+  tier_id?: string;
+  allocated_budget?: number;
+  budget_effective_from?: string;
+  budget_effective_to?: string;
 }
 export type TenantRegisterResponse = TenantView;
 

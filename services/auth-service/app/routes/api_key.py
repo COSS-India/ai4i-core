@@ -157,6 +157,7 @@ async def create_api_key(
         application_id=body.application_id,
         expires_days=body.expires_days,
         allocated_percentage=body.allocated_percentage,
+        budget=body.budget,
         caller_tenant_id=caller_tenant_id,
         platform_core_db=platform_core_db,
     )

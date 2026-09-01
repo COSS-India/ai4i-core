@@ -38,6 +38,7 @@ import type {
   TenantUserStatus,
   TenantView,
   TenantUserView,
+  TenantRegisterRequest,
 } from "../../../types/tenant";
 import type {
   TenantFormState,
@@ -56,7 +57,12 @@ import {
   tenantUserMatchesSearch,
   TENANT_USER_ROLE_FILTER_LIST,
 } from "../../../utils/tenantUserRoles";
-import { userHasRole } from "../../../utils/rbac";
+import {
+  isAdopterInstitutionManager,
+  isPlatformAdminUser,
+  isTenantAdminUser,
+  userHasRole,
+} from "../../../utils/rbac";
 import {
   DEFAULT_ORG_USER_FORM_ROLE_OPTIONS,
   DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST,
@@ -99,9 +105,10 @@ export interface UseTenantManagementOptions {
 
 export function useTenantManagement(options: UseTenantManagementOptions) {
   const { user } = options;
-  const isTenantAdmin = Boolean(userHasRole(user?.roles, "TENANT ADMIN"));
-  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
-  const isTenantScopedUser = isTenantAdmin && !isAdmin;
+  const isTenantAdmin = isTenantAdminUser(user?.roles);
+  const isAdopterManager = isAdopterInstitutionManager(user?.roles);
+  const isAdmin = isPlatformAdminUser(user?.roles);
+  const isTenantScopedUser = isTenantAdmin && !isAdopterManager;
   const userIdStr = user?.user_id ?? null;
 
   // ----- State -----
@@ -126,6 +133,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     contact_name: "",
     email: "",
     phone_number: "",
+    tier_id: "",
+    allocated_budget: "",
+    budget_effective_from: "",
+    budget_effective_to: "",
   });
   const [tenantFormErrors, setTenantFormErrors] = useState<
     Record<string, string>
@@ -168,7 +179,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     null,
   );
   const [tenantDetailSubTab, setTenantDetailSubTab] = useState<
-    "overview" | "users"
+    "overview" | "users" | "applications"
   >("overview");
 
   // Edit tenant modal
@@ -419,7 +430,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     tenantIdOverride?: string,
     expectReady?: (rows: TenantView[]) => boolean,
   ) => {
-    if (isAdmin) {
+    if (isAdopterManager) {
       if (expectReady) {
         const rows = await refreshUntil(loadTenants, expectReady);
         commitTenants(rows);
@@ -464,7 +475,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setIsLoadingKnownEmails(true);
     try {
       let tenantRows: TenantView[] = tenants;
-      if (isAdmin) {
+      if (isAdopterManager) {
         tenantRows = (await tenantService.listTenants()).tenants ?? [];
       } else {
         const tenantId = user?.tenant_id?.trim();
@@ -499,7 +510,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       setIsLoadingKnownEmails(false);
     }
   }, [
-    isAdmin,
+    isAdopterManager,
     user?.tenant_id,
     tenants,
     tenantUsers,
@@ -617,6 +628,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       contact_name: "",
       email: "",
       phone_number: "",
+      tier_id: "",
+      allocated_budget: "",
+      budget_effective_from: "",
+      budget_effective_to: "",
     });
     setTenantFormErrors({});
     createTenantEmailAvailability.clear();
@@ -847,12 +862,34 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setTenantFormErrors({});
     setIsSubmittingTenant(true);
     try {
-      const created = await tenantService.registerTenant({
+      const payload: TenantRegisterRequest = {
         organisation: tenantForm.organisation.trim(),
         contact_name: tenantForm.contact_name.trim(),
         email: tenantForm.email.trim(),
         phone_number: tenantForm.phone_number.trim() || undefined,
-      });
+      };
+      const tierId = tenantForm.tier_id.trim();
+      if (tierId) payload.tier_id = tierId;
+      const budgetRaw = tenantForm.allocated_budget.trim();
+      if (budgetRaw) {
+        const budgetValue = Number(budgetRaw);
+        if (!Number.isFinite(budgetValue) || budgetValue <= 0) {
+          setTenantFormErrors((prev) => ({
+            ...prev,
+            allocated_budget: "Budget must be a positive value.",
+          }));
+          setIsSubmittingTenant(false);
+          return;
+        }
+        payload.allocated_budget = budgetValue;
+      }
+      if (tenantForm.budget_effective_from.trim()) {
+        payload.budget_effective_from = tenantForm.budget_effective_from.trim();
+      }
+      if (tenantForm.budget_effective_to.trim()) {
+        payload.budget_effective_to = tenantForm.budget_effective_to.trim();
+      }
+      const created = await tenantService.registerTenant(payload);
       setTenants((prev) => {
         if (prev.some((t) => t.tenant_id === created.tenant_id)) return prev;
         return applyTenantPendingSoftDeleteFlags([created, ...prev]);
@@ -1840,6 +1877,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     closeDeleteUserDialog,
     // Fetch
     handleFetchTenants,
+    patchTenantLocal,
     handleFetchTenantUsers,
   };
 }

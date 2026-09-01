@@ -14,16 +14,13 @@ import { useAuth } from "../hooks/useAuth";
 import TenantManagementTab from "../components/profile/TenantManagementTab";
 import { INSTITUTION, INSTITUTIONS } from "../config/constants";
 import { getPlatformName } from "../config/runtimeConfig";
+import { canAccessInstitutionManagement } from "../utils/rbac";
 
 const InstitutionManagementPage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
 
-  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
-  const isTenantAdmin = Boolean(
-    user?.roles?.some((role) => (role ?? "").trim().toUpperCase() === "TENANT ADMIN")
-  );
-  const showInstitutionManagement = isAdmin || isTenantAdmin;
+  const showInstitutionManagement = canAccessInstitutionManagement(user?.roles);
 
   React.useEffect(() => {
     if (!authLoading && (!isAuthenticated || !showInstitutionManagement)) {

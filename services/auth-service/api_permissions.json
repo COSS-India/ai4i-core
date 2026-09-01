@@ -39,6 +39,7 @@
     { "endpoint": "GET:/api/v1/auth/tenants/{tenant_id}/applications",            "permissionRequired": 48, "description": "List Applications (application.read); ADMIN and TENANT ADMIN only" },
     { "endpoint": "GET:/api/v1/auth/tenants/{tenant_id}/applications/{application_id}", "permissionRequired": 48, "description": "Get Application by ID (application.read); ADMIN and TENANT ADMIN only" },
     { "endpoint": "PATCH:/api/v1/auth/tenants/{tenant_id}/applications/{application_id}", "permissionRequired": 49, "description": "Update Application name/domain/status (application.update); ADMIN and TENANT ADMIN only" },
+    { "endpoint": "PUT:/api/v1/auth/allocations",                              "permissionRequired": 49, "description": "Rebalance Budget across Applications or API Keys (application.update); ADMIN and TENANT ADMIN only — reuses Application Management's permission since Budget allocation is that same Institution-scope concern (see AllocationService.authorize_institution_scope, the same check application.update's own routes use)" },
 
     { "endpoint": "GET:/api/v1/auth/tenants/tier/list",                    "permissionRequired": 145, "description": "List tenants with an assigned tier (ppu.tenant.read); replaces GET /pay-per-use/tenant/tier" },
     { "endpoint": "PATCH:/api/v1/auth/tenants/{tenant_id}/tier",           "permissionRequired": 144, "description": "Assign/reassign a tenant's tier (ppu.tenant.assign); replaces POST /pay-per-use/tenant/tier and PATCH .../tier/reassign" },
@@ -131,6 +132,10 @@
     { "endpoint": "GET:/api/v1/pay-per-use/usage-summary",                             "permissionRequired": 134, "description": "PPU usage platform summary (usage.read); admin only (platform-wide)" },
     { "endpoint": "GET:/api/v1/pay-per-use/usage-tenants",                             "permissionRequired": 134, "description": "PPU usage tenant list (usage.read); admin only (platform-wide)" },
     { "endpoint": "GET:/api/v1/pay-per-use/usage-tenant",                              "permissionRequired": 135, "description": "PPU usage single-tenant detail (usage.tenant_read); admin platform-wide, role 5 own tenant only" },
+
+    { "endpoint": "GET:/api/v1/pay-per-use/usage-applications-summary",                "permissionRequired": 146, "description": "Metering dashboard Applications tab — institution summary (usage.application_read); admin platform-wide, role 5 own tenant only" },
+    { "endpoint": "GET:/api/v1/pay-per-use/usage-applications",                        "permissionRequired": 146, "description": "Metering dashboard Applications tab — per-application list (usage.application_read); admin platform-wide, role 5 own tenant only" },
+    { "endpoint": "GET:/api/v1/pay-per-use/usage-application",                         "permissionRequired": 146, "description": "Metering dashboard Applications tab — spend by API key (usage.application_read); admin platform-wide, role 5 own tenant only" },
 
     { "endpoint": "POST:/api/v1/alerts/definitions",                       "permissionRequired": 117, "description": "Create alert definition (alerts.create)" },
     { "endpoint": "GET:/api/v1/alerts/definitions",                        "permissionRequired": 116, "description": "List alert definitions (alerts.read)" },

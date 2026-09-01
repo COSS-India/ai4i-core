@@ -34,12 +34,8 @@ export function getDefaultLandingPath(roles?: string[]): string {
     return APP_HOME_PATH;
   }
 
-  // TENANT_SUB_TAB is Overview (same as Adopter Admin).
-  const { defaultView } = getMeteringRoleViewConfig(effectiveRoles);
-  const tab =
-    defaultView === "tenant"
-      ? METERING.DEFAULTS.TENANT_SUB_TAB
-      : METERING.DEFAULTS.SUB_TAB;
+  // Institution Admin lands on Overview (same as Adopter Admin).
+  const tab = METERING.DEFAULTS.SUB_TAB;
 
   return getUsageDashboardPath(tab);
 }

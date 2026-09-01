@@ -1,7 +1,7 @@
-import { SimpleGrid } from "@chakra-ui/react";
+import { SimpleGrid, Text, VStack } from "@chakra-ui/react";
 import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
-import type { OverviewResponse, PlatformAdoption } from "../../types/metering";
+import type { KeyMetricsSupplement, MeteringTopN, OverviewResponse } from "../../types/metering";
 import {
   formatMeteringKpiValue,
   formatTenantLabel,
@@ -10,10 +10,11 @@ import { meteringColorAt } from "../../utils/meteringColors";
 import MeteringDonutChart, { DonutRankedLayout } from "./MeteringDonutChart";
 import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
 import RankedShareList from "./RankedShareList";
+import SegmentedTabBar from "./SegmentedTabBar";
 
 interface OverviewKpiCardsProps {
   data: OverviewResponse;
-  /** When false, omit the all-institutions helper on Total LLM Requests. */
+  /** When false, omit the all-institutions helper on Total Requests. */
   isPlatformWide?: boolean;
 }
 
@@ -25,7 +26,7 @@ const KPI_VALUE_COLORS: Record<string, string> = {
   avg_rps: "gray.800",
 };
 
-/** Top-row summary KPI cards (Total LLM Requests, Successful, Failed, Average RPS). */
+/** Top-row summary KPI cards (Total Requests, Successful, Failed, Average RPS). */
 export const OverviewKpiCards: React.FC<OverviewKpiCardsProps> = ({
   data,
   isPlatformWide = true,
@@ -55,24 +56,37 @@ export const OverviewKpiCards: React.FC<OverviewKpiCardsProps> = ({
 interface ConsumptionOverviewSectionProps {
   data: OverviewResponse;
   tenantOrganisationById?: Record<string, string>;
+  topN: MeteringTopN;
+  onTopNChange: (n: MeteringTopN) => void;
+  /** True when the All Institutions filter is narrowed to one institution. */
+  isScopedTenant?: boolean;
 }
 
 /** Usage concentration — donut + top-institution list. */
 export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProps> = ({
   data,
   tenantOrganisationById = {},
+  topN,
+  onTopNChange,
+  isScopedTenant = false,
 }) => {
   const conc = data.usage_concentration;
   const section = METERING.SECTIONS.CONSUMPTION_OVERVIEW;
+  const donutPrimary = `${METERING.CONTROLS.TOP_N_PREFIX} ${topN}`;
+
+  const visibleTenants = useMemo(
+    () => (conc?.top_tenants ?? []).slice(0, topN),
+    [conc?.top_tenants, topN],
+  );
 
   const pieData = useMemo(
     () =>
-      (conc?.top_tenants ?? []).map((t, i) => ({
+      visibleTenants.map((t, i) => ({
         name: formatTenantLabel(t.tenant, t.organisation, tenantOrganisationById),
         value: t.requests,
         color: meteringColorAt(i),
       })),
-    [conc?.top_tenants, tenantOrganisationById],
+    [visibleTenants, tenantOrganisationById],
   );
 
   if (!conc) return null;
@@ -82,6 +96,15 @@ export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProp
       title={section.TITLE}
       subtitle={section.SUBTITLE}
       sectionLabel
+      action={
+        isScopedTenant ? undefined : (
+          <SegmentedTabBar
+            options={[...METERING.TOP_N_SEGMENT_OPTIONS]}
+            activeId={String(topN)}
+            onChange={(id) => onTopNChange(Number(id) as MeteringTopN)}
+          />
+        )
+      }
     >
       <DonutRankedLayout
         chart={
@@ -91,13 +114,13 @@ export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProp
             innerRadius={65}
             outerRadius={100}
             showTooltip
-            centerPrimary={section.DONUT_PRIMARY}
+            centerPrimary={donutPrimary}
             centerSecondary={section.DONUT_SECONDARY}
           />
         }
         list={
           <RankedShareList
-            rows={conc.top_tenants.map((row) => ({
+            rows={visibleTenants.map((row) => ({
               rank: row.rank,
               label: formatTenantLabel(row.tenant, row.organisation, tenantOrganisationById),
               formattedValue: row.formatted_requests,
@@ -110,53 +133,103 @@ export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProp
   );
 };
 
-interface PlatformAdoptionSectionProps {
+interface KeyMetricsSectionProps {
   data: OverviewResponse;
+  supplement?: KeyMetricsSupplement;
 }
 
-export const PlatformAdoptionSection: React.FC<PlatformAdoptionSectionProps> = ({ data }) => {
-  const adoption = data.platform_adoption;
-  const section = METERING.SECTIONS.PLATFORM_ADOPTION;
+function formatGrowthPct(value: number | null | undefined): string {
+  if (value == null) return METERING.GRAPH.EMPTY_VALUE;
+  const sign = value > 0 ? "+" : value < 0 ? "-" : "";
+  const abs = Math.abs(value);
+  const formatted = Number.isInteger(abs) ? abs.toFixed(0) : abs.toFixed(1);
+  return `${sign}${formatted}%`;
+}
 
-  const activeByKey = useMemo(
-    () => Object.fromEntries((data.active_tenants ?? []).map((cell) => [cell.key, cell])),
-    [data.active_tenants],
+function keyMetricValueColor(
+  key: string,
+  raw: number | null | undefined,
+): string {
+  if (key === "tenants_budget_exhausted" && raw != null && raw > 0) return "red.500";
+  if (key === "model_usage_growth_pct" && raw != null) {
+    if (raw > 0) return "green.500";
+    if (raw < 0) return "red.500";
+  }
+  return "gray.800";
+}
+
+function renderKeyMetricCard(
+  card: (typeof METERING.SECTIONS.KEY_METRICS.INSTITUTION_CARDS)[number] |
+    (typeof METERING.SECTIONS.KEY_METRICS.MODEL_CARDS)[number],
+  values: Record<string, number | null | undefined>,
+) {
+  const raw = values[card.key];
+  const isGrowth = card.key === "model_usage_growth_pct";
+  const value = isGrowth ? formatGrowthPct(raw) : (raw ?? METERING.GRAPH.EMPTY_VALUE);
+
+  return (
+    <KpiCard
+      key={card.key}
+      label={card.label}
+      value={value}
+      helper={card.helper}
+      tooltip={card.tooltip}
+      valueColor={keyMetricValueColor(card.key, raw)}
+    />
   );
+}
 
-  if (!adoption && !data.active_tenants?.length) return null;
+export const KeyMetricsSection: React.FC<KeyMetricsSectionProps> = ({
+  data,
+  supplement,
+}) => {
+  const adoption = data.platform_adoption;
+  const section = METERING.SECTIONS.KEY_METRICS;
 
-  const adoptionValues: Record<string, number | null | undefined> = {
-    total_tenants: adoption?.total_tenants,
-    new_tenants_7d: adoption?.new_tenants_7d,
-    active_24h: adoption?.active_24h,
-    active_7d: adoption?.active_7d,
-    active_30d: adoption?.active_30d,
+  if (!adoption) return null;
+
+  const values: Record<string, number | null | undefined> = {
+    total_tenants: adoption.total_tenants,
+    new_tenants_15d: adoption.new_tenants_15d,
+    active_30d: adoption.active_30d,
+    total_models: supplement?.total_models,
+    active_models_30d: supplement?.active_models_30d,
+    tenants_budget_exhausted: supplement?.tenants_budget_exhausted,
+    model_usage_growth_pct: adoption.model_usage_growth_pct,
   };
 
   return (
-    <MeteringSectionCard title={section.TITLE} subtitle={section.SUBTITLE} sectionLabel bare>
-      <SimpleGrid columns={{ base: 1, sm: 2, lg: 5 }} spacing={4}>
-        {section.CARDS.map((card) => {
-          const activeCell = activeByKey[card.key];
-          const adoptionValue = adoptionValues[card.key as keyof PlatformAdoption];
-
-          return (
-            <KpiCard
-              key={card.key}
-              label={card.label}
-              value={
-                activeCell?.value ??
-                adoptionValue ??
-                METERING.GRAPH.EMPTY_VALUE
-              }
-              pctChange={activeCell?.pct_change}
-              helper={card.helper}
-              tooltip={card.tooltip}
-              valueColor="gray.800"
-            />
-          );
-        })}
-      </SimpleGrid>
+    <MeteringSectionCard title={section.TITLE} subtitle={section.SUBTITLE} bare>
+      <VStack align="stretch" spacing={6}>
+        <VStack align="stretch" spacing={3}>
+          <Text
+            fontSize="xs"
+            fontWeight="semibold"
+            color="gray.500"
+            textTransform="uppercase"
+            letterSpacing="wider"
+          >
+            {section.INSTITUTION_ROW_TITLE}
+          </Text>
+          <SimpleGrid columns={{ base: 1, sm: 2, lg: 4 }} spacing={4}>
+            {section.INSTITUTION_CARDS.map((card) => renderKeyMetricCard(card, values))}
+          </SimpleGrid>
+        </VStack>
+        <VStack align="stretch" spacing={3}>
+          <Text
+            fontSize="xs"
+            fontWeight="semibold"
+            color="gray.500"
+            textTransform="uppercase"
+            letterSpacing="wider"
+          >
+            {section.MODEL_ROW_TITLE}
+          </Text>
+          <SimpleGrid columns={{ base: 1, sm: 2, lg: 3 }} spacing={4}>
+            {section.MODEL_CARDS.map((card) => renderKeyMetricCard(card, values))}
+          </SimpleGrid>
+        </VStack>
+      </VStack>
     </MeteringSectionCard>
   );
 };

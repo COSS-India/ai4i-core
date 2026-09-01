@@ -24,16 +24,36 @@ from consumers.payperuse_consumer._billing import (
 logger = get_logger(__name__)
 
 
+def _to_float(val, fallback: float = 0.0) -> float:
+    try:
+        return float(val or 0)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _to_int(val, fallback: int = 0) -> int:
+    try:
+        return int(val or 0)
+    except (TypeError, ValueError):
+        return fallback
+
+
 def _get_otel_attributes(attrs: dict):
     tenant_id: str = str(attrs.get("tenantId") or "").strip()
     service_id: str = str(attrs.get("service_id") or "").strip()
     # Both LLM and Triton spans write real counts to input_tokens/output_tokens
     # (see trace/request_span.py and services/base/task_service.py).
-    input_tokens: float = float(attrs.get("input_tokens") or 0)
-    output_tokens: float = float(attrs.get("output_tokens") or 0)
+    input_tokens: float = _to_float(attrs.get("input_tokens"))
+    output_tokens: float = _to_float(attrs.get("output_tokens"))
     correlation_id: str = str(attrs.get("correlation_id") or "").strip()
+    api_key_id: int = _to_int(attrs.get("api_key_id"))
+    # Normalise to None so callers never have to guard against "" vs None.
+    # validation.py ships X-Tier-ID="" for keyless-tier requests; that empty
+    # string propagates here via the OTel span attribute.
+    raw_tier = str(attrs.get("tier_id") or "").strip()
+    tier_id: Optional[str] = raw_tier or None
 
-    return tenant_id, service_id, input_tokens, output_tokens, correlation_id
+    return tenant_id, service_id, input_tokens, output_tokens, correlation_id, api_key_id, tier_id
 
 
 async def _is_already_billed(billed_key: str, correlation_id: str, span_id: str, msg: Message) -> bool | None:
@@ -57,10 +77,20 @@ async def _is_already_billed(billed_key: str, correlation_id: str, span_id: str,
         return None
 
 
-async def _post_billing(wallet_exhausted: bool, quota_exhausted: bool, tenant_id, billing_unit_type: str):
-    if wallet_exhausted:
+async def _post_billing(
+    wallet_exhausted: bool, quota_exhausted: bool, tenant_id, api_key_id: int, billing_unit_type: str
+):
+    """wallet_exhausted is scoped to exactly one API Key (its own
+    budget_usage.api_key_budget_snap/api_key_budget_used) — notifying by
+    api_key_id, not tenant_id, so it can't flip every sibling key under the
+    same tenant. Skipped entirely when api_key_id is 0 (no Key on this span
+    — a JWT-authenticated request, or the gateway not yet forwarding
+    X-API-Key-ID): there's no key to flag. quota_exhausted stays tenant-wide
+    — a tier's monthly quota is a tenant-level entitlement, not a per-key
+    ceiling, so it's correct for it to affect every key under the tenant."""
+    if wallet_exhausted and api_key_id:
         await _notify_auth(
-            f"/internal/ppu/tenant/{tenant_id}/budget-exhausted",
+            f"/internal/ppu/api-key/{api_key_id}/budget-exhausted",
             {"exhausted": True},
         )
 
@@ -83,6 +113,8 @@ class BillingContext:
     is_already_billed: bool
     billing_month: str
     offset: int
+    api_key_id: int = 0
+    tier_id: Optional[str] = None
 
 
 @dataclass
@@ -121,7 +153,7 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
     # span_id reaching this consumer is valid and unique.
     attrs = data.get("attributes", {})
     # tenantId is camelCase in OTel attributes (set by ai4i_core.context middleware).
-    tenant_id, service_id, input_tokens, output_tokens, correlation_id = _get_otel_attributes(attrs)
+    tenant_id, service_id, input_tokens, output_tokens, correlation_id, api_key_id, tier_id = _get_otel_attributes(attrs)
     billed_key: str = _get_billed_key(correlation_id, span_id)
 
     is_already_billed = await _is_already_billed(billed_key, correlation_id, span_id, msg)
@@ -156,6 +188,17 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
         )
         return None
 
+    if tier_id is None:
+        # Normal for api_key requests whose cached auth payload has no tier
+        # (validation.py ships X-Tier-ID="" in that case). Budget is still
+        # deducted (resources were consumed); quota upsert is skipped because
+        # there is no tier to look up — see deduct_balance_and_update_quota.
+        logger.warning(
+            "api_key span missing tier_id — budget deducted, quota upsert skipped"
+            " | offset=%d tenant=%s api_key_id=%s",
+            msg.offset(), tenant_id, api_key_id,
+        )
+
     billing_month = _resolve_billing_month(data.get("end_time"))
     logger.debug("Billing month resolved | tenant=%s billing_month=%s", tenant_id, billing_month)
 
@@ -170,6 +213,8 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
         is_already_billed=is_already_billed,
         billing_month=billing_month,
         offset=msg.offset(),
+        api_key_id=api_key_id,
+        tier_id=tier_id,
     )
 
 
@@ -221,6 +266,8 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
         billing_month=ctx.billing_month,
         units=billed_units,
         cost=cost,
+        api_key_id=ctx.api_key_id,
+        tier_id=ctx.tier_id,
     )
 
     if write.tier_id is None:
@@ -233,10 +280,10 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
         quota_exhausted = True
     else:
         logger.debug(
-            "Balance deducted | tenant=%s tier_id=%s available_balance=%s exhausted=%s",
-            ctx.tenant_id, write.tier_id, write.available_balance, write.wallet_exhausted,
+            "Balance deducted | tenant=%s tier_id=%s budget_used=%s exhausted=%s",
+            ctx.tenant_id, write.tier_id, write.api_key_budget_used, write.budget_exhausted,
         )
-        wallet_exhausted = write.wallet_exhausted
+        wallet_exhausted = write.budget_exhausted
 
         if not pricing.task_type:
             logger.debug(
@@ -295,19 +342,22 @@ async def handle_ppu_usage(msg: Message) -> None:
         "Billing applied | tenant=%s service=%s billed_units=%s cost=%s exhausted=%s",
         ctx.tenant_id, ctx.service_id, outcome.billed_units, outcome.cost, outcome.wallet_exhausted,
     )
-    await _post_billing(outcome.wallet_exhausted, outcome.quota_exhausted, ctx.tenant_id, outcome.pricing.task_type)
+    await _post_billing(
+        outcome.wallet_exhausted, outcome.quota_exhausted, ctx.tenant_id, ctx.api_key_id, outcome.pricing.task_type
+    )
 
 
 _NOTIFY_AUTH_MAX_ATTEMPTS = 3
 _NOTIFY_AUTH_BACKOFF_BASE_S = 0.5
-# Full per-attempt timeout: set_budget_exhausted_for_tenant is not a constant-
-# time flag write — it walks every user in the tenant with one list_by_user
-# query each (api_key_service.py:358) — so a large tenant genuinely needs the
-# whole 5s, and an attempt timing out doesn't mean the write itself failed
-# (it may land after we've moved on). Shortening this would time out attempts
-# that were about to succeed and just relabel that as "enforcement flag NOT
-# set". Bound the *total* time some other way (see _NOTIFY_AUTH_DEADLINE_S)
-# instead of starving individual attempts.
+# Full per-attempt timeout: the quota-exhausted path (set_quota_exhausted_for_tenant)
+# is not a constant-time flag write — it walks every key in the tenant — so a
+# large tenant genuinely needs the whole 5s, and an attempt timing out doesn't
+# mean the write itself failed (it may land after we've moved on). The
+# budget-exhausted path is now per-key (set_budget_exhausted_for_key) and
+# doesn't need this, but both share the same call path. Shortening this would
+# time out attempts that were about to succeed and just relabel that as
+# "enforcement flag NOT set". Bound the *total* time some other way (see
+# _NOTIFY_AUTH_DEADLINE_S) instead of starving individual attempts.
 _NOTIFY_AUTH_TIMEOUT_S = 5.0
 # Overall deadline across all attempts of one _notify_auth call, checked only
 # between attempts (never mid-flight, so an in-progress attempt always keeps

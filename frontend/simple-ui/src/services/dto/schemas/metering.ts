@@ -36,10 +36,11 @@ export const meteringScopeSchema = z.object({
 
 export const platformAdoptionSchema = z.object({
   total_tenants: z.number().nullable().optional(),
-  new_tenants_7d: z.number().nullable().optional(),
+  new_tenants_15d: z.number().nullable().optional(),
   active_24h: z.number().nullable().optional(),
   active_7d: z.number().nullable().optional(),
   active_30d: z.number().nullable().optional(),
+  model_usage_growth_pct: z.number().nullable().optional(),
 });
 
 export const tenantRowSchema = z.object({
@@ -102,37 +103,11 @@ export const overviewResponseSchema = z.object({
   ...meteringResponseMetaSchema,
 });
 
-export const serviceEntrySchema = z.object({
-  display_name: z.string(),
-  requests: z.number(),
-  formatted_requests: z.string(),
-  percentage: z.number().optional().default(0),
-});
-
-export const tenantServiceRowSchema = z.object({
-  rank: z.number(),
-  tenant: z.string(),
-  organisation: z.string().nullable().optional(),
-  services: z.record(z.string(), serviceEntrySchema),
-  total: z.number(),
-  formatted_total: z.string(),
-  percentage: z.number().optional().default(0),
-});
-
-export const tenantConsumptionResponseSchema = z.object({
-  scope: meteringScopeSchema,
-  avg_requests_per_tenant: meteringCellSchema.nullable().optional(),
-  tenant_ranking: z.array(tenantRowSchema),
-  usage_by_service: z.array(tenantServiceRowSchema),
-  throughput: throughputDataSchema.optional(),
-  request_volume: meteringGraphSchema.nullable().optional(),
-  ...meteringResponseMetaSchema,
-});
-
 export const modelConsumptionRowSchema = z.object({
   service_id: z.string(),
   name: z.string(),
   model_name: z.string().nullable().optional(),
+  task_type: z.string().nullable().optional(),
   requests: z.number(),
   native_units: z.number(),
   native_unit_suffix: z.string(),
@@ -143,6 +118,7 @@ export const modelConsumptionRowSchema = z.object({
 export const topModelRowSchema = z.object({
   rank: z.number(),
   model_name: z.string(),
+  task_type: z.string().nullable().optional(),
   consumption_pct: z.number(),
   requests: z.number(),
   formatted_requests: z.string(),

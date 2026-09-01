@@ -129,9 +129,10 @@ export interface LogoutResponse {
 
 export interface APIKeyCreate {
   key_name: string;
-  permissions: string[]; // Permission names
+  permissions: string[];
+  application_id: string;
   expires_days?: number;
-  user_id?: string; // Optional: for admin creating keys for other users (UUID)
+  allocated_percentage?: number;
 }
 
 export interface APIKeyResponse {
@@ -146,6 +147,10 @@ export interface APIKeyResponse {
   created_at?: string;
   expires_at?: string;
   last_used?: string;
+  application_id?: string;
+  allocated_percentage?: number | null;
+  allocated_budget?: number | null;
+  created_by?: string;
 }
 
 export interface AdminAPIKeyWithUserResponse extends APIKeyResponse {
@@ -163,7 +168,12 @@ export interface APIKeyUpdate {
   permissions?: string[];
 }
 
-/** Response from GET /api/v1/auth/api-keys */
+/** Response from GET /api/v1/auth/api-keys — grouped by application_id. */
+export interface ApiKeyApplicationGroupResponse {
+  application_id: string;
+  api_keys: APIKeyResponse[];
+}
+
 export interface APIKeyListResponse {
   api_keys: APIKeyResponse[];
 }

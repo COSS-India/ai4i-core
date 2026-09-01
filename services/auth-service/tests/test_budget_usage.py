@@ -71,6 +71,25 @@ class TestFetchBudgetUsage:
         result = await fetch_budget_usage([1], db)
         assert result == {}
 
+    @pytest.mark.asyncio
+    async def test_raise_on_error_propagates_the_failure(self) -> None:
+        """raise_on_error=True is for callers (tenant_service's
+        _sync_ppu_wallet_and_exhaustion) that cannot treat {} as "zero
+        spend" on failure, since that reads identically to "zero rows,
+        query succeeded" and would let them write a wrong derived value."""
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=RuntimeError("connection reset"))
+        with pytest.raises(RuntimeError, match="connection reset"):
+            await fetch_budget_usage([1], db, raise_on_error=True)
+
+    @pytest.mark.asyncio
+    async def test_raise_on_error_still_short_circuits_on_empty_key_ids(self) -> None:
+        # Not a failure case — must stay {} even with raise_on_error=True.
+        db = AsyncMock()
+        result = await fetch_budget_usage([], db, raise_on_error=True)
+        assert result == {}
+        db.execute.assert_not_awaited()
+
 
 class TestWriteBudgetSnapshot:
     @pytest.mark.asyncio

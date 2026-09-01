@@ -45,28 +45,24 @@ export async function deleteTier(tierId: string): Promise<void> {
   });
 }
 
-export interface AssignTenantTierPayload {
-  tenant_id: string;
-  tier_id: string;
-  budget: number;
-  effective_from: string;
-  effective_to: string;
-}
-
-export async function assignTenantTier(
-  payload: AssignTenantTierPayload,
+/** PATCH /auth/tenants/{tenant_id}/tier — assign or change tier (single endpoint). */
+export async function changeTenantTier(
+  tenantId: string,
+  tierId: string,
 ): Promise<void> {
-  await apiClient.post(apiEndpoints.tiers.assignTenant, payload);
+  await apiClient.patch(apiEndpoints.tenants.tenantTier(tenantId), {
+    tier_id: tierId,
+  });
 }
 
 export interface TenantTierAssignment {
   tenant_id: string;
+  tenant_name?: string;
   tier_id: string;
   tier_name: string;
-  budget_limit: string;
-  available_balance: string;
-  effective_from: string;
-  effective_to: string;
+  allocated_budget: number | string;
+  budget_effective_from?: string;
+  budget_effective_to?: string;
   updated_at: string;
 }
 
@@ -76,22 +72,7 @@ export interface TenantTiersResponse {
 }
 
 export async function fetchTenantTiers(): Promise<TenantTiersResponse> {
-  const response = await apiClient.get(apiEndpoints.tiers.assignTenant);
-  return response.data;
-}
-
-export interface ReassignTenantTierPayload {
-  tenant_id: string;
-  tier_id: string;
-}
-
-export async function reassignTenantTier(
-  payload: ReassignTenantTierPayload,
-): Promise<TenantTierAssignment> {
-  const response = await apiClient.patch(
-    apiEndpoints.tiers.reassignTenant,
-    payload,
-  );
+  const response = await apiClient.get(apiEndpoints.tenants.tierList);
   return response.data;
 }
 
@@ -103,8 +84,9 @@ export interface AdjustTenantBudgetPayload {
 
 export interface AdjustTenantBudgetResponse {
   tenant_id: string;
-  budget_limit: string;
-  available_balance: string;
+  allocated_budget: number | string;
+  applications_recomputed?: number;
+  keys_recomputed?: number;
   updated_at: string;
 }
 
@@ -112,8 +94,11 @@ export async function adjustTenantBudget(
   payload: AdjustTenantBudgetPayload,
 ): Promise<AdjustTenantBudgetResponse> {
   const response = await apiClient.patch(
-    apiEndpoints.tiers.adjustBudget,
-    payload,
+    apiEndpoints.tenants.tenantBudget(payload.tenant_id),
+    {
+      action: payload.action,
+      amount: payload.amount,
+    },
   );
 
   return response.data;

@@ -512,7 +512,7 @@ class TestGetTenantList:
         assert result.total == 3
         # only the top-1 tenant (t2) should have been resolved/built, not t1/t3
         repo.get_tier_first_seen.assert_called_once_with(["t2"])
-        repo.get_tenant_budgets.assert_called_once_with("2026-06", ["t2"])
+        repo.get_tenant_budgets.assert_called_once_with("2026-06", ["t2"], None)
 
     @pytest.mark.asyncio
     async def test_tied_spend_breaks_deterministically_by_tenant_id(self):
@@ -786,12 +786,61 @@ class TestResolveTenantNames:
 
         broken_db = MagicMock()
         broken_db.execute = AsyncMock(side_effect=Exception("connection refused"))
+        broken_db.rollback = AsyncMock()
 
         with caplog.at_level(logging.WARNING, logger="app.services.pay_per_use.usage_service"):
             result = await _resolve_tenant_names(["1", "2"], broken_db)
 
         assert result == {}
         assert any("connection refused" in r.message for r in caplog.records)
+        broken_db.rollback.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_failure_does_not_poison_session_for_the_next_auth_db_query(self):
+        """Regression: a bare AsyncMock lets a second .execute() succeed even
+        after the first one raised, which hides the real bug — a real
+        Postgres/SQLAlchemy AsyncSession aborts its transaction on a raising
+        query and rejects every further statement (PendingRollbackError)
+        until .rollback() runs. get_tenant_list/get_tenant_detail always
+        reuse this same auth_db for self._repo.get_tenant_budgets right
+        after this call, so without a rollback here, one flaky name lookup
+        would 500 an otherwise-healthy budget lookup too."""
+        from app.services.pay_per_use.usage_service import _resolve_tenant_names
+
+        class _PoisonableAuthDB:
+            def __init__(self) -> None:
+                self._call_count = 0
+                self._poisoned = False
+                self.rollback = AsyncMock(side_effect=self._clear_poison)
+
+            def _clear_poison(self) -> None:
+                self._poisoned = False
+
+            async def execute(self, *args, **kwargs):
+                self._call_count += 1
+                if self._poisoned:
+                    raise RuntimeError(
+                        "This Session's transaction has been rolled back due to a "
+                        "previous exception during flush."  # PendingRollbackError
+                    )
+                if self._call_count == 1:
+                    self._poisoned = True
+                    raise RuntimeError("connection reset by peer")
+                result = MagicMock()
+                result.all.return_value = []
+                return result
+
+        db = _PoisonableAuthDB()
+
+        org_map = await _resolve_tenant_names(["1", "2"], db)
+
+        assert org_map == {}
+        db.rollback.assert_awaited_once()
+        # The exact bug scenario: a second, unrelated query on the same
+        # session (standing in for get_tenant_budgets) must succeed, not
+        # inherit the first query's failure as a PendingRollbackError.
+        result = await db.execute("SELECT 1")
+        assert result.all() == []
 
     @pytest.mark.asyncio
     async def test_returns_empty_when_no_auth_db(self):

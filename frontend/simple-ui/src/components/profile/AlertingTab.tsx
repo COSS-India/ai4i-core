@@ -1786,7 +1786,6 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             onRowClick={recvs.openView}
             paginate="client"
             pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
-            filterToolbarAlign="flex-end"
             isLoading={recvs.isLoading}
             loadingMessage="Loading receivers..."
             emptyMessage="No notification receivers found. Click 'Create' to add one."

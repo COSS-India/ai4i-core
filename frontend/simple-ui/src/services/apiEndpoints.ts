@@ -60,7 +60,20 @@ export const apiEndpoints = {
     /** POST — re-send set-password setup link to a not-yet-activated tenant user. */
     resendUserSetupLink: (tenantId: string, userId: string) =>
       `${API_V1}/auth/tenants/${tenantId}/users/${userId}/resend-setup-link`,
+    applications: (tenantId: string) =>
+      `${API_V1}/auth/tenants/${tenantId}/applications`,
+    application: (tenantId: string, applicationId: string) =>
+      `${API_V1}/auth/tenants/${tenantId}/applications/${applicationId}`,
+    /** GET — list tenant↔tier assignments (platform admin). */
+    tierList: `${API_V1}/auth/tenants/tier/list`,
+    /** PATCH — assign or change tier for a tenant. */
+    tenantTier: (tenantId: string) => `${API_V1}/auth/tenants/${tenantId}/tier`,
+    /** PATCH — top-up / top-down tenant budget (delta, not edit total). */
+    tenantBudget: (tenantId: string) => `${API_V1}/auth/tenants/${tenantId}/budget`,
   },
+
+  /** Bulk budget reallocation across Applications of a tenant. */
+  allocations: `${API_V1}/auth/allocations`,
 
   alerts: {
     base: `${API_V1}/alerts`,
@@ -227,9 +240,6 @@ export const apiEndpoints = {
     list: `${API_V1}/pay-per-use/tiers`,
     create: `${API_V1}/pay-per-use/tier`,
     update: `${API_V1}/pay-per-use/tier`,
-    assignTenant: `${API_V1}/pay-per-use/tenant/tier`,
-    reassignTenant: `${API_V1}/pay-per-use/tenant/tier/reassign`,
-    adjustBudget: `${API_V1}/pay-per-use/tenant/budget`,
   },
 
   usage: {
