@@ -30,13 +30,13 @@ async def get_tenant_plan(tenant_id: str, svc: TenantService = Depends(get_tenan
 
 
 class BudgetExhaustedRequest(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"example": {"exhausted": True}})
+    model_config = ConfigDict(json_schema_extra={"examples": [{"exhausted": True}]})
 
     exhausted: bool
 
 
 class QuotaExhaustedRequest(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"example": {"inference_name": "nmt"}})
+    model_config = ConfigDict(json_schema_extra={"examples": [{"inference_name": "nmt"}]})
 
     inference_name: str
 

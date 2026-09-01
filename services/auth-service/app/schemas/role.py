@@ -52,9 +52,9 @@ _ROLE_ASSIGN_REQUEST_EXAMPLE = {
 
 
 class RoleAssignRequest(BaseSchema):
-    model_config = ConfigDict(json_schema_extra={"example": _ROLE_ASSIGN_REQUEST_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_ROLE_ASSIGN_REQUEST_EXAMPLE]})
 
-    user_id: UUID
+    user_id: UUID = Field(..., description="User's UUID. Replace the example value with a real user ID from your system.")
     role_name: RoleName
 
 
@@ -66,7 +66,7 @@ _GUEST_SERVICES_ASSIGN_REQUEST_EXAMPLE = {
 class GuestServicesAssignRequest(BaseSchema):
     """Replace GUEST role inference permissions; other GUEST permissions are unchanged."""
 
-    model_config = ConfigDict(json_schema_extra={"example": _GUEST_SERVICES_ASSIGN_REQUEST_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_GUEST_SERVICES_ASSIGN_REQUEST_EXAMPLE]})
 
     services: list[str] = Field(default_factory=list)
 

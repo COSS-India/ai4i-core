@@ -50,7 +50,9 @@ class APIKeyAllocationInput(BaseSchema):
 class ApplicationAllocationInput(BaseSchema):
     model_config = ConfigDict(extra="forbid")
 
-    application_id: int
+    application_id: int = Field(
+        ..., description="ID of the Application to allocate. Replace the example value with a real Application ID from your system."
+    )
     allocated_percentage: Optional[Decimal] = Field(None, ge=0, max_digits=5, decimal_places=2)
     allocated_budget: Optional[Decimal] = Field(None, ge=0, max_digits=15, decimal_places=2)
     api_key_allocations: Optional[list[APIKeyAllocationInput]] = Field(
@@ -86,7 +88,7 @@ class AllocationUpdateRequest(BaseSchema):
     cross-check needs the query param, so it happens in AllocationService,
     not here (a body-only validator can't see the query string)."""
 
-    model_config = ConfigDict(extra="forbid", json_schema_extra={"example": _ALLOCATION_UPDATE_REQUEST_EXAMPLE})
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [_ALLOCATION_UPDATE_REQUEST_EXAMPLE]})
 
     application_allocations: Optional[list[ApplicationAllocationInput]] = None
     api_key_allocations: Optional[list[APIKeyAllocationInput]] = None

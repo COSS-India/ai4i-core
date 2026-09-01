@@ -27,7 +27,7 @@ _CREATE_API_KEY_REQUEST_EXAMPLE = {
 
 
 class CreateAPIKeyRequest(BaseSchema):
-    model_config = ConfigDict(json_schema_extra={"example": _CREATE_API_KEY_REQUEST_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_CREATE_API_KEY_REQUEST_EXAMPLE]})
 
     key_name: str = Field(..., min_length=1, max_length=100)
     permissions: list[str] = Field(
@@ -40,7 +40,9 @@ class CreateAPIKeyRequest(BaseSchema):
         ),
     )
     expires_days: Optional[int] = Field(None, ge=1, description="Key lifetime in days; defaults to API_KEY_EXPIRE_DAYS")
-    application_id: int = Field(..., description="Application this key is issued under.")
+    application_id: int = Field(
+        ..., description="Application this key is issued under. Replace the example value with a real Application ID from your system."
+    )
     allocated_percentage: Optional[Decimal] = Field(
         None,
         ge=0,
@@ -78,7 +80,7 @@ class UpdateAPIKeyRequest(BaseSchema):
         populate_by_name=True,
         str_strip_whitespace=True,
         extra="forbid",
-        json_schema_extra={"example": _UPDATE_API_KEY_REQUEST_EXAMPLE},
+        json_schema_extra={"examples": [_UPDATE_API_KEY_REQUEST_EXAMPLE]},
     )
 
     key_name: Optional[str] = Field(None, min_length=1, max_length=100)

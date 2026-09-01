@@ -102,14 +102,18 @@ _TENANT_CREATE_EXAMPLE = {
 
 
 class TenantCreate(BaseSchema):
-    model_config = ConfigDict(json_schema_extra={"example": _TENANT_CREATE_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_CREATE_EXAMPLE]})
 
     contact_name: str = Field(..., min_length=2, max_length=80)
     organisation: str = Field(..., min_length=2, max_length=100)
     email: EmailStr
     phone_number: Optional[str] = None
-    plan_id: Optional[UUID] = None
-    tier_id: Optional[UUID] = None
+    plan_id: Optional[UUID] = Field(
+        None, description="Pricing plan UUID. Replace the example value with a real plan ID from your system."
+    )
+    tier_id: Optional[UUID] = Field(
+        None, description="Pay-per-use tier UUID. Replace the example value with a real tier ID from your system."
+    )
     # No ge=0 here: a negative value must surface as the contract's named
     # 422 INVALID_BUDGET (checked in TenantService.create_tenant), not a
     # generic Pydantic field-constraint error.
@@ -149,7 +153,7 @@ _TENANT_UPDATE_EXAMPLE = {
 
 
 class TenantUpdate(BaseSchema):
-    model_config = ConfigDict(json_schema_extra={"example": _TENANT_UPDATE_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_UPDATE_EXAMPLE]})
 
     # max_length matches DB column (255) so existing stored values round-trip safely
     contact_name: Optional[str] = Field(None, min_length=2, max_length=255)
@@ -190,7 +194,7 @@ _TENANT_STATUS_UPDATE_EXAMPLE = {
 
 
 class TenantStatusUpdate(BaseSchema):
-    model_config = ConfigDict(json_schema_extra={"example": _TENANT_STATUS_UPDATE_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_STATUS_UPDATE_EXAMPLE]})
 
     status: TenantStatus
 
@@ -228,7 +232,7 @@ _TENANT_USER_CREATE_EXAMPLE = {
 
 
 class TenantUserCreate(BaseSchema):
-    model_config = ConfigDict(json_schema_extra={"example": _TENANT_USER_CREATE_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_USER_CREATE_EXAMPLE]})
 
     email: EmailStr
     full_name: str = Field(..., min_length=2, max_length=80)
@@ -263,7 +267,7 @@ _TENANT_USER_STATUS_UPDATE_EXAMPLE = {
 
 
 class TenantUserStatusUpdate(BaseSchema):
-    model_config = ConfigDict(json_schema_extra={"example": _TENANT_USER_STATUS_UPDATE_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_USER_STATUS_UPDATE_EXAMPLE]})
 
     # is_tenant_active is intentionally NOT accepted here: it is managed by the
     # tenant status API (PATCH /tenants/{id}/status → SUSPENDED/DEACTIVATED/ACTIVE).
@@ -278,7 +282,7 @@ _TENANT_USER_UPDATE_EXAMPLE = {
 
 
 class TenantUserUpdate(BaseSchema):
-    model_config = ConfigDict(json_schema_extra={"example": _TENANT_USER_UPDATE_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_USER_UPDATE_EXAMPLE]})
 
     email: Optional[EmailStr] = None
     # max_length matches DB column (255) so existing stored values round-trip safely
@@ -360,12 +364,14 @@ _TENANT_TIER_ASSIGN_REQUEST_EXAMPLE = {
 
 
 class TenantTierAssignRequest(BaseSchema):
-    model_config = ConfigDict(json_schema_extra={"example": _TENANT_TIER_ASSIGN_REQUEST_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_TIER_ASSIGN_REQUEST_EXAMPLE]})
 
     # Deliberately str, not UUID: an invalid format must surface as the
     # contract's named 400 (checked in TenantService.assign_tenant_tier),
     # not FastAPI's automatic 422 for a failed UUID field parse.
-    tier_id: str
+    tier_id: str = Field(
+        ..., description="Tier UUID (as a string). Replace the example value with a real tier ID from your system."
+    )
 
 
 class TenantTierAssignData(BaseSchema):
@@ -382,7 +388,7 @@ _TENANT_BUDGET_REQUEST_EXAMPLE = {
 
 
 class TenantBudgetRequest(BaseSchema):
-    model_config = ConfigDict(json_schema_extra={"example": _TENANT_BUDGET_REQUEST_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_BUDGET_REQUEST_EXAMPLE]})
 
     action: Literal["top-up", "top-down"]
     amount: Decimal = Field(..., gt=0, max_digits=15, decimal_places=2)

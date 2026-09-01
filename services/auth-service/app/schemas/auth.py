@@ -57,7 +57,7 @@ _REGISTER_REQUEST_EXAMPLE = {
 
 
 class RegisterRequest(BaseSchema):
-    model_config = ConfigDict(json_schema_extra={"example": _REGISTER_REQUEST_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_REGISTER_REQUEST_EXAMPLE]})
 
     email: EmailStr
     password: str = _PASSWORD_FIELD
@@ -69,7 +69,7 @@ class RegisterRequest(BaseSchema):
     timezone: str = Field(default="UTC", max_length=TIMEZONE_MAX_LENGTH)
     tenant_id: Optional[int] = Field(
         None,
-        description="Tenant integer ID to associate with the user.",
+        description="Tenant integer ID to associate with the user. Replace the example value with a real tenant ID from your system.",
     )
 
     @field_validator("full_name", mode="before")
@@ -92,7 +92,7 @@ _LOGIN_REQUEST_EXAMPLE = {
 
 
 class LoginRequest(BaseSchema):
-    model_config = ConfigDict(json_schema_extra={"example": _LOGIN_REQUEST_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_LOGIN_REQUEST_EXAMPLE]})
 
     email: EmailStr
     password: str
@@ -104,7 +104,7 @@ _TOKEN_REFRESH_REQUEST_EXAMPLE = {
 
 
 class TokenRefreshRequest(BaseSchema):
-    model_config = ConfigDict(json_schema_extra={"example": _TOKEN_REFRESH_REQUEST_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_TOKEN_REFRESH_REQUEST_EXAMPLE]})
 
     refresh_token: str
 
@@ -117,7 +117,7 @@ _PASSWORD_CHANGE_REQUEST_EXAMPLE = {
 
 
 class PasswordChangeRequest(BaseSchema):
-    model_config = ConfigDict(json_schema_extra={"example": _PASSWORD_CHANGE_REQUEST_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_PASSWORD_CHANGE_REQUEST_EXAMPLE]})
 
     current_password: str
     new_password: str = _PASSWORD_FIELD
@@ -132,7 +132,7 @@ _SET_PASSWORD_REQUEST_EXAMPLE = {
 
 
 class SetPasswordRequest(BaseSchema):
-    model_config = ConfigDict(json_schema_extra={"example": _SET_PASSWORD_REQUEST_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_SET_PASSWORD_REQUEST_EXAMPLE]})
 
     token: str
     new_password: str = _PASSWORD_FIELD
@@ -146,7 +146,7 @@ _RESEND_SETUP_LINK_REQUEST_EXAMPLE = {
 
 
 class ResendSetupLinkRequest(BaseSchema):
-    model_config = ConfigDict(json_schema_extra={"example": _RESEND_SETUP_LINK_REQUEST_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_RESEND_SETUP_LINK_REQUEST_EXAMPLE]})
 
     email: _AnyEmail
     tenant_id: Optional[int] = Field(
@@ -154,7 +154,8 @@ class ResendSetupLinkRequest(BaseSchema):
         ge=1,
         description=(
             "Pending tenant ID. Required with masked contact emails from Tenant "
-            "Management; resolves the contact admin directly without auth."
+            "Management; resolves the contact admin directly without auth. "
+            "Replace the example value with a real tenant ID from your system."
         ),
     )
 
@@ -165,7 +166,7 @@ _VERIFY_EMAIL_REQUEST_EXAMPLE = {
 
 
 class VerifyEmailRequest(BaseSchema):
-    model_config = ConfigDict(json_schema_extra={"example": _VERIFY_EMAIL_REQUEST_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_VERIFY_EMAIL_REQUEST_EXAMPLE]})
 
     token: str
 
@@ -176,7 +177,7 @@ _RESEND_VERIFICATION_REQUEST_EXAMPLE = {
 
 
 class ResendVerificationRequest(BaseSchema):
-    model_config = ConfigDict(json_schema_extra={"example": _RESEND_VERIFICATION_REQUEST_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_RESEND_VERIFICATION_REQUEST_EXAMPLE]})
 
     email: _AnyEmail
 
@@ -187,7 +188,7 @@ _FORGOT_PASSWORD_REQUEST_EXAMPLE = {
 
 
 class ForgotPasswordRequest(BaseSchema):
-    model_config = ConfigDict(json_schema_extra={"example": _FORGOT_PASSWORD_REQUEST_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_FORGOT_PASSWORD_REQUEST_EXAMPLE]})
 
     email: _AnyEmail
 
@@ -200,7 +201,7 @@ _RESET_PASSWORD_REQUEST_EXAMPLE = {
 
 
 class ResetPasswordRequest(BaseSchema):
-    model_config = ConfigDict(json_schema_extra={"example": _RESET_PASSWORD_REQUEST_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_RESET_PASSWORD_REQUEST_EXAMPLE]})
 
     token: str
     new_password: str = _PASSWORD_FIELD

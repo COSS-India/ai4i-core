@@ -24,7 +24,7 @@ _OAUTH2_EXCHANGE_REQUEST_EXAMPLE = {
 class OAuth2ExchangeRequest(BaseSchema):
     """One-time code exchange — sent by the SPA after the OAuth redirect."""
 
-    model_config = ConfigDict(json_schema_extra={"example": _OAUTH2_EXCHANGE_REQUEST_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_OAUTH2_EXCHANGE_REQUEST_EXAMPLE]})
 
     code: str
 

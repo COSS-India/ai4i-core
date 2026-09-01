@@ -40,7 +40,7 @@ class ApplicationCreate(BaseSchema):
     reasonably believe the value took effect.
     """
 
-    model_config = ConfigDict(extra="forbid", json_schema_extra={"example": _APPLICATION_CREATE_EXAMPLE})
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [_APPLICATION_CREATE_EXAMPLE]})
 
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = Field(None, max_length=500)
@@ -95,7 +95,7 @@ class ApplicationUpdate(BaseSchema):
     Pydantic raises on the unknown key before the handler ever sees it.
     """
 
-    model_config = ConfigDict(extra="forbid", json_schema_extra={"example": _APPLICATION_UPDATE_EXAMPLE})
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [_APPLICATION_UPDATE_EXAMPLE]})
 
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = Field(None, max_length=500)

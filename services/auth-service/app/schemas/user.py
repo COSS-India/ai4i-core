@@ -23,7 +23,7 @@ _USER_UPDATE_EXAMPLE = {
 
 
 class UserUpdate(BaseSchema):
-    model_config = ConfigDict(json_schema_extra={"example": _USER_UPDATE_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_USER_UPDATE_EXAMPLE]})
 
     # Same rules TenantUserUpdate applies to this column (tenant.py): cleaned
     # of invisible characters and restricted to name-like text, so a value
