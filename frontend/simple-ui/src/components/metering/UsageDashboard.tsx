@@ -55,8 +55,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
     />
   ) : null;
 
-  const showKeyMetrics =
-    isTenantView === false && Boolean(overview?.platform_adoption);
+  const showKeyMetrics = isTenantView === false;
 
   if (isLoading) {
     return (
@@ -76,7 +75,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
 
       <MeteringAlerts errorMessage={primaryError} dataStateBanner={dataStateBanner} />
 
-      {showKeyMetrics && overview ? (
+      {showKeyMetrics ? (
         <KeyMetricsSection data={overview} supplement={keyMetricsSupplement} />
       ) : null}
 

@@ -8,7 +8,7 @@ import type {
 } from "../types/metering";
 import { formatModelTaskTypeLabel } from "../config/constants";
 import { METERING } from "../config/meteringConstants";
-import { meteringServiceColor, meteringColorAt } from "./meteringColors";
+import { meteringColorAt } from "./meteringColors";
 import { normalizeModelTaskType } from "./meteringTaskType";
 import { taskTypeColor } from "./usageSpendHelpers";
 
@@ -254,6 +254,15 @@ export interface ServiceChartSlice {
   pct: number;
 }
 
+/** Stable palette color per model task type (shared across donut, list, and drill-down). */
+export function modelConsumptionTaskTypeColor(
+  taskType: string | null | undefined,
+  index: number,
+): string {
+  const key = normalizeModelTaskType(taskType);
+  return key ? taskTypeColor(key, index) : meteringColorAt(index);
+}
+
 /** Donut + legend data for model-level top_models ranking. */
 export function buildTopModelsChart(topModels: TopModelRow[]): {
   slices: ServiceChartSlice[];
@@ -263,7 +272,7 @@ export function buildTopModelsChart(topModels: TopModelRow[]): {
   const slices = topModels.map((m, i) => ({
     name: m.model_name,
     value: m.requests,
-    color: meteringColorAt(i),
+    color: modelConsumptionTaskTypeColor(m.task_type, i),
     pct: m.consumption_pct,
   }));
   return { slices, totalRequests };
@@ -281,7 +290,7 @@ export function buildModelBreakdownChart(breakdown: ModelConsumptionRow[]): {
     return {
       name: s.name,
       value,
-      color: meteringServiceColor(s.name, i),
+      color: modelConsumptionTaskTypeColor(s.task_type, i),
       pct,
     };
   });

@@ -30,8 +30,8 @@ import {
   formatCompactNumber,
   formatNativeConsumption,
   getWindowLabel,
+  modelConsumptionTaskTypeColor,
 } from "../../utils/meteringFormatters";
-import { meteringServiceColor } from "../../utils/meteringColors";
 import { normalizeModelTaskType } from "../../utils/meteringTaskType";
 import { useMeteringTableSort } from "../../utils/meteringTableSort";
 import MeteringAsyncState from "./MeteringAsyncState";
@@ -172,7 +172,19 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
       {data ? (
         <VStack align="stretch" spacing={6}>
           {insights ? (
-            <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={4}>
+            <SimpleGrid columns={{ base: 1, sm: 2, lg: 4 }} spacing={4}>
+              <KpiCard
+                label={section.TOTAL_MODELS}
+                value={insights.totalModels ?? METERING.GRAPH.EMPTY_VALUE}
+                tooltip={section.TOOLTIPS.TOTAL_MODELS}
+                valueColor="gray.800"
+              />
+              <KpiCard
+                label={section.ACTIVE_MODELS}
+                value={insights.activeModels ?? METERING.GRAPH.EMPTY_VALUE}
+                tooltip={section.TOOLTIPS.ACTIVE_MODELS}
+                valueColor="gray.800"
+              />
               <KpiCard
                 label={section.OVERALL_SUCCESS}
                 value={
@@ -243,9 +255,10 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
               }
               list={
                 <RankedShareList
-                  rows={visibleTopModels.map((row) => ({
+                  rows={visibleTopModels.map((row, i) => ({
                     rank: row.rank,
                     label: row.model_name,
+                    taskType: row.task_type ?? undefined,
                     subtitle: row.task_type
                       ? formatModelTaskTypeLabel(row.task_type)
                       : undefined,
@@ -253,9 +266,10 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
                       row.formatted_requests ||
                       formatCompactNumber(row.requests, "indian"),
                     percentage: row.consumption_pct,
+                    color: modelConsumptionTaskTypeColor(row.task_type, i),
                   }))}
                   variant="modelWithTaskType"
-                  headerLeft="Model"
+                  headerLeft={section.TABLE_MODEL}
                   headerTaskType={section.TABLE_TASK_TYPE}
                   headerTotal={METERING.SECTIONS.RANKED_SHARE.HEADER_TOTAL_REQUESTS}
                   headerRight={METERING.SECTIONS.RANKED_SHARE.HEADER_RIGHT}
@@ -327,16 +341,6 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
               <Thead bg="gray.50">
                 <Tr>
                   <SortableTh
-                    sortKey="requests"
-                    activeSortKey={sortKey}
-                    sortDirection={sortDirection}
-                    onSort={toggleSort}
-                    message={section.TOOLTIPS.TOTAL_REQUESTS}
-                    isNumeric
-                  >
-                    {section.TABLE_TOTAL_REQUESTS}
-                  </SortableTh>
-                  <SortableTh
                     sortKey="task_type"
                     activeSortKey={sortKey}
                     sortDirection={sortDirection}
@@ -360,6 +364,16 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
                     onSort={toggleSort}
                   >
                     {section.TABLE_SERVICE}
+                  </SortableTh>
+                  <SortableTh
+                    sortKey="requests"
+                    activeSortKey={sortKey}
+                    sortDirection={sortDirection}
+                    onSort={toggleSort}
+                    message={section.TOOLTIPS.TOTAL_REQUESTS}
+                    isNumeric
+                  >
+                    {section.TABLE_TOTAL_REQUESTS}
                   </SortableTh>
                   <SortableTh
                     sortKey="native_units"
@@ -394,16 +408,15 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
                 </Tr>
               </Thead>
               <Tbody>
-                {sortedRows.map((row, i) => (
+                {sortedRows.map((row, i) => {
+                  const rowColor = modelConsumptionTaskTypeColor(row.task_type, i);
+                  return (
                   <Tr key={`${row.service_id}-${row.model_name ?? i}`}>
-                    <Td isNumeric fontSize="sm">
-                      {formatCompactNumber(row.requests, "indian")}
-                    </Td>
                     <Td fontSize="sm">
                       {row.task_type ? (
                         <TaskTypeLabel
                           taskType={row.task_type}
-                          color={meteringServiceColor(row.name, i)}
+                          color={rowColor}
                         />
                       ) : (
                         METERING.GRAPH.EMPTY_VALUE
@@ -418,12 +431,15 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
                           w={1}
                           h={5}
                           borderRadius="sm"
-                          bg={meteringServiceColor(row.name, i)}
+                          bg={rowColor}
                         />
                         <Text fontWeight="medium" fontSize="sm">
                           {row.name}
                         </Text>
                       </HStack>
+                    </Td>
+                    <Td isNumeric fontSize="sm">
+                      {formatCompactNumber(row.requests, "indian")}
                     </Td>
                     <Td isNumeric fontSize="sm" color="gray.600">
                       {formatNativeConsumption(row.native_units, row.native_unit_suffix)}
@@ -435,7 +451,8 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
                       {row.failure_rate_pct.toFixed(2)}
                     </Td>
                   </Tr>
-                ))}
+                  );
+                })}
               </Tbody>
             </MeteringDataTable>
           </MeteringSectionCard>

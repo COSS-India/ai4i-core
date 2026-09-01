@@ -134,7 +134,7 @@ export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProp
 };
 
 interface KeyMetricsSectionProps {
-  data: OverviewResponse;
+  data?: OverviewResponse;
   supplement?: KeyMetricsSupplement;
 }
 
@@ -183,19 +183,17 @@ export const KeyMetricsSection: React.FC<KeyMetricsSectionProps> = ({
   data,
   supplement,
 }) => {
-  const adoption = data.platform_adoption;
+  const adoption = data?.platform_adoption;
   const section = METERING.SECTIONS.KEY_METRICS;
 
-  if (!adoption) return null;
-
   const values: Record<string, number | null | undefined> = {
-    total_tenants: adoption.total_tenants,
-    new_tenants_15d: adoption.new_tenants_15d,
-    active_30d: adoption.active_30d,
+    total_tenants: adoption?.total_tenants,
+    new_tenants_15d: adoption?.new_tenants_15d,
+    active_30d: adoption?.active_30d,
     total_models: supplement?.total_models,
     active_models_30d: supplement?.active_models_30d,
     tenants_budget_exhausted: supplement?.tenants_budget_exhausted,
-    model_usage_growth_pct: adoption.model_usage_growth_pct,
+    model_usage_growth_pct: adoption?.model_usage_growth_pct,
   };
 
   return (
