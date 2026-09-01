@@ -247,6 +247,9 @@ export const apiEndpoints = {
     summary: `${API_V1}/pay-per-use/usage-summary`,
     tenants: `${API_V1}/pay-per-use/usage-tenants`,
     tenant: `${API_V1}/pay-per-use/usage-tenant`,
+    applicationsSummary: `${API_V1}/pay-per-use/usage-applications-summary`,
+    applications: `${API_V1}/pay-per-use/usage-applications`,
+    application: `${API_V1}/pay-per-use/usage-application`,
   },
 } as const;
 

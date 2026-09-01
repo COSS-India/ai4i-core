@@ -68,7 +68,9 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
 
   return (
     <VStack align="stretch" spacing={isTenantView ? 4 : 5}>
-      {isTenantView && subTab !== METERING.SUB_TAB.USAGE_SPEND ? (
+      {isTenantView &&
+      subTab !== METERING.SUB_TAB.USAGE_SPEND &&
+      subTab !== METERING.SUB_TAB.APPLICATIONS ? (
         <TenantDashboardHeader organisationLabel={organisationLabel} />
       ) : null}
 

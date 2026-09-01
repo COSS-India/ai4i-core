@@ -62,9 +62,14 @@ def _core_db(*, tier_row=(), budget_usage_rows=None) -> AsyncMock:
     """A platform_core_db mock whose .execute() responses are queued in the
     call order assign_tenant_tier/list_tenant_tiers/revise_tenant_budget
     actually issue them. ``budget_usage_rows`` (used only by
-    revise_tenant_budget's flow) is appended after ``tier_row`` since
-    fetch_budget_usage's SELECT is the last platform_core_db call in that
-    flow."""
+    revise_tenant_budget's flow) is appended after ``tier_row``.
+
+    A top-down revision now calls fetch_budget_usage TWICE — once to verify
+    spend before the write (revise_tenant_budget's own gate), once again in
+    _sync_ppu_wallet_and_exhaustion after it commits — while a top-up only
+    ever calls it once (the sync). Pass a flat list of rows for a single
+    fetch (top-up), or a list of two row-lists (one per fetch_budget_usage
+    call) for a top-down that reaches both."""
     db = AsyncMock()
     if tier_row == ():
         # Default sentinel: no tier-lookup response queued at all (used by
@@ -83,7 +88,10 @@ def _core_db(*, tier_row=(), budget_usage_rows=None) -> AsyncMock:
 
     side_effects = [_result(v) for v in responses]
     if budget_usage_rows is not None:
-        side_effects.append(_result(budget_usage_rows))
+        if budget_usage_rows and isinstance(budget_usage_rows[0], list):
+            side_effects.extend(_result(v) for v in budget_usage_rows)
+        else:
+            side_effects.append(_result(budget_usage_rows))
     db.execute = AsyncMock(side_effect=side_effects)
     return db
 
@@ -266,21 +274,121 @@ class TestReviseTenantBudget:
         assert exc_info.value.status_code == 422
         assert exc_info.value.detail["error"] == "budget_negative"
 
+    @pytest.mark.asyncio
+    async def test_top_down_rejected_when_it_would_drop_below_total_spend(self) -> None:
+        """Restores the check the old platform-core endpoint had — a
+        top-down that would leave the tenant's budget below what its keys
+        have already spent is refused outright, not just silently flagged
+        exhausted after the fact."""
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant(allocated_budget=Decimal("1000"))
+        )
+        svc._tenants.update = AsyncMock()
+        svc._api_keys.list_key_ids_for_tenant = AsyncMock(return_value=[10, 11])
+        usage_rows = [self._usage_row(10, Decimal("400.00")), self._usage_row(11, Decimal("300.00"))]
+        db = _core_db(budget_usage_rows=usage_rows)  # only the verification fetch runs
+
+        with pytest.raises(HTTPException) as exc_info:
+            # 1000 - 400 = 600, below the 700 already spent across both keys.
+            await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("400"), db)
+
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail["error"] == "budget_below_consumed"
+        svc._tenants.update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_top_down_allowed_when_it_stays_above_total_spend(self) -> None:
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant(allocated_budget=Decimal("1000"))
+        )
+        svc._tenants.update = AsyncMock()
+        svc._tenants.save_and_refresh = AsyncMock()
+        svc._api_keys.list_key_ids_for_tenant = AsyncMock(return_value=[10])
+        rows = [self._usage_row(10, Decimal("300.00"))]
+        db = _core_db(budget_usage_rows=[rows, rows])  # verification, then the post-commit sync
+
+        # 1000 - 200 = 800, still above the 300 already spent.
+        await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("200"), db)
+
+        svc._tenants.update.assert_awaited_once()
+        assert svc._tenants.update.await_args.args[1]["allocated_budget"] == Decimal("800")
+        # 800 - 300 = 500 > 0 -> not tenant-exhausted -> per-key clear, not a blanket set.
+        svc._api_keys.set_budget_exhausted_for_tenant.assert_not_awaited()
+        svc._api_keys.set_budget_exhausted_for_keys.assert_awaited_once_with([10], False)
+
+    @pytest.mark.asyncio
+    async def test_top_down_refused_when_platform_core_db_is_none(self) -> None:
+        """Unlike the post-commit sync (best-effort), the top-down gate
+        itself must fail closed — an unverifiable spend figure must not
+        silently let an under-provisioning top-down through."""
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant(allocated_budget=Decimal("1000"))
+        )
+        svc._tenants.update = AsyncMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("200"), None)
+
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.detail["error"] == "spend_verification_unavailable"
+        svc._tenants.update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_top_down_refused_when_api_keys_service_missing(self) -> None:
+        svc = _svc()
+        svc._api_keys = None
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant(allocated_budget=Decimal("1000"))
+        )
+        svc._tenants.update = AsyncMock()
+        db = AsyncMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("200"), db)
+
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.detail["error"] == "spend_verification_unavailable"
+        svc._tenants.update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_top_down_refused_when_spend_fetch_fails(self) -> None:
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant(allocated_budget=Decimal("1000"))
+        )
+        svc._tenants.update = AsyncMock()
+        svc._api_keys.list_key_ids_for_tenant = AsyncMock(
+            side_effect=RuntimeError("local DB connection lost")
+        )
+        db = AsyncMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("200"), db)
+
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.detail["error"] == "spend_verification_unavailable"
+        svc._tenants.update.assert_not_awaited()
+
     @staticmethod
-    def _usage_row(api_key_id: int, used: Decimal) -> MagicMock:
+    def _usage_row(api_key_id: int, used: Decimal, snap: Decimal | None = None) -> MagicMock:
         row = MagicMock()
         row.api_key_id = api_key_id
         row.api_key_budget_used = used
-        row.api_key_budget_snap = None
+        row.api_key_budget_snap = snap
         return row
 
     @pytest.mark.asyncio
-    async def test_top_up_clears_budget_exhausted_flag(self) -> None:
+    async def test_top_up_clears_flags_for_keys_not_individually_exhausted(self) -> None:
         """Closes the gap the endpoint this replaces didn't have: the
-        consumer only ever posts {"exhausted": true}, so a key already
-        flagged budget-exhausted=1 needs this call to have any path back.
-        Tenant tops up to 500; total spend across its keys is 100 → not
-        exhausted."""
+        consumer only ever posts {"exhausted": true} per key, so a key
+        already flagged budget-exhausted=1 needs this call to have any path
+        back. Tenant tops up to 500; total spend across its keys is 100 →
+        the tenant pool isn't exhausted, so each key is cleared
+        individually (asymmetric recompute — see
+        _sync_ppu_wallet_and_exhaustion) rather than a tenant-wide flip."""
         svc = _svc()
         svc._tenants.get_by_id_for_update = AsyncMock(
             return_value=_tenant(allocated_budget=Decimal("0"))
@@ -293,12 +401,42 @@ class TestReviseTenantBudget:
 
         await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), db)
 
-        svc._api_keys.set_budget_exhausted_for_tenant.assert_awaited_once_with(1, False)
+        svc._api_keys.set_budget_exhausted_for_tenant.assert_not_awaited()
+        svc._api_keys.set_budget_exhausted_for_keys.assert_awaited_once_with([10, 11], False)
+
+    @pytest.mark.asyncio
+    async def test_top_up_does_not_clear_a_key_still_individually_exhausted(self) -> None:
+        """Tenant pool has headroom again (topped up to 500, total spend
+        100), but Key 11 is individually over its OWN ceiling (used 40 >=
+        snap 30) — an independent constraint from the tenant aggregate.
+        Must stay flagged; only Key 10 (not individually exhausted) clears."""
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant(allocated_budget=Decimal("0"))
+        )
+        svc._tenants.update = AsyncMock()
+        svc._tenants.save_and_refresh = AsyncMock()
+        svc._api_keys.list_key_ids_for_tenant = AsyncMock(return_value=[10, 11])
+        usage_rows = [
+            self._usage_row(10, Decimal("60.00"), snap=Decimal("100.00")),
+            self._usage_row(11, Decimal("40.00"), snap=Decimal("30.00")),
+        ]
+        db = _core_db(budget_usage_rows=usage_rows)
+
+        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), db)
+
+        svc._api_keys.set_budget_exhausted_for_tenant.assert_not_awaited()
+        svc._api_keys.set_budget_exhausted_for_keys.assert_awaited_once_with([10], False)
 
     @pytest.mark.asyncio
     async def test_top_down_to_zero_sets_budget_exhausted_flag(self) -> None:
         """Tenant tops down to 0 remaining allocated_budget; any spend at all
-        (or none) means the tenant has nothing left → exhausted."""
+        (or none) means the tenant has nothing left → exhausted — every key
+        genuinely is out of budget now, so the blanket tenant-wide set still
+        applies here (see _sync_ppu_wallet_and_exhaustion's asymmetry).
+        fetch_budget_usage is called twice: once by revise_tenant_budget's
+        own top-down spend-verification gate (0 -> not below 0 spent, so the
+        top-down is allowed), once more by the post-commit sync."""
         svc = _svc()
         svc._tenants.get_by_id_for_update = AsyncMock(
             return_value=_tenant(allocated_budget=Decimal("500"))
@@ -306,7 +444,8 @@ class TestReviseTenantBudget:
         svc._tenants.update = AsyncMock()
         svc._tenants.save_and_refresh = AsyncMock()
         svc._api_keys.list_key_ids_for_tenant = AsyncMock(return_value=[10])
-        db = _core_db(budget_usage_rows=[self._usage_row(10, Decimal("0"))])
+        rows = [self._usage_row(10, Decimal("0"))]
+        db = _core_db(budget_usage_rows=[rows, rows])
 
         await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("500"), db)
 
@@ -333,7 +472,9 @@ class TestReviseTenantBudget:
     @pytest.mark.asyncio
     async def test_tenant_with_no_api_keys_is_not_exhausted_when_budget_positive(self) -> None:
         """A brand-new tenant with a positive allocated_budget and no keys
-        yet (zero spend) must not be flagged exhausted."""
+        yet (zero spend) must not be flagged exhausted — and with no keys to
+        loop over, neither the tenant-wide nor the per-key setter has
+        anything to call."""
         svc = _svc()
         svc._tenants.get_by_id_for_update = AsyncMock(
             return_value=_tenant(allocated_budget=Decimal("0"))
@@ -345,7 +486,8 @@ class TestReviseTenantBudget:
 
         await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), db)
 
-        svc._api_keys.set_budget_exhausted_for_tenant.assert_awaited_once_with(1, False)
+        svc._api_keys.set_budget_exhausted_for_tenant.assert_not_awaited()
+        svc._api_keys.set_budget_exhausted_for_keys.assert_awaited_once_with([], False)
         db.execute.assert_not_awaited()
 
     @pytest.mark.asyncio

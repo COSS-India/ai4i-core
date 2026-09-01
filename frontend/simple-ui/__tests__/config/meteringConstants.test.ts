@@ -4,10 +4,20 @@ import { normalizeModelTaskType } from '../../src/utils/meteringTaskType';
 import { buildTaskTypeConsumptionChart } from '../../src/utils/meteringFormatters';
 
 describe('Usage Dashboard v2.0 (AI4IDS-2908)', () => {
-  it('exposes three tabs with renamed labels', () => {
-    expect(METERING.SUB_TABS).toHaveLength(3);
-    expect(METERING.SUB_TABS.map((t) => t.label)).toEqual(['Institution', 'Model', 'Budget']);
-    expect(METERING.SUB_TABS.map((t) => t.id)).toEqual(['overview', 'model', 'usage-spend']);
+  it('exposes four tabs including Applications usage', () => {
+    expect(METERING.SUB_TABS).toHaveLength(4);
+    expect(METERING.SUB_TABS.map((t) => t.label)).toEqual([
+      'Institution',
+      'Model',
+      'Budget',
+      'Applications',
+    ]);
+    expect(METERING.SUB_TABS.map((t) => t.id)).toEqual([
+      'overview',
+      'model',
+      'usage-spend',
+      'applications',
+    ]);
   });
 
   it('defaults usage concentration to Top 10', () => {
@@ -29,6 +39,13 @@ describe('Usage Dashboard v2.0 (AI4IDS-2908)', () => {
   it('does not reference Top 5 in usage concentration copy', () => {
     const { SUBTITLE } = METERING.SECTIONS.CONSUMPTION_OVERVIEW;
     expect(SUBTITLE.toLowerCase()).not.toContain('top 5');
+  });
+});
+
+describe('Application Usage tab (AI4IDS-2894)', () => {
+  it('documents lifetime-scoped application usage copy', () => {
+    expect(METERING.APPLICATION_USAGE.LIFETIME_NOTE.toLowerCase()).toContain('lifetime');
+    expect(METERING.SUB_TAB.APPLICATIONS).toBe('applications');
   });
 });
 

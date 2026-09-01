@@ -234,7 +234,7 @@ async def assign_tenant_tier(
 @router.patch(
     "/{tenant_id}/budget",
     response_model=TenantBudgetData,
-    responses=error_responses(404, 422),
+    responses=error_responses(404, 409, 422, 503),
 )
 async def revise_tenant_budget(
     tenant_id: int,
@@ -250,8 +250,14 @@ async def revise_tenant_budget(
     no longer exists. Response is unwrapped (no success/data envelope),
     matching the endpoint it replaces. ``applications_recomputed`` /
     ``keys_recomputed`` are always null in this release — no recompute logic
-    exists yet. Best-effort recomputes and syncs the cached budget-exhausted
-    flag on this tenant's API keys so it reflects this revision too (see
+    exists yet.
+
+    A top-down is rejected outright (409 budget_below_consumed) if it would
+    drop the budget below this tenant's total spend across its API keys, or
+    refused (503 spend_verification_unavailable) if that spend can't be
+    verified right now — see TenantService.revise_tenant_budget. Once a
+    revision (either direction) commits, it best-effort recomputes and syncs
+    the cached budget-exhausted flag on this tenant's API keys too (see
     TenantService._sync_ppu_wallet_and_exhaustion).
     """
     tenant = await svc.revise_tenant_budget(

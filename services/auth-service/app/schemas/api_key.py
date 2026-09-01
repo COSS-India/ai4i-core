@@ -41,7 +41,16 @@ class CreateAPIKeyRequest(BaseSchema):
     budget: Optional[Decimal] = Field(
         None,
         gt=0,
-        description="Budget ceiling for this key in currency units. Stored as api_key_budget_snap in budget_usage.",
+        max_digits=15,
+        decimal_places=2,
+        description=(
+            "₹ ceiling for this key, as an alternative to allocated_percentage. The server "
+            "derives an equivalent allocated_percentage of the Application's own Budget "
+            "immediately to run the same ALLOCATION_TOTAL_EXCEEDED cap check every "
+            "allocated_percentage-created key goes through (rejected if it rounds to 0.00%), "
+            "but stores this exact requested amount as allocated_budget, not the rounded "
+            "derivative. One of allocated_percentage / budget is required; give at most one."
+        ),
     )
 
 
@@ -77,7 +86,11 @@ class CreateAPIKeyData(BaseSchema):
     application_id: int
     allocated_percentage: Optional[Decimal] = None
     allocated_budget: Optional[Decimal] = Field(
-        None, description="Derived: application.allocated_budget * allocated_percentage / 100."
+        None,
+        description=(
+            "The requested ₹ ceiling verbatim (rounded to cents) when this key was created via "
+            "`budget`; otherwise derived as application.allocated_budget * allocated_percentage / 100."
+        ),
     )
 
 
@@ -172,6 +185,7 @@ class ValidateAPIKeyResponse(BaseSchema):
     application_id: Optional[str] = None
     permission_ids: list[int] = []
     token_type: str = "api_key"
+    user_id: Optional[str] = None
 
 
 class ValidateAPIKeyErrorResponse(BaseSchema):
