@@ -12,6 +12,7 @@ from app.models.pay_per_use.tier import Tier, TierQuota
 from app.repositories.pay_per_use.usage_repository import update_tier_cache
 from app.schemas.pay_per_use.tier import TierCreate, TierOut, TierQuotaOut, TierUpdate
 from app.schemas.enums.model_management import resolve_task_type
+from app.services.pay_per_use import inference_type_cache
 from app.core.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
@@ -104,9 +105,20 @@ async def create_tier(body: TierCreate, session: AsyncSession, created_by: Optio
 
     quotas = []
     for q in body.quotas:
+        # The catalogue is authoritative for which task types exist — TierQuotaIn
+        # only normalises the string. A miss here is the 400 that TaskTypeEnum
+        # used to raise at validation time.
+        inference_type = await inference_type_cache.get_by_name(session, q.modelTaskType)
+        if inference_type is None:
+            await session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unknown model task type '{q.modelTaskType}'",
+            )
         quota = TierQuota(
             tier_id=tier.id,
             inference_name=q.modelTaskType,
+            inference_type_id=inference_type["id"],
             monthly_quota=q.limit,
             created_by=created_by,
             updated_by=created_by,
