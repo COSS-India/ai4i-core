@@ -33,7 +33,6 @@ class Tier(Base):
         back_populates="tier",
         cascade="all, delete-orphan",
     )
-    tenant_assignments = relationship("TenantTierAssignment", back_populates="tier")
 
 
 class TierQuota(Base):

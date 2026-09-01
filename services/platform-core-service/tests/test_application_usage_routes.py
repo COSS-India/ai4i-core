@@ -1,18 +1,25 @@
-"""Unit tests: _authorize_tenant in app.routes.application_usage.
+"""Unit tests: _authorize_tenant in app.routes.application_usage, and that
+these endpoints deliberately have no billing_period param.
 
-This is the actual cross-institution security boundary for the Metering
-Dashboard's Applications tab: an Adopter Admin may view any Institution's
-Applications, an Institution Admin (TENANT ADMIN) may only view their own.
-Covers:
+_authorize_tenant is the actual cross-institution security boundary for the
+Metering Dashboard's Applications tab: an Adopter Admin may view any
+Institution's Applications, an Institution Admin (TENANT ADMIN) may only view
+their own. Covers:
   - admin passes regardless of X-Tenant-Id / requested tenant_id
   - tenant admin without X-Tenant-Id gets 403
   - tenant admin naming another institution's tenant_id gets 403
   - tenant admin naming their OWN tenant_id passes
   - a caller with neither role gets 403 before the tenant check even runs
+
+TestNoBillingPeriodParam locks in the deliberate design decision that these
+endpoints have no time dimension at all (budget_usage has no billing_month
+column) — unlike the sibling /usage-* endpoints, so they must never grow a
+billing_period param that would silently do nothing.
 """
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import sys
 from unittest.mock import MagicMock
 
@@ -84,3 +91,43 @@ class TestAuthorizeTenant:
 
         with pytest.raises(InsufficientPermissionsError):
             _authorize_tenant(request, tenant_id="2")
+
+
+class TestNoBillingPeriodParam:
+    """Regression guard for the deliberate design decision that these
+    endpoints have no time dimension: budget_usage carries no billing_month
+    column, so a billing_period query param would silently do nothing if
+    ever added without also wiring it up — worse than not having it. This
+    locks in "no such param" so an accidental re-add doesn't slip through."""
+
+    @pytest.mark.parametrize(
+        "func_name",
+        [
+            "get_application_usage_summary",
+            "get_application_usage_list",
+            "get_application_usage_detail",
+        ],
+    )
+    def test_route_function_has_no_billing_period_parameter(self, func_name):
+        func = getattr(_application_usage_route_mod, func_name)
+
+        assert "billing_period" not in inspect.signature(func).parameters
+
+    @pytest.mark.asyncio
+    async def test_summary_rejects_unexpected_billing_period_kwarg(self):
+        """Passing billing_period at all — e.g. an old/misconfigured frontend
+        still sending it — must fail loudly (TypeError from Python itself,
+        surfaced by FastAPI as an error) rather than being silently accepted
+        and ignored."""
+        get_application_usage_summary = (
+            _application_usage_route_mod.get_application_usage_summary
+        )
+
+        with pytest.raises(TypeError):
+            await get_application_usage_summary(
+                request=_make_request(permission_ids=str(ROLE_ADMIN)),
+                tenant_id="2",
+                billing_period="2026-08",
+                db=MagicMock(),
+                auth_db=None,
+            )

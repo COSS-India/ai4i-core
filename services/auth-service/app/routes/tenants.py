@@ -250,9 +250,9 @@ async def revise_tenant_budget(
     no longer exists. Response is unwrapped (no success/data envelope),
     matching the endpoint it replaces. ``applications_recomputed`` /
     ``keys_recomputed`` are always null in this release — no recompute logic
-    exists yet. Best-effort syncs the legacy ppu_tenant_tier_assignments
-    wallet and cached budget-exhausted flags so the actual enforcement path
-    reflects this revision too (see TenantService._sync_ppu_wallet_and_exhaustion).
+    exists yet. Best-effort recomputes and syncs the cached budget-exhausted
+    flag on this tenant's API keys so it reflects this revision too (see
+    TenantService._sync_ppu_wallet_and_exhaustion).
     """
     tenant = await svc.revise_tenant_budget(
         current_user, tenant_id, body.action, body.amount, platform_core_db

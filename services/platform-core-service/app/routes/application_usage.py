@@ -3,16 +3,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_auth_db_optional, get_db
-from app.core.exceptions import InsufficientPermissionsError
-from app.core.permissions import (
-    ROLE_ADMIN as _ROLE_ADMIN,
-    ROLE_TENANT_ADMIN as _ROLE_TENANT_ADMIN,
-    permission_ids as _permission_ids,
-)
+from app.core.permissions import authorize_own_tenant_or_admin as _authorize_tenant
 from app.repositories.pay_per_use.application_usage_repository import (
     ApplicationUsageRepository,
 )
@@ -26,35 +21,14 @@ from app.services.pay_per_use.application_usage_service import ApplicationUsageS
 router = APIRouter(prefix="/pay-per-use", tags=["Usage"])
 
 
-def _is_admin(request: Request) -> bool:
-    return bool(_permission_ids(request) & {_ROLE_ADMIN})
-
-
-def _require_usage_access(request: Request) -> None:
-    if not _permission_ids(request) & {_ROLE_ADMIN, _ROLE_TENANT_ADMIN}:
-        raise InsufficientPermissionsError()
-
-
-def _caller_tenant_id(request: Request) -> Optional[str]:
-    return request.headers.get("X-Tenant-Id") or None
-
-
-def _authorize_tenant(request: Request, tenant_id: str) -> None:
-    """Institution admins may only view their own tenant's Applications."""
-    _require_usage_access(request)
-    if _is_admin(request):
-        return
-    caller_tid = _caller_tenant_id(request)
-    if not caller_tid:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Tenant admin requires a tenant context (X-Tenant-Id).",
-        )
-    if caller_tid != tenant_id:
-        raise InsufficientPermissionsError()
-
-
-@router.get("/usage-applications-summary", response_model=ApplicationUsageSummaryResponse)
+@router.get(
+    "/usage-applications-summary",
+    response_model=ApplicationUsageSummaryResponse,
+    description="Lifetime-cumulative totals for an institution's Applications. "
+    "No billing_period param — budget_usage has no time dimension to filter "
+    "on, so these figures are never period-scoped (see billingPeriod in the "
+    "response, always \"lifetime\").",
+)
 async def get_application_usage_summary(
     request: Request,
     tenant_id: str = Query(..., description="Institution (tenant) ID."),
@@ -66,7 +40,12 @@ async def get_application_usage_summary(
     return await svc.get_summary(tenant_id, auth_db)
 
 
-@router.get("/usage-applications", response_model=ApplicationUsageListResponse)
+@router.get(
+    "/usage-applications",
+    response_model=ApplicationUsageListResponse,
+    description="Lifetime-cumulative per-application totals for an institution. "
+    "No billing_period param — these figures are never period-scoped.",
+)
 async def get_application_usage_list(
     request: Request,
     tenant_id: str = Query(..., description="Institution (tenant) ID."),
@@ -81,7 +60,12 @@ async def get_application_usage_list(
     return await svc.get_application_list(tenant_id, auth_db, sortOrder, limit, offset)
 
 
-@router.get("/usage-application", response_model=ApplicationUsageDetailResponse)
+@router.get(
+    "/usage-application",
+    response_model=ApplicationUsageDetailResponse,
+    description="Lifetime-cumulative totals for one application. No "
+    "billing_period param — these figures are never period-scoped.",
+)
 async def get_application_usage_detail(
     request: Request,
     application_id: int = Query(..., description="Application ID."),

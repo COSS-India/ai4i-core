@@ -376,6 +376,20 @@ class APIKeyService:
             tenant_id, "budget-exhausted", "1" if exhausted else "0"
         )
 
+    async def list_key_ids_for_tenant(self, tenant_id: int) -> list[int]:
+        """Every api_key.id under any Application belonging to tenant_id,
+        regardless of active/expired status — used by
+        TenantService._sync_ppu_wallet_and_exhaustion to sum this tenant's
+        total spend from platform-core's budget_usage ledger (keyed by
+        api_key_id, not tenant_id). Unlike list_active_keys_for_tenant, this
+        intentionally does not filter by is_active/expiry: a revoked key's
+        past spend still counts against the tenant's allocated_budget.
+        """
+        if self._repo is None:
+            return []
+        keys = await self._repo.list_by_tenant(tenant_id)
+        return [key.id for key in keys]
+
     async def set_tier_id_for_tenant(self, tenant_id: int, tier_id: str) -> None:
         """Force every cached API key hash for the tenant onto ``tier_id``.
 

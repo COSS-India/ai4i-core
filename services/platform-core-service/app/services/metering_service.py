@@ -141,6 +141,19 @@ class MeteringService:
         self._service_repo = service_repo
         self._model_repo = model_repo
 
+    async def _safe_rollback_auth_db(self) -> None:
+        """Best-effort rollback after a swallowed self._auth_db failure — every
+        auth_db-touching method here degrades to None/{} rather than raising,
+        and overview_tenant_data() reuses the same session across several of
+        them sequentially, so leaving it in an aborted-transaction state would
+        turn one flaky query into every query after it failing too. Rollback
+        failing itself must never escalate an already-degraded path into a
+        harder failure than the one it's recovering from."""
+        try:
+            await self._auth_db.rollback()
+        except Exception:
+            logger.warning("Auth DB rollback after failed query also failed", exc_info=True)
+
     # ── public methods ──────────────────────────────────────────────────────
 
     async def request_total(
@@ -452,6 +465,11 @@ class MeteringService:
             }
         except Exception:
             logger.warning("tenant_count: auth DB query failed", exc_info=True)
+            # overview_tenant_data() reuses self._auth_db for
+            # _fetch_valid_tenant_ids() right after this call — without a
+            # rollback, a failure here would leave that next, otherwise-fine
+            # query degraded too (same hazard as UsageService._resolve_tenant_names).
+            await self._safe_rollback_auth_db()
             return {
                 "total_tenants": None,
                 "new_tenants": None,
@@ -1820,6 +1838,7 @@ class MeteringService:
             return {str(r[0]) for r in rows.all()}
         except Exception:
             logger.warning("_fetch_valid_tenant_ids: auth DB query failed", exc_info=True)
+            await self._safe_rollback_auth_db()
             return None
 
     async def _resolve_tenant_names(self, tenant_ids: set) -> dict:
@@ -1847,4 +1866,5 @@ class MeteringService:
             return {str(r[0]): r[1] for r in rows.all()}
         except Exception:
             logger.warning("_resolve_tenant_names: auth DB query failed", exc_info=True)
+            await self._safe_rollback_auth_db()
             return {}

@@ -12,6 +12,14 @@ class ApplicationUsageSummaryResponse(BaseModel):
     allocatedBudget: MoneyPercent
     spendBudget: MoneyPercent
     remainingBudget: MoneyPercent
+    # Unlike UsageSummaryResponse.billingPeriod (a real YYYY-MM month), this is
+    # always the constant "lifetime": budget_usage carries no billing_month
+    # column, so every figure here is a lifetime-cumulative total, not scoped
+    # to any period. There is no billing_period query param on these endpoints
+    # — a dashboard period selector must not compare this figure against a
+    # period-scoped one (e.g. the Overview tab's totalSpend) without
+    # accounting for that difference.
+    billingPeriod: str = "lifetime"
 
 
 class ApplicationUsageListItem(BaseModel):
