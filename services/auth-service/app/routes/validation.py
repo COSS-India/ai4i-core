@@ -237,8 +237,9 @@ async def _validate_api_key(
             headers=quota_header,
         )
 
-    # No X-User-ID for API-key traffic — a key has no owning user any more
-    # (application_id replaced user_id: migration e9f0a1b2c3d4).
+    created_by = result.get("created_by")
+    if created_by:
+        response.headers["X-User-ID"] = str(created_by)
     if application_id:
         response.headers["X-Application-ID"] = str(application_id)
     if api_key_id:
@@ -253,7 +254,7 @@ async def _validate_api_key(
     response.headers["X-Permission-IDS"] = "[" + ",".join(str(p) for p in permission_ids) + "]"
     if tenant_id:
         _set_tenant_headers(response, tenant_id)
-    return ValidateAPIKeyResponse(valid=True, application_id=application_id, permission_ids=permission_ids)
+    return ValidateAPIKeyResponse(valid=True, application_id=application_id, permission_ids=permission_ids, user_id=created_by)
 
 
 async def _validate_jwt(
