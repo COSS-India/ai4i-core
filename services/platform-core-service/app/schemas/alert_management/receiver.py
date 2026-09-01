@@ -24,7 +24,7 @@ from app.schemas.enums.alert_management import VALID_RBAC_ROLES
 _NOTIFICATION_RECEIVER_CREATE_EXAMPLE = {
     "category": "application",
     "severity": "critical",
-    "alert_type": "latency",
+    "alert_type": "Latency",
     "description": "Notify platform on-call for critical application latency alerts",
     "email_to": ["oncall@example.com"],
     "email_subject_template": "[ALERT] {{ .CommonLabels.alertname }}",
