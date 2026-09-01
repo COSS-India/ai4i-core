@@ -49,14 +49,14 @@ class MetricsCollector:
         self.enterprise_requests_total = Counter(
             "telemetry_obsv_requests_total",
             "Total enterprise requests",
-            ["method", "endpoint", "status_code", "tenant", "tenant_id", "service_id", "model_id", "auth_type"],
+            ["method", "endpoint", "status_code", "tenant", "tenant_id", "application_id", "service_id", "model_id", "auth_type"],
             registry=self.registry,
         )
 
         self.enterprise_request_duration = Histogram(
             "telemetry_obsv_request_duration_seconds",
             "Enterprise request duration",
-            ["method", "endpoint", "tenant", "service_id", "model_id", "auth_type"],
+            ["method", "endpoint", "tenant", "tenant_id", "application_id", "service_id", "model_id", "auth_type"],
             registry=self.registry,
         )
 
@@ -71,7 +71,7 @@ class MetricsCollector:
         self.enterprise_llm_tokens_processed = Histogram(
             "telemetry_obsv_llm_tokens_processed",
             "LLM tokens processed per request, as reported by the inference engine (vLLM 'usage' block)",
-            ["model", "model_id", "tenant", "tenant_id", "service_id", "endpoint", "token_type", "auth_type"],
+            ["model", "model_id", "tenant", "tenant_id", "application_id", "service_id", "endpoint", "token_type", "auth_type"],
             buckets=(10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000, float("inf")),
             registry=self.registry,
         )
@@ -80,7 +80,7 @@ class MetricsCollector:
         self.enterprise_tts_characters_synthesized = Histogram(
             "telemetry_obsv_tts_characters_synthesized",
             "TTS characters synthesized per request",
-            ["language", "tenant", "tenant_id", "service_id", "auth_type"],
+            ["language", "tenant", "tenant_id", "application_id", "service_id", "auth_type"],
             buckets=(10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, float("inf")),
             registry=self.registry,
         )
@@ -89,7 +89,7 @@ class MetricsCollector:
         self.enterprise_nmt_characters_translated = Histogram(
             "telemetry_obsv_nmt_characters_translated",
             "NMT characters translated per request",
-            ["source_language", "target_language", "tenant", "tenant_id", "service_id", "auth_type"],
+            ["source_language", "target_language", "tenant", "tenant_id", "application_id", "service_id", "auth_type"],
             buckets=(10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, float("inf")),
             registry=self.registry,
         )
@@ -98,7 +98,7 @@ class MetricsCollector:
         self.enterprise_asr_audio_minutes_processed = Histogram(
             "telemetry_obsv_asr_audio_minutes_processed",
             "ASR audio minutes processed per request",
-            ["language", "tenant", "tenant_id", "service_id", "auth_type"],
+            ["language", "tenant", "tenant_id", "application_id", "service_id", "auth_type"],
             buckets=(0.017, 0.083, 0.167, 0.5, 0.833, 1, 2, 5, 10, 30, 60, float("inf")),
             registry=self.registry,
         )
@@ -111,7 +111,7 @@ class MetricsCollector:
         self.enterprise_ocr_images_processed = Histogram(
             "telemetry_obsv_ocr_images_processed",
             "OCR images processed per request",
-            ["tenant", "tenant_id", "service_id", "auth_type"],
+            ["tenant", "tenant_id", "application_id", "service_id", "auth_type"],
             buckets=(1, 2, 3, 5, 10, 20, 50, 100, float("inf")),
             registry=self.registry,
         )
@@ -120,7 +120,7 @@ class MetricsCollector:
         self.enterprise_transliteration_characters_processed = Histogram(
             "telemetry_obsv_transliteration_characters_processed",
             "Transliteration characters processed per request",
-            ["source_language", "target_language", "tenant", "tenant_id", "service_id", "auth_type"],
+            ["source_language", "target_language", "tenant", "tenant_id", "application_id", "service_id", "auth_type"],
             buckets=(10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, float("inf")),
             registry=self.registry,
         )
@@ -129,7 +129,7 @@ class MetricsCollector:
         self.enterprise_language_detection_characters_processed = Histogram(
             "telemetry_obsv_language_detection_characters_processed",
             "Language detection characters processed per request",
-            ["tenant", "tenant_id", "service_id", "auth_type"],
+            ["tenant", "tenant_id", "application_id", "service_id", "auth_type"],
             buckets=(10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, float("inf")),
             registry=self.registry,
         )
@@ -138,7 +138,7 @@ class MetricsCollector:
         self.enterprise_audio_lang_detection_minutes_processed = Histogram(
             "telemetry_obsv_audio_lang_detection_minutes_processed",
             "Audio language detection audio minutes processed per request",
-            ["tenant", "tenant_id", "service_id", "auth_type"],
+            ["tenant", "tenant_id", "application_id", "service_id", "auth_type"],
             buckets=(0.017, 0.083, 0.167, 0.5, 0.833, 1, 2, 5, 10, 30, 60, float("inf")),
             registry=self.registry,
         )
@@ -147,7 +147,7 @@ class MetricsCollector:
         self.enterprise_ner_tokens_processed = Histogram(
             "telemetry_obsv_ner_tokens_processed",
             "NER tokens (words) processed per request",
-            ["tenant", "tenant_id", "service_id", "auth_type"],
+            ["tenant", "tenant_id", "application_id", "service_id", "auth_type"],
             buckets=(1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, float("inf")),
             registry=self.registry,
         )
@@ -156,7 +156,7 @@ class MetricsCollector:
         self.enterprise_speaker_diarization_minutes_processed = Histogram(
             "telemetry_obsv_speaker_diarization_minutes_processed",
             "Speaker diarization audio minutes processed per request",
-            ["tenant", "tenant_id", "service_id", "auth_type"],
+            ["tenant", "tenant_id", "application_id", "service_id", "auth_type"],
             buckets=(0.017, 0.083, 0.167, 0.5, 0.833, 1, 2, 5, 10, 30, 60, float("inf")),
             registry=self.registry,
         )
@@ -165,7 +165,7 @@ class MetricsCollector:
         self.enterprise_language_diarization_minutes_processed = Histogram(
             "telemetry_obsv_language_diarization_minutes_processed",
             "Language diarization audio minutes processed per request",
-            ["tenant", "tenant_id", "service_id", "auth_type"],
+            ["tenant", "tenant_id", "application_id", "service_id", "auth_type"],
             buckets=(0.017, 0.083, 0.167, 0.5, 0.833, 1, 2, 5, 10, 30, 60, float("inf")),
             registry=self.registry,
         )
@@ -178,6 +178,7 @@ class MetricsCollector:
         duration: float,
         tenant: str = "unknown",
         tenant_id: str = "",
+        application_id: str = "",
         service_id: str = "",
         model_id: str = "",
         auth_type: str = "",
@@ -189,13 +190,15 @@ class MetricsCollector:
             status_code=str(status_code),
             tenant=tenant,
             tenant_id=tenant_id,
+            application_id=application_id,
             service_id=service_id,
             model_id=model_id,
             auth_type=auth_type,
         ).inc()
 
         self.enterprise_request_duration.labels(
-            method=method, endpoint=endpoint, tenant=tenant, service_id=service_id,
+            method=method, endpoint=endpoint, tenant=tenant, tenant_id=tenant_id,
+            application_id=application_id, service_id=service_id,
             model_id=model_id, auth_type=auth_type,
         ).observe(duration)
 
@@ -207,6 +210,7 @@ class MetricsCollector:
         total_tokens: int,
         tenant: str = "unknown",
         tenant_id: str = "",
+        application_id: str = "",
         service_id: str = "",
         endpoint: str = "",
         model_id: str = "",
@@ -230,6 +234,7 @@ class MetricsCollector:
                     model_id=model_id,
                     tenant=tenant,
                     tenant_id=tenant_id,
+                    application_id=application_id,
                     service_id=service_id,
                     endpoint=endpoint,
                     token_type=token_type,
@@ -238,12 +243,12 @@ class MetricsCollector:
 
     def track_tts_characters(
         self, language: str, characters: int, tenant: str = "unknown",
-        tenant_id: str = "", service_id: str = "", auth_type: str = "",
+        tenant_id: str = "", application_id: str = "", service_id: str = "", auth_type: str = "",
     ):
         """Track TTS character synthesis."""
         self.enterprise_tts_characters_synthesized.labels(
             language=language, tenant=tenant, tenant_id=tenant_id,
-            service_id=service_id, auth_type=auth_type,
+            application_id=application_id, service_id=service_id, auth_type=auth_type,
         ).observe(characters)
 
     def track_nmt_characters(
@@ -253,6 +258,7 @@ class MetricsCollector:
         characters: int,
         tenant: str = "unknown",
         tenant_id: str = "",
+        application_id: str = "",
         service_id: str = "",
         auth_type: str = "",
     ):
@@ -262,27 +268,29 @@ class MetricsCollector:
             target_language=target_lang,
             tenant=tenant,
             tenant_id=tenant_id,
+            application_id=application_id,
             service_id=service_id,
             auth_type=auth_type,
         ).observe(characters)
 
     def track_asr_audio_length(
         self, language: str, audio_minutes: float, tenant: str = "unknown",
-        tenant_id: str = "", service_id: str = "", auth_type: str = "",
+        tenant_id: str = "", application_id: str = "", service_id: str = "", auth_type: str = "",
     ):
         """Track ASR audio length processing."""
         self.enterprise_asr_audio_minutes_processed.labels(
             language=language, tenant=tenant, tenant_id=tenant_id,
-            service_id=service_id, auth_type=auth_type,
+            application_id=application_id, service_id=service_id, auth_type=auth_type,
         ).observe(audio_minutes)
 
     def track_ocr_characters(
         self, characters: int, tenant: str = "unknown", tenant_id: str = "",
-        service_id: str = "", auth_type: str = "",
+        application_id: str = "", service_id: str = "", auth_type: str = "",
     ):
         """Track OCR images processed (see enterprise_ocr_images_processed)."""
         self.enterprise_ocr_images_processed.labels(
-            tenant=tenant, tenant_id=tenant_id, service_id=service_id, auth_type=auth_type,
+            tenant=tenant, tenant_id=tenant_id, application_id=application_id,
+            service_id=service_id, auth_type=auth_type,
         ).observe(characters)
 
     def track_transliteration_characters(
@@ -292,6 +300,7 @@ class MetricsCollector:
         characters: int,
         tenant: str = "unknown",
         tenant_id: str = "",
+        application_id: str = "",
         service_id: str = "",
         auth_type: str = "",
     ):
@@ -301,53 +310,59 @@ class MetricsCollector:
             target_language=target_lang,
             tenant=tenant,
             tenant_id=tenant_id,
+            application_id=application_id,
             service_id=service_id,
             auth_type=auth_type,
         ).observe(characters)
 
     def track_language_detection_characters(
         self, characters: int, tenant: str = "unknown", tenant_id: str = "",
-        service_id: str = "", auth_type: str = "",
+        application_id: str = "", service_id: str = "", auth_type: str = "",
     ):
         """Track Language Detection character processing."""
         self.enterprise_language_detection_characters_processed.labels(
-            tenant=tenant, tenant_id=tenant_id, service_id=service_id, auth_type=auth_type,
+            tenant=tenant, tenant_id=tenant_id, application_id=application_id,
+            service_id=service_id, auth_type=auth_type,
         ).observe(characters)
 
     def track_audio_lang_detection_length(
         self, audio_minutes: float, tenant: str = "unknown", tenant_id: str = "",
-        service_id: str = "", auth_type: str = "",
+        application_id: str = "", service_id: str = "", auth_type: str = "",
     ):
         """Track Audio Language Detection audio length processing."""
         self.enterprise_audio_lang_detection_minutes_processed.labels(
-            tenant=tenant, tenant_id=tenant_id, service_id=service_id, auth_type=auth_type,
+            tenant=tenant, tenant_id=tenant_id, application_id=application_id,
+            service_id=service_id, auth_type=auth_type,
         ).observe(audio_minutes)
 
     def track_ner_tokens(
         self, tokens: int, tenant: str = "unknown", tenant_id: str = "",
-        service_id: str = "", auth_type: str = "",
+        application_id: str = "", service_id: str = "", auth_type: str = "",
     ):
         """Track NER token (word) processing."""
         self.enterprise_ner_tokens_processed.labels(
-            tenant=tenant, tenant_id=tenant_id, service_id=service_id, auth_type=auth_type,
+            tenant=tenant, tenant_id=tenant_id, application_id=application_id,
+            service_id=service_id, auth_type=auth_type,
         ).observe(tokens)
 
     def track_speaker_diarization_length(
         self, audio_minutes: float, tenant: str = "unknown", tenant_id: str = "",
-        service_id: str = "", auth_type: str = "",
+        application_id: str = "", service_id: str = "", auth_type: str = "",
     ):
         """Track Speaker Diarization audio length processing."""
         self.enterprise_speaker_diarization_minutes_processed.labels(
-            tenant=tenant, tenant_id=tenant_id, service_id=service_id, auth_type=auth_type,
+            tenant=tenant, tenant_id=tenant_id, application_id=application_id,
+            service_id=service_id, auth_type=auth_type,
         ).observe(audio_minutes)
 
     def track_language_diarization_length(
         self, audio_minutes: float, tenant: str = "unknown", tenant_id: str = "",
-        service_id: str = "", auth_type: str = "",
+        application_id: str = "", service_id: str = "", auth_type: str = "",
     ):
         """Track Language Diarization audio length processing."""
         self.enterprise_language_diarization_minutes_processed.labels(
-            tenant=tenant, tenant_id=tenant_id, service_id=service_id, auth_type=auth_type,
+            tenant=tenant, tenant_id=tenant_id, application_id=application_id,
+            service_id=service_id, auth_type=auth_type,
         ).observe(audio_minutes)
 
     def render(self) -> str:

@@ -420,3 +420,24 @@ class TestRoundingRemainderAbsorption:
             Decimal("100.01"), children, [], parent_old_amount=Decimal("30000")
         )
         assert sum(r.amount for r in result) == Decimal("100.01")
+
+    def test_last_child_never_goes_negative_when_earlier_shares_are_awkward(self) -> None:
+        """8 Keys, an Application cut drastically from 702.09 to 18.96 (~2.7%
+        of its old size) — a genuinely valid request (every Key has consumed
+        0, so any split of 18.96 across them is fine). Each of the first 7
+        Keys' near-1/7th share rounds DOWN to 2.70 (never up — see
+        resolve_level's ROUND_DOWN on non-last shares), so running_total
+        after all seven is 18.90, and the 8th Key (which only ever held 0.90)
+        absorbs the exact remainder: 0.06. Never negative, and the group
+        still lands on exactly 18.96 — the bug this class exists to prevent
+        (drifting a cent or two off target) would have shown up here as
+        EITHER a negative last share OR a total past 18.96; neither happens."""
+        children = [_row(f"Key{i}", "100.17", "0", consumed="0") for i in range(7)]
+        children.append(_row("Key7", "0.90", "0", consumed="0"))
+        result = resolve_level(
+            Decimal("18.96"), children, [], parent_old_amount=Decimal("702.09")
+        )
+        assert sum(r.amount for r in result) == Decimal("18.96")
+        assert all(r.amount >= 0 for r in result)
+        by_id = {r.id: r for r in result}
+        assert by_id["Key7"].amount == Decimal("0.06")

@@ -9,8 +9,9 @@ fixture below.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -87,3 +88,234 @@ class TestBudgetLookupInstant:
         lookup_instant = _budget_lookup_instant("2026-07")
 
         assert effective_from <= lookup_instant < effective_to
+
+
+class TestGetTenantBudgets:
+    """Exact-bug-scenario regression test: ppu_tenant_tier_assignments was
+    dropped (AI4IDS-2923); get_tenant_budgets previously queried it directly
+    and raised UndefinedTableError in production (reproduced live against
+    /usage-summary, /usage-tenants, /usage-tenant). Reconstructed from
+    tenants.allocated_budget + budget_usage (via api_key/applications), so
+    these tests exercise the actual cross-DB query logic, not a mocked
+    repository interface.
+    """
+
+    @staticmethod
+    def _auth_db(side_effects: list) -> MagicMock:
+        auth_db = MagicMock()
+        auth_db.execute = AsyncMock(side_effect=side_effects)
+        return auth_db
+
+    @staticmethod
+    def _rows(rows: list) -> SimpleNamespace:
+        return SimpleNamespace(all=lambda: rows)
+
+    @pytest.mark.asyncio
+    async def test_empty_tenant_ids_returns_empty_without_querying(self):
+        repo = UsageRepository(db=AsyncMock())
+        auth_db = self._auth_db([])
+
+        result = await repo.get_tenant_budgets("2026-08", [], auth_db)
+
+        assert result == {}
+        auth_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_auth_db_none_returns_empty(self):
+        repo = UsageRepository(db=AsyncMock())
+
+        result = await repo.get_tenant_budgets("2026-08", ["2"], None)
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_normal_case_computes_budget_from_allocated_minus_spend(self):
+        auth_db = self._auth_db(
+            [
+                self._rows(
+                    [SimpleNamespace(id=2, allocated_budget=Decimal("1000000.00"), tier_id=None)]
+                ),  # tenants
+                self._rows(
+                    [SimpleNamespace(id=39, tenant_id=2), SimpleNamespace(id=40, tenant_id=2)]
+                ),  # applications
+                self._rows(
+                    [
+                        SimpleNamespace(id=10, application_id=39),
+                        SimpleNamespace(id=11, application_id=39),
+                        SimpleNamespace(id=12, application_id=40),
+                    ]
+                ),  # api_key
+            ]
+        )
+        db = AsyncMock()
+        db.execute = AsyncMock(
+            return_value=self._rows(
+                [
+                    SimpleNamespace(api_key_id=10, api_key_budget_used=Decimal("70000.00")),
+                    SimpleNamespace(api_key_id=11, api_key_budget_used=Decimal("30000.00")),
+                    SimpleNamespace(api_key_id=12, api_key_budget_used=Decimal("90000.00")),
+                ]
+            )
+        )
+        repo = UsageRepository(db=db)
+
+        result = await repo.get_tenant_budgets("2026-08", ["2"], auth_db)
+
+        assert set(result.keys()) == {"2"}
+        budget = result["2"]
+        assert budget.budget_limit == Decimal("1000000.00")
+        assert budget.available_balance == Decimal("810000.00")  # 1,000,000 - (70000+30000+90000)
+        assert budget.tier_id is None
+
+    @pytest.mark.asyncio
+    async def test_tenant_not_in_auth_db_is_absent_from_result(self):
+        auth_db = self._auth_db([self._rows([])])  # tenants query returns nothing
+
+        repo = UsageRepository(db=AsyncMock())
+        result = await repo.get_tenant_budgets("2026-08", ["999"], auth_db)
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_tenant_with_no_applications_has_zero_spend(self):
+        auth_db = self._auth_db(
+            [
+                self._rows(
+                    [SimpleNamespace(id=5, allocated_budget=Decimal("50000.00"), tier_id=None)]
+                ),  # tenants
+                self._rows([]),  # applications — none
+            ]
+        )
+        repo = UsageRepository(db=AsyncMock())
+
+        result = await repo.get_tenant_budgets("2026-08", ["5"], auth_db)
+
+        budget = result["5"]
+        assert budget.budget_limit == Decimal("50000.00")
+        assert budget.available_balance == Decimal("50000.00")
+
+    @pytest.mark.asyncio
+    async def test_non_digit_tenant_id_short_circuits_without_querying(self):
+        auth_db = self._auth_db([])
+        repo = UsageRepository(db=AsyncMock())
+
+        result = await repo.get_tenant_budgets("2026-08", ["not-a-number"], auth_db)
+
+        assert result == {}
+        auth_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_tenant_with_null_allocated_budget_is_absent_from_result(self):
+        """Regression: a tenant that EXISTS in auth-service's tenants table but has
+        never had a budget configured (allocated_budget IS NULL — the column is
+        nullable, and optional on tenant create/update) must be excluded from the
+        returned dict, not coalesced to budget_limit=0. Coalescing to 0 would make
+        _resolve_budget report has_budget=True with a limit of 0, so get_summary
+        would count this tenant's any-nonzero-spend as "budget exceeded" purely
+        because no budget was ever set — the exact "unknown vs. genuinely zero"
+        mixup this module's docstring says must not happen."""
+        auth_db = self._auth_db(
+            [
+                self._rows(
+                    [SimpleNamespace(id=42, allocated_budget=None, tier_id=None)]
+                ),  # tenants — exists, but no budget on file
+                self._rows(
+                    [SimpleNamespace(id=39, tenant_id=42)]
+                ),  # applications
+                self._rows(
+                    [SimpleNamespace(id=10, application_id=39)]
+                ),  # api_key
+            ]
+        )
+        db = AsyncMock()
+        db.execute = AsyncMock(
+            return_value=self._rows(
+                [SimpleNamespace(api_key_id=10, api_key_budget_used=Decimal("150.00"))]
+            )
+        )
+        repo = UsageRepository(db=db)
+
+        result = await repo.get_tenant_budgets("2026-08", ["42"], auth_db)
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_mixed_null_and_real_budgets_only_excludes_the_null_one(self):
+        """Same lookup batch, one tenant with a real budget and one with none on
+        file — only the NULL one should be dropped; the other must still resolve
+        normally with its own spend correctly attributed (not merged/lost)."""
+        auth_db = self._auth_db(
+            [
+                self._rows(
+                    [
+                        SimpleNamespace(id=2, allocated_budget=Decimal("1000.00"), tier_id=None),
+                        SimpleNamespace(id=42, allocated_budget=None, tier_id=None),
+                    ]
+                ),  # tenants
+                self._rows(
+                    [
+                        SimpleNamespace(id=39, tenant_id=2),
+                        SimpleNamespace(id=40, tenant_id=42),
+                    ]
+                ),  # applications
+                self._rows(
+                    [
+                        SimpleNamespace(id=10, application_id=39),
+                        SimpleNamespace(id=11, application_id=40),
+                    ]
+                ),  # api_key
+            ]
+        )
+        db = AsyncMock()
+        db.execute = AsyncMock(
+            return_value=self._rows(
+                [
+                    SimpleNamespace(api_key_id=10, api_key_budget_used=Decimal("300.00")),
+                    SimpleNamespace(api_key_id=11, api_key_budget_used=Decimal("150.00")),
+                ]
+            )
+        )
+        repo = UsageRepository(db=db)
+
+        result = await repo.get_tenant_budgets("2026-08", ["2", "42"], auth_db)
+
+        assert set(result.keys()) == {"2"}
+        assert result["2"].budget_limit == Decimal("1000.00")
+        assert result["2"].available_balance == Decimal("700.00")
+
+    @pytest.mark.asyncio
+    async def test_auth_db_failure_propagates_instead_of_degrading_to_empty(self):
+        """Regression: a real auth_db failure (connection drop, aborted
+        transaction) must NOT be swallowed into `{}` — that made _resolve_budget
+        report has_budget=False for every tenant, so /usage-summary answered
+        200 OK with totalAllocatedBudget=0 during an actual outage, exactly the
+        false zero application_usage_service._load_tenant_budget already
+        refuses to produce (see its docstring). The caller-side route/global
+        exception handler is what turns this into a 500 — this repository
+        method's job is only to not hide it."""
+        auth_db = MagicMock()
+        auth_db.execute = AsyncMock(side_effect=RuntimeError("connection lost"))
+        repo = UsageRepository(db=AsyncMock())
+
+        with pytest.raises(RuntimeError, match="connection lost"):
+            await repo.get_tenant_budgets("2026-08", ["2"], auth_db)
+
+    @pytest.mark.asyncio
+    async def test_auth_db_failure_mid_sequence_also_propagates(self):
+        """The tenants query can succeed and the transaction still abort on the
+        very next statement (applications query) — a realistic partial-failure
+        shape, not just a first-call failure. Must propagate exactly the same
+        as a failure on the first query, not be masked by having already
+        fetched some rows."""
+        auth_db = self._auth_db(
+            [
+                self._rows(
+                    [SimpleNamespace(id=2, allocated_budget=Decimal("1000.00"), tier_id=None)]
+                ),  # tenants — succeeds
+                RuntimeError("transaction aborted"),  # applications — fails
+            ]
+        )
+        repo = UsageRepository(db=AsyncMock())
+
+        with pytest.raises(RuntimeError, match="transaction aborted"):
+            await repo.get_tenant_budgets("2026-08", ["2"], auth_db)

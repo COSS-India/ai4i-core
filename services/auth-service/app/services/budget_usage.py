@@ -29,16 +29,26 @@ logger = logging.getLogger(__name__)
 
 
 async def fetch_budget_usage(
-    key_ids: list[int], platform_core_db: Optional[AsyncSession]
+    key_ids: list[int],
+    platform_core_db: Optional[AsyncSession],
+    *,
+    raise_on_error: bool = False,
 ) -> dict[int, tuple[Decimal, Decimal]]:
     """Batch-fetch (used, snapshot) from platform-core's budget_usage ledger.
     Missing entries mean "no usage recorded yet"; callers treat that as used=0.
 
-    Best-effort: a platform-core outage must not fail the auth-service read
-    it supports (a display value, or a floor-check input that already has
-    its own explicit BUDGET_OVERCOMMITTED/ALLOCATION_BELOW_CONSUMED handling
-    for the "nothing consumed yet" case) — returns {} on any failure rather
-    than raising.
+    Best-effort by default: a platform-core outage must not fail the
+    auth-service read it supports (a display value, or a floor-check input
+    that already has its own explicit BUDGET_OVERCOMMITTED/
+    ALLOCATION_BELOW_CONSUMED handling for the "nothing consumed yet" case)
+    — returns {} on any failure rather than raising.
+
+    ``raise_on_error=True`` opts out of that for callers where "query
+    succeeded with zero rows" and "query failed" are NOT interchangeable —
+    e.g. writing a derived exhaustion flag, where {} on failure would read
+    as "zero spend" and overwrite the flag with a wrong value instead of
+    leaving it stale. Those callers propagate the exception through their
+    own best-effort handling instead.
     """
     if not key_ids or platform_core_db is None:
         return {}
@@ -55,6 +65,8 @@ async def fetch_budget_usage(
         ).all()
     except Exception as exc:
         logger.warning("Failed to fetch budget_usage for keys %s: %s", key_ids, exc)
+        if raise_on_error:
+            raise
         return {}
     return {
         row.api_key_id: (row.api_key_budget_used, row.api_key_budget_snap) for row in rows

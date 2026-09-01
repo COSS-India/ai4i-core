@@ -40,6 +40,7 @@ import { useRouter } from "next/router";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import FieldHint from "../components/common/FieldHint";
+import FormFieldsRow from "../components/common/FormFieldsRow";
 import { FIELD_HINTS } from "../config/fieldHints";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import {
@@ -951,7 +952,7 @@ const ModelManagementPage: React.FC = () => {
                         onClearFilters={clearAllFilters}
                         filters={
                           <VStack align="stretch" spacing={3} w="full">
-                            <HStack flexWrap="wrap" spacing={3} align="flex-end">
+                            <FormFieldsRow>
                               <TableSearchField
                                 label="Search"
                                 value={searchQuery}
@@ -984,7 +985,7 @@ const ModelManagementPage: React.FC = () => {
                                   </option>
                                 ))}
                               </TableSelectField>
-                            </HStack>
+                            </FormFieldsRow>
                             {hasActiveFilters && (
                               <HStack spacing={2} flexWrap="wrap">
                                 {searchQuery.trim() && (

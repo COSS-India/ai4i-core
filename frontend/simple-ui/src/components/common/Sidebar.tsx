@@ -46,10 +46,14 @@ import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { getTenantIdFromToken } from "../../utils/helpers";
 import { getHomePath, getUsageDashboardOverviewPath } from "../../utils/navigation";
 import {
+  canAccessInstitutionManagement,
   canAccessServicesManagement,
   canAccessUsageDashboard,
   canSeeServiceCards,
+  isPlatformAdminUser,
+  isTenantAdminUser,
   isUsageDashboardOnlyUser,
+  userMayManageApiKeys,
 } from "../../utils/rbac";
 import AdopterLogo from "./AdopterLogo";
 import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
@@ -480,7 +484,7 @@ function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean 
     case TABS.tenantManagement:
       return ctx.showTenantManagement;
     case TABS.apiKeyManagement:
-      return ctx.isAdmin || ctx.isTenantAdmin;
+      return userMayManageApiKeys(ctx.userRoles);
     case TABS.logs:
       return !ctx.isUser && !ctx.isGuest && Boolean(ctx.tenantId || ctx.isAdmin);
     case TABS.usageDashboard:
@@ -512,15 +516,12 @@ const Sidebar: React.FC = () => {
   const isUser = user?.roles?.includes('USER') || false;
 
   // Check if user is ADMIN
-  const isAdmin = user?.roles?.includes('ADMIN') || false;
-
-  // Check if user is TENANT ADMIN
-  const isTenantAdmin = user?.roles?.some((role) => (role ?? "").trim().toUpperCase() === 'TENANT ADMIN') || false;
+  const isAdmin = isPlatformAdminUser(user?.roles);
+  const isTenantAdmin = isTenantAdminUser(user?.roles);
 
   const showServiceCards = canSeeServiceCards(user?.roles);
 
-  // Show Tenant Management to admins and tenant admins
-  const showTenantManagement = isAdmin || isTenantAdmin;
+  const showTenantManagement = canAccessInstitutionManagement(user?.roles);
 
   // Get tenant_id from JWT token
   const tenantId = getTenantIdFromToken();

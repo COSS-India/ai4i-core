@@ -1,5 +1,6 @@
 import React from "react";
 import { Button, HStack, IconButton, Select, Text, Tooltip, useColorModeValue } from "@chakra-ui/react";
+import { FORM_LABEL_TO_INPUT_PT } from "./FormFieldsRow";
 
 export {
   default as AdminDataTable,
@@ -167,7 +168,7 @@ export function TableFilterToolbar({
   clearLabel = "Clear all",
   rightContent,
   spacing = 3,
-  align = "center",
+  align = "flex-start",
   justify = "flex-start",
 }: {
   children: React.ReactNode;
@@ -179,15 +180,29 @@ export function TableFilterToolbar({
   align?: string;
   justify?: string;
 }) {
+  const actions =
+    (hasActiveFilters && onClear) || rightContent ? (
+      <HStack spacing={2} pt={FORM_LABEL_TO_INPUT_PT} align="center" flexShrink={0}>
+        {hasActiveFilters && onClear ? (
+          <Button size="sm" variant="outline" onClick={onClear}>
+            {clearLabel}
+          </Button>
+        ) : null}
+        {rightContent}
+      </HStack>
+    ) : null;
+
   return (
-    <HStack spacing={spacing} align={align} justify={justify} flexWrap="wrap" rowGap={3} w="100%">
+    <HStack
+      spacing={spacing}
+      align={align}
+      justify={justify}
+      flexWrap="wrap"
+      rowGap={3}
+      w="100%"
+    >
       {children}
-      {hasActiveFilters && onClear ? (
-        <Button size="sm" variant="outline" onClick={onClear}>
-          {clearLabel}
-        </Button>
-      ) : null}
-      {rightContent}
+      {actions}
     </HStack>
   );
 }

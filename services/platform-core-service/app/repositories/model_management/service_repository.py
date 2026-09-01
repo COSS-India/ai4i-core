@@ -75,7 +75,14 @@ class ServiceRepository:
             ),
         ).where(Service.deleted_at.is_(None))
         if task_types:
-            stmt = stmt.where(Model.task["type"].astext.in_(task_types))
+            # Case-insensitive — same reasoning as ModelRepository's
+            # identical filter: an exact JSONB match against whatever case
+            # a row happens to be stored in would silently exclude it here
+            # while other task-type-aware endpoints tolerate casing
+            # variance (e.g. TaskSpecLenient on /api/v1/models).
+            stmt = stmt.where(
+                func.lower(Model.task["type"].astext).in_([t.lower() for t in task_types])
+            )
         if is_published is not None:
             stmt = stmt.where(Service.is_published == is_published)
         if created_by is not None:
@@ -105,7 +112,14 @@ class ServiceRepository:
             .where(Service.deleted_at.is_(None))
         )
         if task_types:
-            stmt = stmt.where(Model.task["type"].astext.in_(task_types))
+            # Case-insensitive — same reasoning as ModelRepository's
+            # identical filter: an exact JSONB match against whatever case
+            # a row happens to be stored in would silently exclude it here
+            # while other task-type-aware endpoints tolerate casing
+            # variance (e.g. TaskSpecLenient on /api/v1/models).
+            stmt = stmt.where(
+                func.lower(Model.task["type"].astext).in_([t.lower() for t in task_types])
+            )
         if is_published is not None:
             stmt = stmt.where(Service.is_published == is_published)
         if created_by is not None:

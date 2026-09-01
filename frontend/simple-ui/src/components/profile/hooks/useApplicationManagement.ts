@@ -1,0 +1,716 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useToast } from "@chakra-ui/react";
+import {
+  createApplication,
+  getApplicationErrorCode,
+  listAllApplicationsForBudget,
+  listApplicationApiKeys,
+  listApplications,
+  updateApplication,
+  updateApplicationAllocations,
+  type ApplicationApiKeyRow,
+} from "../../../services/applicationService";
+import { parseError } from "../../../utils/errorHandler";
+import {
+  previewKeyCascade,
+  resolveApplicationBudget,
+  roundMoney,
+  roundPct,
+  type ApplicationKeyPreview,
+} from "../../../utils/applicationBudgetPreview";
+import type { Application } from "../../../types/application";
+import { FIELD_HINTS } from "../../../config/fieldHints";
+
+const PAGE_SIZE = 25;
+
+export type ApplicationForm = {
+  name: string;
+  description: string;
+  domain: string;
+  allocated_percentage: string;
+};
+
+const EMPTY_FORM: ApplicationForm = {
+  name: "",
+  description: "",
+  domain: "",
+  allocated_percentage: "",
+};
+
+export type BulkBudgetDraft = {
+  application_id: string;
+  name: string;
+  consumed_percentage: number | null;
+  consumed_budget: number | null;
+  originalPct: number | null;
+  pctInput: string;
+  amountInput: string;
+  resolvedPct: number | null;
+  resolvedAmount: number | null;
+  keysLoading: boolean;
+  keysLoaded: boolean;
+  keys: ApplicationApiKeyRow[];
+  keyPreviews: ApplicationKeyPreview[];
+  rowError: string | null;
+};
+
+function mapAllocationError(error: unknown): string {
+  const code = getApplicationErrorCode(error);
+  if (code === "TENANT_BUDGET_NOT_SET") {
+    return FIELD_HINTS.application.institutionBudgetNotSet;
+  }
+  return parseError(error).message;
+}
+
+function parsePct(raw: string): number | null | "invalid" {
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n)) return "invalid";
+  return n;
+}
+
+function pctString(value: number | null): string {
+  if (value == null) return "";
+  return String(value);
+}
+
+function amountString(value: number | null): string {
+  if (value == null) return "";
+  return String(value);
+}
+
+function sumAllocatedPercentage(apps: Application[]): number {
+  return apps.reduce((sum, app) => sum + (app.allocated_percentage ?? 0), 0);
+}
+
+function consumedFromKeys(
+  keys: ApplicationApiKeyRow[],
+  tenantBudget: number,
+): { consumed_percentage: number; consumed_budget: number } {
+  const consumed_budget = keys.reduce((sum, key) => sum + (key.consumed_budget ?? 0), 0);
+  const consumed_percentage =
+    tenantBudget > 0 ? roundPct((consumed_budget / tenantBudget) * 100) : 0;
+  return { consumed_percentage, consumed_budget };
+}
+
+function rowHasBudgetChange(row: BulkBudgetDraft): boolean {
+  const orig = row.originalPct;
+  const next = row.resolvedPct;
+  if (orig == null && next == null) return false;
+  if (orig == null || next == null) return true;
+  return Math.abs(orig - next) > 1e-6;
+}
+
+function buildDraftFromApplication(app: Application): BulkBudgetDraft {
+  const pct = app.allocated_percentage;
+  const amount = app.allocated_budget;
+  return {
+    application_id: app.application_id,
+    name: app.name,
+    consumed_percentage: app.consumed_percentage ?? null,
+    consumed_budget: app.consumed_budget ?? null,
+    originalPct: pct,
+    pctInput: pctString(pct),
+    amountInput: amountString(amount),
+    resolvedPct: pct,
+    resolvedAmount: amount,
+    keysLoading: false,
+    keysLoaded: false,
+    keys: [],
+    keyPreviews: [],
+    rowError: null,
+  };
+}
+
+function evaluateRowError(
+  row: BulkBudgetDraft,
+  tenantBudget: number,
+): string | null {
+  if (row.resolvedPct == null) return null;
+  if (
+    row.keysLoaded &&
+    row.consumed_percentage != null &&
+    row.resolvedPct < row.consumed_percentage - 1e-6
+  ) {
+    return `Cannot go below ${roundPct(row.consumed_percentage)}% already consumed.`;
+  }
+  if (
+    row.keysLoaded &&
+    row.consumed_budget != null &&
+    row.resolvedAmount != null &&
+    row.resolvedAmount < row.consumed_budget - 1e-6
+  ) {
+    return `Cannot go below ${roundMoney(row.consumed_budget)} already consumed.`;
+  }
+  const keyViolation = row.keyPreviews.find((k) => k.floorViolation);
+  if (keyViolation) {
+    return `Key "${keyViolation.key_name}" would drop below its consumed amount.`;
+  }
+  if (tenantBudget <= 0 && row.resolvedAmount != null && row.resolvedAmount > 0) {
+    return "Institution budget is not set.";
+  }
+  return null;
+}
+
+function applyResolved(
+  row: BulkBudgetDraft,
+  tenantBudget: number,
+  mode: "percentage" | "amount",
+  raw: string,
+): BulkBudgetDraft {
+  const trimmed = raw.trim();
+  if (trimmed === "") {
+    const next = {
+      ...row,
+      pctInput: "",
+      amountInput: "",
+      resolvedPct: null,
+      resolvedAmount: null,
+      keyPreviews: [],
+      rowError: null,
+    };
+    return { ...next, rowError: evaluateRowError(next, tenantBudget) };
+  }
+  const numeric = Number(trimmed);
+  if (!Number.isFinite(numeric)) {
+    return { ...row, rowError: "Enter a valid number." };
+  }
+  const resolved = resolveApplicationBudget(mode, numeric, tenantBudget);
+  if (!resolved) {
+    if (mode === "amount") {
+      return {
+        ...row,
+        amountInput: trimmed,
+        rowError: FIELD_HINTS.application.amountRequiresInstitutionBudget,
+      };
+    }
+    return { ...row, rowError: "Enter a valid number." };
+  }
+  const keys = row.keys.filter((k) => k.is_active);
+  const keyPreviews =
+    resolved.amount != null && keys.length > 0
+      ? previewKeyCascade(resolved.amount, keys)
+      : [];
+  const next: BulkBudgetDraft = {
+    ...row,
+    pctInput: String(resolved.pct),
+    amountInput: resolved.amount != null ? String(resolved.amount) : "",
+    resolvedPct: resolved.pct,
+    resolvedAmount: resolved.amount,
+    keyPreviews,
+    rowError: null,
+  };
+  return { ...next, rowError: evaluateRowError(next, tenantBudget) };
+}
+
+export function useApplicationManagement(tenantId: string, institutionBudget: number | null) {
+  const toast = useToast();
+  const [applications, setApplications] = useState<Application[]>([]);
+  const [totalAllocatedPct, setTotalAllocatedPct] = useState(0);
+  const [tenantBudget, setTenantBudget] = useState(institutionBudget ?? 0);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(PAGE_SIZE);
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [viewOpen, setViewOpen] = useState(false);
+  const [budgetOpen, setBudgetOpen] = useState(false);
+  const [selected, setSelected] = useState<Application | null>(null);
+  const [form, setForm] = useState<ApplicationForm>(EMPTY_FORM);
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [formBanner, setFormBanner] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const [budgetDraft, setBudgetDraft] = useState("");
+  const [budgetFloor, setBudgetFloor] = useState(0);
+  const [budgetBanner, setBudgetBanner] = useState<string | null>(null);
+  const [budgetStepperHint, setBudgetStepperHint] = useState<string | null>(null);
+
+  const [bulkBudgetOpen, setBulkBudgetOpen] = useState(false);
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkRows, setBulkRows] = useState<BulkBudgetDraft[]>([]);
+  const [bulkBanner, setBulkBanner] = useState<string | null>(null);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setSearch(searchInput.trim()), 300);
+    return () => window.clearTimeout(t);
+  }, [searchInput]);
+
+  useEffect(() => {
+    setTenantBudget(institutionBudget ?? 0);
+  }, [institutionBudget]);
+
+  const loadAllocationSummary = useCallback(async () => {
+    if (!tenantId) return;
+    try {
+      const all = await listAllApplicationsForBudget(tenantId);
+      setTotalAllocatedPct(sumAllocatedPercentage(all.applications));
+    } catch {
+      // Keep the previous summary if the full fetch fails.
+    }
+  }, [tenantId]);
+
+  const loadTable = useCallback(async () => {
+    if (!tenantId) return;
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const list = await listApplications(tenantId, {
+        search: search || undefined,
+        page,
+        size: pageSize,
+      });
+      setApplications(list.applications);
+      setTotal(list.pagination.total);
+    } catch (error) {
+      setLoadError(parseError(error).message);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [tenantId, search, page, pageSize]);
+
+  useEffect(() => {
+    void loadTable();
+  }, [loadTable]);
+
+  useEffect(() => {
+    void loadAllocationSummary();
+  }, [loadAllocationSummary]);
+
+  const reload = useCallback(async () => {
+    await Promise.all([loadTable(), loadAllocationSummary()]);
+  }, [loadTable, loadAllocationSummary]);
+
+  const remainingPct = Math.max(0, 100 - totalAllocatedPct);
+  const institutionBudgetUnset = tenantBudget <= 0;
+
+  const bulkLiveTotalPct = useMemo(() => {
+    return bulkRows.reduce((sum, row) => sum + (row.resolvedPct ?? 0), 0);
+  }, [bulkRows]);
+
+  const bulkCanSave = useMemo(() => {
+    if (institutionBudgetUnset) return false;
+    if (bulkLoading || bulkRows.length === 0) return false;
+    if (bulkLiveTotalPct > 100 + 1e-6) return false;
+    if (bulkRows.some((row) => row.rowError)) return false;
+    const changedRows = bulkRows.filter(rowHasBudgetChange);
+    if (changedRows.length === 0) return false;
+    if (changedRows.some((row) => !row.keysLoaded)) return false;
+    return true;
+  }, [institutionBudgetUnset, bulkLoading, bulkRows, bulkLiveTotalPct]);
+
+  const loadKeysForRow = useCallback(async (applicationId: string) => {
+    setBulkRows((prev) =>
+      prev.map((row) =>
+        row.application_id === applicationId
+          ? { ...row, keysLoading: true, rowError: null }
+          : row,
+      ),
+    );
+    try {
+      const keys = await listApplicationApiKeys(applicationId);
+      setBulkRows((prev) =>
+        prev.map((row) => {
+          if (row.application_id !== applicationId) return row;
+          const activeKeys = keys.filter((k) => k.is_active);
+          const consumed = consumedFromKeys(activeKeys, tenantBudget);
+          const keyPreviews =
+            row.resolvedAmount != null
+              ? previewKeyCascade(row.resolvedAmount, activeKeys)
+              : [];
+          const next = {
+            ...row,
+            keysLoading: false,
+            keysLoaded: true,
+            keys: activeKeys,
+            keyPreviews,
+            consumed_percentage: consumed.consumed_percentage,
+            consumed_budget: consumed.consumed_budget,
+          };
+          return { ...next, rowError: evaluateRowError(next, tenantBudget) };
+        }),
+      );
+    } catch (error) {
+      const message = parseError(error).message;
+      setBulkRows((prev) =>
+        prev.map((row) =>
+          row.application_id === applicationId
+            ? {
+                ...row,
+                keysLoading: false,
+                keysLoaded: false,
+                rowError: `Could not load API keys for this Application: ${message}`,
+              }
+            : row,
+        ),
+      );
+    }
+  }, [tenantBudget]);
+
+  const openBulkBudget = useCallback(async () => {
+    if (!tenantId) return;
+    setBulkBudgetOpen(true);
+    setBulkBanner(null);
+    setBulkLoading(true);
+    setBulkRows([]);
+    try {
+      const list = await listAllApplicationsForBudget(tenantId);
+      const effectiveBudget = institutionBudget ?? 0;
+      setTenantBudget(effectiveBudget);
+      const drafts = list.applications.map((app) => {
+        const draft = buildDraftFromApplication(app);
+        if (
+          draft.resolvedPct != null &&
+          draft.resolvedAmount == null &&
+          effectiveBudget > 0
+        ) {
+          draft.resolvedAmount = roundMoney((effectiveBudget * draft.resolvedPct) / 100);
+          draft.amountInput = String(draft.resolvedAmount);
+        }
+        return draft;
+      });
+      setBulkRows(drafts);
+    } catch (error) {
+      setBulkBanner(mapAllocationError(error));
+    } finally {
+      setBulkLoading(false);
+    }
+  }, [tenantId, institutionBudget]);
+
+  const onBulkRowFocus = useCallback(
+    (applicationId: string) => {
+      const row = bulkRows.find((r) => r.application_id === applicationId);
+      if (!row || row.keysLoaded || row.keysLoading) return;
+      void loadKeysForRow(applicationId);
+    },
+    [bulkRows, loadKeysForRow],
+  );
+
+  const onBulkPctChange = useCallback(
+    (applicationId: string, value: string) => {
+      setBulkRows((prev) =>
+        prev.map((row) => {
+          if (row.application_id !== applicationId) return row;
+          const next = applyResolved(row, tenantBudget, "percentage", value);
+          if (row.keysLoaded && next.resolvedAmount != null) {
+            next.keyPreviews = previewKeyCascade(next.resolvedAmount, row.keys);
+            next.rowError = evaluateRowError(next, tenantBudget);
+          }
+          return next;
+        }),
+      );
+      onBulkRowFocus(applicationId);
+    },
+    [tenantBudget, onBulkRowFocus],
+  );
+
+  const onBulkAmountChange = useCallback(
+    (applicationId: string, value: string) => {
+      setBulkRows((prev) =>
+        prev.map((row) => {
+          if (row.application_id !== applicationId) return row;
+          const next = applyResolved(row, tenantBudget, "amount", value);
+          if (row.keysLoaded && next.resolvedAmount != null) {
+            next.keyPreviews = previewKeyCascade(next.resolvedAmount, row.keys);
+            next.rowError = evaluateRowError(next, tenantBudget);
+          }
+          return next;
+        }),
+      );
+      onBulkRowFocus(applicationId);
+    },
+    [tenantBudget, onBulkRowFocus],
+  );
+
+  const handleSaveBulkBudget = async () => {
+    if (!bulkCanSave) return;
+    const changes = bulkRows
+      .filter(rowHasBudgetChange)
+      .filter((row) => row.resolvedPct != null)
+      .map((row) => ({
+        application_id: row.application_id,
+        allocated_percentage: row.resolvedPct as number,
+      }));
+    if (changes.length === 0) {
+      setBulkBudgetOpen(false);
+      return;
+    }
+    setIsSaving(true);
+    setBulkBanner(null);
+    try {
+      await updateApplicationAllocations(tenantId, changes);
+      toast({
+        title: "Application budgets updated.",
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
+      setBulkBudgetOpen(false);
+      await reload();
+    } catch (error) {
+      setBulkBanner(mapAllocationError(error));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const openCreate = () => {
+    setForm(EMPTY_FORM);
+    setFormErrors({});
+    setFormBanner(null);
+    setCreateOpen(true);
+  };
+
+  const openEdit = (app: Application) => {
+    setSelected(app);
+    setForm({
+      name: app.name,
+      description: app.description,
+      domain: app.domain,
+      allocated_percentage: "",
+    });
+    setFormErrors({});
+    setFormBanner(null);
+    setEditOpen(true);
+  };
+
+  const openView = (app: Application) => {
+    setSelected(app);
+    setViewOpen(true);
+  };
+
+  const openBudget = (app: Application) => {
+    setSelected(app);
+    setBudgetDraft(
+      app.allocated_percentage == null ? "" : String(app.allocated_percentage),
+    );
+    setBudgetFloor(0);
+    setBudgetBanner(null);
+    setBudgetStepperHint(null);
+    setBudgetOpen(true);
+    void listApplicationApiKeys(app.application_id)
+      .then((keys) => {
+        const activeKeys = keys.filter((k) => k.is_active);
+        setBudgetFloor(consumedFromKeys(activeKeys, tenantBudget).consumed_percentage);
+      })
+      .catch(() => setBudgetFloor(0));
+  };
+
+  const budgetOthersAllocated = useMemo(() => {
+    if (!selected) return totalAllocatedPct;
+    return totalAllocatedPct - (selected.allocated_percentage ?? 0);
+  }, [selected, totalAllocatedPct]);
+
+  const budgetParsed = parsePct(budgetDraft);
+  const budgetValue =
+    budgetParsed == null || budgetParsed === "invalid" ? 0 : budgetParsed;
+  const budgetLiveTotal = budgetOthersAllocated + budgetValue;
+  const budgetAvailable = Math.max(0, 100 - budgetOthersAllocated);
+
+  const budgetFieldError = useMemo(() => {
+    if (budgetParsed === "invalid") return "Enter a valid percentage.";
+    if (budgetParsed != null && budgetParsed < 0) return "Budget cannot be negative.";
+    if (budgetParsed != null && budgetFloor > 0 && budgetParsed < budgetFloor - 1e-6) {
+      return `Cannot go below ${budgetFloor}% already consumed.`;
+    }
+    if (budgetLiveTotal > 100 + 1e-6) {
+      return `Total across Applications would be ${budgetLiveTotal.toFixed(2)}% — over 100%.`;
+    }
+    return null;
+  }, [budgetParsed, budgetFloor, budgetLiveTotal]);
+
+  const validateCreate = (): boolean => {
+    const errors: Record<string, string> = {};
+    if (!form.name.trim()) errors.name = "Application name is required.";
+    const pct = parsePct(form.allocated_percentage);
+    if (pct === "invalid") errors.allocated_percentage = "Enter a valid percentage.";
+    else if (pct != null && pct < 0) errors.allocated_percentage = "Budget cannot be negative.";
+    else if (pct != null && pct > remainingPct + 1e-6) {
+      errors.allocated_percentage = `Cannot exceed ${remainingPct.toFixed(2)}% still available.`;
+    }
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const handleCreate = async () => {
+    if (!validateCreate()) return;
+    setIsSaving(true);
+    setFormBanner(null);
+    const pct = parsePct(form.allocated_percentage);
+    try {
+      await createApplication(tenantId, {
+        name: form.name.trim(),
+        description: form.description.trim() || undefined,
+        domain: form.domain.trim() || undefined,
+        allocated_percentage: pct == null || pct === "invalid" ? undefined : pct,
+      });
+      toast({ title: "Application created.", status: "success", duration: 3000, isClosable: true });
+      setCreateOpen(false);
+      setPage(1);
+      await reload();
+    } catch (error) {
+      const code = getApplicationErrorCode(error);
+      const message = parseError(error).message;
+      if (code === "APPLICATION_NAME_ALREADY_EXISTS") {
+        setFormErrors((prev) => ({ ...prev, name: message }));
+      } else if (code === "ALLOCATION_TOTAL_EXCEEDED") {
+        setFormBanner(message);
+      } else {
+        setFormBanner(message);
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSaveBudget = async () => {
+    if (!selected) return;
+    if (budgetFieldError) return;
+    const next =
+      budgetParsed == null || budgetParsed === "invalid" ? 0 : budgetParsed;
+    if (
+      selected.allocated_percentage != null &&
+      Math.abs(next - selected.allocated_percentage) < 1e-6
+    ) {
+      setBudgetOpen(false);
+      return;
+    }
+    if (selected.allocated_percentage == null && budgetDraft.trim() === "") {
+      setBudgetOpen(false);
+      return;
+    }
+    setIsSaving(true);
+    setBudgetBanner(null);
+    try {
+      await updateApplicationAllocations(tenantId, [
+        { application_id: selected.application_id, allocated_percentage: next },
+      ]);
+      toast({
+        title: `Budget for "${selected.name}" updated to ${next}%.`,
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
+      setBudgetOpen(false);
+      await reload();
+    } catch (error) {
+      setBudgetBanner(mapAllocationError(error));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleEdit = async () => {
+    if (!selected) return;
+    const errors: Record<string, string> = {};
+    if (!form.name.trim()) errors.name = "Application name is required.";
+    setFormErrors(errors);
+    if (Object.keys(errors).length > 0) return;
+    setIsSaving(true);
+    setFormBanner(null);
+    try {
+      await updateApplication(tenantId, selected.application_id, {
+        name: form.name.trim(),
+        description: form.description.trim(),
+        domain: form.domain.trim(),
+      });
+      toast({ title: "Application updated.", status: "success", duration: 3000, isClosable: true });
+      setEditOpen(false);
+      await reload();
+    } catch (error) {
+      const code = getApplicationErrorCode(error);
+      const message = parseError(error).message;
+      if (code === "APPLICATION_NAME_ALREADY_EXISTS") {
+        setFormErrors((prev) => ({ ...prev, name: message }));
+      } else {
+        setFormBanner(message);
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return {
+    applications,
+    total,
+    page,
+    pageSize,
+    setPage,
+    setPageSize: (size: number) => {
+      setPageSize(size);
+      setPage(1);
+    },
+    searchInput,
+    setSearchInput: (value: string) => {
+      setSearchInput(value);
+      setPage(1);
+    },
+    isLoading,
+    loadError,
+    remainingPct,
+    totalAllocatedPct,
+    tenantBudget,
+    institutionBudgetUnset,
+    createOpen,
+    setCreateOpen,
+    editOpen,
+    setEditOpen,
+    viewOpen,
+    setViewOpen,
+    budgetOpen,
+    setBudgetOpen,
+    selected,
+    form,
+    setForm,
+    formErrors,
+    formBanner,
+    isSaving,
+    openCreate,
+    openEdit,
+    openView,
+    openBudget,
+    handleCreate,
+    handleEdit,
+    handleSaveBudget,
+    budgetDraft,
+    setBudgetDraft: (next: string) => {
+      setBudgetDraft(next);
+      setBudgetStepperHint(null);
+    },
+    onBudgetBoundHit: (bound: "min" | "max") => {
+      if (bound === "min" && budgetFloor > 0) {
+        setBudgetStepperHint(`Cannot go below ${budgetFloor}% already consumed.`);
+        return;
+      }
+      const wouldBe = budgetOthersAllocated + budgetAvailable + 1;
+      setBudgetStepperHint(
+        `Total across Applications would be ${wouldBe.toFixed(2)}% — over 100%.`,
+      );
+    },
+    budgetStepperHint,
+    budgetLiveTotal,
+    budgetFieldError,
+    budgetFloor,
+    budgetAvailable,
+    budgetBanner,
+    bulkBudgetOpen,
+    setBulkBudgetOpen,
+    bulkLoading,
+    bulkRows,
+    bulkBanner,
+    bulkLiveTotalPct,
+    bulkCanSave,
+    openBulkBudget,
+    onBulkRowFocus,
+    onBulkPctChange,
+    onBulkAmountChange,
+    handleSaveBulkBudget,
+    reload,
+  };
+}

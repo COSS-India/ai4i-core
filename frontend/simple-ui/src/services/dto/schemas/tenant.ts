@@ -20,12 +20,37 @@ export const tenantViewSchema = z
     phone_number: z.string().nullable().optional(),
     status: tenantStatusSchema,
     onboarding_completed: z.boolean().optional(),
+    tier_id: z.string().nullable().optional(),
+    tier_name: z.string().nullable().optional(),
+    allocated_budget: z.coerce.number().nullable().optional(),
+    budget_effective_from: z.string().nullable().optional(),
+    budget_effective_to: z.string().nullable().optional(),
     created_at: z.string(),
     created_by: z.coerce.string().nullable().optional(),
     updated_at: z.string().nullable().optional(),
     updated_by: z.coerce.string().nullable().optional(),
   })
   .passthrough();
+
+export const tenantSuccessEnvelopeSchema = <T extends z.ZodTypeAny>(dataSchema: T) =>
+  z.object({
+    success: z.boolean(),
+    data: dataSchema,
+    meta: z.record(z.unknown()).optional(),
+  });
+
+/** GET /tenants — `{ data: Tenant[] }` (no `success` field). */
+export const tenantListDataSchema = z
+  .object({
+    data: z.array(tenantViewSchema),
+  })
+  .passthrough();
+
+/** POST /tenants — 201 flat tenant body or `{ success, data }` envelope. */
+export const tenantCreateResponseSchema = z.union([
+  tenantViewSchema,
+  tenantSuccessEnvelopeSchema(tenantViewSchema),
+]);
 
 export const tenantUserViewSchema = z
   .object({
@@ -56,13 +81,6 @@ export const userRegisterResponseSchema = z.object({
   setup_token: z.string(),
   message: z.string(),
 });
-
-export const tenantSuccessEnvelopeSchema = <T extends z.ZodTypeAny>(dataSchema: T) =>
-  z.object({
-    success: z.boolean(),
-    data: dataSchema,
-    meta: z.record(z.unknown()).optional(),
-  });
 
 export const tenantDeleteUserDataSchema = z.object({
   user_id: z.string(),

@@ -29,6 +29,7 @@ import {
   NumberInput,
   NumberInputField,
   Divider,
+  Grid,
 } from "@chakra-ui/react";
 import {
   AddIcon,
@@ -44,6 +45,7 @@ import AdminDataTable, {
   type AdminTableColumn,
 } from "../common/AdminDataTable";
 import ConfirmDialog from "../common/ConfirmDialog";
+import { FORM_LABEL_TO_INPUT_PT } from "../common/FormFieldsRow";
 import StandardModal from "../common/StandardModal";
 import { useTierManagement } from "../../hooks/useTierManagement";
 import type { Tier } from "../../services/tierManagementService";
@@ -332,13 +334,18 @@ function QuotaEditor({
               borderColor="gray.200"
               bg="gray.50"
             >
-              <HStack align="flex-end" spacing={3}>
-                <HStack align="flex-end" spacing={3} flexWrap="wrap" flex={1}>
-                  <FormControl
-                    w={{ base: "full", sm: "190px" }}
-                    isRequired
-                    isDisabled={isEditMode}
-                  >
+              <HStack align="flex-start" spacing={3}>
+                <Grid
+                  templateColumns={{
+                    base: "1fr",
+                    sm: "minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1fr)",
+                  }}
+                  gap={3}
+                  flex={1}
+                  minW={0}
+                  alignItems="start"
+                >
+                  <FormControl isRequired isDisabled={isEditMode} minW={0}>
                     <FormLabel fontSize="xs" mb={1}>
                       Model Task Type
                     </FormLabel>
@@ -371,10 +378,10 @@ function QuotaEditor({
                   </FormControl>
 
                   <FormControl
-                    w={{ base: "full", sm: "120px" }}
                     isRequired
                     isInvalid={showErrors && isUnitInvalid(quota)}
                     isDisabled={isEditMode}
+                    minW={0}
                   >
                     <FormLabel fontSize="xs" mb={1}>
                       Unit
@@ -396,10 +403,10 @@ function QuotaEditor({
                   </FormControl>
 
                   <FormControl
-                    w={{ base: "full", sm: "120px" }}
                     isRequired
                     isInvalid={showErrors && isLimitInvalid(quota)}
                     isDisabled={isEditMode}
+                    minW={0}
                   >
                     <FormLabel fontSize="xs" mb={1}>
                       Limit
@@ -410,7 +417,9 @@ function QuotaEditor({
                       value={quota.limit}
                       onChange={(v) => handleQuotaChange(idx, "limit", v)}
                     >
-                      <NumberInputField placeholder={FIELD_HINTS.tier.quotaLimit.placeholder} />
+                      <NumberInputField
+                        placeholder={FIELD_HINTS.tier.quotaLimit.placeholder}
+                      />
                     </NumberInput>
                     <FormErrorMessage fontSize="xs">
                       Limit must be greater than 0.
@@ -419,7 +428,7 @@ function QuotaEditor({
                       {FIELD_HINTS.tier.quotaLimit.helper}
                     </FieldHint>
                   </FormControl>
-                </HStack>
+                </Grid>
 
                 {quota.isExisting && onSchedule && (
                   <Tooltip label="Schedule a change" placement="top" hasArrow>
@@ -430,7 +439,7 @@ function QuotaEditor({
                       variant="ghost"
                       colorScheme="blue"
                       onClick={() => onSchedule(quota)}
-                      alignSelf="flex-end"
+                      mt={FORM_LABEL_TO_INPUT_PT}
                     />
                   </Tooltip>
                 )}
@@ -449,7 +458,7 @@ function QuotaEditor({
                         removingTaskType !== quota.modelTaskType
                       }
                       onClick={() => onRemove(quota)}
-                      alignSelf="flex-end"
+                      mt={FORM_LABEL_TO_INPUT_PT}
                     />
                   </Tooltip>
                 )}
@@ -462,7 +471,7 @@ function QuotaEditor({
                     variant="ghost"
                     colorScheme="red"
                     onClick={() => removeQuota(idx)}
-                    alignSelf="flex-end"
+                    mt={FORM_LABEL_TO_INPUT_PT}
                   />
                 )}
               </HStack>

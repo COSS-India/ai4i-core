@@ -78,6 +78,7 @@ export default function UserDetailsTab() {
                   onClick={ud.handleSaveUser}
                   isLoading={ud.isSaving}
                   loadingText="Saving..."
+                  isDisabled={!ud.canSaveUser}
                 >
                   Save
                 </Button>
@@ -98,7 +99,10 @@ export default function UserDetailsTab() {
         <VStack spacing={5} align="stretch">
           <Box bg={sectionBg} borderWidth="1px" borderColor={sectionBorder} borderRadius="md" p={4}>
             <VStack spacing={4} align="stretch">
-          <FormControl>
+          <FormControl
+            isRequired={ud.isEditingUser}
+            isInvalid={ud.isEditingUser && !!ud.errors.full_name}
+          >
             <FormLabel fontWeight="semibold">Full Name</FormLabel>
             <Input
               value={ud.isEditingUser ? (ud.userFormData.full_name || "") : (user.full_name || user.username || "N/A")}
@@ -107,7 +111,14 @@ export default function UserDetailsTab() {
               bg={ud.isEditingUser ? "white" : inputReadOnlyBg}
               placeholder={FIELD_HINTS.profile.fullName.placeholder}
             />
-            <FieldHint show={ud.isEditingUser}>{FIELD_HINTS.profile.fullName.helper}</FieldHint>
+            <FieldHint show={ud.isEditingUser && !ud.errors.full_name}>
+              {FIELD_HINTS.profile.fullName.helper}
+            </FieldHint>
+            {ud.isEditingUser && ud.errors.full_name && (
+              <Text color="red.500" fontSize="sm" mt={1}>
+                {ud.errors.full_name}
+              </Text>
+            )}
           </FormControl>
 
           <FormControl>

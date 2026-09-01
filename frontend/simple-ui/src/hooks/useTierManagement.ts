@@ -169,12 +169,12 @@ export function useTierManagement() {
       .map((a) => ({
         tenantId: String(a.tenant_id),
         organisation:
+          a.tenant_name ??
           tenantById.get(String(a.tenant_id))?.organisation ??
           `${INSTITUTION} ${a.tenant_id}`,
-        budgetLimit: a.budget_limit,
-        availableBalance: a.available_balance,
-        effectiveFrom: a.effective_from,
-        effectiveTo: a.effective_to,
+        budgetLimit: a.allocated_budget,
+        effectiveFrom: a.budget_effective_from,
+        effectiveTo: a.budget_effective_to,
       }));
   }, [viewTier, tenantTiersQuery.data, tenantsDirectoryQuery.data]);
 

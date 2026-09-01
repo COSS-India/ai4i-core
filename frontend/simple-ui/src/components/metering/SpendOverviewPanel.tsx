@@ -2,14 +2,13 @@ import { Box, Center, Flex, HStack, Spinner, Text, VStack } from "@chakra-ui/rea
 import React, { useMemo, useState } from "react";
 import { Cell, Pie, PieChart } from "recharts";
 import { METERING } from "../../config/meteringConstants";
-import { INSTITUTION, INSTITUTIONS } from "../../config/constants";
+import { INSTITUTIONS } from "../../config/constants";
 import {
   aggregateTasks,
   formatSpendMoney,
   formatSpendUnit,
   hasPopulatedQuotaUsage,
   isMultiTaskQuotaTenant,
-  summarizeSpendTokens,
   taskTypeColor,
   USAGE_SPEND_ACCENT,
   USAGE_SPEND_DANGER,
@@ -34,25 +33,15 @@ function spendChangeArrow(spendChangePercent: number): string {
   return "→";
 }
 
-function budgetExceededLabel(count: number | null | undefined): string {
-  if (count == null) return "—";
-  return `${count} ${count === 1 ? INSTITUTION.toLowerCase() : INSTITUTIONS.toLowerCase()}`;
-}
-
 function moneyOrDash(value: number | null | undefined, currency: string): string {
   return value == null ? "—" : formatSpendMoney(value, currency);
-}
-
-function tokensOrDash(value: number | null | undefined, unit: string): string {
-  return value == null ? "—" : formatSpendUnit(value, unit);
 }
 
 function SpendTotalCard({
   label,
   money,
-  tokens,
   tooltip,
-}: Readonly<{ label: string; money: string; tokens: string; tooltip?: string }>) {
+}: Readonly<{ label: string; money: string; tooltip?: string }>) {
   return (
     <Box
       bg={SPEND_CARD_BG}
@@ -76,9 +65,6 @@ function SpendTotalCard({
       </HStack>
       <Text fontSize="22px" fontWeight="bold" lineHeight="1.1" color="gray.800" noOfLines={1}>
         {money}
-      </Text>
-      <Text fontSize="12.5px" color="gray.500" mt="6px" noOfLines={1}>
-        {tokens}
       </Text>
     </Box>
   );
@@ -255,26 +241,21 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
   }));
 
   const totalCards = useMemo(() => {
-    const rows = summary?.spendByModelTaskType ?? [];
-    const tokens = summarizeSpendTokens(rows);
     const tips = METERING.USAGE_SPEND.TOOLTIPS;
     return [
       {
         label: METERING.USAGE_SPEND.TOTAL_ALLOCATED,
         money: moneyOrDash(summary?.totalAllocatedBudget, currency),
-        tokens: tokensOrDash(tokens.tokensAllocated, tokens.unit),
         tooltip: tips.TOTAL_ALLOCATED,
       },
       {
         label: METERING.USAGE_SPEND.TOTAL_USED,
         money: moneyOrDash(summary?.totalSpend, currency),
-        tokens: tokensOrDash(tokens.tokensUsed, tokens.unit),
         tooltip: tips.TOTAL_USED,
       },
       {
         label: METERING.USAGE_SPEND.TOTAL_REMAINING,
         money: moneyOrDash(summary?.totalRemainingBudget, currency),
-        tokens: tokensOrDash(tokens.tokensRemaining, tokens.unit),
         tooltip: tips.TOTAL_REMAINING,
       },
     ];
@@ -308,7 +289,6 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
             key={card.label}
             label={card.label}
             money={card.money}
-            tokens={card.tokens}
             tooltip={card.tooltip}
           />
         ))}
@@ -326,16 +306,6 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
               <Text color="gray.500">Active {INSTITUTIONS.toLowerCase()}:</Text>
               <InfoTip message={METERING.USAGE_SPEND.TOOLTIPS.ACTIVE_TENANTS} />
               <Text fontWeight="semibold" color="gray.800">{summary?.activeTenants ?? "—"}</Text>
-            </HStack>
-            <HStack spacing={1.5}>
-              <Text color="gray.500">Budget exceeded:</Text>
-              <InfoTip message={METERING.USAGE_SPEND.TOOLTIPS.BUDGET_EXCEEDED} />
-              <Text
-                fontWeight="semibold"
-                color={(summary?.budgetExceededTenants ?? 0) > 0 ? USAGE_SPEND_DANGER : "gray.800"}
-              >
-                {budgetExceededLabel(summary?.budgetExceededTenants)}
-              </Text>
             </HStack>
             <HStack spacing={1.5}>
               <Text color="gray.500">vs last month:</Text>
