@@ -1,6 +1,5 @@
-from dataclasses import dataclass
 import asyncio
-from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
@@ -16,6 +15,7 @@ from consumers.payperuse_consumer._billing import (
     ServicePricing,
     calculate_cost,
     deduct_balance_and_update_quota,
+    get_inference_type_id,
     get_service_pricing,
     _get_billing_data,
     _get_billed_key, _update_billing_on_cache,
@@ -153,7 +153,8 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
     # span_id reaching this consumer is valid and unique.
     attrs = data.get("attributes", {})
     # tenantId is camelCase in OTel attributes (set by ai4i_core.context middleware).
-    tenant_id, service_id, input_tokens, output_tokens, correlation_id, api_key_id, tier_id = _get_otel_attributes(attrs)
+    tenant_id, service_id, input_tokens, output_tokens, correlation_id, api_key_id, tier_id = _get_otel_attributes(
+        attrs)
     billed_key: str = _get_billed_key(correlation_id, span_id)
 
     is_already_billed = await _is_already_billed(billed_key, correlation_id, span_id, msg)
@@ -259,6 +260,11 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
     # unset" apart from "genuinely not entitled" on its own — both look like
     # zero matching ppu_tier_quotas rows to it — so that distinction is
     # applied here instead, same as the old _check_quota's early return.
+    # Carried into quota_usage alongside inference_name (AI4IDS-2933 phase 1).
+    # None on a catalogue miss, which the nullable column tolerates — the write
+    # itself still keys off inference_name.
+    inference_type_id = await get_inference_type_id(db, pricing.task_type)
+
     write = await deduct_balance_and_update_quota(
         db,
         tenant_id=ctx.tenant_id,
@@ -268,6 +274,7 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
         cost=cost,
         api_key_id=ctx.api_key_id,
         tier_id=ctx.tier_id,
+        inference_type_id=inference_type_id,
     )
 
     if write.tier_id is None:
