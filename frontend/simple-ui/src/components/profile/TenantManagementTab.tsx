@@ -633,22 +633,6 @@ export default function TenantManagementTab({
       },
       { id: "email", header: "Email", cell: (t) => dash(t.email) },
       {
-        id: "tier",
-        header: "Tier",
-        cell: (t) => (
-          <Text fontSize="sm">
-            {resolveTierLabel(t.tier_id, tierOptions, t.tier_name)}
-          </Text>
-        ),
-      },
-      {
-        id: "budget",
-        header: "Budget",
-        cell: (t) => (
-          <Text fontSize="sm">{formatRupees(tenantBudgetNumber(t))}</Text>
-        ),
-      },
-      {
         id: "status",
         header: "Status",
         cell: (t) => (
@@ -670,7 +654,7 @@ export default function TenantManagementTab({
       },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tm, tierOptions]);
+  }, [tm]);
 
   const userColumns = useMemo((): AdminTableColumn<TenantUserView>[] => {
     return [
