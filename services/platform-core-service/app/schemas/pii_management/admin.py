@@ -20,7 +20,7 @@ class StatusResponse(BaseModel):
 # ── Domain management ──────────────────────────────────────────────────────
 
 _NEW_DOMAIN_REQUEST_EXAMPLE = {
-    "domain_id": "<place your id here>",
+    "domain_id": "healthcare",
     "description": "PII redaction rules for healthcare-domain text (patient names, MRNs, diagnoses)",
 }
 
@@ -37,8 +37,9 @@ _DEPLOY_REQUEST_EXAMPLE = {
     "rules": [
         {
             "entity_type": "PATIENT_NAME",
-            "pattern": r"\b[A-Z][a-z]+ [A-Z][a-z]+\b",
-            "risk_score": 0.8,
+            "custom_regex": r"\b[A-Z][a-z]+ [A-Z][a-z]+\b",
+            "action": "REDACT_TAG",
+            "config": {"tag_label": "[PATIENT]"},
         }
     ],
 }
