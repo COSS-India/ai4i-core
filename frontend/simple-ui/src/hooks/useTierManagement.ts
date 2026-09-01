@@ -466,8 +466,8 @@ export function useTierManagement() {
       setRemovingTaskType(modelTaskType);
       try {
         await updateTier(editingTier.id, {
-          name: formData.name.trim(),
-          description: formData.description.trim() || undefined,
+          name: editingTier.name,
+          description: editingTier.description || undefined,
           quotas: currentQuota
             ? [{ modelTaskType, limit: Number(currentQuota.limit) }]
             : undefined,
@@ -535,8 +535,8 @@ export function useTierManagement() {
     setIsScheduling(true);
     try {
       await updateTier(editingTier.id, {
-        name: formData.name.trim(),
-        description: formData.description.trim() || undefined,
+        name: editingTier.name,
+        description: editingTier.description || undefined,
         quotas: [
           { modelTaskType: scheduleTarget.modelTaskType, limit: newLimit },
         ],
