@@ -5,7 +5,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 from typing import Optional
 
-from sqlalchemy import func, literal, select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -139,7 +139,8 @@ class UsageRepository:
         tenant_ids: list[str],
         auth_db: Optional[AsyncSession] = None,
     ) -> dict:
-        """budget_limit/available_balance/tier_id per tenant_id.
+        """budget_limit/available_balance/tier_id/budget_effective_from/
+        budget_effective_to per tenant_id.
 
         ppu_tenant_tier_assignments was dropped (AI4IDS-2923) when billing moved to
         per-API-key budget_usage deduction — reconstructed here from tables that
@@ -154,6 +155,14 @@ class UsageRepository:
             fallback, never to decide which tenants/tiers have usage (that's
             get_tenants_with_usage_tier, sourced from ppu_quota_usage, unaffected
             by any of this).
+          - budget_effective_from/budget_effective_to = tenants.budget_effective_from/
+            budget_effective_to (auth-service) — NOT the same thing as the dropped
+            ppu_tenant_tier_assignments row's effective_from/to window mentioned
+            below; these live directly on tenants, are set once at tenant creation
+            (TenantService.create_tenant), and are untouched by budget top-up/
+            top-down (TenantService.revise_tenant_budget only updates
+            allocated_budget) — nullable, so absent for any tenant created before
+            these columns existed or without a configured budget window.
 
         billing_month is accepted for interface compatibility but no longer
         narrows this particular lookup: budget_usage carries no per-month
@@ -194,7 +203,10 @@ class UsageRepository:
         # propagate; the global exception handler turns it into a proper 500.
         tenant_rows = (
             await auth_db.execute(
-                text("SELECT id, allocated_budget, tier_id FROM tenants WHERE id = ANY(:ids)"),
+                text(
+                    "SELECT id, allocated_budget, tier_id, budget_effective_from, "
+                    "budget_effective_to FROM tenants WHERE id = ANY(:ids)"
+                ),
                 {"ids": numeric_ids},
             )
         ).all()
@@ -249,19 +261,29 @@ class UsageRepository:
                 tier_id=row.tier_id,
                 budget_limit=budget_limit,
                 available_balance=budget_limit - spent,
+                spent=spent,
+                budget_effective_from=row.budget_effective_from,
+                budget_effective_to=row.budget_effective_to,
             )
         return budgets
 
     async def get_tenant_tier_usage_breakdown(
         self, billing_month: str | None, tenant_ids: list[str], task_types: list[str] | None = None
     ):
-        """Per (tenant, tier, inference_name) usage/cost, across every tier the tenant
+        """Per (tenant, tier, inference_name) usage, across every tier the tenant
         held in scope — not just their most-recently-active tier. billing_month=None
-        means all-time: consumed/spend sum across every month the tenant held that
+        means all-time: consumed sums across every month the tenant held that
         tier, while quota_snap (MAX, not SUM) still reflects that tier's own quota
         amount rather than double-counting it per month.
         Filtered to ``task_types`` when the caller (frontend) passes them; otherwise the
         full breakdown is returned.
+
+        No cost/spend column here (and never one — this was `literal(0)` before,
+        a placeholder for a `cost_accum` column dropped from ppu_quota_usage and
+        never replaced): ppu_quota_usage has no per-task-type/per-tier money
+        dimension, only unit counts. Real spend is tenant-level only, sourced from
+        budget_usage.api_key_budget_used via get_tenant_budgets — see that
+        method's docstring and UsageService._build_hierarchical_item.
         """
         if not tenant_ids:
             return []
@@ -271,9 +293,6 @@ class UsageRepository:
                 QuotaUsage.tier_id,
                 QuotaUsage.inference_name,
                 func.sum(QuotaUsage.monthly_quota_used).label("total_units"),
-                # cost_accum was removed; total_cost will be sourced from
-                # budget_usage.api_key_budget_used once that join is wired up.
-                literal(0).label("total_cost"),
                 func.max(QuotaUsage.monthly_quota_snap).label("quota_snap"),
             )
             .where(QuotaUsage.tenant_id.in_(tenant_ids))
@@ -320,17 +339,6 @@ class UsageRepository:
         _tier_cache = {str(row.id): row.name for row in result.all()}
         _tier_cache_loaded_at = now
         return dict(_tier_cache)
-
-    async def get_total_cost_for_month(self) -> Decimal:
-        """Total api_key_budget_used across all API keys.
-
-        budget_usage has no billing_month or inference_name column, so no
-        per-month or per-task-type filtering is possible yet. Callers that
-        need those dimensions must use get_tenant_tier_usage_breakdown instead.
-        """
-        stmt = select(func.sum(BudgetUsage.api_key_budget_used))
-        result = await self._db.execute(stmt)
-        return result.scalar() or Decimal("0")
 
     async def get_tier_first_seen(self, tenant_ids: list[str]):
         """Earliest ppu_quota_usage activity per (tenant_id, tier_id), across

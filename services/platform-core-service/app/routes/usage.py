@@ -17,8 +17,8 @@ from app.core.permissions import (
 from app.repositories.pay_per_use.usage_repository import UsageRepository
 from app.schemas.enums.model_management import resolve_task_type
 from app.schemas.pay_per_use.usage import (
-    TenantHierarchicalItem,
     TenantHierarchicalListResponse,
+    TenantUsageDetailResponse,
     UsageSummaryResponse,
 )
 from app.services.pay_per_use.usage_service import UsageService
@@ -109,7 +109,7 @@ async def get_tenant_usage_list(
     )
 
 
-@router.get("/usage-tenant", response_model=TenantHierarchicalItem)
+@router.get("/usage-tenant", response_model=TenantUsageDetailResponse)
 async def get_tenant_usage_detail(
     request: Request,
     tenant_id: str = Query(..., description="Tenant ID."),

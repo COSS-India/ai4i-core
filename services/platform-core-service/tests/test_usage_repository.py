@@ -193,7 +193,10 @@ class TestGetTenantBudgets:
         auth_db = self._auth_db(
             [
                 self._rows(
-                    [SimpleNamespace(id=2, allocated_budget=Decimal("1000000.00"), tier_id=None)]
+                    [SimpleNamespace(
+                        id=2, allocated_budget=Decimal("1000000.00"), tier_id=None,
+                        budget_effective_from=None, budget_effective_to=None,
+                    )]
                 ),  # tenants
                 self._rows(
                     [SimpleNamespace(id=39, tenant_id=2), SimpleNamespace(id=40, tenant_id=2)]
@@ -225,7 +228,38 @@ class TestGetTenantBudgets:
         budget = result["2"]
         assert budget.budget_limit == Decimal("1000000.00")
         assert budget.available_balance == Decimal("810000.00")  # 1,000,000 - (70000+30000+90000)
+        # The real, tenant-total spend: the sum of api_key_budget_used across every
+        # api_key belonging to one of the tenant's applications (2 applications, 3
+        # api_keys total, spanning both) — the exact "spend for a tenant is the sum
+        # of its api keys' spend" scenario this field exists for.
+        assert budget.spent == Decimal("190000.00")  # 70000 + 30000 + 90000
         assert budget.tier_id is None
+
+    @pytest.mark.asyncio
+    async def test_budget_effective_from_and_to_are_read_through(self):
+        """budget_effective_from/to come straight off tenants.budget_effective_from/to
+        (auth-service) — set once at tenant creation, untouched by top-up/top-down —
+        and must be carried onto the returned SimpleNamespace as-is, not dropped or
+        defaulted, so get_tenant_detail's TenantBudgetDetail can surface them."""
+        effective_from = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        effective_to = datetime(2026, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+        auth_db = self._auth_db(
+            [
+                self._rows(
+                    [SimpleNamespace(
+                        id=2, allocated_budget=Decimal("1000.00"), tier_id=None,
+                        budget_effective_from=effective_from, budget_effective_to=effective_to,
+                    )]
+                ),  # tenants
+                self._rows([]),  # applications — none
+            ]
+        )
+        repo = UsageRepository(db=AsyncMock())
+
+        result = await repo.get_tenant_budgets("2026-08", ["2"], auth_db)
+
+        assert result["2"].budget_effective_from == effective_from
+        assert result["2"].budget_effective_to == effective_to
 
     @pytest.mark.asyncio
     async def test_tenant_not_in_auth_db_is_absent_from_result(self):
@@ -241,7 +275,10 @@ class TestGetTenantBudgets:
         auth_db = self._auth_db(
             [
                 self._rows(
-                    [SimpleNamespace(id=5, allocated_budget=Decimal("50000.00"), tier_id=None)]
+                    [SimpleNamespace(
+                        id=5, allocated_budget=Decimal("50000.00"), tier_id=None,
+                        budget_effective_from=None, budget_effective_to=None,
+                    )]
                 ),  # tenants
                 self._rows([]),  # applications — none
             ]
@@ -308,8 +345,14 @@ class TestGetTenantBudgets:
             [
                 self._rows(
                     [
-                        SimpleNamespace(id=2, allocated_budget=Decimal("1000.00"), tier_id=None),
-                        SimpleNamespace(id=42, allocated_budget=None, tier_id=None),
+                        SimpleNamespace(
+                            id=2, allocated_budget=Decimal("1000.00"), tier_id=None,
+                            budget_effective_from=None, budget_effective_to=None,
+                        ),
+                        SimpleNamespace(
+                            id=42, allocated_budget=None, tier_id=None,
+                            budget_effective_from=None, budget_effective_to=None,
+                        ),
                     ]
                 ),  # tenants
                 self._rows(
