@@ -125,9 +125,11 @@ class ApplicationBudgetAllocationRequest(BaseSchema):
     the wire shape, but this endpoint never changes it (that only happens
     via the Tenant-level endpoint); it must match what's already stored,
     or the call is rejected (APPLICATION_ALLOCATION_MISMATCH) rather than
-    silently ignored. ``api_keys`` not listed here are left exactly as
-    they are — the Application's own total isn't changing in this call,
-    so nothing forces an untouched Key to react."""
+    silently ignored. A Key not listed in ``api_keys`` is not required to
+    be — it's proportionally re-fit against what's left of the
+    Application's own (unchanged) total, the same unconditional re-fit
+    rule used at every other edge where a parent's children are being
+    resolved."""
 
     model_config = ConfigDict(extra="forbid")
 
