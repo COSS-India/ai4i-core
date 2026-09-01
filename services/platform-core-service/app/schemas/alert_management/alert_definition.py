@@ -55,7 +55,7 @@ class AlertDefinitionCreate(BaseSchema):
     """Create payload. PromQL is built server-side from either alert_type+threshold
     OR (sub_category + signal + signal_metric + condition_operator + threshold)."""
 
-    model_config = ConfigDict(json_schema_extra={"example": _ALERT_DEFINITION_CREATE_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_ALERT_DEFINITION_CREATE_EXAMPLE]})
 
     name: str = Field(..., description="Alert name (e.g., 'HighLatency')")
     description: Optional[str] = Field(None, description="Alert description")
@@ -102,7 +102,7 @@ _ALERT_DEFINITION_UPDATE_EXAMPLE = {
 class AlertDefinitionUpdate(BaseSchema):
     """Patch payload — every field optional."""
 
-    model_config = ConfigDict(json_schema_extra={"example": _ALERT_DEFINITION_UPDATE_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_ALERT_DEFINITION_UPDATE_EXAMPLE]})
 
     description: Optional[str] = None
     threshold_value: Optional[float] = None

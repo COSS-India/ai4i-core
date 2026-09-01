@@ -129,7 +129,7 @@ _ALERTMANAGER_WEBHOOK_EXAMPLE = {
 class AlertmanagerWebhookPayload(BaseSchema):
     """POST /alerts/history/webhook — Alertmanager v4 webhook body."""
 
-    model_config = ConfigDict(extra="allow", json_schema_extra={"example": _ALERTMANAGER_WEBHOOK_EXAMPLE})
+    model_config = ConfigDict(extra="allow", json_schema_extra={"examples": [_ALERTMANAGER_WEBHOOK_EXAMPLE]})
 
     version: Optional[str] = None
     groupKey: Optional[str] = None

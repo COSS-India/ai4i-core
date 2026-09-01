@@ -35,7 +35,7 @@ _NOTIFICATION_RECEIVER_CREATE_EXAMPLE = {
 class NotificationReceiverCreate(BaseSchema):
     """Create payload — auto-generates receiver name + paired routing rule on the server side."""
 
-    model_config = ConfigDict(json_schema_extra={"example": _NOTIFICATION_RECEIVER_CREATE_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_NOTIFICATION_RECEIVER_CREATE_EXAMPLE]})
 
     category: str = Field(..., description="'application' or 'infrastructure'")
     severity: str = Field(..., description="'critical', 'warning', or 'info'")
@@ -74,7 +74,7 @@ _NOTIFICATION_RECEIVER_UPDATE_EXAMPLE = {
 class NotificationReceiverUpdate(BaseSchema):
     """Patch payload — all fields optional."""
 
-    model_config = ConfigDict(json_schema_extra={"example": _NOTIFICATION_RECEIVER_UPDATE_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_NOTIFICATION_RECEIVER_UPDATE_EXAMPLE]})
 
     receiver_name: Optional[str] = None
     rule_name: Optional[str] = None

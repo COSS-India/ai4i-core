@@ -50,7 +50,7 @@ _TIER_CREATE_EXAMPLE = {
 
 
 class TierCreate(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"example": _TIER_CREATE_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_TIER_CREATE_EXAMPLE]})
 
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
@@ -73,7 +73,7 @@ _TIER_UPDATE_EXAMPLE = {
 
 
 class TierUpdate(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"example": _TIER_UPDATE_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_TIER_UPDATE_EXAMPLE]})
 
     tier_id: str = Field(..., description="UUID of the tier to update")
     name: Optional[str] = Field(None, min_length=1)

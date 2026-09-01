@@ -11,7 +11,7 @@ _REDACTION_REQUEST_EXAMPLE = {
 
 
 class RedactionRequest(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"example": _REDACTION_REQUEST_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_REDACTION_REQUEST_EXAMPLE]})
 
     text: str = Field(..., max_length=20_000, description="Text to scan and redact.")
 
