@@ -647,8 +647,8 @@ class APIKeyService:
             # bypassing it entirely (the bug this fixes: a budget-created key
             # previously never populated allocated_percentage at all, so it
             # was invisible to sum_api_key_allocated_percentage — both this
-            # check and PUT /auth/allocations' resolve_level depend on that
-            # sum, and a NULL there reads as 0%). allocated_budget itself is
+            # check and the Budget Allocation endpoints' resolve_level depend
+            # on that sum, and a NULL there reads as 0%). allocated_budget itself is
             # NOT re-derived from this rounded percentage — see below, which
             # keeps the exact requested budget instead.
             if not application.allocated_budget:

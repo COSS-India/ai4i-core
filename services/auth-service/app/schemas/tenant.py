@@ -404,10 +404,23 @@ class TenantBudgetData(BaseSchema):
     tenant_id: int
     allocated_budget: Optional[Decimal] = None
     applications_recomputed: Optional[int] = Field(
-        None, description="Not computed in this release; always null."
+        None,
+        description="Count of Applications under this Tenant whose allocated_budget/"
+        "allocated_percentage actually changed as a result of this revision's cascade.",
     )
     keys_recomputed: Optional[int] = Field(
-        None, description="Not computed in this release; always null."
+        None,
+        description="Count of API Keys (across every recomputed Application) whose "
+        "allocated_budget/allocated_percentage actually changed as a result of this "
+        "revision's cascade.",
+    )
+    snapshot_write_failed: bool = Field(
+        False,
+        description="True if the revision itself succeeded (allocated_budget above is "
+        "already committed) but the best-effort mirror of the new ceilings into "
+        "platform-core's budget_usage.api_key_budget_snap failed — that cache is "
+        "briefly stale for the affected Keys and self-heals on their next allocation "
+        "write; nothing here needs retrying.",
     )
     updated_at: Optional[datetime] = None
 

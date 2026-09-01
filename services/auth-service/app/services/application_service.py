@@ -5,9 +5,9 @@ Routes are thin pass-throughs, same convention as TenantService: scope
 enforcement and repository access all live here.
 
 Note: budget reallocation (rebalancing allocated_percentage across
-Applications/Keys within a tenant, e.g. PUT /auth/allocations) is NOT part of
-this file. That endpoint's business rules were left unwritten in the API
-contract and are being implemented separately by someone else later.
+Applications/Keys within a tenant — the three Budget Allocation endpoints,
+PUT /auth/tenants/{id}/budget-allocation and friends) is NOT part of this
+file — see AllocationService.
 """
 
 from decimal import Decimal
@@ -55,8 +55,9 @@ class ApplicationService:
     async def _authorize(self, user: User, tenant_id: int) -> None:
         """Institution-scope check for Application Management — see
         authorize_institution_scope's docstring for the full rationale.
-        AllocationService (PUT /auth/allocations) enforces the identical
-        rule via the same shared helper, not a second copy of this logic.
+        AllocationService (the three Budget Allocation endpoints) enforces
+        the identical rule via the same shared helper, not a second copy of
+        this logic.
         """
         await authorize_institution_scope(self._roles, user, tenant_id)
 

@@ -53,6 +53,7 @@ from app.schemas.tenant import (
     TenantUserUpdate,
 )
 from app.schemas.user import UserListResponse
+from app.services.allocation_service import AllocationService
 from app.services.api_key_service import APIKeyService
 from app.services.auth_email_templates import render_account_deleted, render_setup_link, render_verify_email
 from app.services.tenant_lifecycle import (
@@ -68,7 +69,7 @@ from app.services.email_helpers import (
     resolve_tenant_id,
     setup_token_expires_at,
 )
-from app.services.budget_usage import fetch_budget_usage
+from app.services.budget_usage import fetch_budget_usage, write_budget_snapshot
 from app.services.role_service import RoleService
 from app.services.tenant_name_cache import tenant_name_cache
 from app.services.token_service import TokenService
@@ -153,6 +154,7 @@ class TenantService:
         email_client: EmailClient,
         api_key_service: Optional[APIKeyService] = None,
         refresh_token_repo: Optional[RefreshTokenRepository] = None,
+        allocation_service: Optional[AllocationService] = None,
     ) -> None:
         self._tenants = tenant_repo
         self._users = user_repo
@@ -163,6 +165,7 @@ class TenantService:
         self._email = email_client
         self._api_keys = api_key_service
         self._refresh_tokens = refresh_token_repo
+        self._allocations = allocation_service
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -1018,28 +1021,43 @@ class TenantService:
         action: Literal["top-up", "top-down"],
         amount: Decimal,
         platform_core_db: Optional[AsyncSession] = None,
-    ) -> Tenant:
+    ) -> tuple[Tenant, int, int, bool]:
         """Top-up or top-down a tenant's budget — PATCH /auth/tenants/{id}/budget.
 
         Restricted to ADMIN, same as assign_tenant_tier. Unlike the old
         platform-core endpoint this replaces, there is no available_balance
         (or any other spend-tracking figure) on ``tenants`` itself — spend
         lives in platform-core's budget_usage ledger, summed here across
-        every API key under the tenant. budget/key allocation recompute
-        (applications_recomputed/keys_recomputed on the response) is still
-        out of scope — always None here.
+        every API key under the tenant.
 
-        A top-down is REJECTED, not just flagged after the fact, when it
-        would drop the budget below this tenant's total spend to date
-        (409 budget_below_consumed — restores the check the old
+        The revision cascades: every Application under the tenant (and, for
+        one whose own amount changes, its own Keys in turn) is
+        proportionally re-fit to track the new total — the SAME shared
+        resolve_level algorithm the Budget Allocation endpoints use, via
+        AllocationService.cascade_tenant_budget_revision, not a separate
+        implementation. This is genuinely atomic with the Tenant's own row
+        change: the cascade is resolved and staged (not committed) BEFORE
+        ``self._tenants.update`` below, and everything commits together in
+        one transaction — if the cascade would push any Application or Key
+        below its own already-consumed amount (a decrease squeezing
+        someone too far), resolve_level raises before anything here is
+        persisted, and the session rollback on that exception undoes the
+        Tenant's own allocated_budget change too. An increase can never
+        fail this way — it only ever grows what's available.
+
+        A top-down is REJECTED even earlier than that (409
+        budget_below_consumed) when it would drop the budget below this
+        tenant's total spend to date (restores the check the old
         platform-core endpoint had, which this rebuild had dropped for lack
-        of a spend figure to check against; see budget_usage). This needs
-        platform_core_db to verify: a top-down is refused outright
-        (503 spend_verification_unavailable) rather than allowed
-        unverified, unlike _sync_ppu_wallet_and_exhaustion's own read below,
-        which is best-effort because ITS write already happened by the time
-        it runs — this check gates the write itself. No optimistic-locking
-        (expected_version) either — deemed unnecessary for this release.
+        of a spend figure to check against; see budget_usage) — this
+        catches the aggregate case cheaply before the per-Application/
+        per-Key cascade even runs. This needs platform_core_db to verify: a
+        top-down is refused outright (503 spend_verification_unavailable)
+        rather than allowed unverified, unlike _sync_ppu_wallet_and_exhaustion's
+        own read below, which is best-effort because ITS write already
+        happened by the time it runs — this check gates the write itself.
+        No optimistic-locking (expected_version) either — deemed
+        unnecessary for this release.
 
         Uses the error-body shape (``{"error": ..., "message": ...}``) the
         contract specifies for this endpoint specifically, matching the old
@@ -1049,7 +1067,22 @@ class TenantService:
         ``platform_core_db`` also drives ``_sync_ppu_wallet_and_exhaustion``
         (best-effort, see its own docstring) to recompute and sync the
         cached budget-exhausted flag on this tenant's API keys after the
-        revision commits.
+        revision commits — unaffected by the cascade above, which only
+        ever writes allocated_percentage/allocated_budget, never the
+        exhaustion flag itself.
+
+        Returns (tenant, applications_recomputed, keys_recomputed,
+        snapshot_write_failed) — the middle two straight from the cascade,
+        for the response's own fields of the same name.
+        ``snapshot_write_failed`` is True when the post-commit
+        write_budget_snapshot call (mirroring the just-committed ceilings
+        into platform-core's budget_usage.api_key_budget_snap) failed —
+        the Tenant/Application/Key revision itself still succeeded and is
+        NOT rolled back for this, since budget_usage is a best-effort
+        cache of the ceiling, not its source of truth, and self-heals on
+        the next successful allocation write for each affected key. Only
+        surfaced so a caller can tell "the ledger cache is briefly behind"
+        apart from a response that looks fully successful.
         """
         roles = await self._roles.get_user_roles(current_user.id)
         if RoleName.ADMIN.value not in roles:
@@ -1130,6 +1163,33 @@ class TenantService:
                     },
                 )
 
+        applications_recomputed = 0
+        keys_recomputed = 0
+        snapshot_writes: dict[int, Decimal] = {}
+        if self._allocations is None:
+            # Fail closed, same reasoning as the top-down spend gate above:
+            # an unverified/un-cascaded revision could silently leave
+            # Applications or Keys out of sync with the Tenant's new total,
+            # or (on a decrease) leave one of them over-committed relative
+            # to what it's actually allowed now. Refuse rather than guess.
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error": "allocation_cascade_unavailable",
+                    "message": "Cannot cascade this revision into Applications/Keys right now — "
+                    "refusing rather than leaving them out of sync with the new budget.",
+                },
+            )
+        applications_recomputed, keys_recomputed, snapshot_writes = (
+            await self._allocations.cascade_tenant_budget_revision(
+                tenant_id, new_budget, current_budget, current_user, platform_core_db
+            )
+        )
+
+        # Staged, not committed, until the cascade above has fully
+        # resolved without raising — see this method's own docstring for
+        # why that's what makes "the whole revision is rejected, not just
+        # the piece that broke" true.
         await self._tenants.update(
             tenant,
             {
@@ -1137,11 +1197,25 @@ class TenantService:
                 "updated_by": current_user.id,
             },
         )
-        await self._tenants.save_and_refresh(tenant)
+        await self._tenants.commit()
+        await self._tenants.refresh(tenant)
 
+        snapshot_write_failed = not await write_budget_snapshot(snapshot_writes, platform_core_db)
+        if snapshot_write_failed:
+            # budget_usage.api_key_budget_snap is now stale for these keys —
+            # the write already happened here in auth-service's own DB, so
+            # this is a real, silent divergence, not a rejected request.
+            # Surfaced to the caller via snapshot_write_failed below rather
+            # than only living in this log line.
+            logger.error(
+                "revise_tenant_budget: budget_usage snapshot write failed for tenant_id=%s "
+                "(%d key(s)) — api_key_budget_snap is now out of step with the ceilings just "
+                "committed; self-heals on the next successful allocation write for each key.",
+                tenant_id, len(snapshot_writes),
+            )
         if platform_core_db is not None:
             await self._sync_ppu_wallet_and_exhaustion(tenant_id, new_budget, platform_core_db)
-        return tenant
+        return tenant, applications_recomputed, keys_recomputed, snapshot_write_failed
 
     async def list_tenant_tiers(
         self,

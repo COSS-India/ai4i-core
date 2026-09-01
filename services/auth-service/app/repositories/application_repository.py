@@ -95,6 +95,33 @@ class ApplicationRepository(BaseRepository):
         )
         return list(result.scalars().all())
 
+    async def list_by_tenant_for_update(self, tenant_id: int) -> list[Application]:
+        """Same as ``list_by_tenant``, but locks every row in ONE round trip
+        (``SELECT ... FOR UPDATE``) instead of the caller looping
+        ``get_by_id_for_update`` once per Application — used by the two
+        callers that need every Application under a Tenant locked up front
+        (Tenant-level Budget Allocation, and PATCH .../budget's own
+        cascade), since either can end up writing any of them.
+        ``ORDER BY id`` pins a consistent lock-acquisition order across
+        both call sites (and across concurrent calls to either), the same
+        purpose ``get_by_id_for_update``'s single-row lock serves for
+        create_api_key's narrower case — without it, two concurrent calls
+        locking the same Applications in different orders could deadlock
+        instead of one simply waiting for the other. ``populate_existing``
+        — same reasoning as ``get_by_id_for_update``: refreshes any row
+        already in the session's identity map from an earlier unlocked
+        read, so ``allocated_budget`` off the result is the just-locked
+        value, not a stale pre-lock one.
+        """
+        result = await self._db.execute(
+            select(Application)
+            .where(Application.tenant_id == tenant_id)
+            .order_by(Application.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return list(result.scalars().all())
+
     async def list_for_tenant(
         self,
         tenant_id: int,

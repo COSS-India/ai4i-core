@@ -1,6 +1,6 @@
 """allocation_validator — the one shared resolve_level/convert implementation
-behind every allocation write path (PATCH .../budget, both scopes of
-PUT /auth/allocations, and the Application->Key cascade).
+behind every allocation write path (PATCH .../budget, each of the three
+Budget Allocation endpoints, and the Application->Key cascade).
 
 Scenarios mirror the worked numbered examples from the design discussion —
 same numbers, so a wrong result here is a wrong result there too.
@@ -130,6 +130,21 @@ class TestResolveLevelGrowth:
         with pytest.raises(ValueError):
             resolve_level(Decimal("120000"), self._children(), [])
 
+    def test_explicit_row_alone_over_parent_rejects_before_the_refit_loop(self) -> None:
+        """An explicit request that alone exceeds the parent's (unchanged)
+        total must reject as ALLOCATION_TOTAL_EXCEEDED against the request
+        itself — not let refit_unlisted=True's room_remaining go negative,
+        re-fit every unlisted sibling toward a negative amount, and have
+        the first one trip ALLOCATION_BELOW_CONSUMED instead, naming a
+        sibling the caller never mentioned with a negative ceiling."""
+        explicit = [ExplicitInput(id="Key1", amount=Decimal("120000"))]
+        with pytest.raises(ValidationError) as exc:
+            resolve_level(
+                Decimal("100000"), self._children(), explicit,
+                parent_old_amount=Decimal("100000"),
+            )
+        assert exc.value.code == "ALLOCATION_TOTAL_EXCEEDED"
+
 
 class TestResolveLevelShrink:
     """App A shrinks 100,000 -> 80,000. Same starting split."""
@@ -178,11 +193,15 @@ class TestResolveLevelShrink:
 
 class TestResolveLevelAcceptanceCriteria:
     """The exact story example: Institution 100%, App A=50%(40 used),
-    App B=30%(30 used, exhausted), App C=20%(5 used). This is the top-level
-    PUT /auth/allocations?tenant_id= scope — the Institution's own total
-    isn't changing, so refit_unlisted=False, matching what AllocationService
-    actually calls (see TestRefitUnlistedFalse for the same fixture's
-    untouched-sibling/sibling-sum behaviour)."""
+    App B=30%(30 used, exhausted), App C=20%(5 used), exercised here with
+    refit_unlisted=False — the Application->Keys edge's own top scope
+    (an unlisted Key is left exactly as it is when the Application's own
+    total isn't changing), and what AllocationService.
+    update_application_key_allocations actually calls. The Tenant->
+    Applications edge now calls this with refit_unlisted=True instead — an
+    unlisted Application IS proportionally re-fit, even though the Tenant's
+    own total isn't changing either (same refit_unlisted=True math the
+    other tests below already cover, e.g. TestSlackSurvivesAResize)."""
 
     @staticmethod
     def _apps():
@@ -234,10 +253,18 @@ class TestFeasibility:
 
 
 class TestRefitUnlistedFalse:
-    """The top-level PUT /auth/allocations scope: the parent's own total is
-    NOT changing this call, so unlisted siblings are left exactly as they
-    are — not resolved, not returned — only the explicit rows come back,
-    and the sibling-sum check uses siblings' CURRENT amounts."""
+    """resolve_level's own refit_unlisted=False mode, tested here at the
+    validator level: when the parent's total is NOT changing this call,
+    unlisted children can be left exactly as they are — not resolved, not
+    returned — only the explicit rows come back, and the sibling-sum check
+    uses siblings' CURRENT amounts.
+
+    Not currently reachable through AllocationService — every one of its
+    call sites resolves Keys with refit_unlisted=True (resizing one Key
+    proportionally re-fits its unlisted siblings; see allocation_service.
+    _resolve_and_persist_keys), so this mode has no live caller today. Kept
+    and tested here because it's a real, distinct mode of the shared
+    algorithm, not because anything currently invokes it that way."""
 
     @staticmethod
     def _apps():
