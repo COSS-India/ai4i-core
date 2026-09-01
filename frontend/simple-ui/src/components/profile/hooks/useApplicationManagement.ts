@@ -80,15 +80,28 @@ function allocationErrorApplicationId(error: unknown): string | null {
   return match?.[1] ?? null;
 }
 
+/** Spend as a share of the Institution budget (not the Application's own allocation). */
+function toInstitutionConsumedPct(
+  consumedAmount: number,
+  tenantBudget: number,
+): number | null {
+  if (tenantBudget <= 0) return null;
+  return roundPct((consumedAmount / tenantBudget) * 100);
+}
+
 function usageDetailToKeyRows(
   apiKeys: Awaited<ReturnType<typeof fetchApplicationUsageDetail>>["apiKeys"],
+  appAllocatedAmount: number,
 ): ApplicationApiKeyRow[] {
   return apiKeys
     .filter((key) => key.isActive)
     .map((key) => ({
       id: key.keyId,
       key_name: key.keyName,
-      allocated_percentage: key.allocatedBudget.percentage,
+      allocated_percentage:
+        appAllocatedAmount > 0
+          ? roundPct((key.allocatedBudget.amount / appAllocatedAmount) * 100)
+          : key.allocatedBudget.percentage,
       allocated_budget: key.allocatedBudget.amount,
       consumed_budget: key.spendBudget.amount,
       is_active: key.isActive,
@@ -357,7 +370,10 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
         tenantId,
         Number(applicationId),
       );
-      const activeKeys = usageDetailToKeyRows(detail.apiKeys);
+      const activeKeys = usageDetailToKeyRows(
+        detail.apiKeys,
+        detail.allocatedBudget.amount,
+      );
       setBulkRows((prev) =>
         prev.map((row) => {
           if (row.application_id !== applicationId) return row;
@@ -371,7 +387,10 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
             keysLoaded: true,
             keys: activeKeys,
             keyPreviews,
-            consumed_percentage: detail.spendBudget.percentage,
+            consumed_percentage: toInstitutionConsumedPct(
+              detail.spendBudget.amount,
+              tenantBudget,
+            ),
             consumed_budget: detail.spendBudget.amount,
           };
           return { ...next, rowError: evaluateRowError(next, tenantBudget) };
@@ -401,12 +420,19 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     setBulkLoading(true);
     setBulkRows([]);
     try {
-      const [list, usage] = await Promise.all([
-        listAllApplicationsForBudget(tenantId),
-        fetchApplicationUsageList({ tenantId, limit: 500 }).catch(() => null),
-      ]);
+      const list = await listAllApplicationsForBudget(tenantId);
+      let usageWarning: string | null = null;
+      let usageRows: Awaited<
+        ReturnType<typeof fetchApplicationUsageList>
+      >["data"] = [];
+      try {
+        const usage = await fetchApplicationUsageList({ tenantId, limit: 500 });
+        usageRows = usage.data;
+      } catch (usageError) {
+        usageWarning = `Could not load consumption data: ${parseError(usageError).message}`;
+      }
       const usageByAppId = new Map(
-        (usage?.data ?? []).map((row) => [String(row.applicationId), row]),
+        usageRows.map((row) => [String(row.applicationId), row]),
       );
       const effectiveBudget = institutionBudget ?? 0;
       setTenantBudget(effectiveBudget);
@@ -414,7 +440,10 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
         const draft = buildDraftFromApplication(app);
         const usageRow = usageByAppId.get(app.application_id);
         if (usageRow) {
-          draft.consumed_percentage = usageRow.spendBudget.percentage;
+          draft.consumed_percentage = toInstitutionConsumedPct(
+            usageRow.spendBudget.amount,
+            effectiveBudget,
+          );
           draft.consumed_budget = usageRow.spendBudget.amount;
         }
         if (
@@ -428,6 +457,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
         return draft;
       });
       setBulkRows(drafts);
+      if (usageWarning) setBulkBanner(usageWarning);
     } catch (error) {
       setBulkBanner(mapAllocationError(error));
     } finally {
@@ -509,11 +539,17 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
         const appId = allocationErrorApplicationId(error);
         const rowMessage = mapBelowConsumedError(message);
         if (appId) {
-          setBulkRows((prev) =>
-            prev.map((row) =>
+          let matched = false;
+          setBulkRows((prev) => {
+            if (!prev.some((row) => row.application_id === appId)) {
+              return prev;
+            }
+            matched = true;
+            return prev.map((row) =>
               row.application_id === appId ? { ...row, rowError: rowMessage } : row,
-            ),
-          );
+            );
+          });
+          if (!matched) setBulkBanner(rowMessage);
         } else {
           setBulkBanner(rowMessage);
         }
@@ -560,7 +596,11 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     setBudgetStepperHint(null);
     setBudgetOpen(true);
     void fetchApplicationUsageDetail(tenantId, Number(app.application_id))
-      .then((detail) => setBudgetFloor(detail.spendBudget.percentage))
+      .then((detail) => {
+        const budget = institutionBudget ?? tenantBudget;
+        const floor = toInstitutionConsumedPct(detail.spendBudget.amount, budget);
+        setBudgetFloor(floor ?? 0);
+      })
       .catch(() => setBudgetFloor(0));
   };
 

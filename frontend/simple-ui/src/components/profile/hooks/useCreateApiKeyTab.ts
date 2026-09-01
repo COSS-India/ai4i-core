@@ -265,6 +265,22 @@ export function useCreateApiKeyTab({
         }));
         return;
       }
+      if (code === "ALLOCATION_REQUIRED") {
+        setFieldErrors((prev) => ({
+          ...prev,
+          budget: "Enter a budget allocation percentage.",
+        }));
+        return;
+      }
+      if (code === "BUDGET_TOO_SMALL") {
+        setFieldErrors((prev) => ({
+          ...prev,
+          budget:
+            rawMessage ||
+            "Budget is too small relative to this Application's allocation — increase it or use a larger percentage.",
+        }));
+        return;
+      }
       if (code === "ALLOCATION_TOTAL_EXCEEDED") {
         setFormBannerError(
           nested?.message ??

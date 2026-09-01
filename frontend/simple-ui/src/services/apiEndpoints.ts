@@ -70,12 +70,9 @@ export const apiEndpoints = {
     tenantTier: (tenantId: string) => `${API_V1}/auth/tenants/${tenantId}/tier`,
     /** PATCH — top-up / top-down tenant budget (delta, not edit total). */
     tenantBudget: (tenantId: string) => `${API_V1}/auth/tenants/${tenantId}/budget`,
-    /** PUT — rebalance Application budget allocations under a tenant. */
-    budgetAllocation: (tenantId: string) =>
-      `${API_V1}/auth/tenants/${tenantId}/budget-allocation`,
   },
 
-  /** @deprecated Use tenants.budgetAllocation instead. */
+  /** PUT — rebalance Application or API Key budget allocations (scoped by query param). */
   allocations: `${API_V1}/auth/allocations`,
 
   alerts: {

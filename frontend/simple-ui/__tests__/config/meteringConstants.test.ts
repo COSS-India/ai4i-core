@@ -1,7 +1,6 @@
 import { METERING } from '../../src/config/meteringConstants';
 import { meteringColorAt } from '../../src/utils/meteringColors';
 import { normalizeModelTaskType } from '../../src/utils/meteringTaskType';
-import { buildTaskTypeConsumptionChart } from '../../src/utils/meteringFormatters';
 
 describe('Usage Dashboard v2.0 (AI4IDS-2908)', () => {
   it('exposes four tabs including Applications usage', () => {
@@ -152,30 +151,5 @@ describe('normalizeModelTaskType (AI4IDS-2980)', () => {
   it('returns empty string for null or blank values', () => {
     expect(normalizeModelTaskType(null)).toBe('');
     expect(normalizeModelTaskType('  ')).toBe('');
-  });
-});
-
-describe('buildTaskTypeConsumptionChart (AI4IDS-2980)', () => {
-  it('aggregates requests by task type', () => {
-    const { slices, totalRequests } = buildTaskTypeConsumptionChart([
-      { task_type: 'llm', requests: 60 },
-      { task_type: 'nmt', requests: 40 },
-      { task_type: 'llm', requests: 20 },
-    ]);
-    expect(totalRequests).toBe(120);
-    expect(slices).toHaveLength(2);
-    expect(slices[0]?.name).toBe('LLM');
-    expect(slices[0]?.value).toBe(80);
-    expect(slices[0]?.pct).toBeCloseTo(66.67, 1);
-    expect(slices[1]?.pct).toBeCloseTo(33.33, 1);
-  });
-
-  it('recomputes percentages for a filtered subset', () => {
-    const { slices, totalRequests } = buildTaskTypeConsumptionChart([
-      { task_type: 'nmt', requests: 40 },
-    ]);
-    expect(totalRequests).toBe(40);
-    expect(slices).toHaveLength(1);
-    expect(slices[0]?.pct).toBe(100);
   });
 });

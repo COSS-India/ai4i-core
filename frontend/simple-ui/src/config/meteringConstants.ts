@@ -377,11 +377,6 @@ export const METERING = {
       BREAKDOWN_SUBTITLE_PREFIX: "Consumption across all Models ·",
       DONUT_PRIMARY: "All",
       DONUT_SECONDARY: "Models",
-      TASK_TYPE_DONUT_TITLE: "Usage by model task type",
-      TASK_TYPE_DONUT_SUBTITLE:
-        "Request distribution across model task types · reflects selected time window",
-      TASK_TYPE_DONUT_PRIMARY: "All",
-      TASK_TYPE_DONUT_SECONDARY: "Task types",
       TOTAL_MODELS: "Total models",
       ACTIVE_MODELS: "Active models",
       MOST_USED: "Most used model",

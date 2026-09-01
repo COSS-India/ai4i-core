@@ -25,9 +25,6 @@ export interface UsageSummaryResponse {
   budgetExceededTenants?: number;
   spendChangePercent?: number;
   spendByModelTaskType: SpendByTaskType[];
-  /** Summed across tenants with a budget assignment covering this billing period. */
-  totalAllocatedBudget?: number;
-  totalRemainingBudget?: number;
 }
 
 export interface TenantBudget {
