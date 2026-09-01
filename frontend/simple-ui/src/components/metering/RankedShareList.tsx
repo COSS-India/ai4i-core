@@ -5,12 +5,15 @@ import { meteringColorAt } from "../../utils/meteringColors";
 import { replaceTenantCopy } from "../../utils/replaceTenantCopy";
 import InfoTip from "../common/InfoTip";
 import MeteringTableText from "./MeteringTableText";
+import { TaskTypeLabel } from "./UsageSpendCells";
 
 export interface RankedShareRow {
   rank: number;
   label: string;
   /** Model task type shown as its own column (Model consumption list). */
   subtitle?: string;
+  /** Raw task type id — renders with TaskTypeLabel when set. */
+  taskType?: string;
   formattedValue: string;
   percentage: number;
   color?: string;
@@ -25,7 +28,7 @@ interface RankedShareListProps {
   tipTotal?: string;
   tipTaskType?: string;
   tipRight?: string;
-  /** Puts Total requests first, then Model Task Type, then Model. */
+  /** Donut list: Model Name, Model Task Type, Total requests, % of total. */
   variant?: "default" | "modelWithTaskType";
 }
 
@@ -42,7 +45,7 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
 }) => {
   const modelWithTaskType = variant === "modelWithTaskType" && Boolean(headerTaskType);
   const gridColumns = modelWithTaskType
-    ? "minmax(88px, 0.75fr) minmax(96px, 0.85fr) minmax(0, 2fr) 56px"
+    ? "minmax(0, 2fr) minmax(96px, 0.85fr) minmax(88px, 0.75fr) 56px"
     : "minmax(0, 2fr) minmax(88px, 0.75fr) 56px";
 
   const headerTotalCell = (
@@ -79,9 +82,9 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
           px={1}
           alignItems="center"
         >
-          {headerTotalCell}
-          {headerTaskTypeCell}
           <Text fontWeight="medium">{replaceTenantCopy(headerLeft)}</Text>
+          {headerTaskTypeCell}
+          {headerTotalCell}
           {headerRightCell}
         </Grid>
       ) : (
@@ -130,7 +133,14 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
           </Badge>
         );
 
-        const taskTypeCell = row.subtitle ? (
+        const taskTypeCell = row.taskType ? (
+          <TaskTypeLabel
+            taskType={row.taskType}
+            color={color}
+            fontSize="sm"
+            fontWeight="medium"
+          />
+        ) : row.subtitle ? (
           <Text fontSize="sm" color="gray.600" noOfLines={1}>
             {row.subtitle}
           </Text>
@@ -155,14 +165,12 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
           return (
             <Box key={row.rank}>
               <Grid templateColumns={gridColumns} gap={3} alignItems="center" mb={1.5}>
-                <Box justifySelf="end">{totalCell}</Box>
-                {taskTypeCell}
                 {modelCell}
+                {taskTypeCell}
+                <Box justifySelf="end">{totalCell}</Box>
                 {pctCell}
               </Grid>
               <Grid templateColumns={gridColumns} gap={3}>
-                <Box />
-                <Box />
                 <Progress
                   value={row.percentage}
                   size="sm"
@@ -170,6 +178,8 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
                   bg="gray.100"
                   sx={{ "& > div": { background: color } }}
                 />
+                <Box />
+                <Box />
                 <Box />
               </Grid>
             </Box>

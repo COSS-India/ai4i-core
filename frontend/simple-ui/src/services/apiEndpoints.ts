@@ -75,9 +75,6 @@ export const apiEndpoints = {
       `${API_V1}/auth/tenants/${tenantId}/budget-allocation`,
   },
 
-  /** @deprecated Use tenants.budgetAllocation instead. */
-  allocations: `${API_V1}/auth/allocations`,
-
   alerts: {
     base: `${API_V1}/alerts`,
     /** Relative to `alerts.base`. */
