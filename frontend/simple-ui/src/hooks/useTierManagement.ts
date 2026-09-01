@@ -307,6 +307,15 @@ export function useTierManagement() {
       });
       return;
     }
+    if (formData.name.trim().length < 2) {
+      toast({
+        title: "Tier name must be at least 2 characters",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
     const quotaError = validateQuotas(formData.quotas);
     if (quotaError) {
       setShowQuotaErrors(true);
@@ -383,6 +392,15 @@ export function useTierManagement() {
     if (!formData.name.trim()) {
       toast({
         title: "Tier name is required",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    if (formData.name.trim().length < 2) {
+      toast({
+        title: "Tier name must be at least 2 characters",
         status: "warning",
         duration: 3000,
         isClosable: true,

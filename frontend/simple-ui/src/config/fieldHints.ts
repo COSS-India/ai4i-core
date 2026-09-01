@@ -158,7 +158,7 @@ export const FIELD_HINTS = {
   apiKey: {
     keyName: {
       placeholder: "Enter a name for this API key",
-      helper: "2–100 characters",
+      helper: "Up to 100 characters",
     },
     expiry: {
       placeholder: "Enter number of days",
