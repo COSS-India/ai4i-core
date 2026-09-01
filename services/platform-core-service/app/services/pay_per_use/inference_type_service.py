@@ -107,7 +107,7 @@ async def create_inference_type(
         )
     await session.refresh(row)
 
-    await inference_type_cache.rebuild(session)
+    await inference_type_cache.rebuild(session, sweep=True)
     return _to_item(_row_to_dict(row))
 
 
@@ -160,7 +160,7 @@ async def update_inference_type(
         )
     await session.refresh(row)
 
-    await inference_type_cache.rebuild(session)
+    await inference_type_cache.rebuild(session, sweep=True)
     return _to_item(_row_to_dict(row))
 
 
@@ -188,4 +188,4 @@ async def delete_inference_type(name: str, session: AsyncSession) -> None:
 
     await session.delete(row)
     await session.commit()
-    await inference_type_cache.rebuild(session)
+    await inference_type_cache.rebuild(session, sweep=True)

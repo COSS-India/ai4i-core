@@ -12,8 +12,17 @@ and backfills it from ``inference_name``. Deliberately does NOT:
   * drop inference_name — every read path still uses it, including the raw
     upsert SQL in payperuse_consumer.
 
-All three are phase 2, and phase 2 is blocked until the NULL audit below comes
-back clean.
+All three are phase 2, which is blocked on **two** things, not one:
+
+  1. ``payperuse_consumer`` setting ``inference_type_id`` on its ``quota_usage``
+     upsert. It does NOT today — its INSERT column list is
+     ``(id, tenant_id, inference_name, billing_month, monthly_quota_snap,
+     monthly_quota_used, tier_id)``. So in this revision the column is
+     **backfill-only**: existing rows get a value from the UPDATE below, and
+     every row written afterwards carries NULL.
+  2. The NULL audit below coming back clean — which cannot happen while (1) is
+     outstanding, however many times it is re-run. Accruing NULLs here are
+     expected, not a migration bug.
 
 The backfill joins on lower(inference_name): platform-core compares
 case-insensitively (tier_service.py), so mixed-case rows can exist.
