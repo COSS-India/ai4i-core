@@ -197,6 +197,26 @@ def resolve_level(
             auto_refitted=False,
         )
 
+    # Guard BEFORE the unlisted re-fit loop below: if the explicit rows
+    # alone already exceed the parent's new total, refit_unlisted=True's
+    # room_remaining goes negative, every unlisted sibling gets re-fit
+    # toward a negative amount, and the FIRST one (by ``children`` order)
+    # trips its own floor check — surfacing as ALLOCATION_BELOW_CONSUMED
+    # naming an Application/Key the caller never mentioned, with a
+    # negative ceiling in the message, instead of the real problem: the
+    # explicit ask itself. Reject that here, before any re-fit math runs,
+    # same code the refit_unlisted=False sibling-sum gate below would
+    # eventually raise for the equivalent case, just earlier and correctly
+    # attributed.
+    if explicit_total > parent_new_amount:
+        raise ValidationError(
+            message=(
+                f"Explicit total ({explicit_total}) already exceeds the parent's amount "
+                f"({parent_new_amount}), before any unlisted sibling is even considered."
+            ),
+            code="ALLOCATION_TOTAL_EXCEEDED",
+        )
+
     unlisted = [c for c in children if c.id not in explicit_by_id]
 
     if refit_unlisted:

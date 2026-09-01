@@ -130,6 +130,21 @@ class TestResolveLevelGrowth:
         with pytest.raises(ValueError):
             resolve_level(Decimal("120000"), self._children(), [])
 
+    def test_explicit_row_alone_over_parent_rejects_before_the_refit_loop(self) -> None:
+        """An explicit request that alone exceeds the parent's (unchanged)
+        total must reject as ALLOCATION_TOTAL_EXCEEDED against the request
+        itself — not let refit_unlisted=True's room_remaining go negative,
+        re-fit every unlisted sibling toward a negative amount, and have
+        the first one trip ALLOCATION_BELOW_CONSUMED instead, naming a
+        sibling the caller never mentioned with a negative ceiling."""
+        explicit = [ExplicitInput(id="Key1", amount=Decimal("120000"))]
+        with pytest.raises(ValidationError) as exc:
+            resolve_level(
+                Decimal("100000"), self._children(), explicit,
+                parent_old_amount=Decimal("100000"),
+            )
+        assert exc.value.code == "ALLOCATION_TOTAL_EXCEEDED"
+
 
 class TestResolveLevelShrink:
     """App A shrinks 100,000 -> 80,000. Same starting split."""
@@ -238,10 +253,18 @@ class TestFeasibility:
 
 
 class TestRefitUnlistedFalse:
-    """The Application->Keys edge's own top scope: the Application's own
-    total is NOT changing this call, so unlisted Keys are left exactly as
-    they are — not resolved, not returned — only the explicit rows come
-    back, and the sibling-sum check uses siblings' CURRENT amounts."""
+    """resolve_level's own refit_unlisted=False mode, tested here at the
+    validator level: when the parent's total is NOT changing this call,
+    unlisted children can be left exactly as they are — not resolved, not
+    returned — only the explicit rows come back, and the sibling-sum check
+    uses siblings' CURRENT amounts.
+
+    Not currently reachable through AllocationService — every one of its
+    call sites resolves Keys with refit_unlisted=True (resizing one Key
+    proportionally re-fits its unlisted siblings; see allocation_service.
+    _resolve_and_persist_keys), so this mode has no live caller today. Kept
+    and tested here because it's a real, distinct mode of the shared
+    algorithm, not because anything currently invokes it that way."""
 
     @staticmethod
     def _apps():

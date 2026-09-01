@@ -18,7 +18,7 @@ reports back "PERCENTAGE" (see allocation_service._response_allocation).
 """
 
 from decimal import Decimal
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import ConfigDict, Field, model_validator
 
@@ -160,9 +160,19 @@ class APIKeyAllocationResponseItem(BaseSchema):
 
 class ApplicationAllocationResponseItem(BaseSchema):
     """The one response shape shared by all three endpoints — a bare array
-    of these for the Tenant-level call, a single one for the other two."""
+    of these for the Tenant-level call, a single one for the other two.
+
+    ``api_keys`` is ``None`` when this Application's own Keys were not
+    resolved this call (the Tenant-level endpoint only cascades into an
+    Application's Keys when that Application's own amount changed or the
+    caller nested explicit api_keys under it — see
+    AllocationService.update_tenant_application_allocations) — distinct
+    from ``[]``, which means the Keys WERE resolved and this Application
+    genuinely has none. The Application-level and single-Key endpoints
+    always resolve every Key under the Application, so this is only ever
+    ``None`` on a Tenant-level response row."""
 
     application_id: int
     allocation: AllocationValue
     allocated_budget: Decimal
-    api_keys: list[APIKeyAllocationResponseItem] = Field(default_factory=list)
+    api_keys: Optional[list[APIKeyAllocationResponseItem]] = None

@@ -1021,7 +1021,7 @@ class TenantService:
         action: Literal["top-up", "top-down"],
         amount: Decimal,
         platform_core_db: Optional[AsyncSession] = None,
-    ) -> tuple[Tenant, int, int]:
+    ) -> tuple[Tenant, int, int, bool]:
         """Top-up or top-down a tenant's budget — PATCH /auth/tenants/{id}/budget.
 
         Restricted to ADMIN, same as assign_tenant_tier. Unlike the old
@@ -1071,9 +1071,18 @@ class TenantService:
         ever writes allocated_percentage/allocated_budget, never the
         exhaustion flag itself.
 
-        Returns (tenant, applications_recomputed, keys_recomputed) — the
-        latter two straight from the cascade, for the response's own
-        fields of the same name.
+        Returns (tenant, applications_recomputed, keys_recomputed,
+        snapshot_write_failed) — the middle two straight from the cascade,
+        for the response's own fields of the same name.
+        ``snapshot_write_failed`` is True when the post-commit
+        write_budget_snapshot call (mirroring the just-committed ceilings
+        into platform-core's budget_usage.api_key_budget_snap) failed —
+        the Tenant/Application/Key revision itself still succeeded and is
+        NOT rolled back for this, since budget_usage is a best-effort
+        cache of the ceiling, not its source of truth, and self-heals on
+        the next successful allocation write for each affected key. Only
+        surfaced so a caller can tell "the ledger cache is briefly behind"
+        apart from a response that looks fully successful.
         """
         roles = await self._roles.get_user_roles(current_user.id)
         if RoleName.ADMIN.value not in roles:
@@ -1191,10 +1200,22 @@ class TenantService:
         await self._tenants.commit()
         await self._tenants.refresh(tenant)
 
-        await write_budget_snapshot(snapshot_writes, platform_core_db)
+        snapshot_write_failed = not await write_budget_snapshot(snapshot_writes, platform_core_db)
+        if snapshot_write_failed:
+            # budget_usage.api_key_budget_snap is now stale for these keys —
+            # the write already happened here in auth-service's own DB, so
+            # this is a real, silent divergence, not a rejected request.
+            # Surfaced to the caller via snapshot_write_failed below rather
+            # than only living in this log line.
+            logger.error(
+                "revise_tenant_budget: budget_usage snapshot write failed for tenant_id=%s "
+                "(%d key(s)) — api_key_budget_snap is now out of step with the ceilings just "
+                "committed; self-heals on the next successful allocation write for each key.",
+                tenant_id, len(snapshot_writes),
+            )
         if platform_core_db is not None:
             await self._sync_ppu_wallet_and_exhaustion(tenant_id, new_budget, platform_core_db)
-        return tenant, applications_recomputed, keys_recomputed
+        return tenant, applications_recomputed, keys_recomputed, snapshot_write_failed
 
     async def list_tenant_tiers(
         self,

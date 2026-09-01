@@ -267,14 +267,17 @@ async def revise_tenant_budget(
     cached budget-exhausted flag on this tenant's API keys too (see
     TenantService._sync_ppu_wallet_and_exhaustion).
     """
-    tenant, applications_recomputed, keys_recomputed = await svc.revise_tenant_budget(
-        current_user, tenant_id, body.action, body.amount, platform_core_db
+    tenant, applications_recomputed, keys_recomputed, snapshot_write_failed = (
+        await svc.revise_tenant_budget(
+            current_user, tenant_id, body.action, body.amount, platform_core_db
+        )
     )
     return TenantBudgetData(
         tenant_id=tenant.id,
         allocated_budget=tenant.allocated_budget,
         applications_recomputed=applications_recomputed,
         keys_recomputed=keys_recomputed,
+        snapshot_write_failed=snapshot_write_failed,
         updated_at=tenant.updated_at,
     )
 

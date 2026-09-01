@@ -20,7 +20,7 @@ new implementation, without depending on a table that no longer exists.
 """
 
 from decimal import Decimal
-from unittest.mock import ANY, AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -652,11 +652,12 @@ class TestReviseTenantBudgetCascade:
         )
         svc._tenants.update = AsyncMock()
 
-        tenant, applications_recomputed, keys_recomputed = await svc.revise_tenant_budget(
-            _admin_user(), 1, "top-up", Decimal("500")
+        tenant, applications_recomputed, keys_recomputed, snapshot_write_failed = (
+            await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"))
         )
 
         assert (applications_recomputed, keys_recomputed) == (3, 5)
+        assert snapshot_write_failed is False
 
     @pytest.mark.asyncio
     async def test_decrease_cascade_counts_flow_into_the_response(self) -> None:
@@ -675,11 +676,12 @@ class TestReviseTenantBudgetCascade:
         rows = [TestReviseTenantBudget._usage_row(10, Decimal("100.00"))]
         db = _core_db(budget_usage_rows=[rows, rows])
 
-        tenant, applications_recomputed, keys_recomputed = await svc.revise_tenant_budget(
-            _admin_user(), 1, "top-down", Decimal("200"), db
+        tenant, applications_recomputed, keys_recomputed, snapshot_write_failed = (
+            await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("200"), db)
         )
 
         assert (applications_recomputed, keys_recomputed) == (2, 4)
+        assert snapshot_write_failed is False
         assert svc._tenants.update.await_args.args[1]["allocated_budget"] == Decimal("800")
 
     @pytest.mark.asyncio
@@ -717,6 +719,39 @@ class TestReviseTenantBudgetCascade:
 
         svc._tenants.update.assert_not_awaited()
         svc._tenants.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_snapshot_write_failure_is_surfaced_not_silent(self) -> None:
+        """The revision itself (Tenant + cascade) already committed by the
+        time write_budget_snapshot runs — its failure must NOT roll back
+        or re-raise (budget_usage.api_key_budget_snap is a best-effort
+        cache, not the ceiling's source of truth), but it also must not
+        be purely a log line: snapshot_write_failed=True on the response
+        is what lets a caller tell "the revision succeeded but the ledger
+        cache is briefly behind" apart from a fully-successful response."""
+        allocation_service = AsyncMock()
+        allocation_service.cascade_tenant_budget_revision = AsyncMock(
+            return_value=(2, 3, {11: Decimal("5000.00")})
+        )
+        svc = _svc(allocation_service=allocation_service)
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant(allocated_budget=Decimal("1000"))
+        )
+        svc._tenants.update = AsyncMock()
+
+        with patch(
+            "app.services.tenant_service.write_budget_snapshot", AsyncMock(return_value=False)
+        ):
+            tenant, applications_recomputed, keys_recomputed, snapshot_write_failed = (
+                await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"))
+            )
+
+        # The revision itself still fully succeeded — not rolled back, not
+        # re-raised — despite the snapshot mirror failing.
+        svc._tenants.update.assert_awaited_once()
+        svc._tenants.commit.assert_awaited_once()
+        assert (applications_recomputed, keys_recomputed) == (2, 3)
+        assert snapshot_write_failed is True
 
 
 class TestListTenantTiers:

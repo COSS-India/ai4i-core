@@ -75,7 +75,7 @@ async def fetch_budget_usage(
 
 async def write_budget_snapshot(
     snapshots: dict[int, Decimal], platform_core_db: Optional[AsyncSession]
-) -> None:
+) -> bool:
     """Upsert ``budget_usage.api_key_budget_snap`` for every api_key_id in
     ``snapshots`` — the ₹ ceiling each key was actually resolved to.
 
@@ -98,9 +98,19 @@ async def write_budget_snapshot(
     truth (``application.allocated_budget`` / ``api_key.allocated_budget``
     in auth-service's own DB are), so a missed write here self-heals the
     next time this same key's allocation changes.
+
+    Returns whether the write actually landed — ``True`` for both a real
+    success and the "nothing to do" no-op (empty ``snapshots`` or no
+    ``platform_core_db``), ``False`` only when a write was attempted and
+    failed. Deliberately still swallows the exception rather than raising
+    it (see this function's own docstring above) — the return value exists
+    so a caller that cares can surface/log the gap itself, without forcing
+    every caller that doesn't (create_api_key, the three Budget Allocation
+    endpoints) to start handling a failure they were already fine
+    ignoring.
     """
     if not snapshots or platform_core_db is None:
-        return
+        return True
     try:
         for api_key_id, snap in snapshots.items():
             await platform_core_db.execute(
@@ -113,6 +123,13 @@ async def write_budget_snapshot(
                 {"api_key_id": api_key_id, "snap": snap},
             )
         await platform_core_db.commit()
+        return True
     except Exception as exc:
-        logger.warning("Failed to write budget_usage snapshot for keys %s: %s", list(snapshots), exc)
+        # error, not warning — a documented write-through invariant
+        # silently not happening is a money-adjacent ledger inconsistency,
+        # not a routine hiccup, and warning-level tends not to get looked
+        # at. The caller (see e.g. TenantService.revise_tenant_budget)
+        # logs its own error with the tenant_id this function doesn't have.
+        logger.error("Failed to write budget_usage snapshot for keys %s: %s", list(snapshots), exc)
         await platform_core_db.rollback()
+        return False

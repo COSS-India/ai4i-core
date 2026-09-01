@@ -119,19 +119,17 @@ class AllocationService:
                 code="TENANT_BUDGET_NOT_SET",
             )
 
-        applications = await self._applications.list_by_tenant(tenant_id)
-        if not applications:
-            raise EntityNotFoundError(f"Applications for tenant {tenant_id}")
-        applications_by_id = {app.id: app for app in applications}
-
         # Every Application under the Tenant is locked, not just the listed
         # ones — refit_unlisted=True means any of them may be re-fit and
         # written by this call, not only the rows the caller mentioned.
-        for app in applications:
-            await self._applications.get_by_id_for_update(app.id)
-        # get_by_id_for_update's populate_existing=True refreshes each locked
-        # Application in place (same identity-mapped object) — applications /
-        # applications_by_id already reflect the just-locked, up-to-date rows.
+        # One batched SELECT ... FOR UPDATE (list_by_tenant_for_update),
+        # not one round trip per Application — the result is already the
+        # locked, up-to-date rows, so no separate unlocked list_by_tenant
+        # call is needed first.
+        applications = await self._applications.list_by_tenant_for_update(tenant_id)
+        if not applications:
+            raise EntityNotFoundError(f"Applications for tenant {tenant_id}")
+        applications_by_id = {app.id: app for app in applications}
 
         keys_by_app, usage_map = await self._load_keys_and_usage(
             [app.id for app in applications], platform_core_db
@@ -187,7 +185,11 @@ class AllocationService:
             # all — only an explicitly-listed one can carry nested api_keys.
             request_row = request_row_by_id.get(resolved.id)
             nested_api_keys = request_row.api_keys if request_row is not None else []
-            key_allocations_out: list[APIKeyAllocationResponseItem] = []
+            # None (not []) when this Application's Keys aren't resolved
+            # this call — [] would be indistinguishable from "resolved,
+            # and this Application genuinely has zero Keys" (see
+            # ApplicationAllocationResponseItem.api_keys's own docstring).
+            key_allocations_out: Optional[list[APIKeyAllocationResponseItem]] = None
             if resolved.changed or nested_api_keys:
                 key_allocations_out = await self._cascade_into_keys(
                     application_id=resolved.id,
@@ -290,7 +292,6 @@ class AllocationService:
             usage_map=usage_map,
             current_user=current_user,
             snapshot_writes=snapshot_writes,
-            refit_unlisted=True,
             owning_application_id=application_id,
         )
 
@@ -372,7 +373,6 @@ class AllocationService:
             usage_map=usage_map,
             current_user=current_user,
             snapshot_writes=snapshot_writes,
-            refit_unlisted=True,
             owning_application_id=application.id,
         )
 
@@ -434,13 +434,13 @@ class AllocationService:
         snapshot_writes for the caller to push through to budget_usage
         after it commits.
         """
-        applications = await self._applications.list_by_tenant(tenant_id)
+        # One batched SELECT ... FOR UPDATE, not one round trip per
+        # Application — see update_tenant_application_allocations's own
+        # comment on list_by_tenant_for_update for why.
+        applications = await self._applications.list_by_tenant_for_update(tenant_id)
         if not applications:
             return 0, 0, {}
         applications_by_id = {app.id: app for app in applications}
-
-        for app in applications:
-            await self._applications.get_by_id_for_update(app.id)
 
         keys_by_app, usage_map = await self._load_keys_and_usage(
             [app.id for app in applications], platform_core_db
@@ -579,15 +579,14 @@ class AllocationService:
     ) -> list[APIKeyAllocationResponseItem]:
         """This Application's own un-listed Keys are NOT left untouched just
         because the caller didn't mention them — every Key under it is
-        unconditionally re-fit to track the Application's own change
-        (refit_unlisted=True), same as everywhere else that a parent's own
-        total just changed. ``old_application_amount`` is what the Application
-        held immediately before this call — required so the re-fit can scale
-        each Key by the Application's actual change instead of normalizing to
-        fill whatever room the resize left (see resolve_level's docstring).
-        refit_unlisted=True means resolve_level itself already returns every
-        Key, so no merge-back-in step is needed here (unlike
-        _resolve_and_persist_keys' refit_unlisted=False path)."""
+        unconditionally re-fit to track the Application's own change,
+        same as everywhere else that a parent's own total just changed.
+        ``old_application_amount`` is what the Application held
+        immediately before this call — required so the re-fit can scale
+        each Key by the Application's actual change instead of normalizing
+        to fill whatever room the resize left (see resolve_level's
+        docstring). resolve_level itself already returns every Key, so no
+        merge-back-in step is needed here."""
         return await self._resolve_and_persist_keys(
             parent_amount=new_application_amount,
             parent_old_amount=old_application_amount,
@@ -596,7 +595,6 @@ class AllocationService:
             usage_map=usage_map,
             current_user=current_user,
             snapshot_writes=snapshot_writes,
-            refit_unlisted=True,
             owning_application_id=application_id,
         )
 
@@ -609,24 +607,19 @@ class AllocationService:
         usage_map: dict[int, tuple[Decimal, Decimal]],
         current_user: User,
         snapshot_writes: dict[int, Decimal],
-        refit_unlisted: bool,
         owning_application_id: Optional[int] = None,
         parent_old_amount: Optional[Decimal] = None,
     ) -> list[APIKeyAllocationResponseItem]:
         """The one place every Key-resolution call site (the Application-scope
         cascade, the direct Application-level endpoint, and the single-Key
         endpoint) actually resolves + persists Keys — same resolve_level
-        call, same persistence, same snapshot bookkeeping; only
-        ``refit_unlisted`` and the KEY_APPLICATION_MISMATCH check (only
-        meaningful when nested under a specific Application) differ.
-
-        When refit_unlisted=False, resolve_level only returns the rows it
-        actually resolved (the explicit ones) — every OTHER existing Key is
-        merged back into the response here from its current DB values
-        (untouched, always reported as PERCENTAGE — see
-        _response_allocation), since the response contract for all three
-        endpoints is "every Key under the Application," not just the edited
-        ones.
+        call (always refit_unlisted=True — every call site proportionally
+        re-fits unlisted Keys, so there's no other mode left to select
+        here; resolve_level's own refit_unlisted=False mode still exists
+        and is still tested at that level, it's just not reachable through
+        this method), same persistence, same snapshot bookkeeping; only
+        the KEY_APPLICATION_MISMATCH check (only meaningful when nested
+        under a specific Application) differs per call site.
         """
         known_key_ids = {k.id for k in existing_keys}
         if owning_application_id is not None:
@@ -671,15 +664,13 @@ class AllocationService:
             parent_amount,
             key_rows,
             explicit,
-            refit_unlisted=refit_unlisted,
+            refit_unlisted=True,
             parent_old_amount=parent_old_amount,
         )
 
         keys_by_id = {key.id: key for key in existing_keys}
         response_rows: list[APIKeyAllocationResponseItem] = []
-        resolved_ids: set = set()
         for resolved in resolved_keys:
-            resolved_ids.add(resolved.id)
             if resolved.changed:
                 key_obj = keys_by_id[resolved.id]
                 await self._api_keys.update(
@@ -700,19 +691,5 @@ class AllocationService:
                     allocated_budget=resolved.amount,
                 )
             )
-
-        if not refit_unlisted:
-            for key in existing_keys:
-                if key.id in resolved_ids:
-                    continue
-                response_rows.append(
-                    APIKeyAllocationResponseItem(
-                        api_key_id=key.id,
-                        allocation=AllocationValue(
-                            type="PERCENTAGE", value=key.allocated_percentage or _ZERO
-                        ),
-                        allocated_budget=key.allocated_budget or _ZERO,
-                    )
-                )
 
         return response_rows
