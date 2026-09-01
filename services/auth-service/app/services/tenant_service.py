@@ -961,9 +961,12 @@ class TenantService:
             individually over its own ceiling just because the tenant's
             total looks fine again would let it bill again with zero
             headroom of its own. Only keys that are ALSO not individually
-            exhausted get cleared; an individually-exhausted key keeps its
-            flag untouched by this path (it only clears via its own future
-            reallocation, same as always).
+            exhausted get cleared, in one batched call
+            (set_budget_exhausted_for_keys — one UPDATE plus one commit for
+            the whole set, not a per-key round trip); an
+            individually-exhausted key keeps its flag untouched by this
+            path (it only clears via its own future reallocation, same as
+            always).
 
         Previously read/wrote a dedicated wallet row on platform-core's
         ppu_tenant_tier_assignments (dropped by AI4IDS-2923). Reconstructed
@@ -994,11 +997,13 @@ class TenantService:
                 await self._api_keys.set_budget_exhausted_for_tenant(tenant_id, True)
                 return
 
+            keys_to_clear = []
             for key_id in key_ids:
                 used, snap = usage.get(key_id, (Decimal("0"), None))
                 individually_exhausted = snap is not None and used >= snap
                 if not individually_exhausted:
-                    await self._api_keys.set_budget_exhausted_for_key(key_id, False)
+                    keys_to_clear.append(key_id)
+            await self._api_keys.set_budget_exhausted_for_keys(keys_to_clear, False)
         except Exception:
             logger.exception(
                 "Failed to recompute budget-exhausted state for tenant_id=%s "

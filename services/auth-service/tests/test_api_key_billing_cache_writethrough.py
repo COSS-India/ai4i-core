@@ -160,6 +160,66 @@ class TestSetBudgetExhaustedForKey:
         repo.update.assert_not_awaited()
 
 
+class TestSetBudgetExhaustedForKeys:
+    """Batched sibling of set_budget_exhausted_for_key — one repo call plus
+    one commit for the whole id list, not a per-key round trip. Used by
+    TenantService._sync_ppu_wallet_and_exhaustion, which already has every
+    key id to clear in hand from a single budget revision."""
+
+    @pytest.mark.asyncio
+    async def test_patches_redis_for_every_returned_key_and_commits_once(self) -> None:
+        repo = AsyncMock()
+        cache = AsyncMock()
+        repo.patch_cached_data_field_for_keys = AsyncMock(return_value=["key-a", "key-b"])
+        svc = APIKeyService(repo, cache)
+
+        await svc.set_budget_exhausted_for_keys([1, 2], False)
+
+        repo.patch_cached_data_field_for_keys.assert_awaited_once_with([1, 2], "budget-exhausted", "0")
+        assert cache.patch_api_key_cache_field.await_args_list == [
+            (("key-a", "budget-exhausted", "0"),),
+            (("key-b", "budget-exhausted", "0"),),
+        ]
+        repo.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_ineligible_key_ids_are_simply_absent_from_the_redis_patch(self) -> None:
+        """The repo's own eligibility filter (active, non-expired, has
+        cached_data) decides what's returned — an id that doesn't qualify
+        (including a revoked/expired one list_key_ids_for_tenant deliberately
+        still includes) just isn't in the RETURNING list, no separate lookup
+        needed here."""
+        repo = AsyncMock()
+        cache = AsyncMock()
+        repo.patch_cached_data_field_for_keys = AsyncMock(return_value=["key-a"])
+        svc = APIKeyService(repo, cache)
+
+        await svc.set_budget_exhausted_for_keys([1, 2, 3], True)
+
+        cache.patch_api_key_cache_field.assert_awaited_once_with("key-a", "budget-exhausted", "1")
+
+    @pytest.mark.asyncio
+    async def test_empty_id_list_is_a_noop(self) -> None:
+        repo = AsyncMock()
+        cache = AsyncMock()
+        svc = APIKeyService(repo, cache)
+
+        await svc.set_budget_exhausted_for_keys([], False)
+
+        repo.patch_cached_data_field_for_keys.assert_not_awaited()
+        cache.patch_api_key_cache_field.assert_not_awaited()
+        repo.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_missing_repo_skips_everything(self) -> None:
+        cache = AsyncMock()
+        svc = APIKeyService(None, cache)
+
+        await svc.set_budget_exhausted_for_keys([1, 2], False)
+
+        cache.patch_api_key_cache_field.assert_not_awaited()
+
+
 class TestSetBudgetExhaustedForTenant:
     @pytest.mark.asyncio
     async def test_patches_redis_and_cached_data(self) -> None:

@@ -316,7 +316,7 @@ class TestReviseTenantBudget:
         assert svc._tenants.update.await_args.args[1]["allocated_budget"] == Decimal("800")
         # 800 - 300 = 500 > 0 -> not tenant-exhausted -> per-key clear, not a blanket set.
         svc._api_keys.set_budget_exhausted_for_tenant.assert_not_awaited()
-        svc._api_keys.set_budget_exhausted_for_key.assert_awaited_once_with(10, False)
+        svc._api_keys.set_budget_exhausted_for_keys.assert_awaited_once_with([10], False)
 
     @pytest.mark.asyncio
     async def test_top_down_refused_when_platform_core_db_is_none(self) -> None:
@@ -402,9 +402,7 @@ class TestReviseTenantBudget:
         await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), db)
 
         svc._api_keys.set_budget_exhausted_for_tenant.assert_not_awaited()
-        assert svc._api_keys.set_budget_exhausted_for_key.await_args_list == [
-            ((10, False),), ((11, False),),
-        ]
+        svc._api_keys.set_budget_exhausted_for_keys.assert_awaited_once_with([10, 11], False)
 
     @pytest.mark.asyncio
     async def test_top_up_does_not_clear_a_key_still_individually_exhausted(self) -> None:
@@ -428,7 +426,7 @@ class TestReviseTenantBudget:
         await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), db)
 
         svc._api_keys.set_budget_exhausted_for_tenant.assert_not_awaited()
-        svc._api_keys.set_budget_exhausted_for_key.assert_awaited_once_with(10, False)
+        svc._api_keys.set_budget_exhausted_for_keys.assert_awaited_once_with([10], False)
 
     @pytest.mark.asyncio
     async def test_top_down_to_zero_sets_budget_exhausted_flag(self) -> None:
@@ -489,7 +487,7 @@ class TestReviseTenantBudget:
         await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), db)
 
         svc._api_keys.set_budget_exhausted_for_tenant.assert_not_awaited()
-        svc._api_keys.set_budget_exhausted_for_key.assert_not_awaited()
+        svc._api_keys.set_budget_exhausted_for_keys.assert_awaited_once_with([], False)
         db.execute.assert_not_awaited()
 
     @pytest.mark.asyncio

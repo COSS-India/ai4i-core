@@ -44,10 +44,12 @@ class CreateAPIKeyRequest(BaseSchema):
         max_digits=15,
         decimal_places=2,
         description=(
-            "₹ ceiling for this key, as an alternative to allocated_percentage — the server "
-            "converts it to the equivalent allocated_percentage of the Application's own Budget "
-            "immediately, so it goes through the same ALLOCATION_TOTAL_EXCEEDED cap check and "
-            "ends up stored the same way. Give at most one of allocated_percentage / budget."
+            "₹ ceiling for this key, as an alternative to allocated_percentage. The server "
+            "derives an equivalent allocated_percentage of the Application's own Budget "
+            "immediately to run the same ALLOCATION_TOTAL_EXCEEDED cap check every "
+            "allocated_percentage-created key goes through (rejected if it rounds to 0.00%), "
+            "but stores this exact requested amount as allocated_budget, not the rounded "
+            "derivative. One of allocated_percentage / budget is required; give at most one."
         ),
     )
 
@@ -84,7 +86,11 @@ class CreateAPIKeyData(BaseSchema):
     application_id: int
     allocated_percentage: Optional[Decimal] = None
     allocated_budget: Optional[Decimal] = Field(
-        None, description="Derived: application.allocated_budget * allocated_percentage / 100."
+        None,
+        description=(
+            "The requested ₹ ceiling verbatim (rounded to cents) when this key was created via "
+            "`budget`; otherwise derived as application.allocated_budget * allocated_percentage / 100."
+        ),
     )
 
 
