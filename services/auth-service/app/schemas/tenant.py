@@ -95,9 +95,12 @@ _TENANT_CREATE_EXAMPLE = {
     "organisation": "Acme Language Services",
     "email": "admin@example.com",
     "phone_number": "+919876543210",
-    "plan_id": "<place your uuid here>",
-    "tier_id": "<place your uuid here>",
     "allocated_budget": 10000.00,
+    # plan_id / tier_id omitted: both are optional and independent
+    # (TenantService.create_tenant only assigns/verifies each when given —
+    # see plan_id/tier_id field descriptions), and a placeholder here would
+    # fail UUID parsing and 422 the prefilled body instead of creating a
+    # tenant. Add either (with a real id) to test plan/tier assignment at creation.
 }
 
 

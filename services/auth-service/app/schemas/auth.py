@@ -52,7 +52,9 @@ _REGISTER_REQUEST_EXAMPLE = {
     "full_name": "Jane Doe",
     "phone_number": "+919876543210",
     "timezone": "Asia/Kolkata",
-    "tenant_id": "<place your id here>",
+    # tenant_id omitted: it's optional, and a placeholder here would fail int
+    # parsing and 422 the prefilled body instead of registering. Add it with
+    # a real tenant id (see the field description) to test tenant-scoped signup.
 }
 
 
@@ -141,7 +143,9 @@ class SetPasswordRequest(BaseSchema):
 
 _RESEND_SETUP_LINK_REQUEST_EXAMPLE = {
     "email": "user@example.com",
-    "tenant_id": "<place your id here>",
+    # tenant_id omitted: it's optional, and a placeholder here would fail int
+    # parsing and 422 the prefilled body. Only add it (with a real tenant id —
+    # see the field description) when resending against a masked contact email.
 }
 
 
