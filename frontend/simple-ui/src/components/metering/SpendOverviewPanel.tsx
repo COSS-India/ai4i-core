@@ -33,43 +33,6 @@ function spendChangeArrow(spendChangePercent: number): string {
   return "→";
 }
 
-function moneyOrDash(value: number | null | undefined, currency: string): string {
-  return value == null ? "—" : formatSpendMoney(value, currency);
-}
-
-function SpendTotalCard({
-  label,
-  money,
-  tooltip,
-}: Readonly<{ label: string; money: string; tooltip?: string }>) {
-  return (
-    <Box
-      bg={SPEND_CARD_BG}
-      borderRadius="12px"
-      borderWidth="1px"
-      borderColor="gray.200"
-      p="18px 20px"
-      flex="1"
-      minW={0}
-    >
-      <HStack spacing={1.5} mb={2} align="center">
-        <Text
-          fontSize="11px"
-          fontWeight="semibold"
-          letterSpacing="0.04em"
-          color={USAGE_SPEND_ACCENT}
-        >
-          {label}
-        </Text>
-        {tooltip ? <InfoTip message={tooltip} /> : null}
-      </HStack>
-      <Text fontSize="22px" fontWeight="bold" lineHeight="1.1" color="gray.800" noOfLines={1}>
-        {money}
-      </Text>
-    </Box>
-  );
-}
-
 interface SpendOverviewPanelProps {
   summary?: UsageSummaryResponse;
   isLoading: boolean;
@@ -240,27 +203,6 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
     color: taskTypeColor(item.modelTaskType, i),
   }));
 
-  const totalCards = useMemo(() => {
-    const tips = METERING.USAGE_SPEND.TOOLTIPS;
-    return [
-      {
-        label: METERING.USAGE_SPEND.TOTAL_ALLOCATED,
-        money: moneyOrDash(summary?.totalAllocatedBudget, currency),
-        tooltip: tips.TOTAL_ALLOCATED,
-      },
-      {
-        label: METERING.USAGE_SPEND.TOTAL_USED,
-        money: moneyOrDash(summary?.totalSpend, currency),
-        tooltip: tips.TOTAL_USED,
-      },
-      {
-        label: METERING.USAGE_SPEND.TOTAL_REMAINING,
-        money: moneyOrDash(summary?.totalRemainingBudget, currency),
-        tooltip: tips.TOTAL_REMAINING,
-      },
-    ];
-  }, [summary, currency]);
-
   const leftPanel = tenantDetail ? (
     <VStack align="stretch" spacing={4} {...cardFlex}>
       <TenantBudgetCard detail={tenantDetail} currency={currency} isLoading={isLoading} />
@@ -281,46 +223,32 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
     <Center minH="140px" w="full">
       <Spinner color="blue.500" />
     </Center>
-  ) : (
-    <VStack align="stretch" spacing={4} w="full">
-      <Flex gap={4} direction={{ base: "column", sm: "row" }}>
-        {totalCards.map((card) => (
-          <SpendTotalCard
-            key={card.label}
-            label={card.label}
-            money={card.money}
-            tooltip={card.tooltip}
-          />
-        ))}
+  ) : showProgramMetrics ? (
+    <Box bg={SPEND_CARD_BG} borderRadius="12px" borderWidth="1px" borderColor="gray.200" p="14px 20px" w="full">
+      <Flex
+        direction={{ base: "column", sm: "row" }}
+        gap={{ base: "9px", sm: 6 }}
+        justify="space-between"
+        fontSize="12.5px"
+        flexWrap="wrap"
+      >
+        <HStack spacing={1.5}>
+          <Text color="gray.500">Active {INSTITUTIONS.toLowerCase()}:</Text>
+          <InfoTip message={METERING.USAGE_SPEND.TOOLTIPS.ACTIVE_TENANTS} />
+          <Text fontWeight="semibold" color="gray.800">{summary?.activeTenants ?? "—"}</Text>
+        </HStack>
+        <HStack spacing={1.5}>
+          <Text color="gray.500">vs last month:</Text>
+          <InfoTip message={METERING.USAGE_SPEND.TOOLTIPS.VS_LAST_MONTH} />
+          <Text fontWeight="semibold" color={spendChangeColor(spendChangePercent) ?? "gray.800"}>
+            {spendChangePercent == null
+              ? "—"
+              : `${spendChangeArrow(spendChangePercent)} ${Math.abs(spendChangePercent).toFixed(1)}%`}
+          </Text>
+        </HStack>
       </Flex>
-      {showProgramMetrics ? (
-        <Box bg={SPEND_CARD_BG} borderRadius="12px" borderWidth="1px" borderColor="gray.200" p="14px 20px">
-          <Flex
-            direction={{ base: "column", sm: "row" }}
-            gap={{ base: "9px", sm: 6 }}
-            justify="space-between"
-            fontSize="12.5px"
-            flexWrap="wrap"
-          >
-            <HStack spacing={1.5}>
-              <Text color="gray.500">Active {INSTITUTIONS.toLowerCase()}:</Text>
-              <InfoTip message={METERING.USAGE_SPEND.TOOLTIPS.ACTIVE_TENANTS} />
-              <Text fontWeight="semibold" color="gray.800">{summary?.activeTenants ?? "—"}</Text>
-            </HStack>
-            <HStack spacing={1.5}>
-              <Text color="gray.500">vs last month:</Text>
-              <InfoTip message={METERING.USAGE_SPEND.TOOLTIPS.VS_LAST_MONTH} />
-              <Text fontWeight="semibold" color={spendChangeColor(spendChangePercent) ?? "gray.800"}>
-                {spendChangePercent == null
-                  ? "—"
-                  : `${spendChangeArrow(spendChangePercent)} ${Math.abs(spendChangePercent).toFixed(1)}%`}
-              </Text>
-            </HStack>
-          </Flex>
-        </Box>
-      ) : null}
-    </VStack>
-  );
+    </Box>
+  ) : null;
 
   let spendBody: React.ReactNode;
   if (isLoading) {

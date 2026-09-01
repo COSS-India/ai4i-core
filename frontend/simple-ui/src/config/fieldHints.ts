@@ -170,7 +170,7 @@ export const FIELD_HINTS = {
     },
     budget: {
       placeholder: "0",
-      helper: "Optional. Percentage of the parent Application's Budget.",
+      helper: "Required. Percentage of the parent Application's Budget.",
     },
     search: {
       placeholder: "Search by key name",
@@ -214,6 +214,10 @@ export const FIELD_HINTS = {
     },
     domainFilter: {
       helper: "Exact-match filter on Application domain.",
+    },
+    status: {
+      activate: "Turn on to activate this Application.",
+      deactivate: "Turn off to deactivate this Application.",
     },
     tooltips: {
       totalApplications:

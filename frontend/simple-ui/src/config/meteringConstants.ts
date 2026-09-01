@@ -377,11 +377,6 @@ export const METERING = {
       BREAKDOWN_SUBTITLE_PREFIX: "Consumption across all Models ·",
       DONUT_PRIMARY: "All",
       DONUT_SECONDARY: "Models",
-      TASK_TYPE_DONUT_TITLE: "Usage by model task type",
-      TASK_TYPE_DONUT_SUBTITLE:
-        "Request distribution across model task types · reflects selected time window",
-      TASK_TYPE_DONUT_PRIMARY: "All",
-      TASK_TYPE_DONUT_SECONDARY: "Task types",
       TOTAL_MODELS: "Total models",
       ACTIVE_MODELS: "Active models",
       MOST_USED: "Most used model",
@@ -399,7 +394,8 @@ export const METERING = {
       TABLE_FAILURE: "Failure rate %",
       FILTER_TASK_TYPES: "Model Task Type",
       TOOLTIPS: {
-        TASK_TYPE: "Model task type for this service (from the service registry).",
+        TASK_TYPE:
+          "The task type this model performs, as registered in the Model Registry.",
         TOTAL_MODELS:
           "Registered model versions for enabled task types in the Registry (active and deprecated).",
         ACTIVE_MODELS:
