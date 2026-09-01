@@ -178,54 +178,6 @@ export interface ApplicationApiKeyRow {
   is_active: boolean;
 }
 
-/** GET /auth/api-keys?application_id= — keys under one Application (for budget cascade preview). */
-export async function listApplicationApiKeys(
-  applicationId: string,
-): Promise<ApplicationApiKeyRow[]> {
-  const response = await apiService.get(`${apiEndpoints.auth.base}/api-keys`, {
-    ...SILENT,
-    params: { application_id: applicationId },
-  });
-  const envelope = unwrapEnvelope(response.data);
-  const groups = Array.isArray(envelope) ? envelope : [];
-  const targetId = String(applicationId);
-  for (const group of groups) {
-    const row = asRecord(group);
-    if (!row) continue;
-    const appId = asString(row.application_id);
-    if (appId !== targetId) continue;
-    const keyRows = Array.isArray(row.api_keys) ? row.api_keys : [];
-    return keyRows.map((raw) => {
-      const k = asRecord(raw) ?? {};
-      return {
-        id: asNumber(k.id) ?? 0,
-        key_name: asString(k.key_name),
-        allocated_percentage: asNumber(k.allocated_percentage) ?? 0,
-        allocated_budget: asNumber(k.allocated_budget),
-        consumed_budget: asNumber(k.budget_used ?? k.consumed_budget),
-        is_active: k.is_active !== false,
-      };
-    });
-  }
-  if (groups.length === 1) {
-    const keyRows = Array.isArray(asRecord(groups[0])?.api_keys)
-      ? (asRecord(groups[0])!.api_keys as unknown[])
-      : [];
-    return keyRows.map((raw) => {
-      const k = asRecord(raw) ?? {};
-      return {
-        id: asNumber(k.id) ?? 0,
-        key_name: asString(k.key_name),
-        allocated_percentage: asNumber(k.allocated_percentage) ?? 0,
-        allocated_budget: asNumber(k.allocated_budget),
-        consumed_budget: asNumber(k.budget_used ?? k.consumed_budget),
-        is_active: k.is_active !== false,
-      };
-    });
-  }
-  return [];
-}
-
 /** Load every Application for bulk budget edit (ignores table search). */
 export async function listAllApplicationsForBudget(tenantId: string): Promise<ApplicationListResult> {
   return listApplications(tenantId, { page: 1, size: 500 });
