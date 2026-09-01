@@ -1,5 +1,6 @@
 """Billing helpers for the pay-per-use Kafka consumer."""
 import json
+import time
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Optional
@@ -102,6 +103,77 @@ async def get_service_pricing(
     return pricing
 
 
+# Process-local memo for the DB-fallback path, keyed by lowercased name.
+# Bounded by the size of the catalogue (~12 rows), so no eviction policy needed.
+_inference_type_ids: dict[str, tuple[Optional[int], float]] = {}
+
+
+async def get_inference_type_id(db: AsyncSession, inference_name: str) -> Optional[int]:
+    """Resolve inference_type_id for a task type; Redis, then memo, then DB.
+
+    Reads ``core:inference_type:<name>`` — written by platform-core's
+    ``inference_type_cache``, a cross-service contract (both services must
+    share a Redis host and logical DB). The DB fallback is mandatory, not
+    belt-and-braces: these keys live under allkeys-lru pressure, and a
+    cache-only path would silently stop resolving ids under memory pressure.
+
+    This function deliberately does **not** write back to Redis. Those keys hold
+    the whole catalogue row and platform-core reads them expecting that shape;
+    writing a partial ``{"id": n}`` from here would corrupt them. platform-core
+    stays the single writer (it warms on startup and rebuilds on every
+    mutation). The process-local memo below keeps a cold Redis from costing a
+    DB round-trip per message — one per task type per process instead.
+
+    Returns None when the name is empty or absent from the catalogue. None is
+    safe — quota_usage.inference_type_id is nullable in phase 1 and the upsert
+    still joins and conflicts on inference_name.
+    """
+    if not inference_name:
+        return None
+    normalized = inference_name.lower()
+
+    try:
+        redis = get_redis_client()
+    except RuntimeError:
+        redis = None
+
+    cache_key = f"{Constants.INFERENCE_TYPE_CACHE_PREFIX}{normalized}"
+    if redis is not None:
+        try:
+            # The key is a hash written by platform-core; pull only the one
+            # field this needs. HGET returns None when either the key or the
+            # field is absent, which falls through to the memo/DB below.
+            cached_id = await redis.hget(cache_key, "id")
+            if cached_id:
+                return int(cached_id)
+        except Exception as exc:
+            logger.warning(
+                "Inference type cache read failed for %s: %s", normalized, exc
+            )
+
+    memo = _inference_type_ids.get(normalized)
+    if memo is not None and time.monotonic() < memo[1]:
+        return memo[0]
+
+    result = await db.execute(
+        text("SELECT id FROM inference_types WHERE name = :name LIMIT 1"),
+        {"name": normalized},
+    )
+    row = result.first()
+    type_id = int(row.id) if row is not None else None
+    if type_id is None:
+        logger.warning(
+            "Inference type %r not found in catalogue — quota_usage row will "
+            "carry a NULL inference_type_id",
+            normalized,
+        )
+    _inference_type_ids[normalized] = (
+        type_id,
+        time.monotonic() + Constants.INFERENCE_TYPE_MEMO_TTL,
+    )
+    return type_id
+
+
 def calculate_cost(total_units: Decimal, pricing: ServicePricing) -> Decimal:
     """
     ₹ cost for total_units.
@@ -124,6 +196,7 @@ async def deduct_balance_and_update_quota(
     cost: Decimal,
     api_key_id: int = 0,
     tier_id: Optional[str] = None,
+    inference_type_id: Optional[int] = None,
 ) -> BillingWriteResult:
     """
     Single round-trip fusing budget deduction (budget_usage) + quota upsert
@@ -142,6 +215,14 @@ async def deduct_balance_and_update_quota(
     Passing an empty string instead of None would raise
     "invalid input syntax for type uuid" in Postgres; callers must normalise
     "" to None before calling (handler._get_otel_attributes does this).
+
+    inference_type_id is written but never read: the join and the ON CONFLICT
+    target both stay on inference_name for phase 1 (AI4IDS-2933). Moving them
+    onto the FK while any tier_quotas row still carries a NULL id would make
+    quota_upsert return no row, which reads as quota_recorded=False and
+    defaults quota_exhausted to True — 429ing tenants on a working tier. The
+    DO UPDATE clause sets it too, so rows predating this change backfill
+    themselves on their next write.
     """
     result = await db.execute(
         text(
@@ -154,14 +235,16 @@ async def deduct_balance_and_update_quota(
             "),"
             " quota_upsert AS ("
             "    INSERT INTO quota_usage"
-            "      (id, tenant_id, inference_name, billing_month, monthly_quota_snap,"
-            "       monthly_quota_used, tier_id)"
-            "    SELECT gen_random_uuid(), :tenant_id, CAST(:inference_name AS text), :billing_month,"
+            "      (id, tenant_id, inference_name, inference_type_id, billing_month,"
+            "       monthly_quota_snap, monthly_quota_used, tier_id)"
+            "    SELECT gen_random_uuid(), :tenant_id, CAST(:inference_name AS text),"
+            "           CAST(:inference_type_id AS int), :billing_month,"
             "           tq.monthly_quota, :units, :tier_id"
             "    FROM tier_quotas tq"
             "    WHERE tq.tier_id = CAST(:tier_id AS uuid) AND tq.inference_name = CAST(:inference_name AS text)"
             "    ON CONFLICT (tenant_id, inference_name, billing_month, tier_id)"
             "    DO UPDATE SET monthly_quota_used = quota_usage.monthly_quota_used + EXCLUDED.monthly_quota_used,"
+            "                  inference_type_id = EXCLUDED.inference_type_id,"
             "                  updated_at = now()"
             "    RETURNING monthly_quota_used, monthly_quota_snap, tier_id"
             " )"
@@ -176,6 +259,7 @@ async def deduct_balance_and_update_quota(
             "api_key_id": api_key_id,
             "tenant_id": tenant_id,
             "inference_name": inference_name,
+            "inference_type_id": inference_type_id,
             "billing_month": billing_month,
             "units": units,
             "cost": cost,

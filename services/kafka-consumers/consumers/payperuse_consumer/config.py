@@ -11,6 +11,15 @@ from pydantic_settings import BaseSettings
 
 class Constants:
     PRICING_CACHE_PREFIX = "ppu:svc:"
+    # Written by platform-core (app/services/pay_per_use/inference_type_cache.py),
+    # read here — a cross-service contract, hence the "core:" namespace rather
+    # than this consumer's "ppu:". Both services must point at the same Redis
+    # host AND logical DB for this to resolve.
+    INFERENCE_TYPE_CACHE_PREFIX = "core:inference_type:"
+    # Process-local memo TTL for the DB-fallback path only (Redis is still
+    # checked first on every call). Short, so a rename or re-seed is picked
+    # up quickly even while Redis is cold.
+    INFERENCE_TYPE_MEMO_TTL = 300
     PRICING_CACHE_TTL = 3600
     BILLED_KEY_PREFIX = "ppu:billed:"
     # Only needs to outlive the redelivery window after a consumer crash/
