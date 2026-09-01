@@ -159,23 +159,14 @@ export async function updateApplication(
 export async function updateApplicationAllocations(
   tenantId: string,
   allocations: AllocationUpdate[],
-): Promise<Application[]> {
-  const application_allocations = allocations.map((row) => ({
-    application_id: Number(row.application_id),
-    allocated_percentage: row.allocated_percentage,
-  }));
-  const response = await apiService.put(
-    apiEndpoints.allocations,
-    { application_allocations },
-    { ...SILENT, params: { tenant_id: tenantId } },
-  );
-  const data = asRecord(unwrapEnvelope(response.data)) ?? {};
-  const rows = Array.isArray(data.application_allocations)
-    ? data.application_allocations
-    : Array.isArray(data.allocations)
-      ? data.allocations
-      : [];
-  return rows.map((row) => normalizeApplication(row, tenantId));
+): Promise<void> {
+  const body = {
+    applications: allocations.map((row) => ({
+      application_id: Number(row.application_id),
+      allocation: row.allocation,
+    })),
+  };
+  await apiService.put(apiEndpoints.tenants.budgetAllocation(tenantId), body, SILENT);
 }
 
 export interface ApplicationApiKeyRow {

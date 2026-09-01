@@ -246,11 +246,11 @@ export default function CreateApiKeyTab({
               </Box>
             </FormControl>
 
-            <FormControl isInvalid={Boolean(create.fieldErrors.budget)}>
+            <FormControl isRequired isInvalid={Boolean(create.fieldErrors.budget)}>
               <FormLabel fontWeight="semibold">
                 Budget Allocation{" "}
                 <Text as="span" fontWeight="normal" color="gray.500" fontSize="sm">
-                  (optional — % of the Application&apos;s Budget)
+                  (% of the Application&apos;s Budget)
                 </Text>
               </FormLabel>
               <PercentageStepper

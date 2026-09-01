@@ -399,7 +399,8 @@ export const METERING = {
       TABLE_FAILURE: "Failure rate %",
       FILTER_TASK_TYPES: "Model Task Type",
       TOOLTIPS: {
-        TASK_TYPE: "Model task type for this service (from the service registry).",
+        TASK_TYPE:
+          "The task type this model performs, as registered in the Model Registry.",
         TOTAL_MODELS:
           "Registered model versions for enabled task types in the Registry (active and deprecated).",
         ACTIVE_MODELS:

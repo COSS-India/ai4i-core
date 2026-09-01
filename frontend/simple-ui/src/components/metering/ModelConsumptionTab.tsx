@@ -1,7 +1,13 @@
 import {
   Box,
+  Button,
   Checkbox,
   HStack,
+  Menu,
+  MenuButton,
+  MenuItem,
+  MenuList,
+  Portal,
   SimpleGrid,
   Tbody,
   Td,
@@ -10,9 +16,8 @@ import {
   Tooltip,
   Tr,
   VStack,
-  Wrap,
-  WrapItem,
 } from "@chakra-ui/react";
+import { ChevronDownIcon } from "@chakra-ui/icons";
 import React, { useEffect, useMemo, useState } from "react";
 import { formatModelTaskTypeLabel } from "../../config/constants";
 import { METERING } from "../../config/meteringConstants";
@@ -20,7 +25,6 @@ import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import type { ModelConsumptionResponse, ModelTopN } from "../../types/metering";
 import {
   buildModelBreakdownChart,
-  buildTaskTypeConsumptionChart,
   buildTopModelsChart,
   deriveModelInsights,
   formatCompactNumber,
@@ -101,10 +105,17 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
     [data?.summary, filteredBreakdown],
   );
 
-  const taskTypeChart = useMemo(
-    () => buildTaskTypeConsumptionChart(filteredBreakdown),
-    [filteredBreakdown],
-  );
+  const taskTypeFilterLabel = useMemo(() => {
+    if (allTaskTypesSelected) return "All model task types";
+    if (selectedTaskTypes.size === 0) return "No model task types selected";
+    if (selectedTaskTypes.size === 1) {
+      const only = taskTypeNames.find((taskType) =>
+        selectedTaskTypes.has(normalizeModelTaskType(taskType)),
+      );
+      return only ? formatModelTaskTypeLabel(only) : "1 selected";
+    }
+    return `${selectedTaskTypes.size} model task types selected`;
+  }, [allTaskTypesSelected, selectedTaskTypes, taskTypeNames]);
 
   const sortAccessors = useMemo(
     () => ({
@@ -200,49 +211,6 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
             </SimpleGrid>
           ) : null}
 
-          {taskTypeChart.slices.length > 0 ? (
-            <MeteringSectionCard
-              title={section.TASK_TYPE_DONUT_TITLE}
-              subtitle={section.TASK_TYPE_DONUT_SUBTITLE}
-              sectionLabel
-            >
-              <DonutRankedLayout
-                chart={
-                  <MeteringDonutChart
-                    data={taskTypeChart.slices.map(({ name, value, color }) => ({
-                      name,
-                      value,
-                      color,
-                    }))}
-                    height={260}
-                    innerRadius={65}
-                    outerRadius={100}
-                    showTooltip
-                    centerPrimary={section.TASK_TYPE_DONUT_PRIMARY}
-                    centerSecondary={section.TASK_TYPE_DONUT_SECONDARY}
-                    total={taskTypeChart.totalRequests}
-                  />
-                }
-                list={
-                  <RankedShareList
-                    rows={taskTypeChart.slices.map((slice, i) => ({
-                      rank: i + 1,
-                      label: slice.name,
-                      formattedValue: formatCompactNumber(slice.value, "indian"),
-                      percentage: slice.pct,
-                      color: slice.color,
-                    }))}
-                    headerLeft={section.TABLE_TASK_TYPE}
-                    headerTotal={METERING.SECTIONS.RANKED_SHARE.HEADER_TOTAL_REQUESTS}
-                    headerRight={METERING.SECTIONS.RANKED_SHARE.HEADER_RIGHT}
-                    tipTotal={METERING.SECTIONS.RANKED_SHARE.TOOLTIPS.TOTAL_REQUESTS}
-                    tipRight={METERING.SECTIONS.RANKED_SHARE.TOOLTIPS.PCT_OF_TOTAL}
-                  />
-                }
-              />
-            </MeteringSectionCard>
-          ) : null}
-
           <MeteringSectionCard
             title={section.TITLE}
             subtitle={section.SUBTITLE}
@@ -286,11 +254,13 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
                       formatCompactNumber(row.requests, "indian"),
                     percentage: row.consumption_pct,
                   }))}
+                  variant="modelWithTaskType"
                   headerLeft="Model"
                   headerTaskType={section.TABLE_TASK_TYPE}
                   headerTotal={METERING.SECTIONS.RANKED_SHARE.HEADER_TOTAL_REQUESTS}
                   headerRight={METERING.SECTIONS.RANKED_SHARE.HEADER_RIGHT}
                   tipTotal={METERING.SECTIONS.RANKED_SHARE.TOOLTIPS.TOTAL_REQUESTS}
+                  tipTaskType={section.TOOLTIPS.TASK_TYPE}
                   tipRight={section.TOOLTIPS.CONSUMPTION_PCT}
                 />
               }
@@ -304,33 +274,68 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
             bare
           >
             {taskTypeNames.length > 0 ? (
-              <Box mb={4}>
+              <Box mb={4} maxW={{ base: "full", sm: "320px" }}>
                 <Text fontSize="xs" fontWeight="semibold" color="gray.600" mb={2}>
                   {section.FILTER_TASK_TYPES}
                 </Text>
-                <Wrap spacing={3}>
-                  {taskTypeNames.map((taskType) => {
-                    const key = normalizeModelTaskType(taskType);
-                    const checked = selectedTaskTypes.has(key);
-                    return (
-                      <WrapItem key={taskType}>
-                        <Checkbox
-                          size="sm"
-                          isChecked={checked}
-                          onChange={() => toggleTaskType(taskType)}
-                        >
-                          {formatModelTaskTypeLabel(taskType)}
-                        </Checkbox>
-                      </WrapItem>
-                    );
-                  })}
-                </Wrap>
+                <Menu closeOnSelect={false} matchWidth>
+                  <MenuButton
+                    as={Button}
+                    rightIcon={<ChevronDownIcon />}
+                    w="full"
+                    textAlign="left"
+                    fontWeight="normal"
+                    variant="outline"
+                    colorScheme="gray"
+                    color="gray.800"
+                    bg="white"
+                    size="sm"
+                    justifyContent="space-between"
+                  >
+                    <Text as="span" isTruncated display="block" minW={0}>
+                      {taskTypeFilterLabel}
+                    </Text>
+                  </MenuButton>
+                  <Portal>
+                    <MenuList maxH="320px" overflowY="auto" zIndex={10}>
+                      {taskTypeNames.map((taskType) => {
+                        const key = normalizeModelTaskType(taskType);
+                        const checked = selectedTaskTypes.has(key);
+                        return (
+                          <MenuItem
+                            key={taskType}
+                            onClick={() => toggleTaskType(taskType)}
+                            closeOnSelect={false}
+                          >
+                            <Checkbox
+                              isChecked={checked}
+                              onChange={() => toggleTaskType(taskType)}
+                              onClick={(e) => e.stopPropagation()}
+                              mr={2}
+                            />
+                            {formatModelTaskTypeLabel(taskType)}
+                          </MenuItem>
+                        );
+                      })}
+                    </MenuList>
+                  </Portal>
+                </Menu>
               </Box>
             ) : null}
 
             <MeteringDataTable>
               <Thead bg="gray.50">
                 <Tr>
+                  <SortableTh
+                    sortKey="requests"
+                    activeSortKey={sortKey}
+                    sortDirection={sortDirection}
+                    onSort={toggleSort}
+                    message={section.TOOLTIPS.TOTAL_REQUESTS}
+                    isNumeric
+                  >
+                    {section.TABLE_TOTAL_REQUESTS}
+                  </SortableTh>
                   <SortableTh
                     sortKey="task_type"
                     activeSortKey={sortKey}
@@ -355,16 +360,6 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
                     onSort={toggleSort}
                   >
                     {section.TABLE_SERVICE}
-                  </SortableTh>
-                  <SortableTh
-                    sortKey="requests"
-                    activeSortKey={sortKey}
-                    sortDirection={sortDirection}
-                    onSort={toggleSort}
-                    message={section.TOOLTIPS.TOTAL_REQUESTS}
-                    isNumeric
-                  >
-                    {section.TABLE_TOTAL_REQUESTS}
                   </SortableTh>
                   <SortableTh
                     sortKey="native_units"
@@ -401,6 +396,9 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
               <Tbody>
                 {sortedRows.map((row, i) => (
                   <Tr key={`${row.service_id}-${row.model_name ?? i}`}>
+                    <Td isNumeric fontSize="sm">
+                      {formatCompactNumber(row.requests, "indian")}
+                    </Td>
                     <Td fontSize="sm">
                       {row.task_type ? (
                         <TaskTypeLabel
@@ -426,9 +424,6 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
                           {row.name}
                         </Text>
                       </HStack>
-                    </Td>
-                    <Td isNumeric fontSize="sm">
-                      {formatCompactNumber(row.requests, "indian")}
                     </Td>
                     <Td isNumeric fontSize="sm" color="gray.600">
                       {formatNativeConsumption(row.native_units, row.native_unit_suffix)}

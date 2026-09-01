@@ -184,25 +184,29 @@ export function useCreateApiKeyTab({
     }
 
     const rawBudget = apiKeyForm.allocated_percentage.trim();
-    let allocatedPct: number | undefined;
-    if (rawBudget) {
-      const pct = Number(rawBudget);
-      if (!Number.isFinite(pct) || pct < 0) {
-        setFieldErrors((prev) => ({
-          ...prev,
-          budget: "Budget can't be negative.",
-        }));
-        return;
-      }
-      if (pct > availablePct + 1e-6) {
-        setFieldErrors((prev) => ({
-          ...prev,
-          budget: `Budget can't exceed ${formatPct(availablePct)}% — that's all that's unallocated within this Application.`,
-        }));
-        return;
-      }
-      allocatedPct = pct;
+    if (!rawBudget) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        budget: "Enter a budget allocation percentage.",
+      }));
+      return;
     }
+    const pct = Number(rawBudget);
+    if (!Number.isFinite(pct) || pct < 0) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        budget: "Budget can't be negative.",
+      }));
+      return;
+    }
+    if (pct > availablePct + 1e-6) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        budget: `Budget can't exceed ${formatPct(availablePct)}% — that's all that's unallocated within this Application.`,
+      }));
+      return;
+    }
+    const allocatedPct = pct;
 
     const tid = tenantId?.trim();
     if (!tid) {

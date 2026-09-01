@@ -55,5 +55,8 @@ export interface UpdateApplicationPayload {
 
 export interface AllocationUpdate {
   application_id: string;
-  allocated_percentage: number;
+  allocation: {
+    type: "PERCENTAGE" | "FIXED";
+    value: number;
+  };
 }
