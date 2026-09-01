@@ -5,6 +5,7 @@ import type { useMeteringDashboard } from "../../hooks/useMeteringDashboard";
 import { OverviewKpiCards, ConsumptionOverviewSection } from "./OverviewSections";
 import ModelConsumptionTab from "./ModelConsumptionTab";
 import UsageAndSpendTab from "./UsageAndSpendTab";
+import ApplicationUsageTab from "./ApplicationUsageTab";
 
 type MeteringDashboardState = ReturnType<typeof useMeteringDashboard>;
 
@@ -72,6 +73,14 @@ export const TenantDashboardPanels: React.FC<TenantPanelsProps> = ({
         refreshNonce={refreshNonce}
       />
     )}
+    {subTab === METERING.SUB_TAB.APPLICATIONS && (
+      <ApplicationUsageTab
+        isTenantView
+        tenantId={tenantId}
+        organisationLabel={organisationLabel}
+        refreshNonce={refreshNonce}
+      />
+    )}
   </Box>
 );
 
@@ -124,6 +133,12 @@ export const AdopterDashboardPanels: React.FC<AdopterPanelsProps> = ({
     )}
     {subTab === METERING.SUB_TAB.USAGE_SPEND && (
       <UsageAndSpendTab
+        scopeTenantId={scopeTenantId}
+        refreshNonce={refreshNonce}
+      />
+    )}
+    {subTab === METERING.SUB_TAB.APPLICATIONS && (
+      <ApplicationUsageTab
         scopeTenantId={scopeTenantId}
         refreshNonce={refreshNonce}
       />
