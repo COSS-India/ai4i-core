@@ -2,9 +2,9 @@
 Shared caller-scope authorization for Institution-scoped resources.
 
 Application Management (ApplicationService) and Allocation Management
-(AllocationService — PUT /auth/allocations) enforce the exact same "who may
-touch this Institution's data" rule, so it lives here once instead of being
-copy-pasted a second time.
+(AllocationService — the three Budget Allocation endpoints) enforce the
+exact same "who may touch this Institution's data" rule, so it lives here
+once instead of being copy-pasted a second time.
 """
 
 from fastapi import HTTPException, status

@@ -248,26 +248,33 @@ async def revise_tenant_budget(
     Replaces platform-core-service's PATCH /pay-per-use/tenant/budget —
     budget now lives on tenants.allocated_budget directly; available_balance
     no longer exists. Response is unwrapped (no success/data envelope),
-    matching the endpoint it replaces. ``applications_recomputed`` /
-    ``keys_recomputed`` are always null in this release — no recompute logic
-    exists yet.
+    matching the endpoint it replaces.
+
+    The revision cascades proportionally into every Application under the
+    tenant (and their own Keys, for any Application whose amount actually
+    changes) — ``applications_recomputed``/``keys_recomputed`` report how
+    many of each actually moved. A decrease that would push any Application
+    or Key below its own already-consumed amount rejects the WHOLE
+    revision, including the Tenant's own allocated_budget change — see
+    TenantService.revise_tenant_budget / AllocationService.
+    cascade_tenant_budget_revision.
 
     A top-down is rejected outright (409 budget_below_consumed) if it would
     drop the budget below this tenant's total spend across its API keys, or
-    refused (503 spend_verification_unavailable) if that spend can't be
-    verified right now — see TenantService.revise_tenant_budget. Once a
-    revision (either direction) commits, it best-effort recomputes and syncs
-    the cached budget-exhausted flag on this tenant's API keys too (see
+    refused (503 spend_verification_unavailable) if that spend — or the
+    cascade above — can't be verified/applied right now. Once a revision
+    (either direction) commits, it best-effort recomputes and syncs the
+    cached budget-exhausted flag on this tenant's API keys too (see
     TenantService._sync_ppu_wallet_and_exhaustion).
     """
-    tenant = await svc.revise_tenant_budget(
+    tenant, applications_recomputed, keys_recomputed = await svc.revise_tenant_budget(
         current_user, tenant_id, body.action, body.amount, platform_core_db
     )
     return TenantBudgetData(
         tenant_id=tenant.id,
         allocated_budget=tenant.allocated_budget,
-        applications_recomputed=None,
-        keys_recomputed=None,
+        applications_recomputed=applications_recomputed,
+        keys_recomputed=keys_recomputed,
         updated_at=tenant.updated_at,
     )
 

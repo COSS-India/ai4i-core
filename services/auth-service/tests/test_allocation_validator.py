@@ -1,6 +1,6 @@
 """allocation_validator — the one shared resolve_level/convert implementation
-behind every allocation write path (PATCH .../budget, both scopes of
-PUT /auth/allocations, and the Application->Key cascade).
+behind every allocation write path (PATCH .../budget, each of the three
+Budget Allocation endpoints, and the Application->Key cascade).
 
 Scenarios mirror the worked numbered examples from the design discussion —
 same numbers, so a wrong result here is a wrong result there too.
@@ -178,11 +178,15 @@ class TestResolveLevelShrink:
 
 class TestResolveLevelAcceptanceCriteria:
     """The exact story example: Institution 100%, App A=50%(40 used),
-    App B=30%(30 used, exhausted), App C=20%(5 used). This is the top-level
-    PUT /auth/allocations?tenant_id= scope — the Institution's own total
-    isn't changing, so refit_unlisted=False, matching what AllocationService
-    actually calls (see TestRefitUnlistedFalse for the same fixture's
-    untouched-sibling/sibling-sum behaviour)."""
+    App B=30%(30 used, exhausted), App C=20%(5 used), exercised here with
+    refit_unlisted=False — the Application->Keys edge's own top scope
+    (an unlisted Key is left exactly as it is when the Application's own
+    total isn't changing), and what AllocationService.
+    update_application_key_allocations actually calls. The Tenant->
+    Applications edge now calls this with refit_unlisted=True instead — an
+    unlisted Application IS proportionally re-fit, even though the Tenant's
+    own total isn't changing either (same refit_unlisted=True math the
+    other tests below already cover, e.g. TestSlackSurvivesAResize)."""
 
     @staticmethod
     def _apps():
@@ -234,10 +238,10 @@ class TestFeasibility:
 
 
 class TestRefitUnlistedFalse:
-    """The top-level PUT /auth/allocations scope: the parent's own total is
-    NOT changing this call, so unlisted siblings are left exactly as they
-    are — not resolved, not returned — only the explicit rows come back,
-    and the sibling-sum check uses siblings' CURRENT amounts."""
+    """The Application->Keys edge's own top scope: the Application's own
+    total is NOT changing this call, so unlisted Keys are left exactly as
+    they are — not resolved, not returned — only the explicit rows come
+    back, and the sibling-sum check uses siblings' CURRENT amounts."""
 
     @staticmethod
     def _apps():

@@ -118,32 +118,6 @@ def get_auth_service(
     )
 
 
-def get_tenant_service(
-    db: AsyncSession = Depends(get_db),
-    role_service: RoleService = Depends(get_role_service),
-    token_service: TokenService = Depends(get_token_service),
-    email_client: EmailClient = Depends(get_email_client),
-    api_key_service: APIKeyService = Depends(get_api_key_service),
-) -> TenantService:
-    """Lightweight tenant service — only injects what's needed for user provisioning.
-
-    Avoids pulling in entire AuthService (8 dependencies) when we only need
-    6 of them for provision_user(). Routes never called this to use other
-    AuthService methods, so this optimization is safe.
-    """
-    return TenantService(
-        tenant_repo=TenantRepository(db),
-        user_repo=UserRepository(db),
-        role_service=role_service,
-        verification_repo=VerificationRepository(db),
-        credentials_repo=CredentialsRepository(db),
-        token_service=token_service,
-        email_client=email_client,
-        api_key_service=api_key_service,
-        refresh_token_repo=RefreshTokenRepository(db),
-    )
-
-
 def get_application_service(
     db: AsyncSession = Depends(get_db),
 ) -> ApplicationService:
@@ -164,6 +138,35 @@ def get_allocation_service(
         tenant_repo=TenantRepository(db),
         role_repo=RoleRepository(db),
         db=db,
+    )
+
+
+def get_tenant_service(
+    db: AsyncSession = Depends(get_db),
+    role_service: RoleService = Depends(get_role_service),
+    token_service: TokenService = Depends(get_token_service),
+    email_client: EmailClient = Depends(get_email_client),
+    api_key_service: APIKeyService = Depends(get_api_key_service),
+    allocation_service: AllocationService = Depends(get_allocation_service),
+) -> TenantService:
+    """Lightweight tenant service — only injects what's needed for user provisioning.
+
+    Avoids pulling in entire AuthService (8 dependencies) when we only need
+    7 of them for provision_user() and revise_tenant_budget(). Routes never
+    called this to use other AuthService methods, so this optimization is
+    safe.
+    """
+    return TenantService(
+        tenant_repo=TenantRepository(db),
+        user_repo=UserRepository(db),
+        role_service=role_service,
+        verification_repo=VerificationRepository(db),
+        credentials_repo=CredentialsRepository(db),
+        token_service=token_service,
+        email_client=email_client,
+        api_key_service=api_key_service,
+        refresh_token_repo=RefreshTokenRepository(db),
+        allocation_service=allocation_service,
     )
 
 

@@ -315,10 +315,15 @@ class TenantBudgetData(BaseSchema):
     tenant_id: int
     allocated_budget: Optional[Decimal] = None
     applications_recomputed: Optional[int] = Field(
-        None, description="Not computed in this release; always null."
+        None,
+        description="Count of Applications under this Tenant whose allocated_budget/"
+        "allocated_percentage actually changed as a result of this revision's cascade.",
     )
     keys_recomputed: Optional[int] = Field(
-        None, description="Not computed in this release; always null."
+        None,
+        description="Count of API Keys (across every recomputed Application) whose "
+        "allocated_budget/allocated_percentage actually changed as a result of this "
+        "revision's cascade.",
     )
     updated_at: Optional[datetime] = None
 

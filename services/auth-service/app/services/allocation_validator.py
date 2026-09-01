@@ -2,10 +2,10 @@
 Allocation & Reallocation — the one shared validator.
 
 The single algorithm for resolving a parent's ₹ total across its children.
-Every write path that does this (PATCH /auth/tenants/{id}/budget, and both
-scopes of PUT /auth/allocations — Tenant->Applications and Application->Keys)
-calls ``resolve_level`` for that one level; none of them re-derives any part
-of this math independently.
+Every write path that does this (PATCH /auth/tenants/{id}/budget, and each
+of the three Budget Allocation endpoints — Tenant->Applications,
+Application->Keys, and the single-Key endpoint) calls ``resolve_level`` for
+that one level; none of them re-derives any part of this math independently.
 
 This module is deliberately pure — no DB session, no I/O. The orchestration
 around it (locking the parent, loading children plus their consumed

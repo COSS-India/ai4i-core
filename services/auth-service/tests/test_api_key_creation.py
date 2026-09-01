@@ -183,8 +183,8 @@ class TestBudgetParam:
     """budget (a raw ₹ ceiling, alternative to allocated_percentage) used to
     bypass ALLOCATION_TOTAL_EXCEEDED entirely and never populate
     allocated_percentage/allocated_budget — invisible to the sum both that
-    check and PUT /auth/allocations' resolve_level depend on. Now converted
-    to allocated_percentage up front, so it goes through the exact same
+    check and the Budget Allocation endpoints' resolve_level depend on. Now
+    converted to allocated_percentage up front, so it goes through the exact same
     path as any other request."""
 
     @pytest.mark.asyncio
@@ -332,8 +332,8 @@ class TestBudgetParam:
     @pytest.mark.asyncio
     async def test_budget_rounding_to_zero_percent_is_rejected(self) -> None:
         """A budget under 0.005% of the Application's own budget would
-        quantize to 0.00% — the cap check (and PUT /auth/allocations'
-        resolve_level, which sums percentages) would treat that as no
+        quantize to 0.00% — the cap check (and the Budget Allocation
+        endpoints' resolve_level, which sums percentages) would treat that as no
         allocation at all, exactly the invisibility bug this whole change
         exists to close. Must reject outright instead of silently creating
         a key with a real ₹ ceiling but a 0.00% footprint."""

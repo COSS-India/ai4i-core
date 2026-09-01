@@ -20,7 +20,7 @@ new implementation, without depending on a table that no longer exists.
 """
 
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -43,7 +43,16 @@ def _tenant(*, tier_id=None, allocated_budget=None) -> Tenant:
     )
 
 
-def _svc(*, roles=("ADMIN",)) -> TenantService:
+def _svc(*, roles=("ADMIN",), allocation_service=None) -> TenantService:
+    if allocation_service is None:
+        # Default double for revise_tenant_budget's cascade: no Applications/
+        # Keys actually recomputed, nothing to snapshot. Tests exercising the
+        # cascade itself pass their own mock with a more specific
+        # cascade_tenant_budget_revision return value.
+        allocation_service = AsyncMock()
+        allocation_service.cascade_tenant_budget_revision = AsyncMock(
+            return_value=(0, 0, {})
+        )
     svc = TenantService(
         tenant_repo=AsyncMock(),
         user_repo=AsyncMock(),
@@ -53,6 +62,7 @@ def _svc(*, roles=("ADMIN",)) -> TenantService:
         token_service=AsyncMock(),
         email_client=AsyncMock(),
         api_key_service=AsyncMock(),
+        allocation_service=allocation_service,
     )
     svc._roles.get_user_roles = AsyncMock(return_value=list(roles))
     return svc
@@ -304,7 +314,6 @@ class TestReviseTenantBudget:
             return_value=_tenant(allocated_budget=Decimal("1000"))
         )
         svc._tenants.update = AsyncMock()
-        svc._tenants.save_and_refresh = AsyncMock()
         svc._api_keys.list_key_ids_for_tenant = AsyncMock(return_value=[10])
         rows = [self._usage_row(10, Decimal("300.00"))]
         db = _core_db(budget_usage_rows=[rows, rows])  # verification, then the post-commit sync
@@ -394,7 +403,6 @@ class TestReviseTenantBudget:
             return_value=_tenant(allocated_budget=Decimal("0"))
         )
         svc._tenants.update = AsyncMock()
-        svc._tenants.save_and_refresh = AsyncMock()
         svc._api_keys.list_key_ids_for_tenant = AsyncMock(return_value=[10, 11])
         usage_rows = [self._usage_row(10, Decimal("60.00")), self._usage_row(11, Decimal("40.00"))]
         db = _core_db(budget_usage_rows=usage_rows)
@@ -415,7 +423,6 @@ class TestReviseTenantBudget:
             return_value=_tenant(allocated_budget=Decimal("0"))
         )
         svc._tenants.update = AsyncMock()
-        svc._tenants.save_and_refresh = AsyncMock()
         svc._api_keys.list_key_ids_for_tenant = AsyncMock(return_value=[10, 11])
         usage_rows = [
             self._usage_row(10, Decimal("60.00"), snap=Decimal("100.00")),
@@ -442,7 +449,6 @@ class TestReviseTenantBudget:
             return_value=_tenant(allocated_budget=Decimal("500"))
         )
         svc._tenants.update = AsyncMock()
-        svc._tenants.save_and_refresh = AsyncMock()
         svc._api_keys.list_key_ids_for_tenant = AsyncMock(return_value=[10])
         rows = [self._usage_row(10, Decimal("0"))]
         db = _core_db(budget_usage_rows=[rows, rows])
@@ -461,7 +467,6 @@ class TestReviseTenantBudget:
             return_value=_tenant(allocated_budget=Decimal("1000"))
         )
         svc._tenants.update = AsyncMock()
-        svc._tenants.save_and_refresh = AsyncMock()
         svc._api_keys.list_key_ids_for_tenant = AsyncMock(return_value=[10])
         db = _core_db(budget_usage_rows=[self._usage_row(10, Decimal("1200.00"))])
 
@@ -480,7 +485,6 @@ class TestReviseTenantBudget:
             return_value=_tenant(allocated_budget=Decimal("0"))
         )
         svc._tenants.update = AsyncMock()
-        svc._tenants.save_and_refresh = AsyncMock()
         svc._api_keys.list_key_ids_for_tenant = AsyncMock(return_value=[])
         db = _core_db()  # fetch_budget_usage short-circuits on empty key_ids — no execute call
 
@@ -500,7 +504,6 @@ class TestReviseTenantBudget:
             return_value=_tenant(allocated_budget=Decimal("0"))
         )
         svc._tenants.update = AsyncMock()
-        svc._tenants.save_and_refresh = AsyncMock()
 
         tenant = await svc.revise_tenant_budget(
             _admin_user(), 1, "top-up", Decimal("500"), None
@@ -520,7 +523,6 @@ class TestReviseTenantBudget:
             return_value=_tenant(allocated_budget=Decimal("0"))
         )
         svc._tenants.update = AsyncMock()
-        svc._tenants.save_and_refresh = AsyncMock()
         svc._api_keys.list_key_ids_for_tenant = AsyncMock(
             side_effect=RuntimeError("local DB connection lost")
         )
@@ -553,7 +555,6 @@ class TestReviseTenantBudget:
             return_value=_tenant(allocated_budget=Decimal("1000"))
         )
         svc._tenants.update = AsyncMock()
-        svc._tenants.save_and_refresh = AsyncMock()
         svc._api_keys.list_key_ids_for_tenant = AsyncMock(return_value=[10, 11])
         db = AsyncMock()
         db.execute = AsyncMock(side_effect=RuntimeError("platform-core unreachable"))
@@ -573,13 +574,149 @@ class TestReviseTenantBudget:
             return_value=_tenant(allocated_budget=Decimal("0"))
         )
         svc._tenants.update = AsyncMock()
-        svc._tenants.save_and_refresh = AsyncMock()
         db = AsyncMock()
 
         await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), db)
 
         assert svc._tenants.update.await_args.args[1]["allocated_budget"] == Decimal("500")
         db.execute.assert_not_awaited()
+
+
+class TestReviseTenantBudgetCascade:
+    """A tenant budget revision proportionally cascades into every
+    Application under it (and, for one whose own amount changes, its own
+    Keys in turn) via AllocationService.cascade_tenant_budget_revision —
+    the same resolve_level algorithm the Budget Allocation endpoints use,
+    not a separate implementation. These tests treat the cascade itself as
+    already covered by test_allocation_service.py and focus on
+    revise_tenant_budget's own contract with it: it's called with the
+    right arguments before anything commits, its counts flow through to
+    the response, and a failure anywhere in it rejects the WHOLE revision
+    — including the Tenant's own allocated_budget change — not just the
+    piece that broke."""
+
+    @pytest.mark.asyncio
+    async def test_allocation_service_missing_fails_closed(self) -> None:
+        """Same fail-closed reasoning as the top-down spend gate: an
+        un-cascade-able revision must not silently leave Applications/Keys
+        out of sync with the Tenant's new total."""
+        svc = _svc()
+        svc._allocations = None
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant(allocated_budget=Decimal("0"))
+        )
+        svc._tenants.update = AsyncMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"))
+
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.detail["error"] == "allocation_cascade_unavailable"
+        svc._tenants.update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_cascade_invoked_with_new_and_old_amounts_before_commit(self) -> None:
+        """Verifies the cascade sees (new_budget, current_budget) — not
+        (amount, 0) or some other pairing — and runs before the Tenant's
+        own row is staged, so its side effects are part of the same
+        not-yet-committed transaction."""
+        allocation_service = AsyncMock()
+        allocation_service.cascade_tenant_budget_revision = AsyncMock(
+            return_value=(2, 3, {7: Decimal("40.00")})
+        )
+        svc = _svc(allocation_service=allocation_service)
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant(allocated_budget=Decimal("1000"))
+        )
+        svc._tenants.update = AsyncMock()
+
+        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"))
+
+        allocation_service.cascade_tenant_budget_revision.assert_awaited_once_with(
+            1, Decimal("1500"), Decimal("1000"), ANY, None
+        )
+        svc._tenants.update.assert_awaited_once()
+        assert svc._tenants.update.await_args.args[1]["allocated_budget"] == Decimal("1500")
+
+    @pytest.mark.asyncio
+    async def test_increase_cascade_counts_flow_into_the_response(self) -> None:
+        """A top-up that proportionally grows N Applications and M of their
+        Keys reports those exact counts back, not hardcoded None/0."""
+        allocation_service = AsyncMock()
+        allocation_service.cascade_tenant_budget_revision = AsyncMock(
+            return_value=(3, 5, {})
+        )
+        svc = _svc(allocation_service=allocation_service)
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant(allocated_budget=Decimal("1000"))
+        )
+        svc._tenants.update = AsyncMock()
+
+        tenant, applications_recomputed, keys_recomputed = await svc.revise_tenant_budget(
+            _admin_user(), 1, "top-up", Decimal("500")
+        )
+
+        assert (applications_recomputed, keys_recomputed) == (3, 5)
+
+    @pytest.mark.asyncio
+    async def test_decrease_cascade_counts_flow_into_the_response(self) -> None:
+        """Same as the increase case, for a top-down that stays above total
+        spend and so is allowed through to the cascade."""
+        allocation_service = AsyncMock()
+        allocation_service.cascade_tenant_budget_revision = AsyncMock(
+            return_value=(2, 4, {})
+        )
+        svc = _svc(allocation_service=allocation_service)
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant(allocated_budget=Decimal("1000"))
+        )
+        svc._tenants.update = AsyncMock()
+        svc._api_keys.list_key_ids_for_tenant = AsyncMock(return_value=[10])
+        rows = [TestReviseTenantBudget._usage_row(10, Decimal("100.00"))]
+        db = _core_db(budget_usage_rows=[rows, rows])
+
+        tenant, applications_recomputed, keys_recomputed = await svc.revise_tenant_budget(
+            _admin_user(), 1, "top-down", Decimal("200"), db
+        )
+
+        assert (applications_recomputed, keys_recomputed) == (2, 4)
+        assert svc._tenants.update.await_args.args[1]["allocated_budget"] == Decimal("800")
+
+    @pytest.mark.asyncio
+    async def test_decrease_pushing_a_descendant_below_spend_rejects_the_whole_revision(
+        self,
+    ) -> None:
+        """If the cascade finds that squeezing the Tenant's total would push
+        some Application or Key below what it's already spent, resolve_level
+        raises out of cascade_tenant_budget_revision before this method ever
+        stages the Tenant's own allocated_budget change — so that change
+        never happens either. Nothing here explicitly rolls the Tenant row
+        back; the point is svc._tenants.update is simply never reached, and
+        it's the session-level rollback (on the real DB session, outside
+        this unit test's mocks) that discards the cascade's own staged
+        writes together with it — this test verifies the ordering that
+        makes that guarantee possible, not the DB rollback itself."""
+        allocation_service = AsyncMock()
+        allocation_service.cascade_tenant_budget_revision = AsyncMock(
+            side_effect=ValidationError(
+                message="Application 9 would drop to 40.00, below its consumed 55.00.",
+                code="ALLOCATION_BELOW_CONSUMED",
+            )
+        )
+        svc = _svc(allocation_service=allocation_service)
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant(allocated_budget=Decimal("1000"))
+        )
+        svc._tenants.update = AsyncMock()
+        svc._api_keys.list_key_ids_for_tenant = AsyncMock(return_value=[10])
+        rows = [TestReviseTenantBudget._usage_row(10, Decimal("100.00"))]
+        db = _core_db(budget_usage_rows=rows)  # only the pre-cascade spend-verification fetch runs
+
+        with pytest.raises(ValidationError):
+            await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("200"), db)
+
+        svc._tenants.update.assert_not_awaited()
+        svc._tenants.commit.assert_not_awaited()
 
 
 class TestListTenantTiers:

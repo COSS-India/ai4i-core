@@ -1,132 +1,151 @@
 """
-PUT /auth/allocations — request/response schemas.
+Budget Allocation APIs — three level-specific endpoints, replacing the old
+single PUT /auth/allocations (scoped by a tenant_id/application_id query
+param). Each is a thin wrapper over the same shared allocation_validator
+algorithm — see AllocationService and allocation-reallocation-flow.md
+Section 4.4 for the full picture.
 
-One endpoint, scoped by exactly one of two mutually-exclusive query params
-(?tenant_id= for Institution->Applications, ?application_id= for
-Application->API Keys — see AllocationService/routes/allocations.py);
-request/response array names mirror each other (application_allocations /
-api_key_allocations), with no separate "scope" discriminator field, since
-which array is populated already says which scope answered the call.
+The wire shape for "what value to set" is one discriminated object
+everywhere (AllocationValue: {type: PERCENTAGE|FIXED, value}), replacing
+the old pair of mutually-exclusive optional fields
+(allocated_percentage/allocated_budget). PERCENTAGE maps to
+allocated_percentage, FIXED to allocated_budget — same two underlying
+values allocation_validator.convert() already produces, just a different
+wire encoding. A response row's own `type` reports "FIXED" only for a row
+that was JUST submitted as FIXED in the SAME request — it is not a
+persisted, sticky attribute; an unlisted/re-fit/unchanged row always
+reports back "PERCENTAGE" (see allocation_service._response_allocation).
 """
 
 from decimal import Decimal
-from typing import Optional
+from typing import Literal
 
 from pydantic import ConfigDict, Field, model_validator
 
 from app.schemas.base import BaseSchema
-from app.schemas.common import SuccessResponse
+
+AllocationType = Literal["PERCENTAGE", "FIXED"]
+
+_PCT_MAX_DIGITS = 5
+_AMT_MAX_DIGITS = 15
+_DECIMAL_PLACES = 2
+
+
+def _digit_count(value: Decimal) -> int:
+    return len(value.as_tuple().digits)
+
+
+def _decimal_places(value: Decimal) -> int:
+    exponent = value.as_tuple().exponent
+    return -exponent if isinstance(exponent, int) and exponent < 0 else 0
+
 
 # ── Request ──────────────────────────────────────────────────────────────
 
 
-def _exactly_one_of_percentage_or_amount(percentage, amount, *, row_label: str):
-    """Shared request-shape check for both row types — NOT the same thing as
-    allocation_validator.convert's own check (that one runs server-side,
-    inside the transaction, against the actual parent amount; this one is a
-    cheap request-shape rejection before any DB work happens at all)."""
-    if (percentage is None) == (amount is None):
-        raise ValueError(
-            f"{row_label}: exactly one of allocated_percentage or allocated_budget is required."
-        )
+class AllocationValue(BaseSchema):
+    """{type, value} — the one shape every allocation row uses, request and
+    response alike. Bounds/precision depend on ``type``: PERCENTAGE is
+    0-100 with the same NUMERIC(5,2) precision as applications.
+    allocated_percentage/api_key.allocated_percentage; FIXED is a
+    non-negative amount with the same NUMERIC(15,2) precision as the
+    allocated_budget columns. Checked here (cheap, request-shape only) —
+    the real, transaction-scoped conversion still happens server-side in
+    allocation_validator.convert(), same as before."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: AllocationType
+    value: Decimal = Field(..., ge=0)
+
+    @model_validator(mode="after")
+    def _check_bounds_and_precision(self) -> "AllocationValue":
+        if _decimal_places(self.value) > _DECIMAL_PLACES:
+            raise ValueError(f"value must have at most {_DECIMAL_PLACES} decimal places.")
+        if self.type == "PERCENTAGE":
+            if self.value > Decimal("100"):
+                raise ValueError("PERCENTAGE value must be between 0 and 100.")
+            if _digit_count(self.value) > _PCT_MAX_DIGITS:
+                raise ValueError(f"PERCENTAGE value must have at most {_PCT_MAX_DIGITS} digits.")
+        else:
+            if _digit_count(self.value) > _AMT_MAX_DIGITS:
+                raise ValueError(f"FIXED value must have at most {_AMT_MAX_DIGITS} digits.")
+        return self
 
 
-class APIKeyAllocationInput(BaseSchema):
+class APIKeyAllocationRow(BaseSchema):
     model_config = ConfigDict(extra="forbid")
 
     api_key_id: int
-    allocated_percentage: Optional[Decimal] = Field(None, ge=0, max_digits=5, decimal_places=2)
-    allocated_budget: Optional[Decimal] = Field(None, ge=0, max_digits=15, decimal_places=2)
-
-    @model_validator(mode="after")
-    def _check_exactly_one(self) -> "APIKeyAllocationInput":
-        _exactly_one_of_percentage_or_amount(
-            self.allocated_percentage, self.allocated_budget,
-            row_label=f"api_key_id={self.api_key_id}",
-        )
-        return self
+    allocation: AllocationValue
 
 
-class ApplicationAllocationInput(BaseSchema):
+class ApplicationAllocationRow(BaseSchema):
     model_config = ConfigDict(extra="forbid")
 
     application_id: int
-    allocated_percentage: Optional[Decimal] = Field(None, ge=0, max_digits=5, decimal_places=2)
-    allocated_budget: Optional[Decimal] = Field(None, ge=0, max_digits=15, decimal_places=2)
-    api_key_allocations: Optional[list[APIKeyAllocationInput]] = Field(
-        None,
-        description=(
-            "Explicit edits to THIS Application's own Keys, resolved in the same "
-            "transaction. Any Key under it NOT listed here is proportionally "
-            "re-fit against what's left of its new budget — never left untouched, "
-            "unlike a sibling Application this call doesn't mention."
-        ),
-    )
-
-    @model_validator(mode="after")
-    def _check_exactly_one(self) -> "ApplicationAllocationInput":
-        _exactly_one_of_percentage_or_amount(
-            self.allocated_percentage, self.allocated_budget,
-            row_label=f"application_id={self.application_id}",
-        )
-        return self
+    allocation: AllocationValue
+    api_keys: list[APIKeyAllocationRow] = Field(default_factory=list)
 
 
-class AllocationUpdateRequest(BaseSchema):
-    """Body shape is the same regardless of scope; which of the two fields is
-    populated must match the ?tenant_id=/?application_id= query param — that
-    cross-check needs the query param, so it happens in AllocationService,
-    not here (a body-only validator can't see the query string)."""
+class TenantBudgetAllocationRequest(BaseSchema):
+    """PUT /auth/tenants/{tenant_id}/budget-allocation.
+
+    An Application under the tenant NOT listed here is not required to be
+    — it's proportionally re-fit against what's left of the Tenant's
+    (unchanged) total, the same unconditional re-fit rule used at every
+    other edge where a parent's children are being resolved."""
 
     model_config = ConfigDict(extra="forbid")
 
-    application_allocations: Optional[list[ApplicationAllocationInput]] = None
-    api_key_allocations: Optional[list[APIKeyAllocationInput]] = None
+    applications: list[ApplicationAllocationRow] = Field(..., min_length=1)
+
+
+class ApplicationBudgetAllocationRequest(BaseSchema):
+    """PUT /auth/applications/{application_id}/budget-allocation.
+
+    ``allocation`` is the Application's own current value — required by
+    the wire shape, but this endpoint never changes it (that only happens
+    via the Tenant-level endpoint); it must match what's already stored,
+    or the call is rejected (APPLICATION_ALLOCATION_MISMATCH) rather than
+    silently ignored. ``api_keys`` not listed here are left exactly as
+    they are — the Application's own total isn't changing in this call,
+    so nothing forces an untouched Key to react."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    application_id: int
+    allocation: AllocationValue
+    api_keys: list[APIKeyAllocationRow] = Field(default_factory=list)
+
+
+class APIKeyBudgetAllocationRequest(BaseSchema):
+    """PUT /auth/api-keys/{key_id}/budget-allocation.
+
+    ``api_key_id`` must match the path's ``{key_id}`` — carried in the body
+    too only because the contract specifies it, not because it's needed
+    (KEY_ID_MISMATCH if they disagree)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    api_key_id: int
+    allocation: AllocationValue
 
 
 # ── Response ─────────────────────────────────────────────────────────────
 
 
-class ResolvedAPIKeyAllocation(BaseSchema):
+class APIKeyAllocationResponseItem(BaseSchema):
     api_key_id: int
-    allocated_percentage: Decimal
+    allocation: AllocationValue
     allocated_budget: Decimal
-    auto_refitted: bool = Field(
-        description="True for a Key the caller never listed but the unconditional re-fit rule touched anyway."
-    )
 
 
-class ResolvedApplicationAllocation(BaseSchema):
+class ApplicationAllocationResponseItem(BaseSchema):
+    """The one response shape shared by all three endpoints — a bare array
+    of these for the Tenant-level call, a single one for the other two."""
+
     application_id: int
-    allocated_percentage: Decimal
+    allocation: AllocationValue
     allocated_budget: Decimal
-    api_key_allocations: Optional[list[ResolvedAPIKeyAllocation]] = Field(
-        None,
-        description=(
-            "Every Key under this Application that has one — present only when this "
-            "Application's own amount changed or the caller explicitly edited its Keys; "
-            "absent when this row's Keys were never in scope for this call."
-        ),
-    )
-
-
-class AllocationUpdateData(BaseSchema):
-    parent_id: str = Field(description="The tenant_id or application_id that scoped this call.")
-    total_allocated_percentage: Decimal = Field(
-        description=(
-            "Live sum across EVERY child at this level (a fresh read, not derived "
-            "from the rows below) — unrelated to which rows this call touched."
-        )
-    )
-    application_allocations: Optional[list[ResolvedApplicationAllocation]] = Field(
-        None, description="Populated for the tenant_id-scoped call; absent for application_id-scoped."
-    )
-    api_key_allocations: Optional[list[ResolvedAPIKeyAllocation]] = Field(
-        None, description="Populated for the application_id-scoped call; absent for tenant_id-scoped."
-    )
-
-
-class AllocationUpdateResponse(SuccessResponse):
-    """PUT /auth/allocations"""
-
-    data: AllocationUpdateData
+    api_keys: list[APIKeyAllocationResponseItem] = Field(default_factory=list)
