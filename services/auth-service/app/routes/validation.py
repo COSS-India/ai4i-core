@@ -237,7 +237,7 @@ async def _validate_api_key(
             headers=quota_header,
         )
 
-    created_by = result.get("created_by")
+    created_by = result.get("user_id")
     if created_by:
         response.headers["X-User-ID"] = str(created_by)
     if application_id:
