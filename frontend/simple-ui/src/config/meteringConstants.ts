@@ -149,6 +149,7 @@ export const METERING = {
     TABLE_TASK_TYPES: "Task Types",
   },
   APPLICATION_USAGE: {
+    TENANT_SUBTITLE: "Application usage · lifetime totals",
     LIFETIME_NOTE:
       "Application budget figures are lifetime totals — not scoped to the time window or billing period used on other tabs.",
     SUMMARY: {
@@ -191,6 +192,7 @@ export const METERING = {
       REMAINING_SHORT: "REMAINING",
       NO_BUDGET: "No Budget allocated",
       REMAINING_OF_ALLOCATION: "of App allocation",
+      REMAINING_OF_KEY_ALLOCATION: "remaining",
     },
     DRAWER_TITLE: "Application Spend Details",
     DRAWER_SPEND_BY_API_KEY: "Spend by API Key",

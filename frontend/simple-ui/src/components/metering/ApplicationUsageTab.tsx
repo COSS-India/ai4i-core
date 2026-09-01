@@ -13,6 +13,7 @@ import { METERING } from "../../config/meteringConstants";
 import { INSTITUTION } from "../../config/constants";
 import { useApplicationUsageData } from "../../hooks/useApplicationUsageData";
 import { fetchApplicationUsageDetail } from "../../services/applicationUsageService";
+import { parseError } from "../../utils/errorHandler";
 import type {
   ApplicationUsageDetail,
   ApplicationUsageListItem,
@@ -38,6 +39,7 @@ const ApplicationUsageTab: React.FC<ApplicationUsageTabProps> = ({
 }) => {
   const scopedId = (isTenantView ? tenantId : scopeTenantId)?.trim() || null;
   const [selected, setSelected] = useState<ApplicationUsageDetail | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const detailRequestIdRef = useRef(0);
   const { isOpen: isDetailOpen, onOpen: onDetailOpen, onClose: onDetailClose } = useDisclosure();
@@ -56,13 +58,16 @@ const ApplicationUsageTab: React.FC<ApplicationUsageTabProps> = ({
       const requestId = ++detailRequestIdRef.current;
       onDetailOpen();
       setIsDetailLoading(true);
+      setDetailError(null);
       try {
         const detail = await fetchApplicationUsageDetail(scopedId, row.applicationId);
         if (requestId !== detailRequestIdRef.current) return;
         setSelected(detail);
-      } catch {
+        setDetailError(null);
+      } catch (error) {
         if (requestId !== detailRequestIdRef.current) return;
         setSelected(null);
+        setDetailError(parseError(error).message);
       } finally {
         if (requestId === detailRequestIdRef.current) setIsDetailLoading(false);
       }
@@ -74,6 +79,7 @@ const ApplicationUsageTab: React.FC<ApplicationUsageTabProps> = ({
     detailRequestIdRef.current += 1;
     onDetailClose();
     setSelected(null);
+    setDetailError(null);
     setIsDetailLoading(false);
   }, [onDetailClose]);
 
@@ -97,7 +103,7 @@ const ApplicationUsageTab: React.FC<ApplicationUsageTabProps> = ({
                 {orgName || `My ${INSTITUTION}`}
               </Text>
               <Text fontSize="13px" color="gray.500">
-                Application usage · lifetime totals
+                {copy.TENANT_SUBTITLE}
               </Text>
             </Box>
           </HStack>
@@ -132,6 +138,7 @@ const ApplicationUsageTab: React.FC<ApplicationUsageTabProps> = ({
         onClose={handleDetailClose}
         detail={selected}
         isLoading={isDetailLoading}
+        errorMessage={detailError}
       />
     </VStack>
   );

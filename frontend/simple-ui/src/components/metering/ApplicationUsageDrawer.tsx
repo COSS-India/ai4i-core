@@ -1,4 +1,7 @@
 import {
+  Alert,
+  AlertDescription,
+  AlertIcon,
   Box,
   Center,
   Drawer,
@@ -35,6 +38,7 @@ interface ApplicationUsageDrawerProps {
   onClose: () => void;
   detail: ApplicationUsageDetail | null;
   isLoading: boolean;
+  errorMessage?: string | null;
   currency?: string;
 }
 
@@ -45,6 +49,7 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
   onClose,
   detail,
   isLoading,
+  errorMessage = null,
   currency = "INR",
 }) => {
   const copy = METERING.APPLICATION_USAGE;
@@ -57,6 +62,13 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
       <Center py={12}>
         <Spinner color="blue.500" />
       </Center>
+    );
+  } else if (errorMessage) {
+    body = (
+      <Alert status="error" borderRadius="md" fontSize="sm">
+        <AlertIcon />
+        <AlertDescription>{errorMessage}</AlertDescription>
+      </Alert>
     );
   } else if (detail) {
     const limit = detail.allocatedBudget.amount;
@@ -195,7 +207,7 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
                             pctOfAllocation={key.remainingBudget.percentage}
                             currency={currency}
                             hasBudget={keyHasBudget}
-                            ofAllocationLabel="remaining"
+                            ofAllocationLabel={cols.REMAINING_OF_KEY_ALLOCATION}
                           />
                         </Td>
                       </Tr>

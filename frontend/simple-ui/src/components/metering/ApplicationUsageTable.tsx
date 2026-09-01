@@ -52,6 +52,7 @@ const ApplicationUsageTable: React.FC<ApplicationUsageTableProps> = ({
       name: (row: ApplicationUsageListItem) => row.name,
       domain: (row: ApplicationUsageListItem) => row.domain ?? "",
       allocated: (row: ApplicationUsageListItem) => row.allocatedBudget.amount,
+      spend: (row: ApplicationUsageListItem) => row.spendBudget.amount,
       remaining: (row: ApplicationUsageListItem) => row.remainingBudget.amount,
     }),
     [],
@@ -59,7 +60,7 @@ const ApplicationUsageTable: React.FC<ApplicationUsageTableProps> = ({
 
   const { sortedRows, sortKey, sortDirection, toggleSort } = useMeteringTableSort(
     applications,
-    "name",
+    "spend",
     sortAccessors,
   );
 
@@ -112,9 +113,17 @@ const ApplicationUsageTable: React.FC<ApplicationUsageTableProps> = ({
               >
                 {cols.ALLOCATED}
               </SortableTh>
-              <ThWithTip message={tips.SPEND_COL} w="22%" sx={thSx}>
+              <SortableTh
+                sortKey="spend"
+                activeSortKey={sortKey}
+                sortDirection={sortDirection}
+                onSort={toggleSort}
+                message={tips.SPEND_COL}
+                w="22%"
+                sx={thSx}
+              >
                 {cols.SPEND}
-              </ThWithTip>
+              </SortableTh>
               <SortableTh
                 sortKey="remaining"
                 activeSortKey={sortKey}
