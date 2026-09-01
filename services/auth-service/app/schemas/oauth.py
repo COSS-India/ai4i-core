@@ -2,6 +2,8 @@
 OAuth2 schemas.
 """
 
+from pydantic import ConfigDict
+
 from app.schemas.auth import LoginResponse
 from app.schemas.base import BaseSchema
 from app.schemas.common import SuccessResponse
@@ -14,8 +16,15 @@ class OAuth2ProviderInfo(BaseSchema):
     scope: list[str] = []
 
 
+_OAUTH2_EXCHANGE_REQUEST_EXAMPLE = {
+    "code": "<authorization-code-from-oauth-redirect>",
+}
+
+
 class OAuth2ExchangeRequest(BaseSchema):
     """One-time code exchange — sent by the SPA after the OAuth redirect."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [_OAUTH2_EXCHANGE_REQUEST_EXAMPLE]})
 
     code: str
 
