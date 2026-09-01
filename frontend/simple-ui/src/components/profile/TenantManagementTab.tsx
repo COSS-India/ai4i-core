@@ -1473,6 +1473,7 @@ export default function TenantManagementTab({
                     tm.handleTenantOrganisationBlur(e.target.value)
                   }
                   placeholder={FIELD_HINTS.tenant.organisation.placeholder}
+                  maxLength={100}
                 />
                 <FormErrorMessage>
                   {tm.tenantFormErrors.organisation}
@@ -1680,6 +1681,7 @@ export default function TenantManagementTab({
                   onBlur={(e) =>
                     tm.handleEditTenantOrganisationBlur(e.target.value)
                   }
+                  maxLength={100}
                 />
                 <FormErrorMessage>
                   {tm.editTenantFormErrors.organisation}
@@ -1972,6 +1974,7 @@ export default function TenantManagementTab({
                   onChange={(e) =>
                     tm.handleEditUserUsernameChange(e.target.value)
                   }
+                  maxLength={100}
                 />
                 <FormErrorMessage>
                   {tm.editUserFormErrors.username}

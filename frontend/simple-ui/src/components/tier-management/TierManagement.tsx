@@ -514,6 +514,7 @@ function TierForm({
           value={formData.name}
           onChange={(e) => onChange({ ...formData, name: e.target.value })}
           placeholder={FIELD_HINTS.tier.name.placeholder}
+          maxLength={100}
         />
         <FieldHint>{FIELD_HINTS.tier.name.helper}</FieldHint>
       </FormControl>

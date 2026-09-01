@@ -39,6 +39,8 @@ import {
   INFRA_DESCRIPTION_MIN_LEN,
   SERVICE_DESCRIPTION_MAX_LEN,
   SERVICE_DESCRIPTION_MIN_LEN,
+  SERVICE_ID_MAX_LEN,
+  SERVICE_NAME_MAX_LEN,
   sanitizeServiceName,
 } from "./serviceFormValidation";
 
@@ -284,6 +286,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   placeholder={FIELD_HINTS.service.name.placeholder}
                   bg={editingService ? "gray.50" : "white"}
                   isReadOnly={!!editingService}
+                  maxLength={SERVICE_NAME_MAX_LEN}
                 />
                 {nameError ? (
                   <FormErrorMessage>{nameError}</FormErrorMessage>
@@ -315,6 +318,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 }
                 bg={editingService ? "gray.50" : "white"}
                 isReadOnly={!!editingService}
+                maxLength={SERVICE_ID_MAX_LEN}
               />
               {idError ? (
                 <FormErrorMessage>{idError}</FormErrorMessage>
@@ -342,6 +346,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 placeholder={FIELD_HINTS.service.description.placeholder}
                 bg="white"
                 rows={4}
+                maxLength={SERVICE_DESCRIPTION_MAX_LEN}
               />
               {descriptionError ? (
                 <FormErrorMessage>{descriptionError}</FormErrorMessage>
@@ -388,6 +393,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 placeholder={FIELD_HINTS.service.hardware.placeholder}
                 bg={editingService ? "gray.50" : "white"}
                 isReadOnly={!!editingService}
+                maxLength={INFRA_DESCRIPTION_MAX_LEN}
               />
               {infraError ? (
                 <FormErrorMessage>{infraError}</FormErrorMessage>

@@ -307,6 +307,15 @@ export function useTierManagement() {
       });
       return;
     }
+    if (formData.name.trim().length < 2) {
+      toast({
+        title: "Tier name must be at least 2 characters",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
     const quotaError = validateQuotas(formData.quotas);
     if (quotaError) {
       setShowQuotaErrors(true);
@@ -389,6 +398,15 @@ export function useTierManagement() {
       });
       return;
     }
+    if (formData.name.trim().length < 2) {
+      toast({
+        title: "Tier name must be at least 2 characters",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
     const quotaError = validateQuotas(formData.quotas);
     if (quotaError) {
       setShowQuotaErrors(true);
@@ -448,8 +466,8 @@ export function useTierManagement() {
       setRemovingTaskType(modelTaskType);
       try {
         await updateTier(editingTier.id, {
-          name: formData.name.trim(),
-          description: formData.description.trim() || undefined,
+          name: editingTier.name,
+          description: editingTier.description || undefined,
           quotas: currentQuota
             ? [{ modelTaskType, limit: Number(currentQuota.limit) }]
             : undefined,
@@ -517,8 +535,8 @@ export function useTierManagement() {
     setIsScheduling(true);
     try {
       await updateTier(editingTier.id, {
-        name: formData.name.trim(),
-        description: formData.description.trim() || undefined,
+        name: editingTier.name,
+        description: editingTier.description || undefined,
         quotas: [
           { modelTaskType: scheduleTarget.modelTaskType, limit: newLimit },
         ],
