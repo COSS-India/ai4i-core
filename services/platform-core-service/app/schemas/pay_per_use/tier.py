@@ -40,7 +40,7 @@ def _check_duplicate_model_task_types(quotas: List[TierQuotaIn]) -> List[TierQuo
 
 
 class TierCreate(BaseModel):
-    name: str = Field(..., min_length=1)
+    name: str = Field(..., min_length=2, max_length=100)
     description: Optional[str] = None
     quotas: List[TierQuotaIn] = Field(..., min_length=1)
 
@@ -52,7 +52,7 @@ class TierCreate(BaseModel):
 
 class TierUpdate(BaseModel):
     tier_id: str = Field(..., description="UUID of the tier to update")
-    name: Optional[str] = Field(None, min_length=1)
+    name: Optional[str] = Field(None, min_length=2, max_length=100)
     description: Optional[str] = None
     quotas: Optional[List[TierQuotaIn]] = None
     cancel_pending_quota: Optional[List[str]] = None
