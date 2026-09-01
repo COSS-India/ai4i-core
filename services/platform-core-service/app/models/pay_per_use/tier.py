@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -50,6 +50,11 @@ class TierQuota(Base):
         index=True,
     )
     inference_name = Column(String(64), nullable=False)
+    inference_type_id = Column(
+        Integer,
+        ForeignKey("inference_types.id"),
+        nullable=True,
+    )
     monthly_quota = Column(Numeric(15, 4), nullable=False)
     pending_monthly_quota = Column(Numeric(15, 4), nullable=True)
     created_by = Column(String(255), nullable=True)
