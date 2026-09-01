@@ -37,7 +37,7 @@ _ROUTING_RULE_CREATE_EXAMPLE = {
 class RoutingRuleCreate(BaseSchema):
     """Create payload."""
 
-    model_config = ConfigDict(json_schema_extra={"example": _ROUTING_RULE_CREATE_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_ROUTING_RULE_CREATE_EXAMPLE]})
 
     rule_name: str = Field(..., description="Unique rule name")
     receiver_id: int = Field(..., description="ID of the notification receiver")
@@ -68,7 +68,7 @@ _ROUTING_RULE_UPDATE_EXAMPLE = {
 class RoutingRuleUpdate(BaseSchema):
     """Patch payload — all fields optional."""
 
-    model_config = ConfigDict(json_schema_extra={"example": _ROUTING_RULE_UPDATE_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_ROUTING_RULE_UPDATE_EXAMPLE]})
 
     rule_name: Optional[str] = None
     receiver_id: Optional[int] = None
@@ -98,7 +98,7 @@ _ROUTING_RULE_TIMING_UPDATE_EXAMPLE = {
 class RoutingRuleTimingUpdate(BaseSchema):
     """Bulk timing-update payload — applies timing params to all routing rules matching the filter set."""
 
-    model_config = ConfigDict(json_schema_extra={"example": _ROUTING_RULE_TIMING_UPDATE_EXAMPLE})
+    model_config = ConfigDict(json_schema_extra={"examples": [_ROUTING_RULE_TIMING_UPDATE_EXAMPLE]})
 
     category: str = Field(..., description="'application' or 'infrastructure'")
     severity: str = Field(..., description="'critical', 'warning', or 'info'")
