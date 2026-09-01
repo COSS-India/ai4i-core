@@ -58,7 +58,7 @@ export const FIELD_HINTS = {
       helper: "+[country code] [phone number]",
     },
     role: { helper: `Sets this user's permission level within the ${org}` },
-    username: { helper: "Minimum 3 characters" },
+    username: { helper: "3–100 characters" },
     emailLocked:
       "Email cannot be changed. Suspend or delete the account if the user has left the organisation.",
     rolesLoadFailed: "Roles could not be loaded; role changes are disabled.",
@@ -147,7 +147,7 @@ export const FIELD_HINTS = {
     },
   },
   tier: {
-    name: { placeholder: "Enter tier name", helper: "e.g. Enterprise, Standard, Basic" },
+    name: { placeholder: "Enter tier name", helper: "2–100 characters. e.g. Enterprise, Standard, Basic" },
     description: {
       placeholder: "Enter tier description",
       helper: "e.g. Enterprise tier for high usage.",
@@ -156,6 +156,10 @@ export const FIELD_HINTS = {
     quotaLimit: { placeholder: "Enter quota limit", helper: "e.g. 10000. Must be greater than 0" },
   },
   apiKey: {
+    keyName: {
+      placeholder: "Enter a name for this API key",
+      helper: "2–100 characters",
+    },
     expiry: {
       placeholder: "Enter number of days",
       helper: "e.g. 30. Must be between 1 and 365",
