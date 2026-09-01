@@ -15,10 +15,20 @@ stays correct if a path ever contains a comma::
     redis-cli HGET    core:inference_type:llm endpoint_patterns
     redis-cli HKEYS   core:inference_type:all      # every type name, one round-trip
 
-**These keys are a cross-service contract.** ``payperuse_consumer`` does
+**Written here; not yet read by anything.** These keys are *intended* as a
+cross-service contract — ``payperuse_consumer`` will
 ``HGET core:inference_type:<name> id`` to resolve ``inference_type_id`` when upserting
-``quota_usage``, so both services must point at the same Redis host *and*
-logical DB.
+``quota_usage`` — but that consumer change is a separate commit and has **not** landed.
+Nothing under ``services/kafka-consumers/`` reads these keys today.
+
+Until it does, ``quota_usage.inference_type_id`` is populated **only** by the migration
+backfill (``11f21f7d7ae4``): every row the consumer writes from now on carries NULL. Do
+not treat the column as trustworthy, and do not read the phase-2 NULL audit as clean-able
+yet.
+
+When the consumer does land, both services must point at the same Redis host *and*
+logical DB — platform-core defaults to ``REDIS_DB=0`` and auth-service uses 0-3 for
+unrelated concerns, so this is a real deployment prerequisite, not a formality.
 
 Four rules govern every operation here:
 
@@ -28,7 +38,9 @@ Four rules govern every operation here:
    into one pipeline is cheaper than reasoning about which keys a partial update
    left stale, and it cannot leave ``:all`` disagreeing with the per-name keys.
 3. **TTL even though this is write-through.** Without one, a bad write is
-   permanent.
+   permanent. It is a backstop, not an invalidation mechanism — mutations
+   rebuild these keys — so it is long (1 day): a short TTL only bought a
+   periodic DB round-trip and rebuild on an otherwise-warm cache.
 4. **Every read falls back to the DB and re-warms.** Modelled on
    ``payperuse_consumer._billing.get_service_pricing``. Not optional: these
    caches already run under ``allkeys-lru`` eviction pressure, and a cache-only
@@ -48,7 +60,11 @@ logger = logging.getLogger(__name__)
 
 _KEY_PREFIX = "core:inference_type"
 _ALL_KEY = f"{_KEY_PREFIX}:all"
-_TTL_SECONDS = 3600
+# 1 day. The catalogue is ~12 near-static rows and every mutation rebuilds
+# these keys, so the TTL is not an invalidation mechanism — it is only a
+# backstop so a bad write cannot become permanent (rule 3). A short TTL bought
+# nothing and cost a DB round-trip plus a full rebuild every hour.
+_TTL_SECONDS = 1 * 24 * 60 * 60
 
 
 def _name_key(name: str) -> str:
@@ -110,9 +126,24 @@ async def _fetch_all(db: AsyncSession) -> List[Dict[str, Any]]:
     return [_to_dict(row) for row in result.scalars().all()]
 
 
-async def rebuild(db: AsyncSession) -> List[Dict[str, Any]]:
-    """Re-read the catalogue and overwrite every cache key. Call after any
-    committed mutation, and once at startup."""
+async def rebuild(db: AsyncSession, *, sweep: bool = False) -> List[Dict[str, Any]]:
+    """Re-read the catalogue and overwrite every cache key.
+
+    ``sweep`` controls the keyspace scan that removes keys for types which no
+    longer exist. It defaults to **False** because rebuild has two callers with
+    opposite needs:
+
+    * **Mutations** (create / update / delete) and startup warm-up pass
+      ``sweep=True``. A rename or delete leaves a per-name key that would keep
+      answering lookups for a type that is gone, so the scan is the only thing
+      that removes it. This mirrors ``cache_service.invalidate_all_versions``,
+      which likewise scans only on invalidation.
+    * **Read-path misses** (``get_all`` falling through on a cold key) use the
+      default. A TTL expiry or an LRU eviction leaves nothing stale to sweep —
+      the keys are simply absent — so scanning ``core:inference_type:*`` across
+      the whole shared Redis DB would be pure waste, and concurrent misses
+      would each pay for their own scan.
+    """
     rows = await _fetch_all(db)
 
     redis = _get_redis()
@@ -120,12 +151,14 @@ async def rebuild(db: AsyncSession) -> List[Dict[str, Any]]:
         return rows
 
     try:
-        # Drop keys for types that no longer exist before writing the new set,
-        # otherwise a deleted type keeps answering per-name lookups until its
-        # TTL expires.
-        existing = [key async for key in redis.scan_iter(match=f"{_KEY_PREFIX}:*")]
-        live = {_ALL_KEY} | {_name_key(r["name"]) for r in rows}
-        stale = [k for k in existing if (k.decode() if isinstance(k, bytes) else k) not in live]
+        stale: List[str] = []
+        if sweep:
+            existing = [key async for key in redis.scan_iter(match=f"{_KEY_PREFIX}:*")]
+            live = {_ALL_KEY} | {_name_key(r["name"]) for r in rows}
+            stale = [
+                k for k in existing
+                if (k.decode() if isinstance(k, bytes) else k) not in live
+            ]
 
         pipe = redis.pipeline()
         if stale:
