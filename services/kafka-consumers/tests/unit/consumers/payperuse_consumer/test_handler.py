@@ -150,3 +150,135 @@ class TestGetOtelAttributes:
         assert corr == ""
         assert aki == 0
         assert tier is None
+
+
+class TestBillUsageThreadsInferenceTypeId:
+    """_bill_usage must resolve inference_type_id and pass it to the upsert.
+
+    The resolution and the write are separately unit-tested in test_billing.py;
+    what is asserted here is the wiring between them, which is the part a
+    refactor of _bill_usage can silently drop. If the argument stops being
+    passed, every quota_usage row written from then on carries a NULL FK and
+    nothing fails — the bug only surfaces at the phase-2 SET NOT NULL.
+    """
+
+    class _FakeDb:
+        """_bill_usage commits before returning; nothing else is called on db
+        here because the two functions that use it are stubbed out."""
+
+        def __init__(self):
+            self.commits = 0
+
+        async def commit(self):
+            self.commits += 1
+
+    def _ctx(self, **overrides):
+        from consumers.payperuse_consumer.handler import BillingContext
+
+        base = dict(
+            tenant_id="tenant-1",
+            service_id="svc-1",
+            input_tokens=10.0,
+            total_tokens=15.0,
+            correlation_id="corr-1",
+            span_id="span-1",
+            billed_key="ppu:billed:corr-1:span-1",
+            is_already_billed=False,
+            billing_month="2026-08",
+            offset=0,
+            api_key_id=0,
+            tier_id="tier-1",
+        )
+        base.update(overrides)
+        return BillingContext(**base)
+
+    def _patch(self, monkeypatch, *, resolved_id, task_type="asr"):
+        """Stub pricing + the two billing calls; return the captured kwargs."""
+        from decimal import Decimal
+
+        from consumers.payperuse_consumer import handler as h
+        from consumers.payperuse_consumer._billing import (
+            BillingWriteResult,
+            ServicePricing,
+        )
+
+        captured: dict = {}
+
+        async def _pricing(db, service_id):
+            return ServicePricing(
+                task_type=task_type,
+                unit_rate=Decimal("0.5"),
+                cost_per_unit=None,
+                unit_size=None,
+            )
+
+        async def _resolve(db, inference_name):
+            captured["resolve_arg"] = inference_name
+            return resolved_id
+
+        async def _write(db, **kwargs):
+            captured.update(kwargs)
+            return BillingWriteResult(
+                api_key_budget_used=Decimal("0"),
+                api_key_budget_snap=None,
+                tier_id="tier-1",
+                budget_exhausted=False,
+                quota_recorded=True,
+                quota_exhausted=False,
+            )
+
+        monkeypatch.setattr(h, "get_service_pricing", _pricing)
+        monkeypatch.setattr(h, "get_inference_type_id", _resolve)
+        monkeypatch.setattr(h, "deduct_balance_and_update_quota", _write)
+        return captured
+
+    async def test_resolved_id_is_passed_to_the_upsert(self, monkeypatch):
+        from consumers.payperuse_consumer.handler import _bill_usage
+
+        captured = self._patch(monkeypatch, resolved_id=2)
+        outcome = await _bill_usage(self._FakeDb(), self._ctx())
+
+        assert outcome is not None
+        assert captured["inference_type_id"] == 2
+
+    async def test_none_is_still_passed_through(self, monkeypatch):
+        from consumers.payperuse_consumer.handler import _bill_usage
+
+        captured = self._patch(monkeypatch, resolved_id=None)
+        await _bill_usage(self._FakeDb(), self._ctx())
+
+        # A catalogue miss must not abort billing — the column is nullable and
+        # the write keys off inference_name regardless.
+        assert captured["inference_type_id"] is None
+
+    async def test_resolution_uses_the_pricing_task_type(self, monkeypatch):
+        from consumers.payperuse_consumer.handler import _bill_usage
+
+        captured = self._patch(monkeypatch, resolved_id=3, task_type="nmt")
+        await _bill_usage(self._FakeDb(), self._ctx())
+
+        # task_type comes from mm_services via get_service_pricing — it is the
+        # same value bound as inference_name, so the two must not diverge.
+        assert captured["resolve_arg"] == "nmt"
+        assert captured["inference_name"] == "nmt"
+
+    async def test_not_resolved_when_pricing_is_missing(self, monkeypatch):
+        from consumers.payperuse_consumer import handler as h
+        from consumers.payperuse_consumer.handler import _bill_usage
+
+        called = {"resolve": False}
+
+        async def _no_pricing(db, service_id):
+            return None
+
+        async def _resolve(db, inference_name):
+            called["resolve"] = True
+            return 1
+
+        monkeypatch.setattr(h, "get_service_pricing", _no_pricing)
+        monkeypatch.setattr(h, "get_inference_type_id", _resolve)
+
+        assert await _bill_usage(self._FakeDb(), self._ctx()) is None
+        # No pricing means no billing at all; resolving an id would be a wasted
+        # round-trip on every unpriced service's spans.
+        assert called["resolve"] is False
