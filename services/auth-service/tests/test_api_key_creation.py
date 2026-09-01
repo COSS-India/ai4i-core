@@ -6,7 +6,7 @@ green build otherwise).
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -171,6 +171,123 @@ class TestBudgetDerivedFromLockedApplicationNotStaleRead:
 
         # 1000.00 * 30% = 300.00, not 0.00 (the stale pre-revision figure).
         assert api_key.allocated_budget == Decimal("300.00")
+
+
+class TestBudgetParam:
+    """budget (a raw ₹ ceiling, alternative to allocated_percentage) used to
+    bypass ALLOCATION_TOTAL_EXCEEDED entirely and never populate
+    allocated_percentage/allocated_budget — invisible to the sum both that
+    check and PUT /auth/allocations' resolve_level depend on. Now converted
+    to allocated_percentage up front, so it goes through the exact same
+    path as any other request."""
+
+    @pytest.mark.asyncio
+    async def test_budget_and_percentage_together_rejected(self) -> None:
+        application = _application(allocated_budget=Decimal("50000.00"))
+        tenant = _tenant()
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        tenants = AsyncMock()
+        tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+
+        with pytest.raises(ValidationError) as exc_info:
+            await svc.create_api_key(
+                actor_user_id=uuid4(),
+                key_name="test",
+                permissions=["nmt.inference"],
+                application_id=1,
+                allocated_percentage=Decimal("20"),
+                budget=Decimal("1000"),
+                caller_tenant_id=1,
+            )
+
+        assert exc_info.value.code == "PERCENTAGE_AMOUNT_MISMATCH"
+        repo.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_budget_without_application_budget_rejected(self) -> None:
+        application = _application(allocated_budget=None)
+        tenant = _tenant()
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        tenants = AsyncMock()
+        tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+
+        with pytest.raises(ValidationError) as exc_info:
+            await svc.create_api_key(
+                actor_user_id=uuid4(),
+                key_name="test",
+                permissions=["nmt.inference"],
+                application_id=1,
+                budget=Decimal("1000"),
+                caller_tenant_id=1,
+            )
+
+        assert exc_info.value.code == "APPLICATION_BUDGET_NOT_SET"
+        repo.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_budget_is_converted_and_enforces_the_cap(self) -> None:
+        """The bug this fixes: budget=15000 against a 50000 Application
+        budget is 30% — an existing 80% already allocated must reject it,
+        exactly as it would for an equivalent allocated_percentage=30 request."""
+        application = _application(allocated_budget=Decimal("50000.00"))
+        tenant = _tenant()
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        applications.get_by_id_for_update = AsyncMock(return_value=application)
+        applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("80"))
+        tenants = AsyncMock()
+        tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+
+        with pytest.raises(ValidationError) as exc_info:
+            await svc.create_api_key(
+                actor_user_id=uuid4(),
+                key_name="test",
+                permissions=["nmt.inference"],
+                application_id=1,
+                budget=Decimal("15000"),
+                caller_tenant_id=1,
+            )
+
+        assert exc_info.value.code == "ALLOCATION_TOTAL_EXCEEDED"
+        repo.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_budget_populates_percentage_and_budget_columns(self) -> None:
+        application = _application(allocated_budget=Decimal("50000.00"))
+        tenant = _tenant()
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        applications.get_by_id_for_update = AsyncMock(return_value=application)
+        applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("0"))
+        tenants = AsyncMock()
+        tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+
+        with patch(
+            "app.services.budget_usage.write_budget_snapshot", AsyncMock()
+        ) as write_snap:
+            _, api_key = await svc.create_api_key(
+                actor_user_id=uuid4(),
+                key_name="test",
+                permissions=["nmt.inference"],
+                application_id=1,
+                budget=Decimal("15000"),
+                caller_tenant_id=1,
+            )
+
+        # 15000 / 50000 * 100 = 30.00% — no longer NULL/invisible to the cap check.
+        assert api_key.allocated_percentage == Decimal("30.00")
+        assert api_key.allocated_budget == Decimal("15000.00")
+        write_snap.assert_awaited_once_with({api_key.id: Decimal("15000.00")}, None)
 
 
 class TestInferenceOnlyPermissionRestriction:

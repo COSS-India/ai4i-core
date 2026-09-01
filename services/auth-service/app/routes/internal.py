@@ -33,17 +33,24 @@ class QuotaExhaustedRequest(BaseModel):
     inference_name: str
 
 
-@router.post("/ppu/tenant/{tenant_id}/budget-exhausted", status_code=status.HTTP_204_NO_CONTENT)
-async def set_budget_exhausted(
-    tenant_id: str,
+@router.post("/ppu/api-key/{api_key_id}/budget-exhausted", status_code=status.HTTP_204_NO_CONTENT)
+async def set_api_key_budget_exhausted(
+    api_key_id: str,
     body: BudgetExhaustedRequest,
     svc: APIKeyService = Depends(get_api_key_service),
 ):
+    """Scoped to one API Key, not a tenant — budget is tracked per key
+    (budget_usage), so one key hitting its own ceiling must not block every
+    other key under the same tenant. Replaces the old
+    /ppu/tenant/{tenant_id}/budget-exhausted as the Kafka billing consumer's
+    notification target — set_budget_exhausted_for_tenant (the tenant-wide
+    fan-out) is still used directly by TenantService for a budget revision's
+    own recompute, just not reachable from here any more."""
     try:
-        tid = int(tenant_id)
+        kid = int(api_key_id)
     except (ValueError, TypeError):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid tenant_id")
-    await svc.set_budget_exhausted_for_tenant(tid, body.exhausted)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid api_key_id")
+    await svc.set_budget_exhausted_for_key(kid, body.exhausted)
 
 
 @router.post("/ppu/tenant/{tenant_id}/quota-exhausted", status_code=status.HTTP_204_NO_CONTENT)

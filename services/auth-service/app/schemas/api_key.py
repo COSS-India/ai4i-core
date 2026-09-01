@@ -41,7 +41,14 @@ class CreateAPIKeyRequest(BaseSchema):
     budget: Optional[Decimal] = Field(
         None,
         gt=0,
-        description="Budget ceiling for this key in currency units. Stored as api_key_budget_snap in budget_usage.",
+        max_digits=15,
+        decimal_places=2,
+        description=(
+            "₹ ceiling for this key, as an alternative to allocated_percentage — the server "
+            "converts it to the equivalent allocated_percentage of the Application's own Budget "
+            "immediately, so it goes through the same ALLOCATION_TOTAL_EXCEEDED cap check and "
+            "ends up stored the same way. Give at most one of allocated_percentage / budget."
+        ),
     )
 
 

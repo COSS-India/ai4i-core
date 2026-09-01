@@ -24,7 +24,7 @@ import re
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 from uuid import UUID
 
@@ -371,10 +371,57 @@ class APIKeyService:
         await self._repo.commit()
 
     async def set_budget_exhausted_for_tenant(self, tenant_id: int, exhausted: bool) -> None:
-        """Flip budget-exhausted on all cached API key hashes for the tenant."""
+        """Flip budget-exhausted on all cached API key hashes for the tenant.
+
+        Kept for TenantService._sync_ppu_wallet_and_exhaustion (a genuinely
+        tenant-scoped recompute — the tenant's OWN allocated_budget changed,
+        so every one of its keys' derived exhaustion state is legitimately
+        re-evaluated at once). NOT used any more for the per-request billing
+        signal — see set_budget_exhausted_for_key: budget is tracked per key
+        (budget_usage.api_key_budget_snap/api_key_budget_used), so one key
+        crossing its own ceiling must not flip every sibling key under the
+        same tenant.
+        """
         await self._patch_all_tenant_key_caches(
             tenant_id, "budget-exhausted", "1" if exhausted else "0"
         )
+
+    async def set_budget_exhausted_for_key(self, key_id: int, exhausted: bool) -> None:
+        """Flip budget-exhausted on exactly ONE cached API key — the
+        per-request billing signal (Kafka's payperuse consumer, via
+        POST /internal/ppu/api-key/{id}/budget-exhausted), driven by that
+        key's own budget_usage.api_key_budget_snap/api_key_budget_used, not
+        a tenant-wide fan-out.
+
+        Intentionally one-way: nothing in this codebase ever calls this with
+        exhausted=False. Exhaustion is terminal for that key, the same way
+        revocation is — a caller that's crossed its own ceiling gets a new
+        key (or a top-up to its Application's own allocation, which is a
+        separate reallocation flow, not this flag).
+
+        Skips a key with no ``cached_data`` snapshot yet, or one that's
+        already inactive/expired — same eligibility filter
+        ``patch_cached_data_field_for_tenant`` applies via
+        ``_active_key_conditions(require_cached_data=True)``. A key can have
+        ``cached_data`` NULL (nullable with no backfill), and writing
+        ``{"budget-exhausted": value}`` as its first-ever snapshot would drop
+        every other field (permissions, application_id, ...) that
+        ``_rehydrate_cache_from_db`` would otherwise serve verbatim on a
+        later Redis miss — ``/auth/validate`` then answers with an empty
+        permission list instead of failing loudly.
+        """
+        if self._repo is None:
+            return
+        key = await self._repo.get_by_id(key_id)
+        if key is None:
+            logger.warning("set_budget_exhausted_for_key: unknown api_key_id=%s", key_id)
+            return
+        if not key.is_active or key.is_expired() or not key.cached_data:
+            return
+        value = "1" if exhausted else "0"
+        await self._cache.patch_api_key_cache_field(key.api_key, "budget-exhausted", value)
+        await self._repo.update(key, {"cached_data": {**key.cached_data, "budget-exhausted": value}})
+        await self._repo.commit()
 
     async def list_key_ids_for_tenant(self, tenant_id: int) -> list[int]:
         """Every api_key.id under any Application belonging to tenant_id,
@@ -536,6 +583,33 @@ class APIKeyService:
 
         permission_ids = await self._resolve_permission_names(permissions)
 
+        if allocated_percentage is not None and budget is not None:
+            raise ValidationError(
+                message="Give exactly one of allocated_percentage or budget, not both.",
+                code="PERCENTAGE_AMOUNT_MISMATCH",
+            )
+        if budget is not None:
+            # A raw ₹ ceiling is never persisted/validated as given — converted
+            # to the canonical allocated_percentage representation immediately,
+            # so it goes through the exact same ALLOCATION_TOTAL_EXCEEDED cap
+            # check below as any allocated_percentage-created key, instead of
+            # bypassing it entirely (the bug this fixes: a budget-created key
+            # previously never populated allocated_percentage at all, so it
+            # was invisible to sum_api_key_allocated_percentage — both this
+            # check and PUT /auth/allocations' resolve_level depend on that
+            # sum, and a NULL there reads as 0%).
+            if not application.allocated_budget:
+                raise ValidationError(
+                    message="This Application has no Budget allocation yet — it must be given "
+                    "a share of the Institution's Budget before a Key can be created against "
+                    "a ₹ ceiling (use allocated_percentage instead, or set the Application's "
+                    "Budget first).",
+                    code="APPLICATION_BUDGET_NOT_SET",
+                )
+            allocated_percentage = (budget / application.allocated_budget * Decimal("100")).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+
         if allocated_percentage is not None:
             # Lock the application row for the rest of this transaction so a
             # concurrent create_api_key call under the same application can't
@@ -581,9 +655,13 @@ class APIKeyService:
         await self._repo.create(api_key)
         await self._repo.commit()
 
-        budget_snap = budget if budget is not None else allocated_budget
-        if budget_snap is not None:
-            await budget_usage.write_budget_snapshot({api_key.id: budget_snap}, platform_core_db)
+        # allocated_budget is now always the resolved ceiling regardless of
+        # which input was given (budget converts to allocated_percentage
+        # above, then re-derives allocated_budget the same way any
+        # allocated_percentage-created key does) — no separate budget_snap
+        # distinction needed any more.
+        if allocated_budget is not None:
+            await budget_usage.write_budget_snapshot({api_key.id: allocated_budget}, platform_core_db)
 
         if self.application_may_use_api_keys(application, tenant):
             payload = self._build_cache_payload(

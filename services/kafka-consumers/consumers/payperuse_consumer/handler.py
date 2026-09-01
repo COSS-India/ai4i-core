@@ -77,10 +77,20 @@ async def _is_already_billed(billed_key: str, correlation_id: str, span_id: str,
         return None
 
 
-async def _post_billing(wallet_exhausted: bool, quota_exhausted: bool, tenant_id, billing_unit_type: str):
-    if wallet_exhausted:
+async def _post_billing(
+    wallet_exhausted: bool, quota_exhausted: bool, tenant_id, api_key_id: int, billing_unit_type: str
+):
+    """wallet_exhausted is scoped to exactly one API Key (its own
+    budget_usage.api_key_budget_snap/api_key_budget_used) — notifying by
+    api_key_id, not tenant_id, so it can't flip every sibling key under the
+    same tenant. Skipped entirely when api_key_id is 0 (no Key on this span
+    — a JWT-authenticated request, or the gateway not yet forwarding
+    X-API-Key-ID): there's no key to flag. quota_exhausted stays tenant-wide
+    — a tier's monthly quota is a tenant-level entitlement, not a per-key
+    ceiling, so it's correct for it to affect every key under the tenant."""
+    if wallet_exhausted and api_key_id:
         await _notify_auth(
-            f"/internal/ppu/tenant/{tenant_id}/budget-exhausted",
+            f"/internal/ppu/api-key/{api_key_id}/budget-exhausted",
             {"exhausted": True},
         )
 
@@ -332,19 +342,22 @@ async def handle_ppu_usage(msg: Message) -> None:
         "Billing applied | tenant=%s service=%s billed_units=%s cost=%s exhausted=%s",
         ctx.tenant_id, ctx.service_id, outcome.billed_units, outcome.cost, outcome.wallet_exhausted,
     )
-    await _post_billing(outcome.wallet_exhausted, outcome.quota_exhausted, ctx.tenant_id, outcome.pricing.task_type)
+    await _post_billing(
+        outcome.wallet_exhausted, outcome.quota_exhausted, ctx.tenant_id, ctx.api_key_id, outcome.pricing.task_type
+    )
 
 
 _NOTIFY_AUTH_MAX_ATTEMPTS = 3
 _NOTIFY_AUTH_BACKOFF_BASE_S = 0.5
-# Full per-attempt timeout: set_budget_exhausted_for_tenant is not a constant-
-# time flag write — it walks every user in the tenant with one list_by_user
-# query each (api_key_service.py:358) — so a large tenant genuinely needs the
-# whole 5s, and an attempt timing out doesn't mean the write itself failed
-# (it may land after we've moved on). Shortening this would time out attempts
-# that were about to succeed and just relabel that as "enforcement flag NOT
-# set". Bound the *total* time some other way (see _NOTIFY_AUTH_DEADLINE_S)
-# instead of starving individual attempts.
+# Full per-attempt timeout: the quota-exhausted path (set_quota_exhausted_for_tenant)
+# is not a constant-time flag write — it walks every key in the tenant — so a
+# large tenant genuinely needs the whole 5s, and an attempt timing out doesn't
+# mean the write itself failed (it may land after we've moved on). The
+# budget-exhausted path is now per-key (set_budget_exhausted_for_key) and
+# doesn't need this, but both share the same call path. Shortening this would
+# time out attempts that were about to succeed and just relabel that as
+# "enforcement flag NOT set". Bound the *total* time some other way (see
+# _NOTIFY_AUTH_DEADLINE_S) instead of starving individual attempts.
 _NOTIFY_AUTH_TIMEOUT_S = 5.0
 # Overall deadline across all attempts of one _notify_auth call, checked only
 # between attempts (never mid-flight, so an in-progress attempt always keeps
