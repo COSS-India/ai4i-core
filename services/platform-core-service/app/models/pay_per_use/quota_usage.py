@@ -30,6 +30,7 @@ class QuotaUsage(Base):
         Integer,
         ForeignKey("inference_types.id"),
         nullable=True,
+        index=True,
     )
     billing_month = Column(String(7), nullable=False)
     monthly_quota_snap = Column(Numeric(15, 4), nullable=True)
