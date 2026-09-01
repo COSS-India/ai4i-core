@@ -236,6 +236,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
   const [bulkLoading, setBulkLoading] = useState(false);
   const [bulkRows, setBulkRows] = useState<BulkBudgetDraft[]>([]);
   const [bulkBanner, setBulkBanner] = useState<string | null>(null);
+  const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
 
   useEffect(() => {
     const t = window.setTimeout(() => setSearch(searchInput.trim()), 300);
@@ -606,6 +607,30 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     }
   };
 
+  const handleToggleStatus = async (app: Application) => {
+    const nextStatus = app.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
+    setStatusBusyId(app.application_id);
+    try {
+      await updateApplication(tenantId, app.application_id, { status: nextStatus });
+      toast({
+        title: nextStatus === "ACTIVE" ? "Application activated." : "Application deactivated.",
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
+      await reload();
+    } catch (error) {
+      toast({
+        title: parseError(error).message,
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setStatusBusyId(null);
+    }
+  };
+
   const handleEdit = async () => {
     if (!selected) return;
     const errors: Record<string, string> = {};
@@ -711,6 +736,8 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     onBulkPctChange,
     onBulkAmountChange,
     handleSaveBulkBudget,
+    statusBusyId,
+    handleToggleStatus,
     reload,
   };
 }

@@ -215,6 +215,10 @@ export const FIELD_HINTS = {
     domainFilter: {
       helper: "Exact-match filter on Application domain.",
     },
+    status: {
+      activate: "Turn on to activate this Application.",
+      deactivate: "Turn off to deactivate this Application.",
+    },
     tooltips: {
       totalApplications:
         "Count of Applications onboarded under this Institution.",

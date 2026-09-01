@@ -50,6 +50,7 @@ export interface UpdateApplicationPayload {
   name?: string;
   description?: string;
   domain?: string;
+  status?: ApplicationStatus;
 }
 
 export interface AllocationUpdate {

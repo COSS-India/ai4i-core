@@ -20,6 +20,7 @@ import {
   NumberInputField,
   NumberInputStepper,
   SimpleGrid,
+  Switch,
   Text,
   Textarea,
   Tooltip,
@@ -249,6 +250,15 @@ export default function ApplicationManagementTab({
       ),
     },
     {
+      id: "status",
+      header: "Status",
+      cell: (app) => (
+        <Badge colorScheme={app.status === "ACTIVE" ? "green" : "gray"}>
+          {app.status === "ACTIVE" ? "Active" : "Inactive"}
+        </Badge>
+      ),
+    },
+    {
       id: "actions",
       header: "",
       tdProps: { onClick: (e) => e.stopPropagation() },
@@ -286,6 +296,29 @@ export default function ApplicationManagementTab({
               _hover={{ bg: "blue.50", color: "blue.600" }}
               onClick={() => mgr.openBudget(app)}
             />
+          </Tooltip>
+          <Tooltip
+            label={
+              app.status === "ACTIVE"
+                ? FIELD_HINTS.application.status.deactivate
+                : FIELD_HINTS.application.status.activate
+            }
+          >
+            <Box as="span" display="inline-flex" alignItems="center">
+              <Switch
+                size="md"
+                colorScheme="green"
+                isChecked={app.status === "ACTIVE"}
+                isDisabled={mgr.statusBusyId === app.application_id}
+                aria-label={
+                  app.status === "ACTIVE"
+                    ? `Deactivate ${app.name}`
+                    : `Activate ${app.name}`
+                }
+                onChange={() => void mgr.handleToggleStatus(app)}
+                onClick={(e) => e.stopPropagation()}
+              />
+            </Box>
           </Tooltip>
         </HStack>
       ),
@@ -491,7 +524,12 @@ export default function ApplicationManagementTab({
         {mgr.selected && (
           <VStack align="stretch" spacing={4}>
             <Box>
-              <Heading size="md">{mgr.selected.name}</Heading>
+              <HStack spacing={2} align="center" flexWrap="wrap">
+                <Heading size="md">{mgr.selected.name}</Heading>
+                <Badge colorScheme={mgr.selected.status === "ACTIVE" ? "green" : "gray"}>
+                  {mgr.selected.status === "ACTIVE" ? "Active" : "Inactive"}
+                </Badge>
+              </HStack>
               {mgr.selected.domain ? (
                 <Badge mt={2} variant="subtle">
                   {mgr.selected.domain}
