@@ -1,7 +1,6 @@
 """PPU usage dashboard routes."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Annotated, Optional
 from uuid import UUID
 
@@ -72,7 +71,7 @@ async def get_usage_summary(
     request: Request,
     billing_period: Annotated[
         Optional[str],
-        Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="Billing month in YYYY-MM format. Defaults to current month."),
+        Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="Billing month in YYYY-MM format. Omit for all-time usage up to now."),
     ] = None,
     tier_id: Optional[str] = Query(None, description="Filter by tier ID."),
     task_types: Optional[str] = Query(None, description="Comma-separated task types to include (frontend allowlist)."),
@@ -81,9 +80,8 @@ async def get_usage_summary(
 ):
     _require_admin(request)
     tier_id = _validate_tier_id(tier_id)
-    month = billing_period or datetime.now(timezone.utc).strftime("%Y-%m")
     svc = UsageService(UsageRepository(db))
-    return await svc.get_summary(month, tier_id, _parse_task_types(task_types), auth_db)
+    return await svc.get_summary(billing_period, tier_id, _parse_task_types(task_types), auth_db)
 
 
 @router.get("/usage-tenants", response_model=TenantHierarchicalListResponse)
@@ -91,7 +89,7 @@ async def get_tenant_usage_list(
     request: Request,
     billing_period: Annotated[
         Optional[str],
-        Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="Billing month in YYYY-MM format. Defaults to current month."),
+        Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="Billing month in YYYY-MM format. Omit for all-time usage up to now."),
     ] = None,
     tier_id: Optional[str] = Query(None, description="Filter by tier ID."),
     modelTaskType: Optional[str] = Query(None, description="Filter by model task type (e.g. LLM, ASR, NMT)."),
@@ -104,10 +102,9 @@ async def get_tenant_usage_list(
 ):
     _require_admin(request)
     tier_id = _validate_tier_id(tier_id)
-    month = billing_period or datetime.now(timezone.utc).strftime("%Y-%m")
     svc = UsageService(UsageRepository(db))
     return await svc.get_tenant_list(
-        month, tier_id, modelTaskType.lower() if modelTaskType else None, auth_db,
+        billing_period, tier_id, modelTaskType.lower() if modelTaskType else None, auth_db,
         sortOrder, limit, offset, task_types=_parse_task_types(task_types),
     )
 
@@ -118,7 +115,7 @@ async def get_tenant_usage_detail(
     tenant_id: str = Query(..., description="Tenant ID."),
     billing_period: Annotated[
         Optional[str],
-        Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="Billing month in YYYY-MM format. Defaults to current month."),
+        Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="Billing month in YYYY-MM format. Omit for all-time usage up to now."),
     ] = None,
     task_types: Optional[str] = Query(None, description="Comma-separated task types to include (frontend allowlist)."),
     db: AsyncSession = Depends(get_db),
@@ -126,6 +123,5 @@ async def get_tenant_usage_detail(
 ):
     _authorize_tenant(request, tenant_id)
 
-    month = billing_period or datetime.now(timezone.utc).strftime("%Y-%m")
     svc = UsageService(UsageRepository(db))
-    return await svc.get_tenant_detail(tenant_id, month, auth_db, task_types=_parse_task_types(task_types))
+    return await svc.get_tenant_detail(tenant_id, billing_period, auth_db, task_types=_parse_task_types(task_types))

@@ -312,13 +312,14 @@ class UsageService:
         self._repo = repo
 
     async def _tenant_assignments_and_usage(
-        self, billing_month: str, tier_id: str | None, task_types: list[str] | None = None
+        self, billing_month: str | None, tier_id: str | None, task_types: list[str] | None = None
     ):
-        """Tenants with at least one ppu_quota_usage row this billing_month, scoped to
-        tier_id if given (their most-recently-active tier that month), plus their usage
-        rows for that month — the same tenant-selection rule used by
+        """Tenants with at least one ppu_quota_usage row in scope, scoped to
+        tier_id if given (their most-recently-active tier in scope), plus their usage
+        rows in scope — the same tenant-selection rule used by
         get_tenant_list/get_tenant_detail, so a tier + billing_period filter combination
-        gives consistent results across all three endpoints. Note: these rows carry
+        gives consistent results across all three endpoints. billing_month=None means
+        all-time (no month filter), i.e. usage up to now. Note: these rows carry
         tier info only, NOT budget — callers that need budget_limit/available_balance
         must separately call get_tenant_budgets. ``task_types`` (from the caller) filters
         both queries to those task types at the SQL level.
@@ -334,13 +335,20 @@ class UsageService:
 
     async def get_summary(
         self,
-        billing_month: str,
+        billing_month: str | None,
         tier_id: str | None = None,
         task_types: list[str] | None = None,
         auth_db: Optional[AsyncSession] = None,
     ) -> UsageSummaryResponse:
         """``task_types`` (from the frontend) filters the spend to those task types at
         the query level; tier_id narrows which tenants are counted.
+
+        billing_month=None means all-time usage up to now (no month filter) —
+        totalSpend/consumption/tier figures become cumulative across every month, and
+        spendChangePercent (a month-over-previous-month figure) has no single anchor
+        to compare against, so it's omitted (null) rather than redefined; billingPeriod
+        reports "lifetime" in that case, mirroring application_usage_service's same
+        convention for its always-cumulative figures.
 
         auth_db is optional (defaults to None, matching every existing caller/test
         that predates get_tenant_budgets needing cross-DB access) — without it,
@@ -413,31 +421,36 @@ class UsageService:
                 if cost_by_tenant.get(a.tenant_id, Decimal("0")) > budget_limit:
                     budget_exceeded += 1
 
-        prev_month = _prev_month(billing_month)
-        if tier_id:
-            # tier_id scopes by tenant ("who was most recently on this tier that month"),
-            # not by usage row, so it needs the full tenant-resolution pipeline to stay
-            # consistent with the current month's figure above.
-            _, prev_usage_rows = await self._tenant_assignments_and_usage(
-                prev_month, tier_id, task_types
-            )
-            prev_total_spend = sum(
-                (_to_decimal(row.total_cost) for row in prev_usage_rows), Decimal("0")
-            )
+        if billing_month is None:
+            # No single month to anchor "previous period" to for a cumulative,
+            # all-time figure — leave it unset rather than redefine its meaning.
+            spend_change_percent = None
         else:
-            # No tenant scoping needed, so skip tenant/tier resolution entirely and get
-            # the same number from one lightweight aggregate query (task-type filtered).
-            prev_total_spend = _to_decimal(
-                await self._repo.get_total_cost_for_month()
+            prev_month = _prev_month(billing_month)
+            if tier_id:
+                # tier_id scopes by tenant ("who was most recently on this tier that month"),
+                # not by usage row, so it needs the full tenant-resolution pipeline to stay
+                # consistent with the current month's figure above.
+                _, prev_usage_rows = await self._tenant_assignments_and_usage(
+                    prev_month, tier_id, task_types
+                )
+                prev_total_spend = sum(
+                    (_to_decimal(row.total_cost) for row in prev_usage_rows), Decimal("0")
+                )
+            else:
+                # No tenant scoping needed, so skip tenant/tier resolution entirely and get
+                # the same number from one lightweight aggregate query (task-type filtered).
+                prev_total_spend = _to_decimal(
+                    await self._repo.get_total_cost_for_month()
+                )
+            spend_change_percent = (
+                round((total_spend - prev_total_spend) / prev_total_spend * 100, 1)
+                if prev_total_spend > 0
+                else None
             )
-        spend_change_percent = (
-            round((total_spend - prev_total_spend) / prev_total_spend * 100, 1)
-            if prev_total_spend > 0
-            else None
-        )
 
         return UsageSummaryResponse(
-            billingPeriod=billing_month,
+            billingPeriod=billing_month or "lifetime",
             totalSpend=round(total_spend, 2),
             currency=_CURRENCY,
             activeTenants=active_tenants,
@@ -450,7 +463,7 @@ class UsageService:
 
     async def get_tenant_list(
         self,
-        billing_month: str,
+        billing_month: str | None,
         tier_id: str | None,
         model_task_type: str | None,
         auth_db: Optional[AsyncSession],
@@ -460,8 +473,9 @@ class UsageService:
         task_types: list[str] | None = None,
     ) -> TenantHierarchicalListResponse:
         """Hierarchical tenant usage: tenant -> tier(s) held during billing_month -> task types.
+        billing_month=None means all-time (no month filter), i.e. usage up to now.
 
-        Only tenants with at least one ppu_quota_usage row this billing_month appear —
+        Only tenants with at least one ppu_quota_usage row in scope appear —
         a tenant with a budget/tier assignment but zero usage that month is omitted
         entirely, not shown as a zero-usage row. The tenant-level `tier` reflects
         whichever tier they were most recently active under that month, derived from
@@ -560,11 +574,12 @@ class UsageService:
     async def get_tenant_detail(
         self,
         tenant_id: str,
-        billing_month: str,
+        billing_month: str | None,
         auth_db: Optional[AsyncSession],
         task_types: list[str] | None = None,
     ) -> TenantHierarchicalItem:
-        """Same hierarchical shape as get_tenant_list, scoped to a single tenant — the
+        """Same hierarchical shape as get_tenant_list, scoped to a single tenant.
+        billing_month=None means all-time (no month filter), i.e. usage up to now. The
         tenant's `tier` reflects whichever tier they were most recently active under
         this billing_month, derived from usage (see get_tenants_with_usage_tier), not
         from a separate assignment table. `budget` is a separate lookup via

@@ -169,6 +169,42 @@ class TestGetSummary:
         repo.get_tenant_tier_usage_breakdown.assert_called_once()  # current month only
 
     @pytest.mark.asyncio
+    async def test_omitted_billing_period_defaults_to_all_time_not_current_month(self):
+        """Regression: billing_period=None used to collapse to the current calendar
+        month before reaching the repository, silently narrowing the dashboard's
+        "up to now" figure to whatever's happened since the 1st. It must now reach
+        the repository as None (all-time, no month filter) instead."""
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[_tier_row()],
+            get_tenant_tier_usage_breakdown=[_usage_row(total_cost=Decimal("50"))],
+            get_tenant_budgets=_budgets(),
+        )
+        svc = UsageService(repo)
+        result = await svc.get_summary(None)
+
+        assert result.totalSpend == 50.0
+        assert result.billingPeriod == "lifetime"
+        repo.get_tenants_with_usage_tier.assert_called_once_with(None, None, task_types=None)
+        repo.get_tenant_tier_usage_breakdown.assert_called_once_with(None, ["t1"], task_types=None)
+
+    @pytest.mark.asyncio
+    async def test_omitted_billing_period_has_no_spend_change_percent(self):
+        """There's no single "previous period" to compare a cumulative, all-time
+        total against, so spendChangePercent is left null rather than redefined —
+        and get_total_cost_for_month (the current-vs-prior-month lookup) must not
+        even be called."""
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[_tier_row()],
+            get_tenant_tier_usage_breakdown=[_usage_row()],
+            get_tenant_budgets=_budgets(),
+        )
+        svc = UsageService(repo)
+        result = await svc.get_summary(None)
+
+        assert result.spendChangePercent is None
+        repo.get_total_cost_for_month.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_percentage_sums_to_100_across_task_types(self):
         repo = _make_repo(
             get_tenants_with_usage_tier=[_tier_row()],

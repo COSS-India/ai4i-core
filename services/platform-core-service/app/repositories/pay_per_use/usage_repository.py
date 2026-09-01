@@ -62,25 +62,27 @@ class UsageRepository:
 
     async def get_tenants_with_usage_tier(
         self,
-        billing_month: str,
+        billing_month: str | None,
         tier_id: str | None = None,
         tenant_id: str | None = None,
         task_types: list[str] | None = None,
     ):
         """One row per tenant: the tier they were most recently active under
-        this billing_month, derived entirely from ppu_quota_usage.
+        this billing_month, derived entirely from ppu_quota_usage. billing_month=None
+        means all-time (no month filter) — "most recently active tier" then becomes
+        the tier with the latest updated_at across the tenant's entire usage history.
 
         ppu_tenant_tier_assignments is deliberately NOT used here —
         effective_from/effective_to on that table describe a BUDGET period
         (see assign_tier/reassign_tier), not tier-assignment validity, so
         they play no part in deciding which tenants/tiers appear. A tenant
-        with zero ppu_quota_usage rows this billing_month has nothing to
+        with zero ppu_quota_usage rows in scope has nothing to
         report and is excluded entirely (no synthetic zero-usage row).
 
         "Most recently active tier" = the tier_id with the latest
-        updated_at among this tenant's usage rows this month — a tenant
+        updated_at among this tenant's in-scope usage rows — a tenant
         reassigned mid-month shows their newer tier here (tierBreakdown
-        still lists every tier they actually used that month).
+        still lists every tier they actually used in scope).
         """
         # row_number() evaluates after GROUP BY within the same SELECT, so the rank can
         # be computed directly alongside the max(updated_at) aggregate — no need for a
@@ -106,9 +108,10 @@ class UsageRepository:
                 )
                 .label("rn"),
             )
-            .where(QuotaUsage.billing_month == billing_month)
             .group_by(QuotaUsage.tenant_id, QuotaUsage.tier_id)
         )
+        if billing_month is not None:
+            ranked_activity = ranked_activity.where(QuotaUsage.billing_month == billing_month)
         # Query-level filter: only the task types the caller (frontend) requested.
         if task_types:
             ranked_activity = ranked_activity.where(
@@ -132,7 +135,7 @@ class UsageRepository:
 
     async def get_tenant_budgets(
         self,
-        billing_month: str,
+        billing_month: str | None,
         tenant_ids: list[str],
         auth_db: Optional[AsyncSession] = None,
     ) -> dict:
@@ -250,10 +253,13 @@ class UsageRepository:
         return budgets
 
     async def get_tenant_tier_usage_breakdown(
-        self, billing_month: str, tenant_ids: list[str], task_types: list[str] | None = None
+        self, billing_month: str | None, tenant_ids: list[str], task_types: list[str] | None = None
     ):
-        """Per (tenant, tier, inference_name) usage/cost for the billing month, across
-        every tier the tenant held that month — not just their most-recently-active tier.
+        """Per (tenant, tier, inference_name) usage/cost, across every tier the tenant
+        held in scope — not just their most-recently-active tier. billing_month=None
+        means all-time: consumed/spend sum across every month the tenant held that
+        tier, while quota_snap (MAX, not SUM) still reflects that tier's own quota
+        amount rather than double-counting it per month.
         Filtered to ``task_types`` when the caller (frontend) passes them; otherwise the
         full breakdown is returned.
         """
@@ -270,16 +276,15 @@ class UsageRepository:
                 literal(0).label("total_cost"),
                 func.max(QuotaUsage.monthly_quota_snap).label("quota_snap"),
             )
-            .where(
-                QuotaUsage.billing_month == billing_month,
-                QuotaUsage.tenant_id.in_(tenant_ids),
-            )
+            .where(QuotaUsage.tenant_id.in_(tenant_ids))
             .group_by(
                 QuotaUsage.tenant_id,
                 QuotaUsage.tier_id,
                 QuotaUsage.inference_name,
             )
         )
+        if billing_month is not None:
+            stmt = stmt.where(QuotaUsage.billing_month == billing_month)
         if task_types:
             stmt = stmt.where(QuotaUsage.inference_name.in_(task_types))
         result = await self._db.execute(stmt)

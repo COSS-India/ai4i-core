@@ -90,6 +90,66 @@ class TestBudgetLookupInstant:
         assert effective_from <= lookup_instant < effective_to
 
 
+class TestBillingMonthOmitted:
+    """billing_month=None means all-time (usage up to now) — the query must drop the
+    billing_month equality filter entirely rather than defaulting to any one month.
+    Captures the compiled statement passed to db.execute() and inspects its WHERE
+    clause, since these two methods build the SQL directly (no repo method to mock)."""
+
+    @staticmethod
+    def _capturing_db(rows: list = ()) -> tuple[AsyncMock, list]:
+        captured: list = []
+        result = SimpleNamespace(all=lambda: list(rows))
+
+        async def _execute(stmt, *args, **kwargs):
+            captured.append(stmt)
+            return result
+
+        db = AsyncMock()
+        db.execute = _execute
+        return db, captured
+
+    @pytest.mark.asyncio
+    async def test_get_tenants_with_usage_tier_omits_billing_month_filter(self):
+        db, captured = self._capturing_db()
+        repo = UsageRepository(db=db)
+
+        await repo.get_tenants_with_usage_tier(None)
+
+        compiled = str(captured[0])
+        assert "billing_month" not in compiled
+
+    @pytest.mark.asyncio
+    async def test_get_tenants_with_usage_tier_keeps_filter_when_given(self):
+        db, captured = self._capturing_db()
+        repo = UsageRepository(db=db)
+
+        await repo.get_tenants_with_usage_tier("2026-06")
+
+        compiled = str(captured[0])
+        assert "billing_month" in compiled
+
+    @pytest.mark.asyncio
+    async def test_get_tenant_tier_usage_breakdown_omits_billing_month_filter(self):
+        db, captured = self._capturing_db()
+        repo = UsageRepository(db=db)
+
+        await repo.get_tenant_tier_usage_breakdown(None, ["t1"])
+
+        compiled = str(captured[0])
+        assert "billing_month" not in compiled
+
+    @pytest.mark.asyncio
+    async def test_get_tenant_tier_usage_breakdown_keeps_filter_when_given(self):
+        db, captured = self._capturing_db()
+        repo = UsageRepository(db=db)
+
+        await repo.get_tenant_tier_usage_breakdown("2026-06", ["t1"])
+
+        compiled = str(captured[0])
+        assert "billing_month" in compiled
+
+
 class TestGetTenantBudgets:
     """Exact-bug-scenario regression test: ppu_tenant_tier_assignments was
     dropped (AI4IDS-2923); get_tenant_budgets previously queried it directly
