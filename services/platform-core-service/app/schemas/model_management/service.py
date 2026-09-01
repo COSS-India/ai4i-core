@@ -336,7 +336,7 @@ def _resolve_and_check_description(
 # those are documented per-field via each alias's own `description` instead.
 _SERVICE_CREATE_EXAMPLE = {
     "serviceId": "ai4bharat/conformer-hi-asr-gpu",
-    "name": "Hindi Conformer ASR",
+    "name": "ai4bharat/conformer-hi-asr",
     "description": (
         "Indic-Conformer ASR model deployed by AI4Bharat for Hindi, served "
         "on a dedicated GPU inference cluster."
@@ -378,7 +378,7 @@ class ServiceCreateRequest(BaseSchema):
     """Request body for POST /services. See the "Example Value" tab for a
     full worked ULCA-conformant payload."""
 
-    model_config = ConfigDict(populate_by_name=True, json_schema_extra={"example": _SERVICE_CREATE_EXAMPLE})
+    model_config = ConfigDict(populate_by_name=True, json_schema_extra={"examples": [_SERVICE_CREATE_EXAMPLE]})
 
     serviceId: str
     name: str = Field(..., min_length=5, max_length=100)
@@ -592,7 +592,7 @@ class ServiceUpdateRequest(BaseSchema):
     editable. See the "Example Value" tab for a realistic partial update.
     """
 
-    model_config = ConfigDict(populate_by_name=True, json_schema_extra={"example": _SERVICE_UPDATE_EXAMPLE})
+    model_config = ConfigDict(populate_by_name=True, json_schema_extra={"examples": [_SERVICE_UPDATE_EXAMPLE]})
 
     # A request touching only these is the publish/unpublish toggle and is
     # exempt from _BILLING_FIELDS_REQUIRED_TOGETHER — requiring them
