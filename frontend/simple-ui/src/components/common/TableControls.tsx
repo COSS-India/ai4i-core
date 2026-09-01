@@ -182,7 +182,13 @@ export function TableFilterToolbar({
 }) {
   const actions =
     (hasActiveFilters && onClear) || rightContent ? (
-      <HStack spacing={2} pt={FORM_LABEL_TO_INPUT_PT} align="center" flexShrink={0}>
+      <HStack
+        spacing={2}
+        pt={FORM_LABEL_TO_INPUT_PT}
+        align="center"
+        flexShrink={0}
+        ml={rightContent ? "auto" : undefined}
+      >
         {hasActiveFilters && onClear ? (
           <Button size="sm" variant="outline" onClick={onClear}>
             {clearLabel}

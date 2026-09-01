@@ -161,23 +161,12 @@ export async function updateApplicationAllocations(
   allocations: AllocationUpdate[],
 ): Promise<void> {
   const body = {
-    application_allocations: allocations.map((row) => {
-      if (row.allocation.type === "FIXED") {
-        return {
-          application_id: Number(row.application_id),
-          allocated_budget: row.allocation.value,
-        };
-      }
-      return {
-        application_id: Number(row.application_id),
-        allocated_percentage: row.allocation.value,
-      };
-    }),
+    applications: allocations.map((row) => ({
+      application_id: Number(row.application_id),
+      allocation: row.allocation,
+    })),
   };
-  await apiService.put(apiEndpoints.allocations, body, {
-    ...SILENT,
-    params: { tenant_id: tenantId },
-  });
+  await apiService.put(apiEndpoints.tenants.budgetAllocation(tenantId), body, SILENT);
 }
 
 export interface ApplicationApiKeyRow {
