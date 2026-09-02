@@ -55,8 +55,8 @@ async def get_unit_type(task_type: str) -> str:
 
     ``task_type`` must be the orchestrator's task type (e.g. payload
     ["task_type"], "NMT"/"ASR"/...) — NOT a class name like
-    "NMTTaskService" (self.task_name), which never matches the yaml's
-    `name:` keys and would silently resolve to "unknown" for every service.
+    "NMTTaskService" (self.task_name), which never matches the catalogue's
+    `name` values and would silently resolve to "unknown" for every service.
 
     Driving unit_type from the catalogue's per-task-type config (rather than
     guessing modality from response field names, as get_output_type used to)
