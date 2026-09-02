@@ -1,12 +1,10 @@
 import { Box, Center, Flex, HStack, Spinner, Text, VStack } from "@chakra-ui/react";
-import React, { useMemo, useState } from "react";
-import { Cell, Pie, PieChart } from "recharts";
+import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
 import { INSTITUTIONS } from "../../config/constants";
 import {
   aggregateTasks,
   formatSpendMoney,
-  formatSpendUnit,
   hasPopulatedQuotaUsage,
   isMultiTaskQuotaTenant,
   taskTypeColor,
@@ -14,24 +12,10 @@ import {
   USAGE_SPEND_DANGER,
 } from "../../utils/usageSpendHelpers";
 import type { TenantUsageItem, UsageSummaryResponse } from "../../types/usageSpend";
-import MeteringChartPanel from "./MeteringChartPanel";
 import InfoTip from "../common/InfoTip";
 import { TaskTypeLabel, UsageCell } from "./UsageSpendCells";
 
 const SPEND_CARD_BG = "#eef3fb";
-
-function spendChangeColor(spendChangePercent: number | null): string | undefined {
-  if (spendChangePercent == null) return undefined;
-  if (spendChangePercent > 0) return "#c0392b";
-  if (spendChangePercent < 0) return "#2f9e44";
-  return undefined;
-}
-
-function spendChangeArrow(spendChangePercent: number): string {
-  if (spendChangePercent > 0) return "↑";
-  if (spendChangePercent < 0) return "↓";
-  return "→";
-}
 
 function moneyOrDash(value: number | null | undefined, currency: string): string {
   return value == null ? "—" : formatSpendMoney(value, currency);
@@ -75,11 +59,8 @@ interface SpendOverviewPanelProps {
   isLoading: boolean;
   error: string | null;
   currency: string;
-  spendChangePercent: number | null;
   emptyStateMessage?: string;
-  /** When set, show tenant Budget / Quota summary cards instead of platform totals. */
   tenantDetail?: TenantUsageItem | null;
-  /** Program-wide summary strip (Active institutions, Budget exceeded, vs last month). Hidden for Institution Admin / scoped views. */
   showProgramMetrics?: boolean;
 }
 
@@ -141,23 +122,18 @@ function TenantBudgetCard({
               ? `${formatSpendMoney(over, cur)} over budget`
               : `${formatSpendMoney(remaining, cur)} remaining`}
           </Text>
+          <Text fontSize="11.5px" color="gray.500" mt={2}>
+            {METERING.USAGE_SPEND.BUDGET_ALL_TIME_NOTE}
+          </Text>
         </>
       )}
     </Box>
   );
 }
 
-/**
- * Quota Summary for a single tenant.
- *
- * - One task type: show the API's flat `usage` quota bar (homogeneous unit + limit).
- * - Multiple task types: list each type from `tierBreakdown` — no cross-unit summary.
- *   The flat `usage` block is intentionally null in that case (can't sum characters +
- *   images + minutes into one consumed/quotaLimit).
- */
 function TenantQuotaSummary({ detail }: Readonly<{ detail: TenantUsageItem }>) {
   const tasks = useMemo(
-    () => aggregateTasks(detail.tierBreakdown ?? []).sort((a, b) => b.spend - a.spend),
+    () => aggregateTasks(detail.tierBreakdown ?? []).sort((a, b) => b.consumed - a.consumed),
     [detail.tierBreakdown],
   );
 
@@ -224,22 +200,9 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
   isLoading,
   error,
   currency,
-  spendChangePercent,
-  emptyStateMessage = "No spend data for this period.",
   tenantDetail = null,
   showProgramMetrics = true,
 }) => {
-  const [hlKey, setHlKey] = useState<string | null>(null);
-  const sorted = useMemo(
-    () => [...(summary?.spendByModelTaskType ?? [])].sort((a, b) => b.spend - a.spend),
-    [summary?.spendByModelTaskType],
-  );
-  const donutData = sorted.map((item, i) => ({
-    name: item.modelTaskType,
-    value: item.spend,
-    color: taskTypeColor(item.modelTaskType, i),
-  }));
-
   const totalCards = useMemo(() => {
     const tips = METERING.USAGE_SPEND.TOOLTIPS;
     return [
@@ -261,27 +224,41 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
     ];
   }, [summary, currency]);
 
-  const leftPanel = tenantDetail ? (
-    <VStack align="stretch" spacing={4} {...cardFlex}>
-      <TenantBudgetCard detail={tenantDetail} currency={currency} isLoading={isLoading} />
-      <Box bg="white" borderRadius="12px" borderWidth="1px" borderColor="gray.200" p="22px 24px">
-        {isLoading ? (
-          <Center minH="100px"><Spinner color="blue.500" /></Center>
-        ) : (
-          <>
-            <Text fontSize="11px" fontWeight="semibold" letterSpacing="0.04em" color="gray.600" mb={3}>
-              {METERING.USAGE_SPEND.QUOTA_SUMMARY}
-            </Text>
-            <TenantQuotaSummary detail={tenantDetail} />
-          </>
-        )}
-      </Box>
-    </VStack>
-  ) : isLoading ? (
-    <Center minH="140px" w="full">
-      <Spinner color="blue.500" />
-    </Center>
-  ) : (
+  if (error) {
+    return <Text fontSize="sm" color="red.500">{error}</Text>;
+  }
+
+  if (tenantDetail) {
+    return (
+      <Flex gap={4} direction={{ base: "column", md: "row" }} align="stretch">
+        <VStack align="stretch" spacing={4} {...cardFlex}>
+          <TenantBudgetCard detail={tenantDetail} currency={currency} isLoading={isLoading} />
+          <Box bg="white" borderRadius="12px" borderWidth="1px" borderColor="gray.200" p="22px 24px">
+            {isLoading ? (
+              <Center minH="100px"><Spinner color="blue.500" /></Center>
+            ) : (
+              <>
+                <Text fontSize="11px" fontWeight="semibold" letterSpacing="0.04em" color="gray.600" mb={3}>
+                  {METERING.USAGE_SPEND.QUOTA_SUMMARY}
+                </Text>
+                <TenantQuotaSummary detail={tenantDetail} />
+              </>
+            )}
+          </Box>
+        </VStack>
+      </Flex>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <Center minH="140px" w="full">
+        <Spinner color="blue.500" />
+      </Center>
+    );
+  }
+
+  return (
     <VStack align="stretch" spacing={4} w="full">
       <Flex gap={4} direction={{ base: "column", sm: "row" }}>
         {totalCards.map((card) => (
@@ -308,123 +285,15 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
               <Text fontWeight="semibold" color="gray.800">{summary?.activeTenants ?? "—"}</Text>
             </HStack>
             <HStack spacing={1.5}>
-              <Text color="gray.500">vs last month:</Text>
-              <InfoTip message={METERING.USAGE_SPEND.TOOLTIPS.VS_LAST_MONTH} />
-              <Text fontWeight="semibold" color={spendChangeColor(spendChangePercent) ?? "gray.800"}>
-                {spendChangePercent == null
-                  ? "—"
-                  : `${spendChangeArrow(spendChangePercent)} ${Math.abs(spendChangePercent).toFixed(1)}%`}
+              <Text color="gray.500">Budget exceeded:</Text>
+              <Text fontWeight="semibold" color="gray.800">
+                {summary?.budgetExceededTenants ?? "—"}
               </Text>
             </HStack>
           </Flex>
         </Box>
       ) : null}
     </VStack>
-  );
-
-  let spendBody: React.ReactNode;
-  if (isLoading) {
-    spendBody = <Center h="150px"><Spinner color="blue.500" /></Center>;
-  } else if (error) {
-    spendBody = <Text fontSize="sm" color="red.500">{error}</Text>;
-  } else if (sorted.length === 0) {
-    spendBody = (
-      <Text fontSize="sm" color="gray.400" py={8} textAlign="center">
-        {emptyStateMessage}
-      </Text>
-    );
-  } else {
-    spendBody = (
-      <Flex align="flex-start" gap={7} direction={{ base: "column", sm: "row" }}>
-        <Box position="relative" flexShrink={0} w="150px" h="150px" mt={{ base: 0, sm: "34px" }}>
-          <MeteringChartPanel height={150} minWidth={150}>
-            {(size) => (
-              <PieChart width={size.width} height={size.height}>
-                <Pie
-                  data={donutData}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={48}
-                  outerRadius={68}
-                  paddingAngle={1}
-                  stroke="none"
-                  onMouseEnter={(_, i) => setHlKey(donutData[i]?.name ?? null)}
-                  onMouseLeave={() => setHlKey(null)}
-                >
-                  {donutData.map((entry) => (
-                    <Cell
-                      key={entry.name}
-                      fill={entry.color}
-                      opacity={hlKey && hlKey !== entry.name ? 0.45 : 1}
-                      cursor="pointer"
-                    />
-                  ))}
-                </Pie>
-              </PieChart>
-            )}
-          </MeteringChartPanel>
-          <Center position="absolute" inset={0} pointerEvents="none" textAlign="center" px="22px">
-            <Text fontSize="11px" fontWeight="bold" letterSpacing="0.04em" color="gray.600" lineHeight="1.3">
-              All Services
-            </Text>
-          </Center>
-        </Box>
-        <Box flex={1} minW={0} maxH="272px" overflowY="auto" pr={2}>
-          {sorted.map((item, i) => {
-            const color = taskTypeColor(item.modelTaskType, i);
-            const isHl = hlKey === item.modelTaskType;
-            return (
-              <Flex
-                key={item.modelTaskType}
-                align="center"
-                justify="space-between"
-                gap={3}
-                px={2}
-                py={2}
-                borderRadius="6px"
-                borderBottomWidth="1px"
-                borderColor="gray.50"
-                bg={isHl ? "gray.50" : "transparent"}
-                onMouseEnter={() => setHlKey(item.modelTaskType)}
-                onMouseLeave={() => setHlKey(null)}
-              >
-                <HStack spacing="9px" minW={0}>
-                  <TaskTypeLabel taskType={item.modelTaskType} color={color} fontWeight="semibold" />
-                  <Text fontSize="12px" color="gray.500" noOfLines={1}>
-                    {formatSpendUnit(item.consumption, item.unit)}
-                  </Text>
-                </HStack>
-                <Box textAlign="right" flexShrink={0}>
-                  <Text fontSize="13px" fontWeight="semibold" display="block">
-                    {formatSpendMoney(item.spend, currency)}
-                  </Text>
-                  <Text fontSize="11.5px" color="gray.500">{item.percentage.toFixed(1)}%</Text>
-                </Box>
-              </Flex>
-            );
-          })}
-        </Box>
-      </Flex>
-    );
-  }
-
-  return (
-    <Flex gap={4} direction={{ base: "column", md: "row" }} align="stretch">
-      {leftPanel}
-      {/* SPEND BY MODEL TASK TYPE removed from adopter Usage & Spend.
-          UNDO — restore the panel below (and keep spendBody / donut logic above).
-      <Box flex={1} bg="white" borderRadius="12px" borderWidth="1px" borderColor="gray.200" p="20px 24px">
-        <Text fontSize="12px" letterSpacing="0.04em" color="gray.600" fontWeight="semibold" mb={4}>
-          {METERING.USAGE_SPEND.SPEND_BY_TASK_TYPE}
-        </Text>
-        {spendBody}
-      </Box>
-      */}
-      {/* Keep spendBody referenced so the unused-code path stays easy to restore. */}
-      {false ? spendBody : null}
-    </Flex>
   );
 };
 

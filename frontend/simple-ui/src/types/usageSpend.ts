@@ -8,16 +8,14 @@ export interface SpendByTaskType {
    */
   allocated?: number | null;
   /**
-   * Never sent by either endpoint; derived locally in summaryFromDetail, which copies it
-   * off the tenant-detail tier breakdown. Absent on responses from the summary endpoint.
+   * Never sent by the summary endpoint; derived locally in summaryFromDetail from
+   * tenant-detail tier breakdown. Absent on responses from the summary endpoint.
    */
   remaining?: number | null;
-  spend: number;
-  percentage: number;
 }
 
 export interface UsageSummaryResponse {
-  billingPeriod: string;
+  billingPeriod: string | null;
   totalSpend: number;
   currency: string;
   /** Present when API supports it; otherwise derived client-side. */
@@ -25,7 +23,7 @@ export interface UsageSummaryResponse {
   budgetExceededTenants?: number;
   spendChangePercent?: number;
   spendByModelTaskType: SpendByTaskType[];
-  /** Summed across tenants with a budget assignment covering this billing period. */
+  /** Summed across tenants with a budget assignment. */
   totalAllocatedBudget?: number;
   totalRemainingBudget?: number;
 }
@@ -35,6 +33,9 @@ export interface TenantBudget {
   spent: number;
   remaining: number;
   percentageUsed: number;
+  /** Present on single-tenant detail only. */
+  budgetEffectiveFrom?: string | null;
+  budgetEffectiveTo?: string | null;
 }
 
 /**
@@ -58,14 +59,11 @@ export interface TierTaskTypeUsage {
   quotaLimit?: number | null;
   consumed: number;
   remaining?: number | null;
-  percentage: number;
-  spend: number;
 }
 
 export interface TenantTierBreakdown {
   tierId: string;
   tierName: string;
-  spend: number;
   taskTypes: TierTaskTypeUsage[];
 }
 
@@ -75,9 +73,12 @@ export interface TenantUsageItem {
   tier: string;
   tierId: string;
   currency: string;
+  /** All-time institution spend — not scoped by billing_period. */
   spend: number;
   budget: TenantBudget;
+  /** Quota usage for the selected billing_period. */
   usage: TenantUsageAggregate;
+  /** Quota breakdown for the selected billing_period. */
   tierBreakdown: TenantTierBreakdown[];
 }
 
@@ -87,7 +88,7 @@ export interface TenantUsageListResponse {
 }
 
 export interface TenantUsageParams {
-  /** Billing month in YYYY-MM format. Defaults to current month server-side. */
+  /** Billing month in YYYY-MM format. Scopes quota usage only. */
   billingPeriod?: string;
   tierId?: string;
   modelTaskType?: string;
@@ -99,8 +100,9 @@ export interface TenantUsageParams {
 }
 
 export interface UsageSummaryParams {
-  /** Billing month in YYYY-MM format. Defaults to current month server-side. */
+  /** Billing month in YYYY-MM format. Omit = all-time on the API. */
   billingPeriod?: string;
+  tierId?: string;
   /** Comma-separated task types to include (frontend allowlist). */
   taskTypes?: string;
 }
