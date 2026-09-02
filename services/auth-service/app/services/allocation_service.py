@@ -37,7 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import EntityNotFoundError, ValidationError
 from app.models.api_key import APIKey
-from app.models.application import Application
+from app.models.application import Application, ApplicationStatus
 from app.models.user import User
 from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.application_repository import ApplicationRepository
@@ -122,7 +122,13 @@ class AllocationService:
         same as always) — a parent/child relationship, not a sibling one.
         This can (rarely) fail one of those Keys' own
         ALLOCATION_BELOW_CONSUMED check; when it does, the WHOLE call is
-        rejected, including the Application's own resize.
+        rejected, including the Application's own resize. But if a caller
+        submits an Application at its CURRENT value (unchanged) purely to
+        nest explicit ``api_keys`` edits under it, that Application's total
+        isn't actually moving — its un-listed Keys follow the same sibling
+        rule as everywhere else this call (refit_unlisted=False), not the
+        parent/child one, since there's no genuine total change forcing
+        them to react (see _cascade_into_keys).
         """
         await authorize_institution_scope(self._roles, current_user, tenant_id)
 
@@ -137,13 +143,15 @@ class AllocationService:
             )
 
         # Every Application under the Tenant is locked, not just the listed
-        # ones — refit_unlisted=True means any of them may be re-fit and
-        # written by this call, not only the rows the caller mentioned.
-        # One batched SELECT ... FOR UPDATE (list_by_tenant_for_update),
-        # not one round trip per Application — the result is already the
-        # locked, up-to-date rows, so no separate unlocked list_by_tenant
-        # call is needed first.
-        applications = await self._applications.list_by_tenant_for_update(tenant_id)
+        # ones — the feasibility check needs a consistent, race-free
+        # snapshot of every sibling's current ₹, whether or not this call
+        # ends up writing them. One batched SELECT ... FOR UPDATE
+        # (list_by_tenant_for_update), not one round trip per Application —
+        # the result is already the locked, up-to-date rows, so no
+        # separate unlocked list_by_tenant call is needed first.
+        applications = self._active_applications(
+            await self._applications.list_by_tenant_for_update(tenant_id)
+        )
         if not applications:
             raise EntityNotFoundError(f"Applications for tenant {tenant_id}")
         applications_by_id = {app.id: app for app in applications}
@@ -207,10 +215,17 @@ class AllocationService:
             # this call — [] would be indistinguishable from "resolved,
             # and this Application genuinely has zero Keys" (see
             # ApplicationAllocationResponseItem.api_keys's own docstring).
-            # This Application's OWN total changing is what forces its
-            # Keys to react (refit_unlisted=True, one level down) — a
-            # parent/child relationship, unrelated to the sibling rule
-            # this level itself now follows.
+            # application_amount_changed=resolved.changed selects the rule
+            # one level down: when the Application's own ₹ actually moved,
+            # its Keys unconditionally re-fit to track that (parent/child).
+            # When it DIDN'T move — a caller submitting this Application at
+            # its current value just to nest Key edits under it — its
+            # un-listed Keys follow the SAME sibling rule this level itself
+            # follows: left exactly as they are, not swept into a re-fit
+            # that has nothing forcing it. Without this, a nested edit
+            # under an unchanged Application would silently reintroduce
+            # the sibling Key re-fit the direct Key endpoints deliberately
+            # removed.
             key_allocations_out: Optional[list[APIKeyAllocationResponseItem]] = None
             if resolved.changed or nested_api_keys:
                 key_allocations_out = await self._cascade_into_keys(
@@ -222,6 +237,7 @@ class AllocationService:
                     usage_map=usage_map,
                     current_user=current_user,
                     snapshot_writes=snapshot_writes,
+                    application_amount_changed=resolved.changed,
                 )
 
             response_rows.append(
@@ -493,11 +509,15 @@ class AllocationService:
         """
         # One batched SELECT ... FOR UPDATE, not one round trip per
         # Application — see update_tenant_application_allocations's own
-        # comment on list_by_tenant_for_update for why.
-        applications = await self._applications.list_by_tenant_for_update(tenant_id)
+        # comment on list_by_tenant_for_update for why. Filtered to ACTIVE
+        # only, same reasoning as that method's own filter: an INACTIVE
+        # Application's allocated_budget must not permanently block room
+        # a top-down needs to free (see _active_applications).
+        applications = self._active_applications(
+            await self._applications.list_by_tenant_for_update(tenant_id)
+        )
         if not applications:
             return 0, 0, {}
-        applications_by_id = {app.id: app for app in applications}
 
         keys_by_app, usage_map = await self._load_keys_and_usage(
             [app.id for app in applications], platform_core_db
@@ -608,6 +628,23 @@ class AllocationService:
         return [k for k in keys if k.is_active]
 
     @staticmethod
+    def _active_applications(applications: list[Application]) -> list[Application]:
+        """The Application-level analogue of ``_active`` above: an INACTIVE
+        Application is excluded from allocation eligibility — its
+        allocated_budget doesn't count toward a sibling-sum/feasibility
+        check, and it isn't returned in a Budget Allocation response —
+        same reasoning as a revoked Key, one level up. This matters more
+        here than it might look: with the sibling re-fit gone, a Tenant's
+        or Application's siblings never auto-shrink any more, so an
+        INACTIVE Application's ₹ — uneditable through the UI once
+        deactivated — would otherwise permanently block that room from
+        ever being reallocated to an active sibling, with no path to free
+        it. Call this on the locked list before building ``children`` (and
+        before the merge-back-untouched loop), same call sites _active
+        governs for Keys."""
+        return [app for app in applications if app.status == ApplicationStatus.ACTIVE]
+
+    @staticmethod
     def _consumed_total(
         keys: list[APIKey], usage_map: dict[int, tuple[Decimal, Decimal]]
     ) -> Decimal:
@@ -624,17 +661,31 @@ class AllocationService:
         usage_map: dict[int, tuple[Decimal, Decimal]],
         current_user: User,
         snapshot_writes: dict[int, Decimal],
+        application_amount_changed: bool,
     ) -> list[APIKeyAllocationResponseItem]:
-        """This Application's own un-listed Keys are NOT left untouched just
-        because the caller didn't mention them — every Key under it is
-        unconditionally re-fit to track the Application's own change,
-        same as everywhere else that a parent's own total just changed.
-        ``old_application_amount`` is what the Application held
-        immediately before this call — required so the re-fit can scale
-        each Key by the Application's actual change instead of normalizing
-        to fill whatever room the resize left (see resolve_level's
-        docstring). resolve_level itself already returns every Key, so no
-        merge-back-in step is needed here."""
+        """Two different reasons this gets called, two different rules:
+
+        - The Application's own amount actually changed this call
+          (``application_amount_changed=True``): its Keys are
+          unconditionally re-fit to track that change (refit_unlisted=True)
+          — a parent/child relationship, not a sibling one.
+        - The Application's own amount did NOT change, but the caller
+          nested explicit ``api_keys`` edits under it anyway
+          (``application_amount_changed=False``): the Application's total
+          is fixed, so this is exactly the same shape as the direct
+          Application-level/single-Key endpoints editing some of an
+          Application's Keys while its own total holds still — un-listed
+          Keys are left exactly as they are (refit_unlisted=False), not
+          swept into a re-fit that has no forcing function behind it.
+
+        ``old_application_amount`` is only meaningful for the True case —
+        required so that re-fit can scale each Key by the Application's
+        actual change instead of normalizing to fill whatever room the
+        resize left (see resolve_level's docstring). resolve_level itself
+        already returns every Key when refit_unlisted=True, so no
+        merge-back-in step is needed here for that path; the False path's
+        merge-back happens inside _resolve_and_persist_keys, same as the
+        direct endpoints."""
         return await self._resolve_and_persist_keys(
             parent_amount=new_application_amount,
             parent_old_amount=old_application_amount,
@@ -643,7 +694,7 @@ class AllocationService:
             usage_map=usage_map,
             current_user=current_user,
             snapshot_writes=snapshot_writes,
-            refit_unlisted=True,
+            refit_unlisted=application_amount_changed,
             owning_application_id=application_id,
         )
 
