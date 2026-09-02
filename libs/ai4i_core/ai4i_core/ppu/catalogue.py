@@ -47,13 +47,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
 from typing import Any, Callable, Dict, List, Optional
+
+import time
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_KEY_PREFIX = "core:inference_type"
-DEFAULT_TTL_SECONDS = 300
+DEFAULT_TTL_SECONDS = 1 * 24 * 60 * 60
 
 
 def to_legacy_entry(entry: Dict[str, Any]) -> Dict[str, Any]:

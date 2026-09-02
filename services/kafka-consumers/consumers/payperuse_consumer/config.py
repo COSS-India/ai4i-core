@@ -22,9 +22,8 @@ class Constants:
     INFERENCE_TYPE_MEMO_TTL = 300
     # A miss is memoised far more briefly than a hit. Since the upsert joins and
     # conflicts on inference_type_id, an unresolved name means quota goes
-    # unenforced for that task type until the memo expires — so a type an admin
-    # has just created must start being enforced in seconds, not minutes.
-    INFERENCE_TYPE_NEGATIVE_MEMO_TTL = 30
+    # unenforced for that task type until the memo expires.
+    INFERENCE_TYPE_NEGATIVE_MEMO_TTL = 300
     PRICING_CACHE_TTL = 3600
     BILLED_KEY_PREFIX = "ppu:billed:"
     # Only needs to outlive the redelivery window after a consumer crash/
