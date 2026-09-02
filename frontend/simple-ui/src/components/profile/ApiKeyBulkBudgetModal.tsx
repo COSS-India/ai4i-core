@@ -221,9 +221,10 @@ export default function ApiKeyBulkBudgetModal({
     >
       <VStack align="stretch" spacing={4}>
         <Text fontSize="sm" color="gray.600">
-          Rebalance Budget % across active API keys under one Application. Only
-          changed keys are submitted. Unallocated % can remain within the
-          Application&apos;s own Budget.
+          Rebalance Budget % across active API keys under one Application. All
+          active keys are included on save; keys you don&apos;t edit keep their
+          current budget. Totals below 100% are allowed within this
+          Application&apos;s Budget.
         </Text>
 
         <FormControl isRequired>
