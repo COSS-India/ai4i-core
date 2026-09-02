@@ -1,5 +1,6 @@
 import { apiService } from "./api";
 import { apiEndpoints } from "./apiEndpoints";
+import type { AllocationUpdate } from "../types/application";
 
 const SILENT = { suppressErrorAlert: true as const };
 
@@ -9,6 +10,13 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+export type AllocationValue = AllocationUpdate["allocation"];
+
+export interface ApiKeyAllocationRow {
+  api_key_id: number;
+  allocation: AllocationValue;
+}
+
 export function getAllocationErrorCode(error: unknown): string | null {
   const data = asRecord((error as { response?: { data?: unknown } })?.response?.data);
   const detail = asRecord(data?.detail);
@@ -16,29 +24,19 @@ export function getAllocationErrorCode(error: unknown): string | null {
   return code == null ? null : String(code).toUpperCase();
 }
 
-export interface ApiKeyAllocationInput {
-  api_key_id: number;
-  allocated_percentage?: number;
-  allocated_budget?: number;
-}
-
 export async function updateApiKeyAllocations(
   applicationId: number,
-  allocations: ApiKeyAllocationInput[],
+  applicationAllocation: AllocationValue,
+  apiKeys: ApiKeyAllocationRow[],
 ): Promise<void> {
   const body = {
-    api_key_allocations: allocations.map((row) => {
-      const entry: Record<string, number> = { api_key_id: row.api_key_id };
-      if (row.allocated_budget != null) {
-        entry.allocated_budget = row.allocated_budget;
-      } else if (row.allocated_percentage != null) {
-        entry.allocated_percentage = row.allocated_percentage;
-      }
-      return entry;
-    }),
+    application_id: applicationId,
+    allocation: applicationAllocation,
+    api_keys: apiKeys,
   };
-  await apiService.put(apiEndpoints.allocations, body, {
-    ...SILENT,
-    params: { application_id: applicationId },
-  });
+  await apiService.put(
+    apiEndpoints.applications.budgetAllocation(String(applicationId)),
+    body,
+    SILENT,
+  );
 }

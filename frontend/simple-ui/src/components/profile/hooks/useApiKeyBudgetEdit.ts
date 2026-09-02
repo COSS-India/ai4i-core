@@ -13,6 +13,7 @@ import {
 } from "../../../utils/applicationBudgetPreview";
 import type { Application } from "../../../types/application";
 import { FIELD_HINTS } from "../../../config/fieldHints";
+import type { AllocationValue } from "../../../services/allocationService";
 
 export type KeyBudgetDraft = {
   api_key_id: number;
@@ -163,10 +164,23 @@ function mapAllocationError(error: unknown): string {
   if (code === "APPLICATION_BUDGET_NOT_SET") {
     return "This Application has no Budget allocation yet — assign one from Application Management first.";
   }
+  if (code === "APPLICATION_ALLOCATION_MISMATCH") {
+    return "Application budget changed elsewhere — close this dialog, refresh, and try again.";
+  }
   if (code === "TENANT_BUDGET_NOT_SET") {
     return FIELD_HINTS.application.institutionBudgetNotSet;
   }
   return parseError(error).message;
+}
+
+function resolveApplicationEcho(app: Application | null): AllocationValue | null {
+  if (app?.allocated_percentage != null) {
+    return { type: "PERCENTAGE", value: app.allocated_percentage };
+  }
+  if (app?.allocated_budget != null) {
+    return { type: "FIXED", value: app.allocated_budget };
+  }
+  return null;
 }
 
 export interface UseApiKeyBudgetEditOptions {
@@ -191,6 +205,8 @@ export function useApiKeyBudgetEdit({
   const [applicationAllocatedPct, setApplicationAllocatedPct] = useState<number | null>(
     null,
   );
+  const [applicationEchoAllocation, setApplicationEchoAllocation] =
+    useState<AllocationValue | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
@@ -205,13 +221,21 @@ export function useApiKeyBudgetEdit({
 
   const canSave = useMemo(() => {
     if (!selectedApplicationId || isLoading || isSaving) return false;
+    if (!applicationEchoAllocation) return false;
     if (rows.length === 0) return false;
     if (liveTotalPct > 100 + 1e-6) return false;
     if (rows.some((row) => row.rowError)) return false;
     const changed = rows.filter(rowHasBudgetChange);
     if (changed.length === 0) return false;
     return true;
-  }, [selectedApplicationId, isLoading, isSaving, rows, liveTotalPct]);
+  }, [
+    selectedApplicationId,
+    applicationEchoAllocation,
+    isLoading,
+    isSaving,
+    rows,
+    liveTotalPct,
+  ]);
 
   const loadKeysForApplication = useCallback(
     async (applicationId: string) => {
@@ -225,11 +249,13 @@ export function useApiKeyBudgetEdit({
           applications.find((a) => a.application_id === applicationId) ?? null;
         const detail = await fetchApplicationUsageDetail(tid, Number(applicationId));
         const appAmount = detail.allocatedBudget.amount;
+        const echo = resolveApplicationEcho(app);
         setApplicationName(detail.applicationName || app?.name || applicationId);
         setApplicationBudget(appAmount);
         setApplicationAllocatedPct(
           app?.allocated_percentage ?? detail.allocatedBudget.percentage ?? null,
         );
+        setApplicationEchoAllocation(echo);
         const activeKeys = detail.apiKeys.filter((k) => k.isActive);
         const drafts = activeKeys.map((key) => buildDraftFromUsageKey(key, appAmount));
         setRows(drafts);
@@ -253,6 +279,7 @@ export function useApiKeyBudgetEdit({
       setApplicationName("");
       setApplicationBudget(0);
       setApplicationAllocatedPct(null);
+      setApplicationEchoAllocation(null);
       setBanner(null);
       setRows([]);
       setIsOpen(true);
@@ -279,6 +306,7 @@ export function useApiKeyBudgetEdit({
         setApplicationName("");
         setApplicationBudget(0);
         setApplicationAllocatedPct(null);
+        setApplicationEchoAllocation(null);
       }
     },
     [loadKeysForApplication],
@@ -317,22 +345,21 @@ export function useApiKeyBudgetEdit({
   );
 
   const save = useCallback(async () => {
-    if (!canSave || !selectedApplicationId) return;
+    if (!canSave || !selectedApplicationId || !applicationEchoAllocation) return;
     const changes = rows.filter(rowHasBudgetChange);
     setIsSaving(true);
     setBanner(null);
     try {
       await updateApiKeyAllocations(
         Number(selectedApplicationId),
-        changes.map((row) => {
-          if (row.lastEditMode === "amount" && row.resolvedAmount != null) {
-            return { api_key_id: row.api_key_id, allocated_budget: row.resolvedAmount };
-          }
-          return {
-            api_key_id: row.api_key_id,
-            allocated_percentage: row.resolvedPct ?? 0,
-          };
-        }),
+        applicationEchoAllocation,
+        changes.map((row) => ({
+          api_key_id: row.api_key_id,
+          allocation:
+            row.lastEditMode === "amount" && row.resolvedAmount != null
+              ? { type: "FIXED", value: row.resolvedAmount }
+              : { type: "PERCENTAGE", value: row.resolvedPct ?? 0 },
+        })),
       );
       toast({
         title: `Budget updated for ${changes.length} key(s).`,
@@ -347,7 +374,7 @@ export function useApiKeyBudgetEdit({
     } finally {
       setIsSaving(false);
     }
-  }, [canSave, selectedApplicationId, rows, toast, close, onSaved]);
+  }, [canSave, selectedApplicationId, applicationEchoAllocation, rows, toast, close, onSaved]);
 
   return {
     isOpen,

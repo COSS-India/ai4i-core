@@ -75,8 +75,11 @@ export const apiEndpoints = {
       `${API_V1}/auth/tenants/${tenantId}/budget-allocation`,
   },
 
-  /** PUT — rebalance budget across Applications (?tenant_id=) or API Keys (?application_id=). */
-  allocations: `${API_V1}/auth/allocations`,
+  applications: {
+    /** PUT — rebalance API Key budget allocations under one Application. */
+    budgetAllocation: (applicationId: string) =>
+      `${API_V1}/auth/applications/${applicationId}/budget-allocation`,
+  },
 
   alerts: {
     base: `${API_V1}/alerts`,
