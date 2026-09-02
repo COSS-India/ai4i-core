@@ -39,6 +39,7 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
   const [selectedTenant, setSelectedTenant] = useState<TenantUsageDetail | null>(null);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const detailRequestIdRef = useRef(0);
+  const selectedTenantRowRef = useRef<TenantUsageItem | null>(null);
   const { isOpen: isDetailOpen, onOpen: onDetailOpen, onClose: onDetailClose } = useDisclosure();
   const { taskTypeNames } = useInferenceTypes();
   const enabledTaskTypesParam =
@@ -67,7 +68,9 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
 
   const handleTenantClick = useCallback(
     (row: TenantUsageItem) => {
+      selectedTenantRowRef.current = row;
       setSelectedTenantId(row.tenantId);
+      setSelectedTenant(null);
       onDetailOpen();
     },
     [onDetailOpen],
@@ -84,7 +87,7 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
       })
       .catch(() => {
         if (requestId !== detailRequestIdRef.current) return;
-        setSelectedTenant(null);
+        setSelectedTenant(selectedTenantRowRef.current);
       })
       .finally(() => {
         if (requestId === detailRequestIdRef.current) setIsDetailLoading(false);
@@ -96,6 +99,7 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
     onDetailClose();
     setSelectedTenantId(null);
     setSelectedTenant(null);
+    selectedTenantRowRef.current = null;
     setIsDetailLoading(false);
   }, [onDetailClose]);
 
@@ -106,8 +110,6 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
           detail={tenantDetail}
           organisationLabel={organisationLabel}
           isLoading={data.isTenantsLoading}
-          billingPeriod={billingPeriod}
-          onBillingPeriodChange={setBillingPeriod}
         />
       </VStack>
     );
@@ -159,8 +161,6 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
         onClose={handleDetailClose}
         detail={selectedTenant}
         isLoading={isDetailLoading}
-        billingPeriod={billingPeriod}
-        onBillingPeriodChange={setBillingPeriod}
       />
     </VStack>
   );
