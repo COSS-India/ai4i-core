@@ -15,20 +15,20 @@ stays correct if a path ever contains a comma::
     redis-cli HGET    core:inference_type:llm endpoint_patterns
     redis-cli HKEYS   core:inference_type:all      # every type name, one round-trip
 
-**Written here; not yet read by anything.** These keys are *intended* as a
-cross-service contract — ``payperuse_consumer`` will
-``HGET core:inference_type:<name> id`` to resolve ``inference_type_id`` when upserting
-``quota_usage`` — but that consumer change is a separate commit and has **not** landed.
-Nothing under ``services/kafka-consumers/`` reads these keys today.
+**Written here, read across services.** These keys are a cross-service contract:
 
-Until it does, ``quota_usage.inference_type_id`` is populated **only** by the migration
-backfill (``11f21f7d7ae4``): every row the consumer writes from now on carries NULL. Do
-not treat the column as trustworthy, and do not read the phase-2 NULL audit as clean-able
-yet.
+* ``payperuse_consumer._billing.get_inference_type_id`` does
+  ``HGET core:inference_type:<name> id`` to resolve the FK its quota upsert joins and
+  conflicts on.
+* ``ai4i_core.ppu.catalogue`` reads ``:all`` for auth-service's per-service quota
+  check and inference-service's billing-unit labels.
 
-When the consumer does land, both services must point at the same Redis host *and*
-logical DB — platform-core defaults to ``REDIS_DB=0`` and auth-service uses 0-3 for
-unrelated concerns, so this is a real deployment prerequisite, not a formality.
+Every reader falls back to the database (or, for inference-service, to platform-core
+over HTTP) and none of them writes these keys — this module stays the single writer, so
+the full-row shape cannot be corrupted by a partial write from elsewhere.
+
+All of them must point at the same Redis host *and* logical DB. Everything defaults to
+``REDIS_DB=0``; that is a real deployment prerequisite, not a formality.
 
 Four rules govern every operation here:
 
@@ -292,3 +292,26 @@ async def get_unit_map(db: AsyncSession) -> Dict[str, str]:
     could not see a type added after the process started.
     """
     return {entry["name"]: entry["unit"] for entry in await get_all(db)}
+
+
+async def get_unit_map_standalone() -> Dict[str, str]:
+    """``get_unit_map`` for callers that hold no session of their own.
+
+    ``MeteringService`` is constructed with repositories and an optional auth DB
+    but no primary session, so it cannot call the session-taking variant. Opens
+    one from the primary factory, the same way ``cache_warmup`` does.
+
+    Returns ``{}`` rather than raising: an empty map makes
+    ``_native_unit_suffix_for_metering_task`` fall through to
+    ``SERVICE_BREAKDOWN_CONFIG``, which is the behaviour that predates PPU units
+    and is correct-if-static. A metering dashboard must not 500 because the
+    catalogue is briefly unreachable.
+    """
+    try:
+        from app.core.database import get_primary_session_factory
+
+        async with get_primary_session_factory()() as session:
+            return await get_unit_map(session)
+    except Exception as exc:
+        logger.warning("Inference type unit map unavailable: %s", exc)
+        return {}

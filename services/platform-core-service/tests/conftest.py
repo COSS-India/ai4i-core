@@ -115,28 +115,53 @@ _ai4i_exc = _conftest_stub(
 )
 _conftest_stub("ai4i_core", exceptions=_ai4i_exc)
 
-# Must mirror libs/ai4i_core/ai4i_core/ppu/inference_types.yaml exactly —
-# metering_service.py reads task-type unit labels from this map (see
-# _native_unit_suffix_for_metering_task), so a stub that drifts from the
-# real yaml (e.g. a wrong unit, or a missing task type) silently masks a
-# real bug behind a passing test instead of catching it.
+# The seeded catalogue. Must mirror the seed migration
+# (52eb3034332e_seed_inference_types.py) exactly — metering_service.py reads
+# task-type unit labels from it (see _native_unit_suffix_for_metering_task), so
+# a stub that drifts (a wrong unit, or a missing task type) silently masks a
+# real bug behind a passing test. test_inference_type_catalogue_fixture.py
+# asserts the two agree, which the old "must mirror the yaml" comment could
+# only ask for.
 _INFERENCE_TYPES = [
-    {"name": "llm", "unit": "tokens"},
-    {"name": "asr", "unit": "audio_minutes"},
-    {"name": "nmt", "unit": "characters"},
-    {"name": "tts", "unit": "characters"},
-    {"name": "ner", "unit": "characters"},
-    {"name": "ocr", "unit": "images"},
-    {"name": "transliteration", "unit": "characters"},
-    {"name": "language-detection", "unit": "characters"},
-    {"name": "language-diarization", "unit": "audio_minutes"},
-    {"name": "speaker-diarization", "unit": "audio_minutes"},
-    {"name": "audio-lang-detection", "unit": "audio_minutes"},
-    {"name": "pipeline", "unit": "requests"},
+    {"id": 1, "name": "llm", "unit": "tokens", "pricing": "per_million_tokens",
+     "endpoint_patterns": ["/api/v1/chat", "/api/v1/chat/completions"]},
+    {"id": 2, "name": "asr", "unit": "audio_minutes", "pricing": "per_minute",
+     "endpoint_patterns": ["/api/v1/asr/inference"]},
+    {"id": 3, "name": "nmt", "unit": "characters", "pricing": "per_million_characters",
+     "endpoint_patterns": ["/api/v1/nmt/inference"]},
+    {"id": 4, "name": "tts", "unit": "characters", "pricing": "per_million_characters",
+     "endpoint_patterns": ["/api/v1/tts/inference"]},
+    {"id": 5, "name": "ner", "unit": "characters", "pricing": "per_million_characters",
+     "endpoint_patterns": ["/api/v1/ner/inference"]},
+    {"id": 6, "name": "ocr", "unit": "images", "pricing": "per_image",
+     "endpoint_patterns": ["/api/v1/ocr/inference"]},
+    {"id": 7, "name": "transliteration", "unit": "characters", "pricing": "per_million_characters",
+     "endpoint_patterns": ["/api/v1/transliteration/inference"]},
+    {"id": 8, "name": "language-detection", "unit": "characters", "pricing": "per_million_characters",
+     "endpoint_patterns": ["/api/v1/language-detection/inference"]},
+    {"id": 9, "name": "language-diarization", "unit": "audio_minutes", "pricing": "per_minute",
+     "endpoint_patterns": ["/api/v1/language-diarization/inference"]},
+    {"id": 10, "name": "speaker-diarization", "unit": "audio_minutes", "pricing": "per_minute",
+     "endpoint_patterns": ["/api/v1/speaker-diarization/inference"]},
+    {"id": 11, "name": "audio-lang-detection", "unit": "audio_minutes", "pricing": "per_minute",
+     "endpoint_patterns": ["/api/v1/audio-lang-detection/inference"]},
+    {"id": 12, "name": "pipeline", "unit": "requests", "pricing": "per_request",
+     "endpoint_patterns": ["/api/v1/pipeline/inference"]},
 ]
+
+
+async def _stub_get_all(*_args, **_kwargs):
+    return _INFERENCE_TYPES
+
+
+async def _stub_get_unit_map(*_args, **_kwargs):
+    return {it["name"]: it["unit"] for it in _INFERENCE_TYPES}
+
+
 _conftest_stub("ai4i_core.ppu",
-    get_inference_types=lambda: _INFERENCE_TYPES,
-    get_inference_unit_map=lambda: {it["name"]: it["unit"] for it in _INFERENCE_TYPES},
+    configure_catalogue=MagicMock(),
+    get_catalogue=MagicMock(),
+    to_legacy_entry=MagicMock(),
     load_inference_types=MagicMock(),
     quota_guard=MagicMock(),
 )
@@ -171,3 +196,53 @@ _deps_stub.get_metering_service = MagicMock()
 # module pulls in ai4i_core.bootstrap.redis, which isn't stubbed here.
 _redis_stub = _conftest_stub("app.core.redis")
 _redis_stub.get_redis = MagicMock()
+
+
+# ── the inference-type catalogue, as tests see it ───────────────────────────
+#
+# metering_service reads unit labels through
+# inference_type_cache.get_unit_map_standalone(), which opens its own session
+# from the primary factory. That factory is stubbed above, so without this the
+# call would fail, return {}, and every metering assertion would silently fall
+# back to SERVICE_BREAKDOWN_CONFIG — the tests would still pass while covering
+# none of the catalogue path they exist to cover.
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _stub_inference_type_catalogue(monkeypatch):
+    from app.services.pay_per_use import inference_type_cache
+
+    monkeypatch.setattr(inference_type_cache, "get_all", _stub_get_all)
+    monkeypatch.setattr(inference_type_cache, "get_unit_map", _stub_get_unit_map)
+    monkeypatch.setattr(
+        inference_type_cache, "get_unit_map_standalone", _stub_get_unit_map
+    )
+
+
+def test_catalogue_fixture_matches_the_seed_migration():
+    """The stub above must agree with what the database is actually seeded with.
+
+    Previously this was a comment asking whoever edited the list to keep it in
+    sync with a YAML file. Now it is checkable: the seed migration is the single
+    source of truth for the catalogue's initial contents.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    seed = (
+        Path(__file__).resolve().parents[3]
+        / "infrastructure/databases/migrations/postgres/alembic/versions"
+        / "ai4iplatform_core/52eb3034332e_seed_inference_types.py"
+    )
+    spec = importlib.util.spec_from_file_location("_seed_2933", seed)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    seeded = {row[0]: (list(row[1]), row[2], row[3]) for row in module._TYPES}
+    stubbed = {
+        it["name"]: (list(it["endpoint_patterns"]), it["unit"], it["pricing"])
+        for it in _INFERENCE_TYPES
+    }
+    assert stubbed == seeded
