@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai4i_core.ppu import get_inference_unit_map
 from app.core.exceptions import EntityNotFoundError
 from app.repositories.pay_per_use.usage_repository import UsageRepository
 from app.utils.billing_month import current_billing_month
@@ -29,7 +28,10 @@ from app.schemas.pay_per_use.usage import (
     UsageSummaryResponse,
 )
 
-_UNIT_LABELS: dict[str, str] = get_inference_unit_map()
+# Unit labels come off the catalogue join now (see UsageRepository
+# .get_tenant_tier_usage_breakdown, which selects InferenceType.unit). The
+# import-time YAML snapshot this replaced could not see a type added after
+# the process started, which is precisely what the catalogue exists to fix.
 _CURRENCY = "INR"
 _FAR_FUTURE = datetime.max.replace(tzinfo=timezone.utc)
 
@@ -148,21 +150,17 @@ def _row_unit(row) -> str:
     """Billing unit for a usage row.
 
     The catalogue column comes free on the join and is authoritative. It is NULL
-    only for pre-catalogue rows, which fall back to the bundled unit map and then
-    to echoing the name — the behaviour this had before the join existed.
+    only for pre-catalogue rows, which echo their own name — the same fallback
+    the bundled unit map gave an unrecognised type.
     """
-    return getattr(row, "task_type_unit", None) or _UNIT_LABELS.get(
-        row.task_type, row.task_type
-    )
+    return getattr(row, "task_type_unit", None) or row.task_type
 
 
 def _effective_unit(matching_rows, fallback_name: str | None) -> str:
     """Unit for the single-task-type `usage` block."""
     for row in matching_rows:
         return _row_unit(row)
-    if fallback_name is None:
-        return "Units"
-    return _UNIT_LABELS.get(fallback_name, fallback_name)
+    return fallback_name or "Units"
 
 
 def _group_usage_by_tier(usage_rows, tier_names: dict) -> dict[str, dict]:

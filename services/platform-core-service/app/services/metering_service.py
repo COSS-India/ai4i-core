@@ -7,12 +7,12 @@ from typing import Optional, Union
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai4i_core.ppu import get_inference_unit_map
 
 from app.core.config import settings
 from app.repositories.model_management.model_repository import ModelRepository
 from app.repositories.model_management.service_repository import ServiceRepository
 from app.utils.prometheus_client import PrometheusClient
+from app.services.pay_per_use import inference_type_cache
 from app.utils.metering_promql_builder import (
     TIME_RANGES,
     SERVICE_BREAKDOWN_CONFIG,
@@ -69,15 +69,15 @@ def _to_registry_task_types(task_types: list[str]) -> list[str]:
     ]
 
 
-# get_inference_unit_map() (libs/ai4i_core/ai4i_core/ppu/inference_types.yaml)
-# is the ONE canonical definition of which unit each task type BILLS in — the
-# yaml is kept as the source of truth for that decision — but its identifiers
+# The inference-type catalogue's `unit` column is the ONE canonical definition
+# of which unit each task type BILLS in — the catalogue is the source of truth
+# for that decision — but its identifiers
 # (audio_minutes, characters, images, requests) are billing/quota vocabulary,
 # not display strings: the frontend (ModelConsumptionTab.tsx) renders this
 # value verbatim after the number, so passing "audio_minutes" through as-is
 # would render "12.35 audio_minutes" instead of "12.35 min". Translate to
 # SERVICE_BREAKDOWN_CONFIG's existing short display suffixes before this
-# reaches the wire — the yaml still decides WHICH unit a task uses, this
+# reaches the wire — the catalogue still decides WHICH unit a task uses, this
 # table only decides how that unit is spelled for display.
 _PPU_UNIT_TO_DISPLAY_SUFFIX: dict[str, str] = {
     "tokens": "tokens",
@@ -88,7 +88,9 @@ _PPU_UNIT_TO_DISPLAY_SUFFIX: dict[str, str] = {
 }
 
 
-def _native_unit_suffix_for_metering_task(task: Optional[str]) -> str:
+def _native_unit_suffix_for_metering_task(
+    task: Optional[str], unit_map: dict[str, str]
+) -> str:
     """Never returns None for a resolvable task — the FE's Zod schema
     declares this field a plain `z.string()`, and `parseResponseData` fails
     the ENTIRE Model Consumption response (not just one cell) on a type
@@ -99,10 +101,15 @@ def _native_unit_suffix_for_metering_task(task: Optional[str]) -> str:
     prints the number alone when the suffix is empty, whereas any actual word
     renders as a misleading unit label (e.g. "0 requests") sitting right next
     to a Requests column already showing the real count for that row.
+
+    ``unit_map`` is the catalogue's {name: unit}, threaded in by the async
+    caller. This function is sync and reached from static/class methods, so it
+    cannot fetch it itself; an empty map simply falls through to
+    SERVICE_BREAKDOWN_CONFIG, which is the pre-PPU behaviour and is safe.
     """
     if task:
         registry_task_type = _METERING_TASK_TO_REGISTRY_TASK_TYPE.get(task, task)
-        ppu_unit = get_inference_unit_map().get(registry_task_type)
+        ppu_unit = unit_map.get(registry_task_type)
         if ppu_unit:
             return _PPU_UNIT_TO_DISPLAY_SUFFIX.get(ppu_unit, ppu_unit)
         cfg = SERVICE_BREAKDOWN_CONFIG.get(task)
@@ -672,6 +679,9 @@ class MeteringService:
         build_base_selectors' docstring — accepted, not fixed here, tracked
         in the ticket.
         """
+        # Fetched once per request, then threaded through the sync helpers that
+        # need it — they are static/class methods and cannot await.
+        unit_map = await inference_type_cache.get_unit_map_standalone()
         # Use the broader regex so /api/v1/chat (LLM) is included alongside
         # the standard /api/v1/{task}/inference endpoints.
         _ep = f'{PROMETHEUS_API_PATH_LABEL}=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
@@ -705,7 +715,9 @@ class MeteringService:
         natives = self._unpack_native_units(native_tasks, raw, native_offset=len(fixed_queries))
 
         return {
-            "services": self._service_breakdown_rows(totals, successes, natives, service_filter),
+            "services": self._service_breakdown_rows(
+                totals, successes, natives, unit_map, service_filter
+            ),
             "filters": {"tenant": tenant, "time_range": time_range or "all"},
         }
 
@@ -799,6 +811,8 @@ class MeteringService:
         self-heals as pre-upgrade series age out of the window; there's no
         after-the-fact fix, same reasoning as the tenant-id cutover.
         """
+        # Fetched once per request; the sync helpers below cannot await.
+        unit_map = await inference_type_cache.get_unit_map_standalone()
         # No task_types filter -> every task type's endpoints (LLM chat AND
         # every /api/v1/{task}/inference path), via the default
         # INFERENCE_ENDPOINT_REGEX build_base_selectors already applies when
@@ -971,7 +985,7 @@ class MeteringService:
             model_id = prom_model_id.get(service_id) or db_model_id
             task = service_task.get(service_id)
             native_units, native_unit_suffix = self._native_units_for(
-                task, native_by_task, service_id
+                task, native_by_task, service_id, unit_map
             )
             services.append({
                 "service_id": service_id,
@@ -1048,7 +1062,7 @@ class MeteringService:
             success_v = model_successes_raw.get(model_id, 0)
             task = model_task.get(model_id)
             native_units, native_unit_suffix = self._round_native(
-                task, model_native_raw.get(model_id, 0.0)
+                task, model_native_raw.get(model_id, 0.0), unit_map
             )
             model_totals.append({
                 "model_id": model_id,
@@ -1640,7 +1654,9 @@ class MeteringService:
         return SERVICE_BREAKDOWN_CONFIG.get(task)
 
     @classmethod
-    def _round_native(cls, task: Optional[str], raw_value: float) -> tuple[float, str]:
+    def _round_native(
+        cls, task: Optional[str], raw_value: float, unit_map: dict[str, str]
+    ) -> tuple[float, str]:
         """Round an already-aggregated native-unit value per its task's
         `round_2dp` config, returning (value, unit_suffix). `unit_suffix` is
         never None/empty — see `_native_unit_suffix_for_metering_task` — a
@@ -1648,21 +1664,23 @@ class MeteringService:
         unknown/unmapped task is represented on the wire."""
         cfg = cls._metering_cfg_for_task(task)
         rounded = round(raw_value, 2) if cfg and cfg.get("round_2dp") else round(raw_value)
-        return float(rounded), _native_unit_suffix_for_metering_task(task)
+        return float(rounded), _native_unit_suffix_for_metering_task(task, unit_map)
 
     @classmethod
     def _native_units_for(
         cls, task: Optional[str],
         native_by_task: dict[str, dict[str, float]], service_id: str,
+        unit_map: dict[str, str],
     ) -> tuple[float, str]:
         """(native_units, native_unit_suffix) for one service row, picking
         its value out of `native_by_task` by its own task."""
         raw_value = native_by_task.get(task, {}).get(service_id, 0.0) if task else 0.0
-        return cls._round_native(task, raw_value)
+        return cls._round_native(task, raw_value, unit_map)
 
     @staticmethod
     def _service_breakdown_rows(
         totals: dict, successes: dict, natives: dict,
+        unit_map: dict[str, str],
         service_filter: Optional[list[str]] = None,
     ) -> list:
         """Assemble + sort the per-service rows from the three unpacked dicts.
@@ -1679,7 +1697,7 @@ class MeteringService:
                 "service": cfg["display_name"],
                 "requests": total_v,
                 "native_units": natives.get(task, 0),
-                "native_unit_suffix": _native_unit_suffix_for_metering_task(task),
+                "native_unit_suffix": _native_unit_suffix_for_metering_task(task, unit_map),
                 "success_pct": round(success_v / total_v * 100, 2) if total_v else 0.0,
             })
         services.sort(key=lambda s: s["requests"], reverse=True)

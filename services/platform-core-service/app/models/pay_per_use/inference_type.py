@@ -8,7 +8,7 @@ from app.models import Base
 class InferenceType(Base):
     """Catalogue of billable inference types (llm, asr, nmt, ...).
 
-    Replaces the deploy-time ``libs/ai4i_core/ai4i_core/ppu/inference_types.yaml``
+    Replaces the deploy-time ``the inference-type catalogue``
     as the source of truth for the catalogue. ``endpoint_patterns[0]`` is the
     canonical path; any further elements are aliases — the YAML expressed that
     as a separate ``endpoint_aliases`` list, and today only ``llm`` has one.

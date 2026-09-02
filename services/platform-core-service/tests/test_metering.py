@@ -179,7 +179,7 @@ class TestApplyTimeRange:
 
 class TestServiceBreakdownConfig:
     def test_asr_native_metric_is_minutes(self):
-        # The ASR histogram now reports audio minutes directly (inference_types.yaml
+        # The ASR histogram now reports audio minutes directly (the inference-type catalogue
         # unit: audio_minutes) — no seconds->minutes division needed anymore.
         assert SERVICE_BREAKDOWN_CONFIG["asr"]["native_metric"] == (
             "telemetry_obsv_asr_audio_minutes_processed_sum"
@@ -200,7 +200,7 @@ class TestServiceBreakdownConfig:
         assert SERVICE_BREAKDOWN_CONFIG["audio_language_detection"]["round_2dp"] is True
 
     def test_ocr_native_metric_is_image_count(self):
-        # OCR bills by image count (inference_types.yaml unit: images). The
+        # OCR bills by image count (the catalogue's unit: images). The
         # native metric is the histogram that now carries that exact billed
         # count (track_ocr_characters(characters=billed_input)), so the
         # dashboard equals billing even when a request carries >1 image —
