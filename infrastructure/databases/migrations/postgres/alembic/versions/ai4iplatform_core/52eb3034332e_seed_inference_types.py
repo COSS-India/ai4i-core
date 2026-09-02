@@ -1,7 +1,7 @@
 """seed_inference_types
 
 Seeds the 12 inference types currently defined in
-``libs/ai4i_core/ai4i_core/ppu/inference_types.yaml`` (AI4IDS-2933 phase 1).
+``libs/ai4i_core/ai4i_core/ppu/inference_types.yaml``.
 
 ``endpoint_patterns[0]`` is the canonical path; further elements are the YAML's
 ``endpoint_aliases``. Only ``llm`` has one today.

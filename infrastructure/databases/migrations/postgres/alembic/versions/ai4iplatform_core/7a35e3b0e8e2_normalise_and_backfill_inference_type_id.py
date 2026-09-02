@@ -55,7 +55,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '7a35e3b0e8e2'
-down_revision: Union[str, None] = '11f21f7d7ae4'
+down_revision: Union[str, None] = '7e0413f48308'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -77,7 +77,7 @@ def _normalise_tier_quota_names(conn) -> None:
         )
     except sa.exc.IntegrityError as exc:
         raise RuntimeError(
-            "AI4IDS-2933: tier_quotas holds rows that differ only by the case of "
+            "Tier_quotas holds rows that differ only by the case of "
             "inference_name. Lowercasing them collides on "
             "uq_tier_quotas_tier_inference, and they would collide again on the "
             "(tier_id, inference_type_id) constraint added by the next revision. "
@@ -87,7 +87,7 @@ def _normalise_tier_quota_names(conn) -> None:
             "    FROM tier_quotas GROUP BY 1, 2 HAVING count(*) > 1;"
         ) from exc
 
-    logger.info("[2933] tier_quotas: normalised %s inference_name value(s)", result.rowcount)
+    logger.info("Tier_quotas: normalised %s inference_name value(s)", result.rowcount)
 
 
 def _backfill(conn) -> None:
@@ -101,7 +101,7 @@ def _backfill(conn) -> None:
                 "    AND it.name = lower(btrim(t.inference_name))"
             )
         )
-        logger.info("[2933] %s: backfilled %s row(s)", table, result.rowcount)
+        logger.info("%s: backfilled %s row(s)", table, result.rowcount)
 
 
 def _gate_tier_quotas(conn) -> None:
@@ -118,7 +118,7 @@ def _gate_tier_quotas(conn) -> None:
     if rows:
         detail = ", ".join(f"{r.nm}={r.c}" for r in rows)
         raise RuntimeError(
-            f"AI4IDS-2933: tier_quotas rows with unresolvable inference_name: {detail}. "
+            f"Tier_quotas rows with unresolvable inference_name: {detail}. "
             "Each one is a tier granting quota for a type that does not exist, so no "
             "billing event can ever match it. Create the missing type via "
             "POST /inference-types and re-run, or delete the offending rows."
@@ -137,11 +137,11 @@ def _report_quota_usage(conn) -> None:
         )
     ).all()
     if not rows:
-        logger.info("[2933] quota_usage: every row resolved to an inference type")
+        logger.info("Quota_usage: every row resolved to an inference type")
         return
     detail = ", ".join(f"{r.nm}={r.c}" for r in rows)
     logger.info(
-        "[2933] quota_usage: %s unresolvable row(s) left as-is (%s). These keep a NULL "
+        "Quota_usage: %s unresolvable row(s) left as-is (%s). These keep a NULL "
         "inference_type_id and their original inference_name; usage reports still show "
         "them via the left join.",
         sum(r.c for r in rows),
