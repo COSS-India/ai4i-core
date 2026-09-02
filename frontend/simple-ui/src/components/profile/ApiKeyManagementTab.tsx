@@ -30,6 +30,8 @@ import {
 } from "@chakra-ui/react";
 import { useAuth } from "../../hooks/useAuth";
 import { useApiKeyManagementTab, type ApiKeyTableRow } from "./hooks/useApiKeyManagementTab";
+import { useApiKeyBudgetEdit } from "./hooks/useApiKeyBudgetEdit";
+import ApiKeyBulkBudgetModal from "./ApiKeyBulkBudgetModal";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
 import { FiSlash } from "react-icons/fi";
 import { ViewIcon, EditIcon } from "@chakra-ui/icons";
@@ -66,6 +68,14 @@ export default function ApiKeyManagementTab({
 
   const mgmt = useApiKeyManagementTab({
     user: user ?? null,
+  });
+
+  const budgetEdit = useApiKeyBudgetEdit({
+    tenantId: user?.tenant_id,
+    applications: mgmt.applications,
+    initialApplicationId:
+      mgmt.filterApplication !== "all" ? mgmt.filterApplication : undefined,
+    onSaved: mgmt.handleFetchAllApiKeys,
   });
 
   const [keyNameSortDirection, setKeyNameSortDirection] = useState<"asc" | "desc">("asc");
@@ -288,15 +298,26 @@ export default function ApiKeyManagementTab({
             <Heading size="md" color="gray.700" userSelect="none" cursor="default">
               Your API Keys
             </Heading>
-            <Button
-              size="sm"
-              colorScheme="blue"
-              onClick={() => void mgmt.handleFetchAllApiKeys()}
-              isLoading={mgmt.isLoadingAllApiKeys}
-              loadingText="Loading..."
-            >
-              Refresh
-            </Button>
+            <HStack spacing={2}>
+              <Button
+                size="sm"
+                variant="outline"
+                colorScheme="blue"
+                onClick={() => budgetEdit.open()}
+                isDisabled={mgmt.applications.length === 0}
+              >
+                Edit Budget
+              </Button>
+              <Button
+                size="sm"
+                colorScheme="blue"
+                onClick={() => void mgmt.handleFetchAllApiKeys()}
+                isLoading={mgmt.isLoadingAllApiKeys}
+                loadingText="Loading..."
+              >
+                Refresh
+              </Button>
+            </HStack>
           </HStack>
         </CardHeader>
         <CardBody>
@@ -677,6 +698,27 @@ export default function ApiKeyManagementTab({
           </AlertDialogContent>
         </AlertDialogOverlay>
       </AlertDialog>
+
+      <ApiKeyBulkBudgetModal
+        isOpen={budgetEdit.isOpen}
+        onClose={budgetEdit.close}
+        isLoading={budgetEdit.isLoading}
+        isSaving={budgetEdit.isSaving}
+        banner={budgetEdit.banner}
+        applications={budgetEdit.applications}
+        selectedApplicationId={budgetEdit.selectedApplicationId}
+        onApplicationChange={budgetEdit.onApplicationChange}
+        applicationName={budgetEdit.applicationName}
+        applicationBudget={budgetEdit.applicationBudget}
+        applicationAllocatedPct={budgetEdit.applicationAllocatedPct}
+        applicationBudgetUnset={budgetEdit.applicationBudgetUnset}
+        liveTotalPct={budgetEdit.liveTotalPct}
+        rows={budgetEdit.rows}
+        onPctChange={budgetEdit.onPctChange}
+        onAmountChange={budgetEdit.onAmountChange}
+        onSave={() => void budgetEdit.save()}
+        canSave={budgetEdit.canSave}
+      />
     </>
   );
 }
