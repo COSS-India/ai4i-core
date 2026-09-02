@@ -228,7 +228,7 @@ async def deduct_balance_and_update_quota(
     "" to None before calling (handler._get_otel_attributes does this).
 
     The join and the ON CONFLICT target are both keyed on inference_type_id
-    (AI4IDS-2933 phase 2). Two details that look cosmetic and are not:
+    . Two details that look cosmetic and are not:
 
       * inference_name is written from ``it.name``, not from a bound parameter.
         The retained legacy column stops being a free-text write, which is what

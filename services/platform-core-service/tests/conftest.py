@@ -236,7 +236,7 @@ def test_catalogue_fixture_matches_the_seed_migration():
         / "infrastructure/databases/migrations/postgres/alembic/versions"
         / "ai4iplatform_core/52eb3034332e_seed_inference_types.py"
     )
-    spec = importlib.util.spec_from_file_location("_seed_2933", seed)
+    spec = importlib.util.spec_from_file_location("_seed", seed)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 

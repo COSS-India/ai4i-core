@@ -27,6 +27,12 @@ All three are phase 2, which is blocked on **two** things, not one:
 The backfill joins on lower(inference_name): platform-core compares
 case-insensitively (tier_service.py), so mixed-case rows can exist.
 
+**The FK indexes are NOT created here.** A plain CREATE INDEX takes a SHARE lock
+that blocks INSERT/UPDATE/DELETE for the whole build, and this revision also runs
+a row-locking backfill UPDATE — both held until commit. payperuse_consumer writes
+quota_usage on every billed span, so it would stall for the duration. The indexes
+are built CONCURRENTLY in the next revision instead.
+
 Revision ID: 11f21f7d7ae4
 Revises: 52eb3034332e
 Create Date: 2026-08-31 15:49:03.882914
@@ -57,11 +63,6 @@ def upgrade() -> None:
             ["inference_type_id"],
             ["id"],
         )
-        op.create_index(
-            f"ix_{table}_inference_type_id",
-            table,
-            ["inference_type_id"],
-        )
         op.execute(
             f"UPDATE {table} t SET inference_type_id = it.id"
             "  FROM inference_types it"
@@ -71,6 +72,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     for table in _TABLES:
-        op.drop_index(f"ix_{table}_inference_type_id", table_name=table)
         op.drop_constraint(f"fk_{table}_inference_type_id", table, type_="foreignkey")
         op.drop_column(table, "inference_type_id")

@@ -260,7 +260,7 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
     # unset" apart from "genuinely not entitled" on its own — both look like
     # zero matching ppu_tier_quotas rows to it — so that distinction is
     # applied here instead, same as the old _check_quota's early return.
-    # The quota upsert joins and conflicts on this id (AI4IDS-2933 phase 2), so
+    # The quota upsert joins and conflicts on this id, so
     # an unresolved name means no quota row is written at all — handled below by
     # failing open rather than by reading that as exhaustion.
     inference_type_id = await get_inference_type_id(db, pricing.task_type)

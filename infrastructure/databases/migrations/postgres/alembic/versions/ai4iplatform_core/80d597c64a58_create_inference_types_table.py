@@ -1,6 +1,6 @@
 """create_inference_types_table
 
-Catalogue of billable inference types (AI4IDS-2933 phase 1). DDL only — the
+Catalogue of billable inference types. DDL only — the
 seed lives in the next revision so it can be rolled back independently.
 
 Autogenerate also proposed a CREATE for ``ppu_tenant_tier_assignments`` and a

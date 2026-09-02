@@ -36,7 +36,7 @@ under an id key:
     and should already have caught this, so reaching it here means the data moved
     in between.
   * quota_usage merges, after archiving what it removes into
-    quota_usage_premerge_2933. Summing consumed units and taking the max snapshot
+    quota_usage_premerge. Summing consumed units and taking the max snapshot
     is mechanical and lossless, but these are billing rows, so nothing is deleted
     without a copy.
 
@@ -65,7 +65,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 logger = logging.getLogger("alembic.runtime.migration")
 
-_ARCHIVE = "quota_usage_premerge_2933"
+# Every ACCESS EXCLUSIVE operation below is preceded by this. Without it, an
+# ALTER that cannot get its lock immediately QUEUES — and once it is queued,
+# every subsequent reader and writer queues behind it, so one slow in-flight
+# transaction turns a millisecond DDL into a table-wide outage. Failing fast and
+# retrying the migration is strictly better than that pile-up.
+_LOCK_TIMEOUT = "3s"
+
+_ARCHIVE = "quota_usage_premerge"
 _UQ_TIER_QUOTAS = "uq_tier_quotas_tier_inference_type"
 _UQ_QUOTA_USAGE = "uq_quota_usage_tenant_type_month_tier"
 
@@ -76,7 +83,7 @@ def _assert_no_null_tier_quota_ids(conn) -> None:
     ).scalar()
     if n:
         raise RuntimeError(
-            f"AI4IDS-2933: {n} tier_quotas row(s) still have a NULL inference_type_id. "
+            f"{n} tier_quotas row(s) still have a NULL inference_type_id. "
             "Re-run the previous revision's gate (downgrade -1 then upgrade head) and "
             "resolve whatever it reports before applying this one."
         )
@@ -97,7 +104,7 @@ def _gate_tier_quota_collisions(conn) -> None:
             for r in rows
         )
         raise RuntimeError(
-            "AI4IDS-2933: tier_quotas rows would violate "
+            "tier_quotas rows would violate "
             f"{_UQ_TIER_QUOTAS}: {detail}. Two quotas for one type on one tier have "
             "no correct winner — merge or delete them by hand, then re-run."
         )
@@ -126,7 +133,7 @@ def _merge_quota_usage_collisions(conn) -> None:
         )
     ).rowcount
     if not archived:
-        logger.info("[2933] quota_usage: no id-keyed collisions to merge")
+        logger.info("quota_usage: no id-keyed collisions to merge")
         return
 
     conn.execute(
@@ -150,10 +157,48 @@ def _merge_quota_usage_collisions(conn) -> None:
         sa.text(f"DELETE FROM quota_usage q USING {_ARCHIVE} p WHERE q.id = p.id")
     ).rowcount
     logger.info(
-        "[2933] quota_usage: merged %s duplicate row(s) into their oldest sibling; "
+        "quota_usage: merged %s duplicate row(s) into their oldest sibling; "
         "originals archived in %s",
         deleted, _ARCHIVE,
     )
+
+
+def _build_unique_indexes_concurrently() -> None:
+    """Build both unique indexes outside a transaction, named for adoption.
+
+    The index name becomes the constraint name: ADD CONSTRAINT ... USING INDEX
+    renames nothing, it adopts the index as-is. So these must already carry the
+    final constraint names.
+    """
+    wanted = {
+        _UQ_TIER_QUOTAS: ("tier_quotas", "tier_id, inference_type_id"),
+        _UQ_QUOTA_USAGE: (
+            "quota_usage",
+            "tenant_id, inference_type_id, billing_month, tier_id",
+        ),
+    }
+    with op.get_context().autocommit_block():
+        conn = op.get_bind()
+        for name, (table, cols) in wanted.items():
+            # A previous failed run can leave an INVALID index, which
+            # IF NOT EXISTS would silently accept and USING INDEX would reject.
+            invalid = conn.execute(
+                sa.text(
+                    "SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid"
+                    " WHERE c.relname = :name AND NOT i.indisvalid"
+                ),
+                {"name": name},
+            ).first()
+            if invalid:
+                logger.warning("dropping INVALID index %s from an earlier run", name)
+                conn.execute(sa.text(f'DROP INDEX CONCURRENTLY IF EXISTS "{name}"'))
+            conn.execute(
+                sa.text(
+                    f'CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS "{name}"'
+                    f"  ON {table} ({cols})"
+                )
+            )
+            logger.info("unique index %s built concurrently", name)
 
 
 def upgrade() -> None:
@@ -163,25 +208,40 @@ def upgrade() -> None:
     _gate_tier_quota_collisions(conn)
     _merge_quota_usage_collisions(conn)
 
+    # The unique indexes are built CONCURRENTLY first, outside any transaction,
+    # then adopted by ADD CONSTRAINT ... USING INDEX. Done the obvious way,
+    # ADD CONSTRAINT ... UNIQUE builds its own index while holding ACCESS
+    # EXCLUSIVE — blocking reads AND writes on quota_usage for the whole build,
+    # with payperuse_consumer upserting into it on every billed span. Splitting
+    # the build off leaves only a metadata flip under the exclusive lock.
+    _build_unique_indexes_concurrently()
+
+    conn = op.get_bind()
+    conn.execute(sa.text(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'"))
+
     # tier_quotas only — see the module docstring for why quota_usage is excluded.
     op.alter_column(
         "tier_quotas", "inference_type_id", existing_type=sa.Integer(), nullable=False
     )
 
-    op.create_unique_constraint(
-        _UQ_TIER_QUOTAS, "tier_quotas", ["tier_id", "inference_type_id"]
+    conn.execute(
+        sa.text(
+            f"ALTER TABLE tier_quotas ADD CONSTRAINT {_UQ_TIER_QUOTAS}"
+            f"  UNIQUE USING INDEX {_UQ_TIER_QUOTAS}"
+        )
     )
-    op.create_unique_constraint(
-        _UQ_QUOTA_USAGE,
-        "quota_usage",
-        ["tenant_id", "inference_type_id", "billing_month", "tier_id"],
+    conn.execute(
+        sa.text(
+            f"ALTER TABLE quota_usage ADD CONSTRAINT {_UQ_QUOTA_USAGE}"
+            f"  UNIQUE USING INDEX {_UQ_QUOTA_USAGE}"
+        )
     )
 
 
 def downgrade() -> None:
     """Reverses the DDL. The merge is NOT reversed automatically.
 
-    quota_usage_premerge_2933 still holds every row the merge deleted, but the
+    quota_usage_premerge still holds every row the merge deleted, but the
     surviving rows keep their summed totals — re-deriving them is a manual,
     case-by-case job. Take a pg_dump before upgrading; the archive is a
     convenience, not a substitute.
@@ -190,6 +250,9 @@ def downgrade() -> None:
     constraint being dropped here, so every billing message would fail. Roll the
     consumer back first, then the schema.
     """
+    conn = op.get_bind()
+    conn.execute(sa.text(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'"))
+    # Dropping the constraint drops the index it adopted; no separate DROP INDEX.
     op.drop_constraint(_UQ_QUOTA_USAGE, "quota_usage", type_="unique")
     op.drop_constraint(_UQ_TIER_QUOTAS, "tier_quotas", type_="unique")
     op.alter_column(
