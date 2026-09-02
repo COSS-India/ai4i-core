@@ -20,6 +20,7 @@ import {
 import StandardModal from "../common/StandardModal";
 import InfoTip from "../common/InfoTip";
 import { FIELD_HINTS } from "../../config/fieldHints";
+import { totalApplicationsExceeds100 } from "../../config/budgetMessages";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
 import type { BulkBudgetDraft } from "./hooks/useApplicationManagement";
 
@@ -237,15 +238,14 @@ export default function ApplicationBulkBudgetModal({
     >
       <VStack align="stretch" spacing={4}>
         <Text fontSize="sm" color="gray.600">
-          Rebalance Budget % across all Applications. Only changed rows are submitted.
-          Unallocated % can remain at the Institution level.
+          {FIELD_HINTS.application.bulkBudgetEdit.intro}
         </Text>
 
         <Box bg="blue.50" borderRadius="md" p={4}>
           <HStack justify="space-between" mb={2}>
             <HStack spacing={1.5}>
               <Text fontSize="xs" fontWeight="bold" color="gray.500" textTransform="uppercase">
-                Institution Budget allocated
+                {FIELD_HINTS.application.bulkBudgetEdit.institutionBudgetAllocatedLabel}
               </Text>
               <InfoTip message={FIELD_HINTS.application.tooltips.institutionBudgetAllocated} />
             </HStack>
@@ -261,7 +261,8 @@ export default function ApplicationBulkBudgetModal({
             />
           </Box>
           <Text fontSize="xs" color="gray.500" mt={2}>
-            Institution total: {formatSpendMoney(tenantBudget, currency)}
+            {FIELD_HINTS.application.bulkBudgetEdit.institutionTotalPrefix}{" "}
+            {formatSpendMoney(tenantBudget, currency)}
           </Text>
         </Box>
 
@@ -275,7 +276,7 @@ export default function ApplicationBulkBudgetModal({
         {totalOver && (
           <Alert status="error" borderRadius="md">
             <AlertIcon />
-            Total across Applications is {liveTotalPct.toFixed(2)}% — cannot exceed 100%.
+            {totalApplicationsExceeds100(liveTotalPct)}
           </Alert>
         )}
 
