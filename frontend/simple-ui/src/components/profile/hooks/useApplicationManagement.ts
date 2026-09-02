@@ -21,7 +21,11 @@ import {
   roundPct,
   type ApplicationKeyPreview,
 } from "../../../utils/applicationBudgetPreview";
-import type { AllocationUpdate, Application } from "../../../types/application";
+import type {
+  AllocationUpdate,
+  Application,
+  ApplicationStatus,
+} from "../../../types/application";
 import {
   allocationErrorEntityId,
   belowConsumedAmount,
@@ -55,6 +59,7 @@ const EMPTY_FORM: ApplicationForm = {
 export type BulkBudgetDraft = {
   application_id: string;
   name: string;
+  status: ApplicationStatus;
   consumed_percentage: number | null;
   consumed_budget: number | null;
   originalPct: number | null;
@@ -151,12 +156,17 @@ function rowHasBudgetChange(row: BulkBudgetDraft): boolean {
   return Math.abs(orig - next) > 1e-6;
 }
 
+function isApplicationBudgetEditable(status: ApplicationStatus): boolean {
+  return status === "ACTIVE";
+}
+
 function buildDraftFromApplication(app: Application): BulkBudgetDraft {
   const pct = app.allocated_percentage;
   const amount = app.allocated_budget;
   return {
     application_id: app.application_id,
     name: app.name,
+    status: app.status,
     consumed_percentage: app.consumed_percentage ?? null,
     consumed_budget: app.consumed_budget ?? null,
     originalPct: pct,
@@ -348,7 +358,9 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     if (bulkLoading || bulkRows.length === 0) return false;
     if (bulkLiveTotalPct > 100 + 1e-6) return false;
     if (bulkRows.some((row) => row.rowError)) return false;
-    const changedRows = bulkRows.filter(rowHasBudgetChange);
+    const changedRows = bulkRows.filter(
+      (row) => isApplicationBudgetEditable(row.status) && rowHasBudgetChange(row),
+    );
     if (changedRows.length === 0) return false;
     if (changedRows.some((row) => !row.keysLoaded)) return false;
     return true;
@@ -477,6 +489,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
       setBulkRows((prev) =>
         prev.map((row) => {
           if (row.application_id !== applicationId) return row;
+          if (!isApplicationBudgetEditable(row.status)) return row;
           const next = { ...applyResolved(row, tenantBudget, "percentage", value), lastEditMode: "percentage" as const };
           if (row.keysLoaded && next.resolvedAmount != null) {
             next.keyPreviews = previewKeyCascade(next.resolvedAmount, row.keys);
@@ -495,6 +508,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
       setBulkRows((prev) =>
         prev.map((row) => {
           if (row.application_id !== applicationId) return row;
+          if (!isApplicationBudgetEditable(row.status)) return row;
           const next = { ...applyResolved(row, tenantBudget, "amount", value), lastEditMode: "amount" as const };
           if (row.keysLoaded && next.resolvedAmount != null) {
             next.keyPreviews = previewKeyCascade(next.resolvedAmount, row.keys);
@@ -511,6 +525,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
   const handleSaveBulkBudget = async () => {
     if (!bulkCanSave) return;
     const changes = bulkRows
+      .filter((row) => isApplicationBudgetEditable(row.status))
       .filter(rowHasBudgetChange)
       .map(buildAllocationUpdate)
       .filter((row): row is AllocationUpdate => row != null);
@@ -585,6 +600,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
   };
 
   const openBudget = (app: Application) => {
+    if (!isApplicationBudgetEditable(app.status)) return;
     setSelected(app);
     setBudgetDraft(
       app.allocated_percentage == null ? "" : String(app.allocated_percentage),
@@ -671,6 +687,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
 
   const handleSaveBudget = async () => {
     if (!selected) return;
+    if (!isApplicationBudgetEditable(selected.status)) return;
     if (budgetFieldError) return;
     const next =
       budgetParsed == null || budgetParsed === "invalid" ? 0 : budgetParsed;

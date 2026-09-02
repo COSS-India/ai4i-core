@@ -219,11 +219,13 @@ export const FIELD_HINTS = {
     },
     institutionBudgetNotSet:
       "This Institution does not have a Budget (₹) assigned yet. Assign a Tier and Budget from Institution Management before saving Application budget allocations.",
+    inactiveBudgetNotEditable:
+      "Inactive applications cannot have their budget allocation changed. Reactivate the application to edit its budget.",
     amountRequiresInstitutionBudget:
       "Assign an Institution Budget (₹) before entering amounts.",
     bulkBudgetEdit: {
       intro:
-        "Rebalance Budget % across all Applications. Only changed rows are submitted. Unallocated % can remain at the Institution level.",
+        "Rebalance Budget % across all Applications. Only changed rows are submitted. Unallocated % can remain at the Institution level. Inactive applications are shown for reference but cannot be edited.",
       institutionBudgetAllocatedLabel: "Institution Budget allocated",
       institutionTotalPrefix: "Institution total:",
     },
