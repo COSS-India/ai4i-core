@@ -8,7 +8,7 @@ it unchanged and proxy_traced reads `usage` for the ai-inference token spans.
 Three sizes based on the request prompt's character length:
   SMALL_LLM_RESPONSE   — short reply    (< 200 chars prompt)
   MEDIUM_LLM_RESPONSE  — a few sentences (200–999 chars prompt)
-  LARGE_LLM_RESPONSE   — full paragraph  (>= 1000 chars prompt)
+  LARGE_LLM_RESPONSE   — ~20k-token reply (>= 1000 chars prompt)
 
 ``chat_completion_chunks`` re-expresses any one of those bodies as the SSE
 chunk sequence a vLLM-style server emits for the same reply, so the streaming
@@ -64,9 +64,12 @@ LARGE_LLM_RESPONSE: dict[str, Any] = _completion(
         "validation, preprocessing, inference, and post-processing can be "
         "measured independently. This makes it straightforward to locate "
         "bottlenecks under load and to compare configurations objectively. "
-    ) * 3,
+    # 286 reps of the ~70-token paragraph lands completion_tokens at 20000, so
+    # a large-bucket load test exercises a long-generation response (and its
+    # proportional ~20k-chunk SSE stream) instead of a few-hundred-token reply.
+    ) * 286,
     prompt_tokens=620,
-    completion_tokens=210,
+    completion_tokens=20000,
 )
 
 
