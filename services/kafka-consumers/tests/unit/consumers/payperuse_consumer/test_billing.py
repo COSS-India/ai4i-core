@@ -11,12 +11,17 @@ broken:
    resolving ids under memory pressure with no error anywhere. The DB fallback
    and the process-local memo are load-bearing, not belt-and-braces.
 
-2. **The upsert must still key off ``inference_name``.** ``inference_type_id``
-   is written but never joined or conflicted on. If someone "finishes the
-   migration" by moving the JOIN or the ON CONFLICT target onto the FK while any
-   tier_quotas row still carries a NULL id, quota_upsert returns no row →
-   ``quota_recorded=False`` → ``quota_exhausted`` defaults to True → tenants get
-   429'd on a working tier. TestUpsertStillKeysOffInferenceName is the guard.
+2. **The upsert must key off ``inference_type_id``.** The JOIN and the
+   ON CONFLICT target are both on the FK now, and ``inference_name`` is written
+   from the joined catalogue row rather than a bound parameter — that is what
+   keeps the name-keyed and id-keyed unique constraints equivalent while both
+   exist on the table. Regressing either back to the name would silently
+   reintroduce free-text writes. TestUpsertKeysOffInferenceTypeId is the guard.
+
+   The failure this replaced is still live, just moved: an unresolved task type
+   now yields no quota row, so ``quota_recorded=False``. Reading that as
+   exhaustion would 429 every tenant on a working tier, which is why
+   handler._bill_usage fails open — see test_handler.py.
 
 It also pins that this consumer never *writes* the shared cache keys: it selects
 only ``id``, so writing a partial ``{"id": n}`` back would corrupt the full-row
@@ -302,7 +307,6 @@ def _upsert_session(row=None) -> _RecordingSession:
 async def _run_upsert(db, **overrides):
     kwargs = dict(
         tenant_id="tenant-1",
-        inference_name="asr",
         billing_month="2026-08",
         units=Decimal("10"),
         cost=Decimal("1.5"),
@@ -336,36 +340,60 @@ class TestUpsertBindsInferenceTypeId:
         # int, not text: the FK column is INT REFERENCES inference_types(id).
         assert "CAST(:inference_type_id AS int)" in db.sql
 
-    async def test_do_update_backfills_the_id(self):
+    async def test_name_is_not_bound_at_all(self):
         db = _upsert_session()
         await _run_upsert(db, tier_id="tier-1", inference_type_id=2)
-        # Rows written before this change carry NULL; the DO UPDATE clause lets
-        # them backfill themselves on the next billing event.
-        assert "inference_type_id = EXCLUDED.inference_type_id" in db.sql
+        # The kwarg is gone and the parameter with it: the persisted name comes
+        # from the catalogue join, never from the caller.
+        assert "inference_name" not in db.params
+        assert ":inference_name" not in db.sql
 
-
-class TestUpsertStillKeysOffInferenceName:
-    """Phase-1 regression guard. See this module's docstring for the failure."""
-
-    async def test_join_predicate_is_inference_name(self):
+    async def test_do_update_backfills_the_name(self):
         db = _upsert_session()
         await _run_upsert(db, tier_id="tier-1", inference_type_id=2)
-        assert "tq.inference_name = CAST(:inference_name AS text)" in db.sql
+        # The id is the conflict target now, so it is already correct. The name
+        # is what self-heals — a legacy case-variant row is rewritten to the
+        # catalogue spelling on its next billing event.
+        assert "inference_name = EXCLUDED.inference_name" in db.sql
 
-    async def test_join_predicate_is_not_the_fk(self):
+
+class TestUpsertKeysOffInferenceTypeId:
+    """Phase-2 regression guard, against reverting to the free-text name."""
+
+    async def test_join_predicate_is_the_fk(self):
         db = _upsert_session()
         await _run_upsert(db, tier_id="tier-1", inference_type_id=2)
-        assert "tq.inference_type_id" not in db.sql
+        assert "tq.inference_type_id = CAST(:inference_type_id AS int)" in db.sql
 
-    async def test_conflict_target_is_inference_name(self):
+    async def test_join_predicate_is_not_the_name(self):
         db = _upsert_session()
         await _run_upsert(db, tier_id="tier-1", inference_type_id=2)
-        assert "ON CONFLICT (tenant_id, inference_name, billing_month, tier_id)" in db.sql
+        assert "tq.inference_name" not in db.sql
 
-    async def test_conflict_target_is_not_the_fk(self):
+    async def test_conflict_target_is_the_fk(self):
         db = _upsert_session()
         await _run_upsert(db, tier_id="tier-1", inference_type_id=2)
-        assert "ON CONFLICT (tenant_id, inference_type_id" not in db.sql
+        assert "ON CONFLICT (tenant_id, inference_type_id, billing_month, tier_id)" in db.sql
+
+    async def test_conflict_target_is_not_the_name(self):
+        db = _upsert_session()
+        await _run_upsert(db, tier_id="tier-1", inference_type_id=2)
+        assert "ON CONFLICT (tenant_id, inference_name" not in db.sql
+
+    async def test_persisted_name_comes_from_the_catalogue(self):
+        db = _upsert_session()
+        await _run_upsert(db, tier_id="tier-1", inference_type_id=2)
+        # The join exists solely to source the canonical name inside the CTE.
+        assert "JOIN inference_types it ON it.id = tq.inference_type_id" in db.sql
+        assert "it.name" in db.sql
+
+    async def test_inserted_id_comes_from_the_joined_row(self):
+        db = _upsert_session()
+        await _run_upsert(db, tier_id="tier-1", inference_type_id=2)
+        # Equal to the bound value by the join predicate, but sourcing it from
+        # tier_quotas makes it NOT NULL by construction — that is what replaces a
+        # NOT NULL constraint on quota_usage.inference_type_id.
+        assert "tq.inference_type_id, :billing_month" in db.sql
 
 
 class TestUpsertResultUnaffected:

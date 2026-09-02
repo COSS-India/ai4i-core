@@ -124,9 +124,16 @@ async def get_inference_type_id(db: AsyncSession, inference_name: str) -> Option
     mutation). The process-local memo below keeps a cold Redis from costing a
     DB round-trip per message — one per task type per process instead.
 
-    Returns None when the name is empty or absent from the catalogue. None is
-    safe — quota_usage.inference_type_id is nullable in phase 1 and the upsert
-    still joins and conflicts on inference_name.
+    Returns None when the name is empty or absent from the catalogue. From
+    phase 2 on, None means **quota cannot be enforced for this span**: the upsert
+    joins and conflicts on inference_type_id, so a NULL selects no rows. The
+    caller must skip the quota decision entirely and must NOT read the resulting
+    quota_recorded=False as exhaustion — that would 429 every tenant on an
+    otherwise-working tier. See handler._bill_usage.
+
+    A negative result is memoised far more briefly than a positive one: under
+    phase 1 a stale negative cost a NULL column value, but now it costs a window
+    of unenforced quota for a type an admin has just created.
     """
     if not inference_name:
         return None
@@ -162,15 +169,19 @@ async def get_inference_type_id(db: AsyncSession, inference_name: str) -> Option
     row = result.first()
     type_id = int(row.id) if row is not None else None
     if type_id is None:
-        logger.warning(
-            "Inference type %r not found in catalogue — quota_usage row will "
-            "carry a NULL inference_type_id",
+        logger.error(
+            "Inference type %r is not in the inference_types catalogue "
+            "(checked Redis, process memo and the database) — quota cannot be "
+            "enforced for it. Create it via POST /inference-types.",
             normalized,
+            extra={"event": "ppu.inference_type.unresolved", "task_type": normalized},
         )
-    _inference_type_ids[normalized] = (
-        type_id,
-        time.monotonic() + Constants.INFERENCE_TYPE_MEMO_TTL,
+    ttl = (
+        Constants.INFERENCE_TYPE_MEMO_TTL
+        if type_id is not None
+        else Constants.INFERENCE_TYPE_NEGATIVE_MEMO_TTL
     )
+    _inference_type_ids[normalized] = (type_id, time.monotonic() + ttl)
     return type_id
 
 
@@ -190,7 +201,6 @@ def calculate_cost(total_units: Decimal, pricing: ServicePricing) -> Decimal:
 async def deduct_balance_and_update_quota(
     db: AsyncSession,
     tenant_id: str,
-    inference_name: str,
     billing_month: str,
     units: Decimal,
     cost: Decimal,
@@ -209,20 +219,30 @@ async def deduct_balance_and_update_quota(
     quota_upsert: looks up monthly_quota_snap from tier_quotas using tier_id
     passed directly from the OTel span (set by auth service, propagated via
     X-Tier-ID header → context → span attribute). Produces no row when
-    tier_id is None or tier_quotas has no matching (tier_id, inference_name)
-    row. CAST(:tier_id AS uuid) with a SQL NULL evaluates the WHERE condition
-    to UNKNOWN (never TRUE), so the INSERT selects no rows — safe no-op.
+    tier_id is None, inference_type_id is None, or tier_quotas has no matching
+    (tier_id, inference_type_id) row. CAST(:tier_id AS uuid) with a SQL NULL
+    evaluates the WHERE condition to UNKNOWN (never TRUE), so the INSERT selects
+    no rows — safe no-op, and the same is true of a NULL inference_type_id.
     Passing an empty string instead of None would raise
     "invalid input syntax for type uuid" in Postgres; callers must normalise
     "" to None before calling (handler._get_otel_attributes does this).
 
-    inference_type_id is written but never read: the join and the ON CONFLICT
-    target both stay on inference_name for phase 1 (AI4IDS-2933). Moving them
-    onto the FK while any tier_quotas row still carries a NULL id would make
-    quota_upsert return no row, which reads as quota_recorded=False and
-    defaults quota_exhausted to True — 429ing tenants on a working tier. The
-    DO UPDATE clause sets it too, so rows predating this change backfill
-    themselves on their next write.
+    The join and the ON CONFLICT target are both keyed on inference_type_id
+    (AI4IDS-2933 phase 2). Two details that look cosmetic and are not:
+
+      * inference_name is written from ``it.name``, not from a bound parameter.
+        The retained legacy column stops being a free-text write, which is what
+        keeps the old name-keyed unique constraint and the new id-keyed one
+        equivalent while both exist on the table.
+      * the inserted id is ``tq.inference_type_id``, not the bound parameter.
+        They are equal by the join predicate, but taking it from the joined row
+        makes it NOT NULL *by construction*. That is what replaces a NOT NULL
+        constraint on quota_usage.inference_type_id — do not "simplify" it back
+        to :inference_type_id.
+
+    A caller that cannot resolve inference_type_id must NOT read the resulting
+    quota_recorded=False as exhaustion — see handler._bill_usage, which fails
+    open on a catalogue gap rather than 429ing every tenant on the tier.
     """
     result = await db.execute(
         text(
@@ -237,14 +257,16 @@ async def deduct_balance_and_update_quota(
             "    INSERT INTO quota_usage"
             "      (id, tenant_id, inference_name, inference_type_id, billing_month,"
             "       monthly_quota_snap, monthly_quota_used, tier_id)"
-            "    SELECT gen_random_uuid(), :tenant_id, CAST(:inference_name AS text),"
-            "           CAST(:inference_type_id AS int), :billing_month,"
+            "    SELECT gen_random_uuid(), :tenant_id, it.name,"
+            "           tq.inference_type_id, :billing_month,"
             "           tq.monthly_quota, :units, :tier_id"
             "    FROM tier_quotas tq"
-            "    WHERE tq.tier_id = CAST(:tier_id AS uuid) AND tq.inference_name = CAST(:inference_name AS text)"
-            "    ON CONFLICT (tenant_id, inference_name, billing_month, tier_id)"
+            "    JOIN inference_types it ON it.id = tq.inference_type_id"
+            "    WHERE tq.tier_id = CAST(:tier_id AS uuid)"
+            "      AND tq.inference_type_id = CAST(:inference_type_id AS int)"
+            "    ON CONFLICT (tenant_id, inference_type_id, billing_month, tier_id)"
             "    DO UPDATE SET monthly_quota_used = quota_usage.monthly_quota_used + EXCLUDED.monthly_quota_used,"
-            "                  inference_type_id = EXCLUDED.inference_type_id,"
+            "                  inference_name = EXCLUDED.inference_name,"
             "                  updated_at = now()"
             "    RETURNING monthly_quota_used, monthly_quota_snap, tier_id"
             " )"
@@ -258,7 +280,6 @@ async def deduct_balance_and_update_quota(
         {
             "api_key_id": api_key_id,
             "tenant_id": tenant_id,
-            "inference_name": inference_name,
             "inference_type_id": inference_type_id,
             "billing_month": billing_month,
             "units": units,

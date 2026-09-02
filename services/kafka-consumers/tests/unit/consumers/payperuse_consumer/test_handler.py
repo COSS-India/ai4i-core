@@ -204,9 +204,9 @@ class TestBillUsageThreadsInferenceTypeId:
 
     The resolution and the write are separately unit-tested in test_billing.py;
     what is asserted here is the wiring between them, which is the part a
-    refactor of _bill_usage can silently drop. If the argument stops being
-    passed, every quota_usage row written from then on carries a NULL FK and
-    nothing fails — the bug only surfaces at the phase-2 SET NOT NULL.
+    refactor of _bill_usage can silently drop. The id is now the upsert's join
+    and conflict key, so if the argument stops being passed the write matches
+    nothing and quota silently stops being recorded.
     """
 
     class _FakeDb:
@@ -304,10 +304,37 @@ class TestBillUsageThreadsInferenceTypeId:
         captured = self._patch(monkeypatch, resolved_id=3, task_type="nmt")
         await _bill_usage(self._FakeDb(), self._ctx())
 
-        # task_type comes from mm_services via get_service_pricing — it is the
-        # same value bound as inference_name, so the two must not diverge.
+        # task_type comes from mm_services via get_service_pricing, and it is
+        # the only thing the id is resolved from. No name is passed to the write
+        # any more — the upsert takes it from the catalogue row it joins.
         assert captured["resolve_arg"] == "nmt"
-        assert captured["inference_name"] == "nmt"
+        assert "inference_name" not in captured
+
+    async def test_unresolvable_task_type_fails_open_not_exhausted(self, monkeypatch, caplog):
+        """The single most important assertion in phase 2.
+
+        A task type absent from the catalogue means the upsert matches nothing,
+        so quota_recorded comes back False. Reading that as exhaustion would 429
+        every tenant on an otherwise-working tier. It must fail OPEN, loudly.
+        """
+        import logging
+
+        from consumers.payperuse_consumer.handler import _bill_usage
+
+        self._patch(monkeypatch, resolved_id=None, task_type="brand-new-type")
+        with caplog.at_level(logging.ERROR):
+            outcome = await _bill_usage(self._FakeDb(), self._ctx())
+
+        assert outcome is not None
+        assert outcome.quota_exhausted is False, (
+            "an unresolvable task type must not be reported as quota-exhausted"
+        )
+        # The stable key an OpenSearch monitor alerts on. Renaming it silently
+        # breaks that alert, which is the only thing making this gap visible.
+        assert any(
+            getattr(r, "event", None) == "ppu.inference_type.unresolved"
+            for r in caplog.records
+        ), "the unresolved-type ERROR event must be emitted"
 
     async def test_not_resolved_when_pricing_is_missing(self, monkeypatch):
         from consumers.payperuse_consumer import handler as h

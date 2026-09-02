@@ -20,6 +20,11 @@ class Constants:
     # checked first on every call). Short, so a rename or re-seed is picked
     # up quickly even while Redis is cold.
     INFERENCE_TYPE_MEMO_TTL = 300
+    # A miss is memoised far more briefly than a hit. Since the upsert joins and
+    # conflicts on inference_type_id, an unresolved name means quota goes
+    # unenforced for that task type until the memo expires — so a type an admin
+    # has just created must start being enforced in seconds, not minutes.
+    INFERENCE_TYPE_NEGATIVE_MEMO_TTL = 30
     PRICING_CACHE_TTL = 3600
     BILLED_KEY_PREFIX = "ppu:billed:"
     # Only needs to outlive the redelivery window after a consumer crash/
