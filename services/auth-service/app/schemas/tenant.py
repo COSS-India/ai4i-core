@@ -405,14 +405,15 @@ class TenantBudgetData(BaseSchema):
     allocated_budget: Optional[Decimal] = None
     applications_recomputed: Optional[int] = Field(
         None,
-        description="Count of Applications under this Tenant whose allocated_budget/"
-        "allocated_percentage actually changed as a result of this revision's cascade.",
+        description="Count of Applications under this Tenant whose allocated_percentage "
+        "was recomputed as a result of this revision — allocated_budget itself never "
+        "changes for any Application here, only its share of the new total.",
     )
     keys_recomputed: Optional[int] = Field(
         None,
-        description="Count of API Keys (across every recomputed Application) whose "
-        "allocated_budget/allocated_percentage actually changed as a result of this "
-        "revision's cascade.",
+        description="Always 0 — a Tenant budget revision never moves any Application's "
+        "own ₹, so nothing ever forces an API Key to react. Kept for response-shape "
+        "consistency with the Budget Allocation endpoints' own counts.",
     )
     snapshot_write_failed: bool = Field(
         False,

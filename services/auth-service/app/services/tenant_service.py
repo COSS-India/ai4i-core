@@ -1030,20 +1030,23 @@ class TenantService:
         lives in platform-core's budget_usage ledger, summed here across
         every API key under the tenant.
 
-        The revision cascades: every Application under the tenant (and, for
-        one whose own amount changes, its own Keys in turn) is
-        proportionally re-fit to track the new total — the SAME shared
-        resolve_level algorithm the Budget Allocation endpoints use, via
+        The revision never moves any Application's own ₹: every Application
+        under the tenant keeps exactly the allocated_budget it already
+        had — only its allocated_percentage is recomputed (the same ₹ is
+        now a different share of a different-sized total), via
         AllocationService.cascade_tenant_budget_revision, not a separate
-        implementation. This is genuinely atomic with the Tenant's own row
+        implementation. No Application's own Keys are touched either,
+        since nothing forces them to react when their parent Application's
+        ₹ didn't move. This is genuinely atomic with the Tenant's own row
         change: the cascade is resolved and staged (not committed) BEFORE
         ``self._tenants.update`` below, and everything commits together in
-        one transaction — if the cascade would push any Application or Key
-        below its own already-consumed amount (a decrease squeezing
-        someone too far), resolve_level raises before anything here is
-        persisted, and the session rollback on that exception undoes the
-        Tenant's own allocated_budget change too. An increase can never
-        fail this way — it only ever grows what's available.
+        one transaction — a top-down that would leave the new total unable
+        to cover what's already allocated across every Application (nobody
+        auto-shrinks to make room any more) raises ALLOCATION_TOTAL_EXCEEDED
+        before anything here is persisted, and the session rollback on that
+        exception undoes the Tenant's own allocated_budget change too. A
+        top-up can never fail this way — it only ever grows what's
+        available, becoming additional unallocated headroom.
 
         A top-down is REJECTED even earlier than that (409
         budget_below_consumed) when it would drop the budget below this

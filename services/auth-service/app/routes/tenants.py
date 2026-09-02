@@ -250,14 +250,16 @@ async def revise_tenant_budget(
     no longer exists. Response is unwrapped (no success/data envelope),
     matching the endpoint it replaces.
 
-    The revision cascades proportionally into every Application under the
-    tenant (and their own Keys, for any Application whose amount actually
-    changes) — ``applications_recomputed``/``keys_recomputed`` report how
-    many of each actually moved. A decrease that would push any Application
-    or Key below its own already-consumed amount rejects the WHOLE
-    revision, including the Tenant's own allocated_budget change — see
-    TenantService.revise_tenant_budget / AllocationService.
-    cascade_tenant_budget_revision.
+    No Application's own ₹ ever moves as a result of this revision — only
+    its allocated_percentage is recomputed, since the same ₹ is now a
+    different share of a different-sized total (``applications_recomputed``
+    reports how many actually changed; ``keys_recomputed`` is always 0 —
+    no Application's ₹ moving means nothing forces its Keys to react
+    either). A decrease that would leave the new total unable to cover
+    what's already allocated across every Application (nobody auto-shrinks
+    to make room) rejects the WHOLE revision, including the Tenant's own
+    allocated_budget change — see TenantService.revise_tenant_budget /
+    AllocationService.cascade_tenant_budget_revision.
 
     A top-down is rejected outright (409 budget_below_consumed) if it would
     drop the budget below this tenant's total spend across its API keys, or
