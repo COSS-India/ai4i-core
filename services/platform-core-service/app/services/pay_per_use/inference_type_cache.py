@@ -49,7 +49,7 @@ Four rules govern every operation here:
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -254,3 +254,41 @@ async def get_id_by_name(db: AsyncSession, name: str) -> Optional[int]:
     """Resolve ``inference_type_id`` for a name, or None when unknown."""
     entry = await get_by_name(db, name)
     return entry["id"] if entry else None
+
+
+async def get_name_by_id(db: AsyncSession) -> Dict[int, str]:
+    """``{id: name}`` for the whole catalogue.
+
+    The response edge needs to turn ids back into names: every API field stays a
+    name string even though the storage and the joins are keyed by id. One
+    ``get_all`` covers a whole response, so callers resolve the map once per
+    request rather than per row.
+    """
+    return {entry["id"]: entry["name"] for entry in await get_all(db)}
+
+
+async def get_ids_by_names(
+    db: AsyncSession, names: Iterable[str]
+) -> Dict[str, Optional[int]]:
+    """``{requested name: id or None}`` for a batch of names.
+
+    Built for comma-separated filters such as ``?task_types=a,b,c``: one
+    ``get_all`` instead of N ``get_by_name`` round-trips. Keys are the caller's
+    own (lowercased, trimmed) strings, so an unknown name maps to None and the
+    caller can name it in the error rather than guess which one missed.
+    """
+    catalogue = {entry["name"]: entry["id"] for entry in await get_all(db)}
+    return {
+        normalized: catalogue.get(normalized)
+        for normalized in (str(n).strip().lower() for n in names)
+        if normalized
+    }
+
+
+async def get_unit_map(db: AsyncSession) -> Dict[str, str]:
+    """``{name: billing unit}`` for the whole catalogue.
+
+    Replaces ``get_inference_unit_map()``'s import-time YAML snapshot, which
+    could not see a type added after the process started.
+    """
+    return {entry["name"]: entry["unit"] for entry in await get_all(db)}

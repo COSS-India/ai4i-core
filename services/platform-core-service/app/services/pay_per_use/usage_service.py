@@ -133,8 +133,40 @@ def _to_decimal(value) -> Decimal:
     return Decimal(str(value))
 
 
+def _task_type_key(row):
+    """Stable identity for a usage row's task type.
+
+    The catalogue id when the row has one. Rows written before the catalogue
+    existed carry NULL, so they fall back to their stored name — otherwise every
+    legacy row would collapse into one ``None`` bucket and be counted as a single
+    task type.
+    """
+    return row.inference_type_id if row.inference_type_id is not None else row.task_type
+
+
+def _row_unit(row) -> str:
+    """Billing unit for a usage row.
+
+    The catalogue column comes free on the join and is authoritative. It is NULL
+    only for pre-catalogue rows, which fall back to the bundled unit map and then
+    to echoing the name — the behaviour this had before the join existed.
+    """
+    return getattr(row, "task_type_unit", None) or _UNIT_LABELS.get(
+        row.task_type, row.task_type
+    )
+
+
+def _effective_unit(matching_rows, fallback_name: str | None) -> str:
+    """Unit for the single-task-type `usage` block."""
+    for row in matching_rows:
+        return _row_unit(row)
+    if fallback_name is None:
+        return "Units"
+    return _UNIT_LABELS.get(fallback_name, fallback_name)
+
+
 def _group_usage_by_tier(usage_rows, tier_names: dict) -> dict[str, dict]:
-    """Groups flat (tier_id, inference_name) usage rows into {tier_key: {tierName, rows}}."""
+    """Groups flat (tier_id, inference type) usage rows into {tier_key: {tierName, rows}}."""
     groups: dict[str, dict] = {}
     for row in usage_rows:
         tier_key = _tier_key(row.tier_id)
@@ -150,15 +182,15 @@ def _build_hierarchical_item(
     tenant_name: str,
     usage_rows,
     quota_usage_rows=None,
-    model_task_type: str | None = None,
+    model_task_type_id: int | None = None,
     tier_order: dict[str, datetime] | None = None,
     tier_names: dict | None = None,
 ) -> TenantHierarchicalItem:
     """Builds one tenant's hierarchical usage item from their end-of-period tier assignment
-    plus their flat per-(tier, inference_name) usage rows for the billing month.
+    plus their flat per-(tier, inference type) usage rows for the billing month.
 
     budget/tierBreakdown always reflect the tenant's FULL period totals across every
-    tier they held that month — model_task_type never narrows these, it only controls the
+    tier they held that month — model_task_type_id never narrows these, it only controls the
     flat `usage` quota-bar fields (see below). tierBreakdown is ordered oldest-tier-first
     per tier_order (falls back to insertion order for any tier_key missing from it).
 
@@ -169,7 +201,7 @@ def _build_hierarchical_item(
     docstring), so tierBreakdown/taskTypes carry no spend field at all; only the
     tenant-total figure is real.
 
-    The `usage` block shows one task type's numbers when model_task_type is explicitly
+    The `usage` block shows one task type's numbers when model_task_type_id is explicitly
     passed, OR automatically when the tenant only has one distinct task type this period
     (nothing to disambiguate). consumed is summed across every tier that type was used
     under, but quotaLimit is taken ONLY from the row under the tenant's CURRENT
@@ -193,7 +225,11 @@ def _build_hierarchical_item(
         key=lambda k: (tier_order or {}).get(k) or _FAR_FUTURE,
     )
 
-    distinct_task_types: set[str] = set()
+    # Identity is the catalogue id; the name is only ever a display value. Legacy
+    # rows carry a NULL id, so they key on their own name to stay distinct from
+    # each other rather than collapsing into a single None bucket.
+    distinct_task_types: set = set()
+    type_names: dict = {}
     tier_breakdown: list[TierUsageBreakdown] = []
     for tier_key in ordered_tier_keys:
         bucket = tier_groups[tier_key]
@@ -202,14 +238,16 @@ def _build_hierarchical_item(
             units = _to_decimal(row.total_units)
             quota = _to_decimal(row.quota_snap) if row.quota_snap is not None else None
             remaining = round(max(Decimal("0"), quota - units), 2) if quota is not None else None
+            key = _task_type_key(row)
             task_types.append(TaskTypeUsage(
-                taskType=row.inference_name,
-                unit=_UNIT_LABELS.get(row.inference_name, row.inference_name),
+                taskType=row.task_type,
+                unit=_row_unit(row),
                 quotaLimit=quota,
                 consumed=units,
                 remaining=remaining,
             ))
-            distinct_task_types.add(row.inference_name)
+            distinct_task_types.add(key)
+            type_names[key] = row.task_type
 
         tier_breakdown.append(TierUsageBreakdown(
             tierId=tier_key,
@@ -222,16 +260,16 @@ def _build_hierarchical_item(
     remaining_budget = round(_to_decimal(assignment.available_balance), 2)
     percentage_used = round(tenant_spend / budget_limit * 100, 1) if budget_limit > 0 else Decimal("0")
 
-    effective_task_type = model_task_type
-    if effective_task_type is None and len(distinct_task_types) == 1:
-        effective_task_type = next(iter(distinct_task_types))
+    effective_key = model_task_type_id
+    if effective_key is None and len(distinct_task_types) == 1:
+        effective_key = next(iter(distinct_task_types))
 
     # Multiple task types with nothing to disambiguate (no filter, no single-type
     # auto-detect): matches the old flat TenantUsageItem.quotaUnit contract, which was
     # always a concrete string and fell back to "Units" here rather than leaving it unset.
     usage_count = TenantUsageCount(taskTypeCount=len(distinct_task_types), unit="Units")
-    if effective_task_type:
-        matching_rows = [r for r in quota_usage_rows if r.inference_name == effective_task_type]
+    if effective_key is not None:
+        matching_rows = [r for r in quota_usage_rows if _task_type_key(r) == effective_key]
         total_consumed = sum((_to_decimal(r.total_units) for r in matching_rows), Decimal("0"))
         current_tier_row = next(
             (r for r in matching_rows if _tier_key(r.tier_id) == assignment.tier_id), None
@@ -253,7 +291,7 @@ def _build_hierarchical_item(
 
         usage_count = TenantUsageCount(
             taskTypeCount=len(distinct_task_types),
-            unit=_UNIT_LABELS.get(effective_task_type, effective_task_type),
+            unit=_effective_unit(matching_rows, type_names.get(effective_key)),
             quotaLimit=round(quota, 2) if quota is not None else None,
             consumed=round(total_consumed, 2),
             remaining=round(max(Decimal("0"), quota - total_consumed), 2) if quota is not None else None,
@@ -345,7 +383,7 @@ class UsageService:
         self._repo = repo
 
     async def _tenant_assignments_and_usage(
-        self, billing_month: str | None, tier_id: str | None, task_types: list[str] | None = None
+        self, billing_month: str | None, tier_id: str | None, task_type_ids: list[int] | None = None
     ):
         """Tenants with at least one ppu_quota_usage row in scope, scoped to
         tier_id if given (their most-recently-active tier in scope), plus their usage
@@ -354,15 +392,15 @@ class UsageService:
         gives consistent results across all three endpoints. billing_month=None means
         all-time (no month filter), i.e. usage up to now. Note: these rows carry
         tier info only, NOT budget — callers that need budget_limit/available_balance
-        must separately call get_tenant_budgets. ``task_types`` (from the caller) filters
+        must separately call get_tenant_budgets. ``task_type_ids`` (from the caller) filters
         both queries to those task types at the SQL level.
         """
         tier_rows = await self._repo.get_tenants_with_usage_tier(
-            billing_month, tier_id, task_types=task_types
+            billing_month, tier_id, task_type_ids=task_type_ids
         )
         tenant_ids = [row.tenant_id for row in tier_rows]
         usage_rows = await self._repo.get_tenant_tier_usage_breakdown(
-            billing_month, tenant_ids, task_types=task_types
+            billing_month, tenant_ids, task_type_ids=task_type_ids
         )
         return tier_rows, usage_rows
 
@@ -370,10 +408,10 @@ class UsageService:
         self,
         billing_month: str | None,
         tier_id: str | None = None,
-        task_types: list[str] | None = None,
+        task_type_ids: list[int] | None = None,
         auth_db: Optional[AsyncSession] = None,
     ) -> UsageSummaryResponse:
-        """``task_types`` (from the frontend) filters consumption/allocated to those
+        """``task_type_ids`` (from the frontend) filters consumption/allocated to those
         task types at the query level; tier_id narrows which tenants are counted.
         totalSpend/budgetExceededTenants are real (sum of budget_usage.
         api_key_budget_used, see get_tenant_budgets) and always lifetime-cumulative —
@@ -400,15 +438,15 @@ class UsageService:
         raising.
         """
         assignments, usage_rows = await self._tenant_assignments_and_usage(
-            billing_month, tier_id, task_types
+            billing_month, tier_id, task_type_ids
         )
 
         by_task_type: dict[str, dict] = {}
         for row in usage_rows:
             units = _to_decimal(row.total_units)
             bucket = by_task_type.setdefault(
-                row.inference_name,
-                {"unit": _UNIT_LABELS.get(row.inference_name, row.inference_name), "units": Decimal("0")},
+                _task_type_key(row),
+                {"name": row.task_type, "unit": _row_unit(row), "units": Decimal("0")},
             )
             bucket["units"] += units
 
@@ -424,18 +462,20 @@ class UsageService:
                 continue
             if current_tier_by_tenant.get(row.tenant_id) != _tier_key(row.tier_id):
                 continue
-            allocated_by_task_type[row.inference_name] = (
-                allocated_by_task_type.get(row.inference_name, Decimal("0")) + _to_decimal(row.quota_snap)
+            allocated_by_task_type[_task_type_key(row)] = (
+                allocated_by_task_type.get(_task_type_key(row), Decimal("0")) + _to_decimal(row.quota_snap)
             )
 
+        # Keyed by catalogue id, but modelTaskType stays the name string the API
+        # has always returned.
         spend_items = [
             SpendItem(
-                modelTaskType=name,
+                modelTaskType=b["name"],
                 unit=b["unit"],
                 consumption=b["units"],
-                allocated=round(allocated_by_task_type[name], 2) if name in allocated_by_task_type else None,
+                allocated=round(allocated_by_task_type[key], 2) if key in allocated_by_task_type else None,
             )
-            for name, b in by_task_type.items()
+            for key, b in by_task_type.items()
         ]
         # No spend field to sort by any more (see SpendItem's docstring) — consumption
         # (real usage volume) is the closest meaningful substitute for "biggest first".
@@ -482,12 +522,12 @@ class UsageService:
         self,
         billing_month: str | None,
         tier_id: str | None,
-        model_task_type: str | None,
+        model_task_type_id: int | None,
         auth_db: Optional[AsyncSession],
         sort_order: str = "desc",
         limit: int = 100,
         offset: int = 0,
-        task_types: list[str] | None = None,
+        task_type_ids: list[int] | None = None,
     ) -> TenantHierarchicalListResponse:
         """Hierarchical tenant usage: tenant -> tier(s) held during billing_month -> task types.
         spend/budget/tierBreakdown are ALWAYS all-time (usage up to now) — billing_month
@@ -512,7 +552,7 @@ class UsageService:
         tierBreakdown covers every tier the tenant has ever had usage under (oldest
         first) — a tier change surfaces as two entries.
 
-        model_task_type does NOT filter which tenants appear, nor narrow their spend/budget/
+        model_task_type_id does NOT filter which tenants appear, nor narrow their spend/budget/
         tierBreakdown — those always reflect the full period. It only populates the flat
         `usage` quota-bar fields with that one task type's numbers (see _build_hierarchical_item).
 
@@ -530,7 +570,7 @@ class UsageService:
         page-only budget lookup below. A worse cost for a real number, not a free one.
         """
         assignments = await self._repo.get_tenants_with_usage_tier(
-            billing_month, tier_id, task_types=task_types
+            billing_month, tier_id, task_type_ids=task_type_ids
         )
         total = len(assignments)
         if not assignments:
@@ -541,12 +581,12 @@ class UsageService:
         # them, even when explicitly given, since budget is a lifetime pool, not a
         # monthly figure (see _build_hierarchical_item's quota_usage_rows docstring).
         usage_rows = await self._repo.get_tenant_tier_usage_breakdown(
-            None, tenant_ids, task_types=task_types
+            None, tenant_ids, task_type_ids=task_type_ids
         )
         # Quota resets monthly, unlike spend, so it's scoped to billing_month when the
         # caller gives one, else the current calendar month — never all-time.
         quota_usage_rows = await self._repo.get_tenant_tier_usage_breakdown(
-            billing_month or current_billing_month(), tenant_ids, task_types=task_types
+            billing_month or current_billing_month(), tenant_ids, task_type_ids=task_type_ids
         )
         # Fetched for the FULL tenant_ids (not just the page) — sorting below needs
         # real spend for every matching tenant, not only the ones that end up on this
@@ -600,7 +640,7 @@ class UsageService:
                 org_map.get(assignment.tenant_id, assignment.tenant_id),
                 usage_by_tenant.get(assignment.tenant_id, []),
                 quota_usage_by_tenant.get(assignment.tenant_id, []),
-                model_task_type,
+                model_task_type_id,
                 order_by_tenant.get(assignment.tenant_id),
                 tier_names,
             )
@@ -614,7 +654,7 @@ class UsageService:
         tenant_id: str,
         billing_month: str | None,
         auth_db: Optional[AsyncSession],
-        task_types: list[str] | None = None,
+        task_type_ids: list[int] | None = None,
     ) -> TenantUsageDetailResponse:
         """Same hierarchical shape as get_tenant_list, scoped to a single tenant, except
         each tierBreakdown taskType entry omits spend/percentage (see
@@ -645,7 +685,7 @@ class UsageService:
         tenant has no budget row at all (see get_tenant_budgets).
         """
         assignments = await self._repo.get_tenants_with_usage_tier(
-            billing_month, tenant_id=tenant_id, task_types=task_types
+            billing_month, tenant_id=tenant_id, task_type_ids=task_type_ids
         )
         if not assignments:
             # No usage this period is a valid tenant configuration (not an error) —
@@ -712,12 +752,12 @@ class UsageService:
             # spend/budget/tierBreakdown are ALWAYS all-time — billing_month never
             # narrows them, even when explicitly given (budget is a lifetime pool).
             usage_rows = await self._repo.get_tenant_tier_usage_breakdown(
-                None, [tenant_id], task_types=task_types
+                None, [tenant_id], task_type_ids=task_type_ids
             )
             # Quota resets monthly, unlike spend, so it's scoped to billing_month when
             # given, else the current calendar month — never all-time.
             quota_usage_rows = await self._repo.get_tenant_tier_usage_breakdown(
-                billing_month or current_billing_month(), [tenant_id], task_types=task_types
+                billing_month or current_billing_month(), [tenant_id], task_type_ids=task_type_ids
             )
             tier_first_seen = await self._repo.get_tier_first_seen([tenant_id])
             tier_names = await self._repo.get_tier_names()
