@@ -103,10 +103,17 @@ class _FakePipeline:
 
 
 class _FakeRedis:
-    def __init__(self, *, existing_keys=(), fail_on=None):
+    """No scan_iter on purpose.
+
+    The real client has one, but the sweep must never call it — reaching for a
+    keyspace walk again is the regression these tests exist to catch, and an
+    AttributeError says so loudly.
+    """
+
+    def __init__(self, *, fail_on=None):
         self.store: dict = {}
         self.log: list = []
-        self._existing = list(existing_keys)
+        self.hkeys_calls = 0
         self._fail_on = fail_on or set()
 
     def pipeline(self):
@@ -114,9 +121,11 @@ class _FakeRedis:
             raise RuntimeError("redis down")
         return _FakePipeline(self.store, self.log)
 
-    async def scan_iter(self, match=None):
-        for key in self._existing:
-            yield key
+    async def hkeys(self, key):
+        self.hkeys_calls += 1
+        if "hkeys" in self._fail_on:
+            raise RuntimeError("redis down")
+        return list(self.store.get(key, {}))
 
     async def hgetall(self, key):
         if "hgetall" in self._fail_on:
@@ -233,43 +242,79 @@ class TestRebuild:
 
 @pytest.mark.asyncio
 class TestRebuildSweep:
-    """sweep=True is the only thing that removes a key for a deleted type."""
+    """sweep=True is the only thing that removes a key for a deleted type.
 
-    _STALE = "core:inference_type:deleted-type"
+    The previous name set comes from the fields of ``:all``, not from a keyspace
+    scan. SCAN MATCH walks every key in the logical DB at COUNT 10 and filters
+    server-side; platform-core, auth-service and payperuse_consumer all share
+    REDIS_DB=0, and cache_warmup awaits this inside the startup lifespan, so a
+    scan makes every replica in a rolling deploy walk millions of unrelated keys
+    before serving traffic.
+    """
+
+    _STALE_NAME = "deleted-type"
+    _STALE_KEY = "core:inference_type:deleted-type"
+
+    def _client(self, monkeypatch, *, previous=("asr", "llm", "deleted-type")):
+        """A cache still holding `previous` as the last-written name set."""
+        client = _FakeRedis()
+        client.store["core:inference_type:all"] = {n: "{}" for n in previous}
+        client.store[self._STALE_KEY] = {"id": "99"}
+        monkeypatch.setattr(cache, "_get_redis", lambda: client)
+        return client
 
     async def test_sweep_removes_keys_for_types_that_no_longer_exist(self, monkeypatch):
-        client = _FakeRedis(existing_keys=[self._STALE, "core:inference_type:asr"])
-        client.store[self._STALE] = {"id": "99"}
-        monkeypatch.setattr(cache, "_get_redis", lambda: client)
-
+        client = self._client(monkeypatch)
         await cache.rebuild(_FakeSession(), sweep=True)
-        assert self._STALE not in client.store
+        assert self._STALE_KEY not in client.store
 
     async def test_sweep_keeps_live_keys(self, monkeypatch):
-        client = _FakeRedis(existing_keys=[self._STALE, "core:inference_type:asr"])
-        monkeypatch.setattr(cache, "_get_redis", lambda: client)
-
+        client = self._client(monkeypatch)
         await cache.rebuild(_FakeSession(), sweep=True)
         assert "core:inference_type:asr" in client.store
 
-    async def test_sweep_handles_bytes_keys_from_redis(self, monkeypatch):
-        # scan_iter yields bytes unless decode_responses is set.
-        client = _FakeRedis(existing_keys=[self._STALE.encode()])
-        client.store[self._STALE] = {"id": "99"}
-        monkeypatch.setattr(cache, "_get_redis", lambda: client)
+    async def test_sweep_handles_bytes_field_names(self, monkeypatch):
+        # HKEYS returns bytes unless decode_responses is set. These are hash
+        # FIELD names now (type names), not key names.
+        client = self._client(monkeypatch)
+        original = client.hkeys
 
+        async def _bytes_hkeys(key):
+            return [n.encode() for n in await original(key)]
+
+        client.hkeys = _bytes_hkeys
         await cache.rebuild(_FakeSession(), sweep=True)
-        assert self._STALE not in client.store
+        assert self._STALE_KEY not in client.store
 
-    async def test_default_does_not_scan(self, monkeypatch):
-        # Read-path misses use the default: a TTL expiry leaves nothing stale,
-        # so scanning the whole shared keyspace would be pure waste.
-        client = _FakeRedis(existing_keys=[self._STALE])
-        client.store[self._STALE] = {"id": "99"}
+    async def test_sweep_costs_exactly_one_round_trip(self, monkeypatch):
+        # The whole point of the change. A future "make it more thorough" edit
+        # that reinstates a scan trips this.
+        client = self._client(monkeypatch)
+        await cache.rebuild(_FakeSession(), sweep=True)
+        assert client.hkeys_calls == 1
+        assert not hasattr(client, "scan_iter"), (
+            "the sweep must not reach for a keyspace walk"
+        )
+
+    async def test_missing_all_key_sweeps_nothing_and_does_not_raise(self, monkeypatch):
+        # The one case a scan caught and this does not: :all evicted while a
+        # per-name key survives. Documented behaviour, not an accident — both
+        # keys share a TTL and are written in the same pipeline, and the orphan
+        # is a type nobody should be naming.
+        client = _FakeRedis()
+        client.store[self._STALE_KEY] = {"id": "99"}
         monkeypatch.setattr(cache, "_get_redis", lambda: client)
 
+        assert len(await cache.rebuild(_FakeSession(), sweep=True)) == 2
+        assert self._STALE_KEY in client.store
+
+    async def test_default_does_not_sweep(self, monkeypatch):
+        # Read-path misses use the default: a TTL expiry or an eviction leaves
+        # nothing stale, so paying for the sweep there is waste.
+        client = self._client(monkeypatch)
         await cache.rebuild(_FakeSession())
-        assert self._STALE in client.store
+        assert client.hkeys_calls == 0
+        assert self._STALE_KEY in client.store
 
 
 # ── rule 4: every read falls back to the DB ──────────────────────────────────
