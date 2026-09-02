@@ -129,20 +129,38 @@ async def _fetch_all(db: AsyncSession) -> List[Dict[str, Any]]:
 async def rebuild(db: AsyncSession, *, sweep: bool = False) -> List[Dict[str, Any]]:
     """Re-read the catalogue and overwrite every cache key.
 
-    ``sweep`` controls the keyspace scan that removes keys for types which no
-    longer exist. It defaults to **False** because rebuild has two callers with
-    opposite needs:
+    ``sweep`` removes per-name keys for types that no longer exist. It defaults
+    to **False** because rebuild has two callers with opposite needs:
 
     * **Mutations** (create / update / delete) and startup warm-up pass
       ``sweep=True``. A rename or delete leaves a per-name key that would keep
-      answering lookups for a type that is gone, so the scan is the only thing
-      that removes it. This mirrors ``cache_service.invalidate_all_versions``,
-      which likewise scans only on invalidation.
+      answering lookups for a type that is gone.
     * **Read-path misses** (``get_all`` falling through on a cold key) use the
       default. A TTL expiry or an LRU eviction leaves nothing stale to sweep —
-      the keys are simply absent — so scanning ``core:inference_type:*`` across
-      the whole shared Redis DB would be pure waste, and concurrent misses
-      would each pay for their own scan.
+      the keys are simply absent — so paying for the sweep there is waste, and
+      concurrent misses would each pay for it.
+
+    The sweep reads the previous name set from ``:all`` rather than scanning the
+    keyspace. ``HKEYS`` is one round trip; ``SCAN MATCH`` walks **every key in the
+    logical DB** and filters server-side afterwards, at the default COUNT of 10.
+    platform-core, auth-service and payperuse_consumer all share ``REDIS_DB=0``,
+    where the billed-dedup keys alone have reached millions (see
+    ``payperuse_consumer/config.py``'s BILLED_KEY_TTL comment), and
+    ``cache_warmup`` awaits this inside the startup lifespan — so every replica
+    in a rolling deploy would pay that walk before accepting traffic. Measured at
+    50k keys the scan took ~500 ms against ~0.1 ms for HKEYS, and it scales
+    linearly.
+
+    ``:all`` is keyed by type name, so its fields *are* the previous name set and
+    the stale entries are simply that set minus the current one.
+
+    Known gap, deliberate: if ``:all`` is evicted while per-name keys survive,
+    this finds nothing to sweep and an orphan lives until its own TTL expires. A
+    scan would catch that, at the cost above. Both keys carry the same TTL and
+    are written in the same pipeline, so they are evicted together in practice,
+    and the blast radius of an orphan is bounded — the type is unreferenced (a
+    referenced one cannot be deleted, see ``_referencing_tables``), so the worst
+    case is a stale hit on ``get_by_name`` for a name nobody should be using.
     """
     rows = await _fetch_all(db)
 
@@ -153,11 +171,14 @@ async def rebuild(db: AsyncSession, *, sweep: bool = False) -> List[Dict[str, An
     try:
         stale: List[str] = []
         if sweep:
-            existing = [key async for key in redis.scan_iter(match=f"{_KEY_PREFIX}:*")]
-            live = {_ALL_KEY} | {_name_key(r["name"]) for r in rows}
+            previous = await redis.hkeys(_ALL_KEY)
+            live_names = {r["name"] for r in rows}
             stale = [
-                k for k in existing
-                if (k.decode() if isinstance(k, bytes) else k) not in live
+                _name_key(name)
+                for name in (
+                    n.decode() if isinstance(n, bytes) else n for n in previous
+                )
+                if name not in live_names
             ]
 
         pipe = redis.pipeline()
