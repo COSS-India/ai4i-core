@@ -80,6 +80,7 @@ export function mapBelowConsumedError(
 export function mapAllocationError(
   error: unknown,
   getCode: (error: unknown) => string | null,
+  context: BelowConsumedContext = "apiKey",
 ): string {
   const code = getCode(error);
   const message = parseError(error).message;
@@ -99,7 +100,7 @@ export function mapAllocationError(
     return message;
   }
   if (code === "ALLOCATION_BELOW_CONSUMED") {
-    return mapBelowConsumedError(message, "apiKey");
+    return mapBelowConsumedError(message, context);
   }
   return message;
 }

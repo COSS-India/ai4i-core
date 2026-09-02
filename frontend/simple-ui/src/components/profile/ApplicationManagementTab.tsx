@@ -20,6 +20,7 @@ import {
   NumberInputField,
   NumberInputStepper,
   SimpleGrid,
+  Switch,
   Text,
   Textarea,
   Tooltip,
@@ -307,6 +308,30 @@ export default function ApplicationManagementTab({
                 _hover={{ bg: "blue.50", color: "blue.600" }}
                 onClick={() => mgr.openBudget(app)}
                 isDisabled={app.status !== "ACTIVE"}
+              />
+            </Box>
+          </Tooltip>
+          <Tooltip
+            label={
+              app.status === "ACTIVE"
+                ? FIELD_HINTS.application.status.deactivate
+                : FIELD_HINTS.application.status.activate
+            }
+            hasArrow
+          >
+            <Box as="span" display="inline-flex" alignItems="center">
+              <Switch
+                size="md"
+                colorScheme="green"
+                isChecked={app.status === "ACTIVE"}
+                isDisabled={mgr.statusBusyId === app.application_id}
+                aria-label={
+                  app.status === "ACTIVE"
+                    ? `Deactivate ${app.name}`
+                    : `Activate ${app.name}`
+                }
+                onChange={() => void mgr.handleToggleStatus(app)}
+                onClick={(e) => e.stopPropagation()}
               />
             </Box>
           </Tooltip>

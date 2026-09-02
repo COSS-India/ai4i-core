@@ -76,7 +76,7 @@ export type BulkBudgetDraft = {
 };
 
 function mapApplicationAllocationError(error: unknown): string {
-  return mapAllocationError(error, getApplicationErrorCode);
+  return mapAllocationError(error, getApplicationErrorCode, "application");
 }
 
 function mapBelowConsumedErrorForApplication(message: string): string {

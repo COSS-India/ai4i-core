@@ -4,7 +4,6 @@ import { INSTITUTION } from "../../config/constants";
 import { METERING } from "../../config/meteringConstants";
 import { formatBudgetEffectiveRange } from "../../utils/usageSpendHelpers";
 import type { TenantUsageItem } from "../../types/usageSpend";
-import BillingMonthSelect from "./BillingMonthSelect";
 import SpendByTaskTypeTable from "./SpendByTaskTypeTable";
 import { BudgetCell, TenantAvatar, TierBadge } from "./UsageSpendCells";
 
@@ -27,15 +26,11 @@ const cardSx = {
 interface InstitutionUsageDetailContentProps {
   detail: TenantUsageItem;
   isLoading?: boolean;
-  billingPeriod?: string;
-  onBillingPeriodChange?: (value: string) => void;
 }
 
 export const InstitutionUsageDetailContent: React.FC<InstitutionUsageDetailContentProps> = ({
   detail,
   isLoading = false,
-  billingPeriod,
-  onBillingPeriodChange,
 }) => {
   const effectiveRange = formatBudgetEffectiveRange(
     detail.budget.budgetEffectiveFrom,
@@ -73,12 +68,9 @@ export const InstitutionUsageDetailContent: React.FC<InstitutionUsageDetailConte
       </Box>
 
       <Box {...cardSx} opacity={isLoading ? 0.6 : 1}>
-        <Flex justify="space-between" align="center" gap={3} mb={4} flexWrap="wrap">
-          <Text {...sectionLabelSx}>{METERING.USAGE_SPEND.USAGE_BY_TASK_TYPE_ALL_TIME}</Text>
-          {billingPeriod && onBillingPeriodChange ? (
-            <BillingMonthSelect value={billingPeriod} onChange={onBillingPeriodChange} />
-          ) : null}
-        </Flex>
+        <Text {...sectionLabelSx} mb={4}>
+          {METERING.USAGE_SPEND.USAGE_BY_TASK_TYPE_ALL_TIME}
+        </Text>
         <SpendByTaskTypeTable
           tierBreakdown={detail.tierBreakdown ?? []}
           usageColumnLabel={METERING.USAGE_SPEND.USAGE_VS_QUOTA_ALL_TIME}
@@ -102,16 +94,12 @@ interface InstitutionUsageDetailPanelProps {
   detail: TenantUsageItem;
   organisationLabel?: string | null;
   isLoading?: boolean;
-  billingPeriod?: string;
-  onBillingPeriodChange?: (value: string) => void;
 }
 
 const InstitutionUsageDetailPanel: React.FC<InstitutionUsageDetailPanelProps> = ({
   detail,
   organisationLabel,
   isLoading = false,
-  billingPeriod,
-  onBillingPeriodChange,
 }) => {
   const displayName = organisationLabel?.trim() || detail.tenantName;
 
@@ -129,12 +117,7 @@ const InstitutionUsageDetailPanel: React.FC<InstitutionUsageDetailPanelProps> = 
         <TierBadge label={detail.tier} />
       </HStack>
 
-      <InstitutionUsageDetailContent
-        detail={detail}
-        isLoading={isLoading}
-        billingPeriod={billingPeriod}
-        onBillingPeriodChange={onBillingPeriodChange}
-      />
+      <InstitutionUsageDetailContent detail={detail} isLoading={isLoading} />
     </VStack>
   );
 };
