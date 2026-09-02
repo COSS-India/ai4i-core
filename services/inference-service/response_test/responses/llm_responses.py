@@ -56,18 +56,26 @@ MEDIUM_LLM_RESPONSE: dict[str, Any] = _completion(
     completion_tokens=44,
 )
 
+_LARGE_PARAGRAPH = (
+    "The proposed approach balances throughput and latency by batching "
+    "requests where possible while keeping per-request overhead low. "
+    "Each stage of the pipeline is instrumented so the time spent in "
+    "validation, preprocessing, inference, and post-processing can be "
+    "measured independently. This makes it straightforward to locate "
+    "bottlenecks under load and to compare configurations objectively. "
+)
+
+# 317 reps plus this 20-word fragment tokenizes (tiktoken cl100k_base) to
+# exactly 20000, so the declared completion_tokens below matches what the
+# content actually tokenizes to instead of just being an asserted number.
+_LARGE_PARAGRAPH_FRAGMENT = (
+    "The proposed approach balances throughput and latency by batching "
+    "requests where possible while keeping per-request overhead low. "
+    "Each stage of "
+)
+
 LARGE_LLM_RESPONSE: dict[str, Any] = _completion(
-    "Here is a detailed response. " + (
-        "The proposed approach balances throughput and latency by batching "
-        "requests where possible while keeping per-request overhead low. "
-        "Each stage of the pipeline is instrumented so the time spent in "
-        "validation, preprocessing, inference, and post-processing can be "
-        "measured independently. This makes it straightforward to locate "
-        "bottlenecks under load and to compare configurations objectively. "
-    # 286 reps of the ~70-token paragraph lands completion_tokens at 20000, so
-    # a large-bucket load test exercises a long-generation response (and its
-    # proportional ~20k-chunk SSE stream) instead of a few-hundred-token reply.
-    ) * 286,
+    "Here is a detailed response. " + (_LARGE_PARAGRAPH * 317) + _LARGE_PARAGRAPH_FRAGMENT,
     prompt_tokens=620,
     completion_tokens=20000,
 )
