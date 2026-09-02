@@ -34,7 +34,6 @@ export interface AggregatedTaskUsage {
   quotaLimit?: number | null;
   consumed: number;
   remaining?: number | null;
-  spend: number;
 }
 
 /** True when the API populated the flat quota-bar fields for one homogeneous unit. */
@@ -60,6 +59,44 @@ export function billingPeriodValue(key: BillingPeriodKey): string {
 
 export function billingPeriodLabel(key: BillingPeriodKey): string {
   return key === "current" ? "CURRENT MONTH" : "LAST MONTH";
+}
+
+export function formatBillingPeriodDisplay(yyyyMm: string): string {
+  const [yearStr, monthStr] = yyyyMm.split("-");
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  if (!year || !month) return yyyyMm;
+  return new Date(year, month - 1, 1).toLocaleDateString("en-IN", {
+    month: "long",
+    year: "numeric",
+  });
+}
+
+export function formatMonthFilterLabel(yyyyMm: string): string {
+  return `Month · ${formatBillingPeriodDisplay(yyyyMm)}`;
+}
+
+function formatBudgetDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+}
+
+export function formatBudgetEffectiveRange(
+  from?: string | null,
+  to?: string | null,
+): string | null {
+  if (from && to) return `Effective ${formatBudgetDate(from)} – ${formatBudgetDate(to)}`;
+  if (from) return `Effective from ${formatBudgetDate(from)}`;
+  if (to) return `Effective until ${formatBudgetDate(to)}`;
+  return null;
+}
+
+export function billingPeriodOptions(): { value: string; label: string }[] {
+  return (["current", "last"] as const).map((key) => {
+    const value = billingPeriodValue(key);
+    return { value, label: formatBillingPeriodDisplay(value) };
+  });
 }
 
 /** Budget and spend figures display as whole currency units — decimals rounded away. */
@@ -202,12 +239,10 @@ export function aggregateTasks(breakdown: TenantTierBreakdown[]): AggregatedTask
           quotaLimit: t.quotaLimit,
           consumed: t.consumed,
           remaining: t.remaining,
-          spend: t.spend,
         });
         order.push(t.taskType);
       } else {
         existing.consumed += t.consumed;
-        existing.spend += t.spend;
         existing.quotaLimit = t.quotaLimit;
         existing.remaining = t.remaining;
         existing.unit = t.unit || existing.unit;
@@ -217,29 +252,25 @@ export function aggregateTasks(breakdown: TenantTierBreakdown[]): AggregatedTask
   return order.map((k) => map.get(k)!);
 }
 
-export function summaryFromDetail(detail: TenantUsageDetail): UsageSummaryResponse {
-  const items = aggregateTasks(detail.tierBreakdown ?? []).map((i) => ({
+export function summaryFromDetail(
+  detail: TenantUsageDetail,
+  billingPeriod?: string | null,
+): UsageSummaryResponse {
+  const spendByModelTaskType = aggregateTasks(detail.tierBreakdown ?? []).map((i) => ({
     modelTaskType: i.taskType,
     unit: i.unit,
     consumption: i.consumed,
     allocated: i.quotaLimit ?? null,
     remaining: i.remaining ?? null,
-    spend: i.spend,
-    percentage: 0,
   }));
-  const total = items.reduce((s, i) => s + i.spend, 0) || detail.spend;
   return {
-    billingPeriod: "",
-    totalSpend: total,
+    billingPeriod: billingPeriod ?? null,
+    totalSpend: detail.spend,
     currency: detail.currency,
     activeTenants: 1,
     budgetExceededTenants:
       detail.budget.remaining < 0 || detail.budget.percentageUsed > 100 ? 1 : 0,
-    spendChangePercent: 0,
-    spendByModelTaskType: items.map((i) => ({
-      ...i,
-      percentage: total > 0 ? Number(((i.spend / total) * 100).toFixed(1)) : 0,
-    })),
+    spendByModelTaskType,
     totalAllocatedBudget: detail.budget.limit,
     totalRemainingBudget: detail.budget.remaining,
   };

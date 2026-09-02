@@ -26,11 +26,10 @@ const multiTaskTenant: TenantUsageItem = {
     {
       tierId: "tier-1",
       tierName: "Standard",
-      spend: 2163.24,
       taskTypes: [
-        { taskType: "nmt", unit: "characters", quotaLimit: 100_000, consumed: 9500, remaining: 90_500, percentage: 44.1, spend: 954 },
-        { taskType: "ner", unit: "characters", quotaLimit: 50_000, consumed: 6600, remaining: 43_400, percentage: 30.3, spend: 656 },
-        { taskType: "ocr", unit: "images", quotaLimit: 500, consumed: 20, remaining: 480, percentage: 9.2, spend: 200 },
+        { taskType: "nmt", unit: "characters", quotaLimit: 100_000, consumed: 9500, remaining: 90_500 },
+        { taskType: "ner", unit: "characters", quotaLimit: 50_000, consumed: 6600, remaining: 43_400 },
+        { taskType: "ocr", unit: "images", quotaLimit: 500, consumed: 20, remaining: 480 },
       ],
     },
   ],
@@ -50,9 +49,8 @@ const singleTaskTenant: TenantUsageItem = {
     {
       tierId: "tier-1",
       tierName: "Standard",
-      spend: 954,
       taskTypes: [
-        { taskType: "nmt", unit: "characters", quotaLimit: 100_000, consumed: 9500, remaining: 90_500, percentage: 100, spend: 954 },
+        { taskType: "nmt", unit: "characters", quotaLimit: 100_000, consumed: 9500, remaining: 90_500 },
       ],
     },
   ],
@@ -75,9 +73,15 @@ describe("quota usage helpers", () => {
     expect(tasks[0]).toMatchObject({ taskType: "nmt", consumed: 9500, unit: "characters" });
   });
 
-  it("builds spend summary from tierBreakdown, not the null flat usage block", () => {
-    const summary = summaryFromDetail(multiTaskTenant);
+  it("builds usage summary from tierBreakdown, not the null flat usage block", () => {
+    const summary = summaryFromDetail(multiTaskTenant, "2026-09");
     expect(summary.spendByModelTaskType).toHaveLength(3);
-    expect(summary.totalSpend).toBeCloseTo(1810, 0);
+    expect(summary.spendByModelTaskType[0]).toMatchObject({
+      modelTaskType: "nmt",
+      consumption: 9500,
+      allocated: 100_000,
+    });
+    expect(summary.totalSpend).toBeCloseTo(2163.24, 0);
+    expect(summary.billingPeriod).toBe("2026-09");
   });
 });
