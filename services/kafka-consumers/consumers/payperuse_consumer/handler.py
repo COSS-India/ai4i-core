@@ -260,15 +260,26 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
     # unset" apart from "genuinely not entitled" on its own — both look like
     # zero matching ppu_tier_quotas rows to it — so that distinction is
     # applied here instead, same as the old _check_quota's early return.
-    # Carried into quota_usage alongside inference_name (AI4IDS-2933 phase 1).
-    # None on a catalogue miss, which the nullable column tolerates — the write
-    # itself still keys off inference_name.
+    # The quota upsert joins and conflicts on this id (AI4IDS-2933 phase 2), so
+    # an unresolved name means no quota row is written at all — handled below by
+    # failing open rather than by reading that as exhaustion.
     inference_type_id = await get_inference_type_id(db, pricing.task_type)
+    if pricing.task_type and inference_type_id is None:
+        logger.error(
+            "Task type %r is not in the inference_types catalogue — quota NOT "
+            "enforced for tenant=%s service=%s. Add it via POST /inference-types.",
+            pricing.task_type, ctx.tenant_id, ctx.service_id,
+            extra={
+                "event": "ppu.inference_type.unresolved",
+                "task_type": pricing.task_type,
+                "tenant_id": ctx.tenant_id,
+                "service_id": ctx.service_id,
+            },
+        )
 
     write = await deduct_balance_and_update_quota(
         db,
         tenant_id=ctx.tenant_id,
-        inference_name=pricing.task_type,
         billing_month=ctx.billing_month,
         units=billed_units,
         cost=cost,
@@ -292,10 +303,17 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
         )
         wallet_exhausted = write.budget_exhausted
 
-        if not pricing.task_type:
+        if not pricing.task_type or inference_type_id is None:
+            # Two ways to get here, both "we cannot judge this tenant's quota":
+            # the service has no task_type configured, or its task_type is not in
+            # the catalogue. Fail OPEN. Reading the absent quota row as
+            # exhaustion would 429 every tenant on an otherwise-working tier,
+            # which is the regression this branch exists to prevent. The budget
+            # deduction above still ran, so nothing is billed for free — only the
+            # quota ceiling goes unenforced, and the ERROR above says so.
             logger.debug(
-                "Quota update skipped | tenant=%s tier_id=%s task_type=%r",
-                ctx.tenant_id, write.tier_id, pricing.task_type,
+                "Quota update skipped | tenant=%s tier_id=%s task_type=%r type_id=%s",
+                ctx.tenant_id, write.tier_id, pricing.task_type, inference_type_id,
             )
             quota_exhausted = False
         elif write.quota_recorded:

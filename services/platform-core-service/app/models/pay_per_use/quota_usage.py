@@ -17,6 +17,21 @@ class QuotaUsage(Base):
             "tier_id",
             name="uq_quota_usage_tenant_inference_month_tier",
         ),
+        # The conflict target the consumer uses from phase 2 on. Both are listed
+        # deliberately: the name-keyed one is still on the table until
+        # inference_name is dropped, and autogenerate would propose removing
+        # whichever it could not see here.
+        #
+        # inference_type_id stays nullable — pre-catalogue rows keep a NULL, and
+        # the consumer cannot write one because it sources the id from the joined
+        # tier_quotas row, which is NOT NULL.
+        UniqueConstraint(
+            "tenant_id",
+            "inference_type_id",
+            "billing_month",
+            "tier_id",
+            name="uq_quota_usage_tenant_type_month_tier",
+        ),
         Index(
             "ix_quota_usage_billing_month_tenant",
             "billing_month", "tenant_id",
