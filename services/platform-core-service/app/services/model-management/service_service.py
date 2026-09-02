@@ -193,7 +193,7 @@ class ServiceService:
             )
 
         tier_name_map = await self._services.get_tier_names_by_ids(service.tier_ids or [])
-        tier_names = [tier_name_map.get(tid) for tid in service.tier_ids] if service.tier_ids else None
+        tier_names = [n for tid in service.tier_ids if (n := tier_name_map.get(tid)) is not None] or None if service.tier_ids else None
         data = service_detail_dict(service, model, tier_names=tier_names)
         self._cache.set_service(service.service_id, data)
         return data
@@ -221,7 +221,7 @@ class ServiceService:
                 service,
                 model=model,
                 include_task_languages=True,
-                tier_names=[tier_name_map.get(tid) for tid in service.tier_ids] if service.tier_ids else None,
+                tier_names=[n for tid in service.tier_ids if (n := tier_name_map.get(tid)) is not None] or None if service.tier_ids else None,
             )
             for service, model in rows
         ]
@@ -353,7 +353,7 @@ class ServiceService:
 
         # 7. Warm cache
         tier_name_map = await self._services.get_tier_names_by_ids(instance.tier_ids or [])
-        tier_names = [tier_name_map.get(tid) for tid in instance.tier_ids] if instance.tier_ids else None
+        tier_names = [n for tid in instance.tier_ids if (n := tier_name_map.get(tid)) is not None] or None if instance.tier_ids else None
         data = service_detail_dict(instance, model, tier_names=tier_names)
         self._cache.set_service(instance.service_id, data)
         logger.info("Created service '%s' (id=%s)", payload.name, service_id)
@@ -559,7 +559,7 @@ class ServiceService:
         )
         if model is not None:
             tier_name_map = await self._services.get_tier_names_by_ids(instance.tier_ids or [])
-            tier_names = [tier_name_map.get(tid) for tid in instance.tier_ids] if instance.tier_ids else None
+            tier_names = [n for tid in instance.tier_ids if (n := tier_name_map.get(tid)) is not None] or None if instance.tier_ids else None
             self._cache.set_service(
                 instance.service_id, service_detail_dict(instance, model, tier_names=tier_names)
             )
@@ -629,7 +629,7 @@ class ServiceService:
     async def _refresh_endpoint_cache(self, instance: Service, model: Any) -> None:
         self._cache.invalidate_service(instance.service_id)
         tier_name_map = await self._services.get_tier_names_by_ids(instance.tier_ids or [])
-        tier_names = [tier_name_map.get(tid) for tid in instance.tier_ids] if instance.tier_ids else None
+        tier_names = [n for tid in instance.tier_ids if (n := tier_name_map.get(tid)) is not None] or None if instance.tier_ids else None
         self._cache.set_service(
             instance.service_id, service_detail_dict(instance, model, tier_names=tier_names)
         )
