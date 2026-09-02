@@ -13,10 +13,9 @@ import base64
 import binascii
 import json
 import logging
-from functools import lru_cache
 from urllib.parse import quote
 
-from ai4i_core.ppu import get_inference_types
+from ai4i_core.ppu import get_catalogue
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 
@@ -38,26 +37,26 @@ from app.services.cache_service import CacheService
 from app.services.tenant_name_cache import tenant_name_cache
 
 
-@lru_cache(maxsize=1)
-def _service_by_path() -> dict[str, dict]:
-    """Concrete request path → inference-type entry, built once from the yaml.
+async def _resolve_service(uri: str) -> dict | None:
+    """Map X-Original-URI to its inference type, or None.
 
-    The gateway serves a fixed, known path set, so resolution is a single
-    exact lookup — no prefix scanning. Every path an entry serves comes from
-    the yaml itself: endpoint_pattern plus any endpoint_aliases. Unknown paths
-    (unified /api/v1/inference, try-it, audio passthrough) resolve to None.
+    Reads the database-backed catalogue instead of the bundled yaml, so a type
+    an admin adds at runtime is enforceable without a release. The catalogue
+    keeps a process-local snapshot with a TTL, so the warm path is still a dict
+    lookup with no I/O — the same property the previous ``@lru_cache`` gave,
+    minus the "cached until restart" part.
+
+    Unknown paths (unified /api/v1/inference, try-it, audio passthrough)
+    resolve to None, as before.
+
+    None is also what a briefly-unreachable catalogue produces, and that
+    degrades safely: it means "no per-service quota check, proceed". The
+    budget-exhausted 429 above is unaffected (it reads the API-key hash, not the
+    catalogue), and so is the X-Quota-Exhausted-Services header. So an outage
+    here can under-enforce a per-service quota, but can never produce a spurious
+    429 or an outage of its own.
     """
-    table: dict[str, dict] = {}
-    for entry in get_inference_types():
-        table[entry["endpoint_pattern"]] = entry
-        for alias in entry.get("endpoint_aliases", []):
-            table[alias] = entry
-    return table
-
-
-def _resolve_service(uri: str) -> dict | None:
-    """Map X-Original-URI to its inference type — one dict lookup."""
-    return _service_by_path().get(uri.split("?", 1)[0].rstrip("/"))
+    return await get_catalogue().get_by_path(uri)
 
 
 router = APIRouter(prefix="/auth", tags=["Validation"])
@@ -225,7 +224,7 @@ async def _validate_api_key(
             headers=quota_header,
         )
 
-    service = _resolve_service(request.headers.get("X-Original-URI", ""))
+    service = await _resolve_service(request.headers.get("X-Original-URI", ""))
     if service and service["name"] in exhausted_services:
         return JSONResponse(
             status_code=429,

@@ -14,10 +14,10 @@ Keys (note the encoding — mixing up GET and HGETALL is a WRONGTYPE error):
 Owned elsewhere, listed here so the namespace stays legible:
   core:inference_type:{name}            — one catalogue row (Redis HASH, use HGETALL)
   core:inference_type:all               — name -> row JSON (Redis HASH, use HGETALL/HGET)
-Written by app/services/pay_per_use/inference_type_cache.py and, for now, read by
-nothing else. They are intended to become a cross-service contract with
-kafka-consumers' payperuse_consumer (which will HGET the id field), but that
-consumer change has not landed — see inference_type_cache.py's docstring.
+Written by app/services/pay_per_use/inference_type_cache.py, which is their only
+writer. Read by kafka-consumers' payperuse_consumer (HGET of the id field) and by
+ai4i_core.ppu.catalogue in auth-service and inference-service. Every reader has a
+database fallback — see inference_type_cache.py's docstring.
 """
 
 import json
