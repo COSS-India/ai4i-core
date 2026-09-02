@@ -2,6 +2,7 @@ import React, { useMemo } from "react";
 import {
   Alert,
   AlertIcon,
+  Badge,
   Box,
   Button,
   FormControl,
@@ -36,12 +37,14 @@ function PercentageStepper({
   onFocus,
   min = 0,
   max = 100,
+  isDisabled = false,
 }: {
   value: string;
   onChange: (next: string) => void;
   onFocus?: () => void;
   min?: number;
   max?: number;
+  isDisabled?: boolean;
 }) {
   const numeric = value.trim() === "" ? null : Number(value);
   return (
@@ -57,6 +60,7 @@ function PercentageStepper({
         size="sm"
         w="88px"
         bg="white"
+        isDisabled={isDisabled}
       />
       <Text color="gray.500" fontSize="sm" fontWeight="semibold">%</Text>
     </HStack>
@@ -126,10 +130,17 @@ export default function ApplicationBulkBudgetModal({
             </Tr>
           </Thead>
           <Tbody>
-            {rows.map((row) => (
-              <Tr key={row.application_id} verticalAlign="top">
+            {rows.map((row) => {
+              const editable = row.status === "ACTIVE";
+              return (
+              <Tr key={row.application_id} verticalAlign="top" opacity={editable ? 1 : 0.75}>
                 <Td>
                   <Text fontWeight="600" fontSize="sm">{row.name}</Text>
+                  {!editable ? (
+                    <Badge mt={1} colorScheme="gray" fontSize="10px">
+                      Inactive
+                    </Badge>
+                  ) : null}
                   {row.rowError ? (
                     <Text fontSize="xs" color="red.500" mt={1}>{row.rowError}</Text>
                   ) : null}
@@ -162,6 +173,7 @@ export default function ApplicationBulkBudgetModal({
                         row.consumed_percentage != null ? row.consumed_percentage : 0
                       }
                       max={100}
+                      isDisabled={!editable}
                     />
                   </FormControl>
                 </Td>
@@ -176,7 +188,7 @@ export default function ApplicationBulkBudgetModal({
                     onChange={(e) => onAmountChange(row.application_id, e.target.value)}
                     min={row.consumed_budget ?? undefined}
                     step={0.01}
-                    isDisabled={institutionBudgetUnset}
+                    isDisabled={!editable || institutionBudgetUnset}
                     placeholder={institutionBudgetUnset ? "—" : undefined}
                   />
                 </Td>
@@ -201,7 +213,8 @@ export default function ApplicationBulkBudgetModal({
                   )}
                 </Td>
               </Tr>
-            ))}
+            );
+            })}
           </Tbody>
         </Table>
       </Box>
