@@ -43,7 +43,7 @@ import requests
 BASE_URL = "https://dev.ai4inclusion.org"
 CHAT_COMPLETIONS_PATH = "/api/v1/chat/completions"
 
-MODEL_ID = "aug-20-llm-2/Automation-ServiceID"  # <-- fill this in
+MODEL_ID = "aug-20-llm-2/Automation-ServiceID-v3/"  # <-- fill this in
 
 # Same input every time -> same prompt token count every time.
 INPUT_TEXT = "Summarize the importance of clean drinking water for rural communities briefly."
