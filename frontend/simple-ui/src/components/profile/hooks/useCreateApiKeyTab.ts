@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { showError } from "../../../utils/errorHandler";
 import { showToast } from "../../../utils/toast";
+import { BUDGET_VALIDATION } from "../../../config/budgetMessages";
 import { INSTITUTION } from "../../../config/constants";
 import authService from "../../../services/authService";
 import { listApplications } from "../../../services/applicationService";
@@ -187,7 +188,7 @@ export function useCreateApiKeyTab({
     if (!rawBudget) {
       setFieldErrors((prev) => ({
         ...prev,
-        budget: "Enter a budget allocation percentage.",
+        budget: BUDGET_VALIDATION.enterBudgetAllocationPercentage,
       }));
       return;
     }
@@ -195,7 +196,7 @@ export function useCreateApiKeyTab({
     if (!Number.isFinite(pct) || pct < 0) {
       setFieldErrors((prev) => ({
         ...prev,
-        budget: "Budget can't be negative.",
+        budget: BUDGET_VALIDATION.budgetCannotBeNegative,
       }));
       return;
     }
@@ -268,7 +269,7 @@ export function useCreateApiKeyTab({
       if (code === "ALLOCATION_REQUIRED") {
         setFieldErrors((prev) => ({
           ...prev,
-          budget: "Enter a budget allocation percentage.",
+          budget: BUDGET_VALIDATION.enterBudgetAllocationPercentage,
         }));
         return;
       }

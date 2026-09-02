@@ -37,6 +37,7 @@ import ApplicationBulkBudgetModal from "./ApplicationBulkBudgetModal";
 import FieldHint from "../common/FieldHint";
 import InfoTip from "../common/InfoTip";
 import { FIELD_HINTS } from "../../config/fieldHints";
+import { BUDGET_VALIDATION } from "../../config/budgetMessages";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
 import type { Application } from "../../types/application";
 import {
@@ -709,7 +710,7 @@ function ApplicationIdentityFields({
             onBoundHit={(bound) => {
               setBoundHint(
                 bound === "min"
-                  ? "Budget cannot be negative."
+                  ? BUDGET_VALIDATION.budgetCannotBeNegative
                   : `Cannot exceed ${remainingPct.toFixed(2)}% still available.`,
               );
             }}

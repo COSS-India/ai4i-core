@@ -180,6 +180,19 @@ export const FIELD_HINTS = {
       budgetAllocation:
         "Share of the parent Application's Budget reserved for this key. Active keys cannot exceed 100% combined per Application.",
     },
+    bulkBudgetEdit: {
+      intro:
+        "Rebalance Budget % across active API keys under one Application. All active keys are included on save; keys you don't edit keep their current budget. Totals below 100% are allowed within this Application's Budget.",
+      selectApplicationPlaceholder: "Select Application",
+      selectApplicationPrompt: "Select an Application to edit key budgets.",
+      loading: "Loading API keys…",
+      empty: "No active API keys under this Application.",
+      modalTitle: "Edit Key Budget",
+      allocatedToKeysLabel: "Application budget allocated to keys",
+      applicationBudgetUnset:
+        "This Application does not have a Budget (₹) assigned yet. Assign one from Application Management before editing key amounts.",
+      applicationAllocationPrefix: "Application allocation:",
+    },
   },
   application: {
     name: {
@@ -208,6 +221,12 @@ export const FIELD_HINTS = {
       "This Institution does not have a Budget (₹) assigned yet. Assign a Tier and Budget from Institution Management before saving Application budget allocations.",
     amountRequiresInstitutionBudget:
       "Assign an Institution Budget (₹) before entering amounts.",
+    bulkBudgetEdit: {
+      intro:
+        "Rebalance Budget % across all Applications. Only changed rows are submitted. Unallocated % can remain at the Institution level.",
+      institutionBudgetAllocatedLabel: "Institution Budget allocated",
+      institutionTotalPrefix: "Institution total:",
+    },
     search: {
       placeholder: "Search by name or domain",
       helper: "Matches Application name or domain.",
