@@ -8,10 +8,12 @@ from app.models import Base
 class InferenceType(Base):
     """Catalogue of billable inference types (llm, asr, nmt, ...).
 
-    Replaces the deploy-time ``the inference-type catalogue``
-    as the source of truth for the catalogue. ``endpoint_patterns[0]`` is the
-    canonical path; any further elements are aliases — the YAML expressed that
-    as a separate ``endpoint_aliases`` list, and today only ``llm`` has one.
+    This table is the source of truth. It replaced a deploy-time YAML that
+    shipped inside the ``ai4i-core`` package, so adding a type meant publishing
+    the library and redeploying every service pinned to it; that file is gone as
+    of phase 2. ``endpoint_patterns[0]`` is the canonical path and any further
+    elements are aliases — the YAML expressed that as a separate
+    ``endpoint_aliases`` list, and today only ``llm`` has one.
     """
 
     __tablename__ = "inference_types"

@@ -226,7 +226,7 @@ def sum_over_window_by(metric_expr: str, by_label: str, time_range: str | None) 
 #   metering_service.py's _native_unit_suffix_for_registry_task_type) —
 #   the single canonical definition of each task type's billing/consumption
 #   unit, shared with quota/pricing enforcement. This field is only used
-#   when that yaml has no entry for a task type at all.
+#   when the catalogue has no entry for a task type at all.
 SERVICE_BREAKDOWN_CONFIG: dict = {
     "nmt": {
         "display_name": "NMT",
@@ -286,7 +286,7 @@ SERVICE_BREAKDOWN_CONFIG: dict = {
         # Despite the metric's own name (a legacy artifact — see
         # telemetry_obsv_ner_tokens_processed_sum), the PPU canonical unit
         # for "ner" (the inference-type catalogue) is
-        # "characters", not tokens — that yaml is the actual source of truth
+        # "characters", not tokens — the catalogue is the actual source of truth
         # metering_service.py's native_unit_suffix lookups read from; this
         # field is kept in sync as a same-value fallback only.
         "metering_unit": "Characters processed",
