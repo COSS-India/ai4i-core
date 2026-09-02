@@ -209,6 +209,16 @@ function resolveApplicationEcho(app: Application | null): AllocationValue | null
   return null;
 }
 
+function resolveApplicationEcho(app: Application | null): AllocationValue | null {
+  if (app?.allocated_percentage != null) {
+    return { type: "PERCENTAGE", value: app.allocated_percentage };
+  }
+  if (app?.allocated_budget != null) {
+    return { type: "FIXED", value: app.allocated_budget };
+  }
+  return null;
+}
+
 export interface UseApiKeyBudgetEditOptions {
   tenantId: string | null | undefined;
   applications: Application[];
