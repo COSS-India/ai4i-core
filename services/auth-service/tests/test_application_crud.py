@@ -25,6 +25,7 @@ def _make_service(roles=("ADMIN",)) -> ApplicationService:
     application_repo.get_by_name = AsyncMock(return_value=None)
     application_repo.list_for_tenant = AsyncMock(return_value=([], 0))
     application_repo.sum_allocated_percentage = AsyncMock(return_value=Decimal("0"))
+    application_repo.sum_allocated_budget = AsyncMock(return_value=Decimal("0"))
     application_repo.create = AsyncMock()
     application_repo.update = AsyncMock()
     application_repo.commit = AsyncMock()
@@ -257,6 +258,45 @@ class TestCreateApplication:
         app = await svc.create_application(101, body, _user())
 
         assert app.allocated_percentage == Decimal("0.00")
+
+    @pytest.mark.asyncio
+    async def test_percentage_sum_at_100_but_rupee_sum_over_budget_is_rejected(self) -> None:
+        """Percentages summing to exactly 100% doesn't guarantee ₹ does too —
+        each Application's allocated_budget is independently ROUND_HALF_UP-
+        derived from its own percentage, so a set of Applications can each
+        have percentages that sum to 100.00% while their independently-
+        rounded ₹ values sum to a cent or two OVER the Tenant's real
+        allocated_budget. Existing Applications here already sum to 70% /
+        ₹70,000.01 (one cent of legacy drift) — a new 30% Application would
+        pass the percentage-only check (70+30=100) but push the real ₹
+        total to 100,000.01, one cent over the Tenant's 100,000.00 Budget."""
+        svc = _make_service()
+        svc._applications.sum_allocated_percentage = AsyncMock(return_value=Decimal("70"))
+        svc._applications.sum_allocated_budget = AsyncMock(return_value=Decimal("70000.01"))
+        body = ApplicationCreate(name="App D", allocated_percentage=Decimal("30"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.create_application(101, body, _user())
+
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["code"] == "ALLOCATION_TOTAL_EXCEEDED"
+        svc._applications.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rupee_sum_check_skipped_when_tenant_has_no_budget_set(self) -> None:
+        """No ₹ ceiling to overcommit against — only the percentage check
+        applies, same as every other budget-derivation path in this file."""
+        svc = _make_service()
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant(101, allocated_budget=None)
+        )
+        svc._applications.sum_allocated_percentage = AsyncMock(return_value=Decimal("0"))
+        body = ApplicationCreate(name="App E", allocated_percentage=Decimal("30"))
+
+        await svc.create_application(101, body, _user())
+
+        svc._applications.sum_allocated_budget.assert_not_awaited()
+        svc._applications.create.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_tenant_not_found_raises_404(self) -> None:

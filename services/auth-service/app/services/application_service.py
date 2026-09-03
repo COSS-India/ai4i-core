@@ -190,6 +190,30 @@ class ApplicationService:
                     ),
                 },
             )
+        # Percentages summing to exactly 100% doesn't guarantee ₹ does too —
+        # each Application's allocated_budget is independently
+        # ROUND_HALF_UP-derived from its own percentage (_derive_budget
+        # below), and independently-rounded shares of the same pool can sum
+        # to a cent or two OVER it even when their percentages sum to
+        # exactly 100.00%. Left unchecked, that drift sits invisibly in the
+        # stored ₹ total until AllocationService's own (₹-based) sibling-sum
+        # check trips over it during a LATER, unrelated edit — see
+        # ApplicationRepository.sum_allocated_budget's docstring. Checked
+        # here, against real ₹, so it can never accrue in the first place.
+        if locked_tenant.allocated_budget is not None:
+            current_budget_sum = await self._applications.sum_allocated_budget(tenant_id)
+            new_budget = self._derive_budget(locked_tenant.allocated_budget, new_percentage) or Decimal("0")
+            if current_budget_sum + new_budget > locked_tenant.allocated_budget:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "code": "ALLOCATION_TOTAL_EXCEEDED",
+                        "message": (
+                            f"Sum of Application Budget allocations ({current_budget_sum + new_budget}) "
+                            f"would exceed the Institution's Budget ({locked_tenant.allocated_budget})."
+                        ),
+                    },
+                )
         return locked_tenant
 
     async def get_application(
