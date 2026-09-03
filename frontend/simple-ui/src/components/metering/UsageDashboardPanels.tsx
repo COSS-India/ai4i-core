@@ -129,6 +129,7 @@ export const AdopterDashboardPanels: React.FC<AdopterPanelsProps> = ({
         isLoading={modelQuery.isLoading}
         errorMessage={parseQueryError(modelQuery.error)}
         isPlatformWide={!scopeTenantId}
+        showModelCountKpis={false}
       />
     )}
     {subTab === METERING.SUB_TAB.USAGE_SPEND && (
