@@ -49,9 +49,6 @@ interface ModelConsumptionTabProps {
   errorMessage?: string | null;
   /** When false, Most used helper uses institution-scoped copy. */
   isPlatformWide?: boolean;
-  /**
-   * When false, the Total/Active models cards are hidden — the adopter view
-   */
   showModelCountKpis?: boolean;
 }
 
