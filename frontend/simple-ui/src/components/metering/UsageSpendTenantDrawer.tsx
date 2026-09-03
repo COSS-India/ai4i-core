@@ -1,5 +1,4 @@
 import {
-  Box,
   Center,
   Drawer,
   DrawerBody,
@@ -13,17 +12,18 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import React from "react";
-import { INSTITUTION } from "../../config/constants";
-import { billingPeriodLabel } from "../../utils/usageSpendHelpers";
+import { METERING } from "../../config/meteringConstants";
 import type { TenantUsageDetail } from "../../types/usageSpend";
-import SpendByTaskTypeTable from "./SpendByTaskTypeTable";
-import { BudgetCell, TenantAvatar, TierBadge } from "./UsageSpendCells";
+import { InstitutionUsageDetailContent } from "./InstitutionUsageDetailPanel";
+import { TenantAvatar, TierBadge } from "./UsageSpendCells";
 
 interface UsageSpendTenantDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   detail: TenantUsageDetail | null;
   isLoading: boolean;
+  billingPeriod: string;
+  onBillingPeriodChange: (value: string) => void;
 }
 
 const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
@@ -31,10 +31,9 @@ const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
   onClose,
   detail,
   isLoading,
+  billingPeriod,
+  onBillingPeriodChange,
 }) => {
-  const hasMultiTier = (detail?.tierBreakdown?.length ?? 0) > 1;
-  const periodLabel = billingPeriodLabel("current");
-
   let body: React.ReactNode = null;
   if (isLoading && !detail) {
     body = (
@@ -53,42 +52,12 @@ const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
           <TierBadge label={detail.tier} />
         </HStack>
 
-        <Box>
-          <Text fontSize="11px" letterSpacing="0.04em" color="gray.600" fontWeight="semibold" mb="10px">
-            BUDGET
-          </Text>
-          <Box bg="gray.50" borderRadius="10px" p="16px 18px" opacity={isLoading ? 0.55 : 1}>
-            <BudgetCell
-              limit={detail.budget.limit}
-              spent={detail.budget.spent}
-              remaining={detail.budget.remaining}
-              percentageUsed={detail.budget.percentageUsed}
-              currency={detail.currency}
-            />
-          </Box>
-        </Box>
-
-        <Box position="relative" opacity={isLoading ? 0.55 : 1}>
-          {isLoading ? (
-            <Center position="absolute" inset={0} zIndex={1}>
-              <Spinner color="blue.500" size="sm" />
-            </Center>
-          ) : null}
-          <Text fontSize="11px" letterSpacing="0.04em" color="gray.600" fontWeight="semibold" mb="10px">
-            SPEND BY MODEL TASK TYPE — {periodLabel}
-          </Text>
-          <SpendByTaskTypeTable
-            tierBreakdown={detail.tierBreakdown ?? []}
-            totalSpend={detail.spend}
-            currency={detail.currency}
-          />
-          {hasMultiTier ? (
-            <Text fontSize="11.5px" color="gray.500" lineHeight="1.5" mt="10px">
-              Grouped by tier since this {INSTITUTION.toLowerCase()} changed tier during the period — spend and usage
-              above the group total are cumulative across all tiers.
-            </Text>
-          ) : null}
-        </Box>
+        <InstitutionUsageDetailContent
+          detail={detail}
+          isLoading={isLoading}
+          billingPeriod={billingPeriod}
+          onBillingPeriodChange={onBillingPeriodChange}
+        />
       </VStack>
     );
   }
@@ -99,7 +68,7 @@ const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
       <DrawerContent maxW="640px">
         <DrawerCloseButton top={4} right={4} />
         <DrawerHeader fontSize="17px" fontWeight="bold" pb={2}>
-          Tenant Spend Details
+          {METERING.USAGE_SPEND.TENANT_DETAIL_TITLE}
         </DrawerHeader>
         <DrawerBody pb={10}>{body}</DrawerBody>
       </DrawerContent>

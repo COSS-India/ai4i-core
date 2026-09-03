@@ -10,8 +10,6 @@ import { parseError } from "../utils/errorHandler";
 import { INSTITUTION } from "../config/constants";
 import {
   USAGE_SPEND_STALE_MS,
-  billingPeriodValue,
-  resolveSpendChangePercent,
   summaryFromDetail,
 } from "../utils/usageSpendHelpers";
 import type {
@@ -26,6 +24,7 @@ interface UseUsageAndSpendDataArgs {
   refreshNonce: number;
   filterTierId: string;
   taskTypeNames: string[];
+  billingPeriod: string;
 }
 
 export function useUsageAndSpendData({
@@ -35,26 +34,21 @@ export function useUsageAndSpendData({
   refreshNonce,
   filterTierId,
   taskTypeNames,
+  billingPeriod,
 }: UseUsageAndSpendDataArgs) {
-  const billingPeriod = billingPeriodValue("current");
-  const previousBillingPeriod = billingPeriodValue("last");
   const scopedId = (isTenantView ? tenantId : scopeTenantId)?.trim() || null;
   const isScoped = Boolean(scopedId);
 
   const enabledParam = taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
 
   const summaryQuery = useQuery({
-    queryKey: ["usage-summary", billingPeriod, enabledParam, refreshNonce],
-    queryFn: () => fetchUsageSummary({ billingPeriod, taskTypes: enabledParam }),
-    enabled: !isScoped,
-    staleTime: USAGE_SPEND_STALE_MS,
-    retry: 1,
-  });
-
-  const previousSummaryQuery = useQuery({
-    queryKey: ["usage-summary", previousBillingPeriod, enabledParam, refreshNonce],
+    queryKey: ["usage-summary", billingPeriod, filterTierId, enabledParam, refreshNonce],
     queryFn: () =>
-      fetchUsageSummary({ billingPeriod: previousBillingPeriod, taskTypes: enabledParam }),
+      fetchUsageSummary({
+        billingPeriod,
+        tierId: filterTierId || undefined,
+        taskTypes: enabledParam,
+      }),
     enabled: !isScoped,
     staleTime: USAGE_SPEND_STALE_MS,
     retry: 1,
@@ -106,7 +100,11 @@ export function useUsageAndSpendData({
   }, [isScoped, scopedQuery.data, tenantsQuery.data?.data]);
 
   const summaryData: UsageSummaryResponse | undefined = useMemo(() => {
-    if (isScoped) return scopedQuery.data ? summaryFromDetail(scopedQuery.data) : undefined;
+    if (isScoped) {
+      return scopedQuery.data
+        ? summaryFromDetail(scopedQuery.data, billingPeriod)
+        : undefined;
+    }
     const summary = summaryQuery.data;
     if (!summary) return undefined;
 
@@ -119,7 +117,10 @@ export function useUsageAndSpendData({
         activeTenants: next.activeTenants ?? (tenantsQuery.data?.total ?? rows.length),
         budgetExceededTenants:
           next.budgetExceededTenants ??
-          rows.filter((r) => r.budget.percentageUsed > 100 || r.budget.remaining < 0).length,
+          rows.filter(
+            (r) =>
+              (r.budget?.percentageUsed ?? 0) > 100 || (r.budget?.remaining ?? 0) < 0,
+          ).length,
       };
     }
 
@@ -127,33 +128,11 @@ export function useUsageAndSpendData({
   }, [
     isScoped,
     scopedQuery.data,
+    billingPeriod,
     summaryQuery.data,
     tenantsQuery.data?.data,
     tenantsQuery.data?.total,
   ]);
-
-  const spendChangePercent = useMemo(
-    () =>
-      resolveSpendChangePercent({
-        isScoped,
-        apiValue: summaryData?.spendChangePercent ?? summaryQuery.data?.spendChangePercent,
-        currentTotal: summaryQuery.data?.totalSpend,
-        prevTotal: previousSummaryQuery.data?.totalSpend,
-        prevReady:
-          previousSummaryQuery.isFetched ||
-          !(previousSummaryQuery.isLoading || previousSummaryQuery.isFetching),
-      }),
-    [
-      isScoped,
-      summaryData?.spendChangePercent,
-      summaryQuery.data?.spendChangePercent,
-      summaryQuery.data?.totalSpend,
-      previousSummaryQuery.data?.totalSpend,
-      previousSummaryQuery.isFetched,
-      previousSummaryQuery.isLoading,
-      previousSummaryQuery.isFetching,
-    ],
-  );
 
   const errMsg = (e: unknown) => (e ? parseError(e).message : null);
 
@@ -164,7 +143,6 @@ export function useUsageAndSpendData({
     isScoped,
     tenants,
     summaryData,
-    spendChangePercent,
     tiers: tiersQuery.data?.data ?? [],
     hasNoTierAssigned,
     summaryError: isScoped ? errMsg(scopedQuery.error) : errMsg(summaryQuery.error),

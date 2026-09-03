@@ -39,7 +39,7 @@ function normalizeApplication(raw: unknown, fallbackTenantId: string): Applicati
     allocated_budget: asNumber(row.allocated_budget),
     consumed_percentage: asNumber(row.consumed_percentage),
     consumed_budget: asNumber(row.consumed_budget),
-    status: row.status === "INACTIVE" ? "INACTIVE" : "ACTIVE",
+    status: String(row.status ?? "").toUpperCase() === "INACTIVE" ? "INACTIVE" : "ACTIVE",
     created_at: asString(row.created_at),
     updated_at: row.updated_at == null ? null : asString(row.updated_at),
     api_key_count: asNumber(row.api_key_count),

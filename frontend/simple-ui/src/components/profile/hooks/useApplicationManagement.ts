@@ -21,7 +21,23 @@ import {
   roundPct,
   type ApplicationKeyPreview,
 } from "../../../utils/applicationBudgetPreview";
-import type { AllocationUpdate, Application } from "../../../types/application";
+import type {
+  AllocationUpdate,
+  Application,
+  ApplicationStatus,
+} from "../../../types/application";
+import {
+  allocationErrorEntityId,
+  belowConsumedAmount,
+  belowConsumedPct,
+  belowConsumedPctRaw,
+  BUDGET_TOAST,
+  BUDGET_VALIDATION,
+  keyWouldDropBelowConsumed,
+  mapAllocationError,
+  mapBelowConsumedError,
+  totalApplicationsOver100,
+} from "../../../config/budgetMessages";
 import { FIELD_HINTS } from "../../../config/fieldHints";
 
 const PAGE_SIZE = 25;
@@ -43,6 +59,7 @@ const EMPTY_FORM: ApplicationForm = {
 export type BulkBudgetDraft = {
   application_id: string;
   name: string;
+  status: ApplicationStatus;
   consumed_percentage: number | null;
   consumed_budget: number | null;
   originalPct: number | null;
@@ -58,26 +75,12 @@ export type BulkBudgetDraft = {
   rowError: string | null;
 };
 
-function mapAllocationError(error: unknown): string {
-  const code = getApplicationErrorCode(error);
-  if (code === "TENANT_BUDGET_NOT_SET") {
-    return FIELD_HINTS.application.institutionBudgetNotSet;
-  }
-  return parseError(error).message;
+function mapApplicationAllocationError(error: unknown): string {
+  return mapAllocationError(error, getApplicationErrorCode, "application");
 }
 
-function mapBelowConsumedError(message: string): string {
-  if (/api[_-]?key/i.test(message)) {
-    return `A Key under this Application would drop below its consumed amount. ${message}`;
-  }
-  return message;
-}
-
-function allocationErrorApplicationId(error: unknown): string | null {
-  const message = parseError(error).message;
-  const match =
-    message.match(/application_id[=:\s]+(\d+)/i) ?? message.match(/\bid=(\d+)/);
-  return match?.[1] ?? null;
+function mapBelowConsumedErrorForApplication(message: string): string {
+  return mapBelowConsumedError(message, "application");
 }
 
 /** Spend as a share of the Institution budget (not the Application's own allocation). */
@@ -145,6 +148,29 @@ function buildAllocationUpdate(row: BulkBudgetDraft): AllocationUpdate | null {
   };
 }
 
+/** Keep inactive Applications at their current share so a sibling save does not re-fit them. */
+function buildFrozenAllocationUpdate(row: BulkBudgetDraft): AllocationUpdate | null {
+  if (row.originalPct != null) {
+    return {
+      application_id: row.application_id,
+      allocation: { type: "PERCENTAGE", value: row.originalPct },
+    };
+  }
+  if (row.resolvedAmount != null) {
+    return {
+      application_id: row.application_id,
+      allocation: { type: "FIXED", value: row.resolvedAmount },
+    };
+  }
+  if (row.resolvedPct != null) {
+    return {
+      application_id: row.application_id,
+      allocation: { type: "PERCENTAGE", value: row.resolvedPct },
+    };
+  }
+  return null;
+}
+
 function rowHasBudgetChange(row: BulkBudgetDraft): boolean {
   const orig = row.originalPct;
   const next = row.resolvedPct;
@@ -153,12 +179,17 @@ function rowHasBudgetChange(row: BulkBudgetDraft): boolean {
   return Math.abs(orig - next) > 1e-6;
 }
 
+function isApplicationBudgetEditable(status: ApplicationStatus): boolean {
+  return status === "ACTIVE";
+}
+
 function buildDraftFromApplication(app: Application): BulkBudgetDraft {
   const pct = app.allocated_percentage;
   const amount = app.allocated_budget;
   return {
     application_id: app.application_id,
     name: app.name,
+    status: app.status,
     consumed_percentage: app.consumed_percentage ?? null,
     consumed_budget: app.consumed_budget ?? null,
     originalPct: pct,
@@ -184,21 +215,21 @@ function evaluateRowError(
     row.consumed_percentage != null &&
     row.resolvedPct < row.consumed_percentage - 1e-6
   ) {
-    return `Cannot go below ${roundPct(row.consumed_percentage)}% already consumed.`;
+    return belowConsumedPct(row.consumed_percentage);
   }
   if (
     row.consumed_budget != null &&
     row.resolvedAmount != null &&
     row.resolvedAmount < row.consumed_budget - 1e-6
   ) {
-    return `Cannot go below ${roundMoney(row.consumed_budget)} already consumed.`;
+    return belowConsumedAmount(row.consumed_budget);
   }
   const keyViolation = row.keyPreviews.find((k) => k.floorViolation);
   if (keyViolation) {
-    return `Key "${keyViolation.key_name}" would drop below its consumed amount.`;
+    return keyWouldDropBelowConsumed(keyViolation.key_name);
   }
   if (tenantBudget <= 0 && row.resolvedAmount != null && row.resolvedAmount > 0) {
-    return "Institution budget is not set.";
+    return BUDGET_VALIDATION.institutionBudgetNotSet;
   }
   return null;
 }
@@ -224,7 +255,7 @@ function applyResolved(
   }
   const numeric = Number(trimmed);
   if (!Number.isFinite(numeric)) {
-    return { ...row, rowError: "Enter a valid number." };
+    return { ...row, rowError: BUDGET_VALIDATION.enterValidNumber };
   }
   const resolved = resolveApplicationBudget(mode, numeric, tenantBudget);
   if (!resolved) {
@@ -235,7 +266,7 @@ function applyResolved(
         rowError: FIELD_HINTS.application.amountRequiresInstitutionBudget,
       };
     }
-    return { ...row, rowError: "Enter a valid number." };
+    return { ...row, rowError: BUDGET_VALIDATION.enterValidNumber };
   }
   const keys = row.keys.filter((k) => k.is_active);
   const keyPreviews =
@@ -350,7 +381,9 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     if (bulkLoading || bulkRows.length === 0) return false;
     if (bulkLiveTotalPct > 100 + 1e-6) return false;
     if (bulkRows.some((row) => row.rowError)) return false;
-    const changedRows = bulkRows.filter(rowHasBudgetChange);
+    const changedRows = bulkRows.filter(
+      (row) => isApplicationBudgetEditable(row.status) && rowHasBudgetChange(row),
+    );
     if (changedRows.length === 0) return false;
     if (changedRows.some((row) => !row.keysLoaded)) return false;
     return true;
@@ -459,7 +492,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
       setBulkRows(drafts);
       if (usageWarning) setBulkBanner(usageWarning);
     } catch (error) {
-      setBulkBanner(mapAllocationError(error));
+      setBulkBanner(mapApplicationAllocationError(error));
     } finally {
       setBulkLoading(false);
     }
@@ -479,6 +512,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
       setBulkRows((prev) =>
         prev.map((row) => {
           if (row.application_id !== applicationId) return row;
+          if (!isApplicationBudgetEditable(row.status)) return row;
           const next = { ...applyResolved(row, tenantBudget, "percentage", value), lastEditMode: "percentage" as const };
           if (row.keysLoaded && next.resolvedAmount != null) {
             next.keyPreviews = previewKeyCascade(next.resolvedAmount, row.keys);
@@ -497,6 +531,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
       setBulkRows((prev) =>
         prev.map((row) => {
           if (row.application_id !== applicationId) return row;
+          if (!isApplicationBudgetEditable(row.status)) return row;
           const next = { ...applyResolved(row, tenantBudget, "amount", value), lastEditMode: "amount" as const };
           if (row.keysLoaded && next.resolvedAmount != null) {
             next.keyPreviews = previewKeyCascade(next.resolvedAmount, row.keys);
@@ -512,20 +547,28 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
 
   const handleSaveBulkBudget = async () => {
     if (!bulkCanSave) return;
-    const changes = bulkRows
+    const activeChanges = bulkRows
+      .filter((row) => isApplicationBudgetEditable(row.status))
       .filter(rowHasBudgetChange)
       .map(buildAllocationUpdate)
       .filter((row): row is AllocationUpdate => row != null);
-    if (changes.length === 0) {
+    if (activeChanges.length === 0) {
       setBulkBudgetOpen(false);
       return;
     }
+    // Pin inactive rows at their current allocation so the API's unlisted
+    // re-fit does not rewrite them when active siblings change.
+    const inactivePins = bulkRows
+      .filter((row) => !isApplicationBudgetEditable(row.status))
+      .map(buildFrozenAllocationUpdate)
+      .filter((row): row is AllocationUpdate => row != null);
+    const changes = [...activeChanges, ...inactivePins];
     setIsSaving(true);
     setBulkBanner(null);
     try {
       await updateApplicationAllocations(tenantId, changes);
       toast({
-        title: "Application budgets updated.",
+        title: BUDGET_TOAST.applicationBudgetsUpdated,
         status: "success",
         duration: 3000,
         isClosable: true,
@@ -536,8 +579,8 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
       const code = getApplicationErrorCode(error);
       const message = parseError(error).message;
       if (code === "ALLOCATION_BELOW_CONSUMED") {
-        const appId = allocationErrorApplicationId(error);
-        const rowMessage = mapBelowConsumedError(message);
+        const appId = allocationErrorEntityId(error, "application");
+        const rowMessage = mapBelowConsumedErrorForApplication(message);
         if (appId) {
           let matched = false;
           setBulkRows((prev) => {
@@ -554,7 +597,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
           setBulkBanner(rowMessage);
         }
       } else {
-        setBulkBanner(mapAllocationError(error));
+        setBulkBanner(mapApplicationAllocationError(error));
       }
     } finally {
       setIsSaving(false);
@@ -587,6 +630,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
   };
 
   const openBudget = (app: Application) => {
+    if (!isApplicationBudgetEditable(app.status)) return;
     setSelected(app);
     setBudgetDraft(
       app.allocated_percentage == null ? "" : String(app.allocated_percentage),
@@ -616,13 +660,13 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
   const budgetAvailable = Math.max(0, 100 - budgetOthersAllocated);
 
   const budgetFieldError = useMemo(() => {
-    if (budgetParsed === "invalid") return "Enter a valid percentage.";
-    if (budgetParsed != null && budgetParsed < 0) return "Budget cannot be negative.";
+    if (budgetParsed === "invalid") return BUDGET_VALIDATION.enterValidPercentage;
+    if (budgetParsed != null && budgetParsed < 0) return BUDGET_VALIDATION.budgetCannotBeNegative;
     if (budgetParsed != null && budgetFloor > 0 && budgetParsed < budgetFloor - 1e-6) {
-      return `Cannot go below ${budgetFloor}% already consumed.`;
+      return belowConsumedPctRaw(budgetFloor);
     }
     if (budgetLiveTotal > 100 + 1e-6) {
-      return `Total across Applications would be ${budgetLiveTotal.toFixed(2)}% — over 100%.`;
+      return totalApplicationsOver100(budgetLiveTotal);
     }
     return null;
   }, [budgetParsed, budgetFloor, budgetLiveTotal]);
@@ -631,8 +675,8 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     const errors: Record<string, string> = {};
     if (!form.name.trim()) errors.name = "Application name is required.";
     const pct = parsePct(form.allocated_percentage);
-    if (pct === "invalid") errors.allocated_percentage = "Enter a valid percentage.";
-    else if (pct != null && pct < 0) errors.allocated_percentage = "Budget cannot be negative.";
+    if (pct === "invalid") errors.allocated_percentage = BUDGET_VALIDATION.enterValidPercentage;
+    else if (pct != null && pct < 0) errors.allocated_percentage = BUDGET_VALIDATION.budgetCannotBeNegative;
     else if (pct != null && pct > remainingPct + 1e-6) {
       errors.allocated_percentage = `Cannot exceed ${remainingPct.toFixed(2)}% still available.`;
     }
@@ -673,6 +717,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
 
   const handleSaveBudget = async () => {
     if (!selected) return;
+    if (!isApplicationBudgetEditable(selected.status)) return;
     if (budgetFieldError) return;
     const next =
       budgetParsed == null || budgetParsed === "invalid" ? 0 : budgetParsed;
@@ -705,7 +750,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
       setBudgetOpen(false);
       await reload();
     } catch (error) {
-      setBudgetBanner(mapAllocationError(error));
+      setBudgetBanner(mapApplicationAllocationError(error));
     } finally {
       setIsSaving(false);
     }
@@ -814,13 +859,11 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     },
     onBudgetBoundHit: (bound: "min" | "max") => {
       if (bound === "min" && budgetFloor > 0) {
-        setBudgetStepperHint(`Cannot go below ${budgetFloor}% already consumed.`);
+        setBudgetStepperHint(belowConsumedPctRaw(budgetFloor));
         return;
       }
       const wouldBe = budgetOthersAllocated + budgetAvailable + 1;
-      setBudgetStepperHint(
-        `Total across Applications would be ${wouldBe.toFixed(2)}% — over 100%.`,
-      );
+      setBudgetStepperHint(totalApplicationsOver100(wouldBe));
     },
     budgetStepperHint,
     budgetLiveTotal,

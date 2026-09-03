@@ -21,6 +21,7 @@ import {
 import StandardModal from "../common/StandardModal";
 import InfoTip from "../common/InfoTip";
 import { FIELD_HINTS } from "../../config/fieldHints";
+import { editKeyBudgetTitle, totalApiKeysExceeds100 } from "../../config/budgetMessages";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
 import type { Application } from "../../types/application";
 import type { KeyBudgetDraft } from "./hooks/useApiKeyBudgetEdit";
@@ -108,21 +109,21 @@ export default function ApiKeyBulkBudgetModal({
     if (!selectedApplicationId) {
       return (
         <Text color="gray.500" py={8} textAlign="center">
-          Select an Application to edit key budgets.
+          {FIELD_HINTS.apiKey.bulkBudgetEdit.selectApplicationPrompt}
         </Text>
       );
     }
     if (isLoading) {
       return (
         <Text color="gray.500" py={8} textAlign="center">
-          Loading API keys…
+          {FIELD_HINTS.apiKey.bulkBudgetEdit.loading}
         </Text>
       );
     }
     if (rows.length === 0) {
       return (
         <Text color="gray.500" py={8} textAlign="center">
-          No active API keys under this Application.
+          {FIELD_HINTS.apiKey.bulkBudgetEdit.empty}
         </Text>
       );
     }
@@ -193,9 +194,7 @@ export default function ApiKeyBulkBudgetModal({
     applicationBudgetUnset,
   ]);
 
-  const title = applicationName
-    ? `Edit Key Budget — ${applicationName}`
-    : "Edit Key Budget";
+  const title = editKeyBudgetTitle(applicationName || undefined);
 
   return (
     <StandardModal
@@ -221,10 +220,7 @@ export default function ApiKeyBulkBudgetModal({
     >
       <VStack align="stretch" spacing={4}>
         <Text fontSize="sm" color="gray.600">
-          Rebalance Budget % across active API keys under one Application.
-          Only the key(s) you edit are saved — every other key keeps its
-          current budget untouched. Totals below 100% are allowed within
-          this Application&apos;s Budget.
+          {FIELD_HINTS.apiKey.bulkBudgetEdit.intro}
         </Text>
 
         <FormControl isRequired>
@@ -232,7 +228,7 @@ export default function ApiKeyBulkBudgetModal({
             Application
           </FormLabel>
           <Select
-            placeholder="Select Application"
+            placeholder={FIELD_HINTS.apiKey.bulkBudgetEdit.selectApplicationPlaceholder}
             value={selectedApplicationId}
             onChange={(e) => onApplicationChange(e.target.value)}
             bg="white"
@@ -255,7 +251,7 @@ export default function ApiKeyBulkBudgetModal({
                   color="gray.500"
                   textTransform="uppercase"
                 >
-                  Application budget allocated to keys
+                  {FIELD_HINTS.apiKey.bulkBudgetEdit.allocatedToKeysLabel}
                 </Text>
                 <InfoTip message={FIELD_HINTS.apiKey.tooltips.budgetAllocation} />
               </HStack>
@@ -271,7 +267,7 @@ export default function ApiKeyBulkBudgetModal({
               />
             </Box>
             <Text fontSize="xs" color="gray.500" mt={2}>
-              Application allocation:{" "}
+              {FIELD_HINTS.apiKey.bulkBudgetEdit.applicationAllocationPrefix}{" "}
               {applicationAllocatedPct != null
                 ? formatPct(applicationAllocatedPct)
                 : "—"}{" "}
@@ -283,16 +279,14 @@ export default function ApiKeyBulkBudgetModal({
         {applicationBudgetUnset && selectedApplicationId && (
           <Alert status="warning" borderRadius="md">
             <AlertIcon />
-            This Application does not have a Budget (₹) assigned yet. Assign one
-            from Application Management before editing key amounts.
+            {FIELD_HINTS.apiKey.bulkBudgetEdit.applicationBudgetUnset}
           </Alert>
         )}
 
         {totalOver && (
           <Alert status="error" borderRadius="md">
             <AlertIcon />
-            Total across active keys is {liveTotalPct.toFixed(2)}% — cannot exceed
-            100% of this Application&apos;s Budget.
+            {totalApiKeysExceeds100(liveTotalPct)}
           </Alert>
         )}
 

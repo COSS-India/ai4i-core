@@ -8,10 +8,18 @@ import { fetchApplicationUsageDetail } from "../../../services/applicationUsageS
 import { parseError } from "../../../utils/errorHandler";
 import {
   resolveApplicationBudget,
-  roundMoney,
   roundPct,
 } from "../../../utils/applicationBudgetPreview";
 import type { Application } from "../../../types/application";
+import {
+  allocationErrorEntityId,
+  belowConsumedAmount,
+  belowConsumedPct,
+  BUDGET_TOAST,
+  BUDGET_VALIDATION,
+  mapAllocationError,
+  mapBelowConsumedError,
+} from "../../../config/budgetMessages";
 import { FIELD_HINTS } from "../../../config/fieldHints";
 import type { AllocationValue } from "../../../services/allocationService";
 
@@ -52,25 +60,25 @@ function evaluateKeyRowError(
   applicationBudget: number,
 ): string | null {
   if (row.pctInput.trim() === "" && row.originalPct != null) {
-    return "Enter a budget allocation percentage.";
+    return BUDGET_VALIDATION.enterBudgetAllocationPercentage;
   }
   if (row.resolvedPct == null) return null;
-  if (row.resolvedPct < 0) return "Budget cannot be negative.";
+  if (row.resolvedPct < 0) return BUDGET_VALIDATION.budgetCannotBeNegative;
   if (
     row.consumed_percentage != null &&
     row.resolvedPct < row.consumed_percentage - 1e-6
   ) {
-    return `Cannot go below ${roundPct(row.consumed_percentage)}% already consumed.`;
+    return belowConsumedPct(row.consumed_percentage);
   }
   if (
     row.consumed_budget != null &&
     row.resolvedAmount != null &&
     row.resolvedAmount < row.consumed_budget - 1e-6
   ) {
-    return `Cannot go below ${roundMoney(row.consumed_budget)} already consumed.`;
+    return belowConsumedAmount(row.consumed_budget);
   }
   if (applicationBudget <= 0 && row.resolvedAmount != null && row.resolvedAmount > 0) {
-    return "This Application has no Budget (₹) assigned yet.";
+    return BUDGET_VALIDATION.applicationBudgetNotAssigned;
   }
   return null;
 }
@@ -95,7 +103,7 @@ function applyResolved(
   }
   const numeric = Number(trimmed);
   if (!Number.isFinite(numeric)) {
-    return { ...row, rowError: "Enter a valid number." };
+    return { ...row, rowError: BUDGET_VALIDATION.enterValidNumber };
   }
   const resolved = resolveApplicationBudget(mode, numeric, applicationBudget);
   if (!resolved) {
@@ -103,10 +111,10 @@ function applyResolved(
       return {
         ...row,
         amountInput: trimmed,
-        rowError: "Enter a Budget amount after this Application has a Budget (₹) assigned.",
+        rowError: BUDGET_VALIDATION.amountRequiresApplicationBudget,
       };
     }
-    return { ...row, rowError: "Enter a valid number." };
+    return { ...row, rowError: BUDGET_VALIDATION.enterValidNumber };
   }
   const next: KeyBudgetDraft = {
     ...row,
@@ -151,42 +159,8 @@ function buildDraftFromUsageKey(
   };
 }
 
-function mapBelowConsumedError(message: string): string {
-  if (/api[_-]?key/i.test(message)) {
-    return message;
-  }
-  return `An API key would drop below its consumed amount. ${message}`;
-}
-
-function allocationErrorApiKeyId(error: unknown): number | null {
-  const message = parseError(error).message;
-  const match =
-    message.match(/api_key_id[=:\s]+(\d+)/i) ?? message.match(/\bid=(\d+)/);
-  return match ? Number(match[1]) : null;
-}
-
-function mapAllocationError(error: unknown): string {
-  const code = getAllocationErrorCode(error);
-  const message = parseError(error).message;
-  if (code === "APPLICATION_BUDGET_NOT_SET") {
-    return "This Application has no Budget allocation yet — assign one from Application Management first.";
-  }
-  if (code === "APPLICATION_ALLOCATION_MISMATCH") {
-    return "Application budget changed elsewhere — close this dialog, refresh, and try again.";
-  }
-  if (code === "TENANT_BUDGET_NOT_SET") {
-    return FIELD_HINTS.application.institutionBudgetNotSet;
-  }
-  if (code === "API_KEY_REVOKED") {
-    return message;
-  }
-  if (code === "ALLOCATION_TOTAL_EXCEEDED") {
-    return message;
-  }
-  if (code === "ALLOCATION_BELOW_CONSUMED") {
-    return mapBelowConsumedError(message);
-  }
-  return message;
+function mapBelowConsumedErrorForApiKey(message: string): string {
+  return mapBelowConsumedError(message, "apiKey");
 }
 
 /** Only ever called for a row that rowHasBudgetChange() already confirmed
@@ -293,7 +267,7 @@ export function useApiKeyBudgetEdit({
         const drafts = activeKeys.map((key) => buildDraftFromUsageKey(key, appAmount));
         setRows(drafts);
         if (activeKeys.length === 0) {
-          setBanner("No active API keys under this Application.");
+          setBanner(FIELD_HINTS.apiKey.bulkBudgetEdit.empty);
         }
       } catch (error) {
         if (pendingLoadApplicationIdRef.current !== applicationId) return;
@@ -395,7 +369,7 @@ export function useApiKeyBudgetEdit({
         })),
       );
       toast({
-        title: `Budget updated for ${changes.length} key(s).`,
+        title: BUDGET_TOAST.keyBudgetUpdated(changes.length),
         status: "success",
         duration: 3000,
         isClosable: true,
@@ -405,8 +379,8 @@ export function useApiKeyBudgetEdit({
     } catch (error) {
       const code = getAllocationErrorCode(error);
       if (code === "ALLOCATION_BELOW_CONSUMED") {
-        const keyId = allocationErrorApiKeyId(error);
-        const rowMessage = mapBelowConsumedError(parseError(error).message);
+        const keyId = allocationErrorEntityId(error, "api_key");
+        const rowMessage = mapBelowConsumedErrorForApiKey(parseError(error).message);
         if (keyId != null) {
           let matched = false;
           setRows((prev) => {
@@ -421,7 +395,7 @@ export function useApiKeyBudgetEdit({
           setBanner(rowMessage);
         }
       } else {
-        setBanner(mapAllocationError(error));
+        setBanner(mapAllocationError(error, getAllocationErrorCode));
       }
     } finally {
       setIsSaving(false);
