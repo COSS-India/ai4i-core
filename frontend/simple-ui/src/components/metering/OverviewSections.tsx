@@ -138,6 +138,7 @@ interface KeyMetricsSectionProps {
   supplement?: KeyMetricsSupplement;
 }
 
+// Kept for the currently hidden "Model usage growth" card (see MODEL_CARDS in meteringConstants).
 function formatGrowthPct(value: number | null | undefined): string {
   if (value == null) return METERING.GRAPH.EMPTY_VALUE;
   const sign = value > 0 ? "+" : value < 0 ? "-" : "";
@@ -164,8 +165,10 @@ function renderKeyMetricCard(
   values: Record<string, number | null | undefined>,
 ) {
   const raw = values[card.key];
-  const isGrowth = card.key === "model_usage_growth_pct";
-  const value = isGrowth ? formatGrowthPct(raw) : (raw ?? METERING.GRAPH.EMPTY_VALUE);
+  // Hidden with the "Model usage growth" card:
+  // const isGrowth = card.key === "model_usage_growth_pct";
+  // const value = isGrowth ? formatGrowthPct(raw) : (raw ?? METERING.GRAPH.EMPTY_VALUE);
+  const value = raw ?? METERING.GRAPH.EMPTY_VALUE;
 
   return (
     <KpiCard
@@ -223,7 +226,8 @@ export const KeyMetricsSection: React.FC<KeyMetricsSectionProps> = ({
           >
             {section.MODEL_ROW_TITLE}
           </Text>
-          <SimpleGrid columns={{ base: 1, sm: 2, lg: 3 }} spacing={4}>
+          {/* lg columns is 2 while the "Model usage growth" card is hidden (was 3) */}
+          <SimpleGrid columns={{ base: 1, sm: 2, lg: 2 }} spacing={4}>
             {section.MODEL_CARDS.map((card) => renderKeyMetricCard(card, values))}
           </SimpleGrid>
         </VStack>
