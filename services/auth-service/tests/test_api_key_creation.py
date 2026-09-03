@@ -6,7 +6,7 @@ green build otherwise).
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -136,6 +136,140 @@ class TestAllocationCapLockOrdering:
 
         assert exc_info.value.code == "ALLOCATION_TOTAL_EXCEEDED"
         repo.create.assert_not_called()
+
+
+class TestExplicitZeroAllocationRejected:
+    """ALLOCATION_REQUIRED only catches the omitted-entirely case (None is
+    not 0) — a caller can route around it by passing an explicit 0 instead,
+    creating an "Active"-looking Key with a ₹0 ceiling that can never spend
+    anything. Rejected the same way BUDGET_TOO_SMALL already rejects a
+    `budget` that rounds to 0.00% derived from a tiny amount."""
+
+    @pytest.mark.asyncio
+    async def test_explicit_zero_percentage_is_rejected(self) -> None:
+        application = _application()
+        tenant = _tenant()
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        tenants = AsyncMock()
+        tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+
+        with pytest.raises(ValidationError) as exc_info:
+            await svc.create_api_key(
+                actor_user_id=uuid4(),
+                key_name="test",
+                permissions=["nmt.inference"],
+                application_id=1,
+                allocated_percentage=Decimal("0"),
+                caller_tenant_id=1,
+            )
+
+        assert exc_info.value.code == "BUDGET_TOO_SMALL"
+        applications.get_by_id_for_update.assert_not_called()
+        repo.create.assert_not_called()
+
+
+class TestRevokedKeySpendCountsTowardNewAllocation:
+    """ALLOCATION_TOTAL_EXCEEDED above only weighs ACTIVE keys'
+    allocated_percentage (sum_api_key_allocated_percentage is_active-
+    filtered) — a revoked key's ceiling AND its real spend both drop out of
+    that sum the instant it's revoked. Without a separate consumed-spend
+    check, revoking an overspent key and creating a fresh one erases the
+    overspend from every check this function runs, so the new key's ceiling
+    stacks on top of an already-exhausted Application budget instead of
+    what's actually left of it."""
+
+    @pytest.mark.asyncio
+    async def test_revoked_keys_spend_blocks_a_new_key_that_would_overcommit(self) -> None:
+        application = _application(allocated_budget=Decimal("10000"))
+        tenant = _tenant()
+        revoked_key = MagicMock(id=901, is_active=False)
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        applications.get_by_id_for_update = AsyncMock(return_value=application)
+        applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("0"))
+        tenants = AsyncMock()
+        tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+        repo.list_by_application = AsyncMock(return_value=[revoked_key])
+
+        with patch(
+            "app.services.api_key_service.budget_usage.fetch_budget_usage",
+            new=AsyncMock(return_value={901: (Decimal("9500"), Decimal("9500"))}),
+        ):
+            with pytest.raises(ValidationError) as exc_info:
+                await svc.create_api_key(
+                    actor_user_id=uuid4(),
+                    key_name="test",
+                    permissions=["nmt.inference"],
+                    application_id=1,
+                    allocated_percentage=Decimal("90"),
+                    caller_tenant_id=1,
+                )
+
+        assert exc_info.value.code == "BUDGET_OVERCOMMITTED"
+        repo.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_new_key_allowed_when_prior_spend_leaves_room(self) -> None:
+        application = _application(allocated_budget=Decimal("10000"))
+        tenant = _tenant()
+        revoked_key = MagicMock(id=901, is_active=False)
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        applications.get_by_id_for_update = AsyncMock(return_value=application)
+        applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("0"))
+        tenants = AsyncMock()
+        tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+        repo.list_by_application = AsyncMock(return_value=[revoked_key])
+
+        with patch(
+            "app.services.api_key_service.budget_usage.fetch_budget_usage",
+            new=AsyncMock(return_value={901: (Decimal("2000"), Decimal("2000"))}),
+        ):
+            _raw_key, api_key = await svc.create_api_key(
+                actor_user_id=uuid4(),
+                key_name="test",
+                permissions=["nmt.inference"],
+                application_id=1,
+                allocated_percentage=Decimal("50"),
+                caller_tenant_id=1,
+            )
+
+        assert api_key.allocated_budget == Decimal("5000")
+        repo.create.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_skipped_entirely_when_application_has_no_budget_set(self) -> None:
+        """A percentage-only key against an Application with no ₹ budget yet
+        has no ceiling to overcommit — nothing to fetch usage for."""
+        application = _application(allocated_budget=None)
+        tenant = _tenant()
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        applications.get_by_id_for_update = AsyncMock(return_value=application)
+        applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("0"))
+        tenants = AsyncMock()
+        tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+        repo.list_by_application = AsyncMock()
+
+        await svc.create_api_key(
+            actor_user_id=uuid4(),
+            key_name="test",
+            permissions=["nmt.inference"],
+            application_id=1,
+            allocated_percentage=Decimal("50"),
+            caller_tenant_id=1,
+        )
+
+        repo.list_by_application.assert_not_awaited()
 
 
 class TestBudgetDerivedFromLockedApplicationNotStaleRead:

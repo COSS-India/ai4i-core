@@ -639,6 +639,20 @@ class APIKeyService:
                 "allocation to be created.",
                 code="ALLOCATION_REQUIRED",
             )
+        if allocated_percentage is not None and allocated_percentage == 0:
+            # ALLOCATION_REQUIRED above only catches the omitted-entirely case
+            # (None is not 0) — a caller can route around it by passing an
+            # explicit 0 instead. Reject that too, for the same reason
+            # BUDGET_TOO_SMALL below rejects a `budget` that rounds to 0.00%:
+            # a 0% allocation is a ₹0 ceiling, a Key that can never spend
+            # anything and is indistinguishable from key sprawl in the UI
+            # (shows as an "Active" key with nothing behind it).
+            raise ValidationError(
+                message="allocated_percentage must be greater than 0 — a 0% allocation gives "
+                "this Key a ₹0 ceiling, which can never be used. Omit both allocated_percentage "
+                "and budget for an intentionally uncapped Key, or give a positive value.",
+                code="BUDGET_TOO_SMALL",
+            )
         if budget is not None:
             # A raw ₹ ceiling is never persisted/validated as given — an
             # equivalent allocated_percentage is derived immediately, so it
@@ -693,6 +707,46 @@ class APIKeyService:
                     ),
                     code="ALLOCATION_TOTAL_EXCEEDED",
                 )
+
+            if application.allocated_budget:
+                # The check above only weighs ACTIVE keys' allocated_percentage
+                # (sum_api_key_allocated_percentage is_active-filtered) — a
+                # revoked key drops out of that sum the moment it's revoked,
+                # but what it already spent is real and permanent (same
+                # "unfiltered for consumed accounting" contract as
+                # AllocationService._consumed_total/_active). Without this,
+                # revoking an overspent key and creating a fresh one erases
+                # the overspend from every check this function runs, so the
+                # new key's ceiling stacks on top of an already-exhausted
+                # Application budget instead of what's actually left of it.
+                # Best-effort read, same posture as every other
+                # fetch_budget_usage call in this codebase (a platform-core
+                # outage must not block key creation; it self-heals once
+                # platform-core answers again on the next create/edit).
+                all_keys = await self._repo.list_by_application(application_id)
+                usage_map = await budget_usage.fetch_budget_usage(
+                    [k.id for k in all_keys], platform_core_db
+                )
+                consumed_total = sum(
+                    (usage_map.get(k.id, (Decimal("0"), None))[0] for k in all_keys),
+                    Decimal("0"),
+                )
+                new_key_ceiling = (
+                    budget.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                    if budget is not None
+                    else (application.allocated_budget * allocated_percentage) / Decimal("100")
+                )
+                if consumed_total + new_key_ceiling > application.allocated_budget:
+                    raise ValidationError(
+                        message=(
+                            f"This Application has already spent {consumed_total} of its "
+                            f"{application.allocated_budget} Budget, including Keys since "
+                            f"revoked — allocating a {new_key_ceiling} ceiling to this new Key "
+                            "would bring the Application's total committed spend above its "
+                            "Budget."
+                        ),
+                        code="BUDGET_OVERCOMMITTED",
+                    )
 
         allocated_budget: Optional[Decimal] = None
         if budget is not None:

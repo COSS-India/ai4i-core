@@ -200,6 +200,13 @@ export function useCreateApiKeyTab({
       }));
       return;
     }
+    if (pct === 0) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        budget: BUDGET_VALIDATION.budgetMustBeGreaterThanZero,
+      }));
+      return;
+    }
     if (pct > availablePct + 1e-6) {
       setFieldErrors((prev) => ({
         ...prev,
