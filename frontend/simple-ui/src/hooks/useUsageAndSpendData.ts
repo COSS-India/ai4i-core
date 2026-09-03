@@ -117,7 +117,10 @@ export function useUsageAndSpendData({
         activeTenants: next.activeTenants ?? (tenantsQuery.data?.total ?? rows.length),
         budgetExceededTenants:
           next.budgetExceededTenants ??
-          rows.filter((r) => r.budget.percentageUsed > 100 || r.budget.remaining < 0).length,
+          rows.filter(
+            (r) =>
+              (r.budget?.percentageUsed ?? 0) > 100 || (r.budget?.remaining ?? 0) < 0,
+          ).length,
       };
     }
 

@@ -148,6 +148,29 @@ function buildAllocationUpdate(row: BulkBudgetDraft): AllocationUpdate | null {
   };
 }
 
+/** Keep inactive Applications at their current share so a sibling save does not re-fit them. */
+function buildFrozenAllocationUpdate(row: BulkBudgetDraft): AllocationUpdate | null {
+  if (row.originalPct != null) {
+    return {
+      application_id: row.application_id,
+      allocation: { type: "PERCENTAGE", value: row.originalPct },
+    };
+  }
+  if (row.resolvedAmount != null) {
+    return {
+      application_id: row.application_id,
+      allocation: { type: "FIXED", value: row.resolvedAmount },
+    };
+  }
+  if (row.resolvedPct != null) {
+    return {
+      application_id: row.application_id,
+      allocation: { type: "PERCENTAGE", value: row.resolvedPct },
+    };
+  }
+  return null;
+}
+
 function rowHasBudgetChange(row: BulkBudgetDraft): boolean {
   const orig = row.originalPct;
   const next = row.resolvedPct;
@@ -524,15 +547,22 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
 
   const handleSaveBulkBudget = async () => {
     if (!bulkCanSave) return;
-    const changes = bulkRows
+    const activeChanges = bulkRows
       .filter((row) => isApplicationBudgetEditable(row.status))
       .filter(rowHasBudgetChange)
       .map(buildAllocationUpdate)
       .filter((row): row is AllocationUpdate => row != null);
-    if (changes.length === 0) {
+    if (activeChanges.length === 0) {
       setBulkBudgetOpen(false);
       return;
     }
+    // Pin inactive rows at their current allocation so the API's unlisted
+    // re-fit does not rewrite them when active siblings change.
+    const inactivePins = bulkRows
+      .filter((row) => !isApplicationBudgetEditable(row.status))
+      .map(buildFrozenAllocationUpdate)
+      .filter((row): row is AllocationUpdate => row != null);
+    const changes = [...activeChanges, ...inactivePins];
     setIsSaving(true);
     setBulkBanner(null);
     try {

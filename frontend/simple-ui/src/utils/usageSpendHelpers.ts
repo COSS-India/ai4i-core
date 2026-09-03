@@ -263,16 +263,17 @@ export function summaryFromDetail(
     allocated: i.quotaLimit ?? null,
     remaining: i.remaining ?? null,
   }));
+  const budget = detail.budget;
   return {
     billingPeriod: billingPeriod ?? null,
     totalSpend: detail.spend,
     currency: detail.currency,
     activeTenants: 1,
     budgetExceededTenants:
-      detail.budget.remaining < 0 || detail.budget.percentageUsed > 100 ? 1 : 0,
+      budget && (budget.remaining < 0 || budget.percentageUsed > 100) ? 1 : 0,
     spendByModelTaskType,
-    totalAllocatedBudget: detail.budget.limit,
-    totalRemainingBudget: detail.budget.remaining,
+    totalAllocatedBudget: budget?.limit,
+    totalRemainingBudget: budget?.remaining,
   };
 }
 

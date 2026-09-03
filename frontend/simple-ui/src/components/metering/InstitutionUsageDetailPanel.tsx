@@ -4,6 +4,7 @@ import { INSTITUTION } from "../../config/constants";
 import { METERING } from "../../config/meteringConstants";
 import { formatBudgetEffectiveRange } from "../../utils/usageSpendHelpers";
 import type { TenantUsageItem } from "../../types/usageSpend";
+import BillingMonthSelect from "./BillingMonthSelect";
 import SpendByTaskTypeTable from "./SpendByTaskTypeTable";
 import { BudgetCell, TenantAvatar, TierBadge } from "./UsageSpendCells";
 
@@ -26,15 +27,20 @@ const cardSx = {
 interface InstitutionUsageDetailContentProps {
   detail: TenantUsageItem;
   isLoading?: boolean;
+  billingPeriod?: string;
+  onBillingPeriodChange?: (value: string) => void;
 }
 
 export const InstitutionUsageDetailContent: React.FC<InstitutionUsageDetailContentProps> = ({
   detail,
   isLoading = false,
+  billingPeriod,
+  onBillingPeriodChange,
 }) => {
+  const budget = detail.budget;
   const effectiveRange = formatBudgetEffectiveRange(
-    detail.budget.budgetEffectiveFrom,
-    detail.budget.budgetEffectiveTo,
+    budget?.budgetEffectiveFrom,
+    budget?.budgetEffectiveTo,
   );
   const hasMultiTier = (detail.tierBreakdown?.length ?? 0) > 1;
 
@@ -53,14 +59,18 @@ export const InstitutionUsageDetailContent: React.FC<InstitutionUsageDetailConte
           <Center minH="72px">
             <Spinner color="blue.500" size="sm" />
           </Center>
-        ) : (
+        ) : budget ? (
           <BudgetCell
-            limit={detail.budget.limit}
-            spent={detail.budget.spent}
-            remaining={detail.budget.remaining}
-            percentageUsed={detail.budget.percentageUsed}
+            limit={budget.limit}
+            spent={budget.spent}
+            remaining={budget.remaining}
+            percentageUsed={budget.percentageUsed}
             currency={detail.currency}
           />
+        ) : (
+          <Text fontSize="sm" color="gray.500">
+            No budget assigned.
+          </Text>
         )}
         <Text fontSize="11.5px" color="gray.500" mt={3}>
           {METERING.USAGE_SPEND.BUDGET_ALL_TIME_NOTE}
@@ -68,9 +78,12 @@ export const InstitutionUsageDetailContent: React.FC<InstitutionUsageDetailConte
       </Box>
 
       <Box {...cardSx} opacity={isLoading ? 0.6 : 1}>
-        <Text {...sectionLabelSx} mb={4}>
-          {METERING.USAGE_SPEND.USAGE_BY_TASK_TYPE_ALL_TIME}
-        </Text>
+        <Flex justify="space-between" align="center" gap={3} mb={4} flexWrap="wrap">
+          <Text {...sectionLabelSx}>{METERING.USAGE_SPEND.USAGE_BY_TASK_TYPE_ALL_TIME}</Text>
+          {billingPeriod && onBillingPeriodChange ? (
+            <BillingMonthSelect value={billingPeriod} onChange={onBillingPeriodChange} />
+          ) : null}
+        </Flex>
         <SpendByTaskTypeTable
           tierBreakdown={detail.tierBreakdown ?? []}
           usageColumnLabel={METERING.USAGE_SPEND.USAGE_VS_QUOTA_ALL_TIME}
@@ -94,12 +107,16 @@ interface InstitutionUsageDetailPanelProps {
   detail: TenantUsageItem;
   organisationLabel?: string | null;
   isLoading?: boolean;
+  billingPeriod?: string;
+  onBillingPeriodChange?: (value: string) => void;
 }
 
 const InstitutionUsageDetailPanel: React.FC<InstitutionUsageDetailPanelProps> = ({
   detail,
   organisationLabel,
   isLoading = false,
+  billingPeriod,
+  onBillingPeriodChange,
 }) => {
   const displayName = organisationLabel?.trim() || detail.tenantName;
 
@@ -117,7 +134,12 @@ const InstitutionUsageDetailPanel: React.FC<InstitutionUsageDetailPanelProps> = 
         <TierBadge label={detail.tier} />
       </HStack>
 
-      <InstitutionUsageDetailContent detail={detail} isLoading={isLoading} />
+      <InstitutionUsageDetailContent
+        detail={detail}
+        isLoading={isLoading}
+        billingPeriod={billingPeriod}
+        onBillingPeriodChange={onBillingPeriodChange}
+      />
     </VStack>
   );
 };
