@@ -615,11 +615,12 @@ class TestReviseTenantBudgetCascade:
         svc._tenants.update.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_cascade_invoked_with_new_and_old_amounts_before_commit(self) -> None:
-        """Verifies the cascade sees (new_budget, current_budget) — not
-        (amount, 0) or some other pairing — and runs before the Tenant's
-        own row is staged, so its side effects are part of the same
-        not-yet-committed transaction."""
+    async def test_cascade_invoked_with_the_new_amount_before_commit(self) -> None:
+        """Verifies the cascade sees new_budget (the ONLY amount it takes —
+        it no longer needs the Tenant's old total, since it never
+        proportionally scales anything off it any more) and runs before
+        the Tenant's own row is staged, so its side effects are part of
+        the same not-yet-committed transaction."""
         allocation_service = AsyncMock()
         allocation_service.cascade_tenant_budget_revision = AsyncMock(
             return_value=(2, 3, {7: Decimal("40.00")})
@@ -633,7 +634,7 @@ class TestReviseTenantBudgetCascade:
         await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"))
 
         allocation_service.cascade_tenant_budget_revision.assert_awaited_once_with(
-            1, Decimal("1500"), Decimal("1000"), ANY, None
+            1, Decimal("1500"), ANY, None
         )
         svc._tenants.update.assert_awaited_once()
         assert svc._tenants.update.await_args.args[1]["allocated_budget"] == Decimal("1500")

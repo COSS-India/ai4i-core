@@ -45,14 +45,16 @@ async def update_tenant_budget_allocation(
 ):
     """Rebalance an Institution's Budget across its Applications.
 
-    An Application not listed in ``applications`` is not required to be —
-    it's proportionally re-fit against what's left of the Tenant's own
-    (unchanged) total, the same unconditional re-fit rule used everywhere
-    a parent's children are being resolved. A listed Application's own
-    un-listed Keys go through the same rule one level down, whenever that
-    Application's own amount actually changes. Returns every Application
-    under the Tenant that has an allocation, not just the ones listed —
-    see AllocationService.update_tenant_application_allocations.
+    An Application not listed in ``applications`` is left exactly as it
+    is — resizing one Application never moves another. An explicit row is
+    checked against whatever's genuinely unallocated and rejected
+    (422 ALLOCATION_TOTAL_EXCEEDED) rather than made to fit by shrinking a
+    sibling. A listed Application's own un-listed Keys DO react, though:
+    that Application's own total is what's actually changing, so its Keys
+    are unconditionally re-fit to track it — a parent/child relationship,
+    not a sibling one. Returns every Application under the Tenant that has
+    an allocation, not just the ones listed — see
+    AllocationService.update_tenant_application_allocations.
     """
     return await svc.update_tenant_application_allocations(
         tenant_id, body, current_user, platform_core_db
@@ -76,12 +78,13 @@ async def update_application_budget_allocation(
     ``allocation`` (the Application's own value) is echo-only — this
     endpoint never changes an Application's share of the Institution's
     Budget, only its Keys' shares of the Application; it must match
-    what's already stored. A Key not listed in ``api_keys`` is not
-    required to be — it's proportionally re-fit against what's left of
-    the Application's own (unchanged) total, the same unconditional
-    re-fit rule used everywhere a parent's children are being resolved.
-    Returns every Key under the Application, not just the ones listed —
-    see AllocationService.update_application_key_allocations.
+    what's already stored. A Key not listed in ``api_keys`` is left
+    exactly as it is — resizing one Key never moves another Key under the
+    same Application. An explicit row is checked against whatever's
+    genuinely unallocated within the Application and rejected
+    (422 ALLOCATION_TOTAL_EXCEEDED) rather than made to fit by shrinking a
+    sibling Key. Returns every Key under the Application, not just the
+    ones listed — see AllocationService.update_application_key_allocations.
     """
     return await svc.update_application_key_allocations(
         application_id, body, current_user, platform_core_db
@@ -102,10 +105,12 @@ async def update_api_key_budget_allocation(
 ):
     """Update a single API Key's own allocation.
 
-    Because Key allocations are relative to their parent Application, and
-    resizing one Key re-fits any of its siblings the caller left
-    unmentioned, this returns the complete parent Application object —
-    including every sibling Key — not just the one Key updated. See
+    Resizing this Key never moves its siblings — the request is checked
+    against whatever's genuinely unallocated within the Application and
+    rejected (422 ALLOCATION_TOTAL_EXCEEDED) rather than made to fit by
+    shrinking another Key. The response is still the complete parent
+    Application object — including every sibling Key, merged back in from
+    its current (untouched) values — not just the one Key updated. See
     AllocationService.update_single_api_key_allocation.
     """
     return await svc.update_single_api_key_allocation(key_id, body, current_user, platform_core_db)

@@ -15,7 +15,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.api_key import APIKey
-from app.models.application import Application
+from app.models.application import Application, ApplicationStatus
 from app.repositories.base import BaseRepository
 
 
@@ -166,12 +166,22 @@ class ApplicationRepository(BaseRepository):
         return list(result.scalars().all())
 
     async def sum_allocated_percentage(self, tenant_id: int) -> Decimal:
-        """Sum of allocated_percentage across a tenant's Applications — used
-        to enforce ALLOCATION_TOTAL_EXCEEDED when creating/reallocating an
-        Application's share of its Institution's budget."""
+        """Sum of allocated_percentage across a tenant's ACTIVE Applications —
+        used to enforce ALLOCATION_TOTAL_EXCEEDED when creating/reallocating
+        an Application's share of its Institution's budget.
+
+        ACTIVE-only, same reasoning as sum_api_key_allocated_percentage's own
+        is_active filter, one level up: an INACTIVE Application's allocation
+        is cleared on deactivation (see ApplicationService.update_application)
+        specifically so it can't keep counting against this sum — without
+        both halves of that fix, a reactivated Application whose old
+        allocated_percentage briefly survived the transition could still
+        double up against room a sibling already grew into.
+        """
         result = await self._db.execute(
             select(func.coalesce(func.sum(Application.allocated_percentage), 0)).where(
-                Application.tenant_id == tenant_id
+                Application.tenant_id == tenant_id,
+                Application.status == ApplicationStatus.ACTIVE,
             )
         )
         return Decimal(result.scalar_one())

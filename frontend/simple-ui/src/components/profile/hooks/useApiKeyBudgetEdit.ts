@@ -163,14 +163,18 @@ function mapBelowConsumedErrorForApiKey(message: string): string {
   return mapBelowConsumedError(message, "apiKey");
 }
 
+/** Only ever called for a row that rowHasBudgetChange() already confirmed
+ * is actually edited — see save() below. An unedited row is never turned
+ * into an allocation at all: the backend leaves any Key not listed in
+ * api_keys exactly as it is, so there's nothing to build for it, and
+ * resubmitting its own stale cached value would needlessly subject it to
+ * a fresh floor check against live consumed spend it was never meant to
+ * go through. */
 function buildKeyAllocation(row: KeyBudgetDraft): AllocationValue {
-  if (rowHasBudgetChange(row)) {
-    if (row.lastEditMode === "amount" && row.resolvedAmount != null) {
-      return { type: "FIXED", value: row.resolvedAmount };
-    }
-    return { type: "PERCENTAGE", value: row.resolvedPct ?? 0 };
+  if (row.lastEditMode === "amount" && row.resolvedAmount != null) {
+    return { type: "FIXED", value: row.resolvedAmount };
   }
-  return { type: "FIXED", value: row.resolvedAmount ?? 0 };
+  return { type: "PERCENTAGE", value: row.resolvedPct ?? 0 };
 }
 
 function resolveApplicationEcho(app: Application | null): AllocationValue | null {
@@ -359,7 +363,7 @@ export function useApiKeyBudgetEdit({
       await updateApiKeyAllocations(
         Number(selectedApplicationId),
         applicationEchoAllocation,
-        rows.map((row) => ({
+        changes.map((row) => ({
           api_key_id: row.api_key_id,
           allocation: buildKeyAllocation(row),
         })),

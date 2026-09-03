@@ -505,16 +505,15 @@ export default function TenantManagementTab({
       }
       setBudgetAmount("");
 
+      // A tenant budget revision never moves any Application's own ₹ (or,
+      // therefore, any Key's — keys_recomputed is always literally 0 now
+      // and would be misleading to surface). Only each Application's %
+      // share of the new total is recalculated; their ₹ allocations are
+      // untouched.
       const apps = res.applications_recomputed;
-      const keys = res.keys_recomputed;
       let description = `Budget ${budgetAction === "topup" ? "increased" : "decreased"} by ${formatRupees(amount)}.`;
-      if (apps != null || keys != null) {
-        const parts: string[] = [];
-        if (apps != null) parts.push(`${apps} Application(s)`);
-        if (keys != null) parts.push(`${keys} Key(s)`);
-        if (parts.length > 0) {
-          description += ` ${parts.join(" and ")} were automatically adjusted.`;
-        }
+      if (apps) {
+        description += ` ${apps} Application(s)' Budget % ${apps === 1 ? "was" : "were"} recalculated to reflect the new total — their ₹ allocations were not changed.`;
       }
 
       toast({

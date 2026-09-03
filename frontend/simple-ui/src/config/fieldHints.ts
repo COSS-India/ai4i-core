@@ -182,7 +182,7 @@ export const FIELD_HINTS = {
     },
     bulkBudgetEdit: {
       intro:
-        "Rebalance Budget % across active API keys under one Application. All active keys are included on save; keys you don't edit keep their current budget. Totals below 100% are allowed within this Application's Budget.",
+        "Rebalance Budget % across active API keys under one Application. Only the key(s) you edit are saved — every other key keeps its current budget untouched. Totals below 100% are allowed within this Application's Budget.",
       selectApplicationPlaceholder: "Select Application",
       selectApplicationPrompt: "Select an Application to edit key budgets.",
       loading: "Loading API keys…",

@@ -126,6 +126,7 @@ def get_application_service(
         tenant_repo=TenantRepository(db),
         role_repo=RoleRepository(db),
         db=db,
+        api_key_repo=APIKeyRepository(db),
     )
 
 

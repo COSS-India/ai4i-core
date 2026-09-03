@@ -10,6 +10,7 @@ Application.tenant_id, not through users.
 """
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import cast, func, or_, select, update
@@ -333,5 +334,35 @@ class APIKeyRepository(BaseRepository):
             )
             .values(is_active=False)
             .returning(APIKey.api_key)
+        )
+        return list(result.scalars().all())
+
+    async def zero_allocation_for_applications(self, application_ids: list[int]) -> list[int]:
+        """Bulk-zero ``allocated_budget``/``allocated_percentage`` for the
+        active keys under the given Applications; return their ids.
+
+        Used when an Application is deactivated: its own allocation is
+        cleared by the caller separately (ApplicationService), and this
+        clears its Keys' ceilings to match — zeroed, not NULLed, since the
+        returned ids feed ``write_budget_snapshot`` and a NULL
+        ``budget_usage.api_key_budget_snap`` reads as "uncapped" rather than
+        "zero room" (see AllocationService._active's docstring for why a
+        revoked key is excluded here — a revoked key can never spend again,
+        so its stale ceiling doesn't matter; only active keys still can, so
+        only they need a real ceiling written through).
+
+        Single ``UPDATE … RETURNING`` per call, same batching rationale as
+        ``revoke_active_for_applications``.
+        """
+        if not application_ids:
+            return []
+        result = await self._db.execute(
+            update(APIKey)
+            .where(
+                APIKey.application_id.in_(application_ids),
+                APIKey.is_active.is_(True),
+            )
+            .values(allocated_budget=Decimal("0"), allocated_percentage=Decimal("0"))
+            .returning(APIKey.id)
         )
         return list(result.scalars().all())
