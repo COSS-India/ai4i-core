@@ -80,8 +80,18 @@ describe("quota usage helpers", () => {
       modelTaskType: "nmt",
       consumption: 9500,
       allocated: 100_000,
+      unit: "characters",
     });
     expect(summary.totalSpend).toBeCloseTo(2163.24, 0);
     expect(summary.billingPeriod).toBe("2026-09");
+    // AI4IDS-3012: API no longer returns per-task-type spend/percentage.
+    expect(summary.spendByModelTaskType[0]).not.toHaveProperty("spend");
+    expect(summary.spendByModelTaskType[0]).not.toHaveProperty("percentage");
+  });
+
+  it("does not crash when task types omit spend/percentage (AI4IDS-3012)", () => {
+    const tasks = aggregateTasks(multiTaskTenant.tierBreakdown);
+    expect(() => tasks.map((t) => t.consumed)).not.toThrow();
+    expect(tasks.every((t) => !("spend" in t))).toBe(true);
   });
 });

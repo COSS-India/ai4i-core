@@ -22,6 +22,8 @@ interface UsageSpendTenantDrawerProps {
   onClose: () => void;
   detail: TenantUsageDetail | null;
   isLoading: boolean;
+  billingPeriod: string;
+  onBillingPeriodChange: (value: string) => void;
 }
 
 const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
@@ -29,6 +31,8 @@ const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
   onClose,
   detail,
   isLoading,
+  billingPeriod,
+  onBillingPeriodChange,
 }) => {
   let body: React.ReactNode = null;
   if (isLoading && !detail) {
@@ -48,7 +52,12 @@ const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
           <TierBadge label={detail.tier} />
         </HStack>
 
-        <InstitutionUsageDetailContent detail={detail} isLoading={isLoading} />
+        <InstitutionUsageDetailContent
+          detail={detail}
+          isLoading={isLoading}
+          billingPeriod={billingPeriod}
+          onBillingPeriodChange={onBillingPeriodChange}
+        />
       </VStack>
     );
   }

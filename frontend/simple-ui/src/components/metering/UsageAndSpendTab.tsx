@@ -110,6 +110,8 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
           detail={tenantDetail}
           organisationLabel={organisationLabel}
           isLoading={data.isTenantsLoading}
+          billingPeriod={billingPeriod}
+          onBillingPeriodChange={setBillingPeriod}
         />
       </VStack>
     );
@@ -161,6 +163,8 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
         onClose={handleDetailClose}
         detail={selectedTenant}
         isLoading={isDetailLoading}
+        billingPeriod={billingPeriod}
+        onBillingPeriodChange={setBillingPeriod}
       />
     </VStack>
   );

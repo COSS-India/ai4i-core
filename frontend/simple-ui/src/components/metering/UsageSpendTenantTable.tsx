@@ -61,8 +61,8 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
     () => ({
       tenantName: (row: TenantUsageItem) => row.tenantName,
       tier: (row: TenantUsageItem) => row.tier,
-      budgetLimit: (row: TenantUsageItem) => row.budget.limit,
-      budgetSpent: (row: TenantUsageItem) => row.budget.spent,
+      budgetLimit: (row: TenantUsageItem) => row.budget?.limit ?? 0,
+      budgetSpent: (row: TenantUsageItem) => row.budget?.spent ?? 0,
       taskTypeCount: (row: TenantUsageItem) =>
         row.usage?.taskTypeCount ?? aggregateTasks(row.tierBreakdown ?? []).length,
     }),
@@ -181,11 +181,17 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
                   <Td><TierBadge label={row.tier} /></Td>
                   <Td>
                     <Text fontWeight="semibold" fontSize="13px">
-                      {formatSpendMoney(row.budget.limit, row.currency)}
+                      {formatSpendMoney(row.budget?.limit ?? 0, row.currency)}
                     </Text>
                   </Td>
                   <Td>
-                    <BudgetCell {...row.budget} currency={row.currency} layout="topRight" />
+                    {row.budget ? (
+                      <BudgetCell {...row.budget} currency={row.currency} layout="topRight" />
+                    ) : (
+                      <Text fontSize="12px" color="gray.500">
+                        —
+                      </Text>
+                    )}
                   </Td>
                   <Td>
                     {taskCount === 0 ? (
