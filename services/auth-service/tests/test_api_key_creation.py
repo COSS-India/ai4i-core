@@ -171,15 +171,104 @@ class TestExplicitZeroAllocationRejected:
         repo.create.assert_not_called()
 
 
-class TestRevokedKeySpendCountsTowardNewAllocation:
+class TestCommittedTotalCountsActiveCeilingsAndRevokedSpend:
     """ALLOCATION_TOTAL_EXCEEDED above only weighs ACTIVE keys'
-    allocated_percentage (sum_api_key_allocated_percentage is_active-
-    filtered) — a revoked key's ceiling AND its real spend both drop out of
-    that sum the instant it's revoked. Without a separate consumed-spend
-    check, revoking an overspent key and creating a fresh one erases the
-    overspend from every check this function runs, so the new key's ceiling
-    stacks on top of an already-exhausted Application budget instead of
-    what's actually left of it."""
+    allocated_percentage — it verifies ceilings sum to <=100%, but that's
+    silent on ₹ once a revoked key's spend is added back into the picture.
+    The BUDGET_OVERCOMMITTED check mirrors AllocationService's full
+    two-half contract: each ACTIVE key is charged the greater of its own
+    ceiling (still reserved, whether spent or not) or what it's actually
+    spent (an over-exhausted key, from the one-call-past-budget design, can
+    overshoot its own allocated_budget); each REVOKED key is charged only
+    its consumed spend (its ceiling is no longer reserved, but the spend is
+    real and permanent). Missing the revoked half lets revoking an
+    overspent key and creating a fresh one erase the overspend from every
+    check this function runs; missing the active half leaves an active
+    sibling's still-unspent — but already promised — ceiling invisible."""
+
+    @pytest.mark.asyncio
+    async def test_active_keys_unspent_ceiling_blocks_a_new_key_even_with_small_revoked_spend(
+        self,
+    ) -> None:
+        """The reviewer's exact scenario: a 10,000 Application budget, a
+        revoked key that only spent 1,000, and an active key already
+        holding a 5,000 ceiling it hasn't spent. A new 5,000 key must still
+        be rejected (1,000 + 5,000 + 5,000 = 11,000 > 10,000) even though
+        the revoked spend alone (1,000) would have left room — a
+        consumed-only check would wrongly allow this."""
+        application = _application(allocated_budget=Decimal("10000"))
+        tenant = _tenant()
+        revoked_key = MagicMock(id=901, is_active=False, allocated_budget=Decimal("9000"))
+        active_key = MagicMock(id=902, is_active=True, allocated_budget=Decimal("5000"))
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        applications.get_by_id_for_update = AsyncMock(return_value=application)
+        applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("50"))
+        tenants = AsyncMock()
+        tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+        repo.list_by_application = AsyncMock(return_value=[revoked_key, active_key])
+
+        with patch(
+            "app.services.api_key_service.budget_usage.fetch_budget_usage",
+            new=AsyncMock(
+                return_value={
+                    901: (Decimal("1000"), Decimal("1000")),
+                    902: (Decimal("0"), Decimal("5000")),
+                }
+            ),
+        ):
+            with pytest.raises(ValidationError) as exc_info:
+                await svc.create_api_key(
+                    actor_user_id=uuid4(),
+                    key_name="test",
+                    permissions=["nmt.inference"],
+                    application_id=1,
+                    allocated_percentage=Decimal("50"),
+                    caller_tenant_id=1,
+                )
+
+        assert exc_info.value.code == "BUDGET_OVERCOMMITTED"
+        repo.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_an_over_exhausted_active_key_is_charged_its_actual_spend_not_its_ceiling(
+        self,
+    ) -> None:
+        """An active key that overspent past its own ceiling (the one call
+        the design allows through after exhaustion) must be charged its
+        real spend, not the smaller ceiling — max(ceiling, consumed)."""
+        application = _application(allocated_budget=Decimal("10000"))
+        tenant = _tenant()
+        over_exhausted_key = MagicMock(id=902, is_active=True, allocated_budget=Decimal("3000"))
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        applications.get_by_id_for_update = AsyncMock(return_value=application)
+        applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("30"))
+        tenants = AsyncMock()
+        tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+        repo.list_by_application = AsyncMock(return_value=[over_exhausted_key])
+
+        with patch(
+            "app.services.api_key_service.budget_usage.fetch_budget_usage",
+            new=AsyncMock(return_value={902: (Decimal("4000"), Decimal("3000"))}),
+        ):
+            with pytest.raises(ValidationError) as exc_info:
+                await svc.create_api_key(
+                    actor_user_id=uuid4(),
+                    key_name="test",
+                    permissions=["nmt.inference"],
+                    application_id=1,
+                    allocated_percentage=Decimal("65"),
+                    caller_tenant_id=1,
+                )
+
+        # committed_total = max(3000, 4000) = 4000; new key = 6500; 10500 > 10000.
+        assert exc_info.value.code == "BUDGET_OVERCOMMITTED"
+        repo.create.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_revoked_keys_spend_blocks_a_new_key_that_would_overcommit(self) -> None:

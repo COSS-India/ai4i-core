@@ -710,25 +710,44 @@ class APIKeyService:
 
             if application.allocated_budget:
                 # The check above only weighs ACTIVE keys' allocated_percentage
-                # (sum_api_key_allocated_percentage is_active-filtered) — a
-                # revoked key drops out of that sum the moment it's revoked,
-                # but what it already spent is real and permanent (same
-                # "unfiltered for consumed accounting" contract as
-                # AllocationService._consumed_total/_active). Without this,
-                # revoking an overspent key and creating a fresh one erases
-                # the overspend from every check this function runs, so the
-                # new key's ceiling stacks on top of an already-exhausted
-                # Application budget instead of what's actually left of it.
-                # Best-effort read, same posture as every other
-                # fetch_budget_usage call in this codebase (a platform-core
-                # outage must not block key creation; it self-heals once
-                # platform-core answers again on the next create/edit).
+                # (sum_api_key_allocated_percentage is_active-filtered) — it
+                # verifies ceilings sum to <=100%, but tells us nothing in ₹
+                # once a revoked key's spend is added back into the picture.
+                # This mirrors AllocationService's ACTUAL two-half contract,
+                # not just _consumed_total's: _active(...) separately feeds
+                # resolve_level, which reserves active children's ceilings —
+                # so committed_total below charges each ACTIVE key the
+                # greater of its own ceiling (still reserved, spent or not)
+                # or what it's actually spent (an over-exhausted key, from
+                # the one call design allows through past its ceiling, can
+                # overshoot its own allocated_budget), and each REVOKED key
+                # only its consumed spend (its ceiling is no longer reserved
+                # — it will never spend again — but the spend itself is real
+                # and permanent). Without the revoked half, revoking an
+                # overspent key and creating a fresh one erases the overspend
+                # from every check this function runs; without the active
+                # half, an active sibling's still-unspent ceiling is invisible
+                # here even though it's already promised. Best-effort read,
+                # same posture as every other fetch_budget_usage call in this
+                # codebase (a platform-core outage must not block key
+                # creation; it self-heals once platform-core answers again on
+                # the next create/edit).
                 all_keys = await self._repo.list_by_application(application_id)
                 usage_map = await budget_usage.fetch_budget_usage(
                     [k.id for k in all_keys], platform_core_db
                 )
-                consumed_total = sum(
-                    (usage_map.get(k.id, (Decimal("0"), None))[0] for k in all_keys),
+                committed_total = sum(
+                    (
+                        (
+                            max(
+                                k.allocated_budget or Decimal("0"),
+                                usage_map.get(k.id, (Decimal("0"), None))[0],
+                            )
+                            if k.is_active
+                            else usage_map.get(k.id, (Decimal("0"), None))[0]
+                        )
+                        for k in all_keys
+                    ),
                     Decimal("0"),
                 )
                 new_key_ceiling = (
@@ -736,14 +755,14 @@ class APIKeyService:
                     if budget is not None
                     else (application.allocated_budget * allocated_percentage) / Decimal("100")
                 )
-                if consumed_total + new_key_ceiling > application.allocated_budget:
+                if committed_total + new_key_ceiling > application.allocated_budget:
                     raise ValidationError(
                         message=(
-                            f"This Application has already spent {consumed_total} of its "
-                            f"{application.allocated_budget} Budget, including Keys since "
-                            f"revoked — allocating a {new_key_ceiling} ceiling to this new Key "
-                            "would bring the Application's total committed spend above its "
-                            "Budget."
+                            f"This Application has already committed {committed_total} of its "
+                            f"{application.allocated_budget} Budget — active Keys' own ceilings "
+                            "plus what Keys since revoked have spent — allocating a "
+                            f"{new_key_ceiling} ceiling to this new Key would bring the "
+                            "Application's total committed spend above its Budget."
                         ),
                         code="BUDGET_OVERCOMMITTED",
                     )

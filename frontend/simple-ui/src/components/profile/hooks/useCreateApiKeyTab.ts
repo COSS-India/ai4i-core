@@ -297,6 +297,17 @@ export function useCreateApiKeyTab({
         );
         return;
       }
+      if (code === "BUDGET_OVERCOMMITTED") {
+        setFieldErrors((prev) => ({
+          ...prev,
+          budget:
+            rawMessage ||
+            "This Application has already committed more of its Budget than this allocation " +
+              "leaves room for — reduce this Key's Budget, or increase the Application's Budget " +
+              "first.",
+        }));
+        return;
+      }
 
       const legacyCode = nested?.code ?? detail?.code;
       if (
