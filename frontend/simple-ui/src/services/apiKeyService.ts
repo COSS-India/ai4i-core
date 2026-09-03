@@ -56,10 +56,18 @@ function normalizeGroupedList(payload: unknown): ApiKeyGroupedListResult {
     const groups = data.map((group) => {
       const g = asRecord(group) ?? {};
       const appId = asString(g.application_id);
+      const appName = asString(g.application_name).trim() || undefined;
       const keyRows = Array.isArray(g.api_keys) ? g.api_keys : [];
       return {
         application_id: appId,
-        api_keys: keyRows.map((k) => normalizeKey(k)),
+        api_keys: keyRows.map((k) => {
+          const key = normalizeKey(k);
+          return {
+            ...key,
+            application_id: key.application_id || appId,
+            application_name: appName,
+          };
+        }),
       };
     });
     return { groups };
@@ -131,6 +139,7 @@ export function toLegacyApiKeyResponse(key: ApiKeyRecord): APIKeyResponse {
     created_at: key.created_at,
     expires_at: key.expires_at,
     application_id: key.application_id,
+    application_name: key.application_name,
     allocated_percentage: key.allocated_percentage,
     allocated_budget: key.allocated_budget,
     created_by: key.created_by,

@@ -5,6 +5,7 @@ export interface ApiKeyRecord {
   /** Masked on list; full value only on create. */
   api_key?: string;
   application_id: string;
+  application_name?: string;
   allocated_percentage: number | null;
   allocated_budget: number | null;
   permissions: string[];

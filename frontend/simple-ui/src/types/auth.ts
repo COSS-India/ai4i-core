@@ -148,6 +148,7 @@ export interface APIKeyResponse {
   expires_at?: string;
   last_used?: string;
   application_id?: string;
+  application_name?: string;
   allocated_percentage?: number | null;
   allocated_budget?: number | null;
   created_by?: string;
