@@ -6,6 +6,8 @@ import { roundMoney, roundPct } from "../utils/applicationBudgetPreview";
 export const BUDGET_VALIDATION = {
   enterBudgetAllocationPercentage: "Enter a budget allocation percentage.",
   budgetCannotBeNegative: "Budget cannot be negative.",
+  budgetMustBeGreaterThanZero:
+    "Budget must be greater than 0% — a 0% allocation is a Key that can never be used.",
   enterValidNumber: "Enter a valid number.",
   enterValidPercentage: "Enter a valid percentage.",
   applicationBudgetNotAssigned: "This Application has no Budget (₹) assigned yet.",

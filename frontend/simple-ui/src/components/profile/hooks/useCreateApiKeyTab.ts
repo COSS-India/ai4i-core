@@ -200,6 +200,13 @@ export function useCreateApiKeyTab({
       }));
       return;
     }
+    if (pct === 0) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        budget: BUDGET_VALIDATION.budgetMustBeGreaterThanZero,
+      }));
+      return;
+    }
     if (pct > availablePct + 1e-6) {
       setFieldErrors((prev) => ({
         ...prev,
@@ -288,6 +295,17 @@ export function useCreateApiKeyTab({
             rawMessage ??
             "Key allocations would exceed 100% of this Application's Budget.",
         );
+        return;
+      }
+      if (code === "BUDGET_OVERCOMMITTED") {
+        setFieldErrors((prev) => ({
+          ...prev,
+          budget:
+            rawMessage ||
+            "This Application has already committed more of its Budget than this allocation " +
+              "leaves room for — reduce this Key's Budget, or increase the Application's Budget " +
+              "first.",
+        }));
         return;
       }
 

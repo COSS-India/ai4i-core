@@ -639,6 +639,20 @@ class APIKeyService:
                 "allocation to be created.",
                 code="ALLOCATION_REQUIRED",
             )
+        if allocated_percentage is not None and allocated_percentage == 0:
+            # ALLOCATION_REQUIRED above only catches the omitted-entirely case
+            # (None is not 0) — a caller can route around it by passing an
+            # explicit 0 instead. Reject that too, for the same reason
+            # BUDGET_TOO_SMALL below rejects a `budget` that rounds to 0.00%:
+            # a 0% allocation is a ₹0 ceiling, a Key that can never spend
+            # anything and is indistinguishable from key sprawl in the UI
+            # (shows as an "Active" key with nothing behind it).
+            raise ValidationError(
+                message="allocated_percentage must be greater than 0 — a 0% allocation gives "
+                "this Key a ₹0 ceiling, which can never be used. Omit both allocated_percentage "
+                "and budget for an intentionally uncapped Key, or give a positive value.",
+                code="BUDGET_TOO_SMALL",
+            )
         if budget is not None:
             # A raw ₹ ceiling is never persisted/validated as given — an
             # equivalent allocated_percentage is derived immediately, so it
@@ -693,6 +707,80 @@ class APIKeyService:
                     ),
                     code="ALLOCATION_TOTAL_EXCEEDED",
                 )
+
+            if application.allocated_budget:
+                # The check above only weighs ACTIVE keys' allocated_percentage
+                # (sum_api_key_allocated_percentage is_active-filtered) — it
+                # verifies ceilings sum to <=100%, but tells us nothing in ₹
+                # once a revoked key's spend is added back into the picture.
+                # This mirrors AllocationService's ACTUAL two-half contract,
+                # not just _consumed_total's: _active(...) separately feeds
+                # resolve_level, which reserves active children's ceilings —
+                # so committed_total below charges each ACTIVE key the
+                # greater of its own PERCENTAGE-derived ceiling or what it's
+                # actually spent (an over-exhausted key, from the one call
+                # design allows through past its ceiling, can overshoot its
+                # own allocated_budget), and each REVOKED key only its
+                # consumed spend (its ceiling is no longer reserved — it
+                # will never spend again — but the spend itself is real and
+                # permanent). Without the revoked half, revoking an
+                # overspent key and creating a fresh one erases the overspend
+                # from every check this function runs; without the active
+                # half, an active sibling's still-unspent ceiling is invisible
+                # here even though it's already promised.
+                #
+                # Deliberately percentage-derived, NOT k.allocated_budget —
+                # allocated_budget is kept as the exact ₹ a currency-path
+                # create/resize was given (see the "budget is not None"
+                # branch below), which can disagree with its OWN stored
+                # allocated_percentage by up to allocated_budget / 20000
+                # (percentage is rounded to 2 places). ALLOCATION_TOTAL_EXCEEDED
+                # above, and the frontend's "how much is left" figure, are
+                # both computed in percent — measuring this check in raw ₹
+                # instead would put it on a different basis than either, and
+                # a Key allocated exactly the remaining share the percentage
+                # check just approved could then be rejected by that
+                # rounding gap. Best-effort usage read, same posture as
+                # every other fetch_budget_usage call in this codebase (a
+                # platform-core outage must not block key creation; it
+                # self-heals once platform-core answers again on the next
+                # create/edit).
+                all_keys = await self._repo.list_by_application(application_id)
+                usage_map = await budget_usage.fetch_budget_usage(
+                    [k.id for k in all_keys], platform_core_db
+                )
+                committed_total = sum(
+                    (
+                        (
+                            max(
+                                (k.allocated_percentage or Decimal("0"))
+                                / Decimal("100")
+                                * application.allocated_budget,
+                                usage_map.get(k.id, (Decimal("0"), None))[0],
+                            )
+                            if k.is_active
+                            else usage_map.get(k.id, (Decimal("0"), None))[0]
+                        )
+                        for k in all_keys
+                    ),
+                    Decimal("0"),
+                )
+                new_key_ceiling = (
+                    budget.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                    if budget is not None
+                    else (application.allocated_budget * allocated_percentage) / Decimal("100")
+                )
+                if committed_total + new_key_ceiling > application.allocated_budget:
+                    raise ValidationError(
+                        message=(
+                            f"This Application has already committed {committed_total} of its "
+                            f"{application.allocated_budget} Budget — active Keys' own ceilings "
+                            "plus what Keys since revoked have spent — allocating a "
+                            f"{new_key_ceiling} ceiling to this new Key would bring the "
+                            "Application's total committed spend above its Budget."
+                        ),
+                        code="BUDGET_OVERCOMMITTED",
+                    )
 
         allocated_budget: Optional[Decimal] = None
         if budget is not None:
