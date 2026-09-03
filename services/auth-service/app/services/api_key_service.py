@@ -717,21 +717,34 @@ class APIKeyService:
                 # not just _consumed_total's: _active(...) separately feeds
                 # resolve_level, which reserves active children's ceilings —
                 # so committed_total below charges each ACTIVE key the
-                # greater of its own ceiling (still reserved, spent or not)
-                # or what it's actually spent (an over-exhausted key, from
-                # the one call design allows through past its ceiling, can
-                # overshoot its own allocated_budget), and each REVOKED key
-                # only its consumed spend (its ceiling is no longer reserved
-                # — it will never spend again — but the spend itself is real
-                # and permanent). Without the revoked half, revoking an
+                # greater of its own PERCENTAGE-derived ceiling or what it's
+                # actually spent (an over-exhausted key, from the one call
+                # design allows through past its ceiling, can overshoot its
+                # own allocated_budget), and each REVOKED key only its
+                # consumed spend (its ceiling is no longer reserved — it
+                # will never spend again — but the spend itself is real and
+                # permanent). Without the revoked half, revoking an
                 # overspent key and creating a fresh one erases the overspend
                 # from every check this function runs; without the active
                 # half, an active sibling's still-unspent ceiling is invisible
-                # here even though it's already promised. Best-effort read,
-                # same posture as every other fetch_budget_usage call in this
-                # codebase (a platform-core outage must not block key
-                # creation; it self-heals once platform-core answers again on
-                # the next create/edit).
+                # here even though it's already promised.
+                #
+                # Deliberately percentage-derived, NOT k.allocated_budget —
+                # allocated_budget is kept as the exact ₹ a currency-path
+                # create/resize was given (see the "budget is not None"
+                # branch below), which can disagree with its OWN stored
+                # allocated_percentage by up to allocated_budget / 20000
+                # (percentage is rounded to 2 places). ALLOCATION_TOTAL_EXCEEDED
+                # above, and the frontend's "how much is left" figure, are
+                # both computed in percent — measuring this check in raw ₹
+                # instead would put it on a different basis than either, and
+                # a Key allocated exactly the remaining share the percentage
+                # check just approved could then be rejected by that
+                # rounding gap. Best-effort usage read, same posture as
+                # every other fetch_budget_usage call in this codebase (a
+                # platform-core outage must not block key creation; it
+                # self-heals once platform-core answers again on the next
+                # create/edit).
                 all_keys = await self._repo.list_by_application(application_id)
                 usage_map = await budget_usage.fetch_budget_usage(
                     [k.id for k in all_keys], platform_core_db
@@ -740,7 +753,9 @@ class APIKeyService:
                     (
                         (
                             max(
-                                k.allocated_budget or Decimal("0"),
+                                (k.allocated_percentage or Decimal("0"))
+                                / Decimal("100")
+                                * application.allocated_budget,
                                 usage_map.get(k.id, (Decimal("0"), None))[0],
                             )
                             if k.is_active

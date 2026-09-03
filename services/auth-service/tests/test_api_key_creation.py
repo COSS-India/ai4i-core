@@ -177,14 +177,69 @@ class TestCommittedTotalCountsActiveCeilingsAndRevokedSpend:
     silent on ₹ once a revoked key's spend is added back into the picture.
     The BUDGET_OVERCOMMITTED check mirrors AllocationService's full
     two-half contract: each ACTIVE key is charged the greater of its own
-    ceiling (still reserved, whether spent or not) or what it's actually
-    spent (an over-exhausted key, from the one-call-past-budget design, can
-    overshoot its own allocated_budget); each REVOKED key is charged only
-    its consumed spend (its ceiling is no longer reserved, but the spend is
-    real and permanent). Missing the revoked half lets revoking an
-    overspent key and creating a fresh one erase the overspend from every
-    check this function runs; missing the active half leaves an active
-    sibling's still-unspent — but already promised — ceiling invisible."""
+    PERCENTAGE-derived ceiling (still reserved, whether spent or not) or
+    what it's actually spent (an over-exhausted key, from the
+    one-call-past-budget design, can overshoot its own allocated_budget);
+    each REVOKED key is charged only its consumed spend (its ceiling is no
+    longer reserved, but the spend is real and permanent). Missing the
+    revoked half lets revoking an overspent key and creating a fresh one
+    erase the overspend from every check this function runs; missing the
+    active half leaves an active sibling's still-unspent — but already
+    promised — ceiling invisible. Percentage-derived, not
+    key.allocated_budget, on purpose: allocated_budget is kept as the exact
+    ₹ a currency-path create/resize was given, which can disagree with its
+    OWN stored allocated_percentage by up to allocated_budget / 20000 —
+    measuring this check in raw ₹ would put it on a different basis than
+    ALLOCATION_TOTAL_EXCEEDED and the frontend's available-percentage
+    figure, both of which are percent-based, and could reject a Key
+    allocated exactly the remaining share those checks just approved."""
+
+    @pytest.mark.asyncio
+    async def test_active_key_created_via_the_currency_path_is_charged_its_percentage_not_its_exact_rupees(
+        self,
+    ) -> None:
+        """The reviewer's rounding-drift scenario: a 30,000 Application
+        budget holds one active key created with budget=1000 — stored as
+        allocated_percentage=3.33 (rounded) and allocated_budget=1000
+        (kept exact, NOT re-derived from the rounded percentage — see the
+        currency-path comment in create_api_key). A new key requesting the
+        entire remaining 96.67% must succeed: charging the active key its
+        raw ₹1000 would leave only 30000 - 1000 - 29001 = -1 of headroom
+        and wrongly reject it; charging it its percentage-derived ceiling
+        (3.33% of 30000 = 999.00) puts this check on the same percent basis
+        as ALLOCATION_TOTAL_EXCEEDED (3.33 + 96.67 = 100.00, which already
+        passed) and the request fits exactly."""
+        application = _application(allocated_budget=Decimal("30000"))
+        tenant = _tenant()
+        active_key = MagicMock(
+            id=902, is_active=True, allocated_budget=Decimal("1000"),
+            allocated_percentage=Decimal("3.33"),
+        )
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        applications.get_by_id_for_update = AsyncMock(return_value=application)
+        applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("3.33"))
+        tenants = AsyncMock()
+        tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+        repo.list_by_application = AsyncMock(return_value=[active_key])
+
+        with patch(
+            "app.services.api_key_service.budget_usage.fetch_budget_usage",
+            new=AsyncMock(return_value={902: (Decimal("0"), Decimal("1000"))}),
+        ):
+            _raw_key, api_key = await svc.create_api_key(
+                actor_user_id=uuid4(),
+                key_name="test",
+                permissions=["nmt.inference"],
+                application_id=1,
+                allocated_percentage=Decimal("96.67"),
+                caller_tenant_id=1,
+            )
+
+        assert api_key.allocated_budget == Decimal("29001.00")
+        repo.create.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_active_keys_unspent_ceiling_blocks_a_new_key_even_with_small_revoked_spend(
@@ -199,7 +254,10 @@ class TestCommittedTotalCountsActiveCeilingsAndRevokedSpend:
         application = _application(allocated_budget=Decimal("10000"))
         tenant = _tenant()
         revoked_key = MagicMock(id=901, is_active=False, allocated_budget=Decimal("9000"))
-        active_key = MagicMock(id=902, is_active=True, allocated_budget=Decimal("5000"))
+        active_key = MagicMock(
+            id=902, is_active=True, allocated_budget=Decimal("5000"),
+            allocated_percentage=Decimal("50"),
+        )
         applications = AsyncMock()
         applications.get_by_id_for_tenant = AsyncMock(return_value=application)
         applications.get_by_id_for_update = AsyncMock(return_value=application)
@@ -241,7 +299,10 @@ class TestCommittedTotalCountsActiveCeilingsAndRevokedSpend:
         real spend, not the smaller ceiling — max(ceiling, consumed)."""
         application = _application(allocated_budget=Decimal("10000"))
         tenant = _tenant()
-        over_exhausted_key = MagicMock(id=902, is_active=True, allocated_budget=Decimal("3000"))
+        over_exhausted_key = MagicMock(
+            id=902, is_active=True, allocated_budget=Decimal("3000"),
+            allocated_percentage=Decimal("30"),
+        )
         applications = AsyncMock()
         applications.get_by_id_for_tenant = AsyncMock(return_value=application)
         applications.get_by_id_for_update = AsyncMock(return_value=application)
