@@ -455,8 +455,22 @@ class MeteringService:
         try:
             # AsyncSession is not concurrency-safe — run sequentially, not via gather.
             total = await self._auth_db.execute(text("SELECT COUNT(*) FROM tenants"))
+            # Truncate to the current UTC calendar day before subtracting 15
+            # days, rather than a raw `NOW() - INTERVAL '15 days'` (sub-day
+            # precision). A rolling timestamp cutoff splits tenants created
+            # on the same calendar day across the boundary depending on the
+            # time of day the request happens to run, and drifts hour to
+            # hour with no tenant being added/removed — both make this KPI
+            # impossible to reconcile against a human reading the "Onboarded"
+            # date column on the Institution Management page, which counts
+            # in whole calendar days.
+            today_utc_midnight = datetime.now(timezone.utc).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            new_tenants_cutoff = today_utc_midnight - timedelta(days=15)
             new_tenants = await self._auth_db.execute(
-                text("SELECT COUNT(*) FROM tenants WHERE created_at >= NOW() - INTERVAL '15 days'")
+                text("SELECT COUNT(*) FROM tenants WHERE created_at >= :cutoff"),
+                {"cutoff": new_tenants_cutoff},
             )
             return {
                 "total_tenants": total.scalar(),
