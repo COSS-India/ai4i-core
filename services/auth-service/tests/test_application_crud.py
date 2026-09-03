@@ -473,6 +473,51 @@ class TestUpdateApplication:
         assert called_data["status"] == ApplicationStatus.INACTIVE
 
     @pytest.mark.asyncio
+    async def test_deactivating_releases_the_applications_allocation(self) -> None:
+        """The ACTIVE -> INACTIVE transition clears allocated_budget and
+        allocated_percentage in the SAME update — not a separate call, so
+        there's no window where the row is INACTIVE but still holding its
+        old ceiling. Without this, AllocationService's own exclusion of
+        INACTIVE Applications from the sibling sum only frees the room
+        until this Application is reactivated with its stale allocation
+        still attached, at which point the Tenant would be holding more
+        ceilings than its budget again."""
+        svc = _make_service()
+        app = _application(
+            12, allocated_budget=Decimal("40000"), allocated_percentage=Decimal("40")
+        )
+        svc._applications.get_by_id = AsyncMock(return_value=app)
+        body = ApplicationUpdate(status=ApplicationStatus.INACTIVE)
+
+        await svc.update_application(101, 12, body, _user())
+
+        called_data = svc._applications.update.call_args.args[1]
+        assert called_data["status"] == ApplicationStatus.INACTIVE
+        assert called_data["allocated_budget"] is None
+        assert called_data["allocated_percentage"] is None
+
+    @pytest.mark.asyncio
+    async def test_reactivating_does_not_touch_allocation_fields(self) -> None:
+        """The clearing is one-directional — going back to ACTIVE doesn't
+        try to restore or otherwise touch allocation fields at all. A
+        reactivated Application comes back with whatever it currently has
+        (None, per the deactivation above) — an explicit fresh allocation
+        via the Budget Allocation endpoints is required either way."""
+        svc = _make_service()
+        app = Application(
+            id=12, tenant_id=101, name="Marketing Bot", status=ApplicationStatus.INACTIVE,
+        )
+        svc._applications.get_by_id = AsyncMock(return_value=app)
+        body = ApplicationUpdate(status=ApplicationStatus.ACTIVE)
+
+        await svc.update_application(101, 12, body, _user())
+
+        called_data = svc._applications.update.call_args.args[1]
+        assert called_data["status"] == ApplicationStatus.ACTIVE
+        assert "allocated_budget" not in called_data
+        assert "allocated_percentage" not in called_data
+
+    @pytest.mark.asyncio
     async def test_moderator_is_rejected(self) -> None:
         svc = _make_service(roles=("MODERATOR",))
         svc._applications.get_by_id = AsyncMock(return_value=_application(12))

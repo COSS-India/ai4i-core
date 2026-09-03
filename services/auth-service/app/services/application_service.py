@@ -18,7 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import EntityNotFoundError
-from app.models.application import Application
+from app.models.application import Application, ApplicationStatus
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.repositories.application_repository import ApplicationRepository
@@ -225,6 +225,26 @@ class ApplicationService:
             existing = await self._applications.get_by_name(tenant_id, data["name"])
             if existing and existing.id != application_id:
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=dict(_NAME_CONFLICT_DETAIL))
+
+        if data.get("status") == ApplicationStatus.INACTIVE and app.status == ApplicationStatus.ACTIVE:
+            # Release this Application's own allocation on deactivation —
+            # not just excluded from AllocationService's sibling-sum/
+            # feasibility checks while INACTIVE (_active_applications), but
+            # actually cleared. Unlike a revoked API key, an INACTIVE
+            # Application isn't terminal: it can be reactivated. Without
+            # clearing this, a sibling that already grew into the room this
+            # Application's exclusion freed would leave the Tenant holding
+            # MORE ceilings than its budget the moment this one comes back —
+            # and sum_allocated_percentage (no status filter of its own
+            # otherwise) would count its stale share again too, rejecting
+            # legitimate new Applications until someone manually fixes it.
+            # A reactivated Application comes back with no allocation at
+            # all, same as a freshly created one — an explicit fresh
+            # allocation via the Budget Allocation endpoints is required
+            # either way, so there's no "restore its old share" path to
+            # get wrong.
+            data["allocated_budget"] = None
+            data["allocated_percentage"] = None
 
         data["updated_by"] = current_user.id
         await self._applications.update(app, data)

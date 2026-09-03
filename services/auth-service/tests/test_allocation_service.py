@@ -246,6 +246,32 @@ class TestTenantScopeResolution:
         assert by_id[2].allocated_budget == Decimal("30000")  # untouched
 
     @pytest.mark.asyncio
+    async def test_explicitly_listing_an_inactive_application_gets_a_distinct_error(
+        self,
+    ) -> None:
+        """App C is INACTIVE and therefore excluded from `children` before
+        resolve_level ever runs — an explicit row naming it would
+        otherwise fall out as an unknown id and 404 as "not found," even
+        though it genuinely exists and is visible in the UI. Same reasoning
+        _resolve_and_persist_keys' API_KEY_REVOKED check already applies
+        one level down for a revoked Key."""
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant())
+        apps = _three_apps()
+        apps[2].status = ApplicationStatus.INACTIVE  # App C
+        svc._applications.list_by_tenant_for_update = AsyncMock(return_value=apps)
+        svc._applications.update = AsyncMock()
+
+        body = TenantBudgetAllocationRequest(
+            applications=[ApplicationAllocationRow(application_id=3, allocation=_pct("10"))]
+        )
+        with pytest.raises(ValidationError) as exc:
+            await svc.update_tenant_application_allocations(101, body, _user(), None)
+
+        assert exc.value.code == "APPLICATION_INACTIVE"
+        svc._applications.update.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_every_application_is_locked_not_just_listed(self) -> None:
         """refit_unlisted=True means any Application may end up written, so
         every one under the Tenant is locked up front, not just the row(s)
@@ -490,7 +516,7 @@ class TestTenantBudgetCascade:
 
         with patch("app.services.budget_usage.fetch_budget_usage", AsyncMock(return_value={})):
             await svc.cascade_tenant_budget_revision(
-                101, Decimal("120000"), Decimal("100000"), _user(), None
+                101, Decimal("120000"), _user(), None
             )
 
         svc._applications.list_by_tenant_for_update.assert_awaited_once_with(101)
@@ -503,9 +529,14 @@ class TestTenantBudgetCascade:
         """A Tenant top-up never moves any Application's ₹ — only
         allocated_percentage is recomputed, since the same ₹ is now a
         different share of a bigger total: 100000 -> 120000, so
-        50000/30000/20000 stay exactly 50000/30000/20000, and their
-        percentages become 41.67/25.00/16.67 (the growth itself becomes
-        additional unallocated headroom, never distributed)."""
+        50000/30000/20000 stay exactly 50000/30000/20000. Every app but the
+        last (by id order) is ROUND_DOWN-quantized (41.66, 25.00); the last
+        absorbs the residual against the once-quantized total_target of
+        83.33% (100000/120000), landing on 16.67 — not because it happens
+        to round that way on its own, but so the stored SUM is exactly
+        83.33, never a hair over from independent per-app rounding (the
+        growth itself becomes additional unallocated headroom, never
+        distributed)."""
         svc = _svc()
         apps = _three_apps()
         svc._applications.list_by_tenant_for_update = AsyncMock(return_value=apps)
@@ -515,7 +546,7 @@ class TestTenantBudgetCascade:
         with patch("app.services.budget_usage.fetch_budget_usage", AsyncMock(return_value={})):
             applications_recomputed, keys_recomputed, snapshot_writes = (
                 await svc.cascade_tenant_budget_revision(
-                    101, Decimal("120000"), Decimal("100000"), _user(), None
+                    101, Decimal("120000"), _user(), None
                 )
             )
 
@@ -526,9 +557,9 @@ class TestTenantBudgetCascade:
         updates_by_app = {
             call.args[0].id: call.args[1] for call in svc._applications.update.await_args_list
         }
-        assert updates_by_app[1]["allocated_percentage"] == Decimal("41.67")
+        assert updates_by_app[1]["allocated_percentage"] == Decimal("41.66")
         assert updates_by_app[2]["allocated_percentage"] == Decimal("25.00")
-        assert updates_by_app[3]["allocated_percentage"] == Decimal("16.67")
+        assert updates_by_app[3]["allocated_percentage"] == Decimal("16.67")  # last -> residual
         # allocated_budget is never in the update dict — it's never touched.
         assert "allocated_budget" not in updates_by_app[1]
 
@@ -550,7 +581,7 @@ class TestTenantBudgetCascade:
         with patch("app.services.budget_usage.fetch_budget_usage", AsyncMock(return_value={})):
             applications_recomputed, keys_recomputed, snapshot_writes = (
                 await svc.cascade_tenant_budget_revision(
-                    101, Decimal("90000"), Decimal("100000"), _user(), None
+                    101, Decimal("90000"), _user(), None
                 )
             )
 
@@ -559,9 +590,11 @@ class TestTenantBudgetCascade:
         updates_by_app = {
             call.args[0].id: call.args[1] for call in svc._applications.update.await_args_list
         }
-        # 50000/90000*100 = 55.56, 30000/90000*100 = 33.33 — budgets unchanged.
-        assert updates_by_app[1]["allocated_percentage"] == Decimal("55.56")
-        assert updates_by_app[2]["allocated_percentage"] == Decimal("33.33")
+        # App1 (not last) ROUND_DOWN(50000/90000*100) = 55.55. App2 (last)
+        # absorbs the residual against total_target = quantize(80000/90000*
+        # 100, HALF_UP) = 88.89: 88.89 - 55.55 = 33.34. Budgets unchanged.
+        assert updates_by_app[1]["allocated_percentage"] == Decimal("55.55")
+        assert updates_by_app[2]["allocated_percentage"] == Decimal("33.34")
 
     @pytest.mark.asyncio
     async def test_top_down_below_what_applications_already_hold_is_rejected(self) -> None:
@@ -578,7 +611,7 @@ class TestTenantBudgetCascade:
         with patch("app.services.budget_usage.fetch_budget_usage", AsyncMock(return_value={})):
             with pytest.raises(ValidationError) as exc:
                 await svc.cascade_tenant_budget_revision(
-                    101, Decimal("90000"), Decimal("100000"), _user(), None
+                    101, Decimal("90000"), _user(), None
                 )
 
         assert exc.value.code == "ALLOCATION_TOTAL_EXCEEDED"
@@ -601,7 +634,7 @@ class TestTenantBudgetCascade:
         with patch("app.services.budget_usage.fetch_budget_usage", AsyncMock(return_value={})):
             applications_recomputed, keys_recomputed, snapshot_writes = (
                 await svc.cascade_tenant_budget_revision(
-                    101, Decimal("90000"), Decimal("100000"), _user(), None
+                    101, Decimal("90000"), _user(), None
                 )
             )
 
@@ -617,7 +650,7 @@ class TestTenantBudgetCascade:
         svc._applications.list_by_tenant_for_update = AsyncMock(return_value=[])
 
         result = await svc.cascade_tenant_budget_revision(
-            101, Decimal("120000"), Decimal("100000"), _user(), None
+            101, Decimal("120000"), _user(), None
         )
 
         assert result == (0, 0, {})

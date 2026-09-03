@@ -30,7 +30,7 @@ against whatever's genuinely unallocated instead, and rejected
 docstring for which rule applies where.
 """
 
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -149,11 +149,34 @@ class AllocationService:
         # (list_by_tenant_for_update), not one round trip per Application —
         # the result is already the locked, up-to-date rows, so no
         # separate unlocked list_by_tenant call is needed first.
-        applications = self._active_applications(
-            await self._applications.list_by_tenant_for_update(tenant_id)
-        )
+        locked_applications = await self._applications.list_by_tenant_for_update(tenant_id)
+        applications = self._active_applications(locked_applications)
         if not applications:
             raise EntityNotFoundError(f"Applications for tenant {tenant_id}")
+        active_ids = {app.id for app in applications}
+
+        # An explicitly-listed Application that's INACTIVE (not merely
+        # unknown) gets its own error here, before resolve_level ever runs —
+        # otherwise it falls out of resolve_level's known ids the same way a
+        # genuinely nonexistent one does, and surfaces as a generic 404
+        # naming an Application that actually exists and is visible in the
+        # UI. Same reasoning _resolve_and_persist_keys' API_KEY_REVOKED
+        # check already applies one level down for a revoked Key.
+        for row in body.applications:
+            if row.application_id in active_ids:
+                continue
+            inactive_app = next(
+                (app for app in locked_applications if app.id == row.application_id), None
+            )
+            if inactive_app is not None:
+                raise ValidationError(
+                    message=f"application_id={row.application_id} is INACTIVE — its Budget "
+                    f"allocation cannot be edited. Reactivate it first.",
+                    code="APPLICATION_INACTIVE",
+                )
+                # else: unknown everywhere — resolve_level below raises
+                # EntityNotFoundError for it, same as any other unknown id.
+
         applications_by_id = {app.id: app for app in applications}
 
         keys_by_app, usage_map = await self._load_keys_and_usage(
@@ -452,7 +475,6 @@ class AllocationService:
         self,
         tenant_id: int,
         new_amount: Decimal,
-        old_amount: Decimal,
         current_user: User,
         platform_core_db: Optional[AsyncSession],
     ) -> tuple[int, int, dict[int, Decimal]]:
@@ -541,24 +563,56 @@ class AllocationService:
         # anything below runs; the return value (always []) is unused.
         resolve_level(new_amount, children, explicit=[], refit_unlisted=False)
 
+        # Recomputing each Application's percentage independently with
+        # ROUND_HALF_UP (each one rounding to its own nearest cent) can
+        # leave the STORED SUM reading above the true allocated share —
+        # several apps each rounding up by a fraction can compound into a
+        # sum that looks like more than what's actually allocated, which
+        # sum_allocated_percentage (create_application's own room check)
+        # would then read at face value. Same fix resolve_level's own
+        # refit_unlisted=True branch already uses one level down: quantize
+        # every app but the last with ROUND_DOWN (never rounds UP past its
+        # true share), and let the last one absorb whatever residual that
+        # leaves — so the group's stored sum is exactly the single,
+        # once-quantized total_target_percentage below, not the coincidental
+        # result of N independent roundings.
         applications_recomputed = 0
-        for app in applications:
-            new_percentage = (
-                (app.allocated_budget / new_amount * Decimal("100")).quantize(
-                    Decimal("0.01"), rounding=ROUND_HALF_UP
-                )
-                if new_amount and app.allocated_budget
-                else _ZERO
+        if new_amount:
+            total_allocated = sum((app.allocated_budget or _ZERO) for app in applications)
+            total_target_percentage = (total_allocated / new_amount * Decimal("100")).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
             )
-            if new_percentage != (app.allocated_percentage or _ZERO):
-                applications_recomputed += 1
-                await self._applications.update(
-                    app,
-                    {
-                        "allocated_percentage": new_percentage,
-                        "updated_by": current_user.id,
-                    },
-                )
+            running_total = _ZERO
+            for index, app in enumerate(applications):
+                is_last = index == len(applications) - 1
+                if not app.allocated_budget:
+                    new_percentage = _ZERO
+                elif is_last:
+                    new_percentage = total_target_percentage - running_total
+                else:
+                    new_percentage = (app.allocated_budget / new_amount * Decimal("100")).quantize(
+                        Decimal("0.01"), rounding=ROUND_DOWN
+                    )
+                running_total += new_percentage
+                if new_percentage != (app.allocated_percentage or _ZERO):
+                    applications_recomputed += 1
+                    await self._applications.update(
+                        app,
+                        {
+                            "allocated_percentage": new_percentage,
+                            "updated_by": current_user.id,
+                        },
+                    )
+        else:
+            # new_amount == 0: the feasibility gate above already rejects
+            # this unless every Application is also at 0 allocated_budget —
+            # nothing to divide by, every percentage is trivially 0.
+            for app in applications:
+                if (app.allocated_percentage or _ZERO) != _ZERO:
+                    applications_recomputed += 1
+                    await self._applications.update(
+                        app, {"allocated_percentage": _ZERO, "updated_by": current_user.id}
+                    )
 
         return applications_recomputed, 0, {}
 
