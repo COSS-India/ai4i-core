@@ -21,10 +21,12 @@ from app.core.exceptions import EntityNotFoundError
 from app.models.application import Application, ApplicationStatus
 from app.models.tenant import Tenant
 from app.models.user import User
+from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.application_repository import ApplicationRepository
 from app.repositories.role_repository import RoleRepository
 from app.repositories.tenant_repository import TenantRepository
 from app.schemas.application import ApplicationCreate, ApplicationUpdate
+from app.services import budget_usage
 from app.services.authorization import authorize_institution_scope
 
 _HUNDRED = Decimal("100")
@@ -44,11 +46,13 @@ class ApplicationService:
         tenant_repo: TenantRepository,
         role_repo: RoleRepository,
         db: AsyncSession,
+        api_key_repo: APIKeyRepository,
     ) -> None:
         self._applications = application_repo
         self._tenants = tenant_repo
         self._roles = role_repo
         self._db = db
+        self._api_keys = api_key_repo
 
     # ── Scope / lookups ─────────────────────────────────────────────────
 
@@ -216,6 +220,7 @@ class ApplicationService:
         application_id: int,
         body: ApplicationUpdate,
         current_user: User,
+        platform_core_db: Optional[AsyncSession] = None,
     ) -> Application:
         await self._authorize(current_user, tenant_id)
         app = await self._load_application_or_404(tenant_id, application_id)
@@ -226,6 +231,7 @@ class ApplicationService:
             if existing and existing.id != application_id:
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=dict(_NAME_CONFLICT_DETAIL))
 
+        zeroed_key_ids: list[int] = []
         if data.get("status") == ApplicationStatus.INACTIVE and app.status == ApplicationStatus.ACTIVE:
             # Release this Application's own allocation on deactivation —
             # not just excluded from AllocationService's sibling-sum/
@@ -245,9 +251,26 @@ class ApplicationService:
             # get wrong.
             data["allocated_budget"] = None
             data["allocated_percentage"] = None
+            # The Application's own ceiling isn't the one spend is actually
+            # checked against — its Keys' allocated_budget (mirrored into
+            # platform-core's budget_usage.api_key_budget_snap) is. Leaving
+            # those untouched would let this Application's Keys keep
+            # spending against a ceiling a sibling may have already grown
+            # into by the time this Application is reactivated. Zeroed, not
+            # NULLed: a NULL budget_snap short-circuits budget_exhausted to
+            # False (see write_budget_snapshot's docstring), making the key
+            # uncapped instead of holding no room — the opposite of what
+            # "comes back with no allocation at all" above requires.
+            zeroed_key_ids = await self._api_keys.zero_allocation_for_applications([application_id])
 
         data["updated_by"] = current_user.id
         await self._applications.update(app, data)
         await self._commit_or_raise_name_conflict()
         await self._applications.refresh(app)
+
+        if zeroed_key_ids:
+            await budget_usage.write_budget_snapshot(
+                {key_id: Decimal("0") for key_id in zeroed_key_ids}, platform_core_db
+            )
+
         return app

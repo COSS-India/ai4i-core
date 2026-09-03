@@ -9,7 +9,9 @@ TenantService.enforce_scope / _deny_moderator / _assert_can_reveal_pii do it.
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import get_platform_core_db
 from app.core.responses import to_response
 from app.dependencies.auth import get_current_user
 from app.dependencies.services import get_application_service
@@ -121,10 +123,18 @@ async def update_application(
     body: ApplicationUpdate,
     current_user: User = Depends(get_current_user),
     svc: ApplicationService = Depends(get_application_service),
+    platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
 ):
     """Update name / domain / status. Budget is not editable here — 422 if sent.
 
     Name stays unique within the tenant (case-insensitive) after edit.
+
+    ``platform_core_db`` is only used when this update deactivates the
+    Application — it carries the zeroed ceiling through to platform-core's
+    budget_usage.api_key_budget_snap for the Application's Keys, same as
+    the three Budget Allocation endpoints.
     """
-    app = await svc.update_application(tenant_id, application_id, body, current_user)
+    app = await svc.update_application(
+        tenant_id, application_id, body, current_user, platform_core_db
+    )
     return UpdateApplicationResponse(data=to_response(app, ApplicationResponse))

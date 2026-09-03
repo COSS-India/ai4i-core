@@ -4,7 +4,7 @@ mirroring tests/test_tenant_organisation_uniqueness.py.
 
 from datetime import datetime, timezone
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -44,11 +44,15 @@ def _make_service(roles=("ADMIN",)) -> ApplicationService:
     db = MagicMock()
     db.rollback = AsyncMock()
 
+    api_key_repo = MagicMock()
+    api_key_repo.zero_allocation_for_applications = AsyncMock(return_value=[])
+
     return ApplicationService(
         application_repo=application_repo,
         tenant_repo=tenant_repo,
         role_repo=role_repo,
         db=db,
+        api_key_repo=api_key_repo,
     )
 
 
@@ -497,6 +501,55 @@ class TestUpdateApplication:
         assert called_data["allocated_percentage"] is None
 
     @pytest.mark.asyncio
+    async def test_deactivating_zeroes_the_applications_keys_ceiling_too(self) -> None:
+        """The Application's own allocation isn't what spend is actually
+        checked against — its Keys' allocated_budget (mirrored into
+        platform-core's budget_usage.api_key_budget_snap) is. Deactivation
+        must zero those too, and push the zeroed ceiling through
+        write_budget_snapshot, or a sibling that grows into the freed room
+        while this Application is INACTIVE leaves its Keys able to spend
+        against a ceiling that's no longer really theirs once reactivated."""
+        svc = _make_service()
+        app = _application(
+            12, allocated_budget=Decimal("40000"), allocated_percentage=Decimal("40")
+        )
+        svc._applications.get_by_id = AsyncMock(return_value=app)
+        svc._api_keys.zero_allocation_for_applications = AsyncMock(return_value=[901, 902])
+        body = ApplicationUpdate(status=ApplicationStatus.INACTIVE)
+
+        with patch(
+            "app.services.application_service.budget_usage.write_budget_snapshot",
+            new=AsyncMock(return_value=True),
+        ) as mock_write:
+            await svc.update_application(101, 12, body, _user(), platform_core_db="db")
+
+        svc._api_keys.zero_allocation_for_applications.assert_awaited_once_with([12])
+        mock_write.assert_awaited_once_with(
+            {901: Decimal("0"), 902: Decimal("0")}, "db"
+        )
+
+    @pytest.mark.asyncio
+    async def test_deactivating_skips_the_snapshot_write_when_no_keys_were_zeroed(self) -> None:
+        """An Application with no active Keys has nothing to write through —
+        write_budget_snapshot is a platform-core round trip and shouldn't
+        be made for an empty mapping."""
+        svc = _make_service()
+        app = _application(
+            12, allocated_budget=Decimal("40000"), allocated_percentage=Decimal("40")
+        )
+        svc._applications.get_by_id = AsyncMock(return_value=app)
+        svc._api_keys.zero_allocation_for_applications = AsyncMock(return_value=[])
+        body = ApplicationUpdate(status=ApplicationStatus.INACTIVE)
+
+        with patch(
+            "app.services.application_service.budget_usage.write_budget_snapshot",
+            new=AsyncMock(return_value=True),
+        ) as mock_write:
+            await svc.update_application(101, 12, body, _user())
+
+        mock_write.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_reactivating_does_not_touch_allocation_fields(self) -> None:
         """The clearing is one-directional — going back to ACTIVE doesn't
         try to restore or otherwise touch allocation fields at all. A
@@ -516,6 +569,7 @@ class TestUpdateApplication:
         assert called_data["status"] == ApplicationStatus.ACTIVE
         assert "allocated_budget" not in called_data
         assert "allocated_percentage" not in called_data
+        svc._api_keys.zero_allocation_for_applications.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_moderator_is_rejected(self) -> None:
