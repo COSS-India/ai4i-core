@@ -225,6 +225,8 @@ async def list_api_keys(
     data = [
         ApplicationAPIKeysGroup(
             application_id=application.id,
+            application_name=application.name,
+            tenant_id=application.tenant_id,
             api_keys=_key_items_from_map(keys, id_to_name),
         )
         for application, keys in groups
