@@ -318,6 +318,108 @@ class TestRefitUnlistedFalse:
         )
         assert {r.id for r in result} == {"A", "C"}
 
+    def test_explicit_row_resubmitted_at_its_unchanged_value_below_consumed_is_allowed(
+        self,
+    ) -> None:
+        """A row that resolves to EXACTLY what it already has isn't an
+        active reduction — it's a no-op re-affirmation of a ceiling the
+        system already tolerates in steady state (e.g. a 0%-allocated Key
+        that picked up a sliver of consumed spend via the one-call-past-
+        exhaustion design). Must not be blocked just because it happens to
+        already be below its own consumed amount."""
+        children = [_row("D", "0", "0", consumed="0.03")]
+        explicit = [ExplicitInput(id="D", amount=Decimal("0"))]
+
+        result = resolve_level(Decimal("100000"), children, explicit, refit_unlisted=False)
+
+        assert result[0].amount == Decimal("0.00")
+        assert result[0].changed is False
+
+    def test_explicit_row_actively_reduced_below_consumed_is_still_blocked(self) -> None:
+        """The no-op exemption doesn't neuter the floor check for a REAL
+        reduction — only a re-fit that lands exactly back where the row
+        already was is exempt."""
+        children = [_row("D", "10", "0.01", consumed="8")]
+        explicit = [ExplicitInput(id="D", amount=Decimal("5"))]
+
+        with pytest.raises(ValidationError) as exc:
+            resolve_level(Decimal("100000"), children, explicit, refit_unlisted=False)
+        assert exc.value.code == "ALLOCATION_BELOW_CONSUMED"
+
+    def test_sibling_sum_tolerates_a_cent_of_legacy_rounding_drift_per_sibling(self) -> None:
+        """Three Applications whose stored ₹ already sum to 100,000.01 —
+        one cent over the Tenant's real 100,000.00 Budget, the kind of
+        drift independently-rounded percentage->₹ derivations at creation
+        time can leave behind. An edit that doesn't touch any of that
+        drift must still be allowed through — refit_unlisted=False can't
+        silently correct the untouched siblings' stored ₹ (they never
+        move unless explicitly listed), so the check has to tolerate
+        drift it didn't cause and can't fix here."""
+        children = [
+            _row("A", "33333.34", "33.33"),
+            _row("B", "33333.33", "33.33"),
+            _row("C", "33333.34", "33.34"),
+        ]
+        result = resolve_level(Decimal("100000.00"), children, [], refit_unlisted=False)
+        assert result == []  # nothing explicit, nothing resolved/returned — just didn't raise
+
+    def test_sibling_sum_still_rejects_drift_beyond_the_per_sibling_tolerance(self) -> None:
+        """The tolerance is bounded, not a blank check — ten cents of
+        overage across three siblings is real over-allocation, not
+        rounding noise, and must still be rejected."""
+        children = [
+            _row("A", "33333.34", "33.33"),
+            _row("B", "33333.33", "33.33"),
+            _row("C", "33333.43", "33.34"),  # +0.10 vs the tolerated scenario above
+        ]
+        with pytest.raises(ValidationError) as exc:
+            resolve_level(Decimal("100000.00"), children, [], refit_unlisted=False)
+        assert exc.value.code == "ALLOCATION_TOTAL_EXCEEDED"
+
+
+class TestUnlistedRefitNoOpExemption:
+    """resolve_level's refit_unlisted=True branch: the reviewed bug from
+    the "Edit Budget" Application flow. Editing an Application's own ₹
+    forces every one of its unlisted Keys through this branch — including
+    a Key holding a 0% ceiling that picked up a sliver of consumed spend
+    via the one-call-past-exhaustion design. Its proportional re-fit
+    naturally lands back at 0 (0% of anything is 0), identical to what it
+    already had — that must not be treated as a reduction."""
+
+    def test_unlisted_key_refit_back_to_its_existing_zero_ceiling_is_allowed(self) -> None:
+        # KeyX holds the Application's entire 80,000 room; id707 holds 0%
+        # but has consumed 0.03 (the one-call-past-exhaustion residue).
+        # Application's own ₹ is unchanged (100,000 -> 100,000), still
+        # forcing the refit branch since it's what a genuine ₹/% edit to
+        # the Application elsewhere in the same request would trigger.
+        children = [
+            _row("KeyX", "80000", "80", consumed="70000"),
+            _row("id707", "0", "0", consumed="0.03"),
+        ]
+        result = resolve_level(
+            Decimal("100000"), children, [], refit_unlisted=True, parent_old_amount=Decimal("100000")
+        )
+        by_id = {r.id: r for r in result}
+        assert by_id["id707"].amount == Decimal("0")
+        assert by_id["id707"].changed is False
+
+    def test_unlisted_key_actively_refit_below_its_consumed_is_still_blocked(self) -> None:
+        """A shrink that genuinely pushes an unlisted Key's re-fit ceiling
+        below what it's consumed — not a no-op — must still be rejected."""
+        children = [
+            _row("KeyX", "80000", "80", consumed="0"),
+            _row("KeyY", "20000", "20", consumed="15000"),
+        ]
+        # Application shrinks 100,000 -> 50,000: KeyY's proportional share
+        # shrinks from 20,000 to 10,000, below its own 15,000 consumed —
+        # a real change (20,000 -> 10,000), not a no-op.
+        with pytest.raises(ValidationError) as exc:
+            resolve_level(
+                Decimal("50000"), children, [], refit_unlisted=True,
+                parent_old_amount=Decimal("100000"),
+            )
+        assert exc.value.code == "ALLOCATION_BELOW_CONSUMED"
+
 
 class TestUnlistedWithZeroOldTotal:
     def test_unlisted_children_all_at_zero_get_nothing_rather_than_crash(self) -> None:

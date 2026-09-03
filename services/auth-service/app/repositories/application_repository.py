@@ -186,6 +186,30 @@ class ApplicationRepository(BaseRepository):
         )
         return Decimal(result.scalar_one())
 
+    async def sum_allocated_budget(self, tenant_id: int) -> Decimal:
+        """Sum of allocated_budget (₹) across a tenant's ACTIVE Applications —
+        the companion ₹ check to sum_allocated_percentage's %-only one.
+
+        A new Application's allocated_budget is independently
+        ROUND_HALF_UP-derived from its percentage (see
+        ApplicationService._derive_budget) — several Applications can each
+        have percentages summing to exactly 100.00% while their
+        independently-rounded ₹ values sum to a cent or two OVER the
+        tenant's real allocated_budget, entirely invisible to a
+        percentage-only cap check. That drift then surfaces later, blamed
+        on whichever Application happens to be edited next, when
+        AllocationService's (correctly ₹-based) sibling-sum check compares
+        the stored total against the real ceiling. Same ACTIVE-only filter
+        as sum_allocated_percentage, for the same reason.
+        """
+        result = await self._db.execute(
+            select(func.coalesce(func.sum(Application.allocated_budget), 0)).where(
+                Application.tenant_id == tenant_id,
+                Application.status == ApplicationStatus.ACTIVE,
+            )
+        )
+        return Decimal(result.scalar_one())
+
     async def sum_api_key_allocated_percentage(self, application_id: int) -> Decimal:
         """Sum of allocated_percentage across the application's active,
         non-revoked API keys — used to enforce ALLOCATION_TOTAL_EXCEEDED

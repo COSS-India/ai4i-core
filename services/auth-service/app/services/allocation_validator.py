@@ -179,7 +179,16 @@ def resolve_level(
     for child_id, row in explicit_by_id.items():
         child = children_by_id[child_id]
         amount, percentage = convert(row, parent_new_amount)
-        if amount < child.consumed_amount:
+        # amount != child.allocated_amount: an explicit row that resolves to
+        # EXACTLY what the child already has isn't an active reduction —
+        # it's a no-op re-affirmation of a ceiling the system already
+        # tolerates in steady state (e.g. a 0%-allocated Key that picked up
+        # a sliver of consumed spend via the one-call-past-exhaustion
+        # design). The floor check exists to stop a call from actively
+        # pushing a ceiling below what's already spent, not to permanently
+        # lock out every future request that happens to touch a child
+        # already in that state without changing it.
+        if amount < child.consumed_amount and amount != child.allocated_amount:
             raise ValidationError(
                 message=(
                     f"id={child_id} has already consumed {child.consumed_amount}, which is "
@@ -274,7 +283,14 @@ def resolve_level(
             percentage = _quantize(
                 (amount / parent_new_amount * 100) if parent_new_amount else Decimal("0"), _PCT_QUANT
             )
-            if amount < child.consumed_amount:
+            # Same no-op exemption as the explicit loop above: an unlisted
+            # child's proportional re-fit landing EXACTLY back where it
+            # already was isn't a reduction — without this, a child that
+            # ever picked up any consumed spend while holding an
+            # insufficient (often 0%) ceiling would permanently block every
+            # future edit to its parent's total, including edits that don't
+            # touch this child's own share at all.
+            if amount < child.consumed_amount and amount != child.allocated_amount:
                 raise ValidationError(
                     message=(
                         f"id={child.id} would be re-fit to {amount} (from {child.allocated_amount}), "
@@ -299,19 +315,34 @@ def resolve_level(
         # sibling this call leaves alone.
         sibling_total = explicit_total + sum((c.allocated_amount for c in unlisted), Decimal("0"))
 
-    # Sibling-sum check. Should always hold by construction when
-    # refit_unlisted=True and unlisted_target_total is non-negative:
-    # unlisted_target_total never exceeds room_remaining, and the group
-    # always resolves to EXACTLY unlisted_target_total — every non-last
-    # child's ROUND_DOWN amount never exceeds its own ideal share, so the
-    # last child's residual is never negative, so nothing is ever clamped or
-    # otherwise made inexact. This is kept as the final defensive gate, not
-    # the primary mechanism, precisely so a future change to the rounding
-    # above that breaks that guarantee fails loudly here instead of silently
-    # persisting an over-committed total. When refit_unlisted=False it's the
-    # ONLY thing stopping an explicit increase from pushing the level over
-    # its parent's unchanged total.
-    if sibling_total > parent_new_amount:
+    # Sibling-sum check. Should always hold EXACTLY when refit_unlisted=True
+    # and unlisted_target_total is non-negative: unlisted_target_total never
+    # exceeds room_remaining, and the group always resolves to EXACTLY
+    # unlisted_target_total — every non-last child's ROUND_DOWN amount never
+    # exceeds its own ideal share, so the last child's residual is never
+    # negative, so nothing is ever clamped or otherwise made inexact. Kept
+    # as the final defensive gate there, not the primary mechanism,
+    # precisely so a future change to the rounding above that breaks that
+    # guarantee fails loudly here instead of silently persisting an
+    # over-committed total — no tolerance in that branch, on purpose.
+    #
+    # When refit_unlisted=False, sibling_total additionally includes every
+    # UNTOUCHED sibling's stored ₹ exactly as persisted, which can carry a
+    # few cents of legacy drift from independently-rounded percentage->₹
+    # derivations at creation time (see
+    # ApplicationService._assert_allocation_within_cap, now ₹-gated to stop
+    # new drift from accruing). Without some tolerance here, a tenant that
+    # already drifted a cent over its true ceiling — through no fault of
+    # whichever sibling THIS call happens to be resolving — would be
+    # permanently unable to edit ANY sibling ever again, since "siblings
+    # never move unless explicitly listed" means this call can't silently
+    # correct their stored ₹ either. Bounded to a cent per sibling in this
+    # resolution: enough to absorb that legacy rounding debt (bounded by
+    # construction to well under a cent per independently-rounded row),
+    # never enough to mask a genuine over-allocation, which would be off by
+    # whole rupees, not fractions of a cent per row.
+    drift_tolerance = _AMT_QUANT * len(children) if not refit_unlisted else Decimal("0")
+    if sibling_total > parent_new_amount + drift_tolerance:
         raise ValidationError(
             message=f"Resolved total ({sibling_total}) exceeds the parent's amount ({parent_new_amount}).",
             code="ALLOCATION_TOTAL_EXCEEDED",
