@@ -138,6 +138,8 @@ class ApplicationAPIKeysGroup(BaseSchema):
     """One Application and the keys issued under it — GET /auth/api-keys groups by Application."""
 
     application_id: int
+    application_name: str
+    tenant_id: int
     api_keys: list[APIKeyItem]
 
 
