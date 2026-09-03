@@ -20,7 +20,6 @@ import {
   NumberInputField,
   NumberInputStepper,
   SimpleGrid,
-  Switch,
   Text,
   Textarea,
   Tooltip,
@@ -38,6 +37,7 @@ import ApplicationBulkBudgetModal from "./ApplicationBulkBudgetModal";
 import FieldHint from "../common/FieldHint";
 import InfoTip from "../common/InfoTip";
 import { FIELD_HINTS } from "../../config/fieldHints";
+import { BUDGET_VALIDATION } from "../../config/budgetMessages";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
 import type { Application } from "../../types/application";
 import {
@@ -132,12 +132,14 @@ function PercentageStepper({
   min = 0,
   max = 100,
   onBoundHit,
+  isDisabled = false,
 }: {
   value: string;
   onChange: (next: string) => void;
   min?: number;
   max?: number;
   onBoundHit?: (bound: "min" | "max") => void;
+  isDisabled?: boolean;
 }) {
   const numeric = value.trim() === "" ? null : Number(value);
   const atMin = numeric != null && Number.isFinite(numeric) && numeric <= min + 1e-6;
@@ -155,6 +157,7 @@ function PercentageStepper({
         clampValueOnBlur
         bg="white"
         w="120px"
+        isDisabled={isDisabled}
       >
         <NumberInputField />
         <NumberInputStepper>
@@ -286,37 +289,24 @@ export default function ApplicationManagementTab({
               onClick={() => mgr.openEdit(app)}
             />
           </Tooltip>
-          <Tooltip label="Edit Budget">
-            <IconButton
-              aria-label={`Edit Budget for ${app.name}`}
-              icon={<FiSliders />}
-              size="sm"
-              variant="ghost"
-              color="gray.500"
-              _hover={{ bg: "blue.50", color: "blue.600" }}
-              onClick={() => mgr.openBudget(app)}
-            />
-          </Tooltip>
           <Tooltip
             label={
               app.status === "ACTIVE"
-                ? FIELD_HINTS.application.status.deactivate
-                : FIELD_HINTS.application.status.activate
+                ? "Edit Budget"
+                : FIELD_HINTS.application.inactiveBudgetNotEditable
             }
+            hasArrow
           >
-            <Box as="span" display="inline-flex" alignItems="center">
-              <Switch
-                size="md"
-                colorScheme="green"
-                isChecked={app.status === "ACTIVE"}
-                isDisabled={mgr.statusBusyId === app.application_id}
-                aria-label={
-                  app.status === "ACTIVE"
-                    ? `Deactivate ${app.name}`
-                    : `Activate ${app.name}`
-                }
-                onChange={() => void mgr.handleToggleStatus(app)}
-                onClick={(e) => e.stopPropagation()}
+            <Box as="span" display="inline-block">
+              <IconButton
+                aria-label={`Edit Budget for ${app.name}`}
+                icon={<FiSliders />}
+                size="sm"
+                variant="ghost"
+                color="gray.500"
+                _hover={{ bg: "blue.50", color: "blue.600" }}
+                onClick={() => mgr.openBudget(app)}
+                isDisabled={app.status !== "ACTIVE"}
               />
             </Box>
           </Tooltip>
@@ -568,7 +558,11 @@ export default function ApplicationManagementTab({
             <Button
               colorScheme="blue"
               isLoading={mgr.isSaving}
-              isDisabled={Boolean(mgr.budgetFieldError) || mgr.institutionBudgetUnset}
+              isDisabled={
+                Boolean(mgr.budgetFieldError) ||
+                mgr.institutionBudgetUnset ||
+                mgr.selected?.status !== "ACTIVE"
+              }
               onClick={() => void mgr.handleSaveBudget()}
             >
               Save changes
@@ -607,6 +601,12 @@ export default function ApplicationManagementTab({
               {mgr.budgetBanner}
             </Alert>
           )}
+          {mgr.selected?.status !== "ACTIVE" && (
+            <Alert status="info" borderRadius="md">
+              <AlertIcon />
+              {FIELD_HINTS.application.inactiveBudgetNotEditable}
+            </Alert>
+          )}
           <FormControl isInvalid={Boolean(mgr.budgetFieldError || mgr.budgetStepperHint)}>
             <FormLabel>{mgr.selected ? `${mgr.selected.name}’s Budget` : "Budget"}</FormLabel>
             <PercentageStepper
@@ -615,6 +615,7 @@ export default function ApplicationManagementTab({
               min={mgr.budgetFloor > 0 ? mgr.budgetFloor : 0}
               max={mgr.budgetAvailable}
               onBoundHit={mgr.onBudgetBoundHit}
+              isDisabled={mgr.selected?.status !== "ACTIVE"}
             />
             <FormErrorMessage>{mgr.budgetFieldError || mgr.budgetStepperHint}</FormErrorMessage>
             <FieldHint show={!mgr.budgetFieldError && !mgr.budgetStepperHint}>
@@ -733,7 +734,7 @@ function ApplicationIdentityFields({
             onBoundHit={(bound) => {
               setBoundHint(
                 bound === "min"
-                  ? "Budget cannot be negative."
+                  ? BUDGET_VALIDATION.budgetCannotBeNegative
                   : `Cannot exceed ${remainingPct.toFixed(2)}% still available.`,
               );
             }}
