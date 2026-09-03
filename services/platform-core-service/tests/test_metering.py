@@ -371,9 +371,11 @@ class TestTenantCount:
 
     async def test_new_tenants_cutoff_is_truncated_to_utc_midnight(self):
         """The cutoff bound into the query must be the UTC calendar-day
-        boundary 15 days back, not a sub-day-precise instant. This is what
-        makes the KPI reconcilable against a human counting whole days off
-        the Institution Management "Onboarded" column."""
+        boundary 14 days back from today's midnight — i.e. today plus the
+        preceding 14 days makes 15 calendar days — not a sub-day-precise
+        instant. This is what makes the KPI reconcilable against a human
+        counting whole days off the Institution Management "Onboarded"
+        column."""
         auth_db = AsyncMock()
         total_result = MagicMock()
         total_result.scalar.return_value = 50
@@ -389,7 +391,10 @@ class TestTenantCount:
             await svc.tenant_count()
 
         cutoff = auth_db.execute.call_args_list[1][0][1]["cutoff"]
-        assert cutoff == _dt_module.datetime(2026, 8, 19, 0, 0, 0, tzinfo=_dt_module.timezone.utc)
+        # today (Sep 3) minus 14 days = Aug 20; Aug 20..Sep 3 inclusive is
+        # 15 calendar days. `- timedelta(days=15)` would land on Aug 19,
+        # making the window 16 days — the off-by-one this test guards.
+        assert cutoff == _dt_module.datetime(2026, 8, 20, 0, 0, 0, tzinfo=_dt_module.timezone.utc)
 
     async def test_new_tenants_cutoff_stable_across_times_of_day(self):
         """Bug repro (production scenario, staging.ai4inclusion.org on
@@ -404,7 +409,10 @@ class TestTenantCount:
         created or deleted in between — an unstable KPI. Truncating to UTC
         midnight first must make the cutoff (and therefore which tenants
         are counted) identical for every request made on the same calendar
-        day, regardless of time of day."""
+        day, regardless of time of day — and, since Aug 19 is 15 days
+        before Sep 3 (the 16th day back, one day too many for a "last 15
+        days including today" window), all three Aug-19 tenants must now be
+        consistently *excluded*, not just consistently treated."""
 
         async def _cutoff_at(fixed_dt):
             auth_db = AsyncMock()
@@ -433,11 +441,16 @@ class TestTenantCount:
         )
 
         assert cutoff_just_after_midnight == cutoff_original_report_time == cutoff_just_before_midnight
-        # All three land on 2026-08-19T00:00:00Z, so tenants 82 (03:56),
-        # 83 (13:39) and 84 (17:27) — all created 2026-08-19 — are now
-        # included/excluded together, matching a whole-calendar-day count.
+        # All three land on 2026-08-20T00:00:00Z (Sep 3 minus 14 days), so
+        # tenants 82 (Aug 19, 03:56), 83 (Aug 19, 13:39) and 84 (Aug 19,
+        # 17:27) fall one full day *before* the cutoff and are excluded
+        # together — not split by time-of-day, and not off by the extra day
+        # a `- 15` cutoff would have included them under.
         assert cutoff_just_after_midnight == _dt_module.datetime(
-            2026, 8, 19, 0, 0, 0, tzinfo=_dt_module.timezone.utc
+            2026, 8, 20, 0, 0, 0, tzinfo=_dt_module.timezone.utc
+        )
+        assert cutoff_just_after_midnight > _dt_module.datetime(
+            2026, 8, 19, 17, 27, 0, tzinfo=_dt_module.timezone.utc
         )
 
     async def test_query_failure_rolls_back_so_the_session_stays_usable(self):
