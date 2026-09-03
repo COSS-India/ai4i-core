@@ -73,9 +73,11 @@ function mapKeysToRows(
   );
   return keys.map(normalizeApiKeyRecord).map((key) => ({
     ...key,
-    application_name: key.application_id
-      ? appNameById.get(key.application_id) ?? key.application_id
-      : undefined,
+    application_name:
+      key.application_name ||
+      (key.application_id
+        ? appNameById.get(key.application_id) ?? key.application_id
+        : undefined),
   }));
 }
 
