@@ -28,8 +28,13 @@ def _display_name(user: User) -> str:
 
 
 def _platform_name() -> str:
-    """Adopter-configurable product name (PLATFORM_NAME / default AI Switch)."""
+    """Adopter-configurable product name (PLATFORM_NAME / default AI4I Orchestrate)."""
     return settings.get_platform_name()
+
+
+def _branding_ctx() -> dict:
+    """Name + logo from the shared branding env pair (PLATFORM_NAME / ADOPTER_LOGO_URL)."""
+    return settings.get_branding()
 
 
 def _build_link(base: Optional[str], token: str, *, env_var: str) -> str:
@@ -67,7 +72,7 @@ def _render(template: str, *, to: str, subject: str, ctx: dict) -> EmailMessage:
     """Render an HTML+text template pair into an EmailMessage."""
     html, text = _renderer.render(
         template,
-        {**ctx, "platform_name": _platform_name()},
+        {**ctx, **_branding_ctx()},
     )
     return EmailMessage(to=to, subject=subject, html_body=html, text_body=text)
 

@@ -4,9 +4,15 @@ import {
   DEFAULT_PLATFORM_NAME,
   EMPTY_RUNTIME_CONFIG,
   getAdopterLogoSrc,
+  getBranding,
   getPlatformName,
   getServerRuntimeConfig,
 } from '../../src/config/runtimeConfig';
+import {
+  resolveAdopterLogoSrc,
+  resolveEmailLogoUrl,
+  resolvePlatformName,
+} from '../../src/config/branding';
 
 const ENV_KEYS = [
   'PLATFORM_NAME',
@@ -15,13 +21,37 @@ const ENV_KEYS = [
   'NEXT_PUBLIC_ADOPTER_LOGO_URL',
 ] as const;
 
+describe('branding resolvers', () => {
+  it('resolvePlatformName falls back to AI4I Orchestrate', () => {
+    expect(resolvePlatformName('')).toBe(DEFAULT_PLATFORM_NAME);
+    expect(resolvePlatformName('  ')).toBe(DEFAULT_PLATFORM_NAME);
+    expect(resolvePlatformName('Custom Brand')).toBe('Custom Brand');
+  });
+
+  it('resolveAdopterLogoSrc accepts http(s) and same-origin paths only', () => {
+    expect(resolveAdopterLogoSrc('')).toBe(DEFAULT_ADOPTER_LOGO_SRC);
+    expect(resolveAdopterLogoSrc('/custom.png')).toBe('/custom.png');
+    expect(resolveAdopterLogoSrc('https://cdn.example.com/a.png')).toBe(
+      'https://cdn.example.com/a.png',
+    );
+    expect(resolveAdopterLogoSrc('//evil.com/x.png')).toBe(DEFAULT_ADOPTER_LOGO_SRC);
+  });
+
+  it('resolveEmailLogoUrl requires absolute http(s)', () => {
+    expect(resolveEmailLogoUrl('/logo.png')).toBeNull();
+    expect(resolveEmailLogoUrl('https://cdn.example.com/logo.png')).toBe(
+      'https://cdn.example.com/logo.png',
+    );
+  });
+});
+
 describe('getPlatformName', () => {
   afterEach(() => {
     applyRuntimeConfig(EMPTY_RUNTIME_CONFIG);
   });
 
-  it('falls back to AI Switch when unset', () => {
-    expect(getPlatformName()).toBe('AI Switch');
+  it('falls back to AI4I Orchestrate when unset', () => {
+    expect(getPlatformName()).toBe('AI4I Orchestrate');
     expect(getPlatformName()).toBe(DEFAULT_PLATFORM_NAME);
   });
 
@@ -108,6 +138,24 @@ describe('getAdopterLogoSrc', () => {
   });
 });
 
+describe('getBranding', () => {
+  afterEach(() => {
+    applyRuntimeConfig(EMPTY_RUNTIME_CONFIG);
+  });
+
+  it('returns name and logo together', () => {
+    applyRuntimeConfig({
+      ...EMPTY_RUNTIME_CONFIG,
+      platformName: 'AI4I Orchestrate',
+      adopterLogoUrl: 'https://cdn.example.com/orch.png',
+    });
+    expect(getBranding()).toEqual({
+      name: 'AI4I Orchestrate',
+      logoSrc: 'https://cdn.example.com/orch.png',
+    });
+  });
+});
+
 describe('getServerRuntimeConfig platformName', () => {
   const saved: Record<string, string | undefined> = {};
 
@@ -128,7 +176,7 @@ describe('getServerRuntimeConfig platformName', () => {
     }
   });
 
-  it('falls back to AI Switch when both env keys are empty', () => {
+  it('falls back to AI4I Orchestrate when both env keys are empty', () => {
     expect(getServerRuntimeConfig().platformName).toBe(DEFAULT_PLATFORM_NAME);
   });
 

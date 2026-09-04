@@ -53,7 +53,11 @@
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                 <tr>
                   <td style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size:16px; font-weight:700; letter-spacing:-0.01em; color:#0b66ff;">
+                    {% if logo_url %}
+                    <img src="{{ logo_url }}" alt="{{ platform_name }}" width="120" height="32" style="display:block; max-width:120px; max-height:32px; width:auto; height:auto; border:0; outline:none; text-decoration:none;">
+                    {% else %}
                     <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:#0b66ff; vertical-align:middle; margin-right:8px;"></span>{{ platform_name }}
+                    {% endif %}
                   </td>
                 </tr>
               </table>

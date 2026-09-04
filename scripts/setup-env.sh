@@ -62,6 +62,13 @@ ALEMBIC_DB_PORT="$(read_env_var ALEMBIC_DB_PORT)"
 
 LLM_UPSTREAM_BASE_URL="$(read_env_var LLM_UPSTREAM_BASE_URL)"
 
+# Branding — single place in root .env, copied into simple-ui + auth-service.
+PLATFORM_NAME="$(read_env_var PLATFORM_NAME)"
+ADOPTER_LOGO_URL="$(read_env_var ADOPTER_LOGO_URL)"
+if [ -z "${PLATFORM_NAME}" ]; then
+    PLATFORM_NAME="AI4I Orchestrate"
+fi
+
 # ── 3. Build sed replacement expressions ─────────────────────────────────────
 SED_ARGS=()
 
@@ -77,6 +84,16 @@ add_sed_replacement() {
     SED_ARGS+=(-e "s|<${placeholder}>|${value}|g")
 }
 
+# Always substitute (empty is valid — e.g. unset logo falls back to the default SVG).
+add_sed_replacement_allow_empty() {
+    local placeholder="$1"
+    local value="$2"
+    # Escape sed replacement metacharacters in the value (&, \, and | delimiter).
+    local escaped
+    escaped=$(printf '%s' "${value}" | sed -e 's/[&\\|]/g')
+    SED_ARGS+=(-e "s|<${placeholder}>|${escaped}|g")
+}
+
 add_sed_replacement "POSTGRES_USER" "${POSTGRES_USER}"
 add_sed_replacement "POSTGRES_PASSWORD" "${POSTGRES_PASSWORD}"
 add_sed_replacement "POSTGRES_HOST" "${POSTGRES_HOST}"
@@ -88,6 +105,8 @@ add_sed_replacement "YOUR_REDIS_PASSWORD" "${REDIS_PASSWORD}"
 add_sed_replacement "ALEMBIC_DB_HOST" "${ALEMBIC_DB_HOST}"
 add_sed_replacement "ALEMBIC_DB_PORT" "${ALEMBIC_DB_PORT}"
 add_sed_replacement "YOUR_LLM_UPSTREAM_BASE_URL" "${LLM_UPSTREAM_BASE_URL}"
+add_sed_replacement_allow_empty "PLATFORM_NAME" "${PLATFORM_NAME}"
+add_sed_replacement_allow_empty "ADOPTER_LOGO_URL" "${ADOPTER_LOGO_URL}"
 
 # ── 3b. PII encryption key (auth-service) ────────────────────────────────────
 # Resolve in order: root .env override → existing auth-service/.env → generate.
