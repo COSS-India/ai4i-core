@@ -73,13 +73,14 @@ def _key(id_, application_id, *, allocated_budget, allocated_percentage, is_acti
     )
 
 
-def _svc(*, roles=("ADMIN",)) -> AllocationService:
+def _svc(*, roles=("ADMIN",), api_key_service=None) -> AllocationService:
     svc = AllocationService(
         application_repo=AsyncMock(),
         api_key_repo=AsyncMock(),
         tenant_repo=AsyncMock(),
         role_repo=AsyncMock(),
         db=AsyncMock(),
+        api_key_service=api_key_service,
     )
     svc._roles.get_user_roles = AsyncMock(return_value=list(roles))
     return svc
@@ -947,3 +948,150 @@ class TestSingleApiKeyScope:
         with pytest.raises(ValidationError) as exc:
             await svc.update_single_api_key_allocation(11, body, _user(), None)
         assert exc.value.code == "API_KEY_REVOKED"
+
+
+class TestSyncKeyExhaustionFlags:
+    """_sync_key_exhaustion_flags: after write_budget_snapshot persists new
+    ceilings, each changed Key's own budget-exhausted cache flag is
+    recomputed from that new ceiling and its already-known usage —
+    otherwise an allocation edit that resolves a Key's ceiling down to (or
+    below) its current usage leaves the enforcement flag exactly where it
+    was, letting every request in between through."""
+
+    @pytest.mark.asyncio
+    async def test_noop_when_no_api_key_service_was_injected(self) -> None:
+        """Optional collaborator — existing direct-construction callers
+        that don't supply one must not crash."""
+        svc = _svc()  # api_key_service=None by default
+        await svc._sync_key_exhaustion_flags(
+            {11: Decimal("0")}, {11: (Decimal("100"), Decimal("500"))}
+        )
+        # No assertion beyond "didn't raise" — there's no mock to inspect.
+
+    @pytest.mark.asyncio
+    async def test_noop_when_nothing_was_written(self) -> None:
+        api_key_service = AsyncMock()
+        svc = _svc(api_key_service=api_key_service)
+        await svc._sync_key_exhaustion_flags({}, {11: (Decimal("100"), Decimal("500"))})
+        api_key_service.set_budget_exhausted_for_keys.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_splits_keys_into_exhausted_and_cleared_batches(self) -> None:
+        api_key_service = AsyncMock()
+        svc = _svc(api_key_service=api_key_service)
+        snapshot_writes = {
+            11: Decimal("0"),       # used >= new_snap (0 >= 0) -> exhausted
+            12: Decimal("100"),     # used (150) >= new_snap (100) -> exhausted
+            13: Decimal("500"),     # used (100) < new_snap (500) -> cleared
+        }
+        usage_map = {
+            11: (Decimal("0"), Decimal("0")),
+            12: (Decimal("150"), Decimal("100")),
+            13: (Decimal("100"), Decimal("500")),
+        }
+
+        await svc._sync_key_exhaustion_flags(snapshot_writes, usage_map)
+
+        calls = {
+            tuple(sorted(call.args[0])): call.args[1]
+            for call in api_key_service.set_budget_exhausted_for_keys.await_args_list
+        }
+        assert calls[(11, 12)] is True
+        assert calls[(13,)] is False
+
+    @pytest.mark.asyncio
+    async def test_key_with_no_usage_yet_and_a_zero_new_ceiling_is_exhausted(self) -> None:
+        """A Key that's never been billed (absent from usage_map, used
+        defaults to 0) but is resolved to a 0 ceiling is still exhausted —
+        0 >= 0."""
+        api_key_service = AsyncMock()
+        svc = _svc(api_key_service=api_key_service)
+
+        await svc._sync_key_exhaustion_flags({11: Decimal("0")}, {})
+
+        api_key_service.set_budget_exhausted_for_keys.assert_awaited_once_with([11], True)
+
+
+class TestExhaustionFlagSyncWiredIntoEachEndpoint:
+    """One test per Budget Allocation endpoint, confirming
+    _sync_key_exhaustion_flags is actually called as part of the real
+    flow (not just correct in isolation) — each endpoint populates
+    snapshot_writes/usage_map slightly differently, so this pins the call
+    site itself, not just the helper's own logic."""
+
+    @pytest.mark.asyncio
+    async def test_single_key_endpoint_flags_a_key_resolved_to_or_below_its_usage(self) -> None:
+        api_key_service = AsyncMock()
+        svc = _svc(api_key_service=api_key_service)
+        app = _application(1, allocated_budget=Decimal("50000"), allocated_percentage=Decimal("50"))
+        key1 = _key(11, 1, allocated_budget=Decimal("35000"), allocated_percentage=Decimal("70"))
+        key2 = _key(12, 1, allocated_budget=Decimal("15000"), allocated_percentage=Decimal("30"))
+        svc._api_keys.get_by_id = AsyncMock(return_value=key1)
+        svc._applications.get_by_id = AsyncMock(return_value=app)
+        svc._applications.get_by_id_for_update = AsyncMock(return_value=app)
+        svc._api_keys.list_by_application = AsyncMock(return_value=[key1, key2])
+        svc._api_keys.update = AsyncMock()
+
+        # Shrink Key 1 (35000 -> 30000, a real change) down to exactly its
+        # own usage (30000) — resolved ceiling == consumed, so it's
+        # exhausted the instant this commits.
+        body = APIKeyBudgetAllocationRequest(api_key_id=11, allocation=_fixed("30000"))
+        with patch(
+            "app.services.budget_usage.fetch_budget_usage",
+            AsyncMock(return_value={11: (Decimal("30000"), Decimal("30000"))}),
+        ), patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()):
+            await svc.update_single_api_key_allocation(11, body, _user(), None)
+
+        api_key_service.set_budget_exhausted_for_keys.assert_awaited_once_with([11], True)
+
+    @pytest.mark.asyncio
+    async def test_application_level_endpoint_flags_an_exhausted_key(self) -> None:
+        api_key_service = AsyncMock()
+        svc = _svc(api_key_service=api_key_service)
+        app = _application(1, allocated_budget=Decimal("50000"), allocated_percentage=Decimal("50"))
+        key1 = _key(11, 1, allocated_budget=Decimal("35000"), allocated_percentage=Decimal("70"))
+        svc._applications.get_by_id = AsyncMock(return_value=app)
+        svc._applications.get_by_id_for_update = AsyncMock(return_value=app)
+        svc._api_keys.list_by_application = AsyncMock(return_value=[key1])
+
+        body = ApplicationBudgetAllocationRequest(
+            application_id=1,
+            allocation=_pct("50"),
+            api_keys=[APIKeyAllocationRow(api_key_id=11, allocation=_fixed("30000"))],
+        )
+        with patch(
+            "app.services.budget_usage.fetch_budget_usage",
+            AsyncMock(return_value={11: (Decimal("30000"), Decimal("30000"))}),
+        ), patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()):
+            await svc.update_application_key_allocations(1, body, _user(), None)
+
+        api_key_service.set_budget_exhausted_for_keys.assert_awaited_once_with([11], True)
+
+    @pytest.mark.asyncio
+    async def test_tenant_level_endpoint_flags_an_exhausted_key_under_a_resized_application(
+        self,
+    ) -> None:
+        api_key_service = AsyncMock()
+        svc = _svc(api_key_service=api_key_service)
+        app = _application(1, allocated_budget=Decimal("50000"), allocated_percentage=Decimal("50"))
+        key1 = _key(11, 1, allocated_budget=Decimal("40000"), allocated_percentage=Decimal("80"))
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant())
+        svc._applications.list_by_tenant_for_update = AsyncMock(return_value=[app])
+        svc._api_keys.list_by_applications = AsyncMock(return_value=[key1])
+
+        body = TenantBudgetAllocationRequest(
+            applications=[
+                ApplicationAllocationRow(
+                    application_id=1,
+                    allocation=_fixed("30000"),
+                    api_keys=[APIKeyAllocationRow(api_key_id=11, allocation=_fixed("30000"))],
+                )
+            ]
+        )
+        with patch(
+            "app.services.budget_usage.fetch_budget_usage",
+            AsyncMock(return_value={11: (Decimal("30000"), Decimal("30000"))}),
+        ), patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()):
+            await svc.update_tenant_application_allocations(101, body, _user(), None)
+
+        api_key_service.set_budget_exhausted_for_keys.assert_awaited_once_with([11], True)
