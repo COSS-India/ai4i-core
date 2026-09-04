@@ -130,6 +130,9 @@ const Header: React.FC = () => {
       case "/usage-dashboard":
         setTitle("Usage Dashboard");
         break;
+      case "/tier-management":
+        setTitle("Tier Management");
+        break;
       case "/policy-management":
         setTitle("Policy Management");
         break;

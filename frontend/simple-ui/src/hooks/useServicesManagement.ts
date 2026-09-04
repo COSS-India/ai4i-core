@@ -97,7 +97,7 @@ export function useServicesManagement() {
   const [selectedTiers, setSelectedTiers] = useState<string[]>([]);
   const [availableTiers, setAvailableTiers] = useState<Tier[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
- 
+
   const [createFormEpoch, setCreateFormEpoch] = useState(0);
   const [deletingServiceUuid, setDeletingServiceUuid] = useState<string | null>(
     null,
@@ -123,7 +123,7 @@ export function useServicesManagement() {
   useEffect(() => {
     if (didInitTaskTypeFilter.current || isLoadingTaskTypes) return;
     didInitTaskTypeFilter.current = true;
-    if (taskTypeNames.length > 0) setFilterTaskType(taskTypeNames[0]);
+    // Default Task Type filter to "" (All); ENABLED_TASK_TYPES still scopes the fetch.
     setTaskTypeFilterReady(true);
   }, [isLoadingTaskTypes, taskTypeNames]);
   const [sortBy, setSortBy] = useState<"time" | "name">("time");
@@ -171,11 +171,13 @@ export function useServicesManagement() {
   }, [services, searchQuery, sortBy, nameSortDirection]);
 
   const hasActiveFilters =
-    filterStatus !== "" || searchQuery.trim() !== "";
+    filterStatus !== "" ||
+    filterTaskType !== "" ||
+    searchQuery.trim() !== "";
   const clearAllFilters = () => {
     setSearchQuery("");
     setFilterStatus("");
-    if (taskTypeNames.length > 0) setFilterTaskType(taskTypeNames[0]);
+    setFilterTaskType("");
   };
 
   const router = useRouter();
