@@ -55,6 +55,7 @@ from app.schemas.allocation import (
 )
 from app.services import budget_usage
 from app.services.allocation_validator import AllocationRow, ExplicitInput, ResolvedRow, resolve_level
+from app.services.api_key_service import APIKeyService
 from app.services.authorization import authorize_institution_scope
 
 _ZERO = Decimal("0")
@@ -86,12 +87,20 @@ class AllocationService:
         tenant_repo: TenantRepository,
         role_repo: RoleRepository,
         db: AsyncSession,
+        api_key_service: Optional[APIKeyService] = None,
     ) -> None:
         self._applications = application_repo
         self._api_keys = api_key_repo
         self._tenants = tenant_repo
         self._roles = role_repo
         self._db = db
+        # Distinct from self._api_keys (the repository, used throughout this
+        # file for plain row access) — this is the service layer, injected
+        # only for its set_budget_exhausted_for_keys write-through (see
+        # _sync_key_exhaustion_flags). Optional so existing tests that
+        # construct AllocationService without it keep working; the sync is
+        # skipped, not crashed, when it's absent.
+        self._api_key_service = api_key_service
 
     # ── Edge 1: Tenant -> Applications ──────────────────────────────────
 
@@ -292,6 +301,7 @@ class AllocationService:
 
         await self._db.commit()
         await budget_usage.write_budget_snapshot(snapshot_writes, platform_core_db)
+        await self._sync_key_exhaustion_flags(snapshot_writes, usage_map)
         return response_rows
 
     # ── Edge 2: Application -> API Keys ─────────────────────────────────
@@ -375,6 +385,7 @@ class AllocationService:
 
         await self._db.commit()
         await budget_usage.write_budget_snapshot(snapshot_writes, platform_core_db)
+        await self._sync_key_exhaustion_flags(snapshot_writes, usage_map)
 
         return ApplicationAllocationResponseItem(
             application_id=application_id,
@@ -459,6 +470,7 @@ class AllocationService:
 
         await self._db.commit()
         await budget_usage.write_budget_snapshot(snapshot_writes, platform_core_db)
+        await self._sync_key_exhaustion_flags(snapshot_writes, usage_map)
 
         return ApplicationAllocationResponseItem(
             application_id=application.id,
@@ -703,6 +715,47 @@ class AllocationService:
         keys: list[APIKey], usage_map: dict[int, tuple[Decimal, Decimal]]
     ) -> Decimal:
         return sum((usage_map.get(k.id, (_ZERO, None))[0] for k in keys), _ZERO)
+
+    async def _sync_key_exhaustion_flags(
+        self,
+        snapshot_writes: dict[int, Decimal],
+        usage_map: dict[int, tuple[Decimal, Decimal]],
+    ) -> None:
+        """After write_budget_snapshot persists new ceilings, recompute
+        every changed Key's own ``budget-exhausted`` cache flag from that
+        new ceiling and its already-known usage — the same ``used >= snap``
+        comparison the Kafka billing consumer uses (payperuse_consumer.
+        _billing), evaluated here instead of waiting for that Key's next
+        billed request to eventually self-correct it. Without this, an
+        allocation edit that resolves a Key's ceiling down to (or below)
+        its current usage leaves the flag exactly where it was — usually
+        unset — so every request in between is let through with nothing
+        left to spend.
+
+        Safe to both SET and CLEAR here, unlike the tenant-aggregate
+        recompute in TenantService._sync_ppu_wallet_and_exhaustion (which
+        deliberately never clears a key that might still be individually
+        over ITS OWN ceiling despite the tenant aggregate looking fine):
+        this recomputes each Key's flag from that same Key's own new
+        ceiling and own usage, so there's no aggregate to mask an
+        independent constraint — a resize that gives a Key real headroom
+        back genuinely un-exhausts it.
+
+        No-op when this AllocationService wasn't given an APIKeyService
+        (kept optional so existing direct-construction tests don't need to
+        supply one) or when nothing was actually written.
+        """
+        if self._api_key_service is None or not snapshot_writes:
+            return
+        now_exhausted = []
+        now_clear = []
+        for key_id, new_snap in snapshot_writes.items():
+            used, _ = usage_map.get(key_id, (_ZERO, None))
+            (now_exhausted if used >= new_snap else now_clear).append(key_id)
+        if now_exhausted:
+            await self._api_key_service.set_budget_exhausted_for_keys(now_exhausted, True)
+        if now_clear:
+            await self._api_key_service.set_budget_exhausted_for_keys(now_clear, False)
 
     async def _cascade_into_keys(
         self,

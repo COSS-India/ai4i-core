@@ -27,6 +27,7 @@ from app.repositories.role_repository import RoleRepository
 from app.repositories.tenant_repository import TenantRepository
 from app.schemas.application import ApplicationCreate, ApplicationUpdate
 from app.services import budget_usage
+from app.services.api_key_service import APIKeyService
 from app.services.authorization import authorize_institution_scope
 
 _HUNDRED = Decimal("100")
@@ -47,12 +48,19 @@ class ApplicationService:
         role_repo: RoleRepository,
         db: AsyncSession,
         api_key_repo: APIKeyRepository,
+        api_key_service: Optional[APIKeyService] = None,
     ) -> None:
         self._applications = application_repo
         self._tenants = tenant_repo
         self._roles = role_repo
         self._db = db
         self._api_keys = api_key_repo
+        # Distinct from self._api_keys (the repository) — the service
+        # layer, injected only for its set_budget_exhausted_for_keys
+        # write-through on deactivation (see update_application). Optional
+        # so existing tests that construct ApplicationService directly
+        # keep working; the flag sync is skipped, not crashed, when absent.
+        self._api_key_service = api_key_service
 
     # ── Scope / lookups ─────────────────────────────────────────────────
 
@@ -296,5 +304,11 @@ class ApplicationService:
             await budget_usage.write_budget_snapshot(
                 {key_id: Decimal("0") for key_id in zeroed_key_ids}, platform_core_db
             )
+            # Without this, these Keys' cached "budget-exhausted" flag is
+            # whatever it already was — usually unset — until some future
+            # billed request happens to trip it, letting every request in
+            # between spend against a ceiling that's already zero.
+            if self._api_key_service is not None:
+                await self._api_key_service.set_budget_exhausted_for_keys(zeroed_key_ids, True)
 
         return app

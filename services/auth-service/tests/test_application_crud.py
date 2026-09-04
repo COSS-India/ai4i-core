@@ -569,6 +569,53 @@ class TestUpdateApplication:
         )
 
     @pytest.mark.asyncio
+    async def test_deactivating_flags_the_zeroed_keys_exhausted(self) -> None:
+        """Zeroing allocated_budget alone isn't enough — the pre-request
+        gate reads a separate cached "budget-exhausted" flag, which stays
+        wherever it already was (usually unset) until some future billed
+        request happens to set it. Without pushing this flag here too,
+        every request against these Keys keeps going through even though
+        their ceiling is already 0."""
+        svc = _make_service()
+        svc._api_key_service = AsyncMock()
+        app = _application(
+            12, allocated_budget=Decimal("40000"), allocated_percentage=Decimal("40")
+        )
+        svc._applications.get_by_id = AsyncMock(return_value=app)
+        svc._api_keys.zero_allocation_for_applications = AsyncMock(return_value=[901, 902])
+        body = ApplicationUpdate(status=ApplicationStatus.INACTIVE)
+
+        with patch(
+            "app.services.application_service.budget_usage.write_budget_snapshot",
+            new=AsyncMock(return_value=True),
+        ):
+            await svc.update_application(101, 12, body, _user())
+
+        svc._api_key_service.set_budget_exhausted_for_keys.assert_awaited_once_with(
+            [901, 902], True
+        )
+
+    @pytest.mark.asyncio
+    async def test_deactivating_without_an_api_key_service_injected_does_not_crash(self) -> None:
+        """Optional collaborator — existing callers that construct
+        ApplicationService without one must not crash; the flag sync is
+        just skipped (same as _make_service's own default)."""
+        svc = _make_service()
+        app = _application(
+            12, allocated_budget=Decimal("40000"), allocated_percentage=Decimal("40")
+        )
+        svc._applications.get_by_id = AsyncMock(return_value=app)
+        svc._api_keys.zero_allocation_for_applications = AsyncMock(return_value=[901, 902])
+        body = ApplicationUpdate(status=ApplicationStatus.INACTIVE)
+
+        with patch(
+            "app.services.application_service.budget_usage.write_budget_snapshot",
+            new=AsyncMock(return_value=True),
+        ):
+            await svc.update_application(101, 12, body, _user())
+        # No assertion beyond "didn't raise" — svc._api_key_service is None.
+
+    @pytest.mark.asyncio
     async def test_deactivating_skips_the_snapshot_write_when_no_keys_were_zeroed(self) -> None:
         """An Application with no active Keys has nothing to write through —
         write_budget_snapshot is a platform-core round trip and shouldn't

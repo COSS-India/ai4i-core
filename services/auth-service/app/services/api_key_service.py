@@ -826,8 +826,46 @@ class APIKeyService:
             await budget_usage.write_budget_snapshot({api_key.id: allocated_budget}, platform_core_db)
 
         if self.application_may_use_api_keys(application, tenant):
+            # A key created with a ceiling that's already <= 0 (e.g. under
+            # an Application/Tenant with no budget left) has nothing to
+            # spend against from its very first request — seed
+            # "budget-exhausted" into this initial cache write instead of
+            # leaving the flag absent (falsy, i.e. NOT exhausted) until some
+            # future billed request happens to set it via the Kafka
+            # consumer. Without this, a brand-new key under an
+            # already-zeroed-out parent serves every request that arrives
+            # before that eventually happens.
+            #
+            # allocated_budget is None for two DIFFERENT reasons, and only
+            # one of them should block: (a) the owning Tenant has no
+            # allocated_budget configured at all — _derive_budget-style
+            # cascade means the Application (if given only a percentage)
+            # and this Key both end up None with nothing real behind them,
+            # which must mean "nothing to spend," not "unlimited"; (b) an
+            # Application was deliberately created with no percentage under
+            # a Tenant that DOES have a real budget — the established,
+            # intentional "uncapped Application" state, unrelated to this
+            # fix and left exactly as it already behaved. tenant.
+            # allocated_budget is None is what tells the two apart. No
+            # budget_usage row is written for this case (write_budget_snapshot
+            # above already skipped it, same as any None ceiling) — leaving
+            # the snap itself unset, not 0, is deliberate: it lets the
+            # Tenant's own future top-up sync (TenantService.
+            # _sync_ppu_wallet_and_exhaustion) clear this flag the normal
+            # way once real money exists, rather than this Key being stuck
+            # at a hard 0 ceiling that only an explicit Budget Allocation
+            # edit could ever move (the exact lockout class fixed elsewhere
+            # in resolve_level's floor check).
+            exhausted = (allocated_budget is not None and allocated_budget <= Decimal("0")) or (
+                allocated_budget is None and tenant.allocated_budget is None
+            )
             payload = self._build_cache_payload(
-                api_key, str(tenant.id), {"tier_id": str(tenant.tier_id)}
+                api_key,
+                str(tenant.id),
+                {
+                    "tier_id": str(tenant.tier_id),
+                    **({"budget-exhausted": "1"} if exhausted else {}),
+                },
             )
             await self._cache.set_api_key_cache(raw_key, ttl, payload)
             await self._persist_cache_snapshot(api_key, payload)
