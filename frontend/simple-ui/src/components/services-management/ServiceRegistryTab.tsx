@@ -112,7 +112,9 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
                   onChange={onFilterTaskTypeChange}
                   formControlProps={{ w: { base: "full", sm: "160px" } }}
                 >
-                  <option value="">All</option>
+                  {taskTypeNames.length > 1 && (
+                    <option value="">All</option>
+                  )}
                   {taskTypeNames?.map((t) => (
                     <option key={t} value={t}>
                       {formatModelTaskTypeLabel(t)}
@@ -152,7 +154,7 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
                       ×
                     </Badge>
                   )}
-                  {filterTaskType && (
+                  {taskTypeNames.length > 1 && filterTaskType && (
                     <Badge
                       colorScheme="purple"
                       fontSize="xs"
