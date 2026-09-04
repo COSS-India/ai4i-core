@@ -131,7 +131,7 @@ const nextConfig = {
       },
       {
         // Guide HTML must open as a viewable page, not a download.
-        source: '/onboarding-guide/:guide.html',
+        source: '/assests/onboarding-guide/:guide.html',
         headers: [
           { key: 'Content-Disposition', value: 'inline' },
         ],

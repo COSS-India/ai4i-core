@@ -8,9 +8,9 @@ Understand your role as Institution Admin and gather what you need before you be
 ## 1. Introduction
 
 
-### About AI Switch
+### About AI4I Orchestrate
 
-AI Switch provides a single, governed layer for secure, measurable, and scalable consumption of open source and sovereign models. It enables sovereign AI infrastructure to be consumed in a controlled and accountable manner while maintaining centralized governance, operational visibility, and consumption oversight across multiple user institutions and applications.
+AI4I Orchestrate provides a single, governed layer for secure, measurable, and scalable consumption of open source and sovereign models. It enables sovereign AI infrastructure to be consumed in a controlled and accountable manner while maintaining centralized governance, operational visibility, and consumption oversight across multiple user institutions and applications.
 
 
 ### Purpose of this Guide
@@ -25,7 +25,7 @@ Part III covers tracking your institution's budget and usage, and Part IV covers
 
 ### Intended Audience
 
-This guide is for the Institution Admin — the person responsible for managing your institution's access to AI Switch: signing in, giving your applications access to LLMs through API keys, onboarding your institution's users, and tracking budget and usage.
+This guide is for the Institution Admin — the person responsible for managing your institution's access to AI4I Orchestrate: signing in, giving your applications access to LLMs through API keys, onboarding your institution's users, and tracking budget and usage.
 
 
 ## 2. Before You Begin
@@ -62,7 +62,7 @@ Sign in, give your applications access to LLMs, and onboard your institution's u
 
 ## 1. Institution Creation
 
-Before you can sign in and begin onboarding, your institution must share the following with your Adopter Admin. Your Adopter Admin uses it to create your institution on AI Switch and assign it a Tier and Budget:
+Before you can sign in and begin onboarding, your institution must share the following with your Adopter Admin. Your Adopter Admin uses it to create your institution on AI4I Orchestrate and assign it a Tier and Budget:
 
 
 ### Information to Share with Your Adopter Admin
