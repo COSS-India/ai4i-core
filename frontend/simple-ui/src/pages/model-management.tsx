@@ -134,7 +134,8 @@ const ModelManagementPage: React.FC = () => {
   useEffect(() => {
     if (didInitTaskTypeFilter.current || isLoadingTaskTypes) return;
     didInitTaskTypeFilter.current = true;
-    // Default Task Type filter to "" (All); ENABLED_TASK_TYPES still scopes the fetch.
+    // Single enabled type → lock filter to it (no All). Multiple → default All ("").
+    if (taskTypeNames.length === 1) setFilterTaskType(taskTypeNames[0]);
     setTaskTypeFilterReady(true);
   }, [isLoadingTaskTypes, taskTypeNames]);
   const [sortBy, setSortBy] = useState<"time" | "name">("time");
@@ -237,14 +238,15 @@ const ModelManagementPage: React.FC = () => {
     });
   }, [models, searchQuery, sortBy, nameSortDirection]);
 
+  const showTaskTypeAllOption = taskTypeNames.length > 1;
   const hasActiveFilters =
     filterVersionStatus !== "" ||
-    filterTaskType !== "" ||
+    (showTaskTypeAllOption && filterTaskType !== "") ||
     searchQuery.trim() !== "";
   const clearAllFilters = () => {
     setSearchQuery("");
     setFilterVersionStatus("");
-    setFilterTaskType("");
+    setFilterTaskType(taskTypeNames.length === 1 ? taskTypeNames[0] : "");
   };
 
   const getTaskColor = (taskType: string) => {
@@ -982,7 +984,9 @@ const ModelManagementPage: React.FC = () => {
                                 onChange={setFilterTaskType}
                                 formControlProps={{ w: { base: "full", sm: "160px" } }}
                               >
-                                <option value="">All</option>
+                                {showTaskTypeAllOption && (
+                                  <option value="">All</option>
+                                )}
                                 {taskTypeNames?.map((t) => (
                                   <option key={t} value={t}>
                                     {formatModelTaskTypeLabel(t)}
@@ -1018,7 +1022,7 @@ const ModelManagementPage: React.FC = () => {
                                     Status: {formatModelVersionFilterLabel(filterVersionStatus)} ×
                                   </Badge>
                                 )}
-                                {filterTaskType && (
+                                {showTaskTypeAllOption && filterTaskType && (
                                   <Badge
                                     colorScheme="purple"
                                     fontSize="xs"

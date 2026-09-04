@@ -73,7 +73,8 @@ export function useTierManagement() {
   useEffect(() => {
     if (didInitTaskTypeFilter.current || isLoadingTaskTypes) return;
     didInitTaskTypeFilter.current = true;
-    // Default Task Type filter to "" (All).
+    // Single enabled type → lock filter to it (no All). Multiple → default All ("").
+    if (taskTypeNames.length === 1) setFilterTaskType(taskTypeNames[0]);
     setTaskTypeFilterReady(true);
   }, [isLoadingTaskTypes, taskTypeNames]);
 
@@ -240,13 +241,15 @@ export function useTierManagement() {
     return result;
   }, [tiers, searchQuery, filterTaskType]);
 
+  const showTaskTypeAllOption = taskTypeNames.length > 1;
   const hasActiveFilters =
-    searchQuery.trim() !== "" || filterTaskType !== "";
+    searchQuery.trim() !== "" ||
+    (showTaskTypeAllOption && filterTaskType !== "");
 
   const clearFilters = useCallback(() => {
     setSearchQuery("");
-    setFilterTaskType("");
-  }, []);
+    setFilterTaskType(taskTypeNames.length === 1 ? taskTypeNames[0] : "");
+  }, [taskTypeNames]);
 
   const refreshTiers = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: [TIER_QUERY_KEY] });

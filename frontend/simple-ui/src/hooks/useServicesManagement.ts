@@ -123,7 +123,8 @@ export function useServicesManagement() {
   useEffect(() => {
     if (didInitTaskTypeFilter.current || isLoadingTaskTypes) return;
     didInitTaskTypeFilter.current = true;
-    // Default Task Type filter to "" (All); ENABLED_TASK_TYPES still scopes the fetch.
+    // Single enabled type → lock filter to it (no All). Multiple → default All ("").
+    if (taskTypeNames.length === 1) setFilterTaskType(taskTypeNames[0]);
     setTaskTypeFilterReady(true);
   }, [isLoadingTaskTypes, taskTypeNames]);
   const [sortBy, setSortBy] = useState<"time" | "name">("time");
@@ -170,14 +171,15 @@ export function useServicesManagement() {
     });
   }, [services, searchQuery, sortBy, nameSortDirection]);
 
+  const showTaskTypeAllOption = taskTypeNames.length > 1;
   const hasActiveFilters =
     filterStatus !== "" ||
-    filterTaskType !== "" ||
+    (showTaskTypeAllOption && filterTaskType !== "") ||
     searchQuery.trim() !== "";
   const clearAllFilters = () => {
     setSearchQuery("");
     setFilterStatus("");
-    setFilterTaskType("");
+    setFilterTaskType(taskTypeNames.length === 1 ? taskTypeNames[0] : "");
   };
 
   const router = useRouter();
