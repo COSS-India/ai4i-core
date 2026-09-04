@@ -9,6 +9,7 @@ import {
   getServerRuntimeConfig,
 } from '../../src/config/runtimeConfig';
 import {
+  platformLogoSrcFromName,
   resolveAdopterLogoSrc,
   resolveEmailLogoUrl,
   resolvePlatformName,
@@ -35,6 +36,14 @@ describe('branding resolvers', () => {
       'https://cdn.example.com/a.png',
     );
     expect(resolveAdopterLogoSrc('//evil.com/x.png')).toBe(DEFAULT_ADOPTER_LOGO_SRC);
+  });
+
+  it('platformLogoSrcFromName maps safe PLATFORM_NAME folder slugs', () => {
+    expect(platformLogoSrcFromName('AISWITCH')).toBe('/assests/AISWITCH/logo.png');
+    expect(platformLogoSrcFromName('AI4I')).toBe('/assests/AI4I/logo.png');
+    expect(platformLogoSrcFromName('../etc')).toBeNull();
+    expect(platformLogoSrcFromName('a/b')).toBeNull();
+    expect(platformLogoSrcFromName('')).toBeNull();
   });
 
   it('resolveEmailLogoUrl requires absolute http(s)', () => {
@@ -78,6 +87,10 @@ describe('getAdopterLogoSrc', () => {
   });
 
   it('falls back to default SVG when unset', () => {
+    applyRuntimeConfig({
+      ...EMPTY_RUNTIME_CONFIG,
+      platformName: 'AISWITCH',
+    });
     expect(getAdopterLogoSrc()).toBe(DEFAULT_ADOPTER_LOGO_SRC);
   });
 
@@ -87,6 +100,15 @@ describe('getAdopterLogoSrc', () => {
       adopterLogoUrl: 'https://cdn.example.com/logo.png',
     });
     expect(getAdopterLogoSrc()).toBe('https://cdn.example.com/logo.png');
+  });
+
+  it('uses bundled /assests/<PLATFORM_NAME>/logo.png when ADOPTER_LOGO_URL is set to it', () => {
+    applyRuntimeConfig({
+      ...EMPTY_RUNTIME_CONFIG,
+      platformName: 'AISWITCH',
+      adopterLogoUrl: '/assests/AISWITCH/logo.png',
+    });
+    expect(getAdopterLogoSrc()).toBe('/assests/AISWITCH/logo.png');
   });
 
   it('accepts http URLs', () => {

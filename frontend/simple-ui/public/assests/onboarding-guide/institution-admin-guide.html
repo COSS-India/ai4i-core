@@ -118,6 +118,36 @@ hr.rule{border:none; border-top:1px solid var(--rule); margin:24px 0;}
   }
 }
 </style>
+<script>
+/* PLATFORM_NAME from ?platformName= (set by the portal on open). Text-only swap — no HTML injection. */
+(function () {
+  var DEFAULT = "AI4I Orchestrate";
+  var PARAM = "platformName";
+  var name = "";
+  try {
+    name = (new URLSearchParams(location.search).get(PARAM) || "").trim();
+  } catch (e) { return; }
+  if (!name || name === DEFAULT) return;
+  document.documentElement.style.visibility = "hidden";
+  document.addEventListener("DOMContentLoaded", function () {
+    document.title = document.title.split(DEFAULT).join(name);
+    function walk(node) {
+      if (node.nodeType === 3) {
+        if (node.nodeValue && node.nodeValue.indexOf(DEFAULT) !== -1) {
+          node.nodeValue = node.nodeValue.split(DEFAULT).join(name);
+        }
+        return;
+      }
+      if (node.nodeType !== 1) return;
+      var tag = node.tagName;
+      if (tag === "SCRIPT" || tag === "STYLE" || tag === "NOSCRIPT") return;
+      for (var i = 0; i < node.childNodes.length; i++) walk(node.childNodes[i]);
+    }
+    walk(document.body);
+    document.documentElement.style.visibility = "";
+  });
+})();
+</script>
 </head>
 <body>
 <div class="sidebar-toggle">&#9776;</div>

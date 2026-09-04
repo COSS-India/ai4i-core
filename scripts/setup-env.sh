@@ -25,10 +25,15 @@ fi
 # ── 2. Read specific variables from root .env ────────────────────────────────
 # We parse the file manually rather than sourcing it, because values like
 # <YOUR_REDIS_PASSWORD> would break bash's source command.
+# Optional 2nd arg: fallback file (e.g. env.template) when root .env value is blank.
 read_env_var() {
     local var_name="$1"
+    local fallback_file="${2:-}"
     local value
     value=$(grep -m1 "^${var_name}=" "$ROOT_ENV" 2>/dev/null | cut -d'=' -f2- || true)
+    if [ -z "${value}" ] && [ -n "${fallback_file}" ]; then
+        value=$(grep -m1 "^${var_name}=" "$fallback_file" 2>/dev/null | cut -d'=' -f2- || true)
+    fi
     echo "${value:-}"
 }
 
@@ -62,12 +67,9 @@ ALEMBIC_DB_PORT="$(read_env_var ALEMBIC_DB_PORT)"
 
 LLM_UPSTREAM_BASE_URL="$(read_env_var LLM_UPSTREAM_BASE_URL)"
 
-# Branding — single place in root .env, copied into simple-ui + auth-service.
-PLATFORM_NAME="$(read_env_var PLATFORM_NAME)"
-ADOPTER_LOGO_URL="$(read_env_var ADOPTER_LOGO_URL)"
-if [ -z "${PLATFORM_NAME}" ]; then
-    PLATFORM_NAME="AI4I Orchestrate"
-fi
+# Branding — root .env, else env.template; copied into simple-ui + auth-service.
+PLATFORM_NAME="$(read_env_var PLATFORM_NAME "$ROOT_DIR/env.template")"
+ADOPTER_LOGO_URL="$(read_env_var ADOPTER_LOGO_URL "$ROOT_DIR/env.template")"
 
 # ── 3. Build sed replacement expressions ─────────────────────────────────────
 SED_ARGS=()
