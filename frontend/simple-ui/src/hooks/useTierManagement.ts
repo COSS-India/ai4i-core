@@ -73,7 +73,7 @@ export function useTierManagement() {
   useEffect(() => {
     if (didInitTaskTypeFilter.current || isLoadingTaskTypes) return;
     didInitTaskTypeFilter.current = true;
-    if (taskTypeNames.length > 0) setFilterTaskType(taskTypeNames[0]);
+    // Default Task Type filter to "" (All).
     setTaskTypeFilterReady(true);
   }, [isLoadingTaskTypes, taskTypeNames]);
 
@@ -122,9 +122,14 @@ export function useTierManagement() {
     onClose: onScheduleClose,
   } = useDisclosure();
 
+  // Frontend-enabled task types (ENABLED_TASK_TYPES). Used to scope "All" fetches.
+  const enabledTaskTypesParam =
+    taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
+
   const tiersQuery = useQuery({
-    queryKey: [TIER_QUERY_KEY, filterTaskType],
-    queryFn: () => fetchTiers(filterTaskType || undefined),
+    queryKey: [TIER_QUERY_KEY, filterTaskType || enabledTaskTypesParam || "all"],
+    queryFn: () =>
+      fetchTiers(filterTaskType || enabledTaskTypesParam || undefined),
     staleTime: 30 * 1000,
     retry: 1,
     enabled: taskTypeFilterReady,
@@ -184,8 +189,6 @@ export function useTierManagement() {
 
   // Services carry their tier mapping as an array of tier UUIDs (tierIds).
   // There's no server-side tier filter, so fetch all services and filter here.
-  const enabledTaskTypesParam =
-    taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
   const servicesQuery = useQuery({
     queryKey: ["services-for-tiers", enabledTaskTypesParam ?? "all"],
     queryFn: () =>
@@ -237,12 +240,13 @@ export function useTierManagement() {
     return result;
   }, [tiers, searchQuery, filterTaskType]);
 
-  const hasActiveFilters = searchQuery.trim() !== "";
+  const hasActiveFilters =
+    searchQuery.trim() !== "" || filterTaskType !== "";
 
   const clearFilters = useCallback(() => {
     setSearchQuery("");
-    if (taskTypeNames.length > 0) setFilterTaskType(taskTypeNames[0]);
-  }, [taskTypeNames]);
+    setFilterTaskType("");
+  }, []);
 
   const refreshTiers = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: [TIER_QUERY_KEY] });
