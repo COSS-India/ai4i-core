@@ -80,7 +80,6 @@ export default function ApplicationBulkBudgetModal({
   rows,
   onRowFocus,
   onPctChange,
-  onAmountChange,
   onSave,
   canSave,
 }: {
@@ -96,7 +95,6 @@ export default function ApplicationBulkBudgetModal({
   rows: BulkBudgetDraft[];
   onRowFocus: (applicationId: string) => void;
   onPctChange: (applicationId: string, value: string) => void;
-  onAmountChange: (applicationId: string, value: string) => void;
   onSave: () => void;
   canSave: boolean;
 }) {
@@ -125,7 +123,6 @@ export default function ApplicationBulkBudgetModal({
               <Th>Application</Th>
               <Th>Used</Th>
               <Th>Budget %</Th>
-              <Th>Budget ({currency})</Th>
               <Th>Key preview</Th>
             </Tr>
           </Thead>
@@ -177,21 +174,6 @@ export default function ApplicationBulkBudgetModal({
                     />
                   </FormControl>
                 </Td>
-                <Td>
-                  <Input
-                    type="number"
-                    size="sm"
-                    w="120px"
-                    bg="white"
-                    value={row.amountInput}
-                    onFocus={() => onRowFocus(row.application_id)}
-                    onChange={(e) => onAmountChange(row.application_id, e.target.value)}
-                    min={row.consumed_budget ?? undefined}
-                    step={0.01}
-                    isDisabled={!editable || institutionBudgetUnset}
-                    placeholder={institutionBudgetUnset ? "—" : undefined}
-                  />
-                </Td>
                 <Td maxW="220px">
                   {row.keysLoading ? (
                     <Text fontSize="xs" color="gray.500">Loading keys…</Text>
@@ -224,7 +206,6 @@ export default function ApplicationBulkBudgetModal({
     rows,
     currency,
     onPctChange,
-    onAmountChange,
     onRowFocus,
     institutionBudgetUnset,
   ]);
