@@ -25,13 +25,36 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from ai4i_core.ppu import get_inference_types
 
 from app.models.api_key import APIKey
 from app.repositories.api_key_repository import APIKeyRepository
 from app.services.api_key_service import APIKeyService
 
-_INFERENCE_FIELDS = [f"quota-{entry['name']}" for entry in get_inference_types()]
+# The catalogue is a network resource now, so these tests declare the types
+# they expect rather than importing a bundled list. _stub_catalogue below feeds
+# the same set into the service under test, so the two cannot drift.
+_INFERENCE_TYPE_NAMES = [
+    "llm", "asr", "nmt", "tts", "ner", "ocr", "transliteration",
+    "language-detection", "language-diarization", "speaker-diarization",
+    "audio-lang-detection", "pipeline",
+]
+_INFERENCE_FIELDS = [f"quota-{name}" for name in _INFERENCE_TYPE_NAMES]
+
+
+@pytest.fixture(autouse=True)
+def _stub_catalogue(monkeypatch):
+    """Point api_key_service's catalogue lookup at the list above.
+
+    Without this the quota-field sweep sees an empty catalogue and — by design —
+    aborts rather than reporting a successful clear, so every assertion here
+    would fail for the wrong reason.
+    """
+    from app.services import api_key_service as svc
+
+    async def _names():
+        return list(_INFERENCE_FIELDS)
+
+    monkeypatch.setattr(svc, "_quota_field_names", _names)
 
 
 def _api_key(*, is_active: bool = True, application_id: int = 1) -> APIKey:

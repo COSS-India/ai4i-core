@@ -1,6 +1,6 @@
 """Unit tests: count_output_tokens for OCR (AI4IDS-2532 follow-up).
 
-OCR's unit_type is "images" (inference_types.yaml), but OCR never outputs
+OCR's unit_type is "images" (the inference-type catalogue), but OCR never outputs
 images — its output is extracted text. count_output_tokens used to route
 "images" to a dead, size-based heuristic (_count_output_image_tokens) that
 checked for image_content/image fields OCR's response never has (its real

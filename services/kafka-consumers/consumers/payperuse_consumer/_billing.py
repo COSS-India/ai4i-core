@@ -1,5 +1,6 @@
 """Billing helpers for the pay-per-use Kafka consumer."""
 import json
+import time
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Optional
@@ -102,6 +103,88 @@ async def get_service_pricing(
     return pricing
 
 
+# Process-local memo for the DB-fallback path, keyed by lowercased name.
+# Bounded by the size of the catalogue (~12 rows), so no eviction policy needed.
+_inference_type_ids: dict[str, tuple[Optional[int], float]] = {}
+
+
+async def get_inference_type_id(db: AsyncSession, inference_name: str) -> Optional[int]:
+    """Resolve inference_type_id for a task type; Redis, then memo, then DB.
+
+    Reads ``core:inference_type:<name>`` — written by platform-core's
+    ``inference_type_cache``, a cross-service contract (both services must
+    share a Redis host and logical DB). The DB fallback is mandatory, not
+    belt-and-braces: these keys live under allkeys-lru pressure, and a
+    cache-only path would silently stop resolving ids under memory pressure.
+
+    This function deliberately does **not** write back to Redis. Those keys hold
+    the whole catalogue row and platform-core reads them expecting that shape;
+    writing a partial ``{"id": n}`` from here would corrupt them. platform-core
+    stays the single writer (it warms on startup and rebuilds on every
+    mutation). The process-local memo below keeps a cold Redis from costing a
+    DB round-trip per message — one per task type per process instead.
+
+    Returns None when the name is empty or absent from the catalogue. From
+    phase 2 on, None means **quota cannot be enforced for this span**: the upsert
+    joins and conflicts on inference_type_id, so a NULL selects no rows. The
+    caller must skip the quota decision entirely and must NOT read the resulting
+    quota_recorded=False as exhaustion — that would 429 every tenant on an
+    otherwise-working tier. See handler._bill_usage.
+
+    A negative result is memoised far more briefly than a positive one: under
+    phase 1 a stale negative cost a NULL column value, but now it costs a window
+    of unenforced quota for a type an admin has just created.
+    """
+    if not inference_name:
+        return None
+    normalized = inference_name.lower()
+
+    try:
+        redis = get_redis_client()
+    except RuntimeError:
+        redis = None
+
+    cache_key = f"{Constants.INFERENCE_TYPE_CACHE_PREFIX}{normalized}"
+    if redis is not None:
+        try:
+            # The key is a hash written by platform-core; pull only the one
+            # field this needs. HGET returns None when either the key or the
+            # field is absent, which falls through to the memo/DB below.
+            cached_id = await redis.hget(cache_key, "id")
+            if cached_id:
+                return int(cached_id)
+        except Exception as exc:
+            logger.warning(
+                "Inference type cache read failed for %s: %s", normalized, exc
+            )
+
+    memo = _inference_type_ids.get(normalized)
+    if memo is not None and time.monotonic() < memo[1]:
+        return memo[0]
+
+    result = await db.execute(
+        text("SELECT id FROM inference_types WHERE name = :name LIMIT 1"),
+        {"name": normalized},
+    )
+    row = result.first()
+    type_id = int(row.id) if row is not None else None
+    if type_id is None:
+        logger.error(
+            "Inference type %r is not in the inference_types catalogue "
+            "(checked Redis, process memo and the database) — quota cannot be "
+            "enforced for it. Create it via POST /inference-types.",
+            normalized,
+            extra={"event": "ppu.inference_type.unresolved", "task_type": normalized},
+        )
+    ttl = (
+        Constants.INFERENCE_TYPE_MEMO_TTL
+        if type_id is not None
+        else Constants.INFERENCE_TYPE_NEGATIVE_MEMO_TTL
+    )
+    _inference_type_ids[normalized] = (type_id, time.monotonic() + ttl)
+    return type_id
+
+
 def calculate_cost(total_units: Decimal, pricing: ServicePricing) -> Decimal:
     """
     ₹ cost for total_units.
@@ -118,12 +201,12 @@ def calculate_cost(total_units: Decimal, pricing: ServicePricing) -> Decimal:
 async def deduct_balance_and_update_quota(
     db: AsyncSession,
     tenant_id: str,
-    inference_name: str,
     billing_month: str,
     units: Decimal,
     cost: Decimal,
     api_key_id: int = 0,
     tier_id: Optional[str] = None,
+    inference_type_id: Optional[int] = None,
 ) -> BillingWriteResult:
     """
     Single round-trip fusing budget deduction (budget_usage) + quota upsert
@@ -136,12 +219,30 @@ async def deduct_balance_and_update_quota(
     quota_upsert: looks up monthly_quota_snap from tier_quotas using tier_id
     passed directly from the OTel span (set by auth service, propagated via
     X-Tier-ID header → context → span attribute). Produces no row when
-    tier_id is None or tier_quotas has no matching (tier_id, inference_name)
-    row. CAST(:tier_id AS uuid) with a SQL NULL evaluates the WHERE condition
-    to UNKNOWN (never TRUE), so the INSERT selects no rows — safe no-op.
+    tier_id is None, inference_type_id is None, or tier_quotas has no matching
+    (tier_id, inference_type_id) row. CAST(:tier_id AS uuid) with a SQL NULL
+    evaluates the WHERE condition to UNKNOWN (never TRUE), so the INSERT selects
+    no rows — safe no-op, and the same is true of a NULL inference_type_id.
     Passing an empty string instead of None would raise
     "invalid input syntax for type uuid" in Postgres; callers must normalise
     "" to None before calling (handler._get_otel_attributes does this).
+
+    The join and the ON CONFLICT target are both keyed on inference_type_id
+    . Two details that look cosmetic and are not:
+
+      * inference_name is written from ``it.name``, not from a bound parameter.
+        The retained legacy column stops being a free-text write, which is what
+        keeps the old name-keyed unique constraint and the new id-keyed one
+        equivalent while both exist on the table.
+      * the inserted id is ``tq.inference_type_id``, not the bound parameter.
+        They are equal by the join predicate, but taking it from the joined row
+        makes it NOT NULL *by construction*. That is what replaces a NOT NULL
+        constraint on quota_usage.inference_type_id — do not "simplify" it back
+        to :inference_type_id.
+
+    A caller that cannot resolve inference_type_id must NOT read the resulting
+    quota_recorded=False as exhaustion — see handler._bill_usage, which fails
+    open on a catalogue gap rather than 429ing every tenant on the tier.
     """
     result = await db.execute(
         text(
@@ -154,14 +255,18 @@ async def deduct_balance_and_update_quota(
             "),"
             " quota_upsert AS ("
             "    INSERT INTO quota_usage"
-            "      (id, tenant_id, inference_name, billing_month, monthly_quota_snap,"
-            "       monthly_quota_used, tier_id)"
-            "    SELECT gen_random_uuid(), :tenant_id, CAST(:inference_name AS text), :billing_month,"
+            "      (id, tenant_id, inference_name, inference_type_id, billing_month,"
+            "       monthly_quota_snap, monthly_quota_used, tier_id)"
+            "    SELECT gen_random_uuid(), :tenant_id, it.name,"
+            "           tq.inference_type_id, :billing_month,"
             "           tq.monthly_quota, :units, :tier_id"
             "    FROM tier_quotas tq"
-            "    WHERE tq.tier_id = CAST(:tier_id AS uuid) AND tq.inference_name = CAST(:inference_name AS text)"
-            "    ON CONFLICT (tenant_id, inference_name, billing_month, tier_id)"
+            "    JOIN inference_types it ON it.id = tq.inference_type_id"
+            "    WHERE tq.tier_id = CAST(:tier_id AS uuid)"
+            "      AND tq.inference_type_id = CAST(:inference_type_id AS int)"
+            "    ON CONFLICT (tenant_id, inference_type_id, billing_month, tier_id)"
             "    DO UPDATE SET monthly_quota_used = quota_usage.monthly_quota_used + EXCLUDED.monthly_quota_used,"
+            "                  inference_name = EXCLUDED.inference_name,"
             "                  updated_at = now()"
             "    RETURNING monthly_quota_used, monthly_quota_snap, tier_id"
             " )"
@@ -175,7 +280,7 @@ async def deduct_balance_and_update_quota(
         {
             "api_key_id": api_key_id,
             "tenant_id": tenant_id,
-            "inference_name": inference_name,
+            "inference_type_id": inference_type_id,
             "billing_month": billing_month,
             "units": units,
             "cost": cost,

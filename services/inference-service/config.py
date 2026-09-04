@@ -43,6 +43,18 @@ class Settings(BaseSettings):
         300, description="In-memory service-resolution cache TTL in seconds"
     )
 
+    # Redis — read-only, and only for the inference-type catalogue
+    # (core:inference_type:*, written by platform-core). Must point at the same
+    # host AND logical DB as platform-core or the keys will not be found; both
+    # default to DB 0. The catalogue falls back to platform-core over HTTP and
+    # then to a stale snapshot, so an unset or unreachable Redis degrades the
+    # billing-unit label rather than breaking inference.
+    REDIS_HOST: str = Field("localhost", description="Redis host")
+    REDIS_PORT: int = Field(6379, description="Redis port")
+    REDIS_PASSWORD: Optional[str] = Field(None, description="Redis password")
+    REDIS_DB: int = Field(0, description="Redis logical DB; must match platform-core")
+    REDIS_TIMEOUT: int = Field(10, description="Redis socket timeout in seconds")
+
     # Model Management Service
     MODEL_MANAGEMENT_SERVICE_URL: Optional[str] = Field(
         None, description="Model management service URL"

@@ -6,10 +6,18 @@ Services: stored in process-local in-memory dict with 5-minute TTL. Cache misses
 are handled by the calling service which falls back to the DB and re-warms
 the cache.
 
-Keys:
-  core:model:{model_id}:{version}       — model details (Redis)
-  core:model:{model_id}                  — latest active version (Redis)
+Keys (note the encoding — mixing up GET and HGETALL is a WRONGTYPE error):
+  core:model:{model_id}:{version}       — model details (Redis STRING, use GET)
+  core:model:{model_id}                  — latest active version (Redis STRING, use GET)
   core:service:{service_id}             — service details (in-memory)
+
+Owned elsewhere, listed here so the namespace stays legible:
+  core:inference_type:{name}            — one catalogue row (Redis HASH, use HGETALL)
+  core:inference_type:all               — name -> row JSON (Redis HASH, use HGETALL/HGET)
+Written by app/services/pay_per_use/inference_type_cache.py, which is their only
+writer. Read by kafka-consumers' payperuse_consumer (HGET of the id field) and by
+ai4i_core.ppu.catalogue in auth-service and inference-service. Every reader has a
+database fallback — see inference_type_cache.py's docstring.
 """
 
 import json

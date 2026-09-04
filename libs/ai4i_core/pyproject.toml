@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai4i-core"
-version = "1.0.23"
+version = "1.0.24"
 description = "AI4I Core - consolidated utility libraries (exceptions, logging, telemetry, observability, bootstrap, email) for AI4I microservices"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -93,7 +93,7 @@ Source = "https://github.com/COSS-India/ai4i-core/tree/master/libs/ai4i_core"
 include = ["ai4i_core*"]
 
 [tool.setuptools.package-data]
-ai4i_core = ["telemetry/util/**/*.json", "ppu/*.yaml"]
+ai4i_core = ["telemetry/util/**/*.json"]
 
 [tool.black]
 line-length = 100
