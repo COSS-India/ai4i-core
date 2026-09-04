@@ -3,16 +3,16 @@
  * Content-Disposition: inline so the browser views them instead of downloading.
  *
  * PLATFORM_NAME is passed as ?platformName= so the static HTML can rebrand
- * without a rebuild (see public/onboarding-guide/*.html).
+ * without a rebuild (see public/assests/onboarding-guide/*.html).
  */
 import { DEFAULT_PLATFORM_NAME } from "./branding";
 import { getPlatformName } from "./runtimeConfig";
 import { isDefaultAdminUser, isTenantAdminUser } from "../utils/rbac";
 
 export const INSTITUTION_ADMIN_GUIDE_HREF =
-  "/onboarding-guide/institution-admin-guide.html";
+  "/assests/onboarding-guide/institution-admin-guide.html";
 export const ADOPTER_ADMIN_GUIDE_HREF =
-  "/onboarding-guide/adopter-admin-guide.html";
+  "/assests/onboarding-guide/adopter-admin-guide.html";
 
 /** Query key read by the guide pages' inline branding script. */
 export const ONBOARDING_GUIDE_PLATFORM_NAME_PARAM = "platformName";
