@@ -60,6 +60,7 @@ from app.services.tenant_lifecycle import (
     TENANT_ONBOARDING_STATUSES,
     assert_default_tenant_not_targeted,
     assert_valid_tenant_status_transition,
+    is_default_tenant,
     sync_tenant_users_for_status,
 )
 from app.services.email_helpers import (
@@ -256,6 +257,39 @@ class TenantService:
                     "code": "LAST_TENANT_ADMIN",
                     "message": (
                         f"Cannot delete user: {tenant.name} must retain at least one active Tenant Admin."
+                    ),
+                },
+            )
+
+    async def _assert_not_last_adopter_admin(
+        self, target: User, tenant: Tenant, *, action: str
+    ) -> None:
+        """Raise 422 if the target is the sole active MODERATOR (Adopter Admin) in the Default Organisation.
+
+        Adopter Admin is adopter-wide, but accounts are provisioned as
+        MODERATOR tenant users under the Default Organisation, so this only
+        applies there. ``action`` is "suspend" or "delete" and picks the
+        error message; the check is on the target (not the caller) so it
+        covers both self-service and one admin acting on another.
+        """
+        if not is_default_tenant(tenant):
+            return
+        roles = await self._roles.get_user_roles(target.id)
+        if RoleName.MODERATOR.value not in roles:
+            return
+        # Serialize concurrent last-admin checks within the same tenant.
+        await self._tenants._db.execute(
+            text("SELECT pg_advisory_xact_lock(:tid)"), {"tid": tenant.id}
+        )
+        count = await self._roles.count_moderators_in_tenant(tenant.id)
+        if count <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "LAST_ADOPTER_ADMIN",
+                    "message": (
+                        f"Cannot {action} the only Admin in the Default Organization. "
+                        "Promote another user to Admin first."
                     ),
                 },
             )
@@ -1405,6 +1439,8 @@ class TenantService:
                         "message": "Tenant admins cannot deactivate their own account.",
                     },
                 )
+        if body.is_active is False:
+            await self._assert_not_last_adopter_admin(target, tenant, action="suspend")
         payload = {"is_active": body.is_active, "updated_by": current_user.id}
         _assert_tenant_active_for_user_deactivation(tenant, payload)
 
@@ -1494,6 +1530,7 @@ class TenantService:
         if RoleName.TENANT_ADMIN.value in target_roles:
             await self._deny_moderator(current_user)
         await self._assert_not_last_tenant_admin(target, tenant)
+        await self._assert_not_last_adopter_admin(target, tenant, action="delete")
 
         # Capture PII before anonymisation — enqueue_email is called after commit
         # so a failed update/commit cannot leak a deletion email.
