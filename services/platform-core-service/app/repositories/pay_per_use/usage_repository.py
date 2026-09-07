@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.pay_per_use.budget_usage import BudgetUsage
+from app.models.pay_per_use.inference_type import InferenceType
 from app.models.pay_per_use.quota_usage import QuotaUsage
 from app.models.pay_per_use.tier import Tier
 from app.utils.billing_month import shift_billing_month
@@ -65,7 +66,7 @@ class UsageRepository:
         billing_month: str | None,
         tier_id: str | None = None,
         tenant_id: str | None = None,
-        task_types: list[str] | None = None,
+        task_type_ids: list[int] | None = None,
     ):
         """One row per tenant: the tier they were most recently active under
         this billing_month, derived entirely from ppu_quota_usage. billing_month=None
@@ -113,9 +114,11 @@ class UsageRepository:
         if billing_month is not None:
             ranked_activity = ranked_activity.where(QuotaUsage.billing_month == billing_month)
         # Query-level filter: only the task types the caller (frontend) requested.
-        if task_types:
+        # Rows with a NULL inference_type_id predate the catalogue and never match,
+        # which is correct — you cannot filter by a type the row does not have.
+        if task_type_ids:
             ranked_activity = ranked_activity.where(
-                QuotaUsage.inference_name.in_(task_types)
+                QuotaUsage.inference_type_id.in_(task_type_ids)
             )
         if tenant_id:
             ranked_activity = ranked_activity.where(QuotaUsage.tenant_id == tenant_id)
@@ -268,15 +271,23 @@ class UsageRepository:
         return budgets
 
     async def get_tenant_tier_usage_breakdown(
-        self, billing_month: str | None, tenant_ids: list[str], task_types: list[str] | None = None
+        self, billing_month: str | None, tenant_ids: list[str],
+        task_type_ids: list[int] | None = None,
     ):
-        """Per (tenant, tier, inference_name) usage, across every tier the tenant
+        """Per (tenant, tier, inference type) usage, across every tier the tenant
         held in scope — not just their most-recently-active tier. billing_month=None
         means all-time: consumed sums across every month the tenant held that
         tier, while quota_snap (MAX, not SUM) still reflects that tier's own quota
         amount rather than double-counting it per month.
-        Filtered to ``task_types`` when the caller (frontend) passes them; otherwise the
-        full breakdown is returned.
+        Filtered to ``task_type_ids`` when the caller (frontend) passes them; otherwise
+        the full breakdown is returned.
+
+        The catalogue join is a LEFT join and the name is coalesced. quota_usage keeps
+        nullable ids for rows written before the catalogue existed; an inner join would
+        drop them from every usage report with no error anywhere. Those rows fall back
+        to their stored inference_name so they still render under their real name. That
+        fallback is display-only — grouping and filtering are keyed by id — and it goes
+        away when the column is dropped.
 
         No cost/spend column here (and never one — this was `literal(0)` before,
         a placeholder for a `cost_accum` column dropped from ppu_quota_usage and
@@ -287,25 +298,36 @@ class UsageRepository:
         """
         if not tenant_ids:
             return []
+        # Labelled task_type, not inference_name: a downstream read that was missed
+        # then fails loudly with AttributeError instead of silently falling through
+        # to the legacy column.
+        task_type_label = func.coalesce(
+            InferenceType.name, QuotaUsage.inference_name
+        ).label("task_type")
         stmt = (
             select(
                 QuotaUsage.tenant_id,
                 QuotaUsage.tier_id,
-                QuotaUsage.inference_name,
+                QuotaUsage.inference_type_id,
+                task_type_label,
+                InferenceType.unit.label("task_type_unit"),
                 func.sum(QuotaUsage.monthly_quota_used).label("total_units"),
                 func.max(QuotaUsage.monthly_quota_snap).label("quota_snap"),
             )
+            .outerjoin(InferenceType, QuotaUsage.inference_type_id == InferenceType.id)
             .where(QuotaUsage.tenant_id.in_(tenant_ids))
             .group_by(
                 QuotaUsage.tenant_id,
                 QuotaUsage.tier_id,
-                QuotaUsage.inference_name,
+                QuotaUsage.inference_type_id,
+                func.coalesce(InferenceType.name, QuotaUsage.inference_name),
+                InferenceType.unit,
             )
         )
         if billing_month is not None:
             stmt = stmt.where(QuotaUsage.billing_month == billing_month)
-        if task_types:
-            stmt = stmt.where(QuotaUsage.inference_name.in_(task_types))
+        if task_type_ids:
+            stmt = stmt.where(QuotaUsage.inference_type_id.in_(task_type_ids))
         result = await self._db.execute(stmt)
         return result.all()
 

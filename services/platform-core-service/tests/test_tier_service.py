@@ -23,6 +23,39 @@ from app.schemas.pay_per_use.tier import TierUpdate
 from app.services.pay_per_use import tier_service
 
 
+# The catalogue is a real collaborator of tier_service now: quota lookups
+# resolve a name to an inference_type_id, and responses map ids back to names.
+# These tests drive tier_service with a blanket-mocked session, so without this
+# the catalogue's own SELECT would be answered with whatever that mock returns.
+_CATALOGUE = {"llm": 1, "asr": 2, "nmt": 3, "tts": 4}
+
+
+@pytest.fixture(autouse=True)
+def _stub_inference_type_cache(monkeypatch):
+    async def get_id_by_name(_session, name):
+        return _CATALOGUE.get((name or "").strip().lower())
+
+    async def get_by_name(_session, name):
+        type_id = _CATALOGUE.get((name or "").strip().lower())
+        return None if type_id is None else {"id": type_id, "name": name.strip().lower()}
+
+    async def get_name_by_id(_session):
+        return {v: k for k, v in _CATALOGUE.items()}
+
+    async def get_ids_by_names(_session, names):
+        return {n.strip().lower(): _CATALOGUE.get(n.strip().lower()) for n in names}
+
+    async def get_all(_session):
+        return [{"id": v, "name": k} for k, v in _CATALOGUE.items()]
+
+    cache = tier_service.inference_type_cache
+    monkeypatch.setattr(cache, "get_id_by_name", get_id_by_name)
+    monkeypatch.setattr(cache, "get_by_name", get_by_name)
+    monkeypatch.setattr(cache, "get_name_by_id", get_name_by_id)
+    monkeypatch.setattr(cache, "get_ids_by_names", get_ids_by_names)
+    monkeypatch.setattr(cache, "get_all", get_all)
+
+
 def _mock_result(*, scalar=None, all_rows=None, first=None):
     r = MagicMock()
     r.scalar_one_or_none.return_value = scalar

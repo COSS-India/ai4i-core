@@ -4,64 +4,63 @@ before any inference request is processed.
 
 Usage in a service:
 
-    from ai4i_core.ppu import load_inference_types, quota_guard
+    from ai4i_core.ppu import configure_catalogue, load_inference_types, quota_guard
 
-    # In lifespan:
-    load_inference_types(app)
+    # In lifespan, after the catalogue transport is available:
+    configure_catalogue(redis_factory=get_redis_client)
+    await load_inference_types(app)
 
     # On the router (applies to every route automatically):
     app.include_router(router, dependencies=[Depends(quota_guard)])
+
+The path→type map now comes from the database-backed catalogue rather than a
+bundled YAML, so a type an admin adds at runtime is enforceable without a
+release. That is the whole point of the change: the YAML could only be updated
+by publishing this package and redeploying every service pinned to it.
 """
 
 import logging
-from pathlib import Path
 
-import yaml
 from fastapi import FastAPI, HTTPException, Request
+
+from .catalogue import get_catalogue
 
 logger = logging.getLogger(__name__)
 
-_YAML_PATH = Path(__file__).parent / "inference_types.yaml"
-_cache: list[dict] | None = None
-
 # Unified endpoint that accepts any task_type in the request body.
-# It has no entry in the YAML (one path serves all types), so quota
-# enforcement must inspect the body field rather than matching the path.
+# It has no catalogue entry (one path serves every type), so quota enforcement
+# must inspect the body field rather than matching the path.
 _UNIFIED_INFERENCE_PATH = "/api/v1/inference"
 
 
-def get_inference_types() -> list[dict]:
-    """Return the raw inference type list from the bundled YAML (cached after first read)."""
-    global _cache
-    if _cache is None:
-        with _YAML_PATH.open() as f:
-            _cache = yaml.safe_load(f)["inference_types"]
-    return _cache
-
-
-def get_inference_unit_map() -> dict[str, str]:
-    """Return mapping of inference_name → billing unit (e.g. 'asr' → 'minutes')."""
-    return {it["name"]: it["unit"] for it in get_inference_types()}
-
-
-def load_inference_types(app: FastAPI) -> None:
+async def load_inference_types(app: FastAPI) -> None:
     """
-    Read inference_types.yaml once at startup and store a name→endpoint_pattern
-    map in app.state.inference_type_map.
+    Warm the catalogue and store a name→endpoint_pattern map in
+    ``app.state.inference_type_map``.
 
-    Call this inside the FastAPI lifespan before yielding.
+    Call this inside the FastAPI lifespan, after ``configure_catalogue``.
+
+    Unlike the YAML version this never raises: the catalogue is a network
+    resource now, and a service must still boot when it is briefly unreachable.
+    ``quota_guard`` reads an empty map as "no per-service quota to enforce",
+    which is the same thing an unmatched path has always meant — it degrades to
+    letting requests through, never to rejecting them.
     """
     try:
-        items = get_inference_types()
+        items = await get_catalogue().get_all()
         app.state.inference_type_map = {
-            item["name"]: item["endpoint_pattern"] for item in items
+            item["name"]: (item.get("endpoint_patterns") or [""])[0]
+            for item in items
         }
         logger.info(
             "Inference type map loaded: %d types.", len(app.state.inference_type_map)
         )
     except Exception as exc:
-        logger.error("Failed to load inference_types.yaml — service cannot start: %s", exc)
-        raise
+        app.state.inference_type_map = {}
+        logger.error(
+            "Failed to load the inference type catalogue; per-service quota "
+            "enforcement is disabled until it is reachable: %s", exc
+        )
 
 
 async def quota_guard(request: Request) -> None:

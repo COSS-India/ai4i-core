@@ -7,11 +7,14 @@ import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request, Response
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import get_db
 from app.core.exceptions import ValidationError
 from app.dependencies.services import ModelService, get_model_service
 from app.schemas.common import MessageMeta, error_responses
-from app.schemas.enums.model_management import TaskTypeEnum, VersionStatusEnum
+from app.schemas.enums.model_management import VersionStatusEnum
+from app.services.pay_per_use import inference_type_cache
 from app.schemas.model_management.model import (
     CreateModelData,
     CreateModelResponse,
@@ -91,6 +94,7 @@ async def list_models(
         description="Maximum number of items to return. Defaults to 100.",
     ),
     svc: ModelService = Depends(get_model_service),
+    db: AsyncSession = Depends(get_db),
 ) -> ListModelsResponse:
     """List models with optional filters and offset/limit pagination."""
     valid_version_statuses = [e.value.lower() for e in VersionStatusEnum]
@@ -98,12 +102,16 @@ async def list_models(
         raise ValidationError(f"Invalid version_status. Accepted values are: {valid_version_statuses}.")
     # ONE task-type filter param: a drill-down is just a one-element list, so a
     # separate single param would only recreate union/precedence ambiguity.
-    # Parsed leniently: names outside TaskTypeEnum (e.g. catalog entries with no
+    # Parsed leniently: names outside the catalogue (e.g. entries with no
     # registered models) are skipped rather than failing the whole request —
     # they can't match any row anyway.
+    #
+    # The allowlist is the live catalogue, not TaskTypeEnum. Only the validation
+    # source changed: mm_models/mm_services are still filtered by name, since
+    # their task type is a JSONB string, not a foreign key.
     _task_types = []
     if task_types:
-        valid = {m.value for m in TaskTypeEnum}
+        valid = {entry["name"] for entry in await inference_type_cache.get_all(db)}
         _task_types = [t.strip().lower() for t in task_types.split(",") if t.strip().lower() in valid]
     items, total = await svc.list_models(
         task_types=_task_types or None,
