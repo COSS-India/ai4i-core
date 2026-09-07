@@ -5,6 +5,7 @@ import {
   Box,
   Button,
   FormControl,
+  FormErrorMessage,
   FormLabel,
   HStack,
   Input,
@@ -119,11 +120,6 @@ export default function ApiKeyBulkBudgetModal({
                   <Text fontWeight="600" fontSize="sm">
                     {row.key_name}
                   </Text>
-                  {row.rowError ? (
-                    <Text fontSize="xs" color="red.500" mt={1}>
-                      {row.rowError}
-                    </Text>
-                  ) : null}
                 </Td>
                 <Td>
                   <Text fontSize="sm">{formatPct(row.consumed_percentage)}</Text>
@@ -132,14 +128,17 @@ export default function ApiKeyBulkBudgetModal({
                   </Text>
                 </Td>
                 <Td>
-                  <PercentageStepper
-                    variant="inline"
-                    value={row.pctInput}
-                    onChange={(next) => onPctChange(row.api_key_id, next)}
-                    onBoundHit={(bound) => onPctBoundHit(row.api_key_id, bound)}
-                    min={row.consumed_percentage ?? 0}
-                    max={100}
-                  />
+                  <FormControl isInvalid={Boolean(row.rowError)}>
+                    <PercentageStepper
+                      variant="inline"
+                      value={row.pctInput}
+                      onChange={(next) => onPctChange(row.api_key_id, next)}
+                      onBoundHit={(bound) => onPctBoundHit(row.api_key_id, bound)}
+                    />
+                    {row.rowError ? (
+                      <FormErrorMessage mt={1}>{row.rowError}</FormErrorMessage>
+                    ) : null}
+                  </FormControl>
                 </Td>
                 <Td>
                   <Input

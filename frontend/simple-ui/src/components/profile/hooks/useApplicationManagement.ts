@@ -36,9 +36,11 @@ import {
   keyWouldDropBelowConsumed,
   mapAllocationError,
   mapBelowConsumedError,
+  percentageBoundMessage,
   totalApplicationsOver100,
 } from "../../../config/budgetMessages";
 import { FIELD_HINTS } from "../../../config/fieldHints";
+import type { PercentageBound } from "../../common/PercentageStepper";
 
 const PAGE_SIZE = 25;
 
@@ -529,17 +531,13 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     [tenantBudget, onBulkRowFocus],
   );
 
-  const onBulkPctBoundHit = useCallback((applicationId: string, bound: "min" | "max" | "floor" | "ceiling") => {
+  const onBulkPctBoundHit = useCallback((applicationId: string, bound: PercentageBound) => {
     setBulkRows((prev) =>
-      prev.map((row) => {
-        if (row.application_id !== applicationId) return row;
-        if (!isApplicationBudgetEditable(row.status)) return row;
-        const rowError =
-          bound === "min" || bound === "floor"
-            ? BUDGET_VALIDATION.budgetCannotBeNegative
-            : BUDGET_VALIDATION.percentageMustBeBetween0And100;
-        return { ...row, rowError };
-      }),
+      prev.map((row) =>
+        row.application_id === applicationId && isApplicationBudgetEditable(row.status)
+          ? { ...row, rowError: percentageBoundMessage(bound) }
+          : row,
+      ),
     );
   }, []);
 
@@ -879,26 +877,8 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
       setBudgetDraft(next);
       setBudgetStepperHint(null);
     },
-    onBudgetBoundHit: (bound: "min" | "max" | "floor" | "ceiling") => {
-      if (bound === "min") {
-        setBudgetStepperHint(BUDGET_VALIDATION.budgetCannotBeNegative);
-        return;
-      }
-      if (bound === "max") {
-        setBudgetStepperHint(BUDGET_VALIDATION.percentageMustBeBetween0And100);
-        return;
-      }
-      if (bound === "floor") {
-        if (budgetFloor > 0) {
-          setBudgetStepperHint(belowConsumedPctRaw(budgetFloor));
-          return;
-        }
-        setBudgetStepperHint(BUDGET_VALIDATION.budgetCannotBeNegative);
-        return;
-      }
-      // ceiling — available Institution allocation
-      const wouldBe = budgetOthersAllocated + budgetAvailable + 1;
-      setBudgetStepperHint(totalApplicationsOver100(wouldBe));
+    onBudgetBoundHit: (bound: PercentageBound) => {
+      setBudgetStepperHint(percentageBoundMessage(bound));
     },
     budgetStepperHint,
     budgetLiveTotal,

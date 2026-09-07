@@ -17,6 +17,13 @@ export const BUDGET_VALIDATION = {
   institutionBudgetNotSet: "Institution budget is not set.",
 } as const;
 
+/** Message for hard 0–100 rejects from PercentageStepper. */
+export function percentageBoundMessage(bound: "min" | "max"): string {
+  return bound === "min"
+    ? BUDGET_VALIDATION.budgetCannotBeNegative
+    : BUDGET_VALIDATION.percentageMustBeBetween0And100;
+}
+
 /** API allocation error codes mapped to user-facing messages. */
 export const ALLOCATION_ERROR_MESSAGES = {
   applicationBudgetNotSet:

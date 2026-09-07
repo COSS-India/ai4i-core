@@ -110,9 +110,6 @@ export default function ApplicationBulkBudgetModal({
                       Inactive
                     </Badge>
                   ) : null}
-                  {row.rowError ? (
-                    <Text fontSize="xs" color="red.500" mt={1}>{row.rowError}</Text>
-                  ) : null}
                 </Td>
                 <Td>
                   {row.consumed_percentage != null ? (
@@ -122,7 +119,7 @@ export default function ApplicationBulkBudgetModal({
                         {formatSpendMoney(row.consumed_budget ?? 0, currency)}
                       </Text>
                     </>
-                  ) : row.rowError ? (
+                  ) : row.rowError?.startsWith("Could not load") ? (
                     <Text fontSize="sm" color="red.500">
                       Load failed — refocus to retry
                     </Text>
@@ -140,12 +137,11 @@ export default function ApplicationBulkBudgetModal({
                       onChange={(next) => onPctChange(row.application_id, next)}
                       onBoundHit={(bound) => onPctBoundHit(row.application_id, bound)}
                       onFocus={() => onRowFocus(row.application_id)}
-                      min={
-                        row.consumed_percentage != null ? row.consumed_percentage : 0
-                      }
-                      max={100}
                       isDisabled={!editable}
                     />
+                    {row.rowError ? (
+                      <FormErrorMessage mt={1}>{row.rowError}</FormErrorMessage>
+                    ) : null}
                   </FormControl>
                 </Td>
                 <Td>

@@ -19,9 +19,11 @@ import {
   BUDGET_VALIDATION,
   mapAllocationError,
   mapBelowConsumedError,
+  percentageBoundMessage,
 } from "../../../config/budgetMessages";
 import { FIELD_HINTS } from "../../../config/fieldHints";
 import type { AllocationValue } from "../../../services/allocationService";
+import type { PercentageBound } from "../../common/PercentageStepper";
 
 export type KeyBudgetDraft = {
   api_key_id: number;
@@ -339,16 +341,13 @@ export function useApiKeyBudgetEdit({
     [applicationBudget],
   );
 
-  const onPctBoundHit = useCallback((apiKeyId: number, bound: "min" | "max" | "floor" | "ceiling") => {
+  const onPctBoundHit = useCallback((apiKeyId: number, bound: PercentageBound) => {
     setRows((prev) =>
-      prev.map((row) => {
-        if (row.api_key_id !== apiKeyId) return row;
-        const rowError =
-          bound === "min" || bound === "floor"
-            ? BUDGET_VALIDATION.budgetCannotBeNegative
-            : BUDGET_VALIDATION.percentageMustBeBetween0And100;
-        return { ...row, rowError };
-      }),
+      prev.map((row) =>
+        row.api_key_id === apiKeyId
+          ? { ...row, rowError: percentageBoundMessage(bound) }
+          : row,
+      ),
     );
   }, []);
 

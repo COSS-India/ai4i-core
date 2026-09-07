@@ -33,7 +33,7 @@ import FieldHint from "../common/FieldHint";
 import InfoTip from "../common/InfoTip";
 import PercentageStepper from "../common/PercentageStepper";
 import { FIELD_HINTS } from "../../config/fieldHints";
-import { BUDGET_VALIDATION } from "../../config/budgetMessages";
+import { percentageBoundMessage } from "../../config/budgetMessages";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
 import type { Application } from "../../types/application";
 import {
@@ -552,8 +552,6 @@ export default function ApplicationManagementTab({
             <PercentageStepper
               value={mgr.budgetDraft}
               onChange={mgr.setBudgetDraft}
-              min={mgr.budgetFloor > 0 ? mgr.budgetFloor : 0}
-              max={mgr.budgetAvailable}
               onBoundHit={mgr.onBudgetBoundHit}
               isDisabled={mgr.selected?.status !== "ACTIVE"}
             />
@@ -670,26 +668,7 @@ function ApplicationIdentityFields({
               setBoundHint(null);
               setForm((prev) => ({ ...prev, allocated_percentage: next }));
             }}
-            min={0}
-            max={Math.max(0, remainingPct)}
-            onBoundHit={(bound) => {
-              if (bound === "min") {
-                setBoundHint(BUDGET_VALIDATION.budgetCannotBeNegative);
-                return;
-              }
-              if (bound === "max") {
-                setBoundHint(BUDGET_VALIDATION.percentageMustBeBetween0And100);
-                return;
-              }
-              if (bound === "floor") {
-                setBoundHint(BUDGET_VALIDATION.budgetCannotBeNegative);
-                return;
-              }
-              // ceiling — available % at this Institution
-              setBoundHint(
-                `Cannot exceed ${remainingPct.toFixed(2)}% still available.`,
-              );
-            }}
+            onBoundHit={(bound) => setBoundHint(percentageBoundMessage(bound))}
           />
           <FormErrorMessage>{budgetError}</FormErrorMessage>
           <FieldHint show={!budgetError}>
