@@ -594,6 +594,7 @@ export default function ApplicationManagementTab({
         rows={mgr.bulkRows}
         onRowFocus={mgr.onBulkRowFocus}
         onPctChange={mgr.onBulkPctChange}
+        onPctBoundHit={mgr.onBulkPctBoundHit}
         onAmountChange={mgr.onBulkAmountChange}
         onSave={() => void mgr.handleSaveBulkBudget()}
         canSave={mgr.bulkCanSave}
@@ -672,10 +673,21 @@ function ApplicationIdentityFields({
             min={0}
             max={Math.max(0, remainingPct)}
             onBoundHit={(bound) => {
+              if (bound === "min") {
+                setBoundHint(BUDGET_VALIDATION.budgetCannotBeNegative);
+                return;
+              }
+              if (bound === "max") {
+                setBoundHint(BUDGET_VALIDATION.percentageMustBeBetween0And100);
+                return;
+              }
+              if (bound === "floor") {
+                setBoundHint(BUDGET_VALIDATION.budgetCannotBeNegative);
+                return;
+              }
+              // ceiling — available % at this Institution
               setBoundHint(
-                bound === "min"
-                  ? BUDGET_VALIDATION.budgetCannotBeNegative
-                  : BUDGET_VALIDATION.percentageMustBeBetween0And100,
+                `Cannot exceed ${remainingPct.toFixed(2)}% still available.`,
               );
             }}
           />

@@ -225,10 +225,17 @@ export default function CreateApiKeyTab({
                 max={create.availablePct}
                 placeholder={FIELD_HINTS.apiKey.budget.placeholder}
                 onBoundHit={(bound) => {
+                  if (bound === "min" || bound === "floor") {
+                    setBudgetBoundHint(BUDGET_VALIDATION.budgetCannotBeNegative);
+                    return;
+                  }
+                  if (bound === "max") {
+                    setBudgetBoundHint(BUDGET_VALIDATION.percentageMustBeBetween0And100);
+                    return;
+                  }
+                  // ceiling — unallocated share of this Application
                   setBudgetBoundHint(
-                    bound === "min"
-                      ? BUDGET_VALIDATION.budgetCannotBeNegative
-                      : BUDGET_VALIDATION.percentageMustBeBetween0And100,
+                    `Budget can't exceed ${create.formatAvailablePct()}% — that's all that's unallocated within this Application.`,
                   );
                 }}
               />

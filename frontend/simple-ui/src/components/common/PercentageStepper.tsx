@@ -10,7 +10,8 @@ import {
   Text,
 } from "@chakra-ui/react";
 
-export type PercentageBound = "min" | "max";
+
+export type PercentageBound = "min" | "max" | "floor" | "ceiling";
 
 type PercentageStepperProps = {
   value: string;
@@ -105,7 +106,7 @@ export default function PercentageStepper({
         step={1}
         precision={2}
         clampValueOnBlur={false}
-        keepWithinRange={false}
+        keepWithinRange
         bg="white"
         w="120px"
         isDisabled={isDisabled}
@@ -115,13 +116,13 @@ export default function PercentageStepper({
           <NumberIncrementStepper
             cursor={atMax ? "not-allowed" : undefined}
             onClick={() => {
-              if (atMax) onBoundHit?.("max");
+              if (atMax) onBoundHit?.("ceiling");
             }}
           />
           <NumberDecrementStepper
             cursor={atMin || numeric == null ? "not-allowed" : undefined}
             onClick={() => {
-              if (atMin || numeric == null) onBoundHit?.("min");
+              if (atMin || numeric == null) onBoundHit?.("floor");
             }}
           />
         </NumberInputStepper>

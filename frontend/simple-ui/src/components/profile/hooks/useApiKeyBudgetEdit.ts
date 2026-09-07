@@ -339,6 +339,19 @@ export function useApiKeyBudgetEdit({
     [applicationBudget],
   );
 
+  const onPctBoundHit = useCallback((apiKeyId: number, bound: "min" | "max" | "floor" | "ceiling") => {
+    setRows((prev) =>
+      prev.map((row) => {
+        if (row.api_key_id !== apiKeyId) return row;
+        const rowError =
+          bound === "min" || bound === "floor"
+            ? BUDGET_VALIDATION.budgetCannotBeNegative
+            : BUDGET_VALIDATION.percentageMustBeBetween0And100;
+        return { ...row, rowError };
+      }),
+    );
+  }, []);
+
   const onAmountChange = useCallback(
     (apiKeyId: number, value: string) => {
       setRows((prev) =>
@@ -421,6 +434,7 @@ export function useApiKeyBudgetEdit({
     liveTotalPct,
     canSave,
     onPctChange,
+    onPctBoundHit,
     onAmountChange,
     save,
   };

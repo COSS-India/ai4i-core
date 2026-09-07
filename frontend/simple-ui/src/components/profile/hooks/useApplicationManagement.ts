@@ -529,6 +529,20 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     [tenantBudget, onBulkRowFocus],
   );
 
+  const onBulkPctBoundHit = useCallback((applicationId: string, bound: "min" | "max" | "floor" | "ceiling") => {
+    setBulkRows((prev) =>
+      prev.map((row) => {
+        if (row.application_id !== applicationId) return row;
+        if (!isApplicationBudgetEditable(row.status)) return row;
+        const rowError =
+          bound === "min" || bound === "floor"
+            ? BUDGET_VALIDATION.budgetCannotBeNegative
+            : BUDGET_VALIDATION.percentageMustBeBetween0And100;
+        return { ...row, rowError };
+      }),
+    );
+  }, []);
+
   const onBulkAmountChange = useCallback(
     (applicationId: string, value: string) => {
       setBulkRows((prev) =>
@@ -865,8 +879,16 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
       setBudgetDraft(next);
       setBudgetStepperHint(null);
     },
-    onBudgetBoundHit: (bound: "min" | "max") => {
+    onBudgetBoundHit: (bound: "min" | "max" | "floor" | "ceiling") => {
       if (bound === "min") {
+        setBudgetStepperHint(BUDGET_VALIDATION.budgetCannotBeNegative);
+        return;
+      }
+      if (bound === "max") {
+        setBudgetStepperHint(BUDGET_VALIDATION.percentageMustBeBetween0And100);
+        return;
+      }
+      if (bound === "floor") {
         if (budgetFloor > 0) {
           setBudgetStepperHint(belowConsumedPctRaw(budgetFloor));
           return;
@@ -874,7 +896,9 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
         setBudgetStepperHint(BUDGET_VALIDATION.budgetCannotBeNegative);
         return;
       }
-      setBudgetStepperHint(BUDGET_VALIDATION.percentageMustBeBetween0And100);
+      // ceiling — available Institution allocation
+      const wouldBe = budgetOthersAllocated + budgetAvailable + 1;
+      setBudgetStepperHint(totalApplicationsOver100(wouldBe));
     },
     budgetStepperHint,
     budgetLiveTotal,
@@ -892,6 +916,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     openBulkBudget,
     onBulkRowFocus,
     onBulkPctChange,
+    onBulkPctBoundHit,
     onBulkAmountChange,
     handleSaveBulkBudget,
     statusBusyId,

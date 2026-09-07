@@ -20,7 +20,9 @@ import {
 } from "@chakra-ui/react";
 import StandardModal from "../common/StandardModal";
 import InfoTip from "../common/InfoTip";
-import PercentageStepper from "../common/PercentageStepper";
+import PercentageStepper, {
+  type PercentageBound,
+} from "../common/PercentageStepper";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import { editKeyBudgetTitle, totalApiKeysExceeds100 } from "../../config/budgetMessages";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
@@ -49,6 +51,7 @@ export default function ApiKeyBulkBudgetModal({
   liveTotalPct,
   rows,
   onPctChange,
+  onPctBoundHit,
   onAmountChange,
   onSave,
   canSave,
@@ -68,6 +71,7 @@ export default function ApiKeyBulkBudgetModal({
   liveTotalPct: number;
   rows: KeyBudgetDraft[];
   onPctChange: (apiKeyId: number, value: string) => void;
+  onPctBoundHit: (apiKeyId: number, bound: PercentageBound) => void;
   onAmountChange: (apiKeyId: number, value: string) => void;
   onSave: () => void;
   canSave: boolean;
@@ -132,6 +136,7 @@ export default function ApiKeyBulkBudgetModal({
                     variant="inline"
                     value={row.pctInput}
                     onChange={(next) => onPctChange(row.api_key_id, next)}
+                    onBoundHit={(bound) => onPctBoundHit(row.api_key_id, bound)}
                     min={row.consumed_percentage ?? 0}
                     max={100}
                   />
@@ -161,6 +166,7 @@ export default function ApiKeyBulkBudgetModal({
     isLoading,
     rows,
     onPctChange,
+    onPctBoundHit,
     onAmountChange,
     applicationBudgetUnset,
   ]);

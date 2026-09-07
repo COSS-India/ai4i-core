@@ -20,7 +20,9 @@ import {
 } from "@chakra-ui/react";
 import StandardModal from "../common/StandardModal";
 import InfoTip from "../common/InfoTip";
-import PercentageStepper from "../common/PercentageStepper";
+import PercentageStepper, {
+  type PercentageBound,
+} from "../common/PercentageStepper";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import { totalApplicationsExceeds100 } from "../../config/budgetMessages";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
@@ -45,6 +47,7 @@ export default function ApplicationBulkBudgetModal({
   rows,
   onRowFocus,
   onPctChange,
+  onPctBoundHit,
   onAmountChange,
   onSave,
   canSave,
@@ -61,6 +64,7 @@ export default function ApplicationBulkBudgetModal({
   rows: BulkBudgetDraft[];
   onRowFocus: (applicationId: string) => void;
   onPctChange: (applicationId: string, value: string) => void;
+  onPctBoundHit: (applicationId: string, bound: PercentageBound) => void;
   onAmountChange: (applicationId: string, value: string) => void;
   onSave: () => void;
   canSave: boolean;
@@ -134,6 +138,7 @@ export default function ApplicationBulkBudgetModal({
                       variant="inline"
                       value={row.pctInput}
                       onChange={(next) => onPctChange(row.application_id, next)}
+                      onBoundHit={(bound) => onPctBoundHit(row.application_id, bound)}
                       onFocus={() => onRowFocus(row.application_id)}
                       min={
                         row.consumed_percentage != null ? row.consumed_percentage : 0
@@ -190,6 +195,7 @@ export default function ApplicationBulkBudgetModal({
     rows,
     currency,
     onPctChange,
+    onPctBoundHit,
     onAmountChange,
     onRowFocus,
     institutionBudgetUnset,
