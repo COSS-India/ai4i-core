@@ -72,6 +72,22 @@ class RoleRepository(BaseRepository):
         )
         return result.scalar_one()
 
+    async def count_admins_in_tenant(self, tenant_id: int) -> int:
+        """Count active, non-deleted ADMIN (platform admin) users in a given tenant."""
+        result = await self._db.execute(
+            select(sa_func.count())
+            .select_from(UserRole)
+            .join(Role, Role.id == UserRole.role_id)
+            .join(User, User.id == UserRole.user_id)
+            .where(
+                Role.name == RoleName.ADMIN.value,
+                User.tenant_id == tenant_id,
+                User.is_delete.isnot(True),
+                User.is_active.is_(True),
+            )
+        )
+        return result.scalar_one()
+
     async def get_tenant_admins(self, tenant_id: int) -> list[User]:
         """Return all active, non-deleted TENANT ADMIN users for a given tenant."""
         result = await self._db.execute(
