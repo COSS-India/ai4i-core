@@ -7,12 +7,17 @@ their permission_ids from the in-process role_permission_cache.
 import logging
 from uuid import UUID
 
+from sqlalchemy import text
+
 from app.core.exceptions import AppError, EntityNotFoundError, ValidationError
 from app.models.role import Permission, Role
 from app.core.constants import RoleName
 from app.utils.common import role_name_to_str
 from app.repositories.role_repository import RoleRepository
+from app.repositories.tenant_repository import TenantRepository
+from app.repositories.user_repository import UserRepository
 from app.services.role_permission_cache import role_permission_cache
+from app.services.tenant_lifecycle import is_default_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +27,15 @@ def _normalize_service_slug(value: str) -> str:
 
 
 class RoleService:
-    def __init__(self, role_repo: RoleRepository) -> None:
+    def __init__(
+        self,
+        role_repo: RoleRepository,
+        user_repo: UserRepository,
+        tenant_repo: TenantRepository,
+    ) -> None:
         self._roles = role_repo
+        self._users = user_repo
+        self._tenants = tenant_repo
 
     @staticmethod
     def _expanded_excluded_resources_for_platform_inference() -> tuple[str, ...]:
@@ -46,6 +58,53 @@ class RoleService:
         if not await self._roles.get_role_by_name(key):
             raise EntityNotFoundError(f"Role '{key}'")
 
+    async def _lock_default_org_admin_roster(self, user_id: UUID) -> None:
+        """Take the per-tenant advisory lock used to guard the ADMIN roster.
+
+        Called before both assigning and removing ADMIN so the two can't
+        interleave: without this, a promote racing a remove's count check in
+        ``_assert_role_removal_keeps_a_platform_admin`` could let the count
+        used there go stale. No-ops outside the Default Organization.
+        """
+        target = await self._users.get_by_id(user_id)
+        if target is None or target.tenant_id is None:
+            return
+        tenant = await self._tenants.get_by_id(target.tenant_id)
+        if tenant is None or not is_default_tenant(tenant):
+            return
+        await self._roles._db.execute(
+            text("SELECT pg_advisory_xact_lock(:tid)"), {"tid": tenant.id}
+        )
+
+    async def _assert_role_removal_keeps_a_platform_admin(self, user_id: UUID) -> None:
+        """Raise 422 if removing ADMIN would leave the Default Organization with none.
+
+        This is the authoritative check: suspend and delete (``TenantService``)
+        also guard against the last ADMIN, but role removal via ``/roles/remove``
+        is the one path that could drop it to zero without going through either
+        — the Institution Management UI's role dropdown demotes by assigning
+        the new role then removing ADMIN, bypassing both suspend and delete.
+        """
+        target = await self._users.get_by_id(user_id)
+        if target is None or not target.is_active or target.tenant_id is None:
+            return
+        tenant = await self._tenants.get_by_id(target.tenant_id)
+        if tenant is None or not is_default_tenant(tenant):
+            return
+        await self._roles._db.execute(
+            text("SELECT pg_advisory_xact_lock(:tid)"), {"tid": tenant.id}
+        )
+        count = await self._roles.count_admins_in_tenant(tenant.id)
+        if count <= 1:
+            raise AppError(
+                message=(
+                    "Cannot remove the Admin role from the only Admin in the "
+                    "Default Organization. Promote another user to Admin first."
+                ),
+                code="LAST_PLATFORM_ADMIN",
+                status_code=422,
+            )
+
     async def assign_role(
         self, user_id: UUID, role_name: str | RoleName, *, commit: bool = True
     ) -> None:
@@ -60,6 +119,9 @@ class RoleService:
         role = await self._roles.get_role_by_name(key)
         if not role:
             raise EntityNotFoundError(f"Role '{key}'")
+
+        if key == RoleName.ADMIN.value:
+            await self._lock_default_org_admin_roster(user_id)
 
         existing = await self._roles.get_user_role_record(user_id, role.id)
         if existing:
@@ -78,6 +140,8 @@ class RoleService:
         role = await self._roles.get_role_by_name(key)
         if not role:
             raise EntityNotFoundError(f"Role '{key}'")
+        if key == RoleName.ADMIN.value:
+            await self._assert_role_removal_keeps_a_platform_admin(user_id)
         removed = await self._roles.remove_role(user_id, role.id)
         if not removed:
             raise AppError(message="The user does not have this role assigned.", code="NOT_FOUND", status_code=404)

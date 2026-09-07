@@ -57,9 +57,16 @@ class RoleRepository(BaseRepository):
         return roles_by_user
 
     async def count_tenant_admins_in_tenant(self, tenant_id: int) -> int:
-        """Count active, non-deleted TENANT ADMIN users in a given tenant."""
+        """Count active, non-deleted TENANT ADMIN users in a given tenant.
+
+        Counts distinct users, not join rows: nothing stops two concurrent
+        ``assign_role`` calls from inserting duplicate ``(user, role)`` rows
+        (no unique constraint on ``user_role``, and the read-then-insert guard
+        in ``RoleService.assign_role`` isn't atomic), which would otherwise
+        inflate this count and let the last real admin through.
+        """
         result = await self._db.execute(
-            select(sa_func.count())
+            select(sa_func.count(sa_func.distinct(User.id)))
             .select_from(UserRole)
             .join(Role, Role.id == UserRole.role_id)
             .join(User, User.id == UserRole.user_id)
@@ -73,9 +80,12 @@ class RoleRepository(BaseRepository):
         return result.scalar_one()
 
     async def count_admins_in_tenant(self, tenant_id: int) -> int:
-        """Count active, non-deleted ADMIN (platform admin) users in a given tenant."""
+        """Count active, non-deleted ADMIN (platform admin) users in a given tenant.
+
+        Counts distinct users — see ``count_tenant_admins_in_tenant`` above.
+        """
         result = await self._db.execute(
-            select(sa_func.count())
+            select(sa_func.count(sa_func.distinct(User.id)))
             .select_from(UserRole)
             .join(Role, Role.id == UserRole.role_id)
             .join(User, User.id == UserRole.user_id)
