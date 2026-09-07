@@ -14,11 +14,6 @@ import {
   Heading,
   IconButton,
   Input,
-  NumberDecrementStepper,
-  NumberIncrementStepper,
-  NumberInput,
-  NumberInputField,
-  NumberInputStepper,
   SimpleGrid,
   Text,
   Textarea,
@@ -36,8 +31,9 @@ import StandardModal from "../common/StandardModal";
 import ApplicationBulkBudgetModal from "./ApplicationBulkBudgetModal";
 import FieldHint from "../common/FieldHint";
 import InfoTip from "../common/InfoTip";
+import PercentageStepper from "../common/PercentageStepper";
 import { FIELD_HINTS } from "../../config/fieldHints";
-import { BUDGET_VALIDATION } from "../../config/budgetMessages";
+import { percentageBoundMessage } from "../../config/budgetMessages";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
 import type { Application } from "../../types/application";
 import {
@@ -124,62 +120,6 @@ function avatarGradient(name: string): string {
   for (let i = 0; i < name.length; i += 1) sum += name.charCodeAt(i);
   const [from, to] = AVATAR_COLORS[sum % AVATAR_COLORS.length];
   return `linear-gradient(135deg, ${from}, ${to})`;
-}
-
-function PercentageStepper({
-  value,
-  onChange,
-  min = 0,
-  max = 100,
-  onBoundHit,
-  isDisabled = false,
-}: {
-  value: string;
-  onChange: (next: string) => void;
-  min?: number;
-  max?: number;
-  onBoundHit?: (bound: "min" | "max") => void;
-  isDisabled?: boolean;
-}) {
-  const numeric = value.trim() === "" ? null : Number(value);
-  const atMin = numeric != null && Number.isFinite(numeric) && numeric <= min + 1e-6;
-  const atMax = numeric != null && Number.isFinite(numeric) && numeric >= max - 1e-6;
-
-  return (
-    <HStack maxW="180px" spacing={2} align="center">
-      <NumberInput
-        value={value}
-        onChange={(next) => onChange(next)}
-        min={min}
-        max={max}
-        step={1}
-        precision={2}
-        clampValueOnBlur
-        bg="white"
-        w="120px"
-        isDisabled={isDisabled}
-      >
-        <NumberInputField />
-        <NumberInputStepper>
-          <NumberIncrementStepper
-            cursor={atMax ? "not-allowed" : undefined}
-            onClick={() => {
-              if (atMax) onBoundHit?.("max");
-            }}
-          />
-          <NumberDecrementStepper
-            cursor={atMin || numeric == null ? "not-allowed" : undefined}
-            onClick={() => {
-              if (atMin || numeric == null) onBoundHit?.("min");
-            }}
-          />
-        </NumberInputStepper>
-      </NumberInput>
-      <Text color="gray.500" fontWeight="semibold">
-        %
-      </Text>
-    </HStack>
-  );
 }
 
 export default function ApplicationManagementTab({
@@ -612,8 +552,6 @@ export default function ApplicationManagementTab({
             <PercentageStepper
               value={mgr.budgetDraft}
               onChange={mgr.setBudgetDraft}
-              min={mgr.budgetFloor > 0 ? mgr.budgetFloor : 0}
-              max={mgr.budgetAvailable}
               onBoundHit={mgr.onBudgetBoundHit}
               isDisabled={mgr.selected?.status !== "ACTIVE"}
             />
@@ -654,6 +592,7 @@ export default function ApplicationManagementTab({
         rows={mgr.bulkRows}
         onRowFocus={mgr.onBulkRowFocus}
         onPctChange={mgr.onBulkPctChange}
+        onPctBoundHit={mgr.onBulkPctBoundHit}
         onAmountChange={mgr.onBulkAmountChange}
         onSave={() => void mgr.handleSaveBulkBudget()}
         canSave={mgr.bulkCanSave}
@@ -729,15 +668,7 @@ function ApplicationIdentityFields({
               setBoundHint(null);
               setForm((prev) => ({ ...prev, allocated_percentage: next }));
             }}
-            min={0}
-            max={Math.max(0, remainingPct)}
-            onBoundHit={(bound) => {
-              setBoundHint(
-                bound === "min"
-                  ? BUDGET_VALIDATION.budgetCannotBeNegative
-                  : `Cannot exceed ${remainingPct.toFixed(2)}% still available.`,
-              );
-            }}
+            onBoundHit={(bound) => setBoundHint(percentageBoundMessage(bound))}
           />
           <FormErrorMessage>{budgetError}</FormErrorMessage>
           <FieldHint show={!budgetError}>

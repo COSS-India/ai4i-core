@@ -8,6 +8,7 @@ export const BUDGET_VALIDATION = {
   budgetCannotBeNegative: "Budget cannot be negative.",
   budgetMustBeGreaterThanZero:
     "Budget must be greater than 0% — a 0% allocation is a Key that can never be used.",
+  percentageMustBeBetween0And100: "Enter a percentage between 0 and 100.",
   enterValidNumber: "Enter a valid number.",
   enterValidPercentage: "Enter a valid percentage.",
   applicationBudgetNotAssigned: "This Application has no Budget (₹) assigned yet.",
@@ -15,6 +16,13 @@ export const BUDGET_VALIDATION = {
     "Enter a Budget amount after this Application has a Budget (₹) assigned.",
   institutionBudgetNotSet: "Institution budget is not set.",
 } as const;
+
+/** Message for hard 0–100 rejects from PercentageStepper. */
+export function percentageBoundMessage(bound: "min" | "max"): string {
+  return bound === "min"
+    ? BUDGET_VALIDATION.budgetCannotBeNegative
+    : BUDGET_VALIDATION.percentageMustBeBetween0And100;
+}
 
 /** API allocation error codes mapped to user-facing messages. */
 export const ALLOCATION_ERROR_MESSAGES = {
