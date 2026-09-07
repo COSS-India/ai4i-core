@@ -6,6 +6,70 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/).
 
 
+## [2.6.0] - 2026-09-07
+
+> Applications and budget allocation release, 70 PRs merged
+
+### Added
+- Applications as a first-class entity: `applications` table, onboarding and management APIs, and a default application seeded per institution
+- Three-level Budget Allocation, one shared re-fit algorithm across `PUT /auth/tenants/{id}/budget-allocation`, `PUT /auth/applications/{id}/budget-allocation` and `PUT /auth/api-keys/{id}/budget-allocation`, each taking a discriminated `{type: PERCENTAGE|FIXED, value}` allocation object
+- Application Usage dashboard, and application-level usage on the Metering Dashboard for Institution Admins
+- Tab-based navigation on the Usage Dashboard, with LLM and NLP task types across every tab and a task-type grouped usage summary donut
+- Key Metrics on the Usage Dashboard: 15-day new-institution window and model usage growth (renamed from Platform Adoption)
+- Applications Management UI workflows, plus Tenant Management and API Key Management UI enhancements
+- `application_id` label on all Prometheus metrics
+- Institution Details view for the Institution Admin
+- Role-based onboarding guide selection in portal navigation
+- Field-level guidance for institution, model and service creation
+- Swagger request and response examples across auth-service, platform-core and inference
+
+### Changed
+- Billing deducts per API key against `budget_usage` instead of a tenant-level wallet. Quota is calculated from `tier_quotas` using `tier_id` and `api_key_id` propagated through request context and OTel spans via `X-Tier-ID` and `X-API-Key-ID`
+- API key ownership moved from `user_id` to `application_id`
+- `PATCH /auth/tenants/{id}/budget` cascades atomically into applications and their keys in one transaction; a floor-check failure anywhere rolls the whole revision back
+- Revoked API keys are excluded from every allocation re-fit pool and rejected on an explicit edit. Their historical spend still counts toward their application's consumed floor
+- `ppu_` prefix dropped from the tiers, tier-quota and quota-usage tables, and from the model, repository, service and test files
+- `ppu_tenant_tier_assignments` dropped
+- Updated Tenant and API Key contract APIs; list API keys exposes `application_name` and `tenant_id`, and API key validation returns `created_by` as `user_id`
+- AI Switch branding updated to AI4I Orchestrate, with the platform name and logo configurable in one place
+- Currency values rounded to the nearest whole number across the UI
+- Kafka consumer reliability improvements
+- Model Management and Service Management navigation hidden for anonymous users
+- Obsolete Budget and Usage Summary metrics, and the Model Usage Total/Active Models and growth cards, removed
+
+### Fixed
+- Budget cap gaps on API key creation: revoked-key spend counted against the cap, explicit zero allocation, and a negative re-fit remainder clamped
+- Requests no longer pass through unblocked on a zero or null budget
+- Rounding drift no longer locks out application budget edits
+- Sibling re-fit at the API key level now genuinely resizes unlisted application-level siblings
+- The three budget-allocation endpoints had no `api_permissions.json` entry, so the gateway forward-auth layer treated them as public. The in-service role check still rejected unauthorized callers, but the gateway-level defence in depth was missing
+- Failed request traces appear in the traces UI
+- `request_duration` carries `tenant_id`
+- Usage endpoints broken by the applications and budget schema change
+- New Institutions (Last 15 Days) KPI count
+- Login internal server error
+- Guest user role corrected by migration
+- Usage Viewer role: delete permission, the Profile delete-account option, and the stray Back button on the Usage Dashboard
+- Blank `full_name` no longer sent on `PUT /auth/me`, with min-length and whitespace guards server side
+- Character limits and helper text across institution, user, API key, tier and service fields, and min/max length validation on tier name
+- Swagger version matched to the branch name
+- "All" option added to filter dropdowns across the management modules
+
+### Security
+- Remediated a DOM-based cross-site scripting vulnerability (AI4IDS-2866)
+
+### Migration hygiene
+- Removed a chain-breaking migration and repaired the broken downgrades
+- Migration upgrades no longer write revision files, and the inverted `tenants.status` drift hooks were removed
+
+### Upgrade notes
+- Shared library `ai4i-core` 1.0.22 to 1.0.23
+- Migrations: eight on the auth database (applications, API key and tenant schema changes, permission grants, guest role fix) and four on the core database (rename the `ppu_` tables and add `budget_usage`, add its timestamps, drop `ppu_tenant_tier_assignments`, drop the cost accumulator and expand `budget_usage`)
+- API keys are re-parented from users to applications, and one default application is seeded per institution. Existing keys keep working under that default application
+- Callers of the removed single `PUT /auth/allocations` endpoint must move to the three level-specific endpoints, and to the `{type, value}` allocation object in place of the `allocated_percentage` and `allocated_budget` pair
+
+---
+
 ## [2.5.0] - 2026-08-24
 
 > Metering and usage release, 67 PRs merged
