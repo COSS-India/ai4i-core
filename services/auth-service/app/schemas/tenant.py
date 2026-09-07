@@ -5,24 +5,29 @@ Tenant request/response schemas.
 import re
 import unicodedata
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
-from typing import Any, Optional, Union
+from typing import Any, Literal, Optional, Union
 from uuid import UUID
 
-from pydantic import AliasChoices, EmailStr, Field, StrictBool, field_serializer, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    ConfigDict,
+    EmailStr,
+    Field,
+    StrictBool,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from app.models.user import CreationType
 from app.schemas.base import BaseSchema
 from app.schemas.common import MessageData, SuccessResponse
+from app.schemas.text_validators import check_name_chars as _check_name_chars
+from app.schemas.text_validators import clean_text as _clean_text
 from app.models.tenant import TenantStatus
 from app.core.constants import RoleName
-
-# Invisible Unicode characters that str.strip() does not remove:
-# soft hyphen, zero-width space/non-joiner/joiner, LTR/RTL marks,
-# line/paragraph separators, zero-width no-break space (BOM).
-_INVISIBLE_CHARS = re.compile(
-    "[­​‌‍‎‏﻿]+"
-)
 
 # E.164 phone: + followed by 2–15 digits
 _E164_RE = re.compile(r"^\+[1-9]\d{1,14}$")
@@ -32,17 +37,6 @@ _PHONE_FORMAT_RE = re.compile(r"[ \-()\.]")
 
 # Punctuation allowed in organisation names beyond letters/digits
 _ORG_PUNCT = frozenset(" -.'/&(),")
-
-# Punctuation allowed in personal name fields
-_NAME_PUNCT = frozenset(" -'")
-
-
-def _clean_text(v: Any) -> Any:
-    """Strip invisible chars, trim whitespace, and NFC-normalise."""
-    if isinstance(v, str):
-        v = _INVISIBLE_CHARS.sub("", v).strip()
-        v = unicodedata.normalize("NFC", v)
-    return v
 
 
 def _check_org_chars(v: str) -> str:
@@ -64,27 +58,6 @@ def _check_org_chars(v: str) -> str:
             )
     if not has_alnum:
         raise ValueError("must contain at least one letter or digit")
-    return v
-
-
-def _check_name_chars(v: str) -> str:
-    """Validate personal name character set.
-
-    Allows Unicode letters and combining marks (covers Indic scripts,
-    accented Latin, etc.) plus spaces, hyphens, and apostrophes.
-    Requires at least one letter so punctuation-only values are rejected.
-    """
-    has_letter = False
-    for c in v:
-        cat = unicodedata.category(c)
-        if cat.startswith(("L", "M")):
-            has_letter = True
-        elif c not in _NAME_PUNCT:
-            raise ValueError(
-                "may only contain letters, spaces, hyphens, and apostrophes"
-            )
-    if not has_letter:
-        raise ValueError("must contain at least one letter")
     return v
 
 
@@ -117,12 +90,41 @@ class TenantUserRole(str, Enum):
 
 
 
+_TENANT_CREATE_EXAMPLE = {
+    "contact_name": "Jane Doe",
+    "organisation": "Acme Language Services",
+    "email": "admin@example.com",
+    "phone_number": "+919876543210",
+    "allocated_budget": 10000.00,
+    # plan_id / tier_id omitted: both are optional and independent
+    # (TenantService.create_tenant only assigns/verifies each when given —
+    # see plan_id/tier_id field descriptions), and a placeholder here would
+    # fail UUID parsing and 422 the prefilled body instead of creating a
+    # tenant. Add either (with a real id) to test plan/tier assignment at creation.
+}
+
+
 class TenantCreate(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_CREATE_EXAMPLE]})
+
     contact_name: str = Field(..., min_length=2, max_length=80)
     organisation: str = Field(..., min_length=2, max_length=100)
     email: EmailStr
     phone_number: Optional[str] = None
-    plan_id: Optional[UUID] = None
+    plan_id: Optional[UUID] = Field(
+        None, description="Pricing plan UUID. Replace the example value with a real plan ID from your system."
+    )
+    tier_id: Optional[UUID] = Field(
+        None, description="Pay-per-use tier UUID. Replace the example value with a real tier ID from your system."
+    )
+    # No ge=0 here: a negative value must surface as the contract's named
+    # 422 INVALID_BUDGET (checked in TenantService.create_tenant), not a
+    # generic Pydantic field-constraint error.
+    allocated_budget: Optional[Decimal] = Field(
+        None, max_digits=15, decimal_places=2, description="Initial budget, INR."
+    )
+    budget_effective_from: Optional[datetime] = None
+    budget_effective_to: Optional[datetime] = None
 
     @field_validator("organisation", "contact_name", mode="before")
     @classmethod
@@ -145,7 +147,17 @@ class TenantCreate(BaseSchema):
         return _normalize_phone(v, validate_e164=True)
 
 
+_TENANT_UPDATE_EXAMPLE = {
+    "contact_name": "Jane Doe",
+    "organisation": "Acme Language Services",
+    "email": "admin@example.com",
+    "phone_number": "+919876543210",
+}
+
+
 class TenantUpdate(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_UPDATE_EXAMPLE]})
+
     # max_length matches DB column (255) so existing stored values round-trip safely
     contact_name: Optional[str] = Field(None, min_length=2, max_length=255)
     organisation: Optional[str] = Field(None, min_length=2, max_length=255)
@@ -179,7 +191,14 @@ class TenantUpdate(BaseSchema):
         return _normalize_phone(v, validate_e164=False)
 
 
+_TENANT_STATUS_UPDATE_EXAMPLE = {
+    "status": "ACTIVE",
+}
+
+
 class TenantStatusUpdate(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_STATUS_UPDATE_EXAMPLE]})
+
     status: TenantStatus
 
 
@@ -201,9 +220,23 @@ class TenantResponse(BaseSchema):
     created_by: Optional[UUID] = None
     updated_at: Optional[datetime] = None
     updated_by: Optional[UUID] = None
+    tier_id: Optional[UUID] = None
+    allocated_budget: Optional[Decimal] = None
+    budget_effective_from: Optional[datetime] = None
+    budget_effective_to: Optional[datetime] = None
+
+
+_TENANT_USER_CREATE_EXAMPLE = {
+    "email": "user@example.com",
+    "full_name": "Jane Doe",
+    "phone_number": "+919876543210",
+    "role": "USER",
+}
 
 
 class TenantUserCreate(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_USER_CREATE_EXAMPLE]})
+
     email: EmailStr
     full_name: str = Field(..., min_length=2, max_length=80)
     phone_number: Optional[str] = None
@@ -231,13 +264,29 @@ class TenantUserCreateResponse(BaseSchema):
     message: str = "Tenant user provisioned. Share the setup link to complete onboarding."
 
 
+_TENANT_USER_STATUS_UPDATE_EXAMPLE = {
+    "is_active": True,
+}
+
+
 class TenantUserStatusUpdate(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_USER_STATUS_UPDATE_EXAMPLE]})
+
     # is_tenant_active is intentionally NOT accepted here: it is managed by the
     # tenant status API (PATCH /tenants/{id}/status → SUSPENDED/DEACTIVATED/ACTIVE).
     is_active: Optional[StrictBool] = None
 
 
+_TENANT_USER_UPDATE_EXAMPLE = {
+    "full_name": "Jane Doe",
+    "phone_number": "+919876543210",
+    "role": "USER",
+}
+
+
 class TenantUserUpdate(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_USER_UPDATE_EXAMPLE]})
+
     email: Optional[EmailStr] = None
     # max_length matches DB column (255) so existing stored values round-trip safely
     full_name: Optional[str] = Field(None, min_length=2, max_length=255)
@@ -310,6 +359,84 @@ class DeleteTenantUserData(BaseSchema):
     deleted: bool
 
 
+# ── Tier / budget ──
+
+_TENANT_TIER_ASSIGN_REQUEST_EXAMPLE = {
+    "tier_id": "<place your uuid here>",
+}
+
+
+class TenantTierAssignRequest(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_TIER_ASSIGN_REQUEST_EXAMPLE]})
+
+    # Deliberately str, not UUID: an invalid format must surface as the
+    # contract's named 400 (checked in TenantService.assign_tenant_tier),
+    # not FastAPI's automatic 422 for a failed UUID field parse.
+    tier_id: str = Field(
+        ..., description="Tier UUID (as a string). Replace the example value with a real tier ID from your system."
+    )
+
+
+class TenantTierAssignData(BaseSchema):
+    tenant_id: int
+    tier_id: UUID
+    updated_at: Optional[datetime] = None
+    updated_by: Optional[UUID] = None
+
+
+_TENANT_BUDGET_REQUEST_EXAMPLE = {
+    "action": "top-up",
+    "amount": 5000.00,
+}
+
+
+class TenantBudgetRequest(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_BUDGET_REQUEST_EXAMPLE]})
+
+    action: Literal["top-up", "top-down"]
+    amount: Decimal = Field(..., gt=0, max_digits=15, decimal_places=2)
+
+
+class TenantBudgetData(BaseSchema):
+    """Unwrapped — no success/data envelope. Matches the endpoint this
+    replaces (platform-core-service's PATCH /pay-per-use/tenant/budget)."""
+
+    tenant_id: int
+    allocated_budget: Optional[Decimal] = None
+    applications_recomputed: Optional[int] = Field(
+        None,
+        description="Count of Applications under this Tenant whose allocated_percentage "
+        "was recomputed as a result of this revision — allocated_budget itself never "
+        "changes for any Application here, only its share of the new total.",
+    )
+    keys_recomputed: Optional[int] = Field(
+        None,
+        description="Always 0 — a Tenant budget revision never moves any Application's "
+        "own ₹, so nothing ever forces an API Key to react. Kept for response-shape "
+        "consistency with the Budget Allocation endpoints' own counts.",
+    )
+    snapshot_write_failed: bool = Field(
+        False,
+        description="True if the revision itself succeeded (allocated_budget above is "
+        "already committed) but the best-effort mirror of the new ceilings into "
+        "platform-core's budget_usage.api_key_budget_snap failed — that cache is "
+        "briefly stale for the affected Keys and self-heals on their next allocation "
+        "write; nothing here needs retrying.",
+    )
+    updated_at: Optional[datetime] = None
+
+
+class TenantTierListItem(BaseSchema):
+    tenant_id: int
+    tenant_name: str
+    tier_id: UUID
+    tier_name: Optional[str] = None
+    allocated_budget: Optional[Decimal] = None
+    budget_effective_from: Optional[datetime] = None
+    budget_effective_to: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
 class CreateTenantResponse(SuccessResponse):
     """POST /auth/tenants"""
 
@@ -380,3 +507,15 @@ class DeleteTenantUserResponse(SuccessResponse):
     """DELETE /auth/tenants/{tenant_id}/users/{user_id}"""
 
     data: DeleteTenantUserData
+
+
+class TenantTierAssignResponse(SuccessResponse):
+    """PATCH /auth/tenants/{tenant_id}/tier"""
+
+    data: TenantTierAssignData
+
+
+class ListTenantTiersResponse(SuccessResponse):
+    """GET /auth/tenants/tier/list"""
+
+    data: list[TenantTierListItem]

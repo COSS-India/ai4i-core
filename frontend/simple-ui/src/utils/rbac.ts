@@ -17,6 +17,14 @@ export function isPlatformAdminUser(roles?: string[]): boolean {
   return userHasRole(roles, "ADMIN");
 }
 
+/**
+ * ADMIN or TENANT ADMIN — matches auth-service route gates for API key
+ * create / update / delete (keys are managed per Application by institution admins).
+ */
+export function userMayManageApiKeys(roles?: string[] | null): boolean {
+  return isPlatformAdminUser(roles ?? undefined) || isTenantAdminUser(roles ?? undefined);
+}
+
 /** Usage Viewer — restricted role, sees Usage Dashboard (and Profile) only. */
 export function isUsageViewerUser(roles?: string[]): boolean {
   return userHasRole(roles, "USAGE VIEWER");
@@ -69,22 +77,39 @@ export function isAdopterAdminUser(roles?: string[]): boolean {
   return userHasRole(roles, "MODERATOR") && !isPlatformAdminUser(roles);
 }
 
+/**
+ * Adopter-side institution managers: Default Admin (platform ADMIN) or Adopter Admin
+ * (MODERATOR). They pick an institution, then manage users and applications there.
+ */
+export function isAdopterInstitutionManager(roles?: string[]): boolean {
+  return isDefaultAdminUser(roles) || isAdopterAdminUser(roles);
+}
+
+/** Institution Management nav/page — platform ADMIN or Institution Admin only. */
+export function canAccessInstitutionManagement(roles?: string[]): boolean {
+  return isDefaultAdminUser(roles) || isTenantAdminUser(roles);
+}
+
 /** Tenant Admin without platform ADMIN or MODERATOR. */
 export function isTenantAdminOnlyUser(roles?: string[]): boolean {
   return isTenantAdminUser(roles) && !canAccessPlatformMetering(roles);
 }
 
 /**
- * Profile self-service account deletion — available to tenant-scoped USER and
- * TENANT ADMIN roles. Hidden for platform ADMIN, Adopter Admin (MODERATOR),
- * and GUEST.
+ * Profile self-service account deletion — available to tenant-scoped USER,
+ * TENANT ADMIN and USAGE VIEWER roles. Hidden for platform ADMIN, Adopter
+ * Admin (MODERATOR), and GUEST.
  */
 export function canSelfDeleteAccount(roles?: string[]): boolean {
   if (!roles?.length) return false;
   if (isPlatformAdminUser(roles)) return false;
   if (isAdopterAdminUser(roles)) return false;
   if (userHasRole(roles, "GUEST")) return false;
-  return userHasRole(roles, "USER") || isTenantAdminUser(roles);
+  return (
+    userHasRole(roles, "USER") ||
+    isTenantAdminUser(roles) ||
+    isUsageViewerUser(roles)
+  );
 }
 
 /** Profile User Details edit — guests cannot update their profile (API denies it). */

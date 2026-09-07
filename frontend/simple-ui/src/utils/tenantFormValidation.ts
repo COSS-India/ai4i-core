@@ -12,7 +12,7 @@ const NAME_PUNCT = new Set([" ", "-", "'"]);
 
 export const ORG_REQUIRED_MSG = "Organisation is required.";
 export const ORG_TOO_SHORT_MSG = "Organisation must be at least 2 characters.";
-export const ORG_TOO_LONG_MSG = "Organisation must be at most 100 characters.";
+export const ORG_TOO_LONG_MSG = "Organisation must not exceed 100 characters.";
 export const ORG_INVALID_CHARS_MSG =
   "Organisation may only contain letters, digits, spaces, hyphens, dots, and apostrophes.";
 export const ORG_NO_ALNUM_MSG = "Organisation must contain at least one letter or digit.";
@@ -37,7 +37,7 @@ export function cleanText(value: string): string {
 
 // ES5-safe character checks (tsconfig target is es5; avoid \p{…} /u regex).
 const LETTER_OR_MARK_RE =
-  /[A-Za-z\u00C0-\u024F]|[\u0300-\u036F]|[\u0900-\u097F]|[\u0980-\u09FF]|[\u0A00-\u0A7F]/;
+  /[A-Za-z\u00C0-\u024F]|[\u0300-\u036F]|[\u0900-\u0D7F]/;
 
 function isLetterOrMark(char: string): boolean {
   return LETTER_OR_MARK_RE.test(char);

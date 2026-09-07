@@ -1,4 +1,5 @@
 from typing import Optional
+from uuid import UUID
 
 from sqlalchemy import Text, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,9 +19,21 @@ class TenantRepository(BaseRepository):
         return result.scalar_one_or_none()
 
     async def get_by_id_for_update(self, tenant_id: int) -> Optional[Tenant]:
-        """Load tenant with ``SELECT … FOR UPDATE`` (blocks concurrent status changes)."""
+        """Load tenant with ``SELECT … FOR UPDATE`` (blocks concurrent status changes).
+
+        ``populate_existing()`` — without it, a tenant already present in the
+        session's identity map (e.g. an earlier unlocked ``get_by_id`` in the
+        same request) is returned as-is: the lock is genuinely acquired on
+        the DB row, but the in-memory attributes are NOT refreshed from it,
+        so a caller reading e.g. ``allocated_budget`` off the "locked" object
+        can still see a pre-revision value. This forces a refresh from the
+        just-locked row every time.
+        """
         result = await self._db.execute(
-            select(Tenant).where(Tenant.id == tenant_id).with_for_update()
+            select(Tenant)
+            .where(Tenant.id == tenant_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 
@@ -64,5 +77,15 @@ class TenantRepository(BaseRepository):
             .offset(offset)
             .limit(limit)
         )
+        result = await self._db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def list_with_tier(self, tier_id: Optional[UUID] = None) -> list[Tenant]:
+        """Tenants with a tier assigned (tier_id IS NOT NULL), optionally
+        filtered to one tier — backs GET /auth/tenants/tier/list."""
+        stmt = select(Tenant).where(Tenant.tier_id.isnot(None))
+        if tier_id is not None:
+            stmt = stmt.where(Tenant.tier_id == tier_id)
+        stmt = stmt.order_by(Tenant.id.asc())
         result = await self._db.execute(stmt)
         return list(result.scalars().all())

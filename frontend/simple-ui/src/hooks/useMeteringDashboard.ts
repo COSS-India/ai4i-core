@@ -13,10 +13,12 @@ import type {
 import {
   fetchMeteringModelConsumption,
   fetchMeteringOverview,
-  fetchMeteringTenantConsumption,
   parseMeteringError,
   type MeteringContext,
 } from "../services/meteringService";
+import { fetchUsageSummary } from "../services/usageSpendService";
+import { billingPeriodValue } from "../utils/usageSpendHelpers";
+import type { KeyMetricsSupplement } from "../types/metering";
 import { getMeteringRoleViewConfig } from "../utils/rbac";
 import { meteringQueryDefaults, meteringQueryKey } from "../utils/meteringQuery";
 import { resolveMeteringGeneratedAt, formatMeteringDataStateBanner } from "../utils/meteringFormatters";
@@ -62,13 +64,9 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     [taskTypeNames],
   );
 
-  const availableSubTabs = isTenantView ? METERING.TENANT_SUB_TABS : METERING.SUB_TABS;
+  const availableSubTabs = METERING.SUB_TABS;
 
-  const [subTab, setSubTab] = useState<MeteringSubTab>(() =>
-    getMeteringRoleViewConfig(userRoles).defaultView === "tenant"
-      ? METERING.DEFAULTS.TENANT_SUB_TAB
-      : METERING.DEFAULTS.SUB_TAB,
-  );
+  const [subTab, setSubTab] = useState<MeteringSubTab>(METERING.DEFAULTS.SUB_TAB);
   const [timeWindow, setTimeWindow] = useState<MeteringWindow>(METERING.DEFAULTS.TIME_WINDOW);
   const [topN, setTopN] = useState<MeteringTopN>(METERING.DEFAULTS.TOP_N);
   const [scopeTenantId, setScopeTenantId] = useState("");
@@ -141,39 +139,35 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       refreshNonce,
     ),
     queryFn: () =>
-      fetchMeteringOverview(timeWindow, ctx, queryTenantId, enabledServices),
+      fetchMeteringOverview(
+        timeWindow,
+        ctx,
+        queryTenantId,
+        enabledServices,
+        METERING.USAGE_CONCENTRATION_FETCH_LIMIT,
+      ),
     enabled: enabledServicesReady && (isAdopterView || tenantOverviewEnabled),
     ...meteringQueryDefaults,
   });
 
   const overview = overviewQuery.data;
 
-  const tenantQuery = useQuery({
-    queryKey: meteringQueryKey(
-      METERING.QUERY.SCOPES.TENANT,
-      timeWindow,
-      topN,
-      enabledServicesKey,
-      queryTenantId,
-      refreshNonce,
-    ),
-    queryFn: () =>
-      fetchMeteringTenantConsumption(
-        timeWindow,
-        topN,
-        enabledServices,
-        queryTenantId,
-      ),
-    enabled:
-      enabledServicesReady &&
-      isAdopterView &&
-      subTab === METERING.SUB_TAB.TENANT,
-    ...meteringQueryDefaults,
-  });
-
   const modelQueryEnabled =
+    enabledServicesReady &&
     subTab === METERING.SUB_TAB.MODEL &&
     (isAdopterView || tenantOverviewEnabled);
+
+  const platformCtx: MeteringContext = useMemo(
+    () => ({ ...ctx, tenantId: null }),
+    [ctx],
+  );
+
+  // Model tab at 30d with no tenant filter already fetches the same platform snapshot.
+  const keyMetricsModelFromTab =
+    isAdopterView &&
+    modelQueryEnabled &&
+    timeWindow === "30d" &&
+    !scopeTenantId;
 
   const modelQuery = useQuery({
     queryKey: meteringQueryKey(
@@ -182,22 +176,59 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       queryTenantId,
       roleViewConfig.defaultView,
       isAdopterView,
+      enabledServicesKey,
       refreshNonce,
     ),
-    queryFn: () => fetchMeteringModelConsumption(timeWindow, ctx, queryTenantId),
+    queryFn: () =>
+      fetchMeteringModelConsumption(timeWindow, ctx, queryTenantId, enabledServices),
     enabled: modelQueryEnabled,
     ...meteringQueryDefaults,
   });
 
+  const keyMetricsModelQuery = useQuery({
+    queryKey: meteringQueryKey(
+      METERING.QUERY.SCOPES.MODEL,
+      "30d",
+      "key-metrics",
+      refreshNonce,
+    ),
+    queryFn: () => fetchMeteringModelConsumption("30d", platformCtx),
+    enabled: isAdopterView && !keyMetricsModelFromTab,
+    ...meteringQueryDefaults,
+  });
+
+  const keyMetricsBudgetQuery = useQuery({
+    queryKey: ["usage-summary", "key-metrics", billingPeriodValue("current"), refreshNonce],
+    queryFn: () => fetchUsageSummary({ billingPeriod: billingPeriodValue("current") }),
+    enabled: isAdopterView,
+    ...meteringQueryDefaults,
+    retry: 1,
+  });
+
+  const keyMetricsSupplement = useMemo((): KeyMetricsSupplement | undefined => {
+    if (!isAdopterView) return undefined;
+    const summary = keyMetricsModelFromTab
+      ? modelQuery.data?.summary
+      : keyMetricsModelQuery.data?.summary;
+    return {
+      total_models: summary?.total_models,
+      active_models_30d: summary?.active_models,
+      tenants_budget_exhausted: keyMetricsBudgetQuery.data?.budgetExceededTenants,
+    };
+  }, [
+    isAdopterView,
+    keyMetricsModelFromTab,
+    modelQuery.data?.summary,
+    keyMetricsModelQuery.data?.summary,
+    keyMetricsBudgetQuery.data?.budgetExceededTenants,
+  ]);
+
   const primaryMeteringResponse = useMemo((): MeteringResponseMeta | null => {
-    if (isAdopterView && subTab === METERING.SUB_TAB.TENANT && tenantQuery.data) {
-      return tenantQuery.data;
-    }
     if (subTab === METERING.SUB_TAB.MODEL && modelQuery.data) {
       return modelQuery.data;
     }
     return overview ?? null;
-  }, [isAdopterView, subTab, tenantQuery.data, modelQuery.data, overview]);
+  }, [subTab, modelQuery.data, overview]);
 
   const dataStateBanner = useMemo(() => {
     if (subTab === METERING.SUB_TAB.USAGE_SPEND) return null;
@@ -210,9 +241,19 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
   const primaryError = useMemo(() => {
     if (subTab === METERING.SUB_TAB.USAGE_SPEND) return null;
     const err =
-      overviewQuery.error || modelQuery.error || tenantQuery.error;
+      overviewQuery.error ||
+      modelQuery.error ||
+      (isAdopterView && keyMetricsModelQuery.error) ||
+      (isAdopterView && keyMetricsBudgetQuery.error);
     return err ? parseMeteringError(err) : null;
-  }, [subTab, overviewQuery.error, modelQuery.error, tenantQuery.error]);
+  }, [
+    subTab,
+    isAdopterView,
+    overviewQuery.error,
+    modelQuery.error,
+    keyMetricsModelQuery.error,
+    keyMetricsBudgetQuery.error,
+  ]);
 
   const isLoading =
     (isAdopterView && overviewQuery.isLoading) ||
@@ -226,17 +267,19 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
 
   const isRefreshing =
     overviewQuery.isFetching ||
-    (isAdopterView && subTab === METERING.SUB_TAB.TENANT && tenantQuery.isFetching) ||
-    (modelQueryEnabled && modelQuery.isFetching);
+    (modelQueryEnabled && modelQuery.isFetching) ||
+    (isAdopterView && keyMetricsModelQuery.isFetching) ||
+    (isAdopterView && keyMetricsBudgetQuery.isFetching);
 
   const handleRefresh = () => {
     setRefreshNonce((n) => n + 1);
     overviewQuery.refetch();
-    if (isAdopterView && subTab === METERING.SUB_TAB.TENANT) {
-      tenantQuery.refetch();
-    }
     if (modelQueryEnabled) {
       modelQuery.refetch();
+    }
+    if (isAdopterView) {
+      keyMetricsModelQuery.refetch();
+      keyMetricsBudgetQuery.refetch();
     }
   };
 
@@ -246,17 +289,12 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     () =>
       resolveMeteringGeneratedAt([
         (isAdopterView || tenantOverviewEnabled) ? overview?.generated_at : null,
-        isAdopterView && subTab === METERING.SUB_TAB.TENANT
-          ? tenantQuery.data?.generated_at
-          : null,
         modelQueryEnabled ? modelQuery.data?.generated_at : null,
       ]),
     [
       isAdopterView,
       tenantOverviewEnabled,
       overview?.generated_at,
-      subTab,
-      tenantQuery.data?.generated_at,
       modelQueryEnabled,
       modelQuery.data?.generated_at,
     ],
@@ -280,7 +318,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     previewTenants,
     tenantOrganisationById,
     overview,
-    tenantQuery,
     modelQuery,
     isLoading,
     isRefreshing,
@@ -293,5 +330,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     parseQueryError,
     refreshNonce,
     effectiveTenantId,
+    keyMetricsSupplement,
   };
 }

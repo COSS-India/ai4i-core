@@ -30,6 +30,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { SearchIcon } from "@chakra-ui/icons";
+import FieldHint from "./FieldHint";
 import {
   TableFilterToolbar,
   TablePaginationBar,
@@ -168,6 +169,7 @@ export function TableSearchField({
   value,
   onChange,
   placeholder,
+  helper,
   formControlProps,
   inputGroupProps,
   inputProps,
@@ -176,6 +178,7 @@ export function TableSearchField({
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
+  helper?: string;
   formControlProps?: FormControlProps;
   inputGroupProps?: Omit<InputGroupProps, "children">;
   inputProps?: Omit<InputProps, "value" | "onChange" | "placeholder">;
@@ -202,6 +205,7 @@ export function TableSearchField({
           {...inputProps}
         />
       </InputGroup>
+      <FieldHint>{helper}</FieldHint>
     </FormControl>
   );
 }
@@ -212,6 +216,7 @@ export function TableSelectField({
   value,
   onChange,
   children,
+  helper,
   formControlProps,
   selectProps,
 }: {
@@ -219,6 +224,7 @@ export function TableSelectField({
   value: string;
   onChange: (value: string) => void;
   children: React.ReactNode;
+  helper?: string;
   formControlProps?: FormControlProps;
   selectProps?: Omit<SelectProps, "value" | "onChange" | "children">;
 }) {
@@ -240,6 +246,7 @@ export function TableSelectField({
       >
         {children}
       </Select>
+      <FieldHint>{helper}</FieldHint>
     </FormControl>
   );
 }
@@ -253,7 +260,7 @@ export type AdminDataTableProps<T> = {
   filters?: React.ReactNode;
   hasActiveFilters?: boolean;
   onClearFilters?: () => void;
-  filterToolbarAlign?: "flex-start" | "flex-end" | "center";
+  filterToolbarAlign?: "flex-start" | "center";
   filterToolbarRightContent?: React.ReactNode;
   showFiltersHeading?: boolean;
   filtersHeading?: string;
@@ -344,7 +351,7 @@ export default function AdminDataTable<T>({
   filters,
   hasActiveFilters = false,
   onClearFilters,
-  filterToolbarAlign = "flex-end",
+  filterToolbarAlign = "flex-start",
   filterToolbarRightContent,
   showFiltersHeading = false,
   filtersHeading = "Filters",

@@ -39,6 +39,9 @@ import { ViewIcon } from "@chakra-ui/icons";
 import { useRouter } from "next/router";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import ContentLayout from "../components/common/ContentLayout";
+import FieldHint from "../components/common/FieldHint";
+import FormFieldsRow from "../components/common/FormFieldsRow";
+import { FIELD_HINTS } from "../config/fieldHints";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import {
   fetchAllModelsMatchingFilters,
@@ -131,7 +134,8 @@ const ModelManagementPage: React.FC = () => {
   useEffect(() => {
     if (didInitTaskTypeFilter.current || isLoadingTaskTypes) return;
     didInitTaskTypeFilter.current = true;
-    if (taskTypeNames.length > 0) setFilterTaskType(taskTypeNames[0]);
+    // Single enabled type → lock filter to it (no All). Multiple → default All ("").
+    if (taskTypeNames.length === 1) setFilterTaskType(taskTypeNames[0]);
     setTaskTypeFilterReady(true);
   }, [isLoadingTaskTypes, taskTypeNames]);
   const [sortBy, setSortBy] = useState<"time" | "name">("time");
@@ -234,11 +238,15 @@ const ModelManagementPage: React.FC = () => {
     });
   }, [models, searchQuery, sortBy, nameSortDirection]);
 
-  const hasActiveFilters = filterVersionStatus !== "" || searchQuery.trim() !== "";
+  const showTaskTypeAllOption = taskTypeNames.length > 1;
+  const hasActiveFilters =
+    filterVersionStatus !== "" ||
+    (showTaskTypeAllOption && filterTaskType !== "") ||
+    searchQuery.trim() !== "";
   const clearAllFilters = () => {
     setSearchQuery("");
     setFilterVersionStatus("");
-    if (taskTypeNames.length > 0) setFilterTaskType(taskTypeNames[0]);
+    setFilterTaskType(taskTypeNames.length === 1 ? taskTypeNames[0] : "");
   };
 
   const getTaskColor = (taskType: string) => {
@@ -949,7 +957,7 @@ const ModelManagementPage: React.FC = () => {
                         onClearFilters={clearAllFilters}
                         filters={
                           <VStack align="stretch" spacing={3} w="full">
-                            <HStack flexWrap="wrap" spacing={3} align="flex-end">
+                            <FormFieldsRow>
                               <TableSearchField
                                 label="Search"
                                 value={searchQuery}
@@ -976,13 +984,16 @@ const ModelManagementPage: React.FC = () => {
                                 onChange={setFilterTaskType}
                                 formControlProps={{ w: { base: "full", sm: "160px" } }}
                               >
+                                {showTaskTypeAllOption && (
+                                  <option value="">All</option>
+                                )}
                                 {taskTypeNames?.map((t) => (
                                   <option key={t} value={t}>
                                     {formatModelTaskTypeLabel(t)}
                                   </option>
                                 ))}
                               </TableSelectField>
-                            </HStack>
+                            </FormFieldsRow>
                             {hasActiveFilters && (
                               <HStack spacing={2} flexWrap="wrap">
                                 {searchQuery.trim() && (
@@ -1009,6 +1020,19 @@ const ModelManagementPage: React.FC = () => {
                                     _hover={{ opacity: 0.8 }}
                                   >
                                     Status: {formatModelVersionFilterLabel(filterVersionStatus)} ×
+                                  </Badge>
+                                )}
+                                {showTaskTypeAllOption && filterTaskType && (
+                                  <Badge
+                                    colorScheme="purple"
+                                    fontSize="xs"
+                                    px={2}
+                                    py={1}
+                                    cursor="pointer"
+                                    onClick={() => setFilterTaskType("")}
+                                    _hover={{ opacity: 0.8 }}
+                                  >
+                                    Task type: {formatModelTaskTypeLabel(filterTaskType)} ×
                                   </Badge>
                                 )}
                               </HStack>
@@ -1054,9 +1078,9 @@ const ModelManagementPage: React.FC = () => {
                                 bg="white"
                               p={2}
                             />
-                            <Text fontSize="sm" color="gray.500" mt={2}>
-                              Upload a JSON file containing the model data. The file will be validated before you can create the model.
-                            </Text>
+                            <FieldHint mt={2} fontSize="sm">
+                              {FIELD_HINTS.model.jsonUpload.helper}
+                            </FieldHint>
                             <Box mt={2} p={3} bg="blue.50" borderRadius="md" border="1px solid" borderColor="blue.200">
                               <Text fontSize="xs" fontWeight="semibold" color="blue.700" mb={1}>
                                 Required Fields (ULCA):

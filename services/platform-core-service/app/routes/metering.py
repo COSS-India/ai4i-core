@@ -339,15 +339,17 @@ def _platform_adoption_block(
     at24: Optional[dict],
     at7: Optional[dict],
     at30: Optional[dict],
+    model_usage_growth_pct: Optional[float] = None,
 ) -> Optional[PlatformAdoption]:
     if not (is_admin and tc):
         return None
     return PlatformAdoption(
         total_tenants=tc["total_tenants"],
-        new_tenants_7d=tc["new_tenants"],
+        new_tenants_15d=tc["new_tenants"],
         active_24h=at24["count"] if at24 else None,
         active_7d=at7["count"] if at7 else None,
         active_30d=at30["count"] if at30 else None,
+        model_usage_growth_pct=model_usage_growth_pct,
     )
 
 
@@ -539,6 +541,7 @@ WindowParam = Literal["1h", "24h", "7d", "30d"]
 async def get_overview(
     request: Request,
     window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
+    limit: int = Query(10, ge=1, le=50, description="Max tenants in usage concentration ranking"),
     tenant_id: Optional[int] = Query(None, ge=1, description="Narrow to a specific tenant (admin only)"),
     task_types: Optional[str] = Query(
         None, description="Comma-separated task types to scope KPIs, the request-volume "
@@ -558,9 +561,11 @@ async def get_overview(
     # payperuse_consumer/handler.py already restricts billing.
     auth_type_filter = API_KEY_AUTH_TYPE
 
+    ranking_active = is_admin and not scope_tenant
     cache_key = (
         f"metering:overview:v2:{window}:{scope_tenant_name or 'all'}:"
         f"{_caller_role_label(request)}:{','.join(task_type_filter) if task_type_filter else 'all'}"
+        + (f":{limit}" if ranking_active else "")
     )
     cached = await _cache_get(redis, cache_key)
     if cached:
@@ -583,9 +588,12 @@ async def get_overview(
             svc, window, scope_tenant_name, task_type_filter,
             tenant_id=scope_tenant, auth_type=auth_type_filter,
         ),
-        # Usage Concentration is platform-wide top-5; hide it when a tenant filter is applied.
-        svc.usage_concentration(limit=5, time_range=window, task_types=task_type_filter)
-        if (is_admin and not scope_tenant) else asyncio.sleep(0),
+        # Usage Concentration is platform-wide; hide it when a tenant filter is applied.
+        svc.usage_concentration(limit=limit, time_range=window, task_types=task_type_filter)
+        if ranking_active else asyncio.sleep(0),
+        # Key Metrics KPI #7 (model_usage_growth_pct) is admin-only, fixed
+        # calendar-month comparison — independent of `window`.
+        svc.model_usage_growth_pct() if is_admin else asyncio.sleep(0),
         return_exceptions=True,
     )
     # Merge both result sets through one _partition_results call so a failure
@@ -595,13 +603,13 @@ async def get_overview(
     combined, degraded = _partition_results([
         active_by_range["24h"], active_by_range["7d"], active_by_range["30d"], *results,
     ])
-    at24, at7, at30, rt, chart, conc = combined
+    at24, at7, at30, rt, chart, conc, model_usage_growth_pct = combined
 
     org = scope_tenant_name
 
     kpis = _overview_kpis(rt)
     # Platform adoption / usage concentration are admin-only blocks.
-    platform_adoption = _platform_adoption_block(is_admin, tc, at24, at7, at30)
+    platform_adoption = _platform_adoption_block(is_admin, tc, at24, at7, at30, model_usage_growth_pct)
     usage_conc = _usage_concentration_block(is_admin, conc)
 
     generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -817,6 +825,11 @@ async def get_model_consumption(
     window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
     tenant_id: Optional[int] = Query(None, ge=1, description="Narrow to a specific tenant (admin only)"),
     limit: int = Query(10, ge=1, le=25, description="Max models to return in top_models"),
+    task_types: Optional[str] = Query(
+        None, description="Comma-separated Model Task Types to filter the drilldown/KPIs to "
+        "(e.g. llm,nmt). Defaults to all task types (LLM + NLP). Unsupported values are "
+        "rejected with 422."
+    ),
     svc: MeteringService = Depends(get_metering_service),
     redis: aioredis.Redis = Depends(get_redis),
 ):
@@ -824,21 +837,25 @@ async def get_model_consumption(
 
     is_admin = _is_platform_admin(request)
     scope_tenant, scope_tenant_name = await _resolve_tenant_scope(request, svc, tenant_id, is_admin)
+    task_type_filter = _parse_task_types(task_types)
 
-    # v3: TopModelRow/ServiceModelRow gained a required `model_id` field.
-    # Bumped from v2 so a payload cached just before this deploy (with no
-    # model_id) can't be served back and fail ModelConsumptionResponse
-    # validation with a 500 for up to the 60s TTL — it starts from a cold key.
+    # v4: no longer implicitly LLM-only — the endpoint now covers every task
+    # type (or the requested subset via `task_types`). Bumped from v3 so a
+    # payload cached under the old LLM-only behavior can't be served back
+    # under the new default.
     cache_key = (
-        f"metering:model-consumption:v3:{window}:{limit}:{scope_tenant_name or 'all'}:"
-        f"{_caller_role_label(request)}"
+        f"metering:model-consumption:v4:{window}:{limit}:{scope_tenant_name or 'all'}:"
+        f"{','.join(task_type_filter) if task_type_filter else 'all'}:{_caller_role_label(request)}"
     )
     cached = await _cache_get(redis, cache_key)
     if cached:
         return cached
 
     results = await asyncio.gather(
-        svc.model_breakdown(tenant=scope_tenant_name, time_range=window, tenant_id=scope_tenant),
+        svc.model_breakdown(
+            tenant=scope_tenant_name, time_range=window, tenant_id=scope_tenant,
+            task_types=task_type_filter,
+        ),
         return_exceptions=True,
     )
     (breakdown,), degraded = _partition_results(results)
@@ -847,7 +864,7 @@ async def get_model_consumption(
     # get_metering_service share `db`), and AsyncSession is not safe for
     # concurrent use — see the same note on tenant_count(). registry_model_count()
     # never raises (catches internally), so it can't regress `degraded`.
-    total_models = await svc.registry_model_count()
+    total_models = await svc.registry_model_count(task_types=task_type_filter)
 
     org = scope_tenant_name
 
@@ -866,7 +883,10 @@ async def get_model_consumption(
     generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     response = ModelConsumptionResponse(
-        scope=Scope(role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window),
+        scope=Scope(
+            role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window,
+            task_types=task_type_filter,
+        ),
         summary=summary,
         top_models=top_models,
         top_models_total_requests=top_models_total_requests,
@@ -876,9 +896,10 @@ async def get_model_consumption(
                 name=s["name"],
                 model_id=s["model_id"],
                 model_name=s["model_name"],
+                task_type=s["task_type"],
                 requests=s["requests"],
                 native_units=s["native_units"],
-                native_unit_suffix="tokens",
+                native_unit_suffix=s["native_unit_suffix"],
                 success_pct=s["success_pct"],
                 # No traffic → nothing succeeded AND nothing failed. Without this
                 # guard, success_pct=0 for a 0-request service makes 100-0=100%

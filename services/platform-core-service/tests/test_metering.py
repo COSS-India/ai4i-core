@@ -15,6 +15,7 @@ import pytest
 
 from app.utils.metering_promql_builder import (
     API_KEY_AUTH_TYPE,
+    INFERENCE_ENDPOINT_REGEX,
     LLM_CHAT_ENDPOINT_REGEX,
     PROMETHEUS_API_PATH_LABEL,
     SERVICE_BREAKDOWN_CONFIG,
@@ -323,7 +324,7 @@ class TestPrometheusClientQuery:
 
 # ── MeteringService tests ─────────────────────────────────────────────────────
 
-from app.services.metering_service import MeteringService
+from app.services.metering_service import MeteringService, _to_registry_task_types
 
 
 def _make_service(query_return=None, scalar_return=0.0, range_return=None, auth_db=None):
@@ -343,7 +344,7 @@ class TestTenantCount:
         assert result["new_tenants"] is None
         assert result["auth_db_available"] is False
 
-    async def test_always_uses_7d_for_new_tenants(self):
+    async def test_always_uses_15d_for_new_tenants(self):
         auth_db = AsyncMock()
         total_result = MagicMock()
         total_result.scalar.return_value = 50
@@ -359,9 +360,197 @@ class TestTenantCount:
         assert result["auth_db_available"] is True
 
         calls = auth_db.execute.call_args_list
-        # Second call (new tenants) must use 7 days, not a variable interval
+        # Second call (new tenants) binds a precomputed :cutoff — not a raw
+        # `NOW() - INTERVAL` baked into the SQL text (see the two tests below
+        # for why that distinction matters).
         new_query_sql = str(calls[1][0][0])
-        assert "7 days" in new_query_sql.lower()
+        assert ":cutoff" in new_query_sql
+        assert "NOW()" not in new_query_sql.upper()
+        params = calls[1][0][1]
+        assert "cutoff" in params
+
+    async def test_new_tenants_cutoff_is_truncated_to_utc_midnight(self):
+        """The cutoff bound into the query must be the UTC calendar-day
+        boundary 14 days back from today's midnight — i.e. today plus the
+        preceding 14 days makes 15 calendar days — not a sub-day-precise
+        instant. This is what makes the KPI reconcilable against a human
+        counting whole days off the Institution Management "Onboarded"
+        column."""
+        auth_db = AsyncMock()
+        total_result = MagicMock()
+        total_result.scalar.return_value = 50
+        new_result = MagicMock()
+        new_result.scalar.return_value = 3
+        auth_db.execute = AsyncMock(side_effect=[total_result, new_result])
+
+        class _MidMorning(_FixedDatetime):
+            _fixed = _dt_module.datetime(2026, 9, 3, 7, 1, 16, tzinfo=_dt_module.timezone.utc)
+
+        with patch("app.services.metering_service.datetime", _MidMorning):
+            svc = _make_service(auth_db=auth_db)
+            await svc.tenant_count()
+
+        cutoff = auth_db.execute.call_args_list[1][0][1]["cutoff"]
+        # today (Sep 3) minus 14 days = Aug 20; Aug 20..Sep 3 inclusive is
+        # 15 calendar days. `- timedelta(days=15)` would land on Aug 19,
+        # making the window 16 days — the off-by-one this test guards.
+        assert cutoff == _dt_module.datetime(2026, 8, 20, 0, 0, 0, tzinfo=_dt_module.timezone.utc)
+
+    async def test_new_tenants_cutoff_stable_across_times_of_day(self):
+        """Bug repro (production scenario, staging.ai4inclusion.org on
+        2026-09-03): tenants 82/83/84 were all created on 2026-08-19, at
+        03:56, 13:39 and 17:27 UTC respectively. With the old raw
+        `NOW() - INTERVAL '15 days'` cutoff, a request made at 07:01 UTC
+        landed the cutoff at 2026-08-19T07:01 — excluding tenant 82 (created
+        03:56, before the cutoff) while including 83 and 84 (created after
+        it), even though all three onboarded on the same calendar day. A
+        later request that same day would produce a *different* cutoff and
+        could flip tenant-82-equivalents in or out with zero tenants
+        created or deleted in between — an unstable KPI. Truncating to UTC
+        midnight first must make the cutoff (and therefore which tenants
+        are counted) identical for every request made on the same calendar
+        day, regardless of time of day — and, since Aug 19 is 15 days
+        before Sep 3 (the 16th day back, one day too many for a "last 15
+        days including today" window), all three Aug-19 tenants must now be
+        consistently *excluded*, not just consistently treated."""
+
+        async def _cutoff_at(fixed_dt):
+            auth_db = AsyncMock()
+            total_result = MagicMock()
+            total_result.scalar.return_value = 50
+            new_result = MagicMock()
+            new_result.scalar.return_value = 3
+            auth_db.execute = AsyncMock(side_effect=[total_result, new_result])
+
+            class _Frozen(_FixedDatetime):
+                _fixed = fixed_dt
+
+            with patch("app.services.metering_service.datetime", _Frozen):
+                svc = _make_service(auth_db=auth_db)
+                await svc.tenant_count()
+            return auth_db.execute.call_args_list[1][0][1]["cutoff"]
+
+        cutoff_just_after_midnight = await _cutoff_at(
+            _dt_module.datetime(2026, 9, 3, 0, 0, 1, tzinfo=_dt_module.timezone.utc)
+        )
+        cutoff_original_report_time = await _cutoff_at(
+            _dt_module.datetime(2026, 9, 3, 7, 1, 16, tzinfo=_dt_module.timezone.utc)
+        )
+        cutoff_just_before_midnight = await _cutoff_at(
+            _dt_module.datetime(2026, 9, 3, 23, 59, 59, tzinfo=_dt_module.timezone.utc)
+        )
+
+        assert cutoff_just_after_midnight == cutoff_original_report_time == cutoff_just_before_midnight
+        # All three land on 2026-08-20T00:00:00Z (Sep 3 minus 14 days), so
+        # tenants 82 (Aug 19, 03:56), 83 (Aug 19, 13:39) and 84 (Aug 19,
+        # 17:27) fall one full day *before* the cutoff and are excluded
+        # together — not split by time-of-day, and not off by the extra day
+        # a `- 15` cutoff would have included them under.
+        assert cutoff_just_after_midnight == _dt_module.datetime(
+            2026, 8, 20, 0, 0, 0, tzinfo=_dt_module.timezone.utc
+        )
+        assert cutoff_just_after_midnight > _dt_module.datetime(
+            2026, 8, 19, 17, 27, 0, tzinfo=_dt_module.timezone.utc
+        )
+
+    async def test_query_failure_rolls_back_so_the_session_stays_usable(self):
+        """A raising execute() aborts the session's transaction at the DB
+        level — swallowing the exception in Python doesn't undo that. Without
+        the rollback, overview_tenant_data()'s next auth_db call
+        (_fetch_valid_tenant_ids, sharing this same session) would inherit
+        the failure as an unrelated PendingRollbackError."""
+        auth_db = AsyncMock()
+        auth_db.execute = AsyncMock(side_effect=RuntimeError("connection reset by peer"))
+
+        svc = _make_service(auth_db=auth_db)
+        result = await svc.tenant_count()
+
+        assert result["auth_db_available"] is False
+        auth_db.rollback.assert_awaited_once()
+
+
+import datetime as _dt_module
+
+
+class _FixedDatetime(_dt_module.datetime):
+    """Freezes datetime.now() for model_usage_growth_pct's month-boundary math."""
+
+    _fixed: _dt_module.datetime = _dt_module.datetime(2026, 8, 27, 10, 30, 0, tzinfo=_dt_module.timezone.utc)
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls._fixed if tz is None else cls._fixed.astimezone(tz)
+
+
+@pytest.mark.asyncio
+class TestModelUsageGrowthPct:
+    async def test_returns_none_when_too_early_in_month(self):
+        svc = _make_service()
+        with patch("app.services.metering_service.datetime") as mock_dt:
+            mock_dt.now.return_value = _dt_module.datetime(2026, 8, 1, 0, 0, 30, tzinfo=_dt_module.timezone.utc)
+            result = await svc.model_usage_growth_pct()
+        assert result is None
+        svc._client.scalar.assert_not_called()
+
+    async def test_computes_growth_pct_from_calendar_month_windows(self):
+        client = MagicMock()
+        client.scalar = AsyncMock(side_effect=[150.0, 100.0])  # current MTD, previous month
+        svc = MeteringService(client=client, auth_db=None)
+        with patch("app.services.metering_service.datetime", _FixedDatetime), \
+             patch("app.services.metering_service.settings.prometheus_retention_days", 90):
+            result = await svc.model_usage_growth_pct()
+        assert result == 50.0
+        cur_q, prev_q = client.scalar.call_args_list[0][0][0], client.scalar.call_args_list[1][0][0]
+        # cur_q must go through the reset-aware sum_over_window() hybrid (an
+        # "unless ... offset" guard against increase() extrapolating a young
+        # series over a long month-to-date window) — its own internal offset
+        # is not the same thing as prev_q's outer offset into a past month.
+        assert "unless" in cur_q and "increase(" in cur_q
+        assert "unless" not in prev_q and "offset" in prev_q
+        # prev_q's window must be the SAME width as cur_q's elapsed-so-far
+        # (comparable days-into-month on both sides), not the previous
+        # month's full length — else e.g. 5 partial August days would be
+        # compared against all 31 July days and report a bogus ~-84% drop
+        # even with flat traffic. _FixedDatetime = 2026-08-27T10:30:00Z ->
+        # elapsed_s = 26d10h30m = 2284200s since Aug 1; prev_month_len_s =
+        # Jul 1 -> Aug 1 = 2678400s (the offset, not the window here).
+        assert "[2284200s]" in prev_q
+        assert "offset 2678400s" in prev_q
+
+    async def test_returns_none_when_previous_month_had_no_traffic(self):
+        client = MagicMock()
+        client.scalar = AsyncMock(side_effect=[80.0, 0.0])
+        svc = MeteringService(client=client, auth_db=None)
+        with patch("app.services.metering_service.datetime", _FixedDatetime), \
+             patch("app.services.metering_service.settings.prometheus_retention_days", 90):
+            result = await svc.model_usage_growth_pct()
+        assert result is None
+
+    async def test_returns_none_on_prometheus_failure(self):
+        client = MagicMock()
+        client.scalar = AsyncMock(side_effect=Exception("boom"))
+        svc = MeteringService(client=client, auth_db=None)
+        with patch("app.services.metering_service.datetime", _FixedDatetime), \
+             patch("app.services.metering_service.settings.prometheus_retention_days", 90):
+            result = await svc.model_usage_growth_pct()
+        assert result is None
+
+    async def test_returns_none_when_declared_retention_cannot_cover_lookback(self):
+        """The repo ships no production Prometheus config, so this guard —
+        not a docker-compose retention bump — is the actual fix for
+        'silently wrong instead of None if retention is too short': it
+        refuses the query outright rather than trusting whatever partial
+        data Prometheus has left after its own retention pruning."""
+        client = MagicMock()
+        client.scalar = AsyncMock(side_effect=[150.0, 100.0])
+        svc = MeteringService(client=client, auth_db=None)
+        with patch("app.services.metering_service.datetime", _FixedDatetime), \
+             patch("app.services.metering_service.settings.prometheus_retention_days", 15):
+            # needs ~57.4d (elapsed_s + prev_month_len_s), default/low
+            # retention of 15d can't cover it
+            result = await svc.model_usage_growth_pct()
+        assert result is None
+        client.scalar.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -517,17 +706,55 @@ class TestServiceBreakdown:
             assert 'tenant!="unknown"' in promql
 
 
+class TestToRegistryTaskTypes:
+    """Metering task-type keys (SERVICE_BREAKDOWN_CONFIG, underscore-separated)
+    are NOT always identical to the Registry's own task-type strings
+    (TaskTypeEnum, app/schemas/enums/model_management.py) — hyphenated for
+    compound names, and "audio-lang-detection" is an outright abbreviation,
+    not a mechanical underscore->hyphen swap of "audio_language_detection"."""
+
+    def test_passthrough_for_keys_already_matching_registry(self):
+        assert _to_registry_task_types(["llm", "nmt", "asr", "tts", "ocr", "transliteration", "ner"]) == [
+            "llm", "nmt", "asr", "tts", "ocr", "transliteration", "ner",
+        ]
+
+    def test_maps_compound_keys_to_registry_strings(self):
+        assert _to_registry_task_types(["language_detection"]) == ["language-detection"]
+        assert _to_registry_task_types(["speaker_diarization"]) == ["speaker-diarization"]
+        assert _to_registry_task_types(["language_diarization"]) == ["language-diarization"]
+        assert _to_registry_task_types(["audio_language_detection"]) == ["audio-lang-detection"]
+
+    def test_drops_pipeline_with_no_registry_equivalent(self):
+        assert _to_registry_task_types(["llm", "pipeline"]) == ["llm"]
+        assert _to_registry_task_types(["pipeline"]) == []
+
+
 @pytest.mark.asyncio
 class TestModelBreakdown:
-    def _row(self, service_id: str, value: float, model_id: str = ""):
-        return [{"metric": {"service_id": service_id, "model_id": model_id}, "value": [0, str(value)]}]
+    def _row(self, service_id: str, value: float, model_id: str = "", endpoint: str = "/api/v1/chat"):
+        """`endpoint` defaults to the LLM chat path — task_type in
+        model_breakdown is resolved from this label (via _resolve_task_key),
+        same as service_breakdown/usage_by_tenant_service already do
+        elsewhere; most existing tests here exercise an LLM/Gemma model, so
+        that's the default unless a test overrides it for a different task."""
+        return [{
+            "metric": {"service_id": service_id, "model_id": model_id, PROMETHEUS_API_PATH_LABEL: endpoint},
+            "value": [0, str(value)],
+        }]
 
-    def _rows(self, pairs: dict, model_ids: dict = None):
+    def _rows(self, pairs: dict, model_ids: dict = None, endpoint: str = "/api/v1/chat"):
         """pairs: {service_id: value}. model_ids: optional {service_id: model_id},
-        defaulting to "" (no Prometheus label — e.g. a pre-upgrade series)."""
+        defaulting to "" (no Prometheus label — e.g. a pre-upgrade series).
+        `endpoint`: see _row — same task_type resolution, applied to every row."""
         model_ids = model_ids or {}
         return [
-            {"metric": {"service_id": s, "model_id": model_ids.get(s, "")}, "value": [0, str(v)]}
+            {
+                "metric": {
+                    "service_id": s, "model_id": model_ids.get(s, ""),
+                    PROMETHEUS_API_PATH_LABEL: endpoint,
+                },
+                "value": [0, str(v)],
+            }
             for s, v in pairs.items()
         ]
 
@@ -553,7 +780,8 @@ class TestModelBreakdown:
 
         client.query = AsyncMock(side_effect=fake_query)
         repo = self._repo({"MH-gemma-32b": ("Mahavistaar Gemma 32B", "hash-gemma-v1", "gemma-3-27b-it")})
-        svc = MeteringService(client=client, service_repo=repo)
+        model_repo = self._model_repo({"hash-gemma-v1": "gemma-3-27b-it"})
+        svc = MeteringService(client=client, service_repo=repo, model_repo=model_repo)
 
         result = await svc.model_breakdown(tenant=None, time_range="24h")
         row = next(s for s in result["services"] if s["service_id"] == "MH-gemma-32b")
@@ -600,7 +828,8 @@ class TestModelBreakdown:
 
         client.query = AsyncMock(side_effect=fake_query)
         repo = self._repo({"live-service": ("Live Service", "hash-gemma-v1", "gemma-3-27b-it")})
-        svc = MeteringService(client=client, service_repo=repo)
+        model_repo = self._model_repo({"hash-gemma-v1": "gemma-3-27b-it"})
+        svc = MeteringService(client=client, service_repo=repo, model_repo=model_repo)
 
         result = await svc.model_breakdown(tenant=None, time_range="24h")
         service_ids = [s["service_id"] for s in result["services"]]
@@ -719,7 +948,9 @@ class TestModelBreakdown:
             assert 'tenant_id="7"' in promql
             assert 'tenant="Acme Corp"' not in promql
 
-    async def test_llm_only_endpoint_selector_used(self):
+    async def test_unfiltered_selector_covers_every_task_type(self):
+        """No task_types filter -> every task type's endpoints (LLM chat AND
+        every /api/v1/{task}/inference path), not just LLM."""
         client = MagicMock()
         client.query = AsyncMock(return_value=[])
         svc = MeteringService(client=client)
@@ -732,9 +963,233 @@ class TestModelBreakdown:
         ]
         assert len(request_calls) == 2  # total + success
         for promql in request_calls:
-            assert LLM_CHAT_ENDPOINT_REGEX in promql
-            assert "by(service_id, model_id)" in promql
+            # Broad INFERENCE_ENDPOINT_REGEX, not narrowed to just the LLM
+            # chat pattern (which is itself a substring of the broad regex,
+            # so check the exact narrow selector form is absent instead).
+            assert f'{PROMETHEUS_API_PATH_LABEL}=~"{LLM_CHAT_ENDPOINT_REGEX}"' not in promql
+            assert INFERENCE_ENDPOINT_REGEX in promql
+            assert f"by(service_id, model_id, {PROMETHEUS_API_PATH_LABEL})" in promql
             assert "by(model)" not in promql
+
+    async def test_task_types_filter_narrows_endpoint_selector(self):
+        """A task_types filter scopes the query to just those tasks'
+        endpoints, via the same build_task_type_selector used elsewhere."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=[])
+        svc = MeteringService(client=client)
+
+        await svc.model_breakdown(tenant=None, time_range="24h", task_types=["nmt"])
+
+        request_calls = [
+            call[0][0] for call in client.query.call_args_list
+            if "telemetry_obsv_requests_total" in call[0][0]
+        ]
+        assert len(request_calls) == 2  # total + success
+        for promql in request_calls:
+            assert "/api/v1/nmt/inference" in promql
+
+    async def test_task_types_filter_narrows_to_audio_task_type(self):
+        """Same as above, for an audio task type (asr) — Model Task Type
+        support isn't just LLM+text-NLP, audio tasks must filter correctly
+        too."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=[])
+        svc = MeteringService(client=client)
+
+        await svc.model_breakdown(tenant=None, time_range="24h", task_types=["asr"])
+
+        request_calls = [
+            call[0][0] for call in client.query.call_args_list
+            if "telemetry_obsv_requests_total" in call[0][0]
+        ]
+        assert len(request_calls) == 2  # total + success
+        for promql in request_calls:
+            assert "/api/v1/asr/inference" in promql
+
+    async def test_multi_task_types_filter_includes_llm_and_audio_excludes_nlp(self):
+        """A combined filter (e.g. ["llm", "asr"]) must scope to exactly
+        those task types' traffic — llm + asr rows returned, an nmt row
+        with traffic in the SAME window must NOT leak through."""
+        client = MagicMock()
+
+        async def fake_query(promql):
+            if "telemetry_obsv_llm_tokens_processed_sum" in promql:
+                return self._row("svc-llm", 999, model_id="hash-llm-model")
+            # Simulates Prometheus itself filtering server-side: only
+            # llm/asr rows match the combined endpoint regex, nmt doesn't.
+            return self._rows(
+                {"svc-llm": 10, "svc-asr": 20},
+                model_ids={"svc-llm": "hash-llm-model", "svc-asr": "hash-asr-model"},
+            )
+
+        client.query = AsyncMock(side_effect=fake_query)
+        model_repo = self._model_repo({
+            "hash-llm-model": "Gemma 3 27B", "hash-asr-model": "Whisper Large v3",
+        })
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h", task_types=["llm", "asr"])
+
+        model_ids = {m["model_id"] for m in result["model_totals"]}
+        assert model_ids == {"hash-llm-model", "hash-asr-model"}
+
+    async def test_llm_tokens_query_skipped_when_filtered_to_nlp_only(self):
+        """Regression: an explicit NLP-only task_types filter (e.g. ["nmt"])
+        must not fire the (LLM-only) tokens query at all — firing it
+        unconditionally would surface an unrelated LLM model_id (found only
+        via tokens_rows, absent from total_rows/success_rows under this
+        filter) as a ghost "0 requests" row in model_totals, since model_ids
+        is a union across all three row sets."""
+        client = MagicMock()
+
+        async def fake_query(promql):
+            if "telemetry_obsv_llm_tokens_processed_sum" in promql:
+                return self._row("svc-llm", 999, model_id="hash-llm-model")
+            return self._row("svc-nmt", 10, model_id="hash-nmt-model")
+
+        client.query = AsyncMock(side_effect=fake_query)
+        model_repo = self._model_repo({"hash-nmt-model": "IndicTrans2"})
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h", task_types=["nmt"])
+
+        tokens_calls = [
+            call[0][0] for call in client.query.call_args_list
+            if "telemetry_obsv_llm_tokens_processed_sum" in call[0][0]
+        ]
+        assert tokens_calls == []
+        assert len(result["model_totals"]) == 1
+        assert result["model_totals"][0]["model_id"] == "hash-nmt-model"
+
+    async def test_llm_tokens_query_fires_when_llm_in_scope(self):
+        """Unfiltered (or an explicit filter including "llm") still queries
+        LLM tokens, same as before this fix."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("svc-llm", 10, model_id="hash-llm-model"))
+        svc = MeteringService(client=client)
+
+        await svc.model_breakdown(tenant=None, time_range="24h", task_types=["llm", "nmt"])
+
+        tokens_calls = [
+            call[0][0] for call in client.query.call_args_list
+            if "telemetry_obsv_llm_tokens_processed_sum" in call[0][0]
+        ]
+        assert len(tokens_calls) == 1
+
+    async def test_nmt_row_reports_characters_not_tokens(self):
+        """AI4IDS follow-up: a row's own task type — resolved from the
+        request's endpoint label, NOT the presence of an LLM-tokens metric —
+        picks its native-unit metric and suffix. An NMT model must report
+        its own characters-translated total (and the PPU-canonical
+        "characters" unit) — never fall back to the LLM tokens metric or the
+        literal "tokens" suffix the route used to hardcode."""
+        client = MagicMock()
+
+        async def fake_query(promql):
+            if 'status_code=~"2.."' in promql:
+                return self._row("svc-nmt", 9, model_id="hash-nmt-model", endpoint="/api/v1/nmt/inference")
+            if "telemetry_obsv_nmt_characters_translated_sum" in promql:
+                return self._row("svc-nmt", 4321)
+            if "telemetry_obsv_requests_total" in promql:
+                return self._row("svc-nmt", 10, model_id="hash-nmt-model", endpoint="/api/v1/nmt/inference")
+            return []  # every other native-unit metric: no data for this service
+
+        client.query = AsyncMock(side_effect=fake_query)
+        model_repo = self._model_repo({"hash-nmt-model": "IndicTrans2"})
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h", task_types=["nmt"])
+
+        row = result["services"][0]
+        assert row["task_type"] == "nmt"
+        assert row["native_units"] == 4321.0
+        assert row["native_unit_suffix"] == "chars"
+
+        model = result["model_totals"][0]
+        assert model["task_type"] == "nmt"
+        assert model["native_units"] == 4321.0
+        assert model["native_unit_suffix"] == "chars"
+
+    async def test_asr_native_units_rounded_to_2dp(self):
+        """ASR (and every other audio-minutes task) keeps 2dp precision —
+        SERVICE_BREAKDOWN_CONFIG's `round_2dp`, same as service_breakdown."""
+        client = MagicMock()
+
+        async def fake_query(promql):
+            if 'status_code=~"2.."' in promql:
+                return self._row("svc-asr", 1, model_id="hash-asr-model", endpoint="/api/v1/asr/inference")
+            if "telemetry_obsv_asr_audio_minutes_processed_sum" in promql:
+                return self._row("svc-asr", 12.345)
+            if "telemetry_obsv_requests_total" in promql:
+                return self._row("svc-asr", 1, model_id="hash-asr-model", endpoint="/api/v1/asr/inference")
+            return []
+
+        client.query = AsyncMock(side_effect=fake_query)
+        model_repo = self._model_repo({"hash-asr-model": "Whisper"})
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h", task_types=["asr"])
+
+        row = result["services"][0]
+        assert row["native_units"] == 12.35
+        assert row["native_unit_suffix"] == "min"
+
+    async def test_audio_lang_detection_endpoint_resolves_correct_task_and_unit(self):
+        """audio-lang-detection is the one endpoint whose task key doesn't
+        follow the standard /api/v1/{task}/inference->task mapping (see
+        ENDPOINT_TO_TASK) — task_type must still resolve to this module's
+        own "audio_language_detection" key (not the raw endpoint path) and
+        pick the right native metric/unit, not silently report
+        native_units=0 because of the naming mismatch."""
+        client = MagicMock()
+
+        async def fake_query(promql):
+            if 'status_code=~"2.."' in promql:
+                return self._row(
+                    "svc-ald", 1, model_id="hash-ald-model",
+                    endpoint="/api/v1/audio-lang-detection/inference",
+                )
+            if "telemetry_obsv_audio_lang_detection_minutes_processed_sum" in promql:
+                return self._row("svc-ald", 2.5)
+            if "telemetry_obsv_requests_total" in promql:
+                return self._row(
+                    "svc-ald", 1, model_id="hash-ald-model",
+                    endpoint="/api/v1/audio-lang-detection/inference",
+                )
+            return []
+
+        client.query = AsyncMock(side_effect=fake_query)
+        model_repo = self._model_repo({"hash-ald-model": "ALD"})
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        result = await svc.model_breakdown(
+            tenant=None, time_range="24h", task_types=["audio_language_detection"]
+        )
+
+        row = result["services"][0]
+        assert row["task_type"] == "audio_language_detection"
+        assert row["native_units"] == 2.5
+        assert row["native_unit_suffix"] == "min"
+
+    async def test_unknown_task_type_reports_zero_units_and_empty_suffix(self):
+        """A row whose endpoint label can't be resolved to any known task
+        (e.g. missing/blank) — task_type can't be determined, so
+        native_units stays 0.0 instead of guessing/defaulting to LLM tokens.
+        native_unit_suffix, however, must NEVER be null on the wire — the
+        FE's Zod schema declares it z.string() and fails the whole response
+        on a type mismatch — so it falls back to "" (not a word like
+        "requests") so formatNativeConsumption prints the bare "0" instead
+        of a misleading unit label next to the row's real Requests count."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("svc-x", 5, endpoint=""))
+        svc = MeteringService(client=client)  # no model_repo
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+
+        row = result["services"][0]
+        assert row["task_type"] is None
+        assert row["native_units"] == 0.0
+        assert row["native_unit_suffix"] == ""
 
     async def test_repo_not_queried_when_no_traffic(self):
         client = MagicMock()
@@ -747,6 +1202,25 @@ class TestModelBreakdown:
 
         repo.get_names_and_models_by_service_ids.assert_not_called()
         model_repo.get_model_names.assert_not_called()
+
+    async def test_pipeline_only_filter_ghosts_every_model_without_querying_registry(self):
+        """task_types=["pipeline"] maps to [] via _to_registry_task_types
+        ("pipeline" has no Registry equivalent). get_model_names() gates on
+        `if task_types:`, so passing [] straight through would fetch every
+        model_id unfiltered (and none would be ghosted) instead of every
+        model_id correctly being treated as unregistered under this scope —
+        skip the query entirely and ghost everything directly."""
+        client = MagicMock()
+        client.query = AsyncMock(
+            return_value=self._row("svc-pipeline", 1, model_id="hash-pipeline-model")
+        )
+        model_repo = self._model_repo({"hash-pipeline-model": "Some Model"})
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h", task_types=["pipeline"])
+
+        model_repo.get_model_names.assert_not_called()
+        assert result["model_totals"] == []
 
     # ── model_totals: grouped/validated by model_id, from the Prometheus
     # label directly — see the ROLLOUT NOTEs on model_breakdown() ──────────
@@ -875,15 +1349,15 @@ class TestModelBreakdown:
         assert result["model_totals"][0]["model_name"] == "test-llm-aug6-3"
         assert result["model_totals"][0]["requests"] == 14
 
-    async def test_model_registry_lookup_scoped_to_llm_task_type(self):
-        """AI4IDS-2854 follow-up: get_model_names must be called with
-        task_types=["llm"] so a model_id registered under a DIFFERENT task
-        type (e.g. mistakenly tagged "asr" while actually serving /chat
-        traffic — a Registry data error, not a deletion) is excluded here
-        the same way a hard-deleted id is, keeping this method's output in
-        the same population as registry_model_count's total_models. Without
-        this filter, such a model would count toward active_models but
-        never toward total_models, breaking their subset relationship."""
+    async def test_model_registry_lookup_scoped_to_every_task_type_when_unfiltered(self):
+        """AI4IDS-2854 follow-up, extended for LLM+NLP support: when the
+        caller passes no task_types filter, get_model_names must still be
+        scoped to a defined population — every known task type, not just
+        "llm" — so a model_id registered under any task type is validated,
+        keeping this method's output in the same population as
+        registry_model_count's total_models. Without this filter, such a
+        model would count toward active_models but never toward
+        total_models, breaking their subset relationship."""
         client = MagicMock()
         client.query = AsyncMock(return_value=self._row("svc-1", 10, model_id="hash-gemma-v1"))
         model_repo = self._model_repo({"hash-gemma-v1": "Gemma 3 27B"})
@@ -892,13 +1366,51 @@ class TestModelBreakdown:
         await svc.model_breakdown(tenant=None, time_range="24h")
 
         model_repo.get_model_names.assert_awaited_once_with(
+            ["hash-gemma-v1"], task_types=_to_registry_task_types(list(SERVICE_BREAKDOWN_CONFIG))
+        )
+
+    async def test_task_type_mapping_translates_to_registry_values_not_raw_metering_keys(self):
+        """Regression: SERVICE_BREAKDOWN_CONFIG's underscore keys are NOT
+        always what mm_models.task["type"] stores (e.g. TaskTypeEnum stores
+        "language-detection", "audio-lang-detection" — the latter isn't even
+        a simple underscore->hyphen swap of "audio_language_detection").
+        Passing the raw metering keys straight through would silently match
+        zero rows for these, undercounting total_models/active_models."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("svc-1", 10, model_id="hash-x"))
+        model_repo = self._model_repo({"hash-x": "Some Model"})
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        await svc.model_breakdown(tenant=None, time_range="24h")
+
+        called_task_types = model_repo.get_model_names.call_args.kwargs["task_types"]
+        assert "language-detection" in called_task_types
+        assert "speaker-diarization" in called_task_types
+        assert "audio-lang-detection" in called_task_types
+        assert "language-diarization" in called_task_types
+        assert "audio_language_detection" not in called_task_types  # raw metering key, never passed through
+        assert "pipeline" not in called_task_types  # no Registry/TaskTypeEnum equivalent
+
+    async def test_model_registry_lookup_scoped_to_requested_task_types(self):
+        """A caller-supplied task_types filter (e.g. the Model Task Type
+        drilldown filter) narrows get_model_names to exactly that list,
+        same as it narrows the Prometheus query itself."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("svc-1", 10, model_id="hash-gemma-v1"))
+        model_repo = self._model_repo({"hash-gemma-v1": "Gemma 3 27B"})
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        await svc.model_breakdown(tenant=None, time_range="24h", task_types=["llm"])
+
+        model_repo.get_model_names.assert_awaited_once_with(
             ["hash-gemma-v1"], task_types=["llm"]
         )
 
     async def test_model_totals_excludes_model_registered_under_different_task_type(self):
         """The exact failure scenario the task_types filter closes: a
         model_id actively serving LLM-chat traffic whose Registry row is
-        tagged with a non-llm task type. `get_model_names(task_types=
+        tagged with a non-llm task type, while the caller has explicitly
+        filtered to task_types=["llm"]. `get_model_names(task_types=
         ["llm"])` won't return it (simulated here the same way a deleted
         model is — the repo call itself is mocked, so the real SQL filter
         is exercised by ModelRepository, not this test; this test pins the
@@ -914,7 +1426,7 @@ class TestModelBreakdown:
         model_repo = self._model_repo({})
         svc = MeteringService(client=client, model_repo=model_repo)
 
-        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        result = await svc.model_breakdown(tenant=None, time_range="24h", task_types=["llm"])
 
         assert result["model_totals"] == []
 
@@ -1044,12 +1556,22 @@ class TestRegistryModelCount:
         svc = MeteringService(client=MagicMock())
         assert await svc.registry_model_count() is None
 
-    async def test_delegates_to_model_repo_count_models_scoped_to_llm(self):
+    async def test_delegates_to_model_repo_scoped_to_every_task_type_when_unfiltered(self):
         repo = MagicMock()
         repo.count_models = AsyncMock(return_value=42)
         svc = MeteringService(client=MagicMock(), model_repo=repo)
 
         assert await svc.registry_model_count() == 42
+        repo.count_models.assert_awaited_once_with(
+            task_types=_to_registry_task_types(list(SERVICE_BREAKDOWN_CONFIG))
+        )
+
+    async def test_delegates_to_model_repo_scoped_to_requested_task_types(self):
+        repo = MagicMock()
+        repo.count_models = AsyncMock(return_value=7)
+        svc = MeteringService(client=MagicMock(), model_repo=repo)
+
+        assert await svc.registry_model_count(task_types=["llm"]) == 7
         repo.count_models.assert_awaited_once_with(task_types=["llm"])
 
     async def test_db_failure_returns_none_not_raises(self):
@@ -1058,6 +1580,20 @@ class TestRegistryModelCount:
         svc = MeteringService(client=MagicMock(), model_repo=repo)
 
         assert await svc.registry_model_count() is None
+
+    async def test_pipeline_only_filter_returns_zero_without_querying_registry(self):
+        """task_types=["pipeline"] maps to [] via _to_registry_task_types
+        ("pipeline" has no Registry equivalent at all). count_models() gates
+        on `if task_types:`, so passing [] straight through would apply NO
+        filter and count every mm_models row instead of zero — there are no
+        registrable models under this scope by definition, so the DB isn't
+        even queried."""
+        repo = MagicMock()
+        repo.count_models = AsyncMock(return_value=999)
+        svc = MeteringService(client=MagicMock(), model_repo=repo)
+
+        assert await svc.registry_model_count(task_types=["pipeline"]) == 0
+        repo.count_models.assert_not_called()
 
 
 class TestModelConsumptionRanking:
@@ -1089,7 +1625,9 @@ class TestModelConsumptionRanking:
         most_used, ranked, grand_total = MeteringService.model_consumption_ranking(model_totals, limit=10)
 
         assert most_used == {
-            "model_id": "id-gemma", "model_name": "gemma", "requests": 300, "consumption_pct": 75.0,
+            "model_id": "id-gemma", "model_name": "gemma", "task_type": None,
+            "requests": 300, "native_units": 0.0, "native_unit_suffix": "",
+            "consumption_pct": 75.0,
         }
         assert grand_total == 400
         assert [m["model_name"] for m in ranked] == ["gemma", "llama"]
@@ -1097,6 +1635,27 @@ class TestModelConsumptionRanking:
         assert ranked[0]["consumption_pct"] == 75.0
         assert ranked[1]["consumption_pct"] == 25.0
         assert ranked[0]["formatted_requests"] == "300"
+
+    def test_task_type_and_native_units_survive_into_top_models(self):
+        """PR #1506 review: model_breakdown's model_totals carries task_type/
+        native_units/native_unit_suffix per model (Subtask 2), but this
+        method used to rebuild each ranked row from only 4 keys — silently
+        dropping all three before they ever reached TopModelRow/the donut
+        chart. They must now flow through unchanged."""
+        model_totals = [{
+            "model_id": "id-nmt", "model_name": "indictrans",
+            "task_type": "nmt", "requests": 8,
+            "native_units": 212.0, "native_unit_suffix": "chars",
+            "success_pct": 100.0,
+        }]
+        most_used, ranked, _ = MeteringService.model_consumption_ranking(model_totals, limit=10)
+
+        assert most_used["task_type"] == "nmt"
+        assert most_used["native_units"] == 212.0
+        assert most_used["native_unit_suffix"] == "chars"
+        assert ranked[0]["task_type"] == "nmt"
+        assert ranked[0]["native_units"] == 212.0
+        assert ranked[0]["native_unit_suffix"] == "chars"
 
     def test_most_used_always_agrees_with_top_ranked_model(self):
         model_totals = [
@@ -1302,7 +1861,7 @@ class TestActiveModelsTotalModelsSubsetInvariant:
         repo = MagicMock()
         repo.count_models = AsyncMock(return_value=5)  # 5 registered llm versions
         svc = MeteringService(client=MagicMock(), model_repo=repo)
-        total_models = await svc.registry_model_count()
+        total_models = await svc.registry_model_count(task_types=["llm"])
         assert total_models == 5
         repo.count_models.assert_awaited_once_with(task_types=["llm"])
 
@@ -1453,6 +2012,25 @@ class TestMeteringQueriesRestrictToApiKeyTraffic:
         await svc.model_breakdown(tenant=None, time_range="24h")
         for call in svc._client.query.call_args_list:
             assert 'auth_type=~"api_key|"' in call[0][0]
+
+    async def test_model_breakdown_native_unit_queries_exclude_unknown_tenant(self):
+        """The tokens query model_breakdown's native-unit fan-out replaced
+        carried `tenant!="unknown"` explicitly (build_base_selectors already
+        applies it to total_q/success_q). Without it on the native-unit
+        queries too, the all-tenants view would count unresolved-tenant
+        traffic in native_units that the request counts exclude, and a
+        service with only unknown-tenant traffic could enter `service_ids`
+        via the native vector alone with 0 requests and an unresolved
+        task_type."""
+        svc = _make_service(query_return=[])
+        await svc.model_breakdown(tenant=None, time_range="24h")
+        native_calls = [
+            call[0][0] for call in svc._client.query.call_args_list
+            if "telemetry_obsv_requests_total" not in call[0][0]
+        ]
+        assert native_calls, "expected at least one native-unit query"
+        for promql in native_calls:
+            assert 'tenant!="unknown"' in promql
 
     async def test_request_total_when_caller_passes_api_key_filter(self):
         # request_total's auth_type is caller-supplied (routes/metering.py
@@ -1677,6 +2255,51 @@ class TestOverviewTenantData:
         assert isinstance(active_by_range["24h"], RuntimeError)
         assert isinstance(active_by_range["7d"], RuntimeError)
         assert tc["auth_db_available"] is True
+
+    async def test_tenant_count_failure_does_not_poison_valid_ids_fetch(self):
+        """Exact bug scenario: tenant_count()'s first query (total_tenants)
+        fails; overview_tenant_data() then reuses the SAME self._auth_db for
+        _fetch_valid_tenant_ids() right after. A bare AsyncMock would let that
+        second query succeed regardless — hiding the bug — so this uses a
+        fake session that reproduces Postgres' real aborted-transaction
+        behavior: every statement after a raising one fails too, until
+        .rollback() runs."""
+
+        class _PoisonableAuthDB:
+            def __init__(self) -> None:
+                self._call_count = 0
+                self._poisoned = False
+                self.rollback = AsyncMock(side_effect=self._clear_poison)
+
+            def _clear_poison(self) -> None:
+                self._poisoned = False
+
+            async def execute(self, *args, **kwargs):
+                self._call_count += 1
+                if self._poisoned:
+                    raise RuntimeError(
+                        "This Session's transaction has been rolled back due to a "
+                        "previous exception during flush."  # PendingRollbackError
+                    )
+                if self._call_count == 1:
+                    self._poisoned = True
+                    raise RuntimeError("connection reset by peer")
+                result = MagicMock()
+                result.scalar.return_value = 1
+                result.all.return_value = [(1,)]
+                return result
+
+        auth_db = _PoisonableAuthDB()
+        svc = _make_service(query_return=[], auth_db=auth_db)
+
+        tc, _ = await svc.overview_tenant_data(["24h"])
+
+        # tenant_count() degrades (its own failing query) — expected.
+        assert tc["auth_db_available"] is False
+        # But the valid-ids fetch right after it, on the same session, must
+        # not inherit that failure — it's an independent, otherwise-healthy
+        # query once the rollback has run.
+        assert auth_db._call_count == 2  # tenant_count's 1st query + valid-ids fetch
 
 
 @pytest.mark.asyncio

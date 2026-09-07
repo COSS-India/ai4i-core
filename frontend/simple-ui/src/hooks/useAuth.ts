@@ -16,9 +16,9 @@ const AUTH_UPDATED_EVENT = 'auth:updated';
  */
 const AUTH_SESSION_REVOKED_STORAGE_KEY = 'ai4i:auth:session-revoked';
 
-// Shared init promise: only one getCurrentUser() + listApiKeys() run for all useAuth() instances.
-// This prevents N components (Header, Sidebar, AuthGuard, pages, useFeatureFlag hooks) from each
-// calling auth/me and listApiKeys on every load.
+// Shared init promise: only one getCurrentUser() runs for all useAuth() instances.
+// This prevents N components (Header, Sidebar, AuthGuard, pages, useFeatureFlag hooks) from
+// each calling auth/me on every load.
 let authInitPromise: Promise<void> | null = null;
 
 function runAuthInitOnce(): Promise<void> {
@@ -89,7 +89,7 @@ export const useAuth = () => {
     refreshThresholdMinutes: 5, // Refresh if token expires within 5 minutes
   });
 
-  // Initialize auth state (shared init: only one auth/me + listApiKeys for all hook instances)
+  // Initialize auth state (shared init: only one auth/me for all hook instances)
   useEffect(() => {
     const handleAuthUpdated = () => {
       try {

@@ -21,7 +21,6 @@ import {
   DrawerOverlay,
   FormControl,
   FormErrorMessage,
-  FormHelperText,
   FormLabel,
   HStack,
   Heading,
@@ -50,29 +49,29 @@ import {
   Text,
   Tooltip,
   VStack,
+  useColorModeValue,
   useDisclosure,
 } from "@chakra-ui/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@chakra-ui/react";
 import {
-  fetchTiers,
-  assignTenantTier,
+  changeTenantTier,
   fetchTenantTiers,
-  reassignTenantTier,
+  fetchTiers,
   type TenantTierAssignment,
   adjustTenantBudget,
 } from "../../services/tierManagementService";
+import * as tenantService from "../../services/tenantService";
 import { fetchAllServicesMatchingFilters } from "../../services/servicesManagementService";
 import {
   FiArrowLeft,
-  FiCheckCircle,
   FiEdit2,
   FiMail,
   FiPauseCircle,
   FiPlus,
   FiPower,
+  FiSliders,
   FiUserPlus,
-  FiUsers,
 } from "react-icons/fi";
 import {
   ChevronDownIcon,
@@ -83,6 +82,9 @@ import {
 import { useAuth } from "../../hooks/useAuth";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { useTenantManagement } from "./hooks/useTenantManagement";
+import { useOwnInstitutionDetails } from "./hooks/useOwnInstitutionDetails";
+import InstitutionDetailsPanel from "./InstitutionDetailsPanel";
+import ApplicationManagementTab from "./ApplicationManagementTab";
 import ConfirmDialog from "../common/ConfirmDialog";
 import ConsentCheckbox, {
   getConsentValidationError,
@@ -109,17 +111,18 @@ import {
   resolveTenantUserDisplayStatus,
 } from "../../config/constants";
 import { replaceTenantCopy } from "../../utils/replaceTenantCopy";
-import { EMAIL_AVAILABLE_MSG } from "../../utils/tenantEmailValidation";
+import {
+  isAdopterInstitutionManager,
+  isPlatformAdminUser,
+} from "../../utils/rbac";
+import { FIELD_HINTS } from "../../config/fieldHints";
+import FieldHint from "../common/FieldHint";
 import {
   DEFAULT_ORG_USER_FORM_ROLE_OPTIONS,
   formatPlatformRoleLabel,
   isDefaultTenant,
 } from "../../utils/defaultTenant";
-import {
-  addDaysToDateInputValue,
-  dateInputToStartOfDayIso,
-  dateInputToEndOfDayIso,
-} from "../../utils/helpers";
+import { dash, fmtDate } from "../../utils/valueFormatters";
 import type { TenantUserView, TenantView } from "../../types/tenant";
 
 const BUDGET_MAX_INTEGER_DIGITS = 7;
@@ -136,19 +139,6 @@ function clampBudgetInput(raw: string): string {
   );
   const decimalPart = dotIndex === -1 ? "" : raw.slice(dotIndex);
   return intPart + decimalPart;
-}
-
-function dash(v?: string | null): string {
-  return v && v.trim() ? v : "—";
-}
-
-function fmtDate(v?: string | null): string {
-  if (!v) return "—";
-  try {
-    return new Date(v).toLocaleString();
-  } catch {
-    return v;
-  }
 }
 
 export interface TenantManagementTabProps {
@@ -176,13 +166,67 @@ function getTenantAvatarBg(name: string): string {
   return AVATAR_COLORS[sum % AVATAR_COLORS.length];
 }
 
+type TierOption = { id: string; name: string };
+
+function tenantBudgetNumber(t: TenantView): number | null {
+  if (t.allocated_budget == null) return null;
+  const n = Number(t.allocated_budget);
+  return Number.isFinite(n) ? n : null;
+}
+
+function resolveTierLabel(
+  tierId: string | null | undefined,
+  tierOptions: TierOption[],
+  fallbackName?: string | null,
+): string {
+  if (fallbackName?.trim()) return fallbackName.trim();
+  if (!tierId) return "—";
+  const match = tierOptions.find((tier) => String(tier.id) === String(tierId));
+  return match?.name ?? tierId;
+}
+
+function formatRupees(amount: number | null | undefined): string {
+  if (amount == null) return "—";
+  return `₹${amount.toLocaleString("en-IN")}`;
+}
+
+function resolveTenantTierAssignment(
+  tenant: TenantView,
+  assignments: TenantTierAssignment[],
+  tierOptions: TierOption[],
+): TenantTierAssignment | null {
+  const fromList = assignments.find(
+    (a) => String(a.tenant_id) === String(tenant.tenant_id),
+  );
+  if (fromList) return fromList;
+  if (!tenant.tier_id) return null;
+  return {
+    tenant_id: tenant.tenant_id,
+    tenant_name: tenant.organisation,
+    tier_id: tenant.tier_id,
+    tier_name: resolveTierLabel(tenant.tier_id, tierOptions, tenant.tier_name),
+    allocated_budget: tenant.allocated_budget ?? 0,
+    budget_effective_from: tenant.budget_effective_from ?? undefined,
+    budget_effective_to: tenant.budget_effective_to ?? undefined,
+    updated_at: tenant.updated_at ?? "",
+  };
+}
+
 export default function TenantManagementTab({
   isActive = false,
 }: TenantManagementTabProps) {
   const { user } = useAuth();
   const tm = useTenantManagement({ user });
 
-  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
+  const isAdmin = isPlatformAdminUser(user?.roles);
+  const isAdopterManager = isAdopterInstitutionManager(user?.roles);
+  const tabCardBg = useColorModeValue("white", "gray.800");
+  const tabCardBorder = useColorModeValue("gray.200", "gray.700");
+  // Institution Admin view only — idle on the adopter path.
+  const ownInstitution = useOwnInstitutionDetails({
+    tenantId: user?.tenant_id,
+    enabled: !isAdopterManager,
+  });
   const { taskTypeNames } = useInferenceTypes();
   const enabledTaskTypesParam =
     taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
@@ -214,42 +258,29 @@ export default function TenantManagementTab({
     setUserConsentError("");
   }, [tm.isUserModalOpen]);
 
-  // Assign Tier modal state
-  const [assignTierTenant, setAssignTierTenant] = useState<TenantView | null>(
-    null,
-  );
-  const [assignTierId, setAssignTierId] = useState("");
-  const [assignBudget, setAssignBudget] = useState("");
-  const [assignEffectiveFrom, setAssignEffectiveFrom] = useState("");
-  const [assignEffectiveTo, setAssignEffectiveTo] = useState("");
-  const [isAssigning, setIsAssigning] = useState(false);
-  const [assignTierError, setAssignTierError] = useState<string | null>(null);
-  const {
-    isOpen: isAssignTierOpen,
-    onOpen: onAssignTierOpen,
-    onClose: onAssignTierClose,
-  } = useDisclosure();
+  // Manage plan drawer (change tier + budget top-up/down)
   const {
     isOpen: isViewTierOpen,
     onOpen: onViewTierOpen,
     onClose: onViewTierClose,
   } = useDisclosure();
 
+  // Adopter-only: tier drawer + onboard form need tier catalog (ADMIN-only).
   const tiersQuery = useQuery({
     queryKey: ["tiers"],
     queryFn: () => fetchTiers(),
     staleTime: 5 * 60_000,
+    enabled: isAdmin,
   });
   const tierOptions = tiersQuery.data?.data ?? [];
 
   // Shared with Tier Management so service↔tier mappings stay consistent
-  // (same taskTypes filter + cache key as useTierManagement).
   const servicesForTiersQuery = useQuery({
     queryKey: ["services-for-tiers", enabledTaskTypesParam ?? "all"],
     queryFn: () =>
       fetchAllServicesMatchingFilters({ taskTypes: enabledTaskTypesParam }),
     staleTime: 60_000,
-    enabled: isAdmin && (isAssignTierOpen || isViewTierOpen),
+    enabled: isAdmin && (isViewTierOpen || tm.isTenantModalOpen),
   });
   const tierIdsWithServices = useMemo(() => {
     const ids = new Set<string>();
@@ -269,10 +300,6 @@ export default function TenantManagementTab({
     enabled: isAdmin,
   });
   const tenantTierAssignments = tenantTiersQuery.data?.data ?? [];
-  const tierAssignedTenantIds = useMemo(
-    () => new Set(tenantTierAssignments.map((a) => String(a.tenant_id))),
-    [tenantTierAssignments],
-  );
 
   const [viewTierTenant, setViewTierTenant] =
     useState<TenantTierAssignment | null>(null);
@@ -334,6 +361,44 @@ export default function TenantManagementTab({
     tm.isDefaultTenantUsersView,
   ]);
 
+  const syncTenantAfterPlanChange = async (tenantId: string) => {
+    const rows = await tm.handleFetchTenants();
+    const fromList = rows.find((row) => String(row.tenant_id) === String(tenantId));
+    let fresh = fromList;
+    if (!fresh) {
+      try {
+        fresh = await tenantService.getViewTenant(tenantId);
+      } catch {
+        fresh = undefined;
+      }
+    }
+    if (fresh) {
+      tm.patchTenantLocal(tenantId, fresh);
+      if (manageTenant?.tenant_id === tenantId) {
+        setManageTenant(fresh);
+        setManageBudget(tenantBudgetNumber(fresh) ?? 0);
+      }
+    }
+  };
+
+  const openManagePlan = (tenant: TenantView) => {
+    const assignment = resolveTenantTierAssignment(
+      tenant,
+      tenantTierAssignments,
+      tierOptions,
+    );
+    setViewTierTenant(assignment);
+    setManageTenant(tenant);
+    const tierId = tenant.tier_id ?? assignment?.tier_id ?? "";
+    setManageTierId(tierId);
+    setOriginalTierId(tierId);
+    setIsEditingTier(!tierId);
+    setManageBudget(tenantBudgetNumber(tenant) ?? 0);
+    setBudgetAmount("");
+    setBudgetAction("topup");
+    onViewTierOpen();
+  };
+
   const handleCloseManagePlan = () => {
     if (isSavingPlan) return;
     onViewTierClose();
@@ -349,10 +414,8 @@ export default function TenantManagementTab({
   };
 
   const handleSaveManagePlan = async () => {
-    if (!viewTierTenant || !manageTierId) return;
+    if (!manageTenant || !manageTierId) return;
 
-    // Wait for service mapping data before allowing reassignment to a
-    // potentially service-less tier (avoids ghost / contradictory state).
     if (servicesForTiersQuery.isLoading || servicesForTiersQuery.isFetching) {
       toast({
         title: "Loading services",
@@ -365,7 +428,7 @@ export default function TenantManagementTab({
     }
     if (servicesForTiersQuery.isError) {
       toast({
-        title: "Cannot update plan",
+        title: "Cannot change tier",
         description:
           "Unable to verify service mappings for this Tier. Please refresh and try again.",
         status: "error",
@@ -376,7 +439,7 @@ export default function TenantManagementTab({
     }
     if (!tierIdsWithServices.has(String(manageTierId))) {
       toast({
-        title: "Cannot update plan",
+        title: "Cannot change tier",
         description: TIER_NO_SERVICES_MSG,
         status: "error",
         duration: 6000,
@@ -387,30 +450,30 @@ export default function TenantManagementTab({
 
     setIsSavingPlan(true);
     try {
-      await reassignTenantTier({
-        tenant_id: String(viewTierTenant.tenant_id),
-        tier_id: manageTierId,
-      });
+      await changeTenantTier(String(manageTenant.tenant_id), manageTierId);
       toast({
-        title: "Plan updated",
-        description: `Tier updated for "${manageTenant?.organisation ?? ""}".`,
+        title: "Tier updated",
+        description: `Tier changed for "${manageTenant.organisation}".`,
         status: "success",
         duration: 4000,
         isClosable: true,
       });
       await queryClient.refetchQueries({ queryKey: ["tenant-tiers"] });
-      handleCloseManagePlan();
-    } catch (err: any) {
-      const detail = err?.response?.data?.detail;
+      await syncTenantAfterPlanChange(manageTenant.tenant_id);
+      setOriginalTierId(manageTierId);
+      setIsEditingTier(false);
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: unknown } } })
+        ?.response?.data?.detail;
       const message =
-        (typeof detail === "object" && detail !== null
-          ? detail.message
-          : detail) ??
-        err?.message ??
-        "An error occurred.";
+        (typeof detail === "object" && detail !== null && "message" in detail
+          ? String((detail as { message?: string }).message)
+          : undefined) ??
+        (typeof detail === "string" ? detail : undefined) ??
+        (err instanceof Error ? err.message : "An error occurred.");
       toast({
-        title: "Failed to update plan",
-        description: String(message),
+        title: "Failed to change tier",
+        description: replaceTenantCopy(String(message)),
         status: "error",
         duration: 5000,
         isClosable: true,
@@ -420,163 +483,59 @@ export default function TenantManagementTab({
     }
   };
 
-  const handleOpenAssignTier = (t: TenantView) => {
-    setAssignTierTenant(t);
-    setAssignTierId("");
-    setAssignBudget("");
-    setAssignEffectiveFrom("");
-    setAssignEffectiveTo("");
-    setAssignTierError(null);
-    onAssignTierOpen();
-  };
-
-  const handleAssignTierClose = () => {
-    if (isAssigning) return;
-    onAssignTierClose();
-    setAssignTierTenant(null);
-    setAssignEffectiveFrom("");
-    setAssignEffectiveTo("");
-    setAssignTierError(null);
-  };
-
-  const handleAssignTierSubmit = async () => {
-    if (
-      !assignTierTenant ||
-      !assignTierId ||
-      !assignBudget.trim() ||
-      !assignEffectiveFrom ||
-      !assignEffectiveTo
-    )
-      return;
-
-    const budgetValue = Number(assignBudget);
-    if (!Number.isFinite(budgetValue) || budgetValue <= 0) {
-      setAssignTierError("Budget must be a positive value.");
-      return;
-    }
-
-    // Block assignment of tiers with no mapped services before calling the API,
-    // so we never create a partial/ghost assignment or show misleading feedback.
-    if (servicesForTiersQuery.isLoading || servicesForTiersQuery.isFetching) {
-      setAssignTierError(
-        "Loading service mappings… please try again in a moment.",
-      );
-      return;
-    }
-    if (servicesForTiersQuery.isError) {
-      setAssignTierError(
-        "Unable to verify service mappings for this Tier. Please refresh and try again.",
-      );
-      return;
-    }
-    if (!tierIdsWithServices.has(String(assignTierId))) {
-      setAssignTierError(TIER_NO_SERVICES_MSG);
-      return;
-    }
-
-    if (assignEffectiveFrom < new Date().toISOString().slice(0, 10)) {
-      setAssignTierError("Effective From cannot be in the past.");
-      return;
-    }
-    if (assignEffectiveFrom === assignEffectiveTo) {
-      setAssignTierError(
-        "Effective From and Effective To cannot be the same date.",
-      );
-      return;
-    }
-    const effectiveFromIso = dateInputToStartOfDayIso(assignEffectiveFrom);
-    const effectiveToIso = dateInputToEndOfDayIso(assignEffectiveTo);
-    if (new Date(effectiveToIso) <= new Date(effectiveFromIso)) {
-      setAssignTierError("Effective To must be after Effective From.");
-      return;
-    }
-
-    setIsAssigning(true);
-    setAssignTierError(null);
-    try {
-      await assignTenantTier({
-        tenant_id: String(assignTierTenant.tenant_id),
-        tier_id: assignTierId,
-        budget: budgetValue,
-        effective_from: effectiveFromIso,
-        effective_to: effectiveToIso,
-      });
-      await queryClient.refetchQueries({ queryKey: ["tenant-tiers"] });
-      toast({
-        title: "Tier assigned",
-        description: `Tier assigned to "${assignTierTenant.organisation}" successfully.`,
-        status: "success",
-        duration: 4000,
-        isClosable: true,
-      });
-      onAssignTierClose();
-      setAssignTierTenant(null);
-    } catch (err: any) {
-      const detail = err?.response?.data?.detail;
-      let message: unknown;
-      if (Array.isArray(detail)) {
-        const budgetError = detail.find((d) =>
-          Array.isArray(d?.loc) ? d.loc.includes("budget") : false,
-        );
-        message = budgetError
-          ? "Budget must be a positive value."
-          : detail[0]?.msg;
-      } else if (typeof detail === "object" && detail !== null) {
-        message = detail.message;
-      } else {
-        message = detail;
-      }
-      message = message ?? err?.message ?? "An error occurred.";
-      const messageStr = String(message);
-      // Map overlapping-period 409 into a clearer failure (not a success-sounding state).
-      if (/already has a tier assignment overlapping/i.test(messageStr)) {
-        setAssignTierError(
-          `This ${INSTITUTION.toLowerCase()} already has a tier assignment for the selected date range. Choose different dates or manage the existing assignment.`,
-        );
-      } else {
-        setAssignTierError(replaceTenantCopy(messageStr));
-      }
-    } finally {
-      setIsAssigning(false);
-    }
-  };
-
   const handleApplyBudget = async () => {
-    if (!viewTierTenant) return;
+    if (!manageTenant) return;
 
     const amount = Number(budgetAmount);
-
     if (amount <= 0) return;
 
     try {
       const res = await adjustTenantBudget({
-        tenant_id: String(viewTierTenant.tenant_id),
+        tenant_id: String(manageTenant.tenant_id),
         action: budgetAction === "topup" ? "top-up" : "top-down",
         amount,
       });
 
-      setManageBudget(Number(res.budget_limit));
+      const nextBudget = Number(res.allocated_budget);
+      if (Number.isFinite(nextBudget)) {
+        setManageBudget(nextBudget);
+        tm.patchTenantLocal(manageTenant.tenant_id, {
+          allocated_budget: nextBudget,
+        });
+      }
       setBudgetAmount("");
+
+      // A tenant budget revision never moves any Application's own ₹ (or,
+      // therefore, any Key's — keys_recomputed is always literally 0 now
+      // and would be misleading to surface). Only each Application's %
+      // share of the new total is recalculated; their ₹ allocations are
+      // untouched.
+      const apps = res.applications_recomputed;
+      let description = `Budget ${budgetAction === "topup" ? "increased" : "decreased"} by ${formatRupees(amount)}.`;
+      if (apps) {
+        description += ` ${apps} Application(s)' Budget % ${apps === 1 ? "was" : "were"} recalculated to reflect the new total — their ₹ allocations were not changed.`;
+      }
 
       toast({
         title: "Budget updated",
+        description,
         status: "success",
-        duration: 3000,
+        duration: 5000,
         isClosable: true,
       });
 
-      await queryClient.refetchQueries({
-        queryKey: ["tenant-tiers"],
-      });
-    } catch (err: any) {
-      const detail = err?.response?.data?.detail;
+      await queryClient.refetchQueries({ queryKey: ["tenant-tiers"] });
+      await syncTenantAfterPlanChange(manageTenant.tenant_id);
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: unknown } } })
+        ?.response?.data?.detail;
 
       toast({
         title: "Failed to update budget",
         description:
-          typeof detail === "object"
-            ? detail.message
-            : (detail ?? "Something went wrong."),
+          typeof detail === "object" && detail !== null && "message" in detail
+            ? String((detail as { message?: string }).message)
+            : (typeof detail === "string" ? detail : "Something went wrong."),
         status: "error",
         duration: 5000,
         isClosable: true,
@@ -592,13 +551,13 @@ export default function TenantManagementTab({
   // Initial fetch when this tab becomes active.
   useEffect(() => {
     if (!isActive || !user) return;
-    if (isAdmin) {
+    if (isAdopterManager) {
       void tm.handleFetchTenants();
     } else {
       void tm.handleFetchTenantUsers();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive, user, isAdmin]);
+  }, [isActive, user, isAdopterManager]);
 
   // Refresh users when tenant detail view changes.
   useEffect(() => {
@@ -694,7 +653,7 @@ export default function TenantManagementTab({
       },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tm, tierOptions]);
+  }, [tm]);
 
   const userColumns = useMemo((): AdminTableColumn<TenantUserView>[] => {
     return [
@@ -740,9 +699,9 @@ export default function TenantManagementTab({
 
   return (
     <Box>
-      {isAdmin && !tm.tenantDetailView && renderAdopterView()}
+      {isAdopterManager && !tm.tenantDetailView && renderAdopterView()}
 
-      {!isAdmin && !tm.tenantDetailView && renderTenantView()}
+      {!isAdopterManager && !tm.tenantDetailView && renderInstitutionAdminView()}
 
       {tm.tenantDetailView && renderTenantDetail()}
 
@@ -754,7 +713,6 @@ export default function TenantManagementTab({
       {renderViewUserModal()}
       {renderStatusConfirmDialog()}
       {renderDeleteUserDialog()}
-      {renderAssignTierModal()}
       {renderViewTierModal()}
     </Box>
   );
@@ -767,14 +725,16 @@ export default function TenantManagementTab({
           <HStack justify="space-between" align="center">
             <Heading size="md">{INSTITUTIONS}</Heading>
             <HStack>
-              <Button
-                leftIcon={<FiPlus />}
-                size="sm"
-                colorScheme="blue"
-                onClick={tm.openTenantModal}
-              >
-                Create {INSTITUTION}
-              </Button>
+              {isAdmin && (
+                <Button
+                  leftIcon={<FiPlus />}
+                  size="sm"
+                  colorScheme="blue"
+                  onClick={tm.openTenantModal}
+                >
+                  Create {INSTITUTION}
+                </Button>
+              )}
             </HStack>
           </HStack>
         </CardHeader>
@@ -819,6 +779,43 @@ export default function TenantManagementTab({
             }
           />
         </CardBody>
+      </Card>
+    );
+  }
+
+  // ── Institution Admin landing view (own institution + its users) ────────
+  // One institution, so no list to drill into — tabs are the first screen.
+  function renderInstitutionAdminView() {
+    return (
+      <Card bg={tabCardBg} borderColor={tabCardBorder} borderWidth="1px">
+        <Tabs colorScheme="blue" variant="enclosed">
+          <TabList>
+            <Tab fontWeight="semibold">{`My ${INSTITUTION}`}</Tab>
+            <Tab fontWeight="semibold">Users</Tab>
+            <Tab fontWeight="semibold">Applications</Tab>
+          </TabList>
+          <TabPanels>
+            <TabPanel px={6} pt={6} pb={6}>
+              <InstitutionDetailsPanel
+                institution={ownInstitution.institution}
+                tierName={ownInstitution.tierName}
+                budgetLimit={ownInstitution.budgetLimit}
+                currency={ownInstitution.currency}
+                isLoading={ownInstitution.isLoading}
+                errorMessage={ownInstitution.errorMessage}
+                tierBudgetErrorMessage={ownInstitution.tierBudgetErrorMessage}
+              />
+            </TabPanel>
+            <TabPanel px={6} pt={6} pb={6}>{renderTenantView()}</TabPanel>
+            <TabPanel px={6} pt={6} pb={6}>
+              <ApplicationManagementTab
+                tenantId={user?.tenant_id ?? ""}
+                institutionBudget={ownInstitution.budgetLimit}
+                currency={ownInstitution.currency}
+              />
+            </TabPanel>
+          </TabPanels>
+        </Tabs>
       </Card>
     );
   }
@@ -984,20 +981,28 @@ export default function TenantManagementTab({
         </CardHeader>
         <CardBody>
           <Tabs
-            index={tm.tenantDetailSubTab === "overview" ? 0 : 1}
+            colorScheme="blue"
+            variant="enclosed"
+            index={
+              tm.tenantDetailSubTab === "overview"
+                ? 0
+                : tm.tenantDetailSubTab === "users"
+                  ? 1
+                  : 2
+            }
             onChange={(idx) =>
-              tm.setTenantDetailSubTab(idx === 0 ? "overview" : "users")
+              tm.setTenantDetailSubTab(
+                idx === 0 ? "overview" : idx === 1 ? "users" : "applications",
+              )
             }
           >
             <TabList>
-              <Tab>Overview</Tab>
-              <Tab>
-                <FiUsers style={{ marginRight: 6 }} />
-                Users
-              </Tab>
+              <Tab fontWeight="semibold">Overview</Tab>
+              <Tab fontWeight="semibold">Users</Tab>
+              <Tab fontWeight="semibold">Applications</Tab>
             </TabList>
             <TabPanels>
-              <TabPanel px={0}>
+              <TabPanel px={0} pt={6}>
                 {isTenantStatus(t.status, TENANT.STATUS.PENDING) && (
                   <Alert
                     status="info"
@@ -1059,20 +1064,50 @@ export default function TenantManagementTab({
                     <Text>{fmtDate(t.created_at)}</Text>
                   </Box>
                   <Box>
-                    <Text fontWeight="semibold">Tier Assigned</Text>
-                    <Text>{dash(tierAssignment?.tier_name)}</Text>
+                    <Text fontWeight="semibold">Tier</Text>
+                    <Text>
+                      {resolveTierLabel(
+                        t.tier_id ?? tierAssignment?.tier_id,
+                        tierOptions,
+                        t.tier_name ?? tierAssignment?.tier_name,
+                      )}
+                    </Text>
                   </Box>
                   <Box>
                     <Text fontWeight="semibold">Budget</Text>
                     <Text>
-                      {tierAssignment
-                        ? `₹${Number(tierAssignment.budget_limit).toLocaleString()}`
-                        : "—"}
+                      {formatRupees(
+                        tenantBudgetNumber(t) ??
+                          (tierAssignment
+                            ? Number(tierAssignment.allocated_budget)
+                            : null),
+                      )}
                     </Text>
                   </Box>
+                  {(t.budget_effective_from || t.budget_effective_to) && (
+                    <Box>
+                      <Text fontWeight="semibold">Budget period</Text>
+                      <Text fontSize="sm">
+                        {fmtDate(t.budget_effective_from)} —{" "}
+                        {fmtDate(t.budget_effective_to)}
+                      </Text>
+                    </Box>
+                  )}
                 </SimpleGrid>
               </TabPanel>
-              <TabPanel px={0}>{renderTenantUsersTable()}</TabPanel>
+              <TabPanel px={6} pt={6} pb={6}>{renderTenantUsersTable()}</TabPanel>
+              <TabPanel px={6} pt={6} pb={6}>
+                <ApplicationManagementTab
+                  tenantId={t.tenant_id}
+                  institutionBudget={
+                    tenantBudgetNumber(t) ??
+                    (tierAssignment
+                      ? Number(tierAssignment.allocated_budget)
+                      : null)
+                  }
+                  currency="INR"
+                />
+              </TabPanel>
             </TabPanels>
           </Tabs>
         </CardBody>
@@ -1264,64 +1299,24 @@ export default function TenantManagementTab({
             tm.handleOpenEditTenant(t);
           }}
         />
-        {tierAssignedTenantIds.has(String(t.tenant_id)) ? (
-          <Tooltip label="View Tier">
-            <IconButton
-              aria-label="View tier"
-              icon={<FiCheckCircle size={14} />}
-              size="xs"
-              w={4}
-              h={4}
-              minW={4}
-              variant="outline"
-              colorScheme="green"
-              borderRadius="full"
-              _hover={{ bg: "green.50" }}
-              onClick={(e) => {
-                stopRowClick(e);
-                const assignment =
-                  tenantTierAssignments.find(
-                    (a) => String(a.tenant_id) === String(t.tenant_id),
-                  ) ?? null;
-                setViewTierTenant(assignment);
-                setManageTenant(t);
-
-                const tierId = assignment?.tier_id ?? "";
-
-                setManageTierId(tierId);
-                setOriginalTierId(tierId);
-                setIsEditingTier(false);
-
-                setManageBudget(
-                  assignment
-                    ? Number.parseFloat(assignment.budget_limit) || 0
-                    : 0,
-                );
-
-                onViewTierOpen();
-              }}
-            />
-          </Tooltip>
-        ) : (
-          <Tooltip label="Assign Tier">
-            <IconButton
-              aria-label="Assign tier"
-              icon={<FiPlus size={8} />}
-              size="xs"
-              w={4}
-              h={4}
-              minW={4}
-              variant="outline"
-              colorScheme="blue"
-              borderRadius="full"
-              _hover={{ bg: "blue.50" }}
-              onClick={(e) => {
-                stopRowClick(e);
-                handleOpenAssignTier(t);
-              }}
-            />
-          </Tooltip>
-        )}
+        <Tooltip label="Manage plan">
+          <IconButton
+            aria-label="Manage plan"
+            icon={<FiSliders size={14} />}
+            size="xs"
+            w={4}
+            h={4}
+            minW={4}
+            variant="outline"
+            colorScheme="blue"
+            borderRadius="full"
+            _hover={{ bg: "blue.50" }}
+            onClick={(e) => {
+              stopRowClick(e);
+              openManagePlan(t);
+            }}
+          />
+        </Tooltip>
 
         {renderOverflowActionMenu(items, stopRowClick, `${INSTITUTION} actions`)}
       </HStack>
@@ -1460,10 +1455,15 @@ export default function TenantManagementTab({
                   onBlur={(e) =>
                     tm.handleTenantOrganisationBlur(e.target.value)
                   }
+                  placeholder={FIELD_HINTS.tenant.organisation.placeholder}
+                  maxLength={100}
                 />
                 <FormErrorMessage>
                   {tm.tenantFormErrors.organisation}
                 </FormErrorMessage>
+                <FieldHint show={!tm.tenantFormErrors.organisation}>
+                  {FIELD_HINTS.tenant.organisation.helper}
+                </FieldHint>
               </FormControl>
               <FormControl
                 isInvalid={Boolean(tm.tenantFormErrors.contact_name)}
@@ -1476,10 +1476,14 @@ export default function TenantManagementTab({
                     tm.handleTenantContactNameChange(e.target.value)
                   }
                   onBlur={(e) => tm.handleTenantContactNameBlur(e.target.value)}
+                  placeholder={FIELD_HINTS.tenant.contactName.placeholder}
                 />
                 <FormErrorMessage>
                   {tm.tenantFormErrors.contact_name}
                 </FormErrorMessage>
+                <FieldHint show={!tm.tenantFormErrors.contact_name}>
+                  {FIELD_HINTS.tenant.contactName.helper}
+                </FieldHint>
               </FormControl>
               <FormControl
                 isInvalid={Boolean(tm.tenantFormErrors.email)}
@@ -1491,20 +1495,19 @@ export default function TenantManagementTab({
                   value={tm.tenantForm.email}
                   onChange={(e) => tm.handleTenantEmailChange(e.target.value)}
                   onBlur={tm.handleTenantEmailBlur}
+                  placeholder={FIELD_HINTS.tenant.email.placeholder}
                 />
                 <FormErrorMessage>{tm.tenantFormErrors.email}</FormErrorMessage>
-                {tm.tenantEmailStatus === "checking" &&
-                  !tm.tenantFormErrors.email && (
-                    <FormHelperText color="gray.500">
-                      Checking if email exists…
-                    </FormHelperText>
-                  )}
-                {tm.tenantEmailStatus === "available" &&
-                  !tm.tenantFormErrors.email && (
-                    <FormHelperText color="green.600">
-                      {EMAIL_AVAILABLE_MSG}
-                    </FormHelperText>
-                  )}
+                <FieldHint
+                  show={!tm.tenantFormErrors.email}
+                  tone={tm.tenantEmailStatus === "available" ? "success" : "muted"}
+                >
+                  {tm.tenantEmailStatus === "checking"
+                    ? FIELD_HINTS.tenant.emailChecking
+                    : tm.tenantEmailStatus === "available"
+                      ? FIELD_HINTS.tenant.emailAvailable
+                      : FIELD_HINTS.tenant.email.helper}
+                </FieldHint>
               </FormControl>
               <FormControl
                 isInvalid={Boolean(tm.tenantFormErrors.phone_number)}
@@ -1513,11 +1516,93 @@ export default function TenantManagementTab({
                 <Input
                   value={tm.tenantForm.phone_number}
                   onChange={(e) => tm.handleTenantPhoneChange(e.target.value)}
+                  placeholder={FIELD_HINTS.tenant.phone.placeholder}
                 />
                 <FormErrorMessage>
                   {tm.tenantFormErrors.phone_number}
                 </FormErrorMessage>
+                <FieldHint show={!tm.tenantFormErrors.phone_number}>
+                  {FIELD_HINTS.tenant.phone.helper}
+                </FieldHint>
               </FormControl>
+              <FormControl>
+                <FormLabel>Tier</FormLabel>
+                <TierSelect
+                  value={tm.tenantForm.tier_id}
+                  onChange={(id) =>
+                    tm.setTenantForm({ ...tm.tenantForm, tier_id: id })
+                  }
+                  tierOptions={tierOptions}
+                  serviceMappingsReady={serviceMappingsReady}
+                  tierIdsWithServices={tierIdsWithServices}
+                />
+                <FieldHint>{FIELD_HINTS.tenant.onboardTier.helper}</FieldHint>
+              </FormControl>
+              <FormControl
+                isInvalid={Boolean(tm.tenantFormErrors.allocated_budget)}
+              >
+                <FormLabel>Initial Budget</FormLabel>
+                <InputGroup size="sm">
+                  <InputLeftAddon>₹</InputLeftAddon>
+                  <Input
+                    value={tm.tenantForm.allocated_budget}
+                    onChange={(e) =>
+                      tm.setTenantForm({
+                        ...tm.tenantForm,
+                        allocated_budget: clampBudgetInput(e.target.value),
+                      })
+                    }
+                    placeholder={FIELD_HINTS.tenant.onboardBudget.placeholder}
+                    type="number"
+                    min={0}
+                    step="any"
+                  />
+                </InputGroup>
+                {tm.tenantFormErrors.allocated_budget && (
+                  <FormErrorMessage>
+                    {tm.tenantFormErrors.allocated_budget}
+                  </FormErrorMessage>
+                )}
+                <FieldHint show={!tm.tenantFormErrors.allocated_budget}>
+                  {FIELD_HINTS.tenant.onboardBudget.helper}
+                </FieldHint>
+              </FormControl>
+              <HStack spacing={4} align="flex-start">
+                <FormControl>
+                  <FormLabel>Budget effective from</FormLabel>
+                  <Input
+                    type="date"
+                    size="sm"
+                    value={tm.tenantForm.budget_effective_from}
+                    onChange={(e) =>
+                      tm.setTenantForm({
+                        ...tm.tenantForm,
+                        budget_effective_from: e.target.value,
+                      })
+                    }
+                  />
+                  <FieldHint>
+                    {FIELD_HINTS.tenant.onboardBudgetEffectiveFrom.helper}
+                  </FieldHint>
+                </FormControl>
+                <FormControl>
+                  <FormLabel>Budget effective to</FormLabel>
+                  <Input
+                    type="date"
+                    size="sm"
+                    value={tm.tenantForm.budget_effective_to}
+                    onChange={(e) =>
+                      tm.setTenantForm({
+                        ...tm.tenantForm,
+                        budget_effective_to: e.target.value,
+                      })
+                    }
+                  />
+                  <FieldHint>
+                    {FIELD_HINTS.tenant.onboardBudgetEffectiveTo.helper}
+                  </FieldHint>
+                </FormControl>
+              </HStack>
               <ConsentCheckbox
                 isChecked={tenantConsentAccepted}
                 onChange={(checked) => {
@@ -1579,10 +1664,14 @@ export default function TenantManagementTab({
                   onBlur={(e) =>
                     tm.handleEditTenantOrganisationBlur(e.target.value)
                   }
+                  maxLength={100}
                 />
                 <FormErrorMessage>
                   {tm.editTenantFormErrors.organisation}
                 </FormErrorMessage>
+                <FieldHint show={!tm.editTenantFormErrors.organisation}>
+                  {FIELD_HINTS.tenant.organisation.helper}
+                </FieldHint>
               </FormControl>
               <FormControl
                 isInvalid={Boolean(tm.editTenantFormErrors.contact_name)}
@@ -1597,6 +1686,9 @@ export default function TenantManagementTab({
                 <FormErrorMessage>
                   {tm.editTenantFormErrors.contact_name}
                 </FormErrorMessage>
+                <FieldHint show={!tm.editTenantFormErrors.contact_name}>
+                  {FIELD_HINTS.tenant.contactName.helper}
+                </FieldHint>
               </FormControl>
               <FormControl
                 isRequired={tm.isEditTenantEmailEditable}
@@ -1618,32 +1710,30 @@ export default function TenantManagementTab({
                     <FormErrorMessage>
                       {tm.editTenantFormErrors.email}
                     </FormErrorMessage>
-                    {tm.editTenantEmailStatus === "checking" &&
-                      !tm.editTenantFormErrors.email && (
-                        <FormHelperText color="gray.500">
-                          Checking if email exists…
-                        </FormHelperText>
-                      )}
-                    {tm.editTenantEmailStatus === "available" &&
-                      !tm.editTenantFormErrors.email && (
-                        <FormHelperText color="green.600">
-                          {EMAIL_AVAILABLE_MSG}
-                        </FormHelperText>
-                      )}
-                    <FormHelperText>
-                      If you change the contact email, the update takes effect
-                      only after the new address is verified.
-                    </FormHelperText>
+                    <FieldHint show={!tm.editTenantFormErrors.email}>
+                      {FIELD_HINTS.tenant.emailVerifyOnChange}
+                    </FieldHint>
+                    <FieldHint
+                      show={
+                        !tm.editTenantFormErrors.email &&
+                        (tm.editTenantEmailStatus === "checking" ||
+                          tm.editTenantEmailStatus === "available")
+                      }
+                      tone={
+                        tm.editTenantEmailStatus === "available" ? "success" : "muted"
+                      }
+                    >
+                      {tm.editTenantEmailStatus === "checking"
+                        ? FIELD_HINTS.tenant.emailChecking
+                        : FIELD_HINTS.tenant.emailAvailable}
+                    </FieldHint>
                   </>
                 ) : (
                   <>
                     <Text fontSize="md" color="gray.700" py={1}>
                       {dash(tm.editTenantForm.email)}
                     </Text>
-                    <FormHelperText>
-                      The contact email can only be corrected while the tenant
-                      is pending verification.
-                    </FormHelperText>
+                    <FieldHint>{FIELD_HINTS.tenant.emailPendingOnly}</FieldHint>
                   </>
                 )}
               </FormControl>
@@ -1660,6 +1750,9 @@ export default function TenantManagementTab({
                 <FormErrorMessage>
                   {tm.editTenantFormErrors.phone_number}
                 </FormErrorMessage>
+                <FieldHint show={!tm.editTenantFormErrors.phone_number}>
+                  {FIELD_HINTS.tenant.phone.helper}
+                </FieldHint>
               </FormControl>
             </VStack>
           </ModalBody>
@@ -1706,6 +1799,7 @@ export default function TenantManagementTab({
                   <FormErrorMessage>
                     {tm.userFormErrors.tenant_id}
                   </FormErrorMessage>
+                  <FieldHint>{FIELD_HINTS.tenantUser.tenant.helper}</FieldHint>
                 </FormControl>
               )}
               {isAdmin && !tm.lockedUserFormTenantId && (
@@ -1740,20 +1834,19 @@ export default function TenantManagementTab({
                   value={tm.userForm.email}
                   onChange={(e) => tm.handleUserEmailChange(e.target.value)}
                   onBlur={tm.handleUserEmailBlur}
+                  placeholder={FIELD_HINTS.tenantUser.email.placeholder}
                 />
                 <FormErrorMessage>{tm.userFormErrors.email}</FormErrorMessage>
-                {tm.userEmailStatus === "checking" &&
-                  !tm.userFormErrors.email && (
-                    <FormHelperText color="gray.500">
-                      Checking if email exists…
-                    </FormHelperText>
-                  )}
-                {tm.userEmailStatus === "available" &&
-                  !tm.userFormErrors.email && (
-                    <FormHelperText color="green.600">
-                      {EMAIL_AVAILABLE_MSG}
-                    </FormHelperText>
-                  )}
+                <FieldHint
+                  show={!tm.userFormErrors.email}
+                  tone={tm.userEmailStatus === "available" ? "success" : "muted"}
+                >
+                  {tm.userEmailStatus === "checking"
+                    ? FIELD_HINTS.tenant.emailChecking
+                    : tm.userEmailStatus === "available"
+                      ? FIELD_HINTS.tenant.emailAvailable
+                      : FIELD_HINTS.tenantUser.email.helper}
+                </FieldHint>
               </FormControl>
               <FormControl
                 isRequired
@@ -1764,10 +1857,14 @@ export default function TenantManagementTab({
                   value={tm.userForm.full_name}
                   onChange={(e) => tm.handleUserFullNameChange(e.target.value)}
                   onBlur={(e) => tm.handleUserFullNameBlur(e.target.value)}
+                  placeholder={FIELD_HINTS.tenantUser.fullName.placeholder}
                 />
                 <FormErrorMessage>
                   {tm.userFormErrors.full_name}
                 </FormErrorMessage>
+                <FieldHint show={!tm.userFormErrors.full_name}>
+                  {FIELD_HINTS.tenantUser.fullName.helper}
+                </FieldHint>
               </FormControl>
               <FormControl isRequired>
                 <FormLabel>Role</FormLabel>
@@ -1786,16 +1883,21 @@ export default function TenantManagementTab({
                     </option>
                   ))}
                 </Select>
+                <FieldHint>{FIELD_HINTS.tenantUser.role.helper}</FieldHint>
               </FormControl>
               <FormControl isInvalid={Boolean(tm.userFormErrors.phone_number)}>
                 <FormLabel>Phone Number</FormLabel>
                 <Input
                   value={tm.userForm.phone_number}
                   onChange={(e) => tm.handleUserPhoneChange(e.target.value)}
+                  placeholder={FIELD_HINTS.tenantUser.phone.placeholder}
                 />
                 <FormErrorMessage>
                   {tm.userFormErrors.phone_number}
                 </FormErrorMessage>
+                <FieldHint show={!tm.userFormErrors.phone_number}>
+                  {FIELD_HINTS.tenantUser.phone.helper}
+                </FieldHint>
               </FormControl>
               <ConsentCheckbox
                 isChecked={userConsentAccepted}
@@ -1855,20 +1957,21 @@ export default function TenantManagementTab({
                   onChange={(e) =>
                     tm.handleEditUserUsernameChange(e.target.value)
                   }
+                  maxLength={100}
                 />
                 <FormErrorMessage>
                   {tm.editUserFormErrors.username}
                 </FormErrorMessage>
+                <FieldHint show={!tm.editUserFormErrors.username}>
+                  {FIELD_HINTS.tenantUser.username.helper}
+                </FieldHint>
               </FormControl>
               <FormControl>
                 <FormLabel>Email</FormLabel>
                 <Text fontSize="md" color="gray.700" py={1}>
                   {dash(tm.editUserRow?.email)}
                 </Text>
-                <Text fontSize="xs" color="gray.500" mt={1}>
-                  Email cannot be changed. Suspend or delete the account if the
-                  user has left the organisation.
-                </Text>
+                <FieldHint>{FIELD_HINTS.tenantUser.emailLocked}</FieldHint>
               </FormControl>
               <FormControl isInvalid={Boolean(tm.editUserFormErrors.full_name)}>
                 <FormLabel>Full Name</FormLabel>
@@ -1881,6 +1984,9 @@ export default function TenantManagementTab({
                 <FormErrorMessage>
                   {tm.editUserFormErrors.full_name}
                 </FormErrorMessage>
+                <FieldHint show={!tm.editUserFormErrors.full_name}>
+                  {FIELD_HINTS.tenantUser.fullName.helper}
+                </FieldHint>
               </FormControl>
               <FormControl isRequired>
                 <FormLabel>Role</FormLabel>
@@ -1901,15 +2007,13 @@ export default function TenantManagementTab({
                   ))}
                 </Select>
                 {!tm.editUserRolesLoaded && (
-                  <FormHelperText>
-                    Roles could not be loaded; role changes are disabled.
-                  </FormHelperText>
+                  <FieldHint>{FIELD_HINTS.tenantUser.rolesLoadFailed}</FieldHint>
                 )}
                 {tm.isEditUserOnlyAdmin && (
-                  <FormHelperText>
-                    You are the only Admin in the default organisation and
-                    cannot change your role.
-                  </FormHelperText>
+                  <FieldHint>{FIELD_HINTS.tenantUser.onlyAdminLocked}</FieldHint>
+                )}
+                {!tm.isEditUserOnlyAdmin && tm.editUserRolesLoaded && (
+                  <FieldHint>{FIELD_HINTS.tenantUser.role.helper}</FieldHint>
                 )}
               </FormControl>
               <FormControl
@@ -1923,6 +2027,9 @@ export default function TenantManagementTab({
                 <FormErrorMessage>
                   {tm.editUserFormErrors.phone_number}
                 </FormErrorMessage>
+                <FieldHint show={!tm.editUserFormErrors.phone_number}>
+                  {FIELD_HINTS.tenantUser.phone.helper}
+                </FieldHint>
               </FormControl>
             </VStack>
           </ModalBody>
@@ -2098,164 +2205,14 @@ export default function TenantManagementTab({
     );
   }
 
-  function renderAssignTierModal() {
-    const tenant = assignTierTenant;
-    const budgetNum = Number(assignBudget);
-    const isBudgetInvalid =
-      assignBudget.trim() !== "" &&
-      (!Number.isFinite(budgetNum) || budgetNum <= 0);
-    const selectedTierHasNoServices =
-      !!assignTierId &&
-      serviceMappingsReady &&
-      !tierIdsWithServices.has(String(assignTierId));
-    const canAssign =
-      !!assignTierId &&
-      !!assignBudget.trim() &&
-      !isBudgetInvalid &&
-      !!assignEffectiveFrom &&
-      !!assignEffectiveTo &&
-      !selectedTierHasNoServices &&
-      !servicesForTiersQuery.isLoading &&
-      !servicesForTiersQuery.isError;
-    const today = new Date().toISOString().slice(0, 10);
-    const effectiveFromMinDate = today;
-    const effectiveToMinDate = assignEffectiveFrom
-      ? (() => {
-          const dayAfterFrom = addDaysToDateInputValue(assignEffectiveFrom, 1);
-          return dayAfterFrom > today ? dayAfterFrom : today;
-        })()
-      : today;
-    return (
-      <Modal
-        isOpen={isAssignTierOpen}
-        onClose={handleAssignTierClose}
-        isCentered
-        size="xl"
-      >
-        <ModalOverlay />
-        <ModalContent minH="350px">
-          <ModalHeader fontSize="md" fontWeight="semibold" pb={1}>
-            Assign Tier{tenant ? ` — ${tenant.organisation}` : ""}
-          </ModalHeader>
-          <ModalCloseButton isDisabled={isAssigning} />
-          <ModalBody pb={6}>
-            <VStack align="stretch" spacing={5}>
-              {(assignTierError || selectedTierHasNoServices) && (
-                <Alert status="error" borderRadius="md">
-                  <AlertIcon />
-                  <AlertDescription fontSize="sm">
-                    {assignTierError ?? TIER_NO_SERVICES_MSG}
-                  </AlertDescription>
-                </Alert>
-              )}
-              <FormControl isRequired isInvalid={selectedTierHasNoServices}>
-                <FormLabel fontWeight="semibold" fontSize="sm">
-                  Tier
-                </FormLabel>
-                <TierSelect
-                  value={assignTierId}
-                  onChange={(id) => {
-                    setAssignTierId(id);
-                    setAssignTierError(
-                      serviceMappingsReady && !tierIdsWithServices.has(id)
-                        ? TIER_NO_SERVICES_MSG
-                        : null,
-                    );
-                  }}
-                  tierOptions={tierOptions}
-                  serviceMappingsReady={serviceMappingsReady}
-                  tierIdsWithServices={tierIdsWithServices}
-                  isDisabled={isAssigning}
-                  isInvalid={selectedTierHasNoServices}
-                />
-              </FormControl>
-
-              <FormControl isRequired isInvalid={isBudgetInvalid}>
-                <FormLabel fontWeight="semibold" fontSize="sm">
-                  Budget
-                </FormLabel>
-                <InputGroup size="sm">
-                  <InputLeftAddon>₹</InputLeftAddon>
-                  <Input
-                    value={assignBudget}
-                    onChange={(e) =>
-                      setAssignBudget(clampBudgetInput(e.target.value))
-                    }
-                    placeholder="e.g. 500000"
-                    type="number"
-                    min={0}
-                    step="any"
-                    isDisabled={isAssigning}
-                  />
-                </InputGroup>
-                <FormErrorMessage>
-                  Budget must be a positive value.
-                </FormErrorMessage>
-              </FormControl>
-
-              <HStack spacing={4} align="flex-start">
-                <FormControl isRequired>
-                  <FormLabel fontWeight="semibold" fontSize="sm">
-                    Effective From
-                  </FormLabel>
-                  <Input
-                    type="date"
-                    size="sm"
-                    value={assignEffectiveFrom}
-                    min={effectiveFromMinDate}
-                    onChange={(e) => setAssignEffectiveFrom(e.target.value)}
-                    isDisabled={isAssigning}
-                  />
-                </FormControl>
-                <FormControl isRequired>
-                  <FormLabel fontWeight="semibold" fontSize="sm">
-                    Effective To
-                  </FormLabel>
-                  <Input
-                    type="date"
-                    size="sm"
-                    value={assignEffectiveTo}
-                    min={effectiveToMinDate}
-                    onChange={(e) => setAssignEffectiveTo(e.target.value)}
-                    isDisabled={isAssigning}
-                  />
-                </FormControl>
-              </HStack>
-            </VStack>
-          </ModalBody>
-          <ModalFooter>
-            <Button
-              variant="ghost"
-              mr={3}
-              onClick={handleAssignTierClose}
-              isDisabled={isAssigning}
-            >
-              Cancel
-            </Button>
-            <Button
-              colorScheme="blue"
-              isDisabled={!canAssign}
-              isLoading={isAssigning}
-              loadingText="Assigning..."
-              onClick={handleAssignTierSubmit}
-            >
-              Assign
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-    );
-  }
-
   function renderViewTierModal() {
-    const a = viewTierTenant;
     const hasTierChanged = manageTierId !== originalTierId;
     const manageTierHasNoServices =
       !!manageTierId &&
       serviceMappingsReady &&
       !tierIdsWithServices.has(String(manageTierId));
 
-    const showSaveButton = isEditingTier && hasTierChanged;
+    const showSaveButton = isEditingTier && hasTierChanged && manageTierId;
 
     const selectedTierName =
       tierOptions.find((t) => t.id === manageTierId)?.name ?? "";
@@ -2279,21 +2236,21 @@ export default function TenantManagementTab({
             {`Manage Plan${manageTenant ? ` — ${manageTenant.organisation}` : ""}`}
           </DrawerHeader>
           <DrawerBody py={6}>
-            {a ? (
+            {manageTenant ? (
               <VStack align="stretch" spacing={5}>
                 <FormControl>
                   <FormLabel>Tier</FormLabel>
-                  {!isEditingTier ? (
+                  {!isEditingTier && originalTierId ? (
                     <HStack>
                       <Input
-                        value={selectedTierName}
+                        value={selectedTierName || originalTierId}
                         isReadOnly
                         bg="gray.50"
                         flex={1}
                       />
 
                       <Button size="sm" onClick={() => setIsEditingTier(true)}>
-                        Change
+                        Change Tier
                       </Button>
                     </HStack>
                   ) : (
@@ -2309,29 +2266,29 @@ export default function TenantManagementTab({
                         flex={1}
                       />
 
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={handleCancelTierEdit}
-                      >
-                        Cancel
-                      </Button>
+                      {originalTierId && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={handleCancelTierEdit}
+                        >
+                          Cancel
+                        </Button>
+                      )}
                     </HStack>
                   )}
                   {isEditingTier && manageTierHasNoServices && (
-                      <FormHelperText color="red.500">
-                        {TIER_NO_SERVICES_MSG}
-                      </FormHelperText>
-                    )}
+                    <FieldHint tone="error">{TIER_NO_SERVICES_MSG}</FieldHint>
+                  )}
                 </FormControl>
 
                 <FormControl>
                   <FormLabel fontWeight="semibold" fontSize="sm">
-                    Budget (₹)
+                    Current budget (₹)
                   </FormLabel>
                   <Input
                     size="sm"
-                    value={manageBudget.toLocaleString()}
+                    value={manageBudget.toLocaleString("en-IN")}
                     isReadOnly
                     bg="gray.50"
                     cursor="default"
@@ -2395,13 +2352,13 @@ export default function TenantManagementTab({
                     </HStack>
                   </Box>
 
-                  <FormHelperText mt={3}>
-                    Tier and Budget changes apply immediately.
-                  </FormHelperText>
+                  <FieldHint mt={3}>
+                    {FIELD_HINTS.tenant.planAppliesImmediately}
+                  </FieldHint>
                 </FormControl>
               </VStack>
             ) : (
-              <Text>No tier data available.</Text>
+              <Text>Select an institution to manage plan.</Text>
             )}
           </DrawerBody>
           <DrawerFooter
@@ -2422,7 +2379,7 @@ export default function TenantManagementTab({
                   servicesForTiersQuery.isError
                 }
               >
-                Save Changes
+                Change Tier
               </Button>
             )}
           </DrawerFooter>

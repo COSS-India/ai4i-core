@@ -44,12 +44,16 @@ import { useGuestServices } from "../../hooks/useGuestServices";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { getTenantIdFromToken } from "../../utils/helpers";
-import { getUsageDashboardOverviewPath } from "../../utils/navigation";
+import { getHomePath, getUsageDashboardOverviewPath } from "../../utils/navigation";
 import {
+  canAccessInstitutionManagement,
   canAccessServicesManagement,
   canAccessUsageDashboard,
   canSeeServiceCards,
+  isPlatformAdminUser,
+  isTenantAdminUser,
   isUsageDashboardOnlyUser,
+  userMayManageApiKeys,
 } from "../../utils/rbac";
 import AdopterLogo from "./AdopterLogo";
 import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
@@ -208,7 +212,7 @@ interface NavItem {
   requiresAuth?: boolean;
 }
 
-// Home and Model Management (always visible)
+// Unsigned-in users only see Home. Remaining top-nav items are role-gated.
 const topNavItems: NavItem[] = [
   {
     id: TABS.home,
@@ -448,6 +452,7 @@ const baseNavItems: NavItem[] = [
 ];
 
 interface TopNavFilterContext {
+  isAuthenticated: boolean;
   isGuest: boolean;
   isUser: boolean;
   isAdmin: boolean;
@@ -458,6 +463,10 @@ interface TopNavFilterContext {
 }
 
 function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean {
+  if (!ctx.isAuthenticated) {
+    return itemId === TABS.home;
+  }
+
   if (isUsageDashboardOnlyUser(ctx.userRoles)) {
     return itemId === TABS.usageDashboard;
   }
@@ -475,7 +484,7 @@ function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean 
     case TABS.tenantManagement:
       return ctx.showTenantManagement;
     case TABS.apiKeyManagement:
-      return ctx.isAdmin || ctx.isTenantAdmin;
+      return userMayManageApiKeys(ctx.userRoles);
     case TABS.logs:
       return !ctx.isUser && !ctx.isGuest && Boolean(ctx.tenantId || ctx.isAdmin);
     case TABS.usageDashboard:
@@ -495,7 +504,7 @@ function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean 
 
 const Sidebar: React.FC = () => {
   const router = useRouter();
-  const { isLoading, user } = useAuth();
+  const { isLoading, user, isAuthenticated } = useAuth();
   const { isGuest: isGuestFromAccess, isLoading: guestServicesLoading, allowedServiceIds } = useGuestServices();
   const { enabledServiceIds, isLoading: inferenceTypesLoading } = useInferenceTypes();
   const { checkSessionExpiry } = useSessionExpiry();
@@ -507,21 +516,19 @@ const Sidebar: React.FC = () => {
   const isUser = user?.roles?.includes('USER') || false;
 
   // Check if user is ADMIN
-  const isAdmin = user?.roles?.includes('ADMIN') || false;
-
-  // Check if user is TENANT ADMIN
-  const isTenantAdmin = user?.roles?.some((role) => (role ?? "").trim().toUpperCase() === 'TENANT ADMIN') || false;
+  const isAdmin = isPlatformAdminUser(user?.roles);
+  const isTenantAdmin = isTenantAdminUser(user?.roles);
 
   const showServiceCards = canSeeServiceCards(user?.roles);
 
-  // Show Tenant Management to admins and tenant admins
-  const showTenantManagement = isAdmin || isTenantAdmin;
+  const showTenantManagement = canAccessInstitutionManagement(user?.roles);
 
   // Get tenant_id from JWT token
   const tenantId = getTenantIdFromToken();
 
   const topNavFilterContext = useMemo<TopNavFilterContext>(
     () => ({
+      isAuthenticated,
       isGuest,
       isUser,
       isAdmin,
@@ -530,7 +537,16 @@ const Sidebar: React.FC = () => {
       tenantId,
       userRoles: user?.roles,
     }),
-    [isGuest, isUser, isAdmin, isTenantAdmin, showTenantManagement, tenantId, user?.roles],
+    [
+      isAuthenticated,
+      isGuest,
+      isUser,
+      isAdmin,
+      isTenantAdmin,
+      showTenantManagement,
+      tenantId,
+      user?.roles,
+    ],
   );
 
   const topItems = useMemo(
@@ -577,9 +593,10 @@ const Sidebar: React.FC = () => {
     setIsServicesExpanded(false);
   }, []);
 
+  // Role-aware: the Usage-Dashboard-only role has no access to "/".
   const goHome = useCallback(() => {
-    router.push("/");
-  }, [router]);
+    router.push(getHomePath(user?.roles));
+  }, [router, user?.roles]);
 
   const onTopNavClick = useCallback(
     (e: React.MouseEvent, path: string, requiresAuth: boolean, itemId: string) => {

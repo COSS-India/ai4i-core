@@ -19,6 +19,7 @@ const pageDefaults = getServicePageDefaults("ocr");
 const OCRPage: React.FC = () => {
   const { copy } = useCopyToClipboard();
   const ocr = useOCRPage();
+  const previewSrc = ocr.safePreviewUrl;
 
   return (
     <ServicePageLayout
@@ -54,7 +55,7 @@ const OCRPage: React.FC = () => {
                 onRemoveFile={ocr.handleRemoveFile}
                 onUriChange={ocr.handleUriChange}
               />
-              {ocr.safePreviewUrl && (
+              {previewSrc && (
                 <Box>
                   <Text fontSize="sm" fontWeight="semibold" mb={2}>
                     Image Preview:
@@ -68,7 +69,7 @@ const OCRPage: React.FC = () => {
                     p={2}
                   >
                     <img
-                      src={ocr.safePreviewUrl}
+                      src={encodeURI(previewSrc)}
                       alt="Preview"
                       style={{ maxWidth: "100%", height: "auto", display: "block" }}
                     />

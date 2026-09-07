@@ -2,10 +2,17 @@
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+
+_REDACTION_REQUEST_EXAMPLE = {
+    "text": "My name is John Doe and my email is john.doe@example.com",
+}
 
 
 class RedactionRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"examples": [_REDACTION_REQUEST_EXAMPLE]})
+
     text: str = Field(..., max_length=20_000, description="Text to scan and redact.")
 
 

@@ -55,7 +55,8 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
   showSubTabs = false,
   subTabs = METERING.SUB_TABS,
 }) => {
-  const isUsageSpend = subTab === METERING.SUB_TAB.USAGE_SPEND;
+  const isPeriodIndependentTab =
+    subTab === METERING.SUB_TAB.USAGE_SPEND || subTab === METERING.SUB_TAB.APPLICATIONS;
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
@@ -70,7 +71,7 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
 
   return (
   <VStack align="stretch" spacing={3}>
-    {isUsageSpend ? null : (
+    {isPeriodIndependentTab ? null : (
       <ButtonGroup size="sm" isAttached variant="outline" flexWrap="wrap">
         {METERING.TIME_WINDOWS.map((opt) => (
           <Button

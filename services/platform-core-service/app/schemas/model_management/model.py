@@ -133,7 +133,7 @@ class ModelCreateRequest(BaseSchema):
     Value" tab for a full worked ULCA-conformant payload.
     """
 
-    model_config = ConfigDict(populate_by_name=True, json_schema_extra={"example": _MODEL_CREATE_EXAMPLE})
+    model_config = ConfigDict(populate_by_name=True, json_schema_extra={"examples": [_MODEL_CREATE_EXAMPLE]})
 
     version: str = Field(
         ...,
@@ -381,7 +381,7 @@ class ModelUpdateRequest(BaseSchema):
     See the "Example Value" tab for a realistic partial update.
     """
 
-    model_config = ConfigDict(populate_by_name=True, json_schema_extra={"example": _MODEL_UPDATE_EXAMPLE})
+    model_config = ConfigDict(populate_by_name=True, json_schema_extra={"examples": [_MODEL_UPDATE_EXAMPLE]})
 
     modelId: str = Field(..., description="Required. Identifies the model to update, together with version.")
     version: Optional[str] = Field(

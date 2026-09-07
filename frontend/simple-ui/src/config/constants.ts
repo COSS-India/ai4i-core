@@ -1251,7 +1251,7 @@ export function isApiKeyExpired(expiresAt?: string | null): boolean {
   }
 }
 
-/** Mirrors auth-service APIKeyService.user_may_use_api_keys (frontend-only). */
+/** Whether API keys are usable for this user/tenant lifecycle (badges, not route auth). */
 export function userMayUseApiKeys(context: ApiKeyAccessContext): boolean {
   if (context.userIsActive === false) return false;
   if (context.userTenantActive === false) return false;

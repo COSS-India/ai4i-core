@@ -149,7 +149,12 @@ services:
       - '--storage.tsdb.path=/prometheus'
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
-      - '--storage.tsdb.retention.time=30d'
+      # 90d, not 30d: model_usage_growth_pct's previous-month comparison
+      # (metering_service.py) needs history back to ~elapsed_s + one full
+      # calendar month (~60d near month-end) or prev_total silently
+      # under-counts instead of returning None. Production must be sized
+      # the same way.
+      - '--storage.tsdb.retention.time=90d'
       - '--web.enable-lifecycle'
       - '--web.external-url=http://localhost:9090'
       - '--web.route-prefix=/'

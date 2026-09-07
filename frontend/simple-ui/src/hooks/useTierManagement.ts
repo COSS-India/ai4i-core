@@ -73,7 +73,8 @@ export function useTierManagement() {
   useEffect(() => {
     if (didInitTaskTypeFilter.current || isLoadingTaskTypes) return;
     didInitTaskTypeFilter.current = true;
-    if (taskTypeNames.length > 0) setFilterTaskType(taskTypeNames[0]);
+    // Single enabled type → lock filter to it (no All). Multiple → default All ("").
+    if (taskTypeNames.length === 1) setFilterTaskType(taskTypeNames[0]);
     setTaskTypeFilterReady(true);
   }, [isLoadingTaskTypes, taskTypeNames]);
 
@@ -122,9 +123,14 @@ export function useTierManagement() {
     onClose: onScheduleClose,
   } = useDisclosure();
 
+  // Frontend-enabled task types (ENABLED_TASK_TYPES). Used to scope "All" fetches.
+  const enabledTaskTypesParam =
+    taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
+
   const tiersQuery = useQuery({
-    queryKey: [TIER_QUERY_KEY, filterTaskType],
-    queryFn: () => fetchTiers(filterTaskType || undefined),
+    queryKey: [TIER_QUERY_KEY, filterTaskType || enabledTaskTypesParam || "all"],
+    queryFn: () =>
+      fetchTiers(filterTaskType || enabledTaskTypesParam || undefined),
     staleTime: 30 * 1000,
     retry: 1,
     enabled: taskTypeFilterReady,
@@ -169,12 +175,12 @@ export function useTierManagement() {
       .map((a) => ({
         tenantId: String(a.tenant_id),
         organisation:
+          a.tenant_name ??
           tenantById.get(String(a.tenant_id))?.organisation ??
           `${INSTITUTION} ${a.tenant_id}`,
-        budgetLimit: a.budget_limit,
-        availableBalance: a.available_balance,
-        effectiveFrom: a.effective_from,
-        effectiveTo: a.effective_to,
+        budgetLimit: a.allocated_budget,
+        effectiveFrom: a.budget_effective_from,
+        effectiveTo: a.budget_effective_to,
       }));
   }, [viewTier, tenantTiersQuery.data, tenantsDirectoryQuery.data]);
 
@@ -184,8 +190,6 @@ export function useTierManagement() {
 
   // Services carry their tier mapping as an array of tier UUIDs (tierIds).
   // There's no server-side tier filter, so fetch all services and filter here.
-  const enabledTaskTypesParam =
-    taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
   const servicesQuery = useQuery({
     queryKey: ["services-for-tiers", enabledTaskTypesParam ?? "all"],
     queryFn: () =>
@@ -237,11 +241,14 @@ export function useTierManagement() {
     return result;
   }, [tiers, searchQuery, filterTaskType]);
 
-  const hasActiveFilters = searchQuery.trim() !== "";
+  const showTaskTypeAllOption = taskTypeNames.length > 1;
+  const hasActiveFilters =
+    searchQuery.trim() !== "" ||
+    (showTaskTypeAllOption && filterTaskType !== "");
 
   const clearFilters = useCallback(() => {
     setSearchQuery("");
-    if (taskTypeNames.length > 0) setFilterTaskType(taskTypeNames[0]);
+    setFilterTaskType(taskTypeNames.length === 1 ? taskTypeNames[0] : "");
   }, [taskTypeNames]);
 
   const refreshTiers = useCallback(() => {
@@ -301,6 +308,15 @@ export function useTierManagement() {
     if (!formData.name.trim()) {
       toast({
         title: "Tier name is required",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    if (formData.name.trim().length < 2) {
+      toast({
+        title: "Tier name must be at least 2 characters",
         status: "warning",
         duration: 3000,
         isClosable: true,
@@ -389,6 +405,15 @@ export function useTierManagement() {
       });
       return;
     }
+    if (formData.name.trim().length < 2) {
+      toast({
+        title: "Tier name must be at least 2 characters",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
     const quotaError = validateQuotas(formData.quotas);
     if (quotaError) {
       setShowQuotaErrors(true);
@@ -448,8 +473,8 @@ export function useTierManagement() {
       setRemovingTaskType(modelTaskType);
       try {
         await updateTier(editingTier.id, {
-          name: formData.name.trim(),
-          description: formData.description.trim() || undefined,
+          name: editingTier.name,
+          description: editingTier.description || undefined,
           quotas: currentQuota
             ? [{ modelTaskType, limit: Number(currentQuota.limit) }]
             : undefined,
@@ -517,8 +542,8 @@ export function useTierManagement() {
     setIsScheduling(true);
     try {
       await updateTier(editingTier.id, {
-        name: formData.name.trim(),
-        description: formData.description.trim() || undefined,
+        name: editingTier.name,
+        description: editingTier.description || undefined,
         quotas: [
           { modelTaskType: scheduleTarget.modelTaskType, limit: newLimit },
         ],

@@ -1,11 +1,15 @@
 """Metering business logic — PromQL construction, Prometheus calls, result shaping."""
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Union
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai4i_core.ppu import get_inference_unit_map
+
+from app.core.config import settings
 from app.repositories.model_management.model_repository import ModelRepository
 from app.repositories.model_management.service_repository import ServiceRepository
 from app.utils.prometheus_client import PrometheusClient
@@ -28,6 +32,84 @@ from app.utils.metering_promql_builder import (
 logger = logging.getLogger(__name__)
 
 _METRIC = "telemetry_obsv_requests_total"
+
+# SERVICE_BREAKDOWN_CONFIG's task keys (underscore-separated, matching the
+# metering module's own PromQL/endpoint conventions — see ENDPOINT_TO_TASK)
+# are NOT always the same string mm_models.task["type"] stores in the DB.
+# The Registry's canonical values come from TaskTypeEnum
+# (app/schemas/enums/model_management.py), which uses hyphens for compound
+# names and, for audio-lang-detection, an outright different (abbreviated)
+# word — NOT a straightforward underscore->hyphen swap. Passing a metering
+# key straight into ModelRepository's Model.task["type"].astext.in_(...)
+# filter would silently match zero rows for these four, undercounting
+# total_models/active_models for exactly the task types this mapping
+# exists to fix. "pipeline" has no Registry/TaskTypeEnum equivalent at all
+# (it's a metering-only bucket, not a registrable model task) and is
+# deliberately omitted — see _to_registry_task_types.
+_METERING_TASK_TO_REGISTRY_TASK_TYPE: dict[str, str] = {
+    "language_detection": "language-detection",
+    "speaker_diarization": "speaker-diarization",
+    "audio_language_detection": "audio-lang-detection",
+    "language_diarization": "language-diarization",
+}
+
+
+def _to_registry_task_types(task_types: list[str]) -> list[str]:
+    """Map metering task-type keys to the Registry's own task-type strings
+    (see `_METERING_TASK_TO_REGISTRY_TASK_TYPE`) for use in ModelRepository
+    calls. Keys with no Registry mapping needed (llm, nmt, asr, ... — already
+    identical to their TaskTypeEnum value) pass through unchanged; "pipeline"
+    (no Registry equivalent) is dropped rather than passed through as a
+    literal string that can never match any mm_models row.
+    """
+    return [
+        _METERING_TASK_TO_REGISTRY_TASK_TYPE.get(t, t)
+        for t in task_types
+        if t != "pipeline"
+    ]
+
+
+# get_inference_unit_map() (libs/ai4i_core/ai4i_core/ppu/inference_types.yaml)
+# is the ONE canonical definition of which unit each task type BILLS in — the
+# yaml is kept as the source of truth for that decision — but its identifiers
+# (audio_minutes, characters, images, requests) are billing/quota vocabulary,
+# not display strings: the frontend (ModelConsumptionTab.tsx) renders this
+# value verbatim after the number, so passing "audio_minutes" through as-is
+# would render "12.35 audio_minutes" instead of "12.35 min". Translate to
+# SERVICE_BREAKDOWN_CONFIG's existing short display suffixes before this
+# reaches the wire — the yaml still decides WHICH unit a task uses, this
+# table only decides how that unit is spelled for display.
+_PPU_UNIT_TO_DISPLAY_SUFFIX: dict[str, str] = {
+    "tokens": "tokens",
+    "characters": "chars",
+    "audio_minutes": "min",
+    "images": "images",
+    "requests": "requests",
+}
+
+
+def _native_unit_suffix_for_metering_task(task: Optional[str]) -> str:
+    """Never returns None for a resolvable task — the FE's Zod schema
+    declares this field a plain `z.string()`, and `parseResponseData` fails
+    the ENTIRE Model Consumption response (not just one cell) on a type
+    mismatch, so a null here for a single row's unresolved task type is far
+    worse than a fallback string.
+
+    That fallback is `""`, not a word like "requests": `formatNativeConsumption`
+    prints the number alone when the suffix is empty, whereas any actual word
+    renders as a misleading unit label (e.g. "0 requests") sitting right next
+    to a Requests column already showing the real count for that row.
+    """
+    if task:
+        registry_task_type = _METERING_TASK_TO_REGISTRY_TASK_TYPE.get(task, task)
+        ppu_unit = get_inference_unit_map().get(registry_task_type)
+        if ppu_unit:
+            return _PPU_UNIT_TO_DISPLAY_SUFFIX.get(ppu_unit, ppu_unit)
+        cfg = SERVICE_BREAKDOWN_CONFIG.get(task)
+        if cfg:
+            return cfg["native_unit_suffix"]
+    return ""
+
 
 class _Unset:
     """Sentinel type distinguishing "caller didn't pass valid_names" from an
@@ -58,6 +140,19 @@ class MeteringService:
         self._auth_db = auth_db
         self._service_repo = service_repo
         self._model_repo = model_repo
+
+    async def _safe_rollback_auth_db(self) -> None:
+        """Best-effort rollback after a swallowed self._auth_db failure — every
+        auth_db-touching method here degrades to None/{} rather than raising,
+        and overview_tenant_data() reuses the same session across several of
+        them sequentially, so leaving it in an aborted-transaction state would
+        turn one flaky query into every query after it failing too. Rollback
+        failing itself must never escalate an already-degraded path into a
+        harder failure than the one it's recovering from."""
+        try:
+            await self._auth_db.rollback()
+        except Exception:
+            logger.warning("Auth DB rollback after failed query also failed", exc_info=True)
 
     # ── public methods ──────────────────────────────────────────────────────
 
@@ -360,8 +455,27 @@ class MeteringService:
         try:
             # AsyncSession is not concurrency-safe — run sequentially, not via gather.
             total = await self._auth_db.execute(text("SELECT COUNT(*) FROM tenants"))
+            # Truncate to the current UTC calendar day before subtracting 15
+            # days, rather than a raw `NOW() - INTERVAL '15 days'` (sub-day
+            # precision). A rolling timestamp cutoff splits tenants created
+            # on the same calendar day across the boundary depending on the
+            # time of day the request happens to run, and drifts hour to
+            # hour with no tenant being added/removed — both make this KPI
+            # impossible to reconcile against a human reading the "Onboarded"
+            # date column on the Institution Management page, which counts
+            # in whole calendar days.
+            # 14, not 15: today counts as one of the 15 days. `- timedelta(days=15)`
+            # would put the cutoff on the 16th-day-back's midnight, so the
+            # window [cutoff, now] spans 16 calendar days (e.g. "today" Sep 3
+            # minus 15 days lands on Aug 19, and Aug 19..Sep 3 inclusive is 16
+            # days) — silently over-counting by a full extra day.
+            today_utc_midnight = datetime.now(timezone.utc).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            new_tenants_cutoff = today_utc_midnight - timedelta(days=14)
             new_tenants = await self._auth_db.execute(
-                text("SELECT COUNT(*) FROM tenants WHERE created_at >= NOW() - INTERVAL '7 days'")
+                text("SELECT COUNT(*) FROM tenants WHERE created_at >= :cutoff"),
+                {"cutoff": new_tenants_cutoff},
             )
             return {
                 "total_tenants": total.scalar(),
@@ -370,11 +484,101 @@ class MeteringService:
             }
         except Exception:
             logger.warning("tenant_count: auth DB query failed", exc_info=True)
+            # overview_tenant_data() reuses self._auth_db for
+            # _fetch_valid_tenant_ids() right after this call — without a
+            # rollback, a failure here would leave that next, otherwise-fine
+            # query degraded too (same hazard as UsageService._resolve_tenant_names).
+            await self._safe_rollback_auth_db()
             return {
                 "total_tenants": None,
                 "new_tenants": None,
                 "auth_db_available": False,
             }
+
+    async def model_usage_growth_pct(self) -> Optional[float]:
+        """Overall LLM request volume, current calendar month-to-date vs the
+        previous calendar month — fixed regardless of the dashboard's
+        `window` filter (Key Metrics KPI #7). Distinct from both
+        request_total()'s vs_previous_pct (a rolling window that follows
+        `window`) and the pay-per-use "vs last month" comparison (spend, not
+        request volume).
+
+        Uses exact elapsed-second widths (not `@`, unsupported by some
+        Prometheus deployments) to bound exact calendar-month boundaries,
+        the same offset-based technique request_total() uses for its
+        rolling-window comparison. `cur_q` goes through sum_over_window()
+        (the reset-aware `unless ... offset` hybrid) rather than a bare
+        increase(), same as request_total()'s "current" query — over a
+        ~30-day month-to-date window a mid-month pod redeploy is exactly
+        the kind of young series increase() would extrapolate up by
+        window/observed_duration, inflating cur_total.
+
+        `prev_q` deliberately compares the SAME width (`elapsed_s`) on both
+        sides, not the previous month's full length — comparing 5 days of
+        August against all 31 days of July would report ~-84% on Aug 5th
+        even with flat traffic. `[elapsed_s]s offset prev_month_len_s` looks
+        back `elapsed_s` from `now - prev_month_len_s`, which lands exactly
+        on `[prev_month_start, prev_month_start + elapsed_s]` — the same
+        number of days into July as `cur_q`'s days into August. Near
+        month-end this needs history back to `elapsed_s + prev_month_len_s`
+        (~60 days).
+
+        This repo ships no production Prometheus config — every deployer
+        runs their own, with their own retention — so that requirement
+        can't be enforced from a config file here. Instead, before firing
+        `prev_q` this method compares how far back it needs against
+        `settings.prometheus_retention_days` (env `PROMETHEUS_RETENTION_DAYS`,
+        default 15 — Prometheus's own out-of-box default, deliberately
+        conservative) and returns None outright if the deployment hasn't
+        declared enough retention to cover it. Without this guard,
+        Prometheus would silently answer from whatever partial data
+        survived retention and `prev_total` would under-count rather than
+        the method returning the `None` it promises — an operator must
+        opt in (set `PROMETHEUS_RETENTION_DAYS` to match their actual
+        `--storage.tsdb.retention.time`, >= ~90d recommended) before this
+        KPI computes a real percentage.
+
+        Returns None if it's too early in the month for a meaningful window,
+        the declared retention can't cover the previous-month lookback, the
+        previous month had no traffic (percentage undefined), or the
+        Prometheus query fails.
+        """
+        now = datetime.now(timezone.utc)
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        elapsed_s = int((now - month_start).total_seconds())
+        if elapsed_s < 60:
+            return None
+
+        prev_month_start = (month_start - timedelta(days=1)).replace(day=1)
+        prev_month_len_s = int((month_start - prev_month_start).total_seconds())
+
+        lookback_days_needed = (elapsed_s + prev_month_len_s) / 86400
+        if lookback_days_needed > settings.prometheus_retention_days:
+            logger.info(
+                "model_usage_growth_pct: skipping — needs %.1fd of history, "
+                "PROMETHEUS_RETENTION_DAYS=%d",
+                lookback_days_needed, settings.prometheus_retention_days,
+            )
+            return None
+
+        sel = build_base_selectors(
+            inference_only=True, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX, auth_type=API_KEY_AUTH_TYPE,
+        )
+        base = f"{_METRIC}{sel}"
+        cur_q = sum_over_window(base, f"{elapsed_s}s")
+        prev_q = f"sum(increase({base}[{elapsed_s}s] offset {prev_month_len_s}s))"
+
+        try:
+            cur_v, prev_v = await asyncio.gather(self._client.scalar(cur_q), self._client.scalar(prev_q))
+        except Exception:
+            logger.warning("model_usage_growth_pct: Prometheus query failed", exc_info=True)
+            return None
+
+        prev_total = max(0, round(float(prev_v)))
+        cur_total = max(0, round(float(cur_v)))
+        if prev_total <= 0:
+            return None
+        return round((cur_total - prev_total) / prev_total * 100, 1)
 
     async def overview_tenant_data(
         self, time_ranges: list[str]
@@ -527,8 +731,9 @@ class MeteringService:
     async def model_breakdown(
         self, tenant: Optional[str], time_range: Optional[str],
         tenant_id: Optional[str] = None,
+        task_types: Optional[list[str]] = None,
     ) -> dict:
-        """LLM usage grouped by BOTH `service_id` (the tenant-facing service
+        """Usage grouped by BOTH `service_id` (the tenant-facing service
         the client called — the OpenAI `model` field as sent) AND `model_id`
         (the Registry's stable identity for the model actually behind that
         service, stamped server-side by inference-service at MMS-resolution
@@ -547,9 +752,26 @@ class MeteringService:
         paths) is intentionally never grouped or filtered on; `model_name`
         below is always the Registry's name for `model_id`, not this label.
 
-        Fires 3 queries in one asyncio.gather: total requests, successful
-        requests, and tokens processed — each grouped by `(service_id,
-        model_id)`.
+        `task_types`, when given, scopes the query to those task types only
+        (LLM + NLP alike — same `build_task_type_selector` used by
+        service_breakdown/usage_concentration/etc); `None` covers every task
+        type. Each row's own `task_type` is resolved from the SAME
+        `PROMETHEUS_API_PATH_LABEL` (endpoint) label the request itself
+        carries on `telemetry_obsv_requests_total`, via `_resolve_task_key`
+        — the same endpoint->task resolution service_breakdown/
+        usage_by_tenant_service already use elsewhere in this module — NOT a
+        separate Model Registry lookup. That task_type then picks the row's
+        native-unit metric and suffix from SERVICE_BREAKDOWN_CONFIG, same
+        per-task-type metrics service_breakdown() already uses — an NLP row
+        reports its own unit (chars/min/images/...), not LLM tokens.
+
+        Fires 2 fixed queries (total requests, successful requests, each
+        grouped by `(service_id, model_id, endpoint)` — the endpoint dimension
+        is what task_type is read from) plus one additional query per
+        native-unit metric in scope (task_types, or every
+        SERVICE_BREAKDOWN_CONFIG task when unfiltered), each grouped by
+        `service_id` alone since none of those per-task Histograms carry a
+        `model_id` label (see metrics.py) — all in one asyncio.gather.
 
         ROLLOUT NOTE (service-level ghosts): per-service rows are
         cross-checked against the Service Registry (mm_services) via
@@ -596,37 +818,41 @@ class MeteringService:
         self-heals as pre-upgrade series age out of the window; there's no
         after-the-fact fix, same reasoning as the tenant-id cutover.
         """
+        # No task_types filter -> every task type's endpoints (LLM chat AND
+        # every /api/v1/{task}/inference path), via the default
+        # INFERENCE_ENDPOINT_REGEX build_base_selectors already applies when
+        # endpoint_regex is omitted. A given task_types list narrows to just
+        # those tasks' endpoints, same selector build used elsewhere
+        # (service_breakdown, usage_concentration, /overview).
+        task_sel = build_task_type_selector(task_types)
         base_sel = build_base_selectors(
-            inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX,
+            inference_only=True, tenant=tenant, extra=[task_sel] if task_sel else None,
             tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE,
         )
         success_sel = build_base_selectors(
-            inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX,
-            extra=['status_code=~"2.."'], tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE,
+            inference_only=True, tenant=tenant,
+            extra=[task_sel, 'status_code=~"2.."'] if task_sel else ['status_code=~"2.."'],
+            tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE,
         )
-        # telemetry_obsv_llm_tokens_processed_sum now carries tenant_id
-        # alongside tenant (see metrics.py) — prefer it, same precedence as
-        # build_base_selectors/_native_unit_queries, so tokens stay
-        # continuous across a rename instead of resetting next to request
-        # counts (from base_sel/success_sel above) that stay continuous.
-        tokens_parts = ['token_type="total"', 'tenant!="unknown"', api_key_auth_type_selector()]
-        if tenant_id:
-            tokens_parts.append(f'tenant_id="{escape_label_value(tenant_id)}"')
-        elif tenant:
-            tokens_parts.append(f'tenant="{escape_label_value(tenant)}"')
-        tokens_sel = "{" + ",".join(tokens_parts) + "}"
-
-        group_by = "service_id, model_id"
+        group_by = f"service_id, model_id, {PROMETHEUS_API_PATH_LABEL}"
         total_q = sum_over_window_by(f"{_METRIC}{base_sel}", group_by, time_range)
         success_q = sum_over_window_by(f"{_METRIC}{success_sel}", group_by, time_range)
-        tokens_q = sum_over_window_by(
-            f"telemetry_obsv_llm_tokens_processed_sum{tokens_sel}", group_by, time_range
+        # One additional query per native-unit metric IN SCOPE (task_types,
+        # or every SERVICE_BREAKDOWN_CONFIG task when unfiltered) — mirrors
+        # service_breakdown's _native_unit_queries, but grouped by service_id
+        # (not a single scalar) since each row here needs its OWN value, not
+        # a tenant-wide total. Restricting to task_types avoids the same
+        # ghost-row problem the old LLM-only gating existed to prevent: an
+        # explicit NLP-only filter (e.g. ["nmt"]) must not pull in, say, an
+        # LLM model_id that has no rows in total_q/success_q under that filter.
+        native_tasks, native_coros = self._model_native_unit_queries(
+            tenant, tenant_id, time_range, task_types
         )
 
         raw = await asyncio.gather(
             self._client.query(total_q),
             self._client.query(success_q),
-            self._client.query(tokens_q),
+            *native_coros,
             return_exceptions=True,
         )
 
@@ -635,24 +861,50 @@ class MeteringService:
 
         total_rows = _safe_list(raw[0])
         success_rows = _safe_list(raw[1])
-        tokens_rows = _safe_list(raw[2])
+        # task -> {service_id: raw float value} — unrounded; each row rounds
+        # its own value below per SERVICE_BREAKDOWN_CONFIG's `round_2dp`.
+        native_by_task: dict[str, dict[str, float]] = {
+            task: self._native_units_by_service(_safe_list(raw[2 + i]))
+            for i, task in enumerate(native_tasks)
+        }
 
         # ── Per-service view (collapses across model_id — see class docstring
         # on why a service_id can transiently carry more than one model_id
         # label value; the per-service TOTAL must not fragment because of it).
         totals = self._label_dict(total_rows, "service_id")
         successes = self._label_dict(success_rows, "service_id")
-        tokens = self._label_dict(tokens_rows, "service_id")
+
+        # task_type per service_id, read straight off the SAME endpoint label
+        # every request already carries (PROMETHEUS_API_PATH_LABEL) — the
+        # same source of truth _resolve_task_key backs elsewhere in this
+        # module (service_breakdown, usage_by_tenant_service's heatmap). No
+        # Model Registry lookup involved: a service serves exactly one task
+        # (its endpoint never varies), so the first row seen for a
+        # service_id settles it.
+        service_task: dict[str, str] = {}
+        for r in (*total_rows, *success_rows):
+            sid = r["metric"].get("service_id", "")
+            if not sid or sid in service_task:
+                continue
+            task = self._resolve_task_key(r["metric"].get(PROMETHEUS_API_PATH_LABEL, ""))
+            if task:
+                service_task[sid] = task
 
         # "" means the client sent no `model` field at all — not a real service.
-        service_ids = {s for s in (set(totals) | set(successes) | set(tokens)) if s != ""}
+        service_ids = {
+            s for s in (
+                set(totals) | set(successes)
+                | {sid for by_service in native_by_task.values() for sid in by_service}
+            )
+            if s != ""
+        }
 
         # Representative model_id per service_id, straight from Prometheus —
         # first non-empty value seen wins (a service's model_id is an
         # immutable FK, so in steady state there's only ever one; see the
         # ROLLOUT NOTE above for the transitional exception).
         prom_model_id: dict = {}
-        for r in (*total_rows, *success_rows, *tokens_rows):
+        for r in (*total_rows, *success_rows):
             sid = r["metric"].get("service_id", "")
             mid = r["metric"].get("model_id", "") or ""
             if sid and mid and sid not in prom_model_id:
@@ -681,6 +933,53 @@ class MeteringService:
                 len(ghosts), sorted(ghosts),
             )
 
+        # ── Model registry lookup (names only — task_type comes from
+        # service_task above, not the Registry) — computed here, before the
+        # per-model rollup below, so `model_ids` is resolved the same way the
+        # model-level rollup groups by EFFECTIVE model_id (Prometheus label
+        # first, falling back to the DB-joined value from svc_info) — see
+        # the ROLLOUT NOTE on model-level totals above for why this is
+        # independent of the service-existence filtering `services` goes
+        # through.
+        def _effective_model_id(row: dict) -> str:
+            sid = row["metric"].get("service_id", "")
+            _, db_model_id, _ = svc_info.get(sid, (None, None, None))
+            return prom_model_id.get(sid) or db_model_id or ""
+
+        model_totals_raw = self._label_dict(total_rows, _effective_model_id)
+        model_successes_raw = self._label_dict(success_rows, _effective_model_id)
+        model_ids = {
+            m for m in (set(model_totals_raw) | set(model_successes_raw))
+            if m != ""
+        }
+
+        # Same population the Prometheus query itself was scoped to: the
+        # requested task_types, or — when unfiltered — every task type this
+        # endpoint knows about (not just "llm"), so a model registered under
+        # any task type is validated rather than only LLM ones. Converted to
+        # the Registry's own task-type strings — see
+        # _to_registry_task_types — since e.g. "audio_language_detection"
+        # (this module's key) is stored in mm_models as "audio-lang-detection".
+        model_registry_task_types = _to_registry_task_types(task_types or list(SERVICE_BREAKDOWN_CONFIG))
+        model_names: dict = {}
+        model_registry_checked = False
+        if not model_registry_task_types:
+            # e.g. task_types=["pipeline"] — see registry_model_count's
+            # comment on the same mapping. get_model_names() gates on
+            # `if task_types:`, so passing [] through would fetch every
+            # model_id unfiltered instead of none; there's no Registry
+            # equivalent for this scope at all, so every model_id is
+            # correctly treated as unregistered (ghosted) without a query.
+            model_registry_checked = True
+        elif self._model_repo is not None and model_ids:
+            try:
+                model_names = await self._model_repo.get_model_names(
+                    list(model_ids), task_types=model_registry_task_types
+                )
+                model_registry_checked = True
+            except Exception:
+                logger.warning("model_breakdown: model registry lookup failed", exc_info=True)
+
         services = []
         for service_id in service_ids:
             if service_id in ghosts:
@@ -689,13 +988,19 @@ class MeteringService:
             success_v = successes.get(service_id, 0)
             name, db_model_id, model_name = svc_info.get(service_id, (service_id, None, None))
             model_id = prom_model_id.get(service_id) or db_model_id
+            task = service_task.get(service_id)
+            native_units, native_unit_suffix = self._native_units_for(
+                task, native_by_task, service_id
+            )
             services.append({
                 "service_id": service_id,
                 "name": name,
                 "model_id": model_id,
                 "model_name": model_name,
+                "task_type": task,
                 "requests": total_v,
-                "native_units": float(tokens.get(service_id, 0)),
+                "native_units": native_units,
+                "native_unit_suffix": native_unit_suffix,
                 "success_pct": round(success_v / total_v * 100, 2) if total_v else 0.0,
             })
 
@@ -706,52 +1011,11 @@ class MeteringService:
         # model-level ROLLOUT NOTE above for why this is independent of the
         # service-existence filtering `services` above went through.
         #
-        # Grouped by EFFECTIVE model_id, resolved PER service_id (reusing
-        # prom_model_id, computed above) — Prometheus label first, falling
-        # back to the DB-joined value from svc_info — same precedence AND
-        # same granularity the per-service view already applies at line
-        # ~612 (`prom_model_id.get(service_id) or db_model_id`). Resolving
-        # per ROW instead (i.e. only from that row's own label) would let a
-        # service with some labeled and some unlabeled rows split across
-        # two model_totals entries whenever the label and the DB FK
-        # disagree during the rollout window, while `services` still shows
-        # it as one — this keeps the two views in agreement. Without the
-        # fallback at all, any series recorded before a service's model_id
-        # label existed (pre-ai4i-core-1.0.18, or before that service's
-        # traffic was first labeled) groups under the empty-string bucket
-        # and is silently excluded from model_totals entirely, even though
-        # the exact same service resolves fine in `services` via svc_info —
-        # real traffic in the per-service breakdown vanishing completely
-        # from the Model Consumption chart.
-        def _effective_model_id(row: dict) -> str:
-            sid = row["metric"].get("service_id", "")
-            _, db_model_id, _ = svc_info.get(sid, (None, None, None))
-            return prom_model_id.get(sid) or db_model_id or ""
-
-        model_totals_raw = self._label_dict(total_rows, _effective_model_id)
-        model_successes_raw = self._label_dict(success_rows, _effective_model_id)
-        model_tokens_raw = self._label_dict(tokens_rows, _effective_model_id)
-        model_ids = {
-            m for m in (set(model_totals_raw) | set(model_successes_raw) | set(model_tokens_raw))
-            if m != ""
-        }
-
-        model_names: dict = {}
-        model_registry_checked = False
-        if self._model_repo is not None and model_ids:
-            try:
-                model_names = await self._model_repo.get_model_names(
-                    list(model_ids), task_types=["llm"]
-                )
-                model_registry_checked = True
-            except Exception:
-                logger.warning("model_breakdown: model registry lookup failed", exc_info=True)
-
-        # model_id with no current Registry row UNDER task_types=["llm"] — a
-        # DEPRECATED model still has a row (see get_model_names) so it's not
-        # a ghost on that basis, only a hard-deleted/stale/never-existent id,
-        # OR one registered under a different task type, is. That second
-        # case matters here specifically: without the llm filter, a model_id
+        # model_id with no current Registry row under `model_registry_task_types`
+        # — a DEPRECATED model still has a row (see get_model_names) so it's
+        # not a ghost on that basis, only a hard-deleted/stale/never-existent
+        # id, OR one registered under a different task type, is. That second
+        # case matters here specifically: without this filter, a model_id
         # tagged e.g. "asr" in the Registry but actually serving /chat
         # traffic (a Registry data error, not a deletion) would land in
         # active_models without ever counting toward registry_model_count's
@@ -775,17 +1039,43 @@ class MeteringService:
                 len(model_ghosts), sorted(model_ghosts),
             )
 
+        # Native units + task per model_id: summed/resolved from every
+        # service_id that resolves to it (same _effective_model_id grouping
+        # the request counts above use) — the per-task Histograms have no
+        # model_id label of their own (see metrics.py), so this is the only
+        # way to roll a native-unit value up from service_id to model_id. A
+        # model is fronted by services that all share its one task, so the
+        # first task seen for the model settles it, same as service_task
+        # does per service_id above.
+        model_native_raw: dict[str, float] = {}
+        model_task: dict[str, str] = {}
+        for service_id in service_ids:
+            mid = _effective_model_id({"metric": {"service_id": service_id}})
+            if not mid:
+                continue
+            task = service_task.get(service_id)
+            v = native_by_task.get(task, {}).get(service_id, 0.0) if task else 0.0
+            model_native_raw[mid] = model_native_raw.get(mid, 0.0) + v
+            if task:
+                model_task.setdefault(mid, task)
+
         model_totals = []
         for model_id in model_ids:
             if model_id in model_ghosts:
                 continue
             total_v = model_totals_raw.get(model_id, 0)
             success_v = model_successes_raw.get(model_id, 0)
+            task = model_task.get(model_id)
+            native_units, native_unit_suffix = self._round_native(
+                task, model_native_raw.get(model_id, 0.0)
+            )
             model_totals.append({
                 "model_id": model_id,
                 "model_name": model_names.get(model_id, model_id),
+                "task_type": task,
                 "requests": total_v,
-                "native_units": float(model_tokens_raw.get(model_id, 0)),
+                "native_units": native_units,
+                "native_unit_suffix": native_unit_suffix,
                 "success_pct": round(success_v / total_v * 100, 2) if total_v else 0.0,
             })
 
@@ -795,34 +1085,34 @@ class MeteringService:
             "filters": {"tenant": tenant, "time_range": time_range or "all"},
         }
 
-    async def registry_model_count(self) -> Optional[int]:
-        """Count of registered LLM model VERSIONS (`mm_models` rows with
-        task.type == "llm") — ACTIVE and DEPRECATED both count (a deprecated
-        version is still "in the Registry", just not the currently-
-        recommended one to use).
+    async def registry_model_count(self, task_types: Optional[list[str]] = None) -> Optional[int]:
+        """Count of registered model VERSIONS (`mm_models` rows) — ACTIVE and
+        DEPRECATED both count (a deprecated version is still "in the
+        Registry", just not the currently-recommended one to use).
 
-        Scoped to task_types=["llm"] to match model_breakdown's own universe
-        (model_totals/model_consumption only ever cover LLM traffic — see
-        model_breakdown's LLM_CHAT_ENDPOINT_REGEX), and identity is model_id
-        (one row per version) to match model_totals' own grain, NOT distinct
-        model name — a model with 3 concurrently-registered versions counts
-        as 3 here, same as it does in the DEFAULT (no `include_deprecated`
-        override) `/api/v1/models?task_types=llm` call's `meta.total` (see
-        ModelRepository.count_models). NOT guaranteed to match every call to
-        that endpoint: ModelService.list_models never forwards its own
-        `include_deprecated` param to `count_models`, so `?task_types=llm&
-        include_deprecated=false` already returns an `items` list narrower
-        than its own `meta.total` — a pre-existing, separate bug this
-        method's parity claim inherits rather than causes.
+        Scoped to the SAME `task_types` model_breakdown's own query was
+        scoped to (or every known task type when unfiltered — see
+        model_breakdown's `model_registry_task_types`), and identity is
+        model_id (one row per version) to match model_totals' own grain, NOT
+        distinct model name — a model with 3 concurrently-registered versions
+        counts as 3 here, same as it does in the DEFAULT (no
+        `include_deprecated` override) `/api/v1/models?task_types=...`
+        call's `meta.total` (see ModelRepository.count_models). NOT
+        guaranteed to match every call to that endpoint: ModelService.
+        list_models never forwards its own `include_deprecated` param to
+        `count_models`, so `?task_types=llm&include_deprecated=false`
+        already returns an `items` list narrower than its own `meta.total`
+        — a pre-existing, separate bug this method's parity claim inherits
+        rather than causes.
 
         This keeps `total_models` and `model_consumption_kpis`'s
-        `active_models` (also model_id-grained and llm-scoped — see
-        get_model_names' `task_types` param and that KPI method's
+        `active_models` (also model_id-grained and identically task-scoped —
+        see get_model_names' `task_types` param and that KPI method's
         docstring) counting the same population MOST of the time — not
         guaranteed: a registry-lookup failure inside model_breakdown leaves
         model_totals' ghosts unfiltered (see model_breakdown's comment on
         `model_ghosts`), which is the one path where `active_models` can
-        still exceed this count even after the llm-scoping here.
+        still exceed this count even after the task-type scoping here.
 
         Not tenant-scoped: ``mm_models`` has no tenant column — the Registry is
         a shared catalog, not partitioned per institution — so this value is
@@ -833,8 +1123,19 @@ class MeteringService:
         """
         if self._model_repo is None:
             return None
+        registry_task_types = _to_registry_task_types(task_types or list(SERVICE_BREAKDOWN_CONFIG))
+        # e.g. task_types=["pipeline"] — the only metering task with no
+        # Registry equivalent (_to_registry_task_types drops it, never maps
+        # it to something real) — maps to []. count_models()/get_model_names()
+        # both gate on `if task_types:`, so passing [] through would apply NO
+        # filter at all and count every mm_models row instead of zero. There
+        # are no registrable models under this scope, by definition — skip
+        # the query and answer 0 directly rather than let an empty list
+        # silently disable the filter.
+        if not registry_task_types:
+            return 0
         try:
-            return await self._model_repo.count_models(task_types=["llm"])
+            return await self._model_repo.count_models(task_types=registry_task_types)
         except Exception:
             logger.warning("registry_model_count: DB query failed", exc_info=True)
             return None
@@ -882,7 +1183,10 @@ class MeteringService:
                 {
                     "model_id": m["model_id"],
                     "model_name": m["model_name"],
+                    "task_type": m.get("task_type"),
                     "requests": m["requests"],
+                    "native_units": m.get("native_units", 0.0),
+                    "native_unit_suffix": m.get("native_unit_suffix", ""),
                     "consumption_pct": round(m["requests"] / grand_total * 100, 2),
                 }
                 for m in active
@@ -1285,6 +1589,96 @@ class MeteringService:
                 natives[task] = round(v, 2) if cfg.get("round_2dp") else round(v)
         return natives
 
+    def _model_native_unit_queries(
+        self, tenant: Optional[str], tenant_id: Optional[str], time_range: Optional[str],
+        task_types: Optional[list[str]],
+    ) -> tuple[list[str], list]:
+        """Per-task-type native-unit query coroutines for model_breakdown.
+
+        Same selector precedence and task-metric config as
+        `_native_unit_queries` (service_breakdown's own version), but grouped
+        by `service_id` — every row here needs its OWN native-unit value,
+        not one tenant-wide scalar — via `query()`, not `scalar()`.
+        `task_types`, when given, restricts to just those tasks (same
+        ghost-avoidance reasoning `model_breakdown` already applies to its
+        request-count queries); `None` covers every SERVICE_BREAKDOWN_CONFIG
+        task that has a native metric.
+
+        Always excludes ``tenant="unknown"`` — the same guard
+        `build_base_selectors` applies to `total_q`/`success_q` above. Without
+        it, the all-tenants view would count unresolved-tenant traffic in
+        `native_units` that the request counts exclude, AND a service whose
+        only in-window traffic has no resolved tenant could enter
+        `service_ids` purely via this native vector with 0 requests and an
+        unresolved `task_type` — exactly the row shape the FE's Zod schema
+        rejects the whole response over (native_unit_suffix must stay a
+        string on the wire, never null).
+        """
+        native_tasks: list[str] = []
+        native_coros = []
+        for task, cfg in SERVICE_BREAKDOWN_CONFIG.items():
+            if task_types is not None and task not in task_types:
+                continue
+            native_metric = cfg.get("native_metric")
+            if not native_metric:
+                continue
+            extra = cfg.get("native_extra_labels") or []
+            parts = ['tenant!="unknown"']
+            if tenant_id:
+                parts.append(f'tenant_id="{escape_label_value(tenant_id)}"')
+            elif tenant:
+                parts.append(f'tenant="{escape_label_value(tenant)}"')
+            parts.append(api_key_auth_type_selector())
+            parts.extend(extra)
+            sel = "{" + ",".join(parts) + "}" if parts else ""
+            q = sum_over_window_by(f"{native_metric}{sel}", "service_id", time_range)
+            native_tasks.append(task)
+            native_coros.append(self._client.query(q))
+        return native_tasks, native_coros
+
+    @staticmethod
+    def _native_units_by_service(rows: list) -> dict[str, float]:
+        """Map service_id -> raw (unrounded) native-unit value from a `sum
+        by(service_id)` result vector. One row per service_id — rounding is
+        deferred to the caller since the correct precision (whole unit vs
+        2dp for audio-minutes) depends on which task the SERVICE consuming
+        this value belongs to, not the metric itself."""
+        return {
+            r["metric"].get("service_id", ""): float(r["value"][1])
+            for r in rows
+        }
+
+    @staticmethod
+    def _metering_cfg_for_task(task: Optional[str]) -> Optional[dict]:
+        """SERVICE_BREAKDOWN_CONFIG entry for a metering task key (e.g.
+        "nmt", "audio_language_detection"), or None when there isn't one
+        (unknown task, or no task resolved for the row at all — see
+        service_task/model_task in model_breakdown)."""
+        if not task:
+            return None
+        return SERVICE_BREAKDOWN_CONFIG.get(task)
+
+    @classmethod
+    def _round_native(cls, task: Optional[str], raw_value: float) -> tuple[float, str]:
+        """Round an already-aggregated native-unit value per its task's
+        `round_2dp` config, returning (value, unit_suffix). `unit_suffix` is
+        never None/empty — see `_native_unit_suffix_for_metering_task` — a
+        0.0 value alongside its generic fallback suffix is how an
+        unknown/unmapped task is represented on the wire."""
+        cfg = cls._metering_cfg_for_task(task)
+        rounded = round(raw_value, 2) if cfg and cfg.get("round_2dp") else round(raw_value)
+        return float(rounded), _native_unit_suffix_for_metering_task(task)
+
+    @classmethod
+    def _native_units_for(
+        cls, task: Optional[str],
+        native_by_task: dict[str, dict[str, float]], service_id: str,
+    ) -> tuple[float, str]:
+        """(native_units, native_unit_suffix) for one service row, picking
+        its value out of `native_by_task` by its own task."""
+        raw_value = native_by_task.get(task, {}).get(service_id, 0.0) if task else 0.0
+        return cls._round_native(task, raw_value)
+
     @staticmethod
     def _service_breakdown_rows(
         totals: dict, successes: dict, natives: dict,
@@ -1304,7 +1698,7 @@ class MeteringService:
                 "service": cfg["display_name"],
                 "requests": total_v,
                 "native_units": natives.get(task, 0),
-                "native_unit_suffix": cfg["native_unit_suffix"],
+                "native_unit_suffix": _native_unit_suffix_for_metering_task(task),
                 "success_pct": round(success_v / total_v * 100, 2) if total_v else 0.0,
             })
         services.sort(key=lambda s: s["requests"], reverse=True)
@@ -1463,6 +1857,7 @@ class MeteringService:
             return {str(r[0]) for r in rows.all()}
         except Exception:
             logger.warning("_fetch_valid_tenant_ids: auth DB query failed", exc_info=True)
+            await self._safe_rollback_auth_db()
             return None
 
     async def _resolve_tenant_names(self, tenant_ids: set) -> dict:
@@ -1490,4 +1885,5 @@ class MeteringService:
             return {str(r[0]): r[1] for r in rows.all()}
         except Exception:
             logger.warning("_resolve_tenant_names: auth DB query failed", exc_info=True)
+            await self._safe_rollback_auth_db()
             return {}

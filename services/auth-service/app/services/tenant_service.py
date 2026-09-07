@@ -9,6 +9,7 @@ repository access and provisioning lives in this file.
 
 import logging
 import re
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Callable, Dict, Literal, Optional
 from uuid import UUID
@@ -52,6 +53,7 @@ from app.schemas.tenant import (
     TenantUserUpdate,
 )
 from app.schemas.user import UserListResponse
+from app.services.allocation_service import AllocationService
 from app.services.api_key_service import APIKeyService
 from app.services.auth_email_templates import render_account_deleted, render_setup_link, render_verify_email
 from app.services.tenant_lifecycle import (
@@ -67,6 +69,7 @@ from app.services.email_helpers import (
     resolve_tenant_id,
     setup_token_expires_at,
 )
+from app.services.budget_usage import fetch_budget_usage, write_budget_snapshot
 from app.services.role_service import RoleService
 from app.services.tenant_name_cache import tenant_name_cache
 from app.services.token_service import TokenService
@@ -74,6 +77,16 @@ from app.utils.masking import drop_masked_pii, mask_pii_in_dict
 from app.utils.username import allocate_unique_username, derive_username_from_email
 
 logger = logging.getLogger(__name__)
+
+# Derived from tenants.allocated_budget's own column type (NUMERIC(15, 2))
+# rather than hand-computed, so widening that column can't silently leave
+# this stale — a stale literal here would keep rejecting valid budgets with
+# a confident-sounding "exceeds the maximum allowed" instead of the column
+# actually being able to hold them.
+_allocated_budget_type = Tenant.__table__.c.allocated_budget.type
+MAX_TENANT_BUDGET = Decimal(10) ** (
+    _allocated_budget_type.precision - _allocated_budget_type.scale
+) - Decimal(1).scaleb(-_allocated_budget_type.scale)
 
 
 async def _assign_plan_to_tenant(tenant_id: int, plan_id: UUID, db: AsyncSession) -> None:
@@ -141,6 +154,7 @@ class TenantService:
         email_client: EmailClient,
         api_key_service: Optional[APIKeyService] = None,
         refresh_token_repo: Optional[RefreshTokenRepository] = None,
+        allocation_service: Optional[AllocationService] = None,
     ) -> None:
         self._tenants = tenant_repo
         self._users = user_repo
@@ -151,6 +165,7 @@ class TenantService:
         self._email = email_client
         self._api_keys = api_key_service
         self._refresh_tokens = refresh_token_repo
+        self._allocations = allocation_service
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -425,6 +440,7 @@ class TenantService:
         body: TenantCreate,
         current_user: User,
         background_tasks: BackgroundTasks,
+        platform_core_db: Optional[AsyncSession] = None,
     ) -> Tenant:
         """Create a tenant and auto-provision its first admin user.
 
@@ -445,6 +461,33 @@ class TenantService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail={"code": "DUPLICATE_TENANT_ORGANISATION", "message": "A tenant with this organisation name already exists."},
             )
+        if body.allocated_budget is not None and body.allocated_budget < 0:
+            raise ValidationError(
+                message="allocated_budget must not be negative.",
+                code="INVALID_BUDGET",
+            )
+        if body.tier_id is not None:
+            # Same lookup assign_tenant_tier uses — without it, a tenant
+            # created with an unknown/inactive tier id would pass
+            # create_api_key's NO_ACTIVE_TIER gate (which only checks
+            # tenants.tier_id is non-null) and have that id baked into every
+            # key's cache payload and emitted downstream as X-Tier-ID.
+            if platform_core_db is None:
+                raise ValidationError(
+                    message="tier_id cannot be verified: platform-core DB is not configured.",
+                    code="PLATFORM_CORE_DB_NOT_CONFIGURED",
+                )
+            tier_row = (
+                await platform_core_db.execute(
+                    text("SELECT id FROM tiers WHERE id = :tid AND is_active = true"),
+                    {"tid": body.tier_id},
+                )
+            ).first()
+            if tier_row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail={"code": "TIER_NOT_FOUND", "message": f"Tier '{body.tier_id}' not found."},
+                )
 
         tenant = Tenant(
             name=body.contact_name,
@@ -453,6 +496,10 @@ class TenantService:
             phone_number=body.phone_number,
             status=TenantStatus.PENDING,
             created_by=current_user.id,
+            tier_id=body.tier_id,
+            allocated_budget=body.allocated_budget,
+            budget_effective_from=body.budget_effective_from,
+            budget_effective_to=body.budget_effective_to,
         )
         await self._tenants.create(tenant)  # flush only — tenant_id now populated
 
@@ -794,6 +841,471 @@ class TenantService:
             "allowed_services": plan.allowed_services or [],
         }
 
+    # ── Tenant tier / budget ─────────────────────────────────────────────
+    # Replaces the old platform-core-service pay-per-use endpoints
+    # (POST/PATCH /pay-per-use/tenant/tier[, /reassign], PATCH
+    # /pay-per-use/tenant/budget): tier and budget now live directly on
+    # tenants.tier_id / tenants.allocated_budget, so these operate on the
+    # local Tenant row with no cross-DB PPU-assignment bookkeeping and no
+    # HTTP round trip to another service.
+
+    async def assign_tenant_tier(
+        self,
+        current_user: User,
+        tenant_id: int,
+        tier_id_str: str,
+        platform_core_db: Optional[AsyncSession],
+    ) -> Tenant:
+        """Assign (or reassign) a tenant's tier — PATCH /auth/tenants/{id}/tier.
+
+        Restricted to ADMIN: this changes what a tenant is billed against,
+        the same trust level as PATCH /auth/tenants/{id}/budget.
+
+        409 TENANT_ALREADY_ON_TIER is raised whenever tenants.tier_id already
+        matches the requested tier. tenants.tier_id is now the SOLE source of
+        truth for a tenant's active tier (create_api_key's NO_ACTIVE_TIER gate
+        already reads only this column, not a separate assignment table) — so
+        this is a single atomic write with no second table to fall out of
+        sync with. Previously this also write-through'd to platform-core's
+        ppu_tenant_tier_assignments (dropped by AI4IDS-2923; see
+        _sync_ppu_wallet_and_exhaustion for the equivalent fix on the budget
+        side) and had to distinguish a genuine no-op from a partial failure
+        between the two writes — that whole class of problem no longer exists
+        with only one write to make.
+        """
+        roles = await self._roles.get_user_roles(current_user.id)
+        if RoleName.ADMIN.value not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "INSUFFICIENT_PERMISSIONS",
+                    "message": "Only administrators can assign a tenant's tier.",
+                },
+            )
+        try:
+            tier_uuid = UUID(tier_id_str)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "INVALID_TIER_ID", "message": "tier_id must be a valid UUID."},
+            )
+
+        tenant = await self._load_tenant_for_update_or_404(tenant_id)
+
+        if platform_core_db is None:
+            raise ValidationError(
+                message="Tier assignment cannot be verified: platform-core DB is not configured.",
+                code="PLATFORM_CORE_DB_NOT_CONFIGURED",
+            )
+        row = (
+            await platform_core_db.execute(
+                text("SELECT id, name FROM tiers WHERE id = :tid AND is_active = true"),
+                {"tid": tier_uuid},
+            )
+        ).first()
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "TIER_NOT_FOUND", "message": f"Tier '{tier_id_str}' not found."},
+            )
+
+        if tenant.tier_id == tier_uuid:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "TENANT_ALREADY_ON_TIER",
+                    "message": f"Tenant '{tenant_id}' is already on tier '{row.name}'.",
+                },
+            )
+        await self._tenants.update(
+            tenant, {"tier_id": tier_uuid, "updated_by": current_user.id}
+        )
+        await self._tenants.save_and_refresh(tenant)
+
+        if self._api_keys is not None:
+            # Quota is tier-scoped: flags earned under the old tier would
+            # otherwise keep 429'ing requests under the new one until the
+            # monthly cron. Cached tier_id also has to be force-written —
+            # every other cache writer preserves the existing value instead
+            # of recomputing it (see _preserved_tier_id), since a tier
+            # reassignment is the one case that legitimately changes it for
+            # already-issued keys.
+            await self._api_keys.clear_quota_flags_for_tenant(tenant_id)
+            await self._api_keys.set_tier_id_for_tenant(tenant_id, str(tier_uuid))
+        return tenant
+
+    async def _sync_ppu_wallet_and_exhaustion(
+        self,
+        tenant_id: int,
+        allocated_budget: Decimal,
+        platform_core_db: AsyncSession,
+    ) -> None:
+        """Recompute budget-exhausted from ``allocated_budget`` (the value
+        the caller just committed to tenants.allocated_budget — passed
+        explicitly rather than re-read off the tenant object, so this does
+        not depend on the caller's update()/save_and_refresh() having
+        mutated it in place) minus this tenant's total spend, and mirror the
+        result onto this tenant's cached API keys — the write-through the
+        old revise_budget endpoint did via its budget-exhausted webhook to
+        auth-service. Without this, a top-up moves tenants.allocated_budget
+        but a key already flagged budget-exhausted=1 from a prior top-down
+        has no path back to 0.
+
+        Asymmetric on purpose, NOT a blanket set-or-clear of every key:
+          * Tenant pool genuinely depleted (exhausted=True) -> every key
+            under the tenant really is out of budget now regardless of its
+            own individual ceiling, so every one is flagged
+            (set_budget_exhausted_for_tenant, unchanged from before).
+          * Tenant pool has headroom again (exhausted=False) -> must NOT
+            blindly clear every key. A key's own budget_usage.
+            api_key_budget_snap/api_key_budget_used is an INDEPENDENT
+            constraint from this tenant-aggregate one (see
+            set_budget_exhausted_for_key) — clearing a key that's still
+            individually over its own ceiling just because the tenant's
+            total looks fine again would let it bill again with zero
+            headroom of its own. Only keys that are ALSO not individually
+            exhausted get cleared, in one batched call
+            (set_budget_exhausted_for_keys — one UPDATE plus one commit for
+            the whole set, not a per-key round trip); an
+            individually-exhausted key keeps its flag untouched by this
+            path (it only clears via its own future reallocation, same as
+            always).
+
+        Previously read/wrote a dedicated wallet row on platform-core's
+        ppu_tenant_tier_assignments (dropped by AI4IDS-2923). Reconstructed
+        here the same way platform-core-service's own get_tenant_budgets was
+        (see usage_repository.py): allocated_budget lives on tenants (this
+        DB); spend lives in budget_usage (platform-core's DB), keyed by
+        api_key_id — summed here across every api_key under this tenant's
+        applications (this DB), not just active ones, since a revoked key's
+        past spend still counts against the tenant's allocated_budget.
+
+        Best-effort by design (unlike the tier write-through): the primary
+        write — tenants.allocated_budget — has already committed by the time
+        this runs, so a failure anywhere here (platform-core unreachable,
+        cache write failure) degrades to a stale cached exhaustion flag
+        rather than rolling back an otherwise-successful budget revision —
+        hence the whole recompute-and-write, not just the fetch, sits inside
+        one try/except.
+        """
+        if self._api_keys is None:
+            return
+        try:
+            key_ids = await self._api_keys.list_key_ids_for_tenant(tenant_id)
+            usage = await fetch_budget_usage(key_ids, platform_core_db, raise_on_error=True)
+            total_spent = sum((used for used, _snap in usage.values()), Decimal("0"))
+            exhausted = (allocated_budget - total_spent) <= 0
+
+            if exhausted:
+                await self._api_keys.set_budget_exhausted_for_tenant(tenant_id, True)
+                return
+
+            keys_to_clear = []
+            for key_id in key_ids:
+                used, snap = usage.get(key_id, (Decimal("0"), None))
+                individually_exhausted = snap is not None and used >= snap
+                if not individually_exhausted:
+                    keys_to_clear.append(key_id)
+            await self._api_keys.set_budget_exhausted_for_keys(keys_to_clear, False)
+        except Exception:
+            logger.exception(
+                "Failed to recompute budget-exhausted state for tenant_id=%s "
+                "after budget revision; tenants.allocated_budget was still updated.",
+                tenant_id,
+            )
+
+    async def revise_tenant_budget(
+        self,
+        current_user: User,
+        tenant_id: int,
+        action: Literal["top-up", "top-down"],
+        amount: Decimal,
+        platform_core_db: Optional[AsyncSession] = None,
+    ) -> tuple[Tenant, int, int, bool]:
+        """Top-up or top-down a tenant's budget — PATCH /auth/tenants/{id}/budget.
+
+        Restricted to ADMIN, same as assign_tenant_tier. Unlike the old
+        platform-core endpoint this replaces, there is no available_balance
+        (or any other spend-tracking figure) on ``tenants`` itself — spend
+        lives in platform-core's budget_usage ledger, summed here across
+        every API key under the tenant.
+
+        The revision never moves any Application's own ₹: every Application
+        under the tenant keeps exactly the allocated_budget it already
+        had — only its allocated_percentage is recomputed (the same ₹ is
+        now a different share of a different-sized total), via
+        AllocationService.cascade_tenant_budget_revision, not a separate
+        implementation. No Application's own Keys are touched either,
+        since nothing forces them to react when their parent Application's
+        ₹ didn't move. This is genuinely atomic with the Tenant's own row
+        change: the cascade is resolved and staged (not committed) BEFORE
+        ``self._tenants.update`` below, and everything commits together in
+        one transaction — a top-down that would leave the new total unable
+        to cover what's already allocated across every Application (nobody
+        auto-shrinks to make room any more) raises ALLOCATION_TOTAL_EXCEEDED
+        before anything here is persisted, and the session rollback on that
+        exception undoes the Tenant's own allocated_budget change too. A
+        top-up can never fail this way — it only ever grows what's
+        available, becoming additional unallocated headroom.
+
+        A top-down is REJECTED even earlier than that (409
+        budget_below_consumed) when it would drop the budget below this
+        tenant's total spend to date (restores the check the old
+        platform-core endpoint had, which this rebuild had dropped for lack
+        of a spend figure to check against; see budget_usage) — this
+        catches the aggregate case cheaply before the per-Application/
+        per-Key cascade even runs. This needs platform_core_db to verify: a
+        top-down is refused outright (503 spend_verification_unavailable)
+        rather than allowed unverified, unlike _sync_ppu_wallet_and_exhaustion's
+        own read below, which is best-effort because ITS write already
+        happened by the time it runs — this check gates the write itself.
+        No optimistic-locking (expected_version) either — deemed
+        unnecessary for this release.
+
+        Uses the error-body shape (``{"error": ..., "message": ...}``) the
+        contract specifies for this endpoint specifically, matching the old
+        endpoint it replaces — every other tenant endpoint in this file uses
+        ``{"code": ..., "message": ...}``.
+
+        ``platform_core_db`` also drives ``_sync_ppu_wallet_and_exhaustion``
+        (best-effort, see its own docstring) to recompute and sync the
+        cached budget-exhausted flag on this tenant's API keys after the
+        revision commits — unaffected by the cascade above, which only
+        ever writes allocated_percentage/allocated_budget, never the
+        exhaustion flag itself.
+
+        Returns (tenant, applications_recomputed, keys_recomputed,
+        snapshot_write_failed) — the middle two straight from the cascade,
+        for the response's own fields of the same name.
+        ``snapshot_write_failed`` is True when the post-commit
+        write_budget_snapshot call (mirroring the just-committed ceilings
+        into platform-core's budget_usage.api_key_budget_snap) failed —
+        the Tenant/Application/Key revision itself still succeeded and is
+        NOT rolled back for this, since budget_usage is a best-effort
+        cache of the ceiling, not its source of truth, and self-heals on
+        the next successful allocation write for each affected key. Only
+        surfaced so a caller can tell "the ledger cache is briefly behind"
+        apart from a response that looks fully successful.
+        """
+        roles = await self._roles.get_user_roles(current_user.id)
+        if RoleName.ADMIN.value not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "INSUFFICIENT_PERMISSIONS",
+                    "message": "Only administrators can revise a tenant's budget.",
+                },
+            )
+
+        tenant = await self._load_tenant_for_update_or_404(tenant_id)
+
+        current_budget = tenant.allocated_budget or Decimal("0")
+        delta = amount if action == "top-up" else -amount
+        new_budget = current_budget + delta
+
+        if action == "top-up" and new_budget > MAX_TENANT_BUDGET:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "budget_limit_exceeded",
+                    "message": (
+                        f"Top-up would raise the budget to {new_budget}, exceeding "
+                        f"the maximum allowed ({MAX_TENANT_BUDGET})"
+                    ),
+                },
+            )
+        if action == "top-down" and new_budget < 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "budget_negative",
+                    "message": f"Top-down amount exceeds the current budget ({current_budget})",
+                },
+            )
+
+        if action == "top-down":
+            # Cheaper, purely-local checks (above) run first; only reach for
+            # platform-core once a top-down has already passed those.
+            if self._api_keys is None or platform_core_db is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "error": "spend_verification_unavailable",
+                        "message": "Cannot verify this tenant's current spend right now — "
+                        "refusing an unverified top-down rather than risking pushing it "
+                        "below what's already been spent.",
+                    },
+                )
+            try:
+                key_ids = await self._api_keys.list_key_ids_for_tenant(tenant_id)
+                usage = await fetch_budget_usage(key_ids, platform_core_db, raise_on_error=True)
+            except Exception:
+                logger.exception(
+                    "Failed to verify spend for tenant_id=%s ahead of a top-down; refusing it.",
+                    tenant_id,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "error": "spend_verification_unavailable",
+                        "message": "Cannot verify this tenant's current spend right now — "
+                        "refusing an unverified top-down rather than risking pushing it "
+                        "below what's already been spent.",
+                    },
+                )
+            total_spent = sum((used for used, _snap in usage.values()), Decimal("0"))
+            if new_budget < total_spent:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "error": "budget_below_consumed",
+                        "message": (
+                            f"Top-down would drop the budget to {new_budget}, below this "
+                            f"tenant's total spend to date ({total_spent}) across its API keys."
+                        ),
+                    },
+                )
+
+        applications_recomputed = 0
+        keys_recomputed = 0
+        snapshot_writes: dict[int, Decimal] = {}
+        if self._allocations is None:
+            # Fail closed, same reasoning as the top-down spend gate above:
+            # an unverified/un-cascaded revision could silently leave
+            # Applications or Keys out of sync with the Tenant's new total,
+            # or (on a decrease) leave one of them over-committed relative
+            # to what it's actually allowed now. Refuse rather than guess.
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error": "allocation_cascade_unavailable",
+                    "message": "Cannot cascade this revision into Applications/Keys right now — "
+                    "refusing rather than leaving them out of sync with the new budget.",
+                },
+            )
+        applications_recomputed, keys_recomputed, snapshot_writes = (
+            await self._allocations.cascade_tenant_budget_revision(
+                tenant_id, new_budget, current_user, platform_core_db
+            )
+        )
+
+        # Staged, not committed, until the cascade above has fully
+        # resolved without raising — see this method's own docstring for
+        # why that's what makes "the whole revision is rejected, not just
+        # the piece that broke" true.
+        await self._tenants.update(
+            tenant,
+            {
+                "allocated_budget": new_budget,
+                "updated_by": current_user.id,
+            },
+        )
+        await self._tenants.commit()
+        await self._tenants.refresh(tenant)
+
+        snapshot_write_failed = not await write_budget_snapshot(snapshot_writes, platform_core_db)
+        if snapshot_write_failed:
+            # budget_usage.api_key_budget_snap is now stale for these keys —
+            # the write already happened here in auth-service's own DB, so
+            # this is a real, silent divergence, not a rejected request.
+            # Surfaced to the caller via snapshot_write_failed below rather
+            # than only living in this log line.
+            logger.error(
+                "revise_tenant_budget: budget_usage snapshot write failed for tenant_id=%s "
+                "(%d key(s)) — api_key_budget_snap is now out of step with the ceilings just "
+                "committed; self-heals on the next successful allocation write for each key.",
+                tenant_id, len(snapshot_writes),
+            )
+        if platform_core_db is not None:
+            await self._sync_ppu_wallet_and_exhaustion(tenant_id, new_budget, platform_core_db)
+        return tenant, applications_recomputed, keys_recomputed, snapshot_write_failed
+
+    async def list_tenant_tiers(
+        self,
+        current_user: User,
+        tier_id: Optional[str],
+        platform_core_db: Optional[AsyncSession],
+    ) -> list[dict]:
+        """GET /auth/tenants/tier/list. ADMIN-only, matching the old
+        GET /pay-per-use/tenant/tier's permission id (145, ppu.tenant.read)
+        — enforced in-code here too, not just via api_permissions.json,
+        the same defense-in-depth pattern as assign_tenant_tier /
+        revise_tenant_budget. tier_name is resolved from platform-core's
+        ``tiers`` table (no cross-DB FK is possible), batched for the set
+        of tier_ids actually in play — the same cross-DB pattern
+        create_api_key uses for tier_id lookups."""
+        roles = await self._roles.get_user_roles(current_user.id)
+        if RoleName.ADMIN.value not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "INSUFFICIENT_PERMISSIONS",
+                    "message": "Only administrators can list tenant tier assignments.",
+                },
+            )
+        # Fail closed on a missing platform-core connection, same as
+        # assign_tenant_tier — previously this degraded silently instead:
+        # tier_name came back null for every row with no log line, and the
+        # tier_id filter's existence check was skipped outright, so
+        # filtering by a nonexistent tier returned an empty list (200)
+        # instead of 404. A misconfiguration should not present as "all
+        # tiers happen to be unnamed" / "this tier happens to have no
+        # tenants".
+        if platform_core_db is None:
+            raise ValidationError(
+                message="Tier data cannot be resolved: platform-core DB is not configured.",
+                code="PLATFORM_CORE_DB_NOT_CONFIGURED",
+            )
+
+        tier_uuid: Optional[UUID] = None
+        if tier_id is not None:
+            try:
+                tier_uuid = UUID(tier_id)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"code": "INVALID_TIER_ID", "message": "tier_id must be a valid UUID."},
+                )
+            # is_active = true, matching assign_tenant_tier's lookup — a tier
+            # listable here but rejected as not-found on assign would be a
+            # visible inconsistency between the two endpoints.
+            exists = (
+                await platform_core_db.execute(
+                    text("SELECT 1 FROM tiers WHERE id = :tid AND is_active = true"), {"tid": tier_uuid}
+                )
+            ).first()
+            if exists is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail={"code": "TIER_NOT_FOUND", "message": f"Tier '{tier_id}' not found"},
+                )
+
+        tenants = await self._tenants.list_with_tier(tier_uuid)
+
+        tier_names: dict[UUID, str] = {}
+        if tenants:
+            ids = list({t.tier_id for t in tenants})
+            rows = (
+                await platform_core_db.execute(
+                    text("SELECT id, name FROM tiers WHERE id = ANY((:ids)::uuid[])"), {"ids": ids}
+                )
+            ).all()
+            tier_names = {row.id: row.name for row in rows}
+
+        return [
+            {
+                "tenant_id": t.id,
+                "tenant_name": t.organisation,
+                "tier_id": str(t.tier_id),
+                "tier_name": tier_names.get(t.tier_id),
+                "allocated_budget": t.allocated_budget,
+                "budget_effective_from": t.budget_effective_from,
+                "budget_effective_to": t.budget_effective_to,
+                "updated_at": t.updated_at,
+            }
+            for t in tenants
+        ]
+
     # ── Tenant-user CRUD ─────────────────────────────────────────────────
 
     async def list_tenant_users(
@@ -898,8 +1410,9 @@ class TenantService:
 
         await self._users.update(target, payload)
         await self._users.save_and_refresh(target)
-        if self._api_keys is not None:
-            await self._api_keys.refresh_keys_cache_for_user(target, tenant)
+        # No per-user API key cache refresh: keys belong to Applications, not
+        # Users (migration e9f0a1b2c3d4) — one tenant user's status has no
+        # bearing on any key's eligibility.
         return target
 
     async def resend_tenant_user_setup_link(
@@ -1010,6 +1523,6 @@ class TenantService:
             self._email,
             lambda: render_account_deleted(deleted_email, deleted_full_name),
         )
-
-        if self._api_keys is not None:
-            await self._api_keys.evict_keys_for_user(target.id)
+        # No per-user API key eviction: keys belong to Applications, not
+        # Users (migration e9f0a1b2c3d4) — deleting a tenant user has no
+        # bearing on any key's cache.

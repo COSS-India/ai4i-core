@@ -3,67 +3,77 @@ import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
 import {
   aggregateTasks,
-  formatSpendMoney,
   taskTypeColor,
   type AggregatedTaskUsage,
 } from "../../utils/usageSpendHelpers";
+import { useMeteringTableSort } from "../../utils/meteringTableSort";
 import type { TenantTierBreakdown, TierTaskTypeUsage } from "../../types/usageSpend";
-import { ThWithTip } from "../common/InfoTip";
 import { TaskTypeLabel, TierBadge, UsageCell } from "./UsageSpendCells";
+import SortableTh from "./SortableTh";
 
 function quotaUsagePercentage(t: TierTaskTypeUsage | AggregatedTaskUsage): number {
-  if ("percentage" in t && typeof t.percentage === "number") return t.percentage;
   const limit = t.quotaLimit ?? 0;
   if (limit <= 0) return 0;
   return (t.consumed / limit) * 100;
 }
 
-type SpendRow =
-  | { kind: "tier"; tier: TenantTierBreakdown }
-  | { kind: "task"; task: TierTaskTypeUsage | AggregatedTaskUsage; tierName?: string };
+type TaskUsageRow = {
+  kind: "task";
+  task: TierTaskTypeUsage | AggregatedTaskUsage;
+  tierName?: string;
+};
+
+type DisplayRow = { kind: "tier"; tier: TenantTierBreakdown } | TaskUsageRow;
 
 interface SpendByTaskTypeTableProps {
-  /** Tier breakdown to render — pass a pre-filtered subset to narrow the table. */
   tierBreakdown: TenantTierBreakdown[];
-  /** Denominator for each row's SHARE % — the tenant's overall (unfiltered) spend. */
-  totalSpend: number;
-  currency: string;
   emptyMessage?: string;
+  usageColumnLabel?: string;
 }
 
-/**
- * Tier-grouped model-task-type spend table: one badge row per tier (when the
- * tenant has more than one), a row per task type with a usage bar, and a
- * Total row summing whatever is currently visible.
- */
 const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
   tierBreakdown,
-  totalSpend,
-  currency,
-  emptyMessage = "No spend data for this period.",
+  emptyMessage = "No usage data for this period.",
+  usageColumnLabel = METERING.USAGE_SPEND.USAGE_VS_MONTHLY_QUOTA,
 }) => {
-  const rows = useMemo<SpendRow[]>(() => {
-    if (tierBreakdown.length > 1) {
-      return tierBreakdown.flatMap((tier) => [
-        { kind: "tier" as const, tier },
-        ...(tier.taskTypes ?? []).map((t) => ({
+  const multiTier = tierBreakdown.length > 1;
+
+  const taskRows = useMemo<TaskUsageRow[]>(() => {
+    if (multiTier) {
+      return tierBreakdown.flatMap((tier) =>
+        (tier.taskTypes ?? []).map((t) => ({
           kind: "task" as const,
           task: t,
           tierName: tier.tierName,
         })),
-      ]);
+      );
     }
-    return aggregateTasks(tierBreakdown)
-      .sort((a, b) => b.spend - a.spend)
-      .map((t) => ({ kind: "task" as const, task: t }));
-  }, [tierBreakdown]);
+    return aggregateTasks(tierBreakdown).map((t) => ({ kind: "task" as const, task: t }));
+  }, [tierBreakdown, multiTier]);
 
-  const visibleSpend = useMemo(
-    () => rows.reduce((s, r) => (r.kind === "task" ? s + r.task.spend : s), 0),
-    [rows],
+  const sortAccessors = useMemo(
+    () => ({
+      taskType: (row: TaskUsageRow) => row.task.taskType,
+      consumed: (row: TaskUsageRow) => row.task.consumed,
+    }),
+    [],
   );
 
-  if (rows.length === 0) {
+  const { sortedRows, sortKey, sortDirection, toggleSort } = useMeteringTableSort(
+    taskRows,
+    "consumed",
+    sortAccessors,
+  );
+
+  const displayRows = useMemo((): DisplayRow[] => {
+    if (!multiTier) return sortedRows;
+    return tierBreakdown.flatMap((tier) => {
+      const tierTasks = sortedRows.filter((r) => r.tierName === tier.tierName);
+      return [{ kind: "tier" as const, tier }, ...tierTasks];
+    });
+  }, [multiTier, tierBreakdown, sortedRows]);
+
+  if (taskRows.length === 0) {
     return (
       <Text fontSize="sm" color="gray.400" py={8} textAlign="center">
         {emptyMessage}
@@ -71,63 +81,53 @@ const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
     );
   }
 
+  const thSx = { fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" } as const;
+
   return (
     <Box overflowX="auto" borderWidth="1px" borderColor="gray.200" borderRadius="md">
-      <Table size="sm" variant="simple" minW="540px" sx={{ tableLayout: "fixed" }}>
+      <Table size="sm" variant="simple" minW="400px" sx={{ tableLayout: "fixed" }}>
         <Thead bg="gray.50">
           <Tr>
-            <ThWithTip
-              w="28%"
-              sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
+            <SortableTh
+              sortKey="taskType"
+              activeSortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={toggleSort}
+              w="36%"
+              sx={thSx}
             >
               MODEL TASK TYPE
-            </ThWithTip>
-            <ThWithTip
+            </SortableTh>
+            <SortableTh
+              sortKey="consumed"
+              activeSortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={toggleSort}
               message={METERING.USAGE_SPEND.TOOLTIPS.USAGE}
-              w="40%"
-              sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
+              w="64%"
+              sx={thSx}
             >
-              USAGE
-            </ThWithTip>
-            <ThWithTip
-              message={METERING.USAGE_SPEND.TOOLTIPS.SPEND}
-              w="18%"
-              isNumeric
-              sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
-            >
-              SPEND
-            </ThWithTip>
-            <ThWithTip
-              message={METERING.USAGE_SPEND.TOOLTIPS.SHARE}
-              w="14%"
-              isNumeric
-              sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
-            >
-              SHARE
-            </ThWithTip>
+              {usageColumnLabel}
+            </SortableTh>
           </Tr>
         </Thead>
         <Tbody>
-          {rows.map((row, idx) => {
+          {displayRows.map((row, idx) => {
             if (row.kind === "tier") {
               return (
                 <Tr key={`tier-${row.tier.tierId}`}>
-                  <Td colSpan={4} bg="gray.50" py={2}>
+                  <Td colSpan={2} bg="gray.50" py={2}>
                     <HStack spacing={2}>
                       <TierBadge label={row.tier.tierName} />
-                      <Text fontSize="10.5px" fontWeight="bold" color="gray.600">
-                        {formatSpendMoney(row.tier.spend, currency)}
-                      </Text>
                     </HStack>
                   </Td>
                 </Tr>
               );
             }
             const t = row.task;
-            const share = totalSpend > 0 ? ((t.spend / totalSpend) * 100).toFixed(1) : "0.0";
             const color = taskTypeColor(t.taskType, idx);
             return (
-              <Tr key={`${"tierName" in row ? row.tierName : ""}-${t.taskType}-${idx}`}>
+              <Tr key={`${row.tierName ?? ""}-${t.taskType}-${idx}`}>
                 <Td>
                   <TaskTypeLabel
                     taskType={t.taskType}
@@ -146,29 +146,9 @@ const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
                     compact
                   />
                 </Td>
-                <Td fontSize="sm" isNumeric>
-                  {formatSpendMoney(t.spend, currency)}
-                </Td>
-                <Td fontSize="12.5px" color="gray.500" isNumeric>
-                  {share}%
-                </Td>
               </Tr>
             );
           })}
-          <Tr bg="gray.50">
-            <Td fontWeight="bold" fontSize="sm">
-              Total
-            </Td>
-            <Td color="gray.500" fontWeight="normal" fontSize="12px">
-              —
-            </Td>
-            <Td fontWeight="bold" fontSize="sm" isNumeric>
-              {formatSpendMoney(visibleSpend, currency)}
-            </Td>
-            <Td fontWeight="bold" fontSize="sm" isNumeric>
-              {totalSpend > 0 ? `${((visibleSpend / totalSpend) * 100).toFixed(0)}%` : "0%"}
-            </Td>
-          </Tr>
         </Tbody>
       </Table>
     </Box>

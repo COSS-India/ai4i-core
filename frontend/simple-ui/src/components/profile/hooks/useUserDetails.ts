@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { showToast } from "../../../utils/toast";
 import { canEditOwnProfile } from "../../../utils/rbac";
+import { validateFullName } from "../../../utils/tenantFormValidation";
 import type { User, UserUpdateRequest } from "../../../types/auth";
 
 const INDIAN_MOBILE_RE = /^[6-9]\d{9}$/;
@@ -72,6 +73,10 @@ export function useUserDetails({ user, updateUser, checkSessionExpiry }: UseUser
 
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};
+    const fullNameError = validateFullName(userFormData.full_name || "");
+    if (fullNameError) {
+      newErrors.full_name = fullNameError;
+    }
     if (userFormData.phone_number && !isValidIndianPhone(userFormData.phone_number)) {
       newErrors.phone_number = INVALID_PHONE_MSG;
     }
@@ -79,11 +84,16 @@ export function useUserDetails({ user, updateUser, checkSessionExpiry }: UseUser
     return Object.keys(newErrors).length === 0;
   };
 
+  const canSaveUser =
+    !validateFullName(userFormData.full_name || "") &&
+    isValidIndianPhone(userFormData.phone_number || "");
+
   const handleEditUser = () => {
     if (!canEditOwnProfile(user?.roles)) return;
     if (!checkSessionExpiry()) return;
     setIsEditingUser(true);
-    setErrors({});
+    const fullNameError = validateFullName(user?.full_name || "");
+    setErrors(fullNameError ? { full_name: fullNameError } : {});
   };
 
   const handleCancelEdit = () => {
@@ -105,12 +115,15 @@ export function useUserDetails({ user, updateUser, checkSessionExpiry }: UseUser
     if (!validateForm()) return;
     setIsSaving(true);
     try {
+      const trimmedFullName = userFormData.full_name?.trim() || "";
       const updateData: UserUpdateRequest = {
-        full_name: userFormData.full_name?.trim() || "",
         phone_number: userFormData.phone_number?.trim() || "",
         timezone: userFormData.timezone || "UTC",
         preferences: userFormData.preferences || {},
       };
+      if (trimmedFullName) {
+        updateData.full_name = trimmedFullName;
+      }
       await updateUser(updateData as Partial<User>);
       showToast({
         type: "success",
@@ -138,6 +151,14 @@ export function useUserDetails({ user, updateUser, checkSessionExpiry }: UseUser
         else delete next.phone_number;
         return next;
       });
+    } else if (field === "full_name" && typeof value === "string") {
+      const error = validateFullName(value);
+      setErrors((prev) => {
+        const next = { ...prev };
+        if (error) next.full_name = error;
+        else delete next.full_name;
+        return next;
+      });
     } else if (errors[field]) {
       setErrors((prev) => {
         const next = { ...prev };
@@ -152,6 +173,7 @@ export function useUserDetails({ user, updateUser, checkSessionExpiry }: UseUser
     isEditingUser,
     isSaving,
     errors,
+    canSaveUser,
     handleEditUser,
     handleCancelEdit,
     handleSaveUser,

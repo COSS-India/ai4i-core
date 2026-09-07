@@ -5,7 +5,7 @@ import React, { useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { Spinner, Center } from '@chakra-ui/react';
 import { useAuth } from '../../hooks/useAuth';
-import { canAccessUsageDashboard, isUsageViewerUser } from '../../utils/rbac';
+import { canAccessUsageDashboard, isUsageViewerUser, userMayManageApiKeys } from '../../utils/rbac';
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -28,6 +28,9 @@ const adminOnlyRoutes = new Set<string>([/* '/alerts-management' */]);
 // Routes limited to Usage Dashboard eligible roles (Adopter Admin, Tenant Admin, platform ADMIN)
 const usageDashboardRoutes = new Set(['/usage-dashboard']);
 
+// Institution admins manage API keys (not self-service for plain USER role).
+const apiKeyManagementRoutes = new Set(['/api-key-management']);
+
 // Routes that allow anonymous access with limited functionality
 // LLM try-it for anonymous users (replaces NMT as primary try-it surface)
 const tryItRoutes = new Set(['/llm', '/nmt']);
@@ -44,11 +47,13 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
   const isProtectedRoute = protectedRoutes.has(router.pathname);
   const isAdminOnlyRoute = adminOnlyRoutes.has(router.pathname);
   const isUsageDashboardRoute = usageDashboardRoutes.has(router.pathname);
+  const isApiKeyManagementRoute = apiKeyManagementRoutes.has(router.pathname);
   const isTryItRoute = tryItRoutes.has(router.pathname);
 
   // Check if user is ADMIN
   const isAdmin = user?.roles?.includes('ADMIN') || false;
   const canAccessUsage = canAccessUsageDashboard(user?.roles);
+  const canManageApiKeys = userMayManageApiKeys(user?.roles);
   const isUsageViewer = isUsageViewerUser(user?.roles);
   const isBlockedForUsageViewer = isUsageViewer && !usageViewerAllowedRoutes.has(router.pathname);
 
@@ -76,6 +81,13 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
       router.push('/');
     }
   }, [isLoading, isUsageDashboardRoute, isAuthenticated, canAccessUsage, router]);
+
+  // Redirect users without API key management access
+  useEffect(() => {
+    if (!isLoading && isApiKeyManagementRoute && isAuthenticated && !canManageApiKeys) {
+      router.push('/profile');
+    }
+  }, [isLoading, isApiKeyManagementRoute, isAuthenticated, canManageApiKeys, router]);
 
   // USAGE VIEWER is restricted to Usage Dashboard (and Profile) — redirect away from
   // any other route, including '/', which is otherwise unguarded.
@@ -108,6 +120,10 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
 
   // If usage dashboard route and user lacks access, don't render children (will redirect)
   if (isUsageDashboardRoute && isAuthenticated && !canAccessUsage) {
+    return null;
+  }
+
+  if (isApiKeyManagementRoute && isAuthenticated && !canManageApiKeys) {
     return null;
   }
 

@@ -220,6 +220,13 @@ def sum_over_window_by(metric_expr: str, by_label: str, time_range: str | None) 
 # round_2dp: the underlying histogram already reports minutes (not seconds),
 #   so display at 2-decimal precision instead of the whole-number rounding
 #   used for character/token/image counts.
+# native_unit_suffix: kept here as a fallback ONLY. The actual value shown
+#   to callers is read from the PPU config
+#   (libs/ai4i_core/ai4i_core/ppu/inference_types.yaml, via
+#   metering_service.py's _native_unit_suffix_for_registry_task_type) —
+#   the single canonical definition of each task type's billing/consumption
+#   unit, shared with quota/pricing enforcement. This field is only used
+#   when that yaml has no entry for a task type at all.
 SERVICE_BREAKDOWN_CONFIG: dict = {
     "nmt": {
         "display_name": "NMT",
@@ -276,9 +283,14 @@ SERVICE_BREAKDOWN_CONFIG: dict = {
     },
     "ner": {
         "display_name": "NER",
-        # metrics.py tracks tokens (words), not bare request counts.
-        "metering_unit": "Tokens processed",
-        "native_unit_suffix": "tokens",
+        # Despite the metric's own name (a legacy artifact — see
+        # telemetry_obsv_ner_tokens_processed_sum), the PPU canonical unit
+        # for "ner" (libs/ai4i_core/ai4i_core/ppu/inference_types.yaml) is
+        # "characters", not tokens — that yaml is the actual source of truth
+        # metering_service.py's native_unit_suffix lookups read from; this
+        # field is kept in sync as a same-value fallback only.
+        "metering_unit": "Characters processed",
+        "native_unit_suffix": "chars",
         "native_metric": "telemetry_obsv_ner_tokens_processed_sum",
         "native_extra_labels": None,
     },

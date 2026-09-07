@@ -2,20 +2,20 @@
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
 
 import pytest
 
 from app.core.exceptions import ValidationError
 from app.models.api_key import APIKey
+from app.models.application import Application
 from app.models.role import Permission
 from app.services.api_key_service import APIKeyService
 
 
-def _api_key(*, permissions: list[int] | None = None) -> APIKey:
+def _api_key(*, permissions: list[int] | None = None, application_id: int = 1) -> APIKey:
     return APIKey(
         id=1,
-        user_id=uuid4(),
+        application_id=application_id,
         key_name="test-key",
         api_key="a" * 32,
         permissions=permissions if permissions is not None else [12, 15],
@@ -94,39 +94,60 @@ class TestPermissionIdsToNames:
 
 
 class TestAPIKeyReadRoutes:
+    @staticmethod
+    def _admin_request() -> MagicMock:
+        """require_any_role stashes the caller's roles on request.state; the
+        route reads them back via _is_admin instead of a second DB call."""
+        request = MagicMock()
+        request.state.user_roles = ["ADMIN"]
+        return request
+
     @pytest.mark.asyncio
     async def test_list_api_keys_returns_permission_names_not_ids(self) -> None:
         from app.routes.api_key import list_api_keys
 
         key = _api_key(permissions=[12, 15])
+        application = Application(id=key.application_id, tenant_id=1, name="Test App")
         mock_svc = AsyncMock()
-        mock_svc.list_by_user = AsyncMock(return_value=[key])
+        mock_svc.list_grouped = AsyncMock(return_value=[(application, [key])])
         mock_svc.permission_name_map_for_keys = AsyncMock(
             return_value={12: "nmt.inference", 15: "asr.inference"},
         )
 
-        response = await list_api_keys(user_id=key.user_id, _admin=MagicMock(), svc=mock_svc)
+        response = await list_api_keys(
+            request=self._admin_request(),
+            application_id=None,
+            current_user=MagicMock(tenant_id=None),
+            svc=mock_svc,
+        )
 
         assert response.success is True
-        assert response.data.api_keys[0].permissions == [
+        assert response.data[0].application_id == application.id
+        assert response.data[0].api_keys[0].permissions == [
             "nmt.inference",
             "asr.inference",
         ]
-        assert all(not isinstance(p, int) for p in response.data.api_keys[0].permissions)
+        assert all(not isinstance(p, int) for p in response.data[0].api_keys[0].permissions)
 
     @pytest.mark.asyncio
     async def test_list_api_keys_omits_unresolved_permission_ids(self, caplog) -> None:
         from app.routes.api_key import list_api_keys
 
         key = _api_key(permissions=[12, 99])
+        application = Application(id=key.application_id, tenant_id=1, name="Test App")
         mock_svc = AsyncMock()
-        mock_svc.list_by_user = AsyncMock(return_value=[key])
+        mock_svc.list_grouped = AsyncMock(return_value=[(application, [key])])
         mock_svc.permission_name_map_for_keys = AsyncMock(return_value={12: "nmt.inference"})
 
         with caplog.at_level("WARNING"):
-            response = await list_api_keys(user_id=key.user_id, _admin=MagicMock(), svc=mock_svc)
+            response = await list_api_keys(
+                request=self._admin_request(),
+                application_id=None,
+                current_user=MagicMock(tenant_id=None),
+                svc=mock_svc,
+            )
 
-        assert response.data.api_keys[0].permissions == ["nmt.inference"]
+        assert response.data[0].api_keys[0].permissions == ["nmt.inference"]
         assert "api_key id=1 references unknown permission id=99" in caplog.text
 
 

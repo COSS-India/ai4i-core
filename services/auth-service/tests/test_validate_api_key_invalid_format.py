@@ -42,9 +42,15 @@ class TestValidateApiKeyInvalidFormat:
         assert "X-User-ID" not in response.headers
 
     async def test_valid_key_still_returns_valid_true(self):
+        # Keys are owned by Applications, not Users (migration e9f0a1b2c3d4
+        # dropped api_key.user_id in favor of application_id) — the
+        # validate_api_key payload and the response headers it drives
+        # reflect that: no X-User-ID for this branch, X-Application-ID
+        # (and X-API-Key-ID) instead.
         api_key_svc = AsyncMock()
         api_key_svc.validate_api_key.return_value = {
-            "user_id": "11111111-1111-1111-1111-111111111111",
+            "id": 42,
+            "application_id": "7",
             "tenant_id": "1",
             "permissions": [1, 2, 3],
         }
@@ -53,4 +59,6 @@ class TestValidateApiKeyInvalidFormat:
         result = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc)
 
         assert result.valid is True
-        assert response.headers["X-User-ID"] == "11111111-1111-1111-1111-111111111111"
+        assert "X-User-ID" not in response.headers
+        assert response.headers["X-Application-ID"] == "7"
+        assert response.headers["X-API-Key-ID"] == "42"

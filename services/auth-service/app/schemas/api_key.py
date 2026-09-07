@@ -1,8 +1,12 @@
 """
 API key request/response schemas.
+
+Ownership: an API key belongs to an Application, not a User (migration
+e9f0a1b2c3d4 dropped api_key.user_id in favor of api_key.application_id).
 """
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional
 
 from pydantic import ConfigDict, Field
@@ -13,7 +17,18 @@ from app.schemas.common import MessageData, SuccessResponse
 
 # ── Requests ──
 
+_CREATE_API_KEY_REQUEST_EXAMPLE = {
+    "key_name": "Production NMT Key",
+    "permissions": ["nmt.inference", "asr.inference"],
+    "expires_days": 365,
+    "application_id": "<place your id here>",
+    "allocated_percentage": 25.00,
+}
+
+
 class CreateAPIKeyRequest(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_CREATE_API_KEY_REQUEST_EXAMPLE]})
+
     key_name: str = Field(..., min_length=1, max_length=100)
     permissions: list[str] = Field(
         ...,
@@ -25,6 +40,38 @@ class CreateAPIKeyRequest(BaseSchema):
         ),
     )
     expires_days: Optional[int] = Field(None, ge=1, description="Key lifetime in days; defaults to API_KEY_EXPIRE_DAYS")
+    application_id: int = Field(
+        ..., description="Application this key is issued under. Replace the example value with a real Application ID from your system."
+    )
+    allocated_percentage: Optional[Decimal] = Field(
+        None,
+        ge=0,
+        le=100,
+        max_digits=5,
+        decimal_places=2,
+        description="Share of the Application's allocated_budget reserved for this key, as a percentage.",
+    )
+    budget: Optional[Decimal] = Field(
+        None,
+        gt=0,
+        max_digits=15,
+        decimal_places=2,
+        description=(
+            "₹ ceiling for this key, as an alternative to allocated_percentage. The server "
+            "derives an equivalent allocated_percentage of the Application's own Budget "
+            "immediately to run the same ALLOCATION_TOTAL_EXCEEDED cap check every "
+            "allocated_percentage-created key goes through (rejected if it rounds to 0.00%), "
+            "but stores this exact requested amount as allocated_budget, not the rounded "
+            "derivative. One of allocated_percentage / budget is required; give at most one."
+        ),
+    )
+
+
+_UPDATE_API_KEY_REQUEST_EXAMPLE = {
+    "key_name": "Production NMT Key (renamed)",
+    "permissions": ["nmt.inference"],
+    "expires_days": 180,
+}
 
 
 class UpdateAPIKeyRequest(BaseSchema):
@@ -33,6 +80,7 @@ class UpdateAPIKeyRequest(BaseSchema):
         populate_by_name=True,
         str_strip_whitespace=True,
         extra="forbid",
+        json_schema_extra={"examples": [_UPDATE_API_KEY_REQUEST_EXAMPLE]},
     )
 
     key_name: Optional[str] = Field(None, min_length=1, max_length=100)
@@ -56,6 +104,15 @@ class CreateAPIKeyData(BaseSchema):
     key_name: str
     permissions: list[str]
     expires_at: Optional[datetime] = None
+    application_id: int
+    allocated_percentage: Optional[Decimal] = None
+    allocated_budget: Optional[Decimal] = Field(
+        None,
+        description=(
+            "The requested ₹ ceiling verbatim (rounded to cents) when this key was created via "
+            "`budget`; otherwise derived as application.allocated_budget * allocated_percentage / 100."
+        ),
+    )
 
 
 class APIKeyItem(BaseSchema):
@@ -67,26 +124,51 @@ class APIKeyItem(BaseSchema):
         ...,
         description="Masked key (first 4 and last 4 characters). The raw key is never returned after create.",
     )
-    user_id: str
+    allocated_percentage: Optional[Decimal] = None
+    allocated_budget: Optional[Decimal] = None
     permissions: list[str]
     expires_at: Optional[datetime] = None
     is_active: bool
+    created_by: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
 
-class APIKeyListData(BaseSchema):
+class ApplicationAPIKeysGroup(BaseSchema):
+    """One Application and the keys issued under it — GET /auth/api-keys groups by Application."""
+
+    application_id: int
+    application_name: str
+    tenant_id: int
     api_keys: list[APIKeyItem]
 
 
-class APIKeyAdminItem(APIKeyItem):
-    """List-all item: masked key plus masked owner identity."""
+class APIKeyAdminItem(BaseSchema):
+    """GET /auth/api-keys/all item — flat (not grouped by application), with
+    the current budget position pulled from platform-core's per-key usage
+    ledger. No owner PII: there is no user_id FK to join through any more."""
 
-    user_email: Optional[str] = Field(
-        None,
-        description="Masked owner email. Plaintext PII is never returned.",
+    id: int
+    key_name: str
+    api_key: str = Field(
+        ...,
+        description="Masked key (first 4 and last 4 characters). The raw key is never returned after create.",
     )
-    username: Optional[str] = None
+    application_id: int
+    allocated_percentage: Optional[Decimal] = None
+    allocated_budget: Optional[Decimal] = None
+    budget_used: Optional[Decimal] = Field(
+        None, description="Cumulative spend against this key, from platform-core's budget_usage ledger."
+    )
+    budget_pending: Optional[Decimal] = Field(
+        None, description="allocated_budget minus budget_used; None if allocated_budget is unset."
+    )
+    permissions: list[str]
+    expires_at: Optional[datetime] = None
+    is_active: bool
+    created_by: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 # ── Route responses: inherit SuccessResponse and override ``data`` ──
@@ -98,9 +180,9 @@ class CreateAPIKeyResponse(SuccessResponse):
 
 
 class ListAPIKeysResponse(SuccessResponse):
-    """GET /auth/api-keys"""
+    """GET /auth/api-keys — one entry per Application, each with its keys."""
 
-    data: APIKeyListData
+    data: list[ApplicationAPIKeysGroup]
 
 
 class UpdateAPIKeyResponse(SuccessResponse):
@@ -123,9 +205,10 @@ class ListAllAPIKeysResponse(SuccessResponse):
 
 class ValidateAPIKeyResponse(BaseSchema):
     valid: bool = True
-    user_id: Optional[str] = None
+    application_id: Optional[str] = None
     permission_ids: list[int] = []
     token_type: str = "api_key"
+    user_id: Optional[str] = None
 
 
 class ValidateAPIKeyErrorResponse(BaseSchema):

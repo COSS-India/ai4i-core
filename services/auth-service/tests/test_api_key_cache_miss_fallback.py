@@ -3,24 +3,27 @@
 Covers the two TODOs on validate_api_key: a cache hit carrying is_already_invalid
 short-circuits without touching the DB; a cache miss falls back to Postgres and
 rehydrates Redis verbatim from api_key.cached_data — the sole source of truth for
-this path, since it can carry a PPU tier_id that's only safe to compute at
+this path, since it can carry a tier_id that's only safe to compute at
 create_api_key time, never on this hot path. A token that's absent, no longer
 eligible, or has no cached_data snapshot yet is rejected with InvalidAPIKeyError
 (the absent/ineligible cases are also negatively cached so repeats stay Redis-only).
+
+Keys are owned by Applications, not Users (migration e9f0a1b2c3d4 dropped
+api_key.user_id in favor of api_key.application_id) — eligibility depends on
+the owning Application's and its Tenant's state.
 """
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
 
 import pytest
 
 from app.core.config import settings
 from app.core.exceptions import InvalidAPIKeyError
 from app.models.api_key import APIKey
+from app.models.application import Application, ApplicationStatus
 from app.models.tenant import Tenant, TenantStatus
-from app.models.user import User
 from app.services.api_key_service import APIKeyService
 
 _TOKEN = "a" * 32
@@ -44,10 +47,10 @@ async def _patched_db_fallback(repo: AsyncMock):
         yield
 
 
-def _api_key(*, cached_data: dict | None = None, expires_at: object = ...) -> APIKey:
+def _api_key(*, cached_data: dict | None = None, expires_at: object = ..., application_id: int = 1) -> APIKey:
     return APIKey(
         id=1,
-        user_id=uuid4(),
+        application_id=application_id,
         key_name="test-key",
         api_key=_TOKEN,
         permissions=[12],
@@ -57,16 +60,8 @@ def _api_key(*, cached_data: dict | None = None, expires_at: object = ...) -> AP
     )
 
 
-def _user(*, is_active: bool = True, is_delete: bool = False, is_tenant_active: bool = True) -> User:
-    return User(
-        id=uuid4(),
-        email="test-user@example.invalid",
-        username=uuid4().hex[:12],
-        tenant_id=1,
-        is_active=is_active,
-        is_delete=is_delete,
-        is_tenant_active=is_tenant_active,
-    )
+def _application(*, status: ApplicationStatus = ApplicationStatus.ACTIVE) -> Application:
+    return Application(id=1, tenant_id=1, name="Test App", status=status)
 
 
 def _tenant(*, status: TenantStatus = TenantStatus.ACTIVE) -> Tenant:
@@ -79,14 +74,14 @@ def _tenant(*, status: TenantStatus = TenantStatus.ACTIVE) -> Tenant:
     )
 
 
-def _db_key(*, key: APIKey | None = None, user: object = ..., tenant: object = ...) -> APIKey:
-    """Wire key.user and key.user.tenant the way get_by_api_key_if_valid's
-    joinedload delivers them."""
+def _db_key(*, key: APIKey | None = None, application: object = ..., tenant: object = ...) -> APIKey:
+    """Wire key.application and key.application.tenant the way
+    get_by_api_key_if_valid's joinedload delivers them."""
     key = key if key is not None else _api_key()
-    user = _user() if user is ... else user
-    if user is not None:
-        user.tenant = _tenant() if tenant is ... else tenant
-    key.user = user
+    application = _application() if application is ... else application
+    if application is not None:
+        application.tenant = _tenant() if tenant is ... else tenant
+    key.application = application
     return key
 
 
@@ -157,12 +152,12 @@ class TestValidateAPIKeyCacheMissDBFallback:
         mock_repo.update.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_inactive_user_tombstones_then_raises(self) -> None:
+    async def test_inactive_application_tombstones_then_raises(self) -> None:
         svc, _repo, cache = _service(repo=None)
         cache.get_api_key_cache = AsyncMock(return_value=None)
         mock_repo = AsyncMock()
         mock_repo.get_by_api_key_if_valid = AsyncMock(
-            return_value=_db_key(user=_user(is_active=False))
+            return_value=_db_key(application=_application(status=ApplicationStatus.INACTIVE))
         )
         async with _patched_db_fallback(mock_repo):
             with pytest.raises(InvalidAPIKeyError):
@@ -183,16 +178,16 @@ class TestValidateAPIKeyCacheMissDBFallback:
         assert cache.set_api_key_cache.await_args.args[2] == {"is_already_invalid": "1"}
 
     @pytest.mark.asyncio
-    async def test_user_without_tenant_is_eligible_and_has_no_tenant_id(self) -> None:
-        """A tenant-less user must not crash — user_may_use_api_keys(user, None) is True."""
+    async def test_application_without_loaded_tenant_is_still_eligible(self) -> None:
+        """Defensive: application_may_use_api_keys(application, None) is True even
+        though in practice Application.tenant_id is NOT NULL and always resolves —
+        this guards the case where the joinedload simply didn't populate it."""
         svc, _repo, cache = _service(repo=None)
         cache.get_api_key_cache = AsyncMock(return_value=None)
-        user = _user()
-        user.tenant_id = None
-        snapshot = {"api_key": _TOKEN, "permissions": [12], "user_id": "u", "tenant_id": None}
+        snapshot = {"api_key": _TOKEN, "permissions": [12], "application_id": "1", "tenant_id": None}
         mock_repo = AsyncMock()
         mock_repo.get_by_api_key_if_valid = AsyncMock(
-            return_value=_db_key(key=_api_key(cached_data=snapshot), user=user, tenant=None)
+            return_value=_db_key(key=_api_key(cached_data=snapshot), tenant=None)
         )
         async with _patched_db_fallback(mock_repo):
             result = await svc.validate_api_key(_TOKEN)
@@ -200,11 +195,11 @@ class TestValidateAPIKeyCacheMissDBFallback:
         assert cache.set_api_key_cache.await_args.args[2]["tenant_id"] is None
 
     @pytest.mark.asyncio
-    async def test_missing_owner_row_tombstones_then_raises(self) -> None:
+    async def test_missing_application_row_tombstones_then_raises(self) -> None:
         svc, _repo, cache = _service(repo=None)
         cache.get_api_key_cache = AsyncMock(return_value=None)
         mock_repo = AsyncMock()
-        mock_repo.get_by_api_key_if_valid = AsyncMock(return_value=_db_key(user=None))
+        mock_repo.get_by_api_key_if_valid = AsyncMock(return_value=_db_key(application=None))
         async with _patched_db_fallback(mock_repo):
             with pytest.raises(InvalidAPIKeyError):
                 await svc.validate_api_key(_TOKEN)
@@ -214,7 +209,7 @@ class TestValidateAPIKeyCacheMissDBFallback:
     async def test_eligible_with_cached_data_rehydrates_verbatim_and_skips_persist(self) -> None:
         svc, _repo, cache = _service(repo=None)
         cache.get_api_key_cache = AsyncMock(return_value=None)
-        snapshot = {"api_key": _TOKEN, "permissions": [12], "user_id": "u", "tenant_id": "1", "tier_id": "t1"}
+        snapshot = {"api_key": _TOKEN, "permissions": [12], "application_id": "1", "tenant_id": "1", "tier_id": "t1"}
         mock_repo = AsyncMock()
         mock_repo.get_by_api_key_if_valid = AsyncMock(
             return_value=_db_key(key=_api_key(cached_data=snapshot))
@@ -230,7 +225,7 @@ class TestValidateAPIKeyCacheMissDBFallback:
     async def test_eligible_without_cached_data_raises_without_tombstoning(self) -> None:
         """cached_data is the sole source of truth for this path — an eligible key
         that hasn't been through create_api_key/an update/the backfill yet still
-        can't be served here (no live PPU tier lookup on this hot path), but this
+        can't be served here (no live tier lookup on this hot path), but this
         case isn't negatively cached: it's a data-completeness gap, not a
         revocation, and should self-resolve once something populates cached_data."""
         svc, _repo, cache = _service(repo=None)
@@ -251,7 +246,7 @@ class TestValidateAPIKeyCacheMissDBFallback:
         without writing Redis (mirrors the pre-existing _refresh_redis_cache guard)."""
         svc, _repo, cache = _service(repo=None)
         cache.get_api_key_cache = AsyncMock(return_value=None)
-        snapshot = {"api_key": _TOKEN, "permissions": [12], "user_id": "u", "tenant_id": "1"}
+        snapshot = {"api_key": _TOKEN, "permissions": [12], "application_id": "1", "tenant_id": "1"}
         expired = _api_key(
             cached_data=snapshot, expires_at=datetime.now(timezone.utc) - timedelta(seconds=1)
         )
@@ -343,10 +338,10 @@ class TestRefreshAndCreatePersistCachedData:
 
     @pytest.mark.asyncio
     async def test_refresh_redis_cache_preserves_tier_id_from_existing_cached_data(self) -> None:
-        """tier_id can only be correctly computed at create_api_key time (a
-        platform-core PPU lookup) — a refresh must carry it forward from
-        cached_data, not drop it, even when Redis itself was evicted (so
-        there's no existing hash to read tier_id from there either)."""
+        """tier_id can only be correctly computed at create_api_key time (a read
+        of tenants.tier_id) — a refresh must carry it forward from cached_data,
+        not drop it, even when Redis itself was evicted (so there's no existing
+        hash to read tier_id from there either)."""
         svc, repo, cache = _service()
         cache.get_api_key_cache = AsyncMock(return_value=None)
         key = _api_key(cached_data={"api_key": _TOKEN, "tier_id": "tier-A", "permissions": [1]})

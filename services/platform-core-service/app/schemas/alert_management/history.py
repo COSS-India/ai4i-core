@@ -96,10 +96,40 @@ class AlertmanagerWebhookAlert(BaseSchema):
     fingerprint: Optional[str] = Field(None, description="Alertmanager's stable identity hash for this alert")
 
 
+_ALERTMANAGER_WEBHOOK_EXAMPLE = {
+    "version": "4",
+    "groupKey": '{}:{alertname="HighLatency"}',
+    "truncatedAlerts": 0,
+    "status": "firing",
+    "receiver": "platform-oncall",
+    "groupLabels": {"alertname": "HighLatency"},
+    "commonLabels": {"alertname": "HighLatency", "severity": "critical", "category": "application"},
+    "commonAnnotations": {
+        "summary": "High latency detected",
+        "action": "Check Triton backend health and scale if needed",
+    },
+    "externalURL": "https://alertmanager.example.com",
+    "alerts": [
+        {
+            "status": "firing",
+            "labels": {"alertname": "HighLatency", "severity": "critical", "category": "application"},
+            "annotations": {
+                "summary": "High latency detected",
+                "description": "P95 latency exceeded 2.5s for 5m",
+            },
+            "startsAt": "2026-08-28T10:00:00Z",
+            "endsAt": "0001-01-01T00:00:00Z",
+            "generatorURL": "https://prometheus.example.com/graph?g0.expr=...",
+            "fingerprint": "abc123def456",
+        }
+    ],
+}
+
+
 class AlertmanagerWebhookPayload(BaseSchema):
     """POST /alerts/history/webhook — Alertmanager v4 webhook body."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="allow", json_schema_extra={"examples": [_ALERTMANAGER_WEBHOOK_EXAMPLE]})
 
     version: Optional[str] = None
     groupKey: Optional[str] = None

@@ -182,7 +182,8 @@ export default function ApiKeyTab({
                       No API keys found
                     </Text>
                     <Text fontSize="sm">
-                      You don&apos;t have any API keys yet. To get an API key, please contact your administrator to add the necessary permissions to your account.
+                      You don&apos;t have any API keys yet. API keys are created by your
+                      institution&apos;s Admin or Tenant Admin under API Key Management.
                     </Text>
                   </AlertDescription>
                 </Alert>

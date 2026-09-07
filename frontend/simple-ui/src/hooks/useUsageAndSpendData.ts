@@ -10,10 +10,7 @@ import { parseError } from "../utils/errorHandler";
 import { INSTITUTION } from "../config/constants";
 import {
   USAGE_SPEND_STALE_MS,
-  billingPeriodValue,
-  resolveSpendChangePercent,
   summaryFromDetail,
-  type BillingPeriodKey,
 } from "../utils/usageSpendHelpers";
 import type {
   TenantUsageItem,
@@ -25,11 +22,9 @@ interface UseUsageAndSpendDataArgs {
   isTenantView: boolean;
   tenantId: string | null;
   refreshNonce: number;
-  periodKey: BillingPeriodKey;
   filterTierId: string;
-  filterTaskType: string;
-  sortOrder: "asc" | "desc";
   taskTypeNames: string[];
+  billingPeriod: string;
 }
 
 export function useUsageAndSpendData({
@@ -37,35 +32,24 @@ export function useUsageAndSpendData({
   isTenantView,
   tenantId,
   refreshNonce,
-  periodKey,
   filterTierId,
-  filterTaskType,
-  sortOrder,
   taskTypeNames,
+  billingPeriod,
 }: UseUsageAndSpendDataArgs) {
-  const billingPeriod = billingPeriodValue(periodKey);
-  const previousBillingPeriod = billingPeriodValue("last");
   const scopedId = (isTenantView ? tenantId : scopeTenantId)?.trim() || null;
   const isScoped = Boolean(scopedId);
 
-  // Frontend-enabled task types sent to the backend so it query-filters the
-  // response (ENABLED_TASK_TYPES via useInferenceTypes). undefined
-  // while the catalog is still loading ⇒ backend returns all (no filter).
   const enabledParam = taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
 
   const summaryQuery = useQuery({
-    queryKey: ["usage-summary", billingPeriod, enabledParam, refreshNonce],
-    queryFn: () => fetchUsageSummary({ billingPeriod, taskTypes: enabledParam }),
-    enabled: !isScoped,
-    staleTime: USAGE_SPEND_STALE_MS,
-    retry: 1,
-  });
-
-  const previousSummaryQuery = useQuery({
-    queryKey: ["usage-summary", previousBillingPeriod, enabledParam, refreshNonce],
+    queryKey: ["usage-summary", billingPeriod, filterTierId, enabledParam, refreshNonce],
     queryFn: () =>
-      fetchUsageSummary({ billingPeriod: previousBillingPeriod, taskTypes: enabledParam }),
-    enabled: !isScoped && periodKey === "current",
+      fetchUsageSummary({
+        billingPeriod,
+        tierId: filterTierId || undefined,
+        taskTypes: enabledParam,
+      }),
+    enabled: !isScoped,
     staleTime: USAGE_SPEND_STALE_MS,
     retry: 1,
   });
@@ -86,18 +70,15 @@ export function useUsageAndSpendData({
       "usage-tenants",
       billingPeriod,
       filterTierId,
-      filterTaskType,
       enabledParam,
-      sortOrder,
       refreshNonce,
     ],
     queryFn: () =>
       fetchTenantUsageList({
         billingPeriod,
         tierId: filterTierId || undefined,
-        modelTaskType: filterTaskType || undefined,
         taskTypes: enabledParam,
-        sortOrder,
+        sortOrder: "desc",
         limit: 100,
         offset: 0,
       }),
@@ -119,36 +100,15 @@ export function useUsageAndSpendData({
   }, [isScoped, scopedQuery.data, tenantsQuery.data?.data]);
 
   const summaryData: UsageSummaryResponse | undefined = useMemo(() => {
-    if (isScoped) return scopedQuery.data ? summaryFromDetail(scopedQuery.data) : undefined;
+    if (isScoped) {
+      return scopedQuery.data
+        ? summaryFromDetail(scopedQuery.data, billingPeriod)
+        : undefined;
+    }
     const summary = summaryQuery.data;
     if (!summary) return undefined;
 
-    // Recompute totalSpend + shares over a filtered row set.
-    const recompute = (
-      rows: typeof summary.spendByModelTaskType,
-    ): UsageSummaryResponse => {
-      const totalSpend = rows.reduce((s, i) => s + i.spend, 0);
-      return {
-        ...summary,
-        totalSpend,
-        spendByModelTaskType: rows.map((i) => ({
-          ...i,
-          percentage: totalSpend > 0 ? Number(((i.spend / totalSpend) * 100).toFixed(1)) : 0,
-        })),
-      };
-    };
-
-    // Enabled-task-type filtering is done at the backend (`task_types=` query param),
-    // so no client-side enabled filter here — only the single-type drill-down below.
     let next: UsageSummaryResponse = summary;
-
-    if (filterTaskType) {
-      next = recompute(
-        next.spendByModelTaskType.filter(
-          (i) => i.modelTaskType.trim().toLowerCase() === filterTaskType.trim().toLowerCase(),
-        ),
-      );
-    }
 
     if (next.activeTenants == null || next.budgetExceededTenants == null) {
       const rows = tenantsQuery.data?.data ?? [];
@@ -157,7 +117,10 @@ export function useUsageAndSpendData({
         activeTenants: next.activeTenants ?? (tenantsQuery.data?.total ?? rows.length),
         budgetExceededTenants:
           next.budgetExceededTenants ??
-          rows.filter((r) => r.budget.percentageUsed > 100 || r.budget.remaining < 0).length,
+          rows.filter(
+            (r) =>
+              (r.budget?.percentageUsed ?? 0) > 100 || (r.budget?.remaining ?? 0) < 0,
+          ).length,
       };
     }
 
@@ -165,52 +128,11 @@ export function useUsageAndSpendData({
   }, [
     isScoped,
     scopedQuery.data,
+    billingPeriod,
     summaryQuery.data,
-    filterTaskType,
     tenantsQuery.data?.data,
     tenantsQuery.data?.total,
   ]);
-
-  const spendChangePercent = useMemo(
-    () =>
-      resolveSpendChangePercent({
-        periodKey,
-        isScoped,
-        apiValue: summaryData?.spendChangePercent ?? summaryQuery.data?.spendChangePercent,
-        currentTotal: summaryQuery.data?.totalSpend,
-        prevTotal: previousSummaryQuery.data?.totalSpend,
-        prevReady:
-          previousSummaryQuery.isFetched ||
-          !(previousSummaryQuery.isLoading || previousSummaryQuery.isFetching),
-      }),
-    [
-      periodKey,
-      isScoped,
-      summaryData?.spendChangePercent,
-      summaryQuery.data?.spendChangePercent,
-      summaryQuery.data?.totalSpend,
-      previousSummaryQuery.data?.totalSpend,
-      previousSummaryQuery.isFetched,
-      previousSummaryQuery.isLoading,
-      previousSummaryQuery.isFetching,
-    ],
-  );
-
-  // Only the frontend-enabled task types (ENABLED_TASK_TYPES via
-  // useInferenceTypes). Data-derived types are NOT added, so disabled types with
-  // historical spend don't appear in the dropdown.
-  const taskTypeOptions = useMemo(() => {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const t of taskTypeNames) {
-      const n = t.trim();
-      if (n && !seen.has(n)) {
-        seen.add(n);
-        out.push(n);
-      }
-    }
-    return out;
-  }, [taskTypeNames]);
 
   const errMsg = (e: unknown) => (e ? parseError(e).message : null);
 
@@ -221,8 +143,6 @@ export function useUsageAndSpendData({
     isScoped,
     tenants,
     summaryData,
-    spendChangePercent,
-    taskTypeOptions,
     tiers: tiersQuery.data?.data ?? [],
     hasNoTierAssigned,
     summaryError: isScoped ? errMsg(scopedQuery.error) : errMsg(summaryQuery.error),

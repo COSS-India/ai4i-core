@@ -29,8 +29,10 @@ import {
   Badge,
 } from "@chakra-ui/react";
 import { useAuth } from "../../hooks/useAuth";
-import { useApiKeyManagementTab } from "./hooks/useApiKeyManagementTab";
-import type { AdminAPIKeyWithUserResponse } from "../../types/auth";
+import { useApiKeyManagementTab, type ApiKeyTableRow } from "./hooks/useApiKeyManagementTab";
+import { useApiKeyBudgetEdit } from "./hooks/useApiKeyBudgetEdit";
+import ApiKeyBulkBudgetModal from "./ApiKeyBulkBudgetModal";
+import { formatSpendMoney } from "../../utils/usageSpendHelpers";
 import { FiSlash } from "react-icons/fi";
 import { ViewIcon, EditIcon } from "@chakra-ui/icons";
 import { useAdminTableSurface } from "../common/TableControls";
@@ -47,6 +49,7 @@ import {
   formatApiKeyFilterStatusLabel,
   getApiKeyDisplayStatusColorScheme,
 } from "../../config/constants";
+import { FIELD_HINTS } from "../../config/fieldHints";
 
 export interface ApiKeyManagementTabProps {
   /** When true, tab is visible; used to fetch data when user switches to this tab */
@@ -67,6 +70,14 @@ export default function ApiKeyManagementTab({
     user: user ?? null,
   });
 
+  const budgetEdit = useApiKeyBudgetEdit({
+    tenantId: user?.tenant_id,
+    applications: mgmt.applications,
+    initialApplicationId:
+      mgmt.filterApplication !== "all" ? mgmt.filterApplication : undefined,
+    onSaved: mgmt.handleFetchAllApiKeys,
+  });
+
   const [keyNameSortDirection, setKeyNameSortDirection] = useState<"asc" | "desc">("asc");
 
   const sortedApiKeys = useMemo(() => {
@@ -83,11 +94,12 @@ export default function ApiKeyManagementTab({
   }, [mgmt.filteredApiKeys, keyNameSortDirection]);
 
   const hasActiveFilters =
+    mgmt.filterApplication !== "all" ||
     mgmt.filterPermission !== "all" ||
     mgmt.filterActive !== "all" ||
     mgmt.keyNameSearch.trim() !== "";
 
-  const apiKeyColumns = useMemo((): AdminTableColumn<AdminAPIKeyWithUserResponse>[] => {
+  const apiKeyColumns = useMemo((): AdminTableColumn<ApiKeyTableRow>[] => {
     return [
       {
         id: "key_name",
@@ -100,7 +112,23 @@ export default function ApiKeyManagementTab({
           ascAriaLabel: "Sort API keys by name ascending",
           descAriaLabel: "Sort API keys by name descending",
         },
-        cell: (key) => <Text fontWeight="semibold">{key.key_name}</Text>,
+        cell: (key) => (
+          <Box>
+            <Text fontWeight="semibold">{key.key_name}</Text>
+            {key.api_key && (
+              <Text fontSize="xs" color="gray.500" fontFamily="mono">
+                {key.api_key}
+              </Text>
+            )}
+          </Box>
+        ),
+      },
+      {
+        id: "application",
+        header: "Application",
+        cell: (key) => (
+          <Text fontSize="sm">{key.application_name ?? key.application_id ?? "—"}</Text>
+        ),
       },
       {
         id: "permissions",
@@ -120,6 +148,28 @@ export default function ApiKeyManagementTab({
                 </Badge>
               )}
             </HStack>
+          );
+        },
+      },
+      {
+        id: "budget",
+        header: "Budget",
+        cell: (key) => {
+          const pctLabel = mgmt.formatBudgetPct(key);
+          if (pctLabel === "—") {
+            return <Text fontSize="sm" color="gray.500">—</Text>;
+          }
+          return (
+            <Box>
+              <Text fontSize="sm" fontWeight="semibold" color="blue.600">
+                {pctLabel}
+              </Text>
+              {key.allocated_budget != null && (
+                <Text fontSize="xs" color="gray.500">
+                  {formatSpendMoney(key.allocated_budget, "INR")}
+                </Text>
+              )}
+            </Box>
           );
         },
       },
@@ -248,15 +298,26 @@ export default function ApiKeyManagementTab({
             <Heading size="md" color="gray.700" userSelect="none" cursor="default">
               Your API Keys
             </Heading>
-            <Button
-              size="sm"
-              colorScheme="blue"
-              onClick={() => void mgmt.handleFetchAllApiKeys()}
-              isLoading={mgmt.isLoadingAllApiKeys}
-              loadingText="Loading..."
-            >
-              Refresh
-            </Button>
+            <HStack spacing={2}>
+              <Button
+                size="sm"
+                variant="outline"
+                colorScheme="blue"
+                onClick={() => budgetEdit.open()}
+                isDisabled={mgmt.applications.length === 0}
+              >
+                Edit Budget
+              </Button>
+              <Button
+                size="sm"
+                colorScheme="blue"
+                onClick={() => void mgmt.handleFetchAllApiKeys()}
+                isLoading={mgmt.isLoadingAllApiKeys}
+                loadingText="Loading..."
+              >
+                Refresh
+              </Button>
+            </HStack>
           </HStack>
         </CardHeader>
         <CardBody>
@@ -264,7 +325,7 @@ export default function ApiKeyManagementTab({
             items={sortedApiKeys}
             columns={apiKeyColumns}
             getRowKey={(key) =>
-              key.api_key ?? `id-${key.id ?? ""}-${key.user_id}-${key.key_name}`
+              key.api_key ?? `id-${key.id ?? ""}-${key.application_id ?? ""}-${key.key_name}`
             }
             onRowClick={mgmt.handleOpenViewModal}
             isLoading={mgmt.isLoadingAllApiKeys}
@@ -282,8 +343,21 @@ export default function ApiKeyManagementTab({
                   label="Key Name"
                   value={mgmt.keyNameSearch}
                   onChange={mgmt.setKeyNameSearch}
-                  placeholder="Search by key name"
+                  placeholder={FIELD_HINTS.apiKey.search.placeholder}
                 />
+                <TableSelectField
+                  label="Application"
+                  value={mgmt.filterApplication}
+                  onChange={mgmt.setFilterApplication}
+                  formControlProps={{ w: { base: "full", md: "280px" } }}
+                >
+                  <option value="all">All Applications</option>
+                  {mgmt.applications.map((app) => (
+                    <option key={app.application_id} value={app.application_id}>
+                      {app.name}
+                    </option>
+                  ))}
+                </TableSelectField>
                 <TableSelectField
                   label="Permission"
                   value={mgmt.filterPermission}
@@ -346,6 +420,28 @@ export default function ApiKeyManagementTab({
                   >
                     {mgmt.formatKeyId(mgmt.selectedKeyForView)}
                   </Text>
+                </Box>
+                <Box>
+                  <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                    Application
+                  </Text>
+                  <Text fontSize="md">
+                    {mgmt.selectedKeyForView.application_name ??
+                      mgmt.selectedKeyForView.application_id ??
+                      "—"}
+                  </Text>
+                </Box>
+                <Box>
+                  <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                    Budget
+                  </Text>
+                  <Text fontSize="md">{mgmt.formatBudgetPct(mgmt.selectedKeyForView)}</Text>
+                  {mgmt.selectedKeyForView.allocated_budget != null &&
+                    mgmt.formatBudgetPct(mgmt.selectedKeyForView) !== "—" && (
+                      <Text fontSize="sm" color="gray.500">
+                        {formatSpendMoney(mgmt.selectedKeyForView.allocated_budget, "INR")}
+                      </Text>
+                    )}
                 </Box>
                 <Box gridColumn={{ base: "span 1", md: "span 2" }}>
                   <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={2}>
@@ -602,6 +698,27 @@ export default function ApiKeyManagementTab({
           </AlertDialogContent>
         </AlertDialogOverlay>
       </AlertDialog>
+
+      <ApiKeyBulkBudgetModal
+        isOpen={budgetEdit.isOpen}
+        onClose={budgetEdit.close}
+        isLoading={budgetEdit.isLoading}
+        isSaving={budgetEdit.isSaving}
+        banner={budgetEdit.banner}
+        applications={budgetEdit.applications}
+        selectedApplicationId={budgetEdit.selectedApplicationId}
+        onApplicationChange={budgetEdit.onApplicationChange}
+        applicationName={budgetEdit.applicationName}
+        applicationBudget={budgetEdit.applicationBudget}
+        applicationAllocatedPct={budgetEdit.applicationAllocatedPct}
+        applicationBudgetUnset={budgetEdit.applicationBudgetUnset}
+        liveTotalPct={budgetEdit.liveTotalPct}
+        rows={budgetEdit.rows}
+        onPctChange={budgetEdit.onPctChange}
+        onAmountChange={budgetEdit.onAmountChange}
+        onSave={() => void budgetEdit.save()}
+        canSave={budgetEdit.canSave}
+      />
     </>
   );
 }

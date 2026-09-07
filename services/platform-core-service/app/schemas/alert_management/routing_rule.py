@@ -8,7 +8,7 @@ Lifted from alert-management-service/alert_management.py:571-634. Changes:
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from app.schemas.base import BaseSchema
 from app.schemas.common import (
@@ -20,8 +20,24 @@ from app.schemas.common import (
 )
 
 
+_ROUTING_RULE_CREATE_EXAMPLE = {
+    "rule_name": "critical-app-alerts",
+    "receiver_id": "<place your id here>",
+    "match_severity": "critical",
+    "match_category": "application",
+    "group_by": ["alertname", "category", "severity"],
+    "group_wait": "10s",
+    "group_interval": "10s",
+    "repeat_interval": "12h",
+    "continue_routing": False,
+    "priority": 100,
+}
+
+
 class RoutingRuleCreate(BaseSchema):
     """Create payload."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [_ROUTING_RULE_CREATE_EXAMPLE]})
 
     rule_name: str = Field(..., description="Unique rule name")
     receiver_id: int = Field(..., description="ID of the notification receiver")
@@ -41,8 +57,18 @@ class RoutingRuleCreate(BaseSchema):
     priority: int = Field(default=100, description="Priority (lower = higher priority)")
 
 
+_ROUTING_RULE_UPDATE_EXAMPLE = {
+    "match_severity": "warning",
+    "group_wait": "30s",
+    "priority": 50,
+    "enabled": True,
+}
+
+
 class RoutingRuleUpdate(BaseSchema):
     """Patch payload — all fields optional."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [_ROUTING_RULE_UPDATE_EXAMPLE]})
 
     rule_name: Optional[str] = None
     receiver_id: Optional[int] = None
@@ -60,8 +86,19 @@ class RoutingRuleUpdate(BaseSchema):
     enabled: Optional[bool] = None
 
 
+_ROUTING_RULE_TIMING_UPDATE_EXAMPLE = {
+    "category": "application",
+    "severity": "critical",
+    "group_wait": "30s",
+    "group_interval": "5m",
+    "repeat_interval": "1h",
+}
+
+
 class RoutingRuleTimingUpdate(BaseSchema):
     """Bulk timing-update payload — applies timing params to all routing rules matching the filter set."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [_ROUTING_RULE_TIMING_UPDATE_EXAMPLE]})
 
     category: str = Field(..., description="'application' or 'infrastructure'")
     severity: str = Field(..., description="'critical', 'warning', or 'info'")

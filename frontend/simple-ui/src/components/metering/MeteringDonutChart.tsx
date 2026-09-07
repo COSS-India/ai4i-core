@@ -115,6 +115,7 @@ const MeteringDonutChart: React.FC<MeteringDonutChartProps> = ({
 }) => {
   const sliceTotal = data.reduce((sum, d) => sum + d.value, 0);
   const total = totalOverride && totalOverride > 0 ? totalOverride : sliceTotal;
+  const paddingAngle = data.length > 1 ? 2 : 0;
   if (data.length === 0) return null;
 
   const chart = (
@@ -135,7 +136,7 @@ const MeteringDonutChart: React.FC<MeteringDonutChartProps> = ({
               cy={size.height / 2}
               innerRadius={innerRadius}
               outerRadius={outerRadius}
-              paddingAngle={2}
+              paddingAngle={paddingAngle}
               stroke={getMeteringChartColor("DONUT_STROKE")}
               strokeWidth={2}
             >

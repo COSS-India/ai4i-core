@@ -26,6 +26,8 @@ import PasswordRequirements, {
   getPasswordValidationError,
   passwordPasses,
 } from "../auth/password/PasswordRequirements";
+import { FIELD_HINTS } from "../../config/fieldHints";
+import FieldHint from "../common/FieldHint";
 
 const CLIENT_MESSAGES = {
   CURRENT_REQUIRED: "Current password is required.",
@@ -201,6 +203,7 @@ export default function ChangePasswordTab({ onCancel }: ChangePasswordTabProps) 
                   onBlur={() => markTouched("current_password")}
                   autoComplete="current-password"
                   maxLength={PASSWORD_POLICY.MAX_LENGTH}
+                  placeholder={FIELD_HINTS.profile.currentPassword.placeholder}
                 />
                 <InputRightElement width="4.5rem">
                   <IconButton
@@ -213,8 +216,10 @@ export default function ChangePasswordTab({ onCancel }: ChangePasswordTabProps) 
                   />
                 </InputRightElement>
               </InputGroup>
-              {errors.current_password && (
+              {errors.current_password ? (
                 <FormErrorMessage>{errors.current_password}</FormErrorMessage>
+              ) : (
+                <FieldHint>{FIELD_HINTS.profile.currentPassword.helper}</FieldHint>
               )}
             </FormControl>
 
@@ -233,6 +238,7 @@ export default function ChangePasswordTab({ onCancel }: ChangePasswordTabProps) 
                   autoComplete="new-password"
                   minLength={PASSWORD_POLICY.MIN_LENGTH}
                   maxLength={PASSWORD_POLICY.MAX_LENGTH}
+                  placeholder={FIELD_HINTS.profile.newPassword.placeholder}
                 />
                 <InputRightElement width="4.5rem">
                   <IconButton
@@ -266,6 +272,7 @@ export default function ChangePasswordTab({ onCancel }: ChangePasswordTabProps) 
                   autoComplete="new-password"
                   minLength={PASSWORD_POLICY.MIN_LENGTH}
                   maxLength={PASSWORD_POLICY.MAX_LENGTH}
+                  placeholder={FIELD_HINTS.profile.confirmPassword.placeholder}
                 />
                 <InputRightElement width="4.5rem">
                   <IconButton
@@ -278,8 +285,10 @@ export default function ChangePasswordTab({ onCancel }: ChangePasswordTabProps) 
                   />
                 </InputRightElement>
               </InputGroup>
-              {errors.confirm_password && (
+              {errors.confirm_password ? (
                 <FormErrorMessage>{errors.confirm_password}</FormErrorMessage>
+              ) : (
+                <FieldHint>{FIELD_HINTS.profile.confirmPassword.helper}</FieldHint>
               )}
             </FormControl>
 

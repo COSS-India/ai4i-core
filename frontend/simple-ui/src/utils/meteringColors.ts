@@ -14,7 +14,7 @@ export function getMeteringChartColor(key: MeteringChartColorKey): string {
 }
 
 export function meteringColorAt(index: number): string {
-  return colorAt(METERING.COLORS.RANK, index);
+  return colorAt(METERING.COLORS.PALETTE, index);
 }
 
 export function meteringServiceColor(name: string, index: number): string {

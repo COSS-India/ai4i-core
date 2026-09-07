@@ -1,5 +1,7 @@
 export { default as TenantManagementTab } from "./TenantManagementTab";
 export type { TenantManagementTabProps } from "./TenantManagementTab";
+export { default as InstitutionDetailsPanel } from "./InstitutionDetailsPanel";
+export type { InstitutionDetailsPanelProps } from "./InstitutionDetailsPanel";
 export { default as UserDetailsTab } from "./UserDetailsTab";
 export { default as ChangePasswordTab } from "./ChangePasswordTab";
 export { default as ApiKeyTab } from "./ApiKeyTab";
@@ -16,6 +18,11 @@ export { default as AlertingTab } from "./AlertingTab";
 export type { AlertingTabProps } from "./AlertingTab";
 export { useTenantManagement } from "./hooks/useTenantManagement";
 export type { UseTenantManagementOptions } from "./hooks/useTenantManagement";
+export { useOwnInstitutionDetails } from "./hooks/useOwnInstitutionDetails";
+export type {
+  UseOwnInstitutionDetailsOptions,
+  OwnInstitutionDetails,
+} from "./hooks/useOwnInstitutionDetails";
 export { useDeleteAccount, ACCOUNT_DELETED_LOGIN_MESSAGE } from "./hooks/useDeleteAccount";
 export { useUserDetails } from "./hooks/useUserDetails";
 export { useRolesTab } from "./hooks/useRolesTab";

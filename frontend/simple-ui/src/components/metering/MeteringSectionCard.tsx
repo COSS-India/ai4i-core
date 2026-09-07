@@ -83,6 +83,8 @@ interface KpiCardProps {
   pctChange?: number | null;
   helper?: string;
   valueColor?: string;
+  /** Override default 3xl — use a smaller size for long string values. */
+  valueFontSize?: string;
   invertTrend?: boolean;   // true = an increase is "bad" (red), e.g. Failed
   /** Hover explanation for computed / non-obvious metrics. */
   tooltip?: string;
@@ -94,6 +96,7 @@ export const KpiCard: React.FC<KpiCardProps> = ({
   pctChange,
   helper,
   valueColor = "gray.800",
+  valueFontSize = "3xl",
   invertTrend = false,
   tooltip,
 }) => {
@@ -107,7 +110,7 @@ export const KpiCard: React.FC<KpiCardProps> = ({
   return (
     <Card variant="outline" borderColor="gray.200" bg="white" shadow="sm" borderRadius="lg" h="full">
       <CardBody py={5} px={5}>
-        <VStack align="flex-start" spacing={3}>
+        <VStack align="stretch" spacing={3}>
           <HStack spacing={1.5} align="center">
             <Text
               fontSize="xs"
@@ -120,7 +123,14 @@ export const KpiCard: React.FC<KpiCardProps> = ({
             </Text>
             {tooltip ? <InfoTip message={tooltip} /> : null}
           </HStack>
-          <Text fontSize="3xl" fontWeight="bold" color={valueColor} lineHeight="1.1">
+          <Text
+            as="div"
+            fontSize={valueFontSize}
+            fontWeight="bold"
+            color={valueColor}
+            lineHeight="1.1"
+            minW={0}
+          >
             {value ?? "—"}
           </Text>
           {pctChange == null ? null : (

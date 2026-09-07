@@ -2,14 +2,14 @@ from datetime import datetime
 from typing import Any, List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.enums.model_management import resolve_task_type
 
 
 class TierQuotaIn(BaseModel):
     modelTaskType: str = Field(..., min_length=1)
-    # Ceiling is the largest integer PPUTierQuota.monthly_quota's Numeric(15, 4)
+    # Ceiling is the largest integer TierQuota.monthly_quota's Numeric(15, 4)
     # column can store exactly (11 integer digits), so an out-of-range limit is
     # rejected here instead of persisting and breaking on read-back.
     limit: int = Field(..., ge=0, le=99_999_999_999)
@@ -39,8 +39,20 @@ def _check_duplicate_model_task_types(quotas: List[TierQuotaIn]) -> List[TierQuo
     return quotas
 
 
+_TIER_CREATE_EXAMPLE = {
+    "name": "Standard",
+    "description": "Standard monthly quota tier for translation and speech services",
+    "quotas": [
+        {"modelTaskType": "nmt", "limit": 100000},
+        {"modelTaskType": "asr", "limit": 50000},
+    ],
+}
+
+
 class TierCreate(BaseModel):
-    name: str = Field(..., min_length=1)
+    model_config = ConfigDict(json_schema_extra={"examples": [_TIER_CREATE_EXAMPLE]})
+
+    name: str = Field(..., min_length=2, max_length=100)
     description: Optional[str] = None
     quotas: List[TierQuotaIn] = Field(..., min_length=1)
 
@@ -50,9 +62,21 @@ class TierCreate(BaseModel):
         return self
 
 
+_TIER_UPDATE_EXAMPLE = {
+    "tier_id": "<place your uuid here>",
+    "name": "Standard",
+    "description": "Updated quota tier for translation and speech services",
+    "quotas": [
+        {"modelTaskType": "nmt", "limit": 150000},
+    ],
+}
+
+
 class TierUpdate(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"examples": [_TIER_UPDATE_EXAMPLE]})
+
     tier_id: str = Field(..., description="UUID of the tier to update")
-    name: Optional[str] = Field(None, min_length=1)
+    name: Optional[str] = Field(None, min_length=2, max_length=100)
     description: Optional[str] = None
     quotas: Optional[List[TierQuotaIn]] = None
     cancel_pending_quota: Optional[List[str]] = None

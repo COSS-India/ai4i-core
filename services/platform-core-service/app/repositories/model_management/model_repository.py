@@ -91,7 +91,17 @@ class ModelRepository:
         """Return the total number of models matching the given filters (no pagination)."""
         stmt = select(func.count(Model.id))
         if task_types:
-            stmt = stmt.where(Model.task["type"].astext.in_(task_types))
+            # Case-insensitive: this filter now runs with all 11
+            # TaskTypeEnum values (previously always just ["llm"], where a
+            # casing mismatch could never surface), and an exact JSONB
+            # match against whatever case a row happens to be stored in
+            # would silently ghost that model_id here while /api/v1/models
+            # (TaskSpecLenient) still renders it normally — see
+            # metering_service.py's model_breakdown for the ghost-drop
+            # consequence.
+            stmt = stmt.where(
+                func.lower(Model.task["type"].astext).in_([t.lower() for t in task_types])
+            )
         if model_name:
             stmt = stmt.where(func.lower(Model.name) == func.lower(model_name))
         if version_status == "active":
@@ -139,7 +149,17 @@ class ModelRepository:
             return {}
         stmt = select(Model.model_id, Model.name).where(Model.model_id.in_(model_ids))
         if task_types:
-            stmt = stmt.where(Model.task["type"].astext.in_(task_types))
+            # Case-insensitive: this filter now runs with all 11
+            # TaskTypeEnum values (previously always just ["llm"], where a
+            # casing mismatch could never surface), and an exact JSONB
+            # match against whatever case a row happens to be stored in
+            # would silently ghost that model_id here while /api/v1/models
+            # (TaskSpecLenient) still renders it normally — see
+            # metering_service.py's model_breakdown for the ghost-drop
+            # consequence.
+            stmt = stmt.where(
+                func.lower(Model.task["type"].astext).in_([t.lower() for t in task_types])
+            )
         result = await self._db.execute(stmt)
         return {row.model_id: row.name for row in result.all()}
 
@@ -160,7 +180,17 @@ class ModelRepository:
         )
         stmt = select(Model)
         if task_types:
-            stmt = stmt.where(Model.task["type"].astext.in_(task_types))
+            # Case-insensitive: this filter now runs with all 11
+            # TaskTypeEnum values (previously always just ["llm"], where a
+            # casing mismatch could never surface), and an exact JSONB
+            # match against whatever case a row happens to be stored in
+            # would silently ghost that model_id here while /api/v1/models
+            # (TaskSpecLenient) still renders it normally — see
+            # metering_service.py's model_breakdown for the ghost-drop
+            # consequence.
+            stmt = stmt.where(
+                func.lower(Model.task["type"].astext).in_([t.lower() for t in task_types])
+            )
         if model_name:
             stmt = stmt.where(func.lower(Model.name) == func.lower(model_name))
         # version_status takes precedence over include_deprecated

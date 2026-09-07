@@ -11,7 +11,7 @@ deliberate changes from the source:
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from app.schemas.base import BaseSchema
 from app.schemas.common import (
@@ -30,9 +30,32 @@ class AlertAnnotation(BaseSchema):
     value: str = Field(..., description="Annotation value")
 
 
+_ALERT_DEFINITION_CREATE_EXAMPLE = {
+    "name": "HighLatency",
+    "description": "Fires when inference request latency exceeds threshold",
+    "threshold_value": 2.5,
+    "threshold_unit": "s",
+    "category": "application",
+    "severity": "critical",
+    "urgency": "high",
+    "alert_type": "Latency",
+    "scope": "per_service",
+    "service": ["nmt", "asr"],
+    "evaluation_interval": "30s",
+    "for_duration": "5m",
+    "enabled": True,
+    "annotations": [
+        {"key": "summary", "value": "High latency detected on {{ $labels.service }}"},
+        {"key": "action", "value": "Check Triton backend health and scale if needed"},
+    ],
+}
+
+
 class AlertDefinitionCreate(BaseSchema):
     """Create payload. PromQL is built server-side from either alert_type+threshold
     OR (sub_category + signal + signal_metric + condition_operator + threshold)."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [_ALERT_DEFINITION_CREATE_EXAMPLE]})
 
     name: str = Field(..., description="Alert name (e.g., 'HighLatency')")
     description: Optional[str] = Field(None, description="Alert description")
@@ -68,8 +91,18 @@ class AlertDefinitionCreate(BaseSchema):
                 )
 
 
+_ALERT_DEFINITION_UPDATE_EXAMPLE = {
+    "threshold_value": 3.0,
+    "threshold_unit": "s",
+    "severity": "warning",
+    "enabled": True,
+}
+
+
 class AlertDefinitionUpdate(BaseSchema):
     """Patch payload — every field optional."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [_ALERT_DEFINITION_UPDATE_EXAMPLE]})
 
     description: Optional[str] = None
     threshold_value: Optional[float] = None

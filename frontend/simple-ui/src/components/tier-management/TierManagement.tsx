@@ -29,6 +29,7 @@ import {
   NumberInput,
   NumberInputField,
   Divider,
+  Grid,
 } from "@chakra-ui/react";
 import {
   AddIcon,
@@ -44,11 +45,14 @@ import AdminDataTable, {
   type AdminTableColumn,
 } from "../common/AdminDataTable";
 import ConfirmDialog from "../common/ConfirmDialog";
+import { FORM_LABEL_TO_INPUT_PT } from "../common/FormFieldsRow";
 import StandardModal from "../common/StandardModal";
 import { useTierManagement } from "../../hooks/useTierManagement";
 import type { Tier } from "../../services/tierManagementService";
 import type { TierFormData, TierFormQuota } from "../../types/tierManagement";
 import { INSTITUTIONS, formatModelTaskTypeLabel } from "../../config/constants";
+import { FIELD_HINTS } from "../../config/fieldHints";
+import FieldHint from "../common/FieldHint";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { generateUUID } from "../../utils/uuid";
 
@@ -330,13 +334,18 @@ function QuotaEditor({
               borderColor="gray.200"
               bg="gray.50"
             >
-              <HStack align="flex-end" spacing={3}>
-                <HStack align="flex-end" spacing={3} flexWrap="wrap" flex={1}>
-                  <FormControl
-                    w={{ base: "full", sm: "190px" }}
-                    isRequired
-                    isDisabled={isEditMode}
-                  >
+              <HStack align="flex-start" spacing={3}>
+                <Grid
+                  templateColumns={{
+                    base: "1fr",
+                    sm: "minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1fr)",
+                  }}
+                  gap={3}
+                  flex={1}
+                  minW={0}
+                  alignItems="start"
+                >
+                  <FormControl isRequired isDisabled={isEditMode} minW={0}>
                     <FormLabel fontSize="xs" mb={1}>
                       Model Task Type
                     </FormLabel>
@@ -369,10 +378,10 @@ function QuotaEditor({
                   </FormControl>
 
                   <FormControl
-                    w={{ base: "full", sm: "120px" }}
                     isRequired
                     isInvalid={showErrors && isUnitInvalid(quota)}
                     isDisabled={isEditMode}
+                    minW={0}
                   >
                     <FormLabel fontSize="xs" mb={1}>
                       Unit
@@ -388,13 +397,16 @@ function QuotaEditor({
                     <FormErrorMessage fontSize="xs">
                       Unit is required.
                     </FormErrorMessage>
+                    <FieldHint show={!(showErrors && isUnitInvalid(quota))}>
+                      {FIELD_HINTS.tier.quotaUnit.helper}
+                    </FieldHint>
                   </FormControl>
 
                   <FormControl
-                    w={{ base: "full", sm: "120px" }}
                     isRequired
                     isInvalid={showErrors && isLimitInvalid(quota)}
                     isDisabled={isEditMode}
+                    minW={0}
                   >
                     <FormLabel fontSize="xs" mb={1}>
                       Limit
@@ -405,13 +417,18 @@ function QuotaEditor({
                       value={quota.limit}
                       onChange={(v) => handleQuotaChange(idx, "limit", v)}
                     >
-                      <NumberInputField placeholder="e.g. 10000" />
+                      <NumberInputField
+                        placeholder={FIELD_HINTS.tier.quotaLimit.placeholder}
+                      />
                     </NumberInput>
                     <FormErrorMessage fontSize="xs">
                       Limit must be greater than 0.
                     </FormErrorMessage>
+                    <FieldHint show={!(showErrors && isLimitInvalid(quota))}>
+                      {FIELD_HINTS.tier.quotaLimit.helper}
+                    </FieldHint>
                   </FormControl>
-                </HStack>
+                </Grid>
 
                 {quota.isExisting && onSchedule && (
                   <Tooltip label="Schedule a change" placement="top" hasArrow>
@@ -422,7 +439,7 @@ function QuotaEditor({
                       variant="ghost"
                       colorScheme="blue"
                       onClick={() => onSchedule(quota)}
-                      alignSelf="flex-end"
+                      mt={FORM_LABEL_TO_INPUT_PT}
                     />
                   </Tooltip>
                 )}
@@ -441,7 +458,7 @@ function QuotaEditor({
                         removingTaskType !== quota.modelTaskType
                       }
                       onClick={() => onRemove(quota)}
-                      alignSelf="flex-end"
+                      mt={FORM_LABEL_TO_INPUT_PT}
                     />
                   </Tooltip>
                 )}
@@ -454,7 +471,7 @@ function QuotaEditor({
                     variant="ghost"
                     colorScheme="red"
                     onClick={() => removeQuota(idx)}
-                    alignSelf="flex-end"
+                    mt={FORM_LABEL_TO_INPUT_PT}
                   />
                 )}
               </HStack>
@@ -496,8 +513,10 @@ function TierForm({
         <Input
           value={formData.name}
           onChange={(e) => onChange({ ...formData, name: e.target.value })}
-          placeholder="e.g. Enterprise"
+          placeholder={FIELD_HINTS.tier.name.placeholder}
+          maxLength={100}
         />
+        <FieldHint>{FIELD_HINTS.tier.name.helper}</FieldHint>
       </FormControl>
 
       <FormControl>
@@ -507,8 +526,9 @@ function TierForm({
           onChange={(e) =>
             onChange({ ...formData, description: e.target.value })
           }
-          placeholder="e.g. Enterprise tier for high usage"
+          placeholder={FIELD_HINTS.tier.description.placeholder}
         />
+        <FieldHint>{FIELD_HINTS.tier.description.helper}</FieldHint>
       </FormControl>
 
       <Divider />
@@ -775,16 +795,14 @@ const TierManagement: React.FC = () => {
         paginate="client"
         filterToolbarAlign="flex-start"
         filterToolbarRightContent={
-          <Box ml="auto">
-            <Button
-              leftIcon={<AddIcon />}
-              colorScheme="blue"
-              size="sm"
-              onClick={handleOpenCreate}
-            >
-              Create Tier
-            </Button>
-          </Box>
+          <Button
+            leftIcon={<AddIcon />}
+            colorScheme="blue"
+            size="sm"
+            onClick={handleOpenCreate}
+          >
+            Create Tier
+          </Button>
         }
         filters={
           <HStack spacing={3} flexWrap="wrap" align="flex-end">
@@ -803,6 +821,9 @@ const TierManagement: React.FC = () => {
               formControlProps={{ w: { base: "full", sm: "210px" }, mb: 0 }}
               selectProps={{ size: "sm" }}
             >
+              {taskTypeNames.length > 1 && (
+                <option value="">All</option>
+              )}
               {taskTypeNames.map((t) => (
                 <option key={t} value={t}>
                   {formatModelTaskTypeLabel(t)}

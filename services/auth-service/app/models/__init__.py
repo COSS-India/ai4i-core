@@ -14,6 +14,7 @@ from app.models.tenant_plan import TenantPlan  # noqa: E402
 from app.models.user import User  # noqa: E402
 from app.models.credentials import UserCredentials  # noqa: E402
 from app.models.role import Role, Permission, UserRole, RolePermission  # noqa: E402
+from app.models.application import Application  # noqa: E402
 from app.models.api_key import APIKey  # noqa: E402
 from app.models.verification import TokenVerification  # noqa: E402
 from app.models.refresh import RefreshToken  # noqa: E402
@@ -28,6 +29,7 @@ __all__ = [
     "Permission",
     "UserRole",
     "RolePermission",
+    "Application",
     "APIKey",
     "TokenVerification",
     "RefreshToken",

@@ -64,7 +64,6 @@ class User(Base):
     tenant = relationship("Tenant", back_populates="users")
     user_roles = relationship("UserRole", back_populates="user", cascade="all, delete-orphan")
     credentials = relationship("UserCredentials", back_populates="user", uselist=False, cascade="all, delete-orphan")
-    api_keys = relationship("APIKey", back_populates="user", cascade="all, delete-orphan")
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
 
     def is_accessible(self) -> bool:

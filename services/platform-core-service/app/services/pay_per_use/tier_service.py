@@ -4,13 +4,12 @@ from uuid import UUID
 
 import httpx
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.pay_per_use.ppu_tier import PPUTier, PPUTierQuota
-from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssignment
-from app.repositories.pay_per_use.ppu_usage_repository import update_tier_cache
+from app.models.pay_per_use.tier import Tier, TierQuota
+from app.repositories.pay_per_use.usage_repository import update_tier_cache
 from app.schemas.pay_per_use.tier import TierCreate, TierOut, TierQuotaOut, TierUpdate
 from app.schemas.enums.model_management import resolve_task_type
 from app.core.exceptions import ValidationError
@@ -33,7 +32,7 @@ def _resolve_task_types(task_types: Optional[str]) -> Optional[List[str]]:
     return resolved or None
 
 
-def _build_out(tier: PPUTier, quotas: List[PPUTierQuota]) -> TierOut:
+def _build_out(tier: Tier, quotas: List[TierQuota]) -> TierOut:
     return TierOut(
         id=str(tier.id),
         name=tier.name,
@@ -56,9 +55,9 @@ async def list_tiers(
 ) -> dict:
     model_task_types = _resolve_task_types(task_types)
     stmt = (
-        select(PPUTier)
-        .where(PPUTier.is_active.is_(True))
-        .options(selectinload(PPUTier.tier_quotas))
+        select(Tier)
+        .where(Tier.is_active.is_(True))
+        .options(selectinload(Tier.tier_quotas))
     )
     result = await session.execute(stmt)
     tiers = result.scalars().all()
@@ -80,9 +79,9 @@ async def get_tier_by_id(tier_id: str, session: AsyncSession) -> TierOut:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid tier_id format")
 
     result = await session.execute(
-        select(PPUTier)
-        .where(PPUTier.id == uid, PPUTier.is_active.is_(True))
-        .options(selectinload(PPUTier.tier_quotas))
+        select(Tier)
+        .where(Tier.id == uid, Tier.is_active.is_(True))
+        .options(selectinload(Tier.tier_quotas))
     )
     tier = result.scalar_one_or_none()
     if not tier:
@@ -92,20 +91,20 @@ async def get_tier_by_id(tier_id: str, session: AsyncSession) -> TierOut:
 
 
 async def create_tier(body: TierCreate, session: AsyncSession, created_by: Optional[str] = None) -> TierOut:
-    existing = await session.execute(select(PPUTier).where(PPUTier.name == body.name))
+    existing = await session.execute(select(Tier).where(Tier.name == body.name))
     if existing.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Tier with name '{body.name}' already exists",
         )
 
-    tier = PPUTier(name=body.name, description=body.description, created_by=created_by, updated_by=created_by)
+    tier = Tier(name=body.name, description=body.description, created_by=created_by, updated_by=created_by)
     session.add(tier)
     await session.flush()
 
     quotas = []
     for q in body.quotas:
-        quota = PPUTierQuota(
+        quota = TierQuota(
             tier_id=tier.id,
             inference_name=q.modelTaskType,
             monthly_quota=q.limit,
@@ -121,24 +120,34 @@ async def create_tier(body: TierCreate, session: AsyncSession, created_by: Optio
     return _build_out(tier, quotas)
 
 
-async def _fetch_tenant_ids_for_tier(tier_id, session: AsyncSession) -> list:
-    result = await session.execute(
-        select(PPUTenantTierAssignment.tenant_id).where(
-            PPUTenantTierAssignment.tier_id == tier_id,
-            PPUTenantTierAssignment.effective_from <= func.now(),
-            PPUTenantTierAssignment.effective_to > func.now(),
-        )
+async def _fetch_tenant_ids_for_tier(tier_id, auth_db: Optional[AsyncSession]) -> list:
+    """Tenants currently on ``tier_id`` — for the best-effort
+    quota-limit-updated webhook to auth-service, so it knows who to notify.
+
+    ppu_tenant_tier_assignments was dropped (AI4IDS-2923); tenants.tier_id
+    (auth-service, via auth_db) is the sole source of truth now — no
+    effective_from/effective_to window to check, since that column has no
+    expiry (same fact already established fixing get_tenant_budgets and
+    auth-service's assign_tenant_tier). auth_db unavailable degrades to no
+    tenants found, matching this function's existing best-effort framing —
+    the caller already treats the whole notification as skippable.
+    """
+    if auth_db is None:
+        return []
+    result = await auth_db.execute(
+        text("SELECT id FROM tenants WHERE tier_id = :tier_id"),
+        {"tier_id": tier_id},
     )
-    return [row.tenant_id for row in result.all()]
+    return [row.id for row in result.all()]
 
 
-async def _resolve_tier_for_update(body: TierUpdate, session: AsyncSession) -> PPUTier:
+async def _resolve_tier_for_update(body: TierUpdate, session: AsyncSession) -> Tier:
     try:
         uid = UUID(body.tier_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid tier_id format")
 
-    result = await session.execute(select(PPUTier).where(PPUTier.id == uid, PPUTier.is_active.is_(True)))
+    result = await session.execute(select(Tier).where(Tier.id == uid, Tier.is_active.is_(True)))
     tier = result.scalar_one_or_none()
     if not tier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tier '{body.tier_id}' not found")
@@ -146,13 +155,13 @@ async def _resolve_tier_for_update(body: TierUpdate, session: AsyncSession) -> P
 
 
 async def _upsert_quotas(
-    session: AsyncSession, tier: PPUTier, quotas: List, updated_by: Optional[str]
+    session: AsyncSession, tier: Tier, quotas: List, updated_by: Optional[str]
 ) -> None:
     for q in quotas:
         q_result = await session.execute(
-            select(PPUTierQuota).where(
-                PPUTierQuota.tier_id == tier.id,
-                func.lower(PPUTierQuota.inference_name) == q.modelTaskType.lower(),
+            select(TierQuota).where(
+                TierQuota.tier_id == tier.id,
+                func.lower(TierQuota.inference_name) == q.modelTaskType.lower(),
             )
         )
         existing = q_result.scalar_one_or_none()
@@ -166,13 +175,13 @@ async def _upsert_quotas(
 
 
 async def _cancel_pending_quotas(
-    session: AsyncSession, tier: PPUTier, inference_names: List[str], updated_by: Optional[str]
+    session: AsyncSession, tier: Tier, inference_names: List[str], updated_by: Optional[str]
 ) -> None:
     for inference_name in inference_names:
         q_result = await session.execute(
-            select(PPUTierQuota).where(
-                PPUTierQuota.tier_id == tier.id,
-                func.lower(PPUTierQuota.inference_name) == inference_name.lower(),
+            select(TierQuota).where(
+                TierQuota.tier_id == tier.id,
+                func.lower(TierQuota.inference_name) == inference_name.lower(),
             )
         )
         row = q_result.scalar_one_or_none()
@@ -182,16 +191,16 @@ async def _cancel_pending_quotas(
 
 
 async def _notify_tier_updated(
-    session: AsyncSession,
-    tier: PPUTier,
+    tier: Tier,
     auth_service_url: str,
     http_client: Optional[httpx.AsyncClient],
+    auth_db: Optional[AsyncSession],
 ) -> None:
     if not (auth_service_url and http_client):
         return
 
-    tenant_ids = await _fetch_tenant_ids_for_tier(tier.id, session)
     try:
+        tenant_ids = await _fetch_tenant_ids_for_tier(tier.id, auth_db)
         resp = await http_client.post(
             f"{auth_service_url}/internal/ppu/tier/quota-limit-updated",
             json={"tier_name": tier.name, "tenant_ids": tenant_ids},
@@ -208,6 +217,7 @@ async def update_tier(
     updated_by: Optional[str] = None,
     auth_service_url: str = "",
     http_client: Optional[httpx.AsyncClient] = None,
+    auth_db: Optional[AsyncSession] = None,
 ) -> TierOut:
     tier = await _resolve_tier_for_update(body, session)
 
@@ -228,9 +238,9 @@ async def update_tier(
     update_tier_cache(tier.id, tier.name)
 
     if body.quotas is not None or body.cancel_pending_quota:
-        await _notify_tier_updated(session, tier, auth_service_url, http_client)
+        await _notify_tier_updated(tier, auth_service_url, http_client, auth_db)
 
-    q_result = await session.execute(select(PPUTierQuota).where(PPUTierQuota.tier_id == tier.id))
+    q_result = await session.execute(select(TierQuota).where(TierQuota.tier_id == tier.id))
     quotas = list(q_result.scalars().all())
     return _build_out(tier, quotas)
 
@@ -241,7 +251,7 @@ async def apply_pending_quotas(session: AsyncSession) -> int:
     Returns the number of quota rows updated.
     """
     result = await session.execute(
-        select(PPUTierQuota).where(PPUTierQuota.pending_monthly_quota.isnot(None))
+        select(TierQuota).where(TierQuota.pending_monthly_quota.isnot(None))
     )
     rows = result.scalars().all()
     for row in rows:
@@ -251,26 +261,36 @@ async def apply_pending_quotas(session: AsyncSession) -> int:
     return len(rows)
 
 
-async def delete_tier(tier_id: str, session: AsyncSession) -> None:
+async def delete_tier(tier_id: str, session: AsyncSession, auth_db: Optional[AsyncSession]) -> None:
     try:
         uid = UUID(tier_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid tier_id format")
 
     result = await session.execute(
-        select(PPUTier).where(PPUTier.id == uid, PPUTier.is_active.is_(True))
+        select(Tier).where(Tier.id == uid, Tier.is_active.is_(True))
     )
     tier = result.scalar_one_or_none()
     if not tier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tier '{tier_id}' not found")
 
-    assigned = await session.execute(
-        select(PPUTenantTierAssignment).where(
-            PPUTenantTierAssignment.tier_id == uid,
-            PPUTenantTierAssignment.effective_to > func.now(),
-        ).limit(1)
+    # ppu_tenant_tier_assignments was dropped (AI4IDS-2923); tenants.tier_id
+    # (auth-service, via auth_db) is the sole source of truth now — see
+    # _fetch_tenant_ids_for_tier. Unlike that best-effort notification, this
+    # is a genuine safety guard (deleting an in-use tier breaks billing
+    # enforcement for its tenants), so an unavailable auth_db must fail
+    # closed here, not silently skip the check — same convention as
+    # auth-service's assign_tenant_tier's PLATFORM_CORE_DB_NOT_CONFIGURED.
+    if auth_db is None:
+        raise ValidationError(
+            message="Tier deletion cannot be verified: auth-service DB is not configured.",
+            code="AUTH_DB_NOT_CONFIGURED",
+        )
+    assigned = await auth_db.execute(
+        text("SELECT 1 FROM tenants WHERE tier_id = :tier_id LIMIT 1"),
+        {"tier_id": uid},
     )
-    if assigned.scalar_one_or_none():
+    if assigned.first():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Tier is assigned to one or more tenants and cannot be deleted",

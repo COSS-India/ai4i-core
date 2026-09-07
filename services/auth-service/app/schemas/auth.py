@@ -3,9 +3,9 @@ Authentication request/response schemas.
 """
 
 import re
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
-from pydantic import EmailStr, Field
+from pydantic import ConfigDict, EmailStr, Field, field_validator
 from pydantic.functional_validators import AfterValidator
 from pydantic import StringConstraints
 
@@ -38,71 +38,175 @@ from app.core.constants import (
 )
 from app.schemas.base import BaseSchema
 from app.schemas.common import MessageData, SuccessResponse
+from app.schemas.text_validators import check_name_chars, clean_text
 
 _PASSWORD_FIELD = Field(..., min_length=PASSWORD_MIN_LENGTH, max_length=PASSWORD_MAX_LENGTH)
 
 
 # ── Requests ──
 
+_REGISTER_REQUEST_EXAMPLE = {
+    "email": "user@example.com",
+    "password": "Str0ngP@ss1!",
+    "confirm_password": "Str0ngP@ss1!",
+    "full_name": "Jane Doe",
+    "phone_number": "+919876543210",
+    "timezone": "Asia/Kolkata",
+    # tenant_id omitted: it's optional, and a placeholder here would fail int
+    # parsing and 422 the prefilled body instead of registering. Add it with
+    # a real tenant id (see the field description) to test tenant-scoped signup.
+}
+
+
 class RegisterRequest(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_REGISTER_REQUEST_EXAMPLE]})
+
     email: EmailStr
     password: str = _PASSWORD_FIELD
     confirm_password: str = _PASSWORD_FIELD
-    full_name: Optional[str] = Field(None, max_length=FULL_NAME_MAX_LENGTH)
+    # Same rules TenantUserUpdate/UserUpdate apply to this column: cleaned of
+    # invisible characters and restricted to name-like text (tenant.py, user.py).
+    full_name: Optional[str] = Field(None, min_length=2, max_length=FULL_NAME_MAX_LENGTH)
     phone_number: Optional[str] = Field(None, max_length=PHONE_NUMBER_MAX_LENGTH)
     timezone: str = Field(default="UTC", max_length=TIMEZONE_MAX_LENGTH)
     tenant_id: Optional[int] = Field(
         None,
-        description="Tenant integer ID to associate with the user.",
+        description="Tenant integer ID to associate with the user. Replace the example value with a real tenant ID from your system.",
     )
+
+    @field_validator("full_name", mode="before")
+    @classmethod
+    def _clean_full_name(cls, v: Any) -> Any:
+        return clean_text(v)
+
+    @field_validator("full_name", mode="after")
+    @classmethod
+    def _validate_full_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return check_name_chars(v)
+        return v
+
+
+_LOGIN_REQUEST_EXAMPLE = {
+    "email": "user@example.com",
+    "password": "Str0ngP@ss1!",
+}
 
 
 class LoginRequest(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_LOGIN_REQUEST_EXAMPLE]})
+
     email: EmailStr
     password: str
 
 
+_TOKEN_REFRESH_REQUEST_EXAMPLE = {
+    "refresh_token": "<refresh-token-from-login-response>",
+}
+
+
 class TokenRefreshRequest(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_TOKEN_REFRESH_REQUEST_EXAMPLE]})
+
     refresh_token: str
 
 
+_PASSWORD_CHANGE_REQUEST_EXAMPLE = {
+    "current_password": "<your-current-password>",
+    "new_password": "NewStr0ngP@ss2!",
+    "confirm_password": "NewStr0ngP@ss2!",
+}
+
+
 class PasswordChangeRequest(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_PASSWORD_CHANGE_REQUEST_EXAMPLE]})
+
     current_password: str
     new_password: str = _PASSWORD_FIELD
     confirm_password: str = _PASSWORD_FIELD
 
 
+_SET_PASSWORD_REQUEST_EXAMPLE = {
+    "token": "<set-password-token-from-email-link>",
+    "new_password": "NewStr0ngP@ss2!",
+    "confirm_password": "NewStr0ngP@ss2!",
+}
+
+
 class SetPasswordRequest(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_SET_PASSWORD_REQUEST_EXAMPLE]})
+
     token: str
     new_password: str = _PASSWORD_FIELD
     confirm_password: str = _PASSWORD_FIELD
 
 
+_RESEND_SETUP_LINK_REQUEST_EXAMPLE = {
+    "email": "user@example.com",
+    # tenant_id omitted: it's optional, and a placeholder here would fail int
+    # parsing and 422 the prefilled body. Only add it (with a real tenant id —
+    # see the field description) when resending against a masked contact email.
+}
+
+
 class ResendSetupLinkRequest(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_RESEND_SETUP_LINK_REQUEST_EXAMPLE]})
+
     email: _AnyEmail
     tenant_id: Optional[int] = Field(
         default=None,
         ge=1,
         description=(
             "Pending tenant ID. Required with masked contact emails from Tenant "
-            "Management; resolves the contact admin directly without auth."
+            "Management; resolves the contact admin directly without auth. "
+            "Replace the example value with a real tenant ID from your system."
         ),
     )
 
 
+_VERIFY_EMAIL_REQUEST_EXAMPLE = {
+    "token": "<email-verification-token-from-link>",
+}
+
+
 class VerifyEmailRequest(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_VERIFY_EMAIL_REQUEST_EXAMPLE]})
+
     token: str
 
 
+_RESEND_VERIFICATION_REQUEST_EXAMPLE = {
+    "email": "user@example.com",
+}
+
+
 class ResendVerificationRequest(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_RESEND_VERIFICATION_REQUEST_EXAMPLE]})
+
     email: _AnyEmail
+
+
+_FORGOT_PASSWORD_REQUEST_EXAMPLE = {
+    "email": "user@example.com",
+}
 
 
 class ForgotPasswordRequest(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_FORGOT_PASSWORD_REQUEST_EXAMPLE]})
+
     email: _AnyEmail
 
 
+_RESET_PASSWORD_REQUEST_EXAMPLE = {
+    "token": "<password-reset-token-from-email-link>",
+    "new_password": "NewStr0ngP@ss2!",
+    "confirm_password": "NewStr0ngP@ss2!",
+}
+
+
 class ResetPasswordRequest(BaseSchema):
+    model_config = ConfigDict(json_schema_extra={"examples": [_RESET_PASSWORD_REQUEST_EXAMPLE]})
+
     token: str
     new_password: str = _PASSWORD_FIELD
     confirm_password: str = _PASSWORD_FIELD

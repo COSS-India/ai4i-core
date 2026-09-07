@@ -18,7 +18,7 @@ class Settings(BaseSettings):
 
     # Service configuration
     SERVICE_NAME: str = Field("inference-service", description="Service name")
-    SERVICE_VERSION: str = Field("1.0.1", description="Service version reported in traces")
+    SERVICE_VERSION: str = Field("release-2.6", description="Service version reported in traces")
     HOST: str = Field("0.0.0.0", description="Host to bind to")
     # Default matches the Dockerfile EXPOSE/HEALTHCHECK port — a container
     # started without PORT set must still pass its health check.

@@ -20,6 +20,7 @@ export async function fetchUsageSummary(
 ): Promise<UsageSummaryResponse> {
   const query: Record<string, string> = {};
   if (params?.billingPeriod) query.billing_period = params.billingPeriod;
+  if (params?.tierId) query.tier_id = params.tierId;
   if (params?.taskTypes) query.task_types = params.taskTypes;
   const response = await apiClient.get(apiEndpoints.usage.summary, {
     params: query,

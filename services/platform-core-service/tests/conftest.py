@@ -115,12 +115,24 @@ _ai4i_exc = _conftest_stub(
 )
 _conftest_stub("ai4i_core", exceptions=_ai4i_exc)
 
+# Must mirror libs/ai4i_core/ai4i_core/ppu/inference_types.yaml exactly —
+# metering_service.py reads task-type unit labels from this map (see
+# _native_unit_suffix_for_metering_task), so a stub that drifts from the
+# real yaml (e.g. a wrong unit, or a missing task type) silently masks a
+# real bug behind a passing test instead of catching it.
 _INFERENCE_TYPES = [
-    {"name": "llm",  "unit": "tokens"},
-    {"name": "asr",  "unit": "minutes"},
-    {"name": "nmt",  "unit": "characters"},
-    {"name": "tts",  "unit": "characters"},
-    {"name": "ocr",  "unit": "characters"},
+    {"name": "llm", "unit": "tokens"},
+    {"name": "asr", "unit": "audio_minutes"},
+    {"name": "nmt", "unit": "characters"},
+    {"name": "tts", "unit": "characters"},
+    {"name": "ner", "unit": "characters"},
+    {"name": "ocr", "unit": "images"},
+    {"name": "transliteration", "unit": "characters"},
+    {"name": "language-detection", "unit": "characters"},
+    {"name": "language-diarization", "unit": "audio_minutes"},
+    {"name": "speaker-diarization", "unit": "audio_minutes"},
+    {"name": "audio-lang-detection", "unit": "audio_minutes"},
+    {"name": "pipeline", "unit": "requests"},
 ]
 _conftest_stub("ai4i_core.ppu",
     get_inference_types=lambda: _INFERENCE_TYPES,
@@ -137,6 +149,11 @@ _db_stub.get_primary_session_factory = MagicMock()
 _db_stub.get_auth_session_factory = MagicMock(return_value=None)
 _db_stub.get_db = MagicMock()
 _db_stub.get_engine = MagicMock()
+# get_auth_db/get_auth_db_optional: imported by app/routes/usage.py and
+# app/routes/application_usage.py — needed so those route modules can be
+# loaded directly by file path (see test_application_usage_routes.py).
+_db_stub.get_auth_db = MagicMock()
+_db_stub.get_auth_db_optional = MagicMock()
 
 # Stub app.dependencies.services so route modules (app/routes/model.py,
 # app/routes/service.py, ...) can be loaded directly by file path without

@@ -20,6 +20,7 @@ import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import { useAuth } from "../hooks/useAuth";
 import CreateApiKeyTab from "../components/profile/CreateApiKeyTab";
 import ApiKeyManagementTab from "../components/profile/ApiKeyManagementTab";
+import { userMayManageApiKeys } from "../utils/rbac";
 import { getPlatformName } from "../config/runtimeConfig";
 const ApiKeyManagementPage: React.FC = () => {
   const router = useRouter();
@@ -30,8 +31,7 @@ const ApiKeyManagementPage: React.FC = () => {
 
   const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
   const isTenantAdmin = Boolean(user?.roles?.includes("TENANT ADMIN"));
-
-  const showApiKeyManagement = isAdmin || isTenantAdmin;
+  const showApiKeyManagement = userMayManageApiKeys(user?.roles);
 
   useEffect(() => {
     if (!authLoading && (!isAuthenticated || !showApiKeyManagement)) {
@@ -119,6 +119,7 @@ const ApiKeyManagementPage: React.FC = () => {
                   <TabPanel key={t.id} px={0} pt={6}>
                     {t.id === "create" && (
                       <CreateApiKeyTab
+                        tenantId={user.tenant_id}
                         onApiKeyCreated={() => void refreshManagedKeysRef.current?.()}
                       />
                     )}

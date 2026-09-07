@@ -12,7 +12,6 @@ import {
   CheckboxGroup,
   Flex,
   FormControl,
-  FormHelperText,
   FormLabel,
   Heading,
   HStack,
@@ -56,6 +55,9 @@ import {
   type PolicyOut,
 } from "../../services/policyService";
 import { INSTITUTION, INSTITUTION_ARTICLE, INSTITUTIONS, isTenantStatus, TENANT } from "../../config/constants";
+import { FIELD_HINTS } from "../../config/fieldHints";
+import FieldHint from "../common/FieldHint";
+import FormFieldsRow from "../common/FormFieldsRow";
 import { listTenants } from "../../services/tenantService";
 import type { TenantView } from "../../types/tenant";
 
@@ -605,7 +607,7 @@ function PoliciesPanel() {
             getRowKey={(row) => row.policy_id}
             filters={
               <VStack align="stretch" spacing={3} flex="1" w="full">
-                <HStack spacing={3} align="flex-end" flexWrap="wrap" rowGap={3} w="full">
+                <FormFieldsRow spacing={3} w="full">
                   <TableSearchField
                     label="Search"
                     value={searchQuery}
@@ -635,7 +637,7 @@ function PoliciesPanel() {
                     <option value="false">{INSTITUTION}-scoped</option>
                   </TableSelectField>
                   <Box flex="1" minW={0} />
-                </HStack>
+                </FormFieldsRow>
                 {hasActiveFilters ? (
                   <HStack spacing={2} flexWrap="wrap">
                     {searchQuery.trim() ? (
@@ -692,7 +694,6 @@ function PoliciesPanel() {
             }
             hasActiveFilters={hasActiveFilters}
             onClearFilters={clearAllFilters}
-            filterToolbarAlign="flex-end"
             filterToolbarRightContent={
               <Button size="sm" colorScheme="orange" leftIcon={<AddIcon />} onClick={openCreate}>
                 Create policy
@@ -1149,7 +1150,7 @@ function PolicyFormModal({
                     fontSize="sm"
                     rows={3}
                   />
-                  <FormHelperText>Enter one or more {INSTITUTION.toLowerCase()} IDs.</FormHelperText>
+                  <FieldHint>{FIELD_HINTS.policy.tenantIdsManual}</FieldHint>
                 </>
               ) : (
                 <>
@@ -1174,9 +1175,7 @@ function PolicyFormModal({
                       </Stack>
                     </CheckboxGroup>
                   </Box>
-                  <FormHelperText>
-                    Select one or more active {INSTITUTION.toLowerCase()} assignments for this policy.
-                  </FormHelperText>
+                  <FieldHint>{FIELD_HINTS.policy.tenantIdsSelect}</FieldHint>
                 </>
               )}
             </FormControl>
@@ -1626,7 +1625,7 @@ function PiiTypesPanel() {
             getRowKey={(row) => row.pii_type_id}
             filters={
               <VStack align="stretch" spacing={3} flex="1" w="full">
-                <HStack spacing={3} align="flex-end" flexWrap="wrap" rowGap={3} w="full">
+                <FormFieldsRow spacing={3} w="full">
                   <TableSearchField
                     label="Search"
                     value={searchQuery}
@@ -1649,7 +1648,7 @@ function PiiTypesPanel() {
                     ))}
                   </TableSelectField>
                   <Box flex="1" minW={0} />
-                </HStack>
+                </FormFieldsRow>
                 {hasActiveFilters ? (
                   <HStack spacing={2} flexWrap="wrap">
                     {searchQuery.trim() ? (
@@ -1690,7 +1689,6 @@ function PiiTypesPanel() {
             }
             hasActiveFilters={hasActiveFilters}
             onClearFilters={clearAllFilters}
-            filterToolbarAlign="flex-end"
             filterToolbarRightContent={
               <Button size="sm" colorScheme="orange" leftIcon={<AddIcon />} onClick={openCreate}>
                 Create PII type
@@ -2006,7 +2004,7 @@ function AuditPanel() {
         getRowKey={(row) => row.pii_audit_id}
         filters={
           <VStack align="stretch" spacing={3} flex="1" w="full">
-            <HStack spacing={3} align="flex-end" flexWrap="wrap" rowGap={3} w="full">
+            <FormFieldsRow spacing={3} w="full">
               <FormControl w={{ base: "full", sm: "200px" }}>
                 <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
                   {INSTITUTION} ID
@@ -2056,7 +2054,7 @@ function AuditPanel() {
                   bg={cardBg}
                 />
               </FormControl>
-            </HStack>
+            </FormFieldsRow>
             {hasActiveFilters ? (
               <HStack spacing={2} flexWrap="wrap">
                 {debouncedFilters.tenant !== "" ? (
@@ -2117,7 +2115,6 @@ function AuditPanel() {
         }
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearAllFilters}
-        filterToolbarAlign="flex-end"
         isLoading={loading}
         loadingMessage="Loading audit logs…"
         emptyMessage="No audit entries yet."

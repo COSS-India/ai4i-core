@@ -8,6 +8,7 @@ import {
   HStack,
   VStack,
 } from "@chakra-ui/react";
+import FormFieldsRow from "../common/FormFieldsRow";
 import React from "react";
 import AdminDataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
@@ -87,7 +88,7 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
           onClearFilters={onClearFilters}
           filters={
             <VStack align="stretch" spacing={3} w="full">
-              <HStack flexWrap="wrap" spacing={3} align="flex-end">
+              <FormFieldsRow>
                 <TableSearchField
                   label="Search"
                   value={searchQuery}
@@ -111,13 +112,16 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
                   onChange={onFilterTaskTypeChange}
                   formControlProps={{ w: { base: "full", sm: "160px" } }}
                 >
+                  {taskTypeNames.length > 1 && (
+                    <option value="">All</option>
+                  )}
                   {taskTypeNames?.map((t) => (
                     <option key={t} value={t}>
                       {formatModelTaskTypeLabel(t)}
                     </option>
                   ))}
                 </TableSelectField>
-              </HStack>
+              </FormFieldsRow>
               {hasActiveFilters && (
                 <HStack spacing={2} flexWrap="wrap">
                   {searchQuery.trim() && (
@@ -148,6 +152,19 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
                         ? "Published"
                         : "Unpublished"}{" "}
                       ×
+                    </Badge>
+                  )}
+                  {taskTypeNames.length > 1 && filterTaskType && (
+                    <Badge
+                      colorScheme="purple"
+                      fontSize="xs"
+                      px={2}
+                      py={1}
+                      cursor="pointer"
+                      onClick={() => onFilterTaskTypeChange("")}
+                      _hover={{ opacity: 0.8 }}
+                    >
+                      Task type: {formatModelTaskTypeLabel(filterTaskType)} ×
                     </Badge>
                   )}
                 </HStack>

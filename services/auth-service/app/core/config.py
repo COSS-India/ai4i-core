@@ -132,7 +132,7 @@ class AuthSettings(BaseSettings):
     # stays the single source of truth for which env vars this service expects.
     email_provider: str = "smtp"
     email_from: Optional[str] = None
-    email_from_name: str = "AI Switch"
+    email_from_name: str = "AI4I Orchestrate"
     email_reply_to: Optional[str] = None
     email_extra_headers: Optional[str] = None
     smtp_host: Optional[str] = None
@@ -141,10 +141,15 @@ class AuthSettings(BaseSettings):
     smtp_password: Optional[SecretStr] = None
     smtp_use_tls: bool = True
     smtp_timeout: int = 30
+    # Branding (single place with simple-ui — AI4IDS-3043). Prefer setting
+    # PLATFORM_NAME + ADOPTER_LOGO_URL once in root .env / shared ConfigMap.
     # Product name used in email subject/body copy. Independent of the SMTP
     # From display name (EMAIL_FROM_NAME, read by ai4i_core EmailSettings) so
     # EMAIL_FROM_NAME="COSS Support" does not become "Welcome to COSS Support".
-    platform_name: str = "AI Switch"
+    platform_name: str = "AI4I Orchestrate"
+    # Absolute http(s) logo URL for email headers. Relative paths are ignored
+    # (email clients cannot resolve same-origin paths). Empty ⇒ text brand mark.
+    adopter_logo_url: Optional[str] = None
     setup_link_base_url: Optional[str] = None
     verify_link_base_url: Optional[str] = None
     reset_link_base_url: Optional[str] = None
@@ -198,8 +203,24 @@ class AuthSettings(BaseSettings):
         return Path(self.rs256_key_directory)
 
     def get_platform_name(self) -> str:
-        """Product name for email subject/body copy. Falls back to AI Switch."""
-        return (self.platform_name or "").strip() or "AI Switch"
+        """Product name for email subject/body copy. Falls back to AI4I Orchestrate."""
+        return (self.platform_name or "").strip() or "AI4I Orchestrate"
+
+    def get_adopter_logo_url(self) -> Optional[str]:
+        """Absolute http(s) logo for email headers; None when unset/invalid."""
+        raw = (self.adopter_logo_url or "").strip()
+        if not raw:
+            return None
+        if raw.startswith(("http://", "https://")):
+            return raw
+        return None
+
+    def get_branding(self) -> dict[str, Optional[str]]:
+        """Name + logo together — single branding surface for email templates."""
+        return {
+            "platform_name": self.get_platform_name(),
+            "logo_url": self.get_adopter_logo_url(),
+        }
 
     def resolve_smtp_from_name(self, email_from_name: str) -> str:
         """SMTP From display name: explicit EMAIL_FROM_NAME, else platform name.

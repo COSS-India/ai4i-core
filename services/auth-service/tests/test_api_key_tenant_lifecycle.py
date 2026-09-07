@@ -1,4 +1,9 @@
-"""API key Redis cache vs tenant/user access — Suspend=Inactive (no DB revoke), Deactivate=Revoke."""
+"""API key Redis cache vs tenant/application access — Suspend=Inactive (no DB revoke), Deactivate=Revoke.
+
+Keys are owned by Applications, not Users (migration e9f0a1b2c3d4 dropped
+api_key.user_id in favor of api_key.application_id) — eligibility depends on
+the owning Application's and its Tenant's state.
+"""
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
@@ -7,20 +12,34 @@ from uuid import uuid4
 import pytest
 
 from app.models.api_key import APIKey
+from app.models.application import Application, ApplicationStatus
 from app.models.tenant import Tenant, TenantStatus
-from app.models.user import User
 from app.services.api_key_service import APIKeyService
 
 
 def _api_key(*, is_active: bool = True) -> APIKey:
     return APIKey(
         id=1,
-        user_id=uuid4(),
+        application_id=1,
         key_name="test",
         api_key=uuid4().hex,
         permissions=[1],
         expires_at=datetime.now(timezone.utc) + timedelta(days=30),
         is_active=is_active,
+    )
+
+
+def _application(*, status: ApplicationStatus = ApplicationStatus.ACTIVE) -> Application:
+    return Application(id=1, tenant_id=1, name="Test App", status=status)
+
+
+def _tenant(*, status: TenantStatus = TenantStatus.ACTIVE) -> Tenant:
+    return Tenant(
+        id=1,
+        name="Acme",
+        organisation="Acme",
+        email="test-contact@example.invalid",
+        status=status,
     )
 
 
@@ -38,98 +57,64 @@ class TestAPIKeyIsExpired:
 class TestAPIKeyCacheLifecycle:
     @pytest.mark.asyncio
     async def test_refresh_repopulates_redis_after_tenant_reactivation(self) -> None:
-        user = User(
-            id=uuid4(),
-            email="test-user@example.invalid",
-            username=uuid4().hex[:12],
-            tenant_id=1,
-            is_active=True,
-            is_tenant_active=True,
-        )
-        tenant = Tenant(
-            id=1,
-            name="Acme",
-            organisation="Acme",
-            email="test-contact@example.invalid",
-            status=TenantStatus.ACTIVE,
-        )
+        application = _application(status=ApplicationStatus.ACTIVE)
+        tenant = _tenant(status=TenantStatus.ACTIVE)
         key = _api_key(is_active=True)
 
         cache = AsyncMock()
         cache.get_api_key_cache = AsyncMock(return_value={})
         repo = AsyncMock()
-        repo.list_by_user = AsyncMock(return_value=[key])
-        users = AsyncMock()
+        repo.list_by_application = AsyncMock(return_value=[key])
+        applications = AsyncMock()
         tenants = AsyncMock()
         tenants.get_by_id = AsyncMock(return_value=tenant)
 
-        svc = APIKeyService(repo, cache, user_repo=users, tenant_repo=tenants)
-        await svc.refresh_keys_cache_for_user(user, tenant)
+        svc = APIKeyService(repo, cache, application_repo=applications, tenant_repo=tenants)
+        await svc.refresh_keys_cache_for_application(application, tenant)
 
         cache.set_api_key_cache.assert_awaited_once()
         cache.delete_api_key_cache.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_refresh_does_not_reactivate_revoked_keys(self) -> None:
-        user = User(
-            id=uuid4(),
-            email="test-user@example.invalid",
-            username=uuid4().hex[:12],
-            tenant_id=1,
-            is_active=True,
-            is_tenant_active=True,
-        )
-        tenant = Tenant(
-            id=1,
-            name="Acme",
-            organisation="Acme",
-            email="test-contact@example.invalid",
-            status=TenantStatus.ACTIVE,
-        )
+        application = _application()
+        tenant = _tenant()
         key = _api_key(is_active=False)
 
         cache = AsyncMock()
         repo = AsyncMock()
-        repo.list_by_user = AsyncMock(return_value=[key])
+        repo.list_by_application = AsyncMock(return_value=[key])
 
         svc = APIKeyService(repo, cache)
-        await svc.refresh_keys_cache_for_user(user, tenant)
+        await svc.refresh_keys_cache_for_application(application, tenant)
 
         cache.set_api_key_cache.assert_not_awaited()
         cache.delete_api_key_cache.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_evict_removes_all_user_keys_from_redis(self) -> None:
+    async def test_evict_removes_all_application_keys_from_redis(self) -> None:
         keys = [_api_key(), _api_key()]
         keys[1].api_key = uuid4().hex
         cache = AsyncMock()
         repo = AsyncMock()
-        repo.list_by_user = AsyncMock(return_value=keys)
+        repo.list_by_application = AsyncMock(return_value=keys)
 
         svc = APIKeyService(repo, cache)
-        await svc.evict_keys_for_user(keys[0].user_id)
+        await svc.evict_keys_for_application(keys[0].application_id)
 
         assert cache.delete_api_key_cache.await_count == 2
 
     @pytest.mark.asyncio
     async def test_revoke_keys_for_tenant_commits_before_redis_delete(self) -> None:
-        user = User(
-            id=uuid4(),
-            email="test-user@example.invalid",
-            username=uuid4().hex[:12],
-            tenant_id=1,
-            is_active=True,
-            is_tenant_active=False,
-        )
+        application = _application()
         active_key = _api_key(is_active=True)
-        active_key.user_id = user.id
+        active_key.application_id = application.id
 
         cache = AsyncMock()
         repo = AsyncMock()
-        repo.revoke_active_for_users = AsyncMock(return_value=[active_key.api_key])
-        repo.commit = AsyncMock()
-        users = AsyncMock()
-        users.list_by_tenant = AsyncMock(side_effect=[[user], []])
+        repo.revoke_active_for_applications = AsyncMock(return_value=[active_key.api_key])
+        applications = AsyncMock()
+        applications.list_by_tenant = AsyncMock(return_value=[application])
 
         call_order: list[str] = []
 
@@ -142,72 +127,44 @@ class TestAPIKeyCacheLifecycle:
         repo.commit = AsyncMock(side_effect=_commit)
         cache.delete_api_key_cache = AsyncMock(side_effect=_delete)
 
-        svc = APIKeyService(repo, cache, user_repo=users)
+        svc = APIKeyService(repo, cache, application_repo=applications)
         await svc.revoke_keys_for_tenant(1)
 
-        repo.revoke_active_for_users.assert_awaited_once_with([user.id])
+        repo.revoke_active_for_applications.assert_awaited_once_with([application.id])
         repo.commit.assert_awaited_once()
         cache.delete_api_key_cache.assert_awaited_once_with(active_key.api_key)
         assert call_order == ["commit", "redis"]
 
     @pytest.mark.asyncio
     async def test_revoke_keys_for_tenant_skips_redis_when_commit_fails(self) -> None:
-        user = User(
-            id=uuid4(),
-            email="test-user@example.invalid",
-            username=uuid4().hex[:12],
-            tenant_id=1,
-            is_active=True,
-            is_tenant_active=False,
-        )
+        application = _application()
         active_key = _api_key(is_active=True)
 
         cache = AsyncMock()
         repo = AsyncMock()
-        repo.revoke_active_for_users = AsyncMock(return_value=[active_key.api_key])
+        repo.revoke_active_for_applications = AsyncMock(return_value=[active_key.api_key])
         repo.commit = AsyncMock(side_effect=RuntimeError("db commit failed"))
-        users = AsyncMock()
-        users.list_by_tenant = AsyncMock(side_effect=[[user], []])
+        applications = AsyncMock()
+        applications.list_by_tenant = AsyncMock(return_value=[application])
 
-        svc = APIKeyService(repo, cache, user_repo=users)
+        svc = APIKeyService(repo, cache, application_repo=applications)
         with pytest.raises(RuntimeError, match="db commit failed"):
             await svc.revoke_keys_for_tenant(1)
 
         cache.delete_api_key_cache.assert_not_awaited()
 
-    def test_user_may_use_api_keys_false_when_tenant_suspended(self) -> None:
-        user = User(
-            id=uuid4(),
-            email="test-user@example.invalid",
-            username=uuid4().hex[:12],
-            tenant_id=1,
-            is_active=True,
-            is_tenant_active=False,
-        )
-        tenant = Tenant(
-            id=1,
-            name="Acme",
-            organisation="Acme",
-            email="test-contact@example.invalid",
-            status=TenantStatus.SUSPENDED,
-        )
-        assert APIKeyService.user_may_use_api_keys(user, tenant) is False
+    def test_application_may_use_api_keys_false_when_tenant_suspended(self) -> None:
+        application = _application(status=ApplicationStatus.ACTIVE)
+        tenant = _tenant(status=TenantStatus.SUSPENDED)
+        assert APIKeyService.application_may_use_api_keys(application, tenant) is False
+
+    def test_application_may_use_api_keys_false_when_application_inactive(self) -> None:
+        application = _application(status=ApplicationStatus.INACTIVE)
+        tenant = _tenant(status=TenantStatus.ACTIVE)
+        assert APIKeyService.application_may_use_api_keys(application, tenant) is False
 
     def test_effective_is_active_false_when_key_revoked(self) -> None:
-        user = User(
-            id=uuid4(),
-            email="test-user@example.invalid",
-            username=uuid4().hex[:12],
-            tenant_id=1,
-            is_active=True,
-            is_tenant_active=True,
-        )
-        tenant = Tenant(
-            id=1,
-            name="Acme",
-            organisation="Acme",
-            email="test-contact@example.invalid",
-            status=TenantStatus.ACTIVE,
-        )
+        application = _application()
+        tenant = _tenant()
         key = _api_key(is_active=False)
-        assert APIKeyService.effective_is_active(key, user, tenant) is False
+        assert APIKeyService.effective_is_active(key, application, tenant) is False
