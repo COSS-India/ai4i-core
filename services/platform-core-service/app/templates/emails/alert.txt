@@ -1,0 +1,18 @@
+AI4I-Orchestrate
+================================
+
+Dear {{ recipient_name }},
+
+{{ alert_name }} has reached {{ threshold }}% for {{ institution_name }} as of
+{{ effective_date }}.
+
+Current value: {{ current_value }}
+
+{% if portal_url -%}
+Log in to the AI4I-Orchestrate Portal to view full details: {{ portal_url }}
+{%- else -%}
+Log in to the AI4I-Orchestrate Portal to view full details.
+{%- endif %}
+
+Regards,
+AI4I-Orchestrate Team

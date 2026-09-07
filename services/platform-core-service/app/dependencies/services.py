@@ -7,8 +7,12 @@ business-logic services.
 """
 
 import importlib
+from functools import lru_cache
 from typing import Optional
 
+from ai4i_core.email import EmailClient
+from ai4i_core.email.providers.factory import build_provider
+from ai4i_core.email.settings import EmailSettings
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,6 +53,20 @@ SyncService = _alert_pkg.SyncService
 # between the periodic background loop (started in lifespan) and the per-request
 # triggers fired after alert CRUD writes.
 _sync_service_singleton = SyncService()
+
+
+@lru_cache(maxsize=1)
+def _email_client_singleton() -> EmailClient:
+    return EmailClient(build_provider(EmailSettings()))
+
+
+def get_email_client() -> EmailClient:
+    """EmailClient for Notification/Alert emails (app.services.notification_email_templates).
+
+    Distinct from the SMTP_SMARTHOST-based settings that feed alertmanager.yml —
+    those configure Alertmanager's own delivery, this configures ours directly.
+    """
+    return _email_client_singleton()
 
 
 def get_prometheus_client(request: Request) -> PrometheusClient:

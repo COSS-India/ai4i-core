@@ -1,0 +1,6 @@
+{# Shared "log in to the portal" line, included by notification.html and alert.html. #}
+{% if portal_url %}
+<p style="margin:0 0 20px 0;">Log in to the <a href="{{ portal_url }}" style="color:#0b66ff; text-decoration:none;">AI4I-Orchestrate Portal</a> to view full details.</p>
+{% else %}
+<p style="margin:0 0 20px 0;">Log in to the AI4I-Orchestrate Portal to view full details.</p>
+{% endif %}

@@ -1,0 +1,17 @@
+{% extends "_base.html" %}
+{% block title %}{{ alert_name }} at {{ threshold }}% — {{ institution_name }}{% endblock %}
+{% block preheader %}{{ alert_name }} has reached {{ threshold }}% for {{ institution_name }}.{% endblock %}
+{% block heading %}{{ alert_name }} at {{ threshold }}% — {{ institution_name }}{% endblock %}
+{% block body %}
+  <p style="margin:0 0 4px 0;">Dear {{ recipient_name }},</p>
+  <p style="margin:0 0 8px 0;">
+    <strong>{{ alert_name }}</strong> has reached <strong>{{ threshold }}%</strong> for
+    <strong>{{ institution_name }}</strong> as of {{ effective_date }}.
+  </p>
+  <p style="margin:0 0 20px 0;">Current value: {{ current_value }}</p>
+  {% include "_portal_line.html" %}
+  <p style="margin:20px 0 0 0;">
+    Regards,<br>
+    AI4I-Orchestrate Team
+  </p>
+{% endblock %}
