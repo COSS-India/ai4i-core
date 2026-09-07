@@ -201,14 +201,7 @@ export default function ApplicationBulkBudgetModal({
         </Table>
       </Box>
     );
-  }, [
-    isLoading,
-    rows,
-    currency,
-    onPctChange,
-    onRowFocus,
-    institutionBudgetUnset,
-  ]);
+  }, [isLoading, rows, currency, onPctChange, onRowFocus]);
 
   return (
     <StandardModal
