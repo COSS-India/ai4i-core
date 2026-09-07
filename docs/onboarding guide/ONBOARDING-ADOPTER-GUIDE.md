@@ -1,23 +1,23 @@
 # Adopter Admin Guide
 
-Set up, onboard, and operate AI Switch · Version 1.0
+Set up, onboard, and operate AI4I Orchestrate · Version 1.0
 
-Understand AI Switch, and gather everything required before you begin setup.
+Understand AI4I Orchestrate, and gather everything required before you begin setup.
 
 
 ## 1. Introduction
 
 
-### About AI Switch
+### About AI4I Orchestrate
 
-AI Switch provides a single, governed layer for secure, measurable, and scalable consumption of open-source and sovereign AI models. It enables sovereign AI infrastructure to be consumed in a controlled and accountable manner while maintaining centralized governance, operational visibility, and consumption oversight across multiple institutions and applications.
+AI4I Orchestrate provides a single, governed layer for secure, measurable, and scalable consumption of open-source and sovereign AI models. It enables sovereign AI infrastructure to be consumed in a controlled and accountable manner while maintaining centralized governance, operational visibility, and consumption oversight across multiple institutions and applications.
 
 
 ### Purpose of this Guide
 
-This guide walks you through setting up AI Switch, in the order you'll typically do it:
+This guide walks you through setting up AI4I Orchestrate, in the order you'll typically do it:
 
-- Signing in to AI Switch
+- Signing in to AI4I Orchestrate
 - Registering models and configuring tiers and services
 - Onboarding institutions, and assigning their tiers and budgets
 Part III covers monitoring platform performance and tracking budget and usage, and Part IV covers the day-to-day management and maintenance you'll return to afterward.
@@ -25,7 +25,7 @@ Part III covers monitoring platform performance and tracking budget and usage, a
 
 ### Intended Audience
 
-This guide is for the Adopter Admin — the person responsible for governing AI Switch on behalf of your organization: registering models, configuring tiers and services, onboarding institutions, and monitoring platform health, budget, and usage.
+This guide is for the Adopter Admin — the person responsible for governing AI4I Orchestrate on behalf of your organization: registering models, configuring tiers and services, onboarding institutions, and monitoring platform health, budget, and usage.
 
 
 ## 2. Before You Begin

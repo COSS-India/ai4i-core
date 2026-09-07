@@ -134,7 +134,8 @@ const ModelManagementPage: React.FC = () => {
   useEffect(() => {
     if (didInitTaskTypeFilter.current || isLoadingTaskTypes) return;
     didInitTaskTypeFilter.current = true;
-    if (taskTypeNames.length > 0) setFilterTaskType(taskTypeNames[0]);
+    // Single enabled type → lock filter to it (no All). Multiple → default All ("").
+    if (taskTypeNames.length === 1) setFilterTaskType(taskTypeNames[0]);
     setTaskTypeFilterReady(true);
   }, [isLoadingTaskTypes, taskTypeNames]);
   const [sortBy, setSortBy] = useState<"time" | "name">("time");
@@ -237,11 +238,15 @@ const ModelManagementPage: React.FC = () => {
     });
   }, [models, searchQuery, sortBy, nameSortDirection]);
 
-  const hasActiveFilters = filterVersionStatus !== "" || searchQuery.trim() !== "";
+  const showTaskTypeAllOption = taskTypeNames.length > 1;
+  const hasActiveFilters =
+    filterVersionStatus !== "" ||
+    (showTaskTypeAllOption && filterTaskType !== "") ||
+    searchQuery.trim() !== "";
   const clearAllFilters = () => {
     setSearchQuery("");
     setFilterVersionStatus("");
-    if (taskTypeNames.length > 0) setFilterTaskType(taskTypeNames[0]);
+    setFilterTaskType(taskTypeNames.length === 1 ? taskTypeNames[0] : "");
   };
 
   const getTaskColor = (taskType: string) => {
@@ -979,6 +984,9 @@ const ModelManagementPage: React.FC = () => {
                                 onChange={setFilterTaskType}
                                 formControlProps={{ w: { base: "full", sm: "160px" } }}
                               >
+                                {showTaskTypeAllOption && (
+                                  <option value="">All</option>
+                                )}
                                 {taskTypeNames?.map((t) => (
                                   <option key={t} value={t}>
                                     {formatModelTaskTypeLabel(t)}
@@ -1012,6 +1020,19 @@ const ModelManagementPage: React.FC = () => {
                                     _hover={{ opacity: 0.8 }}
                                   >
                                     Status: {formatModelVersionFilterLabel(filterVersionStatus)} ×
+                                  </Badge>
+                                )}
+                                {showTaskTypeAllOption && filterTaskType && (
+                                  <Badge
+                                    colorScheme="purple"
+                                    fontSize="xs"
+                                    px={2}
+                                    py={1}
+                                    cursor="pointer"
+                                    onClick={() => setFilterTaskType("")}
+                                    _hover={{ opacity: 0.8 }}
+                                  >
+                                    Task type: {formatModelTaskTypeLabel(filterTaskType)} ×
                                   </Badge>
                                 )}
                               </HStack>

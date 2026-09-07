@@ -4,6 +4,7 @@
 import React from "react";
 import { Checkbox, FormControl, FormErrorMessage, Link } from "@chakra-ui/react";
 import { UI_ERROR_MESSAGES } from "../../config/constants";
+import { getPlatformName } from "../../config/runtimeConfig";
 
 export interface ConsentCheckboxProps {
   isChecked: boolean;
@@ -16,14 +17,10 @@ export function getConsentValidationError(accepted: boolean): string | undefined
   return accepted ? undefined : UI_ERROR_MESSAGES.CONSENT_REQUIRED;
 }
 
-/** Fixed product name in the recorded consent sentence. Must match docs/legal
- *  (not PLATFORM_NAME) so the wording stays auditable across rebrands. */
-const CONSENT_PRODUCT_NAME = "AI Switch";
-
 const ConsentCheckbox: React.FC<ConsentCheckboxProps> = ({ isChecked, onChange, error }) => (
   <FormControl isRequired isInvalid={!!error}>
     <Checkbox isChecked={isChecked} onChange={(e) => onChange(e.target.checked)}>
-      I agree to {CONSENT_PRODUCT_NAME}&apos;s{" "}
+      I agree to {getPlatformName()}&apos;s{" "}
       <Link
         href="https://github.com/COSS-India/ai4i-core/blob/master/docs/legal/terms-of-service.md"
         isExternal

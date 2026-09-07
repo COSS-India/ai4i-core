@@ -8,13 +8,24 @@
  *
  * Preferred env names (no NEXT_PUBLIC_ prefix). Legacy NEXT_PUBLIC_* names are
  * still accepted so existing ConfigMaps keep working during the migration.
+ *
+ * Branding (name + logo) is configured once via PLATFORM_NAME + ADOPTER_LOGO_URL
+ * (root env / shared ConfigMap — see branding.ts).
  */
 
-/** Default product display name (AI4IDS-2809). Override with PLATFORM_NAME. */
-export const DEFAULT_PLATFORM_NAME = "AI Switch";
+import {
+  DEFAULT_ADOPTER_LOGO_SRC,
+  DEFAULT_PLATFORM_NAME,
+  resolveAdopterLogoSrc,
+  resolvePlatformName,
+  type BrandingConfig,
+} from "./branding";
 
-/** Default instance logo. Override with ADOPTER_LOGO_URL (http(s) or same-origin path). */
-export const DEFAULT_ADOPTER_LOGO_SRC = "/AI4Inclusion_Logo.svg";
+export {
+  DEFAULT_ADOPTER_LOGO_SRC,
+  DEFAULT_PLATFORM_NAME,
+  type BrandingConfig,
+} from "./branding";
 
 export type RuntimeConfig = {
   /** Browser-facing API origin. Empty ⇒ same-origin (Next.js proxy). */
@@ -23,9 +34,9 @@ export type RuntimeConfig = {
   telemetryServiceUrl: string;
   /** Comma-separated yaml task-type names (e.g. "llm" or "llm,nmt"). Empty ⇒ full catalog. */
   enabledTaskTypes: string;
-  /** Product/brand name shown in UI titles, consent, headers. */
+  /** Product/brand name (PLATFORM_NAME). */
   platformName: string;
-  /** ConfigMap `ADOPTER_LOGO_URL`; empty ⇒ default SVG. */
+  /** Raw ConfigMap ADOPTER_LOGO_URL; empty ⇒ default SVG via getAdopterLogoSrc. */
   adopterLogoUrl: string;
 };
 
@@ -61,9 +72,9 @@ export function getServerRuntimeConfig(): RuntimeConfig {
       "ENABLED_TASK_TYPES",
       "NEXT_PUBLIC_ENABLED_TASK_TYPES",
     ),
-    platformName:
-      firstEnv("PLATFORM_NAME", "NEXT_PUBLIC_PLATFORM_NAME") ||
-      DEFAULT_PLATFORM_NAME,
+    platformName: resolvePlatformName(
+      firstEnv("PLATFORM_NAME", "NEXT_PUBLIC_PLATFORM_NAME"),
+    ),
     adopterLogoUrl: firstEnv("ADOPTER_LOGO_URL", "NEXT_PUBLIC_ADOPTER_LOGO_URL"),
   };
 }
@@ -77,8 +88,7 @@ export function applyRuntimeConfig(config: RuntimeConfig): void {
     apiUrl: (config.apiUrl ?? "").trim(),
     telemetryServiceUrl: (config.telemetryServiceUrl ?? "").trim(),
     enabledTaskTypes: (config.enabledTaskTypes ?? "").trim(),
-    platformName:
-      (config.platformName ?? "").trim() || DEFAULT_PLATFORM_NAME,
+    platformName: resolvePlatformName(config.platformName),
     adopterLogoUrl: (config.adopterLogoUrl ?? "").trim(),
   };
   if (typeof window !== "undefined") {
@@ -94,23 +104,22 @@ export function getTelemetryServiceUrl(): string {
   return cached.telemetryServiceUrl;
 }
 
-/** Platform display name for titles, consent copy, headers, etc. */
+/** Platform display name for titles, headers, etc. */
 export function getPlatformName(): string {
-  return cached.platformName || DEFAULT_PLATFORM_NAME;
+  return resolvePlatformName(cached.platformName);
 }
 
 /** Logo from ConfigMap; invalid/unset ⇒ default SVG. */
 export function getAdopterLogoSrc(): string {
-  const raw = (cached.adopterLogoUrl ?? "").trim();
-  if (!raw) return DEFAULT_ADOPTER_LOGO_SRC;
-  if (raw.startsWith("/") && !raw.startsWith("//")) return raw;
-  try {
-    const { protocol } = new URL(raw);
-    if (protocol === "http:" || protocol === "https:") return raw;
-  } catch {
-    /* use default */
-  }
-  return DEFAULT_ADOPTER_LOGO_SRC;
+  return resolveAdopterLogoSrc(cached.adopterLogoUrl);
+}
+
+/** Name + logo together — prefer this when both are needed. */
+export function getBranding(): BrandingConfig {
+  return {
+    name: getPlatformName(),
+    logoSrc: getAdopterLogoSrc(),
+  };
 }
 
 /** Parsed allowlist; empty array ⇒ no filter (full catalog). */

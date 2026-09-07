@@ -4,47 +4,78 @@ from uuid import UUID
 
 import httpx
 from fastapi import HTTPException, status
-from sqlalchemy import func, select, text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.pay_per_use.tier import Tier, TierQuota
 from app.repositories.pay_per_use.usage_repository import update_tier_cache
 from app.schemas.pay_per_use.tier import TierCreate, TierOut, TierQuotaOut, TierUpdate
-from app.schemas.enums.model_management import resolve_task_type
+from app.services.pay_per_use import inference_type_cache
 from app.core.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
 
 
-def _resolve_task_types(task_types: Optional[str]) -> Optional[List[str]]:
+async def _resolve_task_type_ids(
+    session: AsyncSession, task_types: Optional[str]
+) -> Optional[List[int]]:
+    """Parse ``?task_types=a,b`` into catalogue ids.
+
+    Validates against the live catalogue rather than ``TaskTypeEnum``: the enum is
+    a hardcoded list, so filtering by an admin-added type used to 422 even though
+    creating a tier with it worked.
+    """
     if not task_types:
         return None
-    resolved = []
-    for raw in task_types.split(","):
-        raw = raw.strip()
-        if not raw:
-            continue
-        try:
-            resolved.append(resolve_task_type(raw))
-        except ValueError as exc:
-            raise ValidationError(str(exc))
-    return resolved or None
+    requested = [raw.strip() for raw in task_types.split(",") if raw.strip()]
+    if not requested:
+        return None
+
+    resolved = await inference_type_cache.get_ids_by_names(session, requested)
+    unknown = sorted(name for name, type_id in resolved.items() if type_id is None)
+    if unknown:
+        known = sorted(entry["name"] for entry in await inference_type_cache.get_all(session))
+        raise ValidationError(
+            f"Invalid task type '{unknown[0]}'. Valid types: {', '.join(known)}"
+        )
+    return [type_id for type_id in resolved.values() if type_id is not None] or None
 
 
-def _build_out(tier: Tier, quotas: List[TierQuota]) -> TierOut:
+def _build_out(tier: Tier, quotas: List[TierQuota], names: dict) -> TierOut:
+    """Serialise a tier. ``names`` is the catalogue's ``{id: name}`` map.
+
+    The API contract is unchanged — ``modelTaskType`` is still the name string —
+    but it now comes from the catalogue rather than the denormalised column, so a
+    renamed type is reflected immediately.
+
+    The fallback to ``inference_name`` covers a cache miss mid-request. It is
+    unreachable in practice once every row carries an id, and it goes away with
+    the column.
+    """
+    quota_out = []
+    for q in quotas:
+        name = names.get(q.inference_type_id)
+        if name is None:
+            logger.warning(
+                "Tier quota %s has no catalogue entry for inference_type_id=%s; "
+                "falling back to the stored inference_name %r",
+                q.id, q.inference_type_id, q.inference_name,
+            )
+            name = q.inference_name
+        quota_out.append(
+            TierQuotaOut(
+                modelTaskType=name,
+                limit=q.monthly_quota,
+                pendingLimit=q.pending_monthly_quota,
+            )
+        )
+
     return TierOut(
         id=str(tier.id),
         name=tier.name,
         description=tier.description,
-        quotas=[
-            TierQuotaOut(
-                modelTaskType=q.inference_name,
-                limit=q.monthly_quota,
-                pendingLimit=q.pending_monthly_quota,
-            )
-            for q in quotas
-        ],
+        quotas=quota_out,
         createdAt=tier.created_at,
         updatedAt=tier.updated_at,
     )
@@ -53,7 +84,8 @@ def _build_out(tier: Tier, quotas: List[TierQuota]) -> TierOut:
 async def list_tiers(
     session: AsyncSession, task_types: Optional[str] = None
 ) -> dict:
-    model_task_types = _resolve_task_types(task_types)
+    type_ids = await _resolve_task_type_ids(session, task_types)
+    names = await inference_type_cache.get_name_by_id(session)
     stmt = (
         select(Tier)
         .where(Tier.is_active.is_(True))
@@ -64,10 +96,16 @@ async def list_tiers(
 
     out = []
     for tier in tiers:
-        quotas = [q for q in tier.tier_quotas if not model_task_types or q.inference_name in model_task_types]
-        if model_task_types and not quotas:
+        # Comparing ids also fixes a latent bug: the old membership test was
+        # case-sensitive, so ?task_types=ASR matched nothing against a quota
+        # stored as 'asr'.
+        quotas = [
+            q for q in tier.tier_quotas
+            if not type_ids or q.inference_type_id in type_ids
+        ]
+        if type_ids and not quotas:
             continue
-        out.append(_build_out(tier, quotas))
+        out.append(_build_out(tier, quotas, names))
 
     return {"data": out, "total": len(out)}
 
@@ -87,7 +125,8 @@ async def get_tier_by_id(tier_id: str, session: AsyncSession) -> TierOut:
     if not tier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tier '{tier_id}' not found")
 
-    return _build_out(tier, tier.tier_quotas)
+    names = await inference_type_cache.get_name_by_id(session)
+    return _build_out(tier, tier.tier_quotas, names)
 
 
 async def create_tier(body: TierCreate, session: AsyncSession, created_by: Optional[str] = None) -> TierOut:
@@ -104,9 +143,20 @@ async def create_tier(body: TierCreate, session: AsyncSession, created_by: Optio
 
     quotas = []
     for q in body.quotas:
+        # The catalogue is authoritative for which task types exist — TierQuotaIn
+        # only normalises the string. A miss here is the 400 that TaskTypeEnum
+        # used to raise at validation time.
+        inference_type = await inference_type_cache.get_by_name(session, q.modelTaskType)
+        if inference_type is None:
+            await session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unknown model task type '{q.modelTaskType}'",
+            )
         quota = TierQuota(
             tier_id=tier.id,
             inference_name=q.modelTaskType,
+            inference_type_id=inference_type["id"],
             monthly_quota=q.limit,
             created_by=created_by,
             updated_by=created_by,
@@ -117,7 +167,8 @@ async def create_tier(body: TierCreate, session: AsyncSession, created_by: Optio
     await session.commit()
     await session.refresh(tier)
     update_tier_cache(tier.id, tier.name)
-    return _build_out(tier, quotas)
+    names = await inference_type_cache.get_name_by_id(session)
+    return _build_out(tier, quotas, names)
 
 
 async def _fetch_tenant_ids_for_tier(tier_id, auth_db: Optional[AsyncSession]) -> list:
@@ -158,10 +209,19 @@ async def _upsert_quotas(
     session: AsyncSession, tier: Tier, quotas: List, updated_by: Optional[str]
 ) -> None:
     for q in quotas:
+        # Two distinct 400s now: not in the catalogue at all, versus in the
+        # catalogue but not granted on this tier. The second message is
+        # user-visible and unchanged.
+        type_id = await inference_type_cache.get_id_by_name(session, q.modelTaskType)
+        if type_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unknown model task type '{q.modelTaskType}'",
+            )
         q_result = await session.execute(
             select(TierQuota).where(
                 TierQuota.tier_id == tier.id,
-                func.lower(TierQuota.inference_name) == q.modelTaskType.lower(),
+                TierQuota.inference_type_id == type_id,
             )
         )
         existing = q_result.scalar_one_or_none()
@@ -178,10 +238,15 @@ async def _cancel_pending_quotas(
     session: AsyncSession, tier: Tier, inference_names: List[str], updated_by: Optional[str]
 ) -> None:
     for inference_name in inference_names:
+        # Unknown name stays a silent no-op, matching the existing `if row:`
+        # behaviour — a cancel should not start 400ing.
+        type_id = await inference_type_cache.get_id_by_name(session, inference_name)
+        if type_id is None:
+            continue
         q_result = await session.execute(
             select(TierQuota).where(
                 TierQuota.tier_id == tier.id,
-                func.lower(TierQuota.inference_name) == inference_name.lower(),
+                TierQuota.inference_type_id == type_id,
             )
         )
         row = q_result.scalar_one_or_none()
@@ -242,7 +307,8 @@ async def update_tier(
 
     q_result = await session.execute(select(TierQuota).where(TierQuota.tier_id == tier.id))
     quotas = list(q_result.scalars().all())
-    return _build_out(tier, quotas)
+    names = await inference_type_cache.get_name_by_id(session)
+    return _build_out(tier, quotas, names)
 
 
 async def apply_pending_quotas(session: AsyncSession) -> int:

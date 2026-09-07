@@ -22,9 +22,9 @@ import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { INSTITUTION } from "../../config/constants";
 import {
-  PRE_LOGIN_GUIDE_OPTIONS,
   canSeeOnboardingGuide,
   getOnboardingGuideHref,
+  getPreLoginGuideOptions,
 } from "../../config/onboardingGuide";
 import { getHomePath, isHomePathname } from "../../utils/navigation";
 import AuthModal from "../auth/AuthModal";
@@ -66,6 +66,7 @@ const Header: React.FC = () => {
   const showOnboardingGuideMenu =
     showUserMenu && canSeeOnboardingGuide(user?.roles);
   const onboardingGuideHref = getOnboardingGuideHref(user?.roles);
+  const preLoginGuideOptions = getPreLoginGuideOptions();
   const showHomeOnboardingGuideLink =
     !showUserMenu && router.pathname === "/";
 
@@ -129,6 +130,9 @@ const Header: React.FC = () => {
         break;
       case "/usage-dashboard":
         setTitle("Usage Dashboard");
+        break;
+      case "/tier-management":
+        setTitle("Tier Management");
         break;
       case "/policy-management":
         setTitle("Policy Management");
@@ -242,7 +246,7 @@ const Header: React.FC = () => {
                     </MenuButton>
                     <MenuList minW="16rem">
                       <MenuGroup title="Select your guide">
-                        {PRE_LOGIN_GUIDE_OPTIONS.map((option) => (
+                        {preLoginGuideOptions.map((option) => (
                           <MenuItem
                             key={option.href}
                             as="a"

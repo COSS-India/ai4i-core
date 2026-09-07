@@ -26,6 +26,9 @@ from app.core.redis import close_redis, get_redis_client, init_redis
 from app.routes import api_router, versioning
 # services/model-management/ is hyphenated; importlib is the only way to pull symbols out.
 import importlib as _importlib
+
+from app.utils.cache_warmup import warmup_cache
+
 EndpointValidationFailedError = _importlib.import_module(
     "app.services.model-management.service_service"
 ).EndpointValidationFailedError
@@ -52,10 +55,13 @@ async def lifespan(app: FastAPI):
     )
     # Secondary auth_db engine — no-op if AUTH_DB_NAME is not configured.
     init_auth_database()
+    # Initialize redis connection to a db index.
     await init_redis(
         url=settings.get_redis_url(),
         socket_timeout=settings.redis_timeout,
     )
+    # Warm up cache. inference_type is added.
+    await warmup_cache()
     # ── Telemetry / OpenSearch ────────────────────────────────────────────
     if settings.opensearch_url and settings.opensearch_username and settings.opensearch_password:
         from app.utils.opensearch_client import OpenSearchTraceClient

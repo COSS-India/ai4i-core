@@ -497,7 +497,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         and the OpenSearch trace — see trace/span_attributes.py) to the
         matching Prometheus metric for this service_type.
 
-        billed_input's unit depends on service_type's inference_types.yaml
+        billed_input's unit depends on service_type's catalogue
         entry: characters (tts/translation/transliteration/language_detection/
         ner), audio minutes (asr/audio_lang_detection/*_diarization — passed
         straight through, no unit conversion), or images (ocr).
@@ -522,7 +522,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     service_id=service_id, auth_type=auth_type,
                 )
             elif service_type == "ocr":
-                # billed_input is an image COUNT (inference_types.yaml unit:
+                # billed_input is an image COUNT (the catalogue's unit:
                 # images), not a character estimate — track_ocr_characters is
                 # repurposed to carry the real billed unit instead of the
                 # byte-size heuristic it used to compute independently.
@@ -557,7 +557,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     application_id=application_id, service_id=service_id, auth_type=auth_type,
                 )
             elif service_type == "ner":
-                # billed_input is a CHARACTER count (inference_types.yaml
+                # billed_input is a CHARACTER count (the inference-type catalogue
                 # unit: characters), not a word count — track_ner_tokens
                 # previously computed len(source.split()) independently;
                 # it now carries the same character count billing uses.

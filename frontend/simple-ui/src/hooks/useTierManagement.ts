@@ -73,7 +73,8 @@ export function useTierManagement() {
   useEffect(() => {
     if (didInitTaskTypeFilter.current || isLoadingTaskTypes) return;
     didInitTaskTypeFilter.current = true;
-    if (taskTypeNames.length > 0) setFilterTaskType(taskTypeNames[0]);
+    // Single enabled type → lock filter to it (no All). Multiple → default All ("").
+    if (taskTypeNames.length === 1) setFilterTaskType(taskTypeNames[0]);
     setTaskTypeFilterReady(true);
   }, [isLoadingTaskTypes, taskTypeNames]);
 
@@ -122,9 +123,14 @@ export function useTierManagement() {
     onClose: onScheduleClose,
   } = useDisclosure();
 
+  // Frontend-enabled task types (ENABLED_TASK_TYPES). Used to scope "All" fetches.
+  const enabledTaskTypesParam =
+    taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
+
   const tiersQuery = useQuery({
-    queryKey: [TIER_QUERY_KEY, filterTaskType],
-    queryFn: () => fetchTiers(filterTaskType || undefined),
+    queryKey: [TIER_QUERY_KEY, filterTaskType || enabledTaskTypesParam || "all"],
+    queryFn: () =>
+      fetchTiers(filterTaskType || enabledTaskTypesParam || undefined),
     staleTime: 30 * 1000,
     retry: 1,
     enabled: taskTypeFilterReady,
@@ -184,8 +190,6 @@ export function useTierManagement() {
 
   // Services carry their tier mapping as an array of tier UUIDs (tierIds).
   // There's no server-side tier filter, so fetch all services and filter here.
-  const enabledTaskTypesParam =
-    taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
   const servicesQuery = useQuery({
     queryKey: ["services-for-tiers", enabledTaskTypesParam ?? "all"],
     queryFn: () =>
@@ -237,11 +241,14 @@ export function useTierManagement() {
     return result;
   }, [tiers, searchQuery, filterTaskType]);
 
-  const hasActiveFilters = searchQuery.trim() !== "";
+  const showTaskTypeAllOption = taskTypeNames.length > 1;
+  const hasActiveFilters =
+    searchQuery.trim() !== "" ||
+    (showTaskTypeAllOption && filterTaskType !== "");
 
   const clearFilters = useCallback(() => {
     setSearchQuery("");
-    if (taskTypeNames.length > 0) setFilterTaskType(taskTypeNames[0]);
+    setFilterTaskType(taskTypeNames.length === 1 ? taskTypeNames[0] : "");
   }, [taskTypeNames]);
 
   const refreshTiers = useCallback(() => {

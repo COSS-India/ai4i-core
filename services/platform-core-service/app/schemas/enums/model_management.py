@@ -19,6 +19,7 @@ class TaskTypeEnum(str, Enum):
     language_diarization = "language-diarization"
     ocr = "ocr"
     ner = "ner"
+    pipeline = "pipeline"
 
 
 def resolve_task_type(value: str) -> str:

@@ -225,7 +225,7 @@ class TestValuesComeFromState:
 
 class TestPerServiceUnitDispatch:
     def test_ocr_emits_billed_image_count_not_byte_heuristic(self):
-        """billed_input for OCR is an image COUNT (inference_types.yaml
+        """billed_input for OCR is an image COUNT (the inference-type catalogue
         unit: images) — track_ocr_characters is repurposed to carry it."""
         mw = _middleware()
         mw._track_payload_metrics(
@@ -254,7 +254,7 @@ class TestPerServiceUnitDispatch:
         ("language_diarization", "track_language_diarization_length"),
     ])
     def test_audio_minutes_passed_through_unconverted(self, service_type, tracker):
-        """billed_input is already in minutes (inference_types.yaml unit:
+        """billed_input is already in minutes (the catalogue's unit:
         audio_minutes) — the histogram is minute-scaled too, so no conversion."""
         mw = _middleware()
         mw._track_payload_metrics(

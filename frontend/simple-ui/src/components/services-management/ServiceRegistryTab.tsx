@@ -112,6 +112,9 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
                   onChange={onFilterTaskTypeChange}
                   formControlProps={{ w: { base: "full", sm: "160px" } }}
                 >
+                  {taskTypeNames.length > 1 && (
+                    <option value="">All</option>
+                  )}
                   {taskTypeNames?.map((t) => (
                     <option key={t} value={t}>
                       {formatModelTaskTypeLabel(t)}
@@ -149,6 +152,19 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
                         ? "Published"
                         : "Unpublished"}{" "}
                       ×
+                    </Badge>
+                  )}
+                  {taskTypeNames.length > 1 && filterTaskType && (
+                    <Badge
+                      colorScheme="purple"
+                      fontSize="xs"
+                      px={2}
+                      py={1}
+                      cursor="pointer"
+                      onClick={() => onFilterTaskTypeChange("")}
+                      _hover={{ opacity: 0.8 }}
+                    >
+                      Task type: {formatModelTaskTypeLabel(filterTaskType)} ×
                     </Badge>
                   )}
                 </HStack>

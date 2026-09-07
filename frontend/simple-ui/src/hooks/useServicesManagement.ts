@@ -97,7 +97,7 @@ export function useServicesManagement() {
   const [selectedTiers, setSelectedTiers] = useState<string[]>([]);
   const [availableTiers, setAvailableTiers] = useState<Tier[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
- 
+
   const [createFormEpoch, setCreateFormEpoch] = useState(0);
   const [deletingServiceUuid, setDeletingServiceUuid] = useState<string | null>(
     null,
@@ -123,7 +123,8 @@ export function useServicesManagement() {
   useEffect(() => {
     if (didInitTaskTypeFilter.current || isLoadingTaskTypes) return;
     didInitTaskTypeFilter.current = true;
-    if (taskTypeNames.length > 0) setFilterTaskType(taskTypeNames[0]);
+    // Single enabled type → lock filter to it (no All). Multiple → default All ("").
+    if (taskTypeNames.length === 1) setFilterTaskType(taskTypeNames[0]);
     setTaskTypeFilterReady(true);
   }, [isLoadingTaskTypes, taskTypeNames]);
   const [sortBy, setSortBy] = useState<"time" | "name">("time");
@@ -170,12 +171,15 @@ export function useServicesManagement() {
     });
   }, [services, searchQuery, sortBy, nameSortDirection]);
 
+  const showTaskTypeAllOption = taskTypeNames.length > 1;
   const hasActiveFilters =
-    filterStatus !== "" || searchQuery.trim() !== "";
+    filterStatus !== "" ||
+    (showTaskTypeAllOption && filterTaskType !== "") ||
+    searchQuery.trim() !== "";
   const clearAllFilters = () => {
     setSearchQuery("");
     setFilterStatus("");
-    if (taskTypeNames.length > 0) setFilterTaskType(taskTypeNames[0]);
+    setFilterTaskType(taskTypeNames.length === 1 ? taskTypeNames[0] : "");
   };
 
   const router = useRouter();
