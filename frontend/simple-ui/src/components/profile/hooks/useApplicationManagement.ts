@@ -211,6 +211,9 @@ function evaluateRowError(
   tenantBudget: number,
 ): string | null {
   if (row.resolvedPct == null) return null;
+  if (row.resolvedPct < 0 || row.resolvedPct > 100) {
+    return BUDGET_VALIDATION.percentageMustBeBetween0And100;
+  }
   if (
     row.consumed_percentage != null &&
     row.resolvedPct < row.consumed_percentage - 1e-6
@@ -662,6 +665,9 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
   const budgetFieldError = useMemo(() => {
     if (budgetParsed === "invalid") return BUDGET_VALIDATION.enterValidPercentage;
     if (budgetParsed != null && budgetParsed < 0) return BUDGET_VALIDATION.budgetCannotBeNegative;
+    if (budgetParsed != null && budgetParsed > 100) {
+      return BUDGET_VALIDATION.percentageMustBeBetween0And100;
+    }
     if (budgetParsed != null && budgetFloor > 0 && budgetParsed < budgetFloor - 1e-6) {
       return belowConsumedPctRaw(budgetFloor);
     }
@@ -677,7 +683,9 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     const pct = parsePct(form.allocated_percentage);
     if (pct === "invalid") errors.allocated_percentage = BUDGET_VALIDATION.enterValidPercentage;
     else if (pct != null && pct < 0) errors.allocated_percentage = BUDGET_VALIDATION.budgetCannotBeNegative;
-    else if (pct != null && pct > remainingPct + 1e-6) {
+    else if (pct != null && pct > 100) {
+      errors.allocated_percentage = BUDGET_VALIDATION.percentageMustBeBetween0And100;
+    } else if (pct != null && pct > remainingPct + 1e-6) {
       errors.allocated_percentage = `Cannot exceed ${remainingPct.toFixed(2)}% still available.`;
     }
     setFormErrors(errors);

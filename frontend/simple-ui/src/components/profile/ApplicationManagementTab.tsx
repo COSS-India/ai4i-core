@@ -141,25 +141,75 @@ function PercentageStepper({
   onBoundHit?: (bound: "min" | "max") => void;
   isDisabled?: boolean;
 }) {
+  const hi = Math.min(100, max);
+  const lo = Math.max(0, min);
   const numeric = value.trim() === "" ? null : Number(value);
-  const atMin = numeric != null && Number.isFinite(numeric) && numeric <= min + 1e-6;
-  const atMax = numeric != null && Number.isFinite(numeric) && numeric >= max - 1e-6;
+  const atMin = numeric != null && Number.isFinite(numeric) && numeric <= lo + 1e-6;
+  const atMax = numeric != null && Number.isFinite(numeric) && numeric >= hi - 1e-6;
+
+  /** Accept only in-range values; reject the keystroke (keep current value). */
+  const accept = (raw: string) => {
+    if (raw.trim() === "") {
+      onChange("");
+      return;
+    }
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return;
+    if (n > hi) {
+      onBoundHit?.("max");
+      return;
+    }
+    if (n < lo) {
+      onBoundHit?.("min");
+      return;
+    }
+    onChange(raw);
+  };
+
+  const blockIfOutOfRange = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key.length !== 1 || !/[0-9.]/.test(e.key)) return;
+    const el = e.currentTarget;
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    const next = `${el.value.slice(0, start)}${e.key}${el.value.slice(end)}`;
+    const n = Number(next);
+    if (!Number.isFinite(n)) return;
+    if (n > hi || n < lo) {
+      e.preventDefault();
+      onBoundHit?.(n > hi ? "max" : "min");
+    }
+  };
+
+  const blockPasteIfOutOfRange = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const text = e.clipboardData.getData("text");
+    const el = e.currentTarget;
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    const next = `${el.value.slice(0, start)}${text}${el.value.slice(end)}`;
+    const n = Number(next.trim());
+    if (next.trim() !== "" && Number.isFinite(n) && (n > hi || n < lo)) {
+      e.preventDefault();
+      onBoundHit?.(n > hi ? "max" : "min");
+    }
+  };
 
   return (
     <HStack maxW="180px" spacing={2} align="center">
       <NumberInput
         value={value}
-        onChange={(next) => onChange(next)}
-        min={min}
-        max={max}
+        onChange={accept}
+        min={lo}
+        max={hi}
         step={1}
         precision={2}
-        clampValueOnBlur
+        clampValueOnBlur={false}
+        keepWithinRange={false}
         bg="white"
         w="120px"
         isDisabled={isDisabled}
       >
-        <NumberInputField />
+        <NumberInputField onKeyDown={blockIfOutOfRange} onPaste={blockPasteIfOutOfRange} />
         <NumberInputStepper>
           <NumberIncrementStepper
             cursor={atMax ? "not-allowed" : undefined}

@@ -64,6 +64,7 @@ function evaluateKeyRowError(
   }
   if (row.resolvedPct == null) return null;
   if (row.resolvedPct < 0) return BUDGET_VALIDATION.budgetCannotBeNegative;
+  if (row.resolvedPct > 100) return BUDGET_VALIDATION.percentageMustBeBetween0And100;
   if (
     row.consumed_percentage != null &&
     row.resolvedPct < row.consumed_percentage - 1e-6

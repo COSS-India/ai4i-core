@@ -8,6 +8,7 @@ export const BUDGET_VALIDATION = {
   budgetCannotBeNegative: "Budget cannot be negative.",
   budgetMustBeGreaterThanZero:
     "Budget must be greater than 0% — a 0% allocation is a Key that can never be used.",
+  percentageMustBeBetween0And100: "Enter a percentage between 0 and 100.",
   enterValidNumber: "Enter a valid number.",
   enterValidPercentage: "Enter a valid percentage.",
   applicationBudgetNotAssigned: "This Application has no Budget (₹) assigned yet.",
