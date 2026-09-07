@@ -1,6 +1,5 @@
-from dataclasses import dataclass
 import asyncio
-from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
@@ -16,6 +15,7 @@ from consumers.payperuse_consumer._billing import (
     ServicePricing,
     calculate_cost,
     deduct_balance_and_update_quota,
+    get_inference_type_id,
     get_service_pricing,
     _get_billing_data,
     _get_billed_key, _update_billing_on_cache,
@@ -153,7 +153,8 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
     # span_id reaching this consumer is valid and unique.
     attrs = data.get("attributes", {})
     # tenantId is camelCase in OTel attributes (set by ai4i_core.context middleware).
-    tenant_id, service_id, input_tokens, output_tokens, correlation_id, api_key_id, tier_id = _get_otel_attributes(attrs)
+    tenant_id, service_id, input_tokens, output_tokens, correlation_id, api_key_id, tier_id = _get_otel_attributes(
+        attrs)
     billed_key: str = _get_billed_key(correlation_id, span_id)
 
     is_already_billed = await _is_already_billed(billed_key, correlation_id, span_id, msg)
@@ -259,15 +260,32 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
     # unset" apart from "genuinely not entitled" on its own — both look like
     # zero matching ppu_tier_quotas rows to it — so that distinction is
     # applied here instead, same as the old _check_quota's early return.
+    # The quota upsert joins and conflicts on this id, so
+    # an unresolved name means no quota row is written at all — handled below by
+    # failing open rather than by reading that as exhaustion.
+    inference_type_id = await get_inference_type_id(db, pricing.task_type)
+    if pricing.task_type and inference_type_id is None:
+        logger.error(
+            "Task type %r is not in the inference_types catalogue — quota NOT "
+            "enforced for tenant=%s service=%s. Add it via POST /inference-types.",
+            pricing.task_type, ctx.tenant_id, ctx.service_id,
+            extra={
+                "event": "ppu.inference_type.unresolved",
+                "task_type": pricing.task_type,
+                "tenant_id": ctx.tenant_id,
+                "service_id": ctx.service_id,
+            },
+        )
+
     write = await deduct_balance_and_update_quota(
         db,
         tenant_id=ctx.tenant_id,
-        inference_name=pricing.task_type,
         billing_month=ctx.billing_month,
         units=billed_units,
         cost=cost,
         api_key_id=ctx.api_key_id,
         tier_id=ctx.tier_id,
+        inference_type_id=inference_type_id,
     )
 
     if write.tier_id is None:
@@ -285,10 +303,17 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
         )
         wallet_exhausted = write.budget_exhausted
 
-        if not pricing.task_type:
+        if not pricing.task_type or inference_type_id is None:
+            # Two ways to get here, both "we cannot judge this tenant's quota":
+            # the service has no task_type configured, or its task_type is not in
+            # the catalogue. Fail OPEN. Reading the absent quota row as
+            # exhaustion would 429 every tenant on an otherwise-working tier,
+            # which is the regression this branch exists to prevent. The budget
+            # deduction above still ran, so nothing is billed for free — only the
+            # quota ceiling goes unenforced, and the ERROR above says so.
             logger.debug(
-                "Quota update skipped | tenant=%s tier_id=%s task_type=%r",
-                ctx.tenant_id, write.tier_id, pricing.task_type,
+                "Quota update skipped | tenant=%s tier_id=%s task_type=%r type_id=%s",
+                ctx.tenant_id, write.tier_id, pricing.task_type, inference_type_id,
             )
             quota_exhausted = False
         elif write.quota_recorded:

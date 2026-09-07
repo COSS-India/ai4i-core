@@ -15,7 +15,7 @@ from app.core.permissions import (
     permission_ids as _permission_ids,
 )
 from app.repositories.pay_per_use.usage_repository import UsageRepository
-from app.schemas.enums.model_management import resolve_task_type
+from app.services.pay_per_use import inference_type_cache
 from app.schemas.pay_per_use.usage import (
     TenantHierarchicalListResponse,
     TenantUsageDetailResponse,
@@ -46,24 +46,32 @@ def _validate_tier_id(tier_id: Optional[str]) -> Optional[str]:
     return tier_id
 
 
-def _parse_task_types(task_types: Optional[str]) -> Optional[list[str]]:
-    """Comma-separated task types → validated, canonicalized list, or None if not supplied.
-    Mirrors tier_service._resolve_task_types so /tiers and the usage endpoints reject
-    unrecognized task_types the same way (422 VALIDATION_ERROR) instead of silently
-    filtering to an empty/zeroed result.
+async def _parse_task_type_ids(
+    db: AsyncSession, task_types: Optional[str]
+) -> Optional[list[int]]:
+    """Comma-separated task types → catalogue ids, or None if not supplied.
+
+    Mirrors tier_service._resolve_task_type_ids so /tiers and the usage endpoints
+    reject unrecognized task_types the same way (422 VALIDATION_ERROR) instead of
+    silently filtering to an empty/zeroed result.
+
+    Validated against the live catalogue rather than TaskTypeEnum, so an
+    admin-added type can be filtered on instead of 422ing.
     """
     if not task_types:
         return None
-    parsed = []
-    for raw in task_types.split(","):
-        raw = raw.strip()
-        if not raw:
-            continue
-        try:
-            parsed.append(resolve_task_type(raw))
-        except ValueError as exc:
-            raise ValidationError(str(exc))
-    return parsed or None
+    requested = [raw.strip() for raw in task_types.split(",") if raw.strip()]
+    if not requested:
+        return None
+
+    resolved = await inference_type_cache.get_ids_by_names(db, requested)
+    unknown = sorted(name for name, type_id in resolved.items() if type_id is None)
+    if unknown:
+        known = sorted(entry["name"] for entry in await inference_type_cache.get_all(db))
+        raise ValidationError(
+            f"Invalid task type '{unknown[0]}'. Valid types: {', '.join(known)}"
+        )
+    return [type_id for type_id in resolved.values() if type_id is not None] or None
 
 
 @router.get("/usage-summary", response_model=UsageSummaryResponse)
@@ -81,7 +89,9 @@ async def get_usage_summary(
     _require_admin(request)
     tier_id = _validate_tier_id(tier_id)
     svc = UsageService(UsageRepository(db))
-    return await svc.get_summary(billing_period, tier_id, _parse_task_types(task_types), auth_db)
+    return await svc.get_summary(
+        billing_period, tier_id, await _parse_task_type_ids(db, task_types), auth_db
+    )
 
 
 @router.get("/usage-tenants", response_model=TenantHierarchicalListResponse)
@@ -103,9 +113,17 @@ async def get_tenant_usage_list(
     _require_admin(request)
     tier_id = _validate_tier_id(tier_id)
     svc = UsageService(UsageRepository(db))
+    # Resolved to an id here, at the edge. A name that is not in the catalogue
+    # stays lenient (None = no narrowing), which is the behaviour this parameter
+    # has always had — unlike task_types, it never validated.
+    model_task_type_id = (
+        await inference_type_cache.get_id_by_name(db, modelTaskType)
+        if modelTaskType
+        else None
+    )
     return await svc.get_tenant_list(
-        billing_period, tier_id, modelTaskType.lower() if modelTaskType else None, auth_db,
-        sortOrder, limit, offset, task_types=_parse_task_types(task_types),
+        billing_period, tier_id, model_task_type_id, auth_db,
+        sortOrder, limit, offset, task_type_ids=await _parse_task_type_ids(db, task_types),
     )
 
 
@@ -124,4 +142,7 @@ async def get_tenant_usage_detail(
     _authorize_tenant(request, tenant_id)
 
     svc = UsageService(UsageRepository(db))
-    return await svc.get_tenant_detail(tenant_id, billing_period, auth_db, task_types=_parse_task_types(task_types))
+    return await svc.get_tenant_detail(
+        tenant_id, billing_period, auth_db,
+        task_type_ids=await _parse_task_type_ids(db, task_types),
+    )

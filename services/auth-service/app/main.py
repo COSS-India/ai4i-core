@@ -20,9 +20,16 @@ from app.core.permission_checker import set_global_endpoint_permission_map
 from app.core import pii_crypto
 from app.core.config import settings
 from app.core.constants import ENV_DEVELOPMENT
-from app.core.database import close_database, close_platform_core_database, init_database, init_platform_core_database
+from ai4i_core.ppu import configure_catalogue, get_catalogue
+from app.core.database import (
+    close_database,
+    close_platform_core_database,
+    get_platform_core_session_factory,
+    init_database,
+    init_platform_core_database,
+)
 from app.core.exceptions import register_exception_handlers
-from app.core.redis import close_redis, init_redis
+from app.core.redis import close_redis, get_redis_client, init_redis
 from app.core.security import key_manager
 from app.dependencies.auth import init_jwt_verifier
 from app.routes import api_router, versioning
@@ -35,6 +42,24 @@ logger = logging.getLogger(__name__)
 
 API_PERMISSIONS: dict[str, Any] = {}
 
+async def _configure_catalogue():
+    # The inference-type catalogue backs per-service quota enforcement in
+    # /auth/validate. Redis first (platform-core writes core:inference_type:*
+    # there — both services must share a host AND logical DB, both default to
+    # REDIS_DB=0), then the platform-core database when it is configured.
+    #
+    # Warming here is best-effort on purpose: an unreachable catalogue must not
+    # stop auth-service booting. It degrades to skipping per-service quota
+    # checks, never to a spurious 429.
+    configure_catalogue(
+        redis_factory=get_redis_client,
+        session_factory=get_platform_core_session_factory(),
+    )
+    try:
+        types = await get_catalogue().refresh()
+        logger.info("Inference type catalogue warmed: %d types.", len(types))
+    except Exception as exc:
+        logger.warning("Inference type catalogue warm-up skipped: %s", exc)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -59,6 +84,7 @@ async def lifespan(app: FastAPI):
         redis_db=settings.redis_db,
     )
     init_platform_core_database()
+    await _configure_catalogue()
     key_manager.initialize()
     init_jwt_verifier()
     await _load_api_permissions_with_retry(app)

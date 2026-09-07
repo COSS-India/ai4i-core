@@ -95,10 +95,28 @@ def _budgets(*rows) -> dict:
     return {r.tenant_id: r for r in rows}
 
 
+# Catalogue ids for the names these tests use. The repository projects
+# task_type (coalesced name) and task_type_unit alongside inference_type_id, so
+# the fixture has to carry all three or the service reads attributes that the
+# real row would have.
+_TYPE_IDS = {"llm": 1, "asr": 2, "nmt": 3, "tts": 4}
+_TYPE_UNITS = {"llm": "tokens", "asr": "audio_minutes", "nmt": "characters", "tts": "characters"}
+
+
 def _usage_row(**kwargs):
+    """One row as get_tenant_tier_usage_breakdown projects it.
+
+    Accepts ``task_type=`` (a name) and derives inference_type_id/task_type_unit
+    from it, so callers keep reading naturally. Pass ``inference_type_id=None``
+    explicitly to simulate a pre-catalogue row.
+    """
+    task_type = kwargs.pop("task_type", "llm")
     defaults = dict(
         tenant_id="t1", tier_id="1", tier_name="Pro",
-        inference_name="llm", total_units=100.0, total_cost=Decimal("50"),
+        inference_type_id=_TYPE_IDS.get(task_type),
+        task_type=task_type,
+        task_type_unit=_TYPE_UNITS.get(task_type),
+        total_units=100.0, total_cost=Decimal("50"),
         quota_snap=200.0,
     )
     return _row(**{**defaults, **kwargs})
@@ -136,8 +154,8 @@ class TestGetSummary:
         repo = _make_repo(
             get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[
-                _usage_row(inference_name="llm"),
-                _usage_row(inference_name="asr"),
+                _usage_row(task_type="llm"),
+                _usage_row(task_type="asr"),
             ],
             get_tenant_budgets=_budgets(),
         )
@@ -219,8 +237,8 @@ class TestGetSummary:
         # this value back as billing_period must get something that round-trips
         # (omitted == all-time again), not a value that 422s.
         assert result.billingPeriod is None
-        repo.get_tenants_with_usage_tier.assert_called_once_with(None, None, task_types=None)
-        repo.get_tenant_tier_usage_breakdown.assert_called_once_with(None, ["t1"], task_types=None)
+        repo.get_tenants_with_usage_tier.assert_called_once_with(None, None, task_type_ids=None)
+        repo.get_tenant_tier_usage_breakdown.assert_called_once_with(None, ["t1"], task_type_ids=None)
 
     @pytest.mark.asyncio
     async def test_billing_period_response_value_is_valid_query_input_elsewhere(self):
@@ -337,8 +355,8 @@ class TestGetSummary:
         repo = _make_repo(
             get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[
-                _usage_row(inference_name="llm", total_units=100.0, quota_snap=200.0),
-                _usage_row(inference_name="asr", total_units=10.0, quota_snap=50.0),
+                _usage_row(task_type="llm", total_units=100.0, quota_snap=200.0),
+                _usage_row(task_type="asr", total_units=10.0, quota_snap=50.0),
             ],
             get_tenant_budgets=_budgets(),
         )
@@ -389,7 +407,7 @@ class TestGetSummaryFiltered:
 
         assert result.totalSpend == 150.0
         assert not hasattr(result, "spendChangePercent")
-        repo.get_tenants_with_usage_tier.assert_called_once_with("2026-06", "1", task_types=None)
+        repo.get_tenants_with_usage_tier.assert_called_once_with("2026-06", "1", task_type_ids=None)
 
 
 # ── get_tenant_list ───────────────────────────────────────────────────────────
@@ -645,14 +663,14 @@ class TestGetTenantList:
         repo = _make_repo(
             get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[
-                _usage_row(inference_name="llm", total_units=100.0, quota_snap=200.0),
-                _usage_row(inference_name="asr", total_units=50.0, quota_snap=None),
+                _usage_row(task_type="llm", total_units=100.0, quota_snap=200.0),
+                _usage_row(task_type="asr", total_units=50.0, quota_snap=None),
             ],
             get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
             get_tenant_budgets=_budgets(_budget_row(spent=Decimal("50"))),
         )
         svc = UsageService(repo)
-        result = await svc.get_tenant_list("2026-06", None, "asr", auth_db=None)
+        result = await svc.get_tenant_list("2026-06", None, _TYPE_IDS["asr"], auth_db=None)
 
         item = result.data[0]
         assert item.spend == 50.0  # real tenant-total, unaffected by the filter
@@ -1099,8 +1117,8 @@ class TestGetTenantDetail:
         repo = _make_repo(
             get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[
-                _usage_row(inference_name="llm", total_cost=Decimal("75")),
-                _usage_row(inference_name="asr", total_cost=Decimal("25")),
+                _usage_row(task_type="llm", total_cost=Decimal("75")),
+                _usage_row(task_type="asr", total_cost=Decimal("25")),
             ],
             get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
             get_tenant_budgets=_budgets(),

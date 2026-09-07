@@ -303,13 +303,14 @@ class BaseTaskService:
         ) or self.TRITON_CALL_MODE
         groups = [[item] for item in input_items] if call_mode == "per_item" else [input_items]
 
-        # unit_type comes from inference_types.yaml (per task_type), not from
-        # guessing modality off response field names — see get_unit_type.
-        # payload["task_type"] (e.g. "NMT"), NOT self.task_name (the Python
-        # class name, e.g. "NMTTaskService") — the latter never matches the
-        # yaml's `name:` keys and silently resolves to "unknown" for every
-        # service, which zeroes out both count_input_tokens/count_output_tokens.
-        unit_type = get_unit_type(payload.get("task_type", ""))
+        # unit_type comes from the inference-type catalogue (per task_type),
+        # not from guessing modality off response field names — see
+        # get_unit_type. payload["task_type"] (e.g. "NMT"), NOT self.task_name
+        # (the Python class name, e.g. "NMTTaskService") — the latter never
+        # matches the catalogue's names and silently resolves to "unknown" for
+        # every service, which zeroes out both count_input_tokens and
+        # count_output_tokens.
+        unit_type = await get_unit_type(payload.get("task_type", ""))
 
         # Billed input, summed across groups (per_item call_mode makes more
         # than one). Exposed as an instance attr — not a run_inference return

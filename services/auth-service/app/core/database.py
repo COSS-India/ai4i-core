@@ -66,6 +66,16 @@ async def close_platform_core_database() -> None:
     logger.info("platform_core_db secondary engine disposed")
 
 
+def get_platform_core_session_factory() -> Optional[async_sessionmaker[AsyncSession]]:
+    """The platform-core session factory, or None when not configured.
+
+    get_platform_core_db below is a FastAPI dependency and only works inside a
+    request. Startup code and the inference-type catalogue need the factory
+    itself.
+    """
+    return _platform_core_session_factory
+
+
 async def get_platform_core_db() -> AsyncIterator[Optional[AsyncSession]]:
     """FastAPI dependency yielding a session bound to platform-core DB, or None if unconfigured."""
     if _platform_core_session_factory is None:
