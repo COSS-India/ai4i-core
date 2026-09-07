@@ -103,12 +103,12 @@ export function isTenantAdminOnlyUser(roles?: string[]): boolean {
 export function canSelfDeleteAccount(roles?: string[]): boolean {
   if (!roles?.length) return false;
   if (isPlatformAdminUser(roles)) return false;
-  if (isAdopterAdminUser(roles)) return false;
   if (userHasRole(roles, "GUEST")) return false;
   return (
     userHasRole(roles, "USER") ||
     isTenantAdminUser(roles) ||
-    isUsageViewerUser(roles)
+    isUsageViewerUser(roles) ||
+    userHasRole(roles, "MODERATOR")
   );
 }
 
