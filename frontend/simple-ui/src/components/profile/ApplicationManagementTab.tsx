@@ -37,7 +37,7 @@ import ApplicationBulkBudgetModal from "./ApplicationBulkBudgetModal";
 import FieldHint from "../common/FieldHint";
 import InfoTip from "../common/InfoTip";
 import { FIELD_HINTS } from "../../config/fieldHints";
-import { BUDGET_VALIDATION } from "../../config/budgetMessages";
+import { BUDGET_VALIDATION, exceedsRemainingPct } from "../../config/budgetMessages";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
 import type { Application } from "../../types/application";
 import {
@@ -154,7 +154,7 @@ function PercentageStepper({
         max={max}
         step={1}
         precision={2}
-        clampValueOnBlur
+        clampValueOnBlur={false}
         bg="white"
         w="120px"
         isDisabled={isDisabled}
@@ -444,7 +444,12 @@ export default function ApplicationManagementTab({
             <Button variant="ghost" onClick={() => mgr.setCreateOpen(false)}>
               Cancel
             </Button>
-            <Button colorScheme="blue" isLoading={mgr.isSaving} onClick={() => void mgr.handleCreate()}>
+            <Button
+              colorScheme="blue"
+              isLoading={mgr.isSaving}
+              isDisabled={Boolean(mgr.createBudgetError)}
+              onClick={() => void mgr.handleCreate()}
+            >
               Create Application
             </Button>
           </HStack>
@@ -457,6 +462,7 @@ export default function ApplicationManagementTab({
           banner={mgr.formBanner}
           showBudget
           remainingPct={mgr.remainingPct}
+          liveBudgetError={mgr.createBudgetError}
           budgetPreview={createPreview}
           currency={currency}
         />
@@ -669,6 +675,7 @@ function ApplicationIdentityFields({
   banner,
   showBudget,
   remainingPct = 0,
+  liveBudgetError = null,
   budgetPreview,
   currency = "INR",
 }: {
@@ -678,11 +685,12 @@ function ApplicationIdentityFields({
   banner: string | null;
   showBudget: boolean;
   remainingPct?: number;
+  liveBudgetError?: string | null;
   budgetPreview?: number | null;
   currency?: string;
 }) {
   const [boundHint, setBoundHint] = React.useState<string | null>(null);
-  const budgetError = errors.allocated_percentage || boundHint;
+  const budgetError = errors.allocated_percentage || liveBudgetError || boundHint;
   return (
     <VStack align="stretch" spacing={4}>
       {banner && (
@@ -735,7 +743,7 @@ function ApplicationIdentityFields({
               setBoundHint(
                 bound === "min"
                   ? BUDGET_VALIDATION.budgetCannotBeNegative
-                  : `Cannot exceed ${remainingPct.toFixed(2)}% still available.`,
+                  : exceedsRemainingPct(remainingPct),
               );
             }}
           />

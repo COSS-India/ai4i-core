@@ -33,6 +33,7 @@ import {
   belowConsumedPctRaw,
   BUDGET_TOAST,
   BUDGET_VALIDATION,
+  exceedsRemainingPct,
   keyWouldDropBelowConsumed,
   mapAllocationError,
   mapBelowConsumedError,
@@ -117,6 +118,18 @@ function parsePct(raw: string): number | null | "invalid" {
   const n = Number(trimmed);
   if (!Number.isFinite(n)) return "invalid";
   return n;
+}
+
+function evaluateCreateBudgetError(
+  raw: string,
+  remainingPct: number,
+): string | null {
+  const pct = parsePct(raw);
+  if (pct === "invalid") return BUDGET_VALIDATION.enterValidPercentage;
+  if (pct == null) return null;
+  if (pct < 0) return BUDGET_VALIDATION.budgetCannotBeNegative;
+  if (pct > remainingPct + 1e-6) return exceedsRemainingPct(remainingPct);
+  return null;
 }
 
 function pctString(value: number | null): string {
@@ -371,6 +384,11 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
 
   const remainingPct = Math.max(0, 100 - totalAllocatedPct);
   const institutionBudgetUnset = tenantBudget <= 0;
+
+  const createBudgetError = useMemo(
+    () => evaluateCreateBudgetError(form.allocated_percentage, remainingPct),
+    [form.allocated_percentage, remainingPct],
+  );
 
   const bulkLiveTotalPct = useMemo(() => {
     return bulkRows.reduce((sum, row) => sum + (row.resolvedPct ?? 0), 0);
@@ -674,12 +692,8 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
   const validateCreate = (): boolean => {
     const errors: Record<string, string> = {};
     if (!form.name.trim()) errors.name = "Application name is required.";
-    const pct = parsePct(form.allocated_percentage);
-    if (pct === "invalid") errors.allocated_percentage = BUDGET_VALIDATION.enterValidPercentage;
-    else if (pct != null && pct < 0) errors.allocated_percentage = BUDGET_VALIDATION.budgetCannotBeNegative;
-    else if (pct != null && pct > remainingPct + 1e-6) {
-      errors.allocated_percentage = `Cannot exceed ${remainingPct.toFixed(2)}% still available.`;
-    }
+    const budgetError = evaluateCreateBudgetError(form.allocated_percentage, remainingPct);
+    if (budgetError) errors.allocated_percentage = budgetError;
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
   };
@@ -828,6 +842,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     isLoading,
     loadError,
     remainingPct,
+    createBudgetError,
     totalAllocatedPct,
     tenantBudget,
     institutionBudgetUnset,

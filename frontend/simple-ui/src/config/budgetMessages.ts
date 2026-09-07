@@ -49,6 +49,10 @@ export function totalApplicationsOver100(totalPct: number): string {
   return `Total across Applications would be ${totalPct.toFixed(2)}% — over 100%.`;
 }
 
+export function exceedsRemainingPct(remainingPct: number): string {
+  return `Cannot exceed ${remainingPct.toFixed(2)}% still available.`;
+}
+
 export function totalApplicationsExceeds100(totalPct: number): string {
   return `Total across Applications is ${totalPct.toFixed(2)}% — cannot exceed 100%.`;
 }

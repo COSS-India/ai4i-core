@@ -62,7 +62,7 @@ function PercentageStepper({
         max={max}
         step={1}
         precision={2}
-        clampValueOnBlur
+        clampValueOnBlur={false}
         bg="white"
         w="120px"
       >
