@@ -20,6 +20,7 @@ import {
 } from "@chakra-ui/react";
 import StandardModal from "../common/StandardModal";
 import InfoTip from "../common/InfoTip";
+import PercentageStepper from "../common/PercentageStepper";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import { editKeyBudgetTitle, totalApiKeysExceeds100 } from "../../config/budgetMessages";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
@@ -30,58 +31,6 @@ function formatPct(value: number | null | undefined): string {
   if (value == null) return "—";
   const rounded = Math.round(value * 100) / 100;
   return `${rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(2)}%`;
-}
-
-function PercentageStepper({
-  value,
-  onChange,
-  min = 0,
-  max = 100,
-}: {
-  value: string;
-  onChange: (next: string) => void;
-  min?: number;
-  max?: number;
-}) {
-  const hi = Math.min(100, max);
-  const lo = Math.max(0, min);
-  return (
-    <HStack spacing={1} align="center">
-      <Input
-        type="number"
-        value={value}
-        onChange={(e) => {
-          const raw = e.target.value;
-          if (raw.trim() === "") {
-            onChange(raw);
-            return;
-          }
-          const n = Number(raw);
-          if (!Number.isFinite(n) || n > hi || n < lo) return;
-          onChange(raw);
-        }}
-        onKeyDown={(e) => {
-          if (e.ctrlKey || e.metaKey || e.altKey) return;
-          if (e.key.length !== 1 || !/[0-9.]/.test(e.key)) return;
-          const el = e.currentTarget;
-          const start = el.selectionStart ?? el.value.length;
-          const end = el.selectionEnd ?? el.value.length;
-          const next = `${el.value.slice(0, start)}${e.key}${el.value.slice(end)}`;
-          const n = Number(next);
-          if (Number.isFinite(n) && (n > hi || n < lo)) e.preventDefault();
-        }}
-        min={lo}
-        max={hi}
-        step={0.01}
-        size="sm"
-        w="88px"
-        bg="white"
-      />
-      <Text color="gray.500" fontSize="sm" fontWeight="semibold">
-        %
-      </Text>
-    </HStack>
-  );
 }
 
 export default function ApiKeyBulkBudgetModal({
@@ -180,6 +129,7 @@ export default function ApiKeyBulkBudgetModal({
                 </Td>
                 <Td>
                   <PercentageStepper
+                    variant="inline"
                     value={row.pctInput}
                     onChange={(next) => onPctChange(row.api_key_id, next)}
                     min={row.consumed_percentage ?? 0}

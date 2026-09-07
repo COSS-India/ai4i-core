@@ -14,11 +14,6 @@ import {
   Heading,
   IconButton,
   Input,
-  NumberDecrementStepper,
-  NumberIncrementStepper,
-  NumberInput,
-  NumberInputField,
-  NumberInputStepper,
   SimpleGrid,
   Text,
   Textarea,
@@ -36,6 +31,7 @@ import StandardModal from "../common/StandardModal";
 import ApplicationBulkBudgetModal from "./ApplicationBulkBudgetModal";
 import FieldHint from "../common/FieldHint";
 import InfoTip from "../common/InfoTip";
+import PercentageStepper from "../common/PercentageStepper";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import { BUDGET_VALIDATION } from "../../config/budgetMessages";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
@@ -124,112 +120,6 @@ function avatarGradient(name: string): string {
   for (let i = 0; i < name.length; i += 1) sum += name.charCodeAt(i);
   const [from, to] = AVATAR_COLORS[sum % AVATAR_COLORS.length];
   return `linear-gradient(135deg, ${from}, ${to})`;
-}
-
-function PercentageStepper({
-  value,
-  onChange,
-  min = 0,
-  max = 100,
-  onBoundHit,
-  isDisabled = false,
-}: {
-  value: string;
-  onChange: (next: string) => void;
-  min?: number;
-  max?: number;
-  onBoundHit?: (bound: "min" | "max") => void;
-  isDisabled?: boolean;
-}) {
-  const hi = Math.min(100, max);
-  const lo = Math.max(0, min);
-  const numeric = value.trim() === "" ? null : Number(value);
-  const atMin = numeric != null && Number.isFinite(numeric) && numeric <= lo + 1e-6;
-  const atMax = numeric != null && Number.isFinite(numeric) && numeric >= hi - 1e-6;
-
-  /** Accept only in-range values; reject the keystroke (keep current value). */
-  const accept = (raw: string) => {
-    if (raw.trim() === "") {
-      onChange("");
-      return;
-    }
-    const n = Number(raw);
-    if (!Number.isFinite(n)) return;
-    if (n > hi) {
-      onBoundHit?.("max");
-      return;
-    }
-    if (n < lo) {
-      onBoundHit?.("min");
-      return;
-    }
-    onChange(raw);
-  };
-
-  const blockIfOutOfRange = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
-    if (e.key.length !== 1 || !/[0-9.]/.test(e.key)) return;
-    const el = e.currentTarget;
-    const start = el.selectionStart ?? el.value.length;
-    const end = el.selectionEnd ?? el.value.length;
-    const next = `${el.value.slice(0, start)}${e.key}${el.value.slice(end)}`;
-    const n = Number(next);
-    if (!Number.isFinite(n)) return;
-    if (n > hi || n < lo) {
-      e.preventDefault();
-      onBoundHit?.(n > hi ? "max" : "min");
-    }
-  };
-
-  const blockPasteIfOutOfRange = (e: React.ClipboardEvent<HTMLInputElement>) => {
-    const text = e.clipboardData.getData("text");
-    const el = e.currentTarget;
-    const start = el.selectionStart ?? el.value.length;
-    const end = el.selectionEnd ?? el.value.length;
-    const next = `${el.value.slice(0, start)}${text}${el.value.slice(end)}`;
-    const n = Number(next.trim());
-    if (next.trim() !== "" && Number.isFinite(n) && (n > hi || n < lo)) {
-      e.preventDefault();
-      onBoundHit?.(n > hi ? "max" : "min");
-    }
-  };
-
-  return (
-    <HStack maxW="180px" spacing={2} align="center">
-      <NumberInput
-        value={value}
-        onChange={accept}
-        min={lo}
-        max={hi}
-        step={1}
-        precision={2}
-        clampValueOnBlur={false}
-        keepWithinRange={false}
-        bg="white"
-        w="120px"
-        isDisabled={isDisabled}
-      >
-        <NumberInputField onKeyDown={blockIfOutOfRange} onPaste={blockPasteIfOutOfRange} />
-        <NumberInputStepper>
-          <NumberIncrementStepper
-            cursor={atMax ? "not-allowed" : undefined}
-            onClick={() => {
-              if (atMax) onBoundHit?.("max");
-            }}
-          />
-          <NumberDecrementStepper
-            cursor={atMin || numeric == null ? "not-allowed" : undefined}
-            onClick={() => {
-              if (atMin || numeric == null) onBoundHit?.("min");
-            }}
-          />
-        </NumberInputStepper>
-      </NumberInput>
-      <Text color="gray.500" fontWeight="semibold">
-        %
-      </Text>
-    </HStack>
-  );
 }
 
 export default function ApplicationManagementTab({
@@ -785,7 +675,7 @@ function ApplicationIdentityFields({
               setBoundHint(
                 bound === "min"
                   ? BUDGET_VALIDATION.budgetCannotBeNegative
-                  : `Cannot exceed ${remainingPct.toFixed(2)}% still available.`,
+                  : BUDGET_VALIDATION.percentageMustBeBetween0And100,
               );
             }}
           />

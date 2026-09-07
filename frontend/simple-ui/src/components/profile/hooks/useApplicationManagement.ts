@@ -866,12 +866,15 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
       setBudgetStepperHint(null);
     },
     onBudgetBoundHit: (bound: "min" | "max") => {
-      if (bound === "min" && budgetFloor > 0) {
-        setBudgetStepperHint(belowConsumedPctRaw(budgetFloor));
+      if (bound === "min") {
+        if (budgetFloor > 0) {
+          setBudgetStepperHint(belowConsumedPctRaw(budgetFloor));
+          return;
+        }
+        setBudgetStepperHint(BUDGET_VALIDATION.budgetCannotBeNegative);
         return;
       }
-      const wouldBe = budgetOthersAllocated + budgetAvailable + 1;
-      setBudgetStepperHint(totalApplicationsOver100(wouldBe));
+      setBudgetStepperHint(BUDGET_VALIDATION.percentageMustBeBetween0And100);
     },
     budgetStepperHint,
     budgetLiveTotal,

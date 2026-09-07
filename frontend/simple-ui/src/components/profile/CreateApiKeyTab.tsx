@@ -26,83 +26,14 @@ import {
   Center,
   Spinner,
   Select,
-  NumberDecrementStepper,
-  NumberIncrementStepper,
-  NumberInput,
-  NumberInputField,
-  NumberInputStepper,
 } from "@chakra-ui/react";
 import { CopyIcon, CloseIcon } from "@chakra-ui/icons";
 import { useCreateApiKeyTab } from "./hooks/useCreateApiKeyTab";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { FIELD_HINTS } from "../../config/fieldHints";
+import { BUDGET_VALIDATION } from "../../config/budgetMessages";
 import FieldHint from "../common/FieldHint";
-
-function PercentageStepper({
-  value,
-  onChange,
-  min = 0,
-  max = 100,
-}: {
-  value: string;
-  onChange: (next: string) => void;
-  min?: number;
-  max?: number;
-}) {
-  const hi = Math.min(100, max);
-  const lo = Math.max(0, min);
-  const numeric = value.trim() === "" ? null : Number(value);
-  const atMin = numeric != null && Number.isFinite(numeric) && numeric <= lo + 1e-6;
-  const atMax = numeric != null && Number.isFinite(numeric) && numeric >= hi - 1e-6;
-
-  const accept = (raw: string) => {
-    if (raw.trim() === "") {
-      onChange("");
-      return;
-    }
-    const n = Number(raw);
-    if (!Number.isFinite(n) || n > hi || n < lo) return;
-    onChange(raw);
-  };
-
-  const blockIfOutOfRange = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
-    if (e.key.length !== 1 || !/[0-9.]/.test(e.key)) return;
-    const el = e.currentTarget;
-    const start = el.selectionStart ?? el.value.length;
-    const end = el.selectionEnd ?? el.value.length;
-    const next = `${el.value.slice(0, start)}${e.key}${el.value.slice(end)}`;
-    const n = Number(next);
-    if (Number.isFinite(n) && (n > hi || n < lo)) e.preventDefault();
-  };
-
-  return (
-    <HStack maxW="180px" spacing={2} align="center">
-      <NumberInput
-        value={value}
-        onChange={accept}
-        min={lo}
-        max={hi}
-        step={1}
-        precision={2}
-        clampValueOnBlur={false}
-        keepWithinRange={false}
-        bg="white"
-        w="120px"
-      >
-        <NumberInputField
-          placeholder={FIELD_HINTS.apiKey.budget.placeholder}
-          onKeyDown={blockIfOutOfRange}
-        />
-        <NumberInputStepper>
-          <NumberIncrementStepper cursor={atMax ? "not-allowed" : undefined} />
-          <NumberDecrementStepper cursor={atMin || numeric == null ? "not-allowed" : undefined} />
-        </NumberInputStepper>
-      </NumberInput>
-      <Text color="gray.500" fontWeight="semibold">%</Text>
-    </HStack>
-  );
-}
+import PercentageStepper from "../common/PercentageStepper";
 
 export interface CreateApiKeyTabProps {
   tenantId?: string | null;
@@ -118,8 +49,10 @@ export default function CreateApiKeyTab({
 
   const create = useCreateApiKeyTab({ tenantId, onApiKeyCreated });
   const { copy } = useCopyToClipboard();
+  const [budgetBoundHint, setBudgetBoundHint] = React.useState<string | null>(null);
 
   const isLoading = create.isLoadingPermissions || create.isLoadingApplications;
+  const budgetError = create.fieldErrors.budget || budgetBoundHint;
 
   return (
     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
@@ -273,7 +206,7 @@ export default function CreateApiKeyTab({
               </Box>
             </FormControl>
 
-            <FormControl isRequired isInvalid={Boolean(create.fieldErrors.budget)}>
+            <FormControl isRequired isInvalid={Boolean(budgetError)}>
               <FormLabel fontWeight="semibold">
                 Budget Allocation{" "}
                 <Text as="span" fontWeight="normal" color="gray.500" fontSize="sm">
@@ -282,15 +215,24 @@ export default function CreateApiKeyTab({
               </FormLabel>
               <PercentageStepper
                 value={create.apiKeyForm.allocated_percentage}
-                onChange={(next) =>
+                onChange={(next) => {
+                  setBudgetBoundHint(null);
                   create.setApiKeyForm({
                     ...create.apiKeyForm,
                     allocated_percentage: next,
-                  })
-                }
+                  });
+                }}
                 max={create.availablePct}
+                placeholder={FIELD_HINTS.apiKey.budget.placeholder}
+                onBoundHit={(bound) => {
+                  setBudgetBoundHint(
+                    bound === "min"
+                      ? BUDGET_VALIDATION.budgetCannotBeNegative
+                      : BUDGET_VALIDATION.percentageMustBeBetween0And100,
+                  );
+                }}
               />
-              <FieldHint>
+              <FieldHint show={!budgetError}>
                 {FIELD_HINTS.apiKey.budget.helper}
                 {create.apiKeyForm.application_id
                   ? ` Up to ${create.formatAvailablePct()}% available within this Application.`
@@ -301,8 +243,8 @@ export default function CreateApiKeyTab({
                   ≈ {create.budgetPreview} of Application budget
                 </Text>
               )}
-              {create.fieldErrors.budget && (
-                <FormErrorMessage>{create.fieldErrors.budget}</FormErrorMessage>
+              {budgetError && (
+                <FormErrorMessage>{budgetError}</FormErrorMessage>
               )}
             </FormControl>
 
