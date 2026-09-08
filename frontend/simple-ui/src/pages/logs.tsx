@@ -721,6 +721,9 @@ const LogsPage: React.FC = () => {
                             <option value="success">Success</option>
                             <option value="failure">Failure</option>
                           </TableSelectField>
+                          <Box flex="1" minW={0} display={{ base: "none", lg: "block" }} />
+                        </FormFieldsRow>
+                        <FormFieldsRow spacing={3} w="full">
                           <FormControl w={{ base: "full", sm: "220px" }}>
                             <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
                               Start Time
