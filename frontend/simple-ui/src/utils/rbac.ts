@@ -41,14 +41,6 @@ export function canAccessServicesManagement(roles?: string[]): boolean {
 }
 
 /**
- * Sidebar "Model task type" service cards (and the section that holds them).
- * Hidden for the Usage-Dashboard-only role; every other role gets the section.
- */
-export function canSeeServiceCards(roles?: string[]): boolean {
-  return !isUsageDashboardOnlyUser(roles);
-}
-
-/**
  * Restricted roles whose entire nav surface is the Usage Dashboard (plus Profile).
  * Callers gate every other nav item off this.
  */
