@@ -805,9 +805,9 @@ const TierManagement: React.FC = () => {
           </Button>
         }
         filters={
-          <HStack spacing={3} flexWrap="wrap" align="flex-end">
+          <HStack spacing={3} flexWrap="wrap" align="flex-start">
             <TableSearchField
-              label=""
+              label="Search"
               value={searchQuery}
               onChange={setSearchQuery}
               placeholder="Search tiers..."
@@ -815,7 +815,7 @@ const TierManagement: React.FC = () => {
               inputGroupProps={{ size: "sm" }}
             />
             <TableSelectField
-              label=""
+              label="Model Task Type"
               value={filterTaskType}
               onChange={setFilterTaskType}
               formControlProps={{ w: { base: "full", sm: "210px" }, mb: 0 }}
