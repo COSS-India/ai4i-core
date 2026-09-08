@@ -1165,12 +1165,7 @@ export default function TenantManagementTab({
   function renderTenantRowActions(t: TenantView) {
     const stopRowClick = (e: React.MouseEvent) => e.stopPropagation();
     const isProtectedDefaultOrg = isDefaultTenant(t);
-    const hasTier = Boolean(
-      t.tier_id ??
-        resolveTenantTierAssignment(t, tenantTierAssignments, tierOptions)
-          ?.tier_id,
-    );
-    const planActionLabel = hasTier ? "Manage Plan" : "Assign Tier";
+    const planActionLabel = "Assign Tier";
 
     const items: RowActionMenuItem[] = (() => {
       if (isTenantStatus(t.status, TENANT.STATUS.PENDING)) {
@@ -2130,7 +2125,7 @@ export default function TenantManagementTab({
 
     const selectedTierName =
       tierOptions.find((t) => t.id === manageTierId)?.name ?? "";
-    const planDrawerTitle = originalTierId ? "Manage Plan" : "Assign Tier";
+    const planDrawerTitle = "Assign Tier";
 
     return (
       <Drawer
@@ -2273,7 +2268,7 @@ export default function TenantManagementTab({
                 </FormControl>
               </VStack>
             ) : (
-              <Text>Select an institution to manage plan.</Text>
+              <Text>Select an institution to assign a tier.</Text>
             )}
           </DrawerBody>
           <DrawerFooter
