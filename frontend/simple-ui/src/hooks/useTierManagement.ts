@@ -17,6 +17,7 @@ import { INSTITUTION } from "../config/constants";
 import { fetchAllServicesMatchingFilters } from "../services/servicesManagementService";
 import { useInferenceTypes } from "./useInferenceTypes";
 import { generateUUID } from "../utils/uuid";
+import { resolveTaskType } from "../utils/platformService";
 import type { TierFormData, TierFormQuota } from "../types/tierManagement";
 
 const TIER_QUERY_KEY = "tiers";
@@ -208,12 +209,7 @@ export function useTierManagement() {
           (s.tierNames ?? []).includes(viewTier.name),
       )
       .map((s) => {
-        const taskType =
-          (typeof s.task === "object" && s.task && "type" in s.task
-            ? s.task.type
-            : undefined) ??
-          s.task_type ??
-          "";
+        const taskType = resolveTaskType(s);
         return {
           serviceId: s.serviceId ?? s.service_id ?? "",
           name: s.name,

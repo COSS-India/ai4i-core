@@ -28,6 +28,7 @@ import { useAuth } from "./useAuth";
 import { isRegistryReadOnlyUser } from "../utils/rbac";
 import { useSessionExpiry } from "./useSessionExpiry";
 import { showError } from "../utils/errorHandler";
+import { resolveTaskType } from "../utils/platformService";
 import { showToast } from "../utils/toast";
 import { refreshUntil } from "../utils/postMutationRefresh";
 import { useInferenceTypes } from "./useInferenceTypes";
@@ -576,11 +577,7 @@ export function useServicesManagement() {
           modelDetails?.model_id ||
           "";
 
-        const rawModelTaskType =
-          modelDetails?.task?.type ||
-          modelDetails?.task_type ||
-          modelDetails?.taskType ||
-          "";
+        const rawModelTaskType = resolveTaskType(modelDetails);
         // Select options use catalog `taskTypeNames` exactly — resolve
         // case-insensitively and ignore values outside the enabled set.
         const resolvedModelTaskType =
@@ -830,11 +827,7 @@ export function useServicesManagement() {
   // Unit type is derived from task type (billing is server-driven via inference_types).
   const unitType = unitByTaskType[formData.task_type || ""] || "";
 
-  const viewServiceTaskType =
-    selectedService?.model?.task?.type ||
-    selectedService?.task?.type ||
-    selectedService?.task_type ||
-    "";
+  const viewServiceTaskType = resolveTaskType(selectedService);
   const viewServiceUnitType =
     unitByTaskType[viewServiceTaskType] ||
     selectedService?.billingUnitType ||
@@ -842,11 +835,7 @@ export function useServicesManagement() {
 
   const filteredModelsForDropdown = formData.task_type
     ? modelsForDropdown.filter((model) => {
-        const modelTaskType =
-          model?.task?.type ||
-          (model as any).task_type ||
-          (model as any).taskType ||
-          "";
+        const modelTaskType = resolveTaskType(model);
         return (
           modelTaskType.toLowerCase() === formData.task_type?.toLowerCase()
         );
@@ -988,11 +977,7 @@ export function useServicesManagement() {
         modelId,
         modelName: service.model?.name || modelId,
         endpoint: service.endpoint || service.endpoint_url || "",
-        task_type:
-          service.model?.task?.type ||
-          service.task?.type ||
-          service.task_type ||
-          "",
+        task_type: resolveTaskType(service),
         modelSubmissionDate: "",
         modelVersion: service.modelVersion || service.model_version || "1.0",
       });

@@ -28,6 +28,7 @@ import { useServicesManagement } from "../../hooks/useServicesManagement";
 import ServiceRegistryTab from "./ServiceRegistryTab";
 import ServiceFormTab from "./ServiceFormTab";
 import ServiceDetailTab from "./ServiceDetailTab";
+import { resolveTaskType } from "../../utils/platformService";
 
 function getTaskColor(taskType?: string) {
   if (!taskType) return "gray";
@@ -98,21 +99,12 @@ const ServicesManagement: React.FC = () => {
     setPricePerUnit,
     unitSize,
     setUnitSize,
-    currency,
-    setCurrency,
     selectedTiers,
     toggleTier,
     availableTiers,
-    isCreateServiceTabDisabled,
     isCreateFormModelSelected,
     canCreateService,
-    isLlmTaskType,
     serviceIdError,
-    serviceIdLengthError,
-    serviceDescriptionError,
-    serviceNameError,
-    hardwareDescriptionError,
-    createFormEpoch,
     isSubmitting,
     handleSubmit,
     handleCancelForm,
@@ -163,23 +155,14 @@ const ServicesManagement: React.FC = () => {
       {
         id: "task",
         header: "Model Task Type",
-        cell: (service) => (
-          <Badge
-            colorScheme={getTaskColor(
-              service.model?.task?.type ||
-                service.task?.type ||
-                service.task_type,
-            )}
-            fontSize="sm"
-            p={1}
-          >
-            {(
-              service.model?.task?.type ||
-              service.task?.type ||
-              service.task_type
-            )?.toUpperCase() || "N/A"}
-          </Badge>
-        ),
+        cell: (service) => {
+          const taskType = resolveTaskType(service);
+          return (
+            <Badge colorScheme={getTaskColor(taskType)} fontSize="sm" p={1}>
+              {taskType ? taskType.toUpperCase() : "N/A"}
+            </Badge>
+          );
+        },
       },
       {
         id: "tiers",
@@ -371,28 +354,9 @@ const ServicesManagement: React.FC = () => {
               <TabList>
                 <Tab fontWeight="semibold">Service Registry</Tab>
                 {!isRegistryReadOnly && (
-                  <Tooltip
-                    label={
-                      isCreateServiceTabDisabled
-                        ? "No Tier available. Please create a Tier before creating a Service."
-                        : undefined
-                    }
-                    hasArrow
-                    placement="top"
-                    isDisabled={!isCreateServiceTabDisabled}
-                    shouldWrapChildren
-                  >
-                    <Tab
-                      fontWeight="semibold"
-                      isDisabled={isCreateServiceTabDisabled}
-                      _disabled={{
-                        opacity: 0.5,
-                        cursor: "not-allowed",
-                      }}
-                    >
-                      {editingService ? "Edit Service" : "Create Service"}
-                    </Tab>
-                  </Tooltip>
+                  <Tab fontWeight="semibold">
+                    {editingService ? "Edit Service" : "Create Service"}
+                  </Tab>
                 )}
                 {isViewingService && (
                   <Tab fontWeight="semibold">View Service</Tab>
@@ -431,9 +395,6 @@ const ServicesManagement: React.FC = () => {
                 {!isRegistryReadOnly && (
                   <TabPanel px={0} pt={6}>
                     <ServiceFormTab
-                      // Remount on reset/edit-load so no field is left
-                      // marked as blurred from the previous form.
-                      key={createFormEpoch}
                       cardBg={cardBg}
                       cardBorder={cardBorder}
                       editingService={editingService}
@@ -449,19 +410,12 @@ const ServicesManagement: React.FC = () => {
                       onPricePerUnitChange={setPricePerUnit}
                       unitSize={unitSize}
                       onUnitSizeChange={setUnitSize}
-                      currency={currency}
-                      onCurrencyChange={setCurrency}
                       selectedTiers={selectedTiers}
                       onToggleTier={toggleTier}
                       availableTiers={availableTiers}
                       isCreateFormModelSelected={isCreateFormModelSelected}
                       canCreateService={canCreateService}
-                      isLlmTaskType={isLlmTaskType}
                       serviceIdError={serviceIdError}
-                      serviceIdLengthError={serviceIdLengthError}
-                      serviceDescriptionError={serviceDescriptionError}
-                      serviceNameError={serviceNameError}
-                      hardwareDescriptionError={hardwareDescriptionError}
                       isSubmitting={isSubmitting}
                       onSubmit={handleSubmit}
                       onCancel={handleCancelForm}
