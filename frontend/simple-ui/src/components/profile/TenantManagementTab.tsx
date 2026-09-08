@@ -26,8 +26,6 @@ import {
   Heading,
   IconButton,
   Input,
-  InputGroup,
-  InputLeftAddon,
   Modal,
   ModalBody,
   ModalCloseButton,
@@ -125,21 +123,9 @@ import {
 import { dash, fmtDate } from "../../utils/valueFormatters";
 import type { TenantUserView, TenantView } from "../../types/tenant";
 
-const BUDGET_MAX_INTEGER_DIGITS = 7;
-
 /** Shown when assigning/reassigning a tier that has no mapped services. */
 const TIER_NO_SERVICES_MSG =
   `This Tier has no services mapped. Please map at least one service before assigning to ${INSTITUTION_ARTICLE} ${INSTITUTION.toLowerCase()}.`;
-
-function clampBudgetInput(raw: string): string {
-  const dotIndex = raw.indexOf(".");
-  const intPart = (dotIndex === -1 ? raw : raw.slice(0, dotIndex)).slice(
-    0,
-    BUDGET_MAX_INTEGER_DIGITS,
-  );
-  const decimalPart = dotIndex === -1 ? "" : raw.slice(dotIndex);
-  return intPart + decimalPart;
-}
 
 export interface TenantManagementTabProps {
   isActive?: boolean;
@@ -280,7 +266,7 @@ export default function TenantManagementTab({
     queryFn: () =>
       fetchAllServicesMatchingFilters({ taskTypes: enabledTaskTypesParam }),
     staleTime: 60_000,
-    enabled: isAdmin && (isViewTierOpen || tm.isTenantModalOpen),
+    enabled: isAdmin && isViewTierOpen,
   });
   const tierIdsWithServices = useMemo(() => {
     const ids = new Set<string>();
@@ -1179,6 +1165,7 @@ export default function TenantManagementTab({
   function renderTenantRowActions(t: TenantView) {
     const stopRowClick = (e: React.MouseEvent) => e.stopPropagation();
     const isProtectedDefaultOrg = isDefaultTenant(t);
+    const planActionLabel = "Assign Tier";
 
     const items: RowActionMenuItem[] = (() => {
       if (isTenantStatus(t.status, TENANT.STATUS.PENDING)) {
@@ -1299,9 +1286,9 @@ export default function TenantManagementTab({
             tm.handleOpenEditTenant(t);
           }}
         />
-        <Tooltip label="Manage plan">
+        <Tooltip label={planActionLabel}>
           <IconButton
-            aria-label="Manage plan"
+            aria-label={planActionLabel}
             icon={<FiSliders size={14} />}
             size="xs"
             w={4}
@@ -1525,84 +1512,6 @@ export default function TenantManagementTab({
                   {FIELD_HINTS.tenant.phone.helper}
                 </FieldHint>
               </FormControl>
-              <FormControl>
-                <FormLabel>Tier</FormLabel>
-                <TierSelect
-                  value={tm.tenantForm.tier_id}
-                  onChange={(id) =>
-                    tm.setTenantForm({ ...tm.tenantForm, tier_id: id })
-                  }
-                  tierOptions={tierOptions}
-                  serviceMappingsReady={serviceMappingsReady}
-                  tierIdsWithServices={tierIdsWithServices}
-                />
-                <FieldHint>{FIELD_HINTS.tenant.onboardTier.helper}</FieldHint>
-              </FormControl>
-              <FormControl
-                isInvalid={Boolean(tm.tenantFormErrors.allocated_budget)}
-              >
-                <FormLabel>Initial Budget</FormLabel>
-                <InputGroup size="sm">
-                  <InputLeftAddon>₹</InputLeftAddon>
-                  <Input
-                    value={tm.tenantForm.allocated_budget}
-                    onChange={(e) =>
-                      tm.setTenantForm({
-                        ...tm.tenantForm,
-                        allocated_budget: clampBudgetInput(e.target.value),
-                      })
-                    }
-                    placeholder={FIELD_HINTS.tenant.onboardBudget.placeholder}
-                    type="number"
-                    min={0}
-                    step="any"
-                  />
-                </InputGroup>
-                {tm.tenantFormErrors.allocated_budget && (
-                  <FormErrorMessage>
-                    {tm.tenantFormErrors.allocated_budget}
-                  </FormErrorMessage>
-                )}
-                <FieldHint show={!tm.tenantFormErrors.allocated_budget}>
-                  {FIELD_HINTS.tenant.onboardBudget.helper}
-                </FieldHint>
-              </FormControl>
-              <HStack spacing={4} align="flex-start">
-                <FormControl>
-                  <FormLabel>Budget effective from</FormLabel>
-                  <Input
-                    type="date"
-                    size="sm"
-                    value={tm.tenantForm.budget_effective_from}
-                    onChange={(e) =>
-                      tm.setTenantForm({
-                        ...tm.tenantForm,
-                        budget_effective_from: e.target.value,
-                      })
-                    }
-                  />
-                  <FieldHint>
-                    {FIELD_HINTS.tenant.onboardBudgetEffectiveFrom.helper}
-                  </FieldHint>
-                </FormControl>
-                <FormControl>
-                  <FormLabel>Budget effective to</FormLabel>
-                  <Input
-                    type="date"
-                    size="sm"
-                    value={tm.tenantForm.budget_effective_to}
-                    onChange={(e) =>
-                      tm.setTenantForm({
-                        ...tm.tenantForm,
-                        budget_effective_to: e.target.value,
-                      })
-                    }
-                  />
-                  <FieldHint>
-                    {FIELD_HINTS.tenant.onboardBudgetEffectiveTo.helper}
-                  </FieldHint>
-                </FormControl>
-              </HStack>
               <ConsentCheckbox
                 isChecked={tenantConsentAccepted}
                 onChange={(checked) => {
@@ -2216,6 +2125,7 @@ export default function TenantManagementTab({
 
     const selectedTierName =
       tierOptions.find((t) => t.id === manageTierId)?.name ?? "";
+    const planDrawerTitle = "Assign Tier";
 
     return (
       <Drawer
@@ -2233,7 +2143,7 @@ export default function TenantManagementTab({
             borderBottomWidth="1px"
             borderColor="gray.200"
           >
-            {`Manage Plan${manageTenant ? ` — ${manageTenant.organisation}` : ""}`}
+            {`${planDrawerTitle}${manageTenant ? ` — ${manageTenant.organisation}` : ""}`}
           </DrawerHeader>
           <DrawerBody py={6}>
             {manageTenant ? (
@@ -2358,7 +2268,7 @@ export default function TenantManagementTab({
                 </FormControl>
               </VStack>
             ) : (
-              <Text>Select an institution to manage plan.</Text>
+              <Text>Select an institution to assign a tier.</Text>
             )}
           </DrawerBody>
           <DrawerFooter

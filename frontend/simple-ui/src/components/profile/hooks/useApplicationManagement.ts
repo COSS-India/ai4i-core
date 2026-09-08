@@ -36,9 +36,11 @@ import {
   keyWouldDropBelowConsumed,
   mapAllocationError,
   mapBelowConsumedError,
+  percentageBoundMessage,
   totalApplicationsOver100,
 } from "../../../config/budgetMessages";
 import { FIELD_HINTS } from "../../../config/fieldHints";
+import type { PercentageBound } from "../../common/PercentageStepper";
 
 const PAGE_SIZE = 25;
 
@@ -211,6 +213,9 @@ function evaluateRowError(
   tenantBudget: number,
 ): string | null {
   if (row.resolvedPct == null) return null;
+  if (row.resolvedPct < 0 || row.resolvedPct > 100) {
+    return BUDGET_VALIDATION.percentageMustBeBetween0And100;
+  }
   if (
     row.consumed_percentage != null &&
     row.resolvedPct < row.consumed_percentage - 1e-6
@@ -526,6 +531,16 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     [tenantBudget, onBulkRowFocus],
   );
 
+  const onBulkPctBoundHit = useCallback((applicationId: string, bound: PercentageBound) => {
+    setBulkRows((prev) =>
+      prev.map((row) =>
+        row.application_id === applicationId && isApplicationBudgetEditable(row.status)
+          ? { ...row, rowError: percentageBoundMessage(bound) }
+          : row,
+      ),
+    );
+  }, []);
+
   const onBulkAmountChange = useCallback(
     (applicationId: string, value: string) => {
       setBulkRows((prev) =>
@@ -662,6 +677,9 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
   const budgetFieldError = useMemo(() => {
     if (budgetParsed === "invalid") return BUDGET_VALIDATION.enterValidPercentage;
     if (budgetParsed != null && budgetParsed < 0) return BUDGET_VALIDATION.budgetCannotBeNegative;
+    if (budgetParsed != null && budgetParsed > 100) {
+      return BUDGET_VALIDATION.percentageMustBeBetween0And100;
+    }
     if (budgetParsed != null && budgetFloor > 0 && budgetParsed < budgetFloor - 1e-6) {
       return belowConsumedPctRaw(budgetFloor);
     }
@@ -677,7 +695,9 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     const pct = parsePct(form.allocated_percentage);
     if (pct === "invalid") errors.allocated_percentage = BUDGET_VALIDATION.enterValidPercentage;
     else if (pct != null && pct < 0) errors.allocated_percentage = BUDGET_VALIDATION.budgetCannotBeNegative;
-    else if (pct != null && pct > remainingPct + 1e-6) {
+    else if (pct != null && pct > 100) {
+      errors.allocated_percentage = BUDGET_VALIDATION.percentageMustBeBetween0And100;
+    } else if (pct != null && pct > remainingPct + 1e-6) {
       errors.allocated_percentage = `Cannot exceed ${remainingPct.toFixed(2)}% still available.`;
     }
     setFormErrors(errors);
@@ -857,13 +877,8 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
       setBudgetDraft(next);
       setBudgetStepperHint(null);
     },
-    onBudgetBoundHit: (bound: "min" | "max") => {
-      if (bound === "min" && budgetFloor > 0) {
-        setBudgetStepperHint(belowConsumedPctRaw(budgetFloor));
-        return;
-      }
-      const wouldBe = budgetOthersAllocated + budgetAvailable + 1;
-      setBudgetStepperHint(totalApplicationsOver100(wouldBe));
+    onBudgetBoundHit: (bound: PercentageBound) => {
+      setBudgetStepperHint(percentageBoundMessage(bound));
     },
     budgetStepperHint,
     budgetLiveTotal,
@@ -881,6 +896,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     openBulkBudget,
     onBulkRowFocus,
     onBulkPctChange,
+    onBulkPctBoundHit,
     onBulkAmountChange,
     handleSaveBulkBudget,
     statusBusyId,

@@ -715,6 +715,7 @@ export default function ApiKeyManagementTab({
         liveTotalPct={budgetEdit.liveTotalPct}
         rows={budgetEdit.rows}
         onPctChange={budgetEdit.onPctChange}
+        onPctBoundHit={budgetEdit.onPctBoundHit}
         onAmountChange={budgetEdit.onAmountChange}
         onSave={() => void budgetEdit.save()}
         canSave={budgetEdit.canSave}

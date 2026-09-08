@@ -26,56 +26,14 @@ import {
   Center,
   Spinner,
   Select,
-  NumberDecrementStepper,
-  NumberIncrementStepper,
-  NumberInput,
-  NumberInputField,
-  NumberInputStepper,
 } from "@chakra-ui/react";
 import { CopyIcon, CloseIcon } from "@chakra-ui/icons";
 import { useCreateApiKeyTab } from "./hooks/useCreateApiKeyTab";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { FIELD_HINTS } from "../../config/fieldHints";
+import { percentageBoundMessage } from "../../config/budgetMessages";
 import FieldHint from "../common/FieldHint";
-
-function PercentageStepper({
-  value,
-  onChange,
-  min = 0,
-  max = 100,
-}: {
-  value: string;
-  onChange: (next: string) => void;
-  min?: number;
-  max?: number;
-}) {
-  const numeric = value.trim() === "" ? null : Number(value);
-  const atMin = numeric != null && Number.isFinite(numeric) && numeric <= min + 1e-6;
-  const atMax = numeric != null && Number.isFinite(numeric) && numeric >= max - 1e-6;
-
-  return (
-    <HStack maxW="180px" spacing={2} align="center">
-      <NumberInput
-        value={value}
-        onChange={(next) => onChange(next)}
-        min={min}
-        max={max}
-        step={1}
-        precision={2}
-        clampValueOnBlur
-        bg="white"
-        w="120px"
-      >
-        <NumberInputField placeholder={FIELD_HINTS.apiKey.budget.placeholder} />
-        <NumberInputStepper>
-          <NumberIncrementStepper cursor={atMax ? "not-allowed" : undefined} />
-          <NumberDecrementStepper cursor={atMin || numeric == null ? "not-allowed" : undefined} />
-        </NumberInputStepper>
-      </NumberInput>
-      <Text color="gray.500" fontWeight="semibold">%</Text>
-    </HStack>
-  );
-}
+import PercentageStepper from "../common/PercentageStepper";
 
 export interface CreateApiKeyTabProps {
   tenantId?: string | null;
@@ -91,8 +49,10 @@ export default function CreateApiKeyTab({
 
   const create = useCreateApiKeyTab({ tenantId, onApiKeyCreated });
   const { copy } = useCopyToClipboard();
+  const [budgetBoundHint, setBudgetBoundHint] = React.useState<string | null>(null);
 
   const isLoading = create.isLoadingPermissions || create.isLoadingApplications;
+  const budgetError = create.fieldErrors.budget || budgetBoundHint;
 
   return (
     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
@@ -246,7 +206,7 @@ export default function CreateApiKeyTab({
               </Box>
             </FormControl>
 
-            <FormControl isRequired isInvalid={Boolean(create.fieldErrors.budget)}>
+            <FormControl isRequired isInvalid={Boolean(budgetError)}>
               <FormLabel fontWeight="semibold">
                 Budget Allocation{" "}
                 <Text as="span" fontWeight="normal" color="gray.500" fontSize="sm">
@@ -255,15 +215,17 @@ export default function CreateApiKeyTab({
               </FormLabel>
               <PercentageStepper
                 value={create.apiKeyForm.allocated_percentage}
-                onChange={(next) =>
+                onChange={(next) => {
+                  setBudgetBoundHint(null);
                   create.setApiKeyForm({
                     ...create.apiKeyForm,
                     allocated_percentage: next,
-                  })
-                }
-                max={create.availablePct}
+                  });
+                }}
+                placeholder={FIELD_HINTS.apiKey.budget.placeholder}
+                onBoundHit={(bound) => setBudgetBoundHint(percentageBoundMessage(bound))}
               />
-              <FieldHint>
+              <FieldHint show={!budgetError}>
                 {FIELD_HINTS.apiKey.budget.helper}
                 {create.apiKeyForm.application_id
                   ? ` Up to ${create.formatAvailablePct()}% available within this Application.`
@@ -274,8 +236,8 @@ export default function CreateApiKeyTab({
                   ≈ {create.budgetPreview} of Application budget
                 </Text>
               )}
-              {create.fieldErrors.budget && (
-                <FormErrorMessage>{create.fieldErrors.budget}</FormErrorMessage>
+              {budgetError && (
+                <FormErrorMessage>{budgetError}</FormErrorMessage>
               )}
             </FormControl>
 
