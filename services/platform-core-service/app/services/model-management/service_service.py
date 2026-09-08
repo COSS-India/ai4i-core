@@ -42,6 +42,7 @@ from app.models.model_management.service import Service
 from app.repositories.model_management.model_repository import ModelRepository
 from app.repositories.model_management.service_repository import ServiceRepository
 from app.schemas.model_management.service import (
+    DESCRIPTION_MAX_LEN,
     ServiceCreateRequest,
     ServiceEndpointUpdateItem,
     ServiceUpdateRequest,
@@ -387,6 +388,11 @@ class ServiceService:
             ),
             existing_task_type=instance.task_type,
             existing_schema=instance.inference_schema,
+        )
+
+        self._validate_description_length_on_update(
+            new_description=payload.description,
+            existing_description=instance.service_description,
         )
 
         # Re-validate against the model schema whenever the endpoint changes,
@@ -808,6 +814,42 @@ class ServiceService:
                 ),
                 code="SCHEMA_TASK_TYPE_MISMATCH",
             )
+
+    def _validate_description_length_on_update(
+        self,
+        *,
+        new_description: Optional[str],
+        existing_description: Optional[str],
+    ) -> None:
+        """Enforces the create-time upper bound (DESCRIPTION_MAX_LEN) on
+        update too, but only against a genuinely changed value.
+
+        The create cap (1bb3c89, 10 Aug 2026) landed over a pre-existing
+        Text column with no DB-level length constraint, so a service
+        created before that date can already have a stored description
+        longer than DESCRIPTION_MAX_LEN. The edit form has no length rule
+        of its own on update (frontend's serviceFormValidation.ts is
+        create-only — see its own docstring) and resends the stored
+        description on every save (useServicesManagement.ts), so a flat
+        `len(new) > DESCRIPTION_MAX_LEN` check here — the same one
+        ServiceCreateRequest applies unconditionally — would 422 an
+        unrelated edit (e.g. just the endpoint) on any such legacy row
+        until the admin manually shortens a field they never touched.
+        Comparing against what's on file, the way
+        `_validate_schema_task_type_consistency_on_update` already does,
+        distinguishes "still too long because nothing changed" (allowed)
+        from "now too long because it just changed" (rejected).
+        """
+        if new_description is None:
+            return
+        if len(new_description) <= DESCRIPTION_MAX_LEN:
+            return
+        if new_description == existing_description:
+            return
+        raise ValidationError(
+            message=f"description must not exceed {DESCRIPTION_MAX_LEN} characters.",
+            code="DESCRIPTION_TOO_LONG",
+        )
 
     async def _validate_endpoint_for_model(
         self,
