@@ -103,6 +103,7 @@ const ServicesManagement: React.FC = () => {
     selectedTiers,
     toggleTier,
     availableTiers,
+    isCreateServiceTabDisabled,
     isCreateFormModelSelected,
     canCreateService,
     isLlmTaskType,
@@ -370,9 +371,28 @@ const ServicesManagement: React.FC = () => {
               <TabList>
                 <Tab fontWeight="semibold">Service Registry</Tab>
                 {!isRegistryReadOnly && (
-                  <Tab fontWeight="semibold">
-                    {editingService ? "Edit Service" : "Create Service"}
-                  </Tab>
+                  <Tooltip
+                    label={
+                      isCreateServiceTabDisabled
+                        ? "No Tier available. Please create a Tier before creating a Service."
+                        : undefined
+                    }
+                    hasArrow
+                    placement="top"
+                    isDisabled={!isCreateServiceTabDisabled}
+                    shouldWrapChildren
+                  >
+                    <Tab
+                      fontWeight="semibold"
+                      isDisabled={isCreateServiceTabDisabled}
+                      _disabled={{
+                        opacity: 0.5,
+                        cursor: "not-allowed",
+                      }}
+                    >
+                      {editingService ? "Edit Service" : "Create Service"}
+                    </Tab>
+                  </Tooltip>
                 )}
                 {isViewingService && (
                   <Tab fontWeight="semibold">View Service</Tab>
