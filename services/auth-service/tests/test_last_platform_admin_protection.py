@@ -24,9 +24,10 @@ def _make_service() -> TenantService:
     user_repo.update = AsyncMock()
     user_repo.save_and_refresh = AsyncMock()
     user_repo.commit = AsyncMock()
-    role_service = MagicMock()
+    role_repo = MagicMock()
+    role_repo.count_admins_in_tenant = AsyncMock(return_value=2)
+    role_service = RoleService(role_repo, MagicMock(), MagicMock())
     role_service.get_user_roles = AsyncMock(return_value=[])
-    role_service.count_admins_in_tenant = AsyncMock(return_value=2)
     return TenantService(
         tenant_repo=tenant_repo,
         user_repo=user_repo,
@@ -73,7 +74,7 @@ class TestAssertNotLastPlatformAdmin:
     async def test_blocks_when_sole_active_admin(self) -> None:
         svc = _make_service()
         svc._roles.get_user_roles = AsyncMock(return_value=[RoleName.ADMIN.value])
-        svc._roles.count_admins_in_tenant = AsyncMock(return_value=1)
+        svc._roles._roles.count_admins_in_tenant = AsyncMock(return_value=1)
         target = _admin_user()
 
         with pytest.raises(HTTPException) as exc_info:
@@ -87,7 +88,7 @@ class TestAssertNotLastPlatformAdmin:
     async def test_delete_message_matches_action(self) -> None:
         svc = _make_service()
         svc._roles.get_user_roles = AsyncMock(return_value=[RoleName.ADMIN.value])
-        svc._roles.count_admins_in_tenant = AsyncMock(return_value=1)
+        svc._roles._roles.count_admins_in_tenant = AsyncMock(return_value=1)
         target = _admin_user()
 
         with pytest.raises(HTTPException) as exc_info:
@@ -99,34 +100,34 @@ class TestAssertNotLastPlatformAdmin:
     async def test_allowed_when_multiple_active_admins(self) -> None:
         svc = _make_service()
         svc._roles.get_user_roles = AsyncMock(return_value=[RoleName.ADMIN.value])
-        svc._roles.count_admins_in_tenant = AsyncMock(return_value=2)
+        svc._roles._roles.count_admins_in_tenant = AsyncMock(return_value=2)
         target = _admin_user()
 
         await svc._assert_not_last_platform_admin(target, _default_org(), action="suspend")
 
-        svc._roles.count_admins_in_tenant.assert_awaited_once_with(1)
+        svc._roles._roles.count_admins_in_tenant.assert_awaited_once_with(1)
 
     @pytest.mark.asyncio
     async def test_skipped_outside_default_organization(self) -> None:
         svc = _make_service()
         svc._roles.get_user_roles = AsyncMock(return_value=[RoleName.ADMIN.value])
-        svc._roles.count_admins_in_tenant = AsyncMock(return_value=1)
+        svc._roles._roles.count_admins_in_tenant = AsyncMock(return_value=1)
         target = _admin_user()
 
         await svc._assert_not_last_platform_admin(target, _other_tenant(), action="delete")
 
-        svc._roles.count_admins_in_tenant.assert_not_awaited()
+        svc._roles._roles.count_admins_in_tenant.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_skipped_when_target_not_admin(self) -> None:
         svc = _make_service()
         svc._roles.get_user_roles = AsyncMock(return_value=[RoleName.MODERATOR.value])
-        svc._roles.count_admins_in_tenant = AsyncMock(return_value=1)
+        svc._roles._roles.count_admins_in_tenant = AsyncMock(return_value=1)
         target = _admin_user()
 
         await svc._assert_not_last_platform_admin(target, _default_org(), action="delete")
 
-        svc._roles.count_admins_in_tenant.assert_not_awaited()
+        svc._roles._roles.count_admins_in_tenant.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_skipped_when_target_already_inactive(self) -> None:
@@ -134,13 +135,13 @@ class TestAssertNotLastPlatformAdmin:
         so acting on them further can't be what drops it to zero."""
         svc = _make_service()
         svc._roles.get_user_roles = AsyncMock(return_value=[RoleName.ADMIN.value])
-        svc._roles.count_admins_in_tenant = AsyncMock(return_value=1)
+        svc._roles._roles.count_admins_in_tenant = AsyncMock(return_value=1)
         target = _admin_user(is_active=False)
 
         await svc._assert_not_last_platform_admin(target, _default_org(), action="delete")
 
         svc._roles.get_user_roles.assert_not_awaited()
-        svc._roles.count_admins_in_tenant.assert_not_awaited()
+        svc._roles._roles.count_admins_in_tenant.assert_not_awaited()
 
 
 class TestUpdateTenantUserStatusPlatformAdminGuard:
@@ -152,7 +153,7 @@ class TestUpdateTenantUserStatusPlatformAdminGuard:
         svc._tenants.get_by_id = AsyncMock(return_value=_default_org())
         svc._load_tenant_user_or_404 = AsyncMock(return_value=target)
         svc._roles.get_user_roles = AsyncMock(return_value=[RoleName.ADMIN.value])
-        svc._roles.count_admins_in_tenant = AsyncMock(return_value=1)
+        svc._roles._roles.count_admins_in_tenant = AsyncMock(return_value=1)
 
         body = MagicMock()
         body.is_active = False
@@ -171,7 +172,7 @@ class TestUpdateTenantUserStatusPlatformAdminGuard:
         svc._tenants.get_by_id = AsyncMock(return_value=_default_org())
         svc._load_tenant_user_or_404 = AsyncMock(return_value=target)
         svc._roles.get_user_roles = AsyncMock(return_value=[RoleName.ADMIN.value])
-        svc._roles.count_admins_in_tenant = AsyncMock(return_value=2)
+        svc._roles._roles.count_admins_in_tenant = AsyncMock(return_value=2)
 
         body = MagicMock()
         body.is_active = False
@@ -189,7 +190,7 @@ class TestUpdateTenantUserStatusPlatformAdminGuard:
         svc._tenants.get_by_id = AsyncMock(return_value=_default_org())
         svc._load_tenant_user_or_404 = AsyncMock(return_value=target)
         svc._roles.get_user_roles = AsyncMock(return_value=[RoleName.ADMIN.value])
-        svc._roles.count_admins_in_tenant = AsyncMock(return_value=1)
+        svc._roles._roles.count_admins_in_tenant = AsyncMock(return_value=1)
 
         body = MagicMock()
         body.is_active = True
@@ -208,7 +209,7 @@ class TestDeleteTenantUserPlatformAdminGuard:
         svc._tenants.get_by_id = AsyncMock(return_value=_default_org())
         svc._load_tenant_user_or_404 = AsyncMock(return_value=target)
         svc._roles.get_user_roles = AsyncMock(return_value=[RoleName.ADMIN.value])
-        svc._roles.count_admins_in_tenant = AsyncMock(return_value=1)
+        svc._roles._roles.count_admins_in_tenant = AsyncMock(return_value=1)
 
         with pytest.raises(HTTPException) as exc_info:
             await svc.delete_tenant_user(_admin_user(), 1, target.id, MagicMock())
@@ -224,7 +225,7 @@ class TestDeleteTenantUserPlatformAdminGuard:
         svc._tenants.get_by_id = AsyncMock(return_value=_default_org())
         svc._load_tenant_user_or_404 = AsyncMock(return_value=target)
         svc._roles.get_user_roles = AsyncMock(return_value=[RoleName.ADMIN.value])
-        svc._roles.count_admins_in_tenant = AsyncMock(return_value=2)
+        svc._roles._roles.count_admins_in_tenant = AsyncMock(return_value=2)
 
         await svc.delete_tenant_user(_admin_user(), 1, target.id, MagicMock())
 
@@ -241,7 +242,7 @@ class TestDeleteTenantUserPlatformAdminGuard:
         svc._tenants.get_by_id = AsyncMock(return_value=_default_org())
         svc._load_tenant_user_or_404 = AsyncMock(return_value=target)
         svc._roles.get_user_roles = AsyncMock(return_value=[RoleName.ADMIN.value])
-        svc._roles.count_admins_in_tenant = AsyncMock(return_value=1)
+        svc._roles._roles.count_admins_in_tenant = AsyncMock(return_value=1)
 
         await svc.delete_tenant_user(_admin_user(), 1, target.id, MagicMock())
 
