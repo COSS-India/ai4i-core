@@ -57,7 +57,7 @@ export const FIELD_HINTS = {
   assignTier: {
     budget: { placeholder: "Enter budget amount", helper: "Must be greater than 0" },
     effectiveFrom: { helper: "Defaults to today; cannot be backdated" },
-    effectiveTo: { helper: "Must be a later date than Effective From" },
+    effectiveTo: { helper: "Must be at least one day after Effective From" },
   },
   model: {
     jsonUpload: {
