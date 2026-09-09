@@ -66,10 +66,8 @@ export type BulkBudgetDraft = {
   consumed_budget: number | null;
   originalPct: number | null;
   pctInput: string;
-  amountInput: string;
   resolvedPct: number | null;
   resolvedAmount: number | null;
-  lastEditMode: "percentage" | "amount";
   keysLoading: boolean;
   keysLoaded: boolean;
   keys: ApplicationApiKeyRow[];
@@ -126,11 +124,6 @@ function pctString(value: number | null): string {
   return String(value);
 }
 
-function amountString(value: number | null): string {
-  if (value == null) return "";
-  return String(value);
-}
-
 function sumAllocatedPercentage(apps: Application[]): number {
   return apps.reduce((sum, app) => sum + (app.allocated_percentage ?? 0), 0);
 }
@@ -138,12 +131,6 @@ function sumAllocatedPercentage(apps: Application[]): number {
 
 function buildAllocationUpdate(row: BulkBudgetDraft): AllocationUpdate | null {
   if (row.resolvedPct == null) return null;
-  if (row.lastEditMode === "amount" && row.resolvedAmount != null) {
-    return {
-      application_id: row.application_id,
-      allocation: { type: "FIXED", value: row.resolvedAmount },
-    };
-  }
   return {
     application_id: row.application_id,
     allocation: { type: "PERCENTAGE", value: row.resolvedPct },
@@ -196,10 +183,8 @@ function buildDraftFromApplication(app: Application): BulkBudgetDraft {
     consumed_budget: app.consumed_budget ?? null,
     originalPct: pct,
     pctInput: pctString(pct),
-    amountInput: amountString(amount),
     resolvedPct: pct,
     resolvedAmount: amount,
-    lastEditMode: "percentage",
     keysLoading: false,
     keysLoaded: false,
     keys: [],
@@ -242,7 +227,6 @@ function evaluateRowError(
 function applyResolved(
   row: BulkBudgetDraft,
   tenantBudget: number,
-  mode: "percentage" | "amount",
   raw: string,
 ): BulkBudgetDraft {
   const trimmed = raw.trim();
@@ -250,7 +234,6 @@ function applyResolved(
     const next = {
       ...row,
       pctInput: "",
-      amountInput: "",
       resolvedPct: null,
       resolvedAmount: null,
       keyPreviews: [],
@@ -262,15 +245,8 @@ function applyResolved(
   if (!Number.isFinite(numeric)) {
     return { ...row, rowError: BUDGET_VALIDATION.enterValidNumber };
   }
-  const resolved = resolveApplicationBudget(mode, numeric, tenantBudget);
+  const resolved = resolveApplicationBudget("percentage", numeric, tenantBudget);
   if (!resolved) {
-    if (mode === "amount") {
-      return {
-        ...row,
-        amountInput: trimmed,
-        rowError: FIELD_HINTS.application.amountRequiresInstitutionBudget,
-      };
-    }
     return { ...row, rowError: BUDGET_VALIDATION.enterValidNumber };
   }
   const keys = row.keys.filter((k) => k.is_active);
@@ -281,7 +257,6 @@ function applyResolved(
   const next: BulkBudgetDraft = {
     ...row,
     pctInput: String(resolved.pct),
-    amountInput: resolved.amount != null ? String(resolved.amount) : "",
     resolvedPct: resolved.pct,
     resolvedAmount: resolved.amount,
     keyPreviews,
@@ -490,7 +465,6 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
           effectiveBudget > 0
         ) {
           draft.resolvedAmount = roundMoney((effectiveBudget * draft.resolvedPct) / 100);
-          draft.amountInput = String(draft.resolvedAmount);
         }
         return draft;
       });
