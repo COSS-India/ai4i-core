@@ -19,6 +19,7 @@ budget top-up must clear a stale budget-exhausted flag) still holds under the
 new implementation, without depending on a table that no longer exists.
 """
 
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -36,11 +37,20 @@ def _admin_user() -> User:
     return User(id=uuid4(), email="test-admin@example.invalid", username=uuid4().hex[:12])
 
 
-def _tenant(*, tier_id=None, allocated_budget=None) -> Tenant:
+def _tenant(*, tier_id=None, allocated_budget=None, budget_effective_from=None, budget_effective_to=None) -> Tenant:
     return Tenant(
         id=1, name="Acme", organisation="Acme", email="test-contact@example.invalid",
         status=TenantStatus.ACTIVE, tier_id=tier_id, allocated_budget=allocated_budget,
+        budget_effective_from=budget_effective_from, budget_effective_to=budget_effective_to,
     )
+
+
+def _valid_window() -> tuple[datetime, datetime]:
+    """A window that always passes assign_tenant_tier's server-side checks
+    (From >= today UTC, To >= From + 1 day), computed at call time so these
+    tests never go stale relative to "today"."""
+    today = datetime.now(timezone.utc)
+    return today, today + timedelta(days=30)
 
 
 def _svc(*, roles=("ADMIN",), allocation_service=None) -> TenantService:
@@ -110,25 +120,58 @@ class TestAssignTenantTierAuthAndValidation:
     @pytest.mark.asyncio
     async def test_non_admin_rejected(self) -> None:
         svc = _svc(roles=["TENANT ADMIN"])
+        efrom, eto = _valid_window()
         with pytest.raises(HTTPException) as exc_info:
-            await svc.assign_tenant_tier(_admin_user(), 1, str(uuid4()), AsyncMock())
+            await svc.assign_tenant_tier(_admin_user(), 1, str(uuid4()), efrom, eto, AsyncMock())
         assert exc_info.value.status_code == 403
         assert exc_info.value.detail["code"] == "INSUFFICIENT_PERMISSIONS"
 
     @pytest.mark.asyncio
     async def test_invalid_uuid_rejected(self) -> None:
         svc = _svc()
+        efrom, eto = _valid_window()
         with pytest.raises(HTTPException) as exc_info:
-            await svc.assign_tenant_tier(_admin_user(), 1, "not-a-uuid", AsyncMock())
+            await svc.assign_tenant_tier(_admin_user(), 1, "not-a-uuid", efrom, eto, AsyncMock())
         assert exc_info.value.status_code == 400
         assert exc_info.value.detail["code"] == "INVALID_TIER_ID"
+
+    @pytest.mark.asyncio
+    async def test_effective_from_in_past_rejected(self) -> None:
+        """From is checked before any DB/platform-core work — a bad window
+        must fail fast without even loading the tenant."""
+        svc = _svc()
+        efrom = datetime.now(timezone.utc) - timedelta(days=1)
+        eto = efrom + timedelta(days=30)
+        with pytest.raises(ValidationError) as exc_info:
+            await svc.assign_tenant_tier(_admin_user(), 1, str(uuid4()), efrom, eto, AsyncMock())
+        assert exc_info.value.code == "EFFECTIVE_FROM_IN_PAST"
+
+    @pytest.mark.asyncio
+    async def test_effective_to_same_day_as_from_rejected(self) -> None:
+        """To must be at least one calendar day after From — same-day is rejected."""
+        svc = _svc()
+        efrom = datetime.now(timezone.utc)
+        eto = efrom + timedelta(hours=2)
+        with pytest.raises(ValidationError) as exc_info:
+            await svc.assign_tenant_tier(_admin_user(), 1, str(uuid4()), efrom, eto, AsyncMock())
+        assert exc_info.value.code == "EFFECTIVE_TO_TOO_SOON"
+
+    @pytest.mark.asyncio
+    async def test_effective_to_before_from_rejected(self) -> None:
+        svc = _svc()
+        efrom = datetime.now(timezone.utc)
+        eto = efrom - timedelta(days=5)
+        with pytest.raises(ValidationError) as exc_info:
+            await svc.assign_tenant_tier(_admin_user(), 1, str(uuid4()), efrom, eto, AsyncMock())
+        assert exc_info.value.code == "EFFECTIVE_TO_TOO_SOON"
 
     @pytest.mark.asyncio
     async def test_platform_core_db_none_rejected(self) -> None:
         svc = _svc()
         svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant())
+        efrom, eto = _valid_window()
         with pytest.raises(ValidationError) as exc_info:
-            await svc.assign_tenant_tier(_admin_user(), 1, str(uuid4()), None)
+            await svc.assign_tenant_tier(_admin_user(), 1, str(uuid4()), efrom, eto, None)
         assert exc_info.value.code == "PLATFORM_CORE_DB_NOT_CONFIGURED"
 
     @pytest.mark.asyncio
@@ -136,24 +179,29 @@ class TestAssignTenantTierAuthAndValidation:
         svc = _svc()
         svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant())
         db = _core_db(tier_row=None)
+        efrom, eto = _valid_window()
         with pytest.raises(HTTPException) as exc_info:
-            await svc.assign_tenant_tier(_admin_user(), 1, str(uuid4()), db)
+            await svc.assign_tenant_tier(_admin_user(), 1, str(uuid4()), efrom, eto, db)
         assert exc_info.value.status_code == 404
         assert exc_info.value.detail["code"] == "TIER_NOT_FOUND"
 
     @pytest.mark.asyncio
     async def test_already_on_tier_rejected(self) -> None:
-        """tenants.tier_id is the sole source of truth now — no second table
-        to check, so this is a straight comparison, not a two-step lookup."""
+        """A true no-op — same tier AND same window (to the day) already on
+        the tenant — is still rejected. tenants.tier_id/budget_effective_*
+        are the sole source of truth now — no second table to check."""
         tier_id = uuid4()
+        efrom, eto = _valid_window()
         svc = _svc()
-        svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant(tier_id=tier_id))
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant(tier_id=tier_id, budget_effective_from=efrom, budget_effective_to=eto)
+        )
         tier_row = MagicMock(id=tier_id)
         tier_row.name = "Gold"
         db = _core_db(tier_row=[tier_row])  # only the tier lookup — no assignment table left to query
 
         with pytest.raises(HTTPException) as exc_info:
-            await svc.assign_tenant_tier(_admin_user(), 1, str(tier_id), db)
+            await svc.assign_tenant_tier(_admin_user(), 1, str(tier_id), efrom, eto, db)
 
         assert exc_info.value.status_code == 409
         assert exc_info.value.detail["code"] == "TENANT_ALREADY_ON_TIER"
@@ -161,6 +209,33 @@ class TestAssignTenantTierAuthAndValidation:
         # Exactly one platform_core_db call (the tier lookup) — confirms no
         # leftover query against the dropped ppu_tenant_tier_assignments table.
         assert db.execute.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_same_tier_new_window_is_allowed(self) -> None:
+        """AI4IDS-2995: renewing the SAME tier with a NEW window must not
+        409 — this is the exact scenario the ticket calls out (same-tier
+        renew after expiry previously failed with 409 TENANT_ALREADY_ON_TIER)."""
+        tier_id = uuid4()
+        old_from = datetime.now(timezone.utc) - timedelta(days=60)
+        old_to = datetime.now(timezone.utc) - timedelta(days=1)  # expired
+        tenant = _tenant(tier_id=tier_id, budget_effective_from=old_from, budget_effective_to=old_to)
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
+        svc._tenants.update = AsyncMock()
+        svc._tenants.save_and_refresh = AsyncMock()
+        tier_row = MagicMock(id=tier_id)
+        tier_row.name = "Gold"
+        db = _core_db(tier_row=[tier_row])
+        new_from, new_to = _valid_window()
+
+        result = await svc.assign_tenant_tier(_admin_user(), 1, str(tier_id), new_from, new_to, db)
+
+        assert result is tenant
+        svc._tenants.update.assert_awaited_once()
+        write = svc._tenants.update.await_args.args[1]
+        assert write["tier_id"] == tier_id
+        assert write["budget_effective_from"] == new_from
+        assert write["budget_effective_to"] == new_to
 
 
 class TestAssignTenantTierReassignment:
@@ -178,12 +253,15 @@ class TestAssignTenantTierReassignment:
         tier_row = MagicMock(id=new_tier_id)
         tier_row.name = "Platinum"
         db = _core_db(tier_row=[tier_row])  # only the tier lookup
+        efrom, eto = _valid_window()
 
-        result = await svc.assign_tenant_tier(_admin_user(), 1, str(new_tier_id), db)
+        result = await svc.assign_tenant_tier(_admin_user(), 1, str(new_tier_id), efrom, eto, db)
 
         assert result is tenant
         svc._tenants.update.assert_awaited_once()
         assert svc._tenants.update.await_args.args[1]["tier_id"] == new_tier_id
+        assert svc._tenants.update.await_args.args[1]["budget_effective_from"] == efrom
+        assert svc._tenants.update.await_args.args[1]["budget_effective_to"] == eto
         svc._tenants.save_and_refresh.assert_awaited_once()
         # No lingering write to any platform_core_db table beyond the tier lookup.
         assert db.execute.await_count == 1
@@ -203,8 +281,9 @@ class TestAssignTenantTierReassignment:
         tier_row = MagicMock(id=new_tier_id)
         tier_row.name = "Gold"
         db = _core_db(tier_row=[tier_row])
+        efrom, eto = _valid_window()
 
-        await svc.assign_tenant_tier(_admin_user(), 1, str(new_tier_id), db)
+        await svc.assign_tenant_tier(_admin_user(), 1, str(new_tier_id), efrom, eto, db)
 
         svc._tenants.update.assert_awaited_once()
         assert svc._tenants.update.await_args.args[1]["tier_id"] == new_tier_id
@@ -212,9 +291,9 @@ class TestAssignTenantTierReassignment:
     @pytest.mark.asyncio
     async def test_reassignment_reconnects_quota_and_cache(self) -> None:
         """Quota flags earned under the old tier must clear, and the cached
-        tier_id must be force-written to the new tier — the actual
-        enforcement-path reconnection this file exists to pin, independent
-        of how the tier itself is now persisted."""
+        tier_id AND effective window must be force-written to the new
+        values — the actual enforcement-path reconnection this file exists
+        to pin, independent of how the tier itself is now persisted."""
         old_tier_id, new_tier_id = uuid4(), uuid4()
         tenant = _tenant(tier_id=old_tier_id)
         svc = _svc()
@@ -224,11 +303,13 @@ class TestAssignTenantTierReassignment:
         tier_row = MagicMock(id=new_tier_id)
         tier_row.name = "Platinum"
         db = _core_db(tier_row=[tier_row])
+        efrom, eto = _valid_window()
 
-        await svc.assign_tenant_tier(_admin_user(), 1, str(new_tier_id), db)
+        await svc.assign_tenant_tier(_admin_user(), 1, str(new_tier_id), efrom, eto, db)
 
         svc._api_keys.clear_quota_flags_for_tenant.assert_awaited_once_with(1)
         svc._api_keys.set_tier_id_for_tenant.assert_awaited_once_with(1, str(new_tier_id))
+        svc._api_keys.set_budget_window_for_tenant.assert_awaited_once_with(1, efrom, eto)
 
     @pytest.mark.asyncio
     async def test_api_keys_service_missing_does_not_block_assignment(self) -> None:
@@ -245,8 +326,9 @@ class TestAssignTenantTierReassignment:
         tier_row = MagicMock(id=new_tier_id)
         tier_row.name = "Gold"
         db = _core_db(tier_row=[tier_row])
+        efrom, eto = _valid_window()
 
-        result = await svc.assign_tenant_tier(_admin_user(), 1, str(new_tier_id), db)
+        result = await svc.assign_tenant_tier(_admin_user(), 1, str(new_tier_id), efrom, eto, db)
 
         assert result is tenant
         svc._tenants.update.assert_awaited_once()

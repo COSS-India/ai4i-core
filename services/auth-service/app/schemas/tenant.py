@@ -363,6 +363,8 @@ class DeleteTenantUserData(BaseSchema):
 
 _TENANT_TIER_ASSIGN_REQUEST_EXAMPLE = {
     "tier_id": "<place your uuid here>",
+    "budget_effective_from": "2026-09-09T00:00:00Z",
+    "budget_effective_to": "2026-10-09T00:00:00Z",
 }
 
 
@@ -375,11 +377,25 @@ class TenantTierAssignRequest(BaseSchema):
     tier_id: str = Field(
         ..., description="Tier UUID (as a string). Replace the example value with a real tier ID from your system."
     )
+    # Both required (AI4IDS-2995): every assign/reassign must now persist an
+    # effective window, not just a tier. The "From >= today" / "To >= From + 1
+    # day" business rules are checked in TenantService.assign_tenant_tier
+    # (needs "today", a moving reference, so it belongs with the other
+    # domain-error codes there — not a static field-format check), same
+    # reasoning as tier_id staying a plain str above.
+    budget_effective_from: datetime = Field(
+        ..., description="Effective start of the tier/budget window (UTC day granularity). Cannot be before today."
+    )
+    budget_effective_to: datetime = Field(
+        ..., description="Effective end of the tier/budget window. Must be at least one calendar day after budget_effective_from."
+    )
 
 
 class TenantTierAssignData(BaseSchema):
     tenant_id: int
     tier_id: UUID
+    budget_effective_from: Optional[datetime] = None
+    budget_effective_to: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     updated_by: Optional[UUID] = None
 

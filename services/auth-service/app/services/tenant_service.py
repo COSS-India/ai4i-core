@@ -9,7 +9,7 @@ repository access and provisioning lives in this file.
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Callable, Dict, Literal, Optional
 from uuid import UUID
@@ -883,11 +883,22 @@ class TenantService:
     # local Tenant row with no cross-DB PPU-assignment bookkeeping and no
     # HTTP round trip to another service.
 
+    @staticmethod
+    def _as_utc(dt: datetime) -> datetime:
+        """Normalize a possibly-naive datetime to UTC-aware, assuming naive
+        input is already UTC (matches every other UTC-boundary check in this
+        service, e.g. _compute_cache_ttl's use of datetime.now(timezone.utc))."""
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+
     async def assign_tenant_tier(
         self,
         current_user: User,
         tenant_id: int,
         tier_id_str: str,
+        budget_effective_from: datetime,
+        budget_effective_to: datetime,
         platform_core_db: Optional[AsyncSession],
     ) -> Tenant:
         """Assign (or reassign) a tenant's tier — PATCH /auth/tenants/{id}/tier.
@@ -895,17 +906,23 @@ class TenantService:
         Restricted to ADMIN: this changes what a tenant is billed against,
         the same trust level as PATCH /auth/tenants/{id}/budget.
 
-        409 TENANT_ALREADY_ON_TIER is raised whenever tenants.tier_id already
-        matches the requested tier. tenants.tier_id is now the SOLE source of
-        truth for a tenant's active tier (create_api_key's NO_ACTIVE_TIER gate
-        already reads only this column, not a separate assignment table) — so
-        this is a single atomic write with no second table to fall out of
-        sync with. Previously this also write-through'd to platform-core's
-        ppu_tenant_tier_assignments (dropped by AI4IDS-2923; see
-        _sync_ppu_wallet_and_exhaustion for the equivalent fix on the budget
-        side) and had to distinguish a genuine no-op from a partial failure
-        between the two writes — that whole class of problem no longer exists
-        with only one write to make.
+        AI4IDS-2995: every assign/reassign now also persists the effective
+        window (budget_effective_from/to), validated server-side (From not
+        before today UTC; To at least one calendar day after From) and
+        write-through'd onto every already-issued API key's cache so the
+        request-time expiry check in routes/validation.py has it without a
+        DB round trip.
+
+        409 TENANT_ALREADY_ON_TIER is now raised only for a genuine no-op —
+        same tier AND same window (UTC day granularity) already on the
+        tenant. A same-tier call with a NEW window is a renewal, not a no-op
+        (e.g. re-upping the same tier after the old window expired), and
+        must be allowed through — see TestAssignTenantTierRenewal.
+        tenants.tier_id/budget_effective_from/to are now the SOLE source of
+        truth for a tenant's active tier+window (create_api_key's
+        NO_ACTIVE_TIER/TIER_BUDGET_EXPIRED gates already read only these
+        columns, not a separate assignment table) — so this is a single
+        atomic write with no second table to fall out of sync with.
         """
         roles = await self._roles.get_user_roles(current_user.id)
         if RoleName.ADMIN.value not in roles:
@@ -922,6 +939,20 @@ class TenantService:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={"code": "INVALID_TIER_ID", "message": "tier_id must be a valid UUID."},
+            )
+
+        effective_from = self._as_utc(budget_effective_from)
+        effective_to = self._as_utc(budget_effective_to)
+        today = datetime.now(timezone.utc).date()
+        if effective_from.date() < today:
+            raise ValidationError(
+                message="budget_effective_from cannot be before today (UTC).",
+                code="EFFECTIVE_FROM_IN_PAST",
+            )
+        if effective_to.date() < effective_from.date() + timedelta(days=1):
+            raise ValidationError(
+                message="budget_effective_to must be at least one calendar day after budget_effective_from.",
+                code="EFFECTIVE_TO_TOO_SOON",
             )
 
         tenant = await self._load_tenant_for_update_or_404(tenant_id)
@@ -943,16 +974,29 @@ class TenantService:
                 detail={"code": "TIER_NOT_FOUND", "message": f"Tier '{tier_id_str}' not found."},
             )
 
-        if tenant.tier_id == tier_uuid:
+        same_tier = tenant.tier_id == tier_uuid
+        same_window = (
+            tenant.budget_effective_from is not None
+            and tenant.budget_effective_to is not None
+            and self._as_utc(tenant.budget_effective_from).date() == effective_from.date()
+            and self._as_utc(tenant.budget_effective_to).date() == effective_to.date()
+        )
+        if same_tier and same_window:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail={
                     "code": "TENANT_ALREADY_ON_TIER",
-                    "message": f"Tenant '{tenant_id}' is already on tier '{row.name}'.",
+                    "message": f"Tenant '{tenant_id}' is already on tier '{row.name}' with this effective window.",
                 },
             )
         await self._tenants.update(
-            tenant, {"tier_id": tier_uuid, "updated_by": current_user.id}
+            tenant,
+            {
+                "tier_id": tier_uuid,
+                "budget_effective_from": effective_from,
+                "budget_effective_to": effective_to,
+                "updated_by": current_user.id,
+            },
         )
         await self._tenants.save_and_refresh(tenant)
 
@@ -963,9 +1007,14 @@ class TenantService:
             # every other cache writer preserves the existing value instead
             # of recomputing it (see _preserved_tier_id), since a tier
             # reassignment is the one case that legitimately changes it for
-            # already-issued keys.
+            # already-issued keys. The effective window is force-written the
+            # same way (see _preserved_budget_window) — this is the one path
+            # allowed to move it for keys issued before this renewal.
             await self._api_keys.clear_quota_flags_for_tenant(tenant_id)
             await self._api_keys.set_tier_id_for_tenant(tenant_id, str(tier_uuid))
+            await self._api_keys.set_budget_window_for_tenant(
+                tenant_id, effective_from, effective_to
+            )
         return tenant
 
     async def _sync_ppu_wallet_and_exhaustion(

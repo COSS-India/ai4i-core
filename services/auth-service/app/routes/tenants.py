@@ -220,11 +220,20 @@ async def assign_tenant_tier(
     Replaces the old POST /pay-per-use/tenant/tier and PATCH
     /pay-per-use/tenant/tier/reassign — now a single idempotent PATCH.
     """
-    tenant = await svc.assign_tenant_tier(current_user, tenant_id, str(body.tier_id), platform_core_db)
+    tenant = await svc.assign_tenant_tier(
+        current_user,
+        tenant_id,
+        str(body.tier_id),
+        body.budget_effective_from,
+        body.budget_effective_to,
+        platform_core_db,
+    )
     return TenantTierAssignResponse(
         data=TenantTierAssignData(
             tenant_id=tenant.id,
             tier_id=tenant.tier_id,
+            budget_effective_from=tenant.budget_effective_from,
+            budget_effective_to=tenant.budget_effective_to,
             updated_at=tenant.updated_at,
             updated_by=tenant.updated_by,
         )

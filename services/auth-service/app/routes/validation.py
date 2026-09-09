@@ -13,6 +13,7 @@ import base64
 import binascii
 import json
 import logging
+from datetime import datetime, timezone
 from urllib.parse import quote
 
 from ai4i_core.ppu import get_catalogue
@@ -202,6 +203,32 @@ async def _validate_api_key(
     application_id = result.get("application_id")
     api_key_id = result.get("id")
     tenant_id = result.get("tenant_id")
+
+    # ── Tier/budget window expiry (AI4IDS-2995) — API-key path only ────────
+    # _validate_jwt is a fully separate function (Portal's "Try it now" uses
+    # the JWT path) — this branch never runs for it, so JWT access stays
+    # available independent of tier/budget expiry, as required.
+    # budget_effective_to is absent for a tenant that's never had a window
+    # set (NULL on tenants, so never write-through'd into cached_data) —
+    # treated as "no expiry", not "expired".
+    budget_effective_to = result.get("budget_effective_to")
+    if budget_effective_to:
+        try:
+            expires_at = datetime.fromisoformat(budget_effective_to)
+        except ValueError:
+            expires_at = None
+        if expires_at is not None:
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) > expires_at:
+                return JSONResponse(
+                    status_code=403,
+                    content=ValidateTokenErrorResponse(
+                        error="TIER_BUDGET_EXPIRED",
+                        message="This institution's tier/budget window has expired. "
+                        "Contact your administrator to renew the tier assignment.",
+                    ).model_dump(),
+                )
 
     # ── PPU enforcement — decided HERE, not in APISIX ──────────────────────
     # APISIX only forward-auths (and rate-limits); a 429 from this endpoint

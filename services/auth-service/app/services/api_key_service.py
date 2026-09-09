@@ -168,6 +168,15 @@ class APIKeyService:
         return await self._repo.get_permission_names_by_ids(list(all_ids))
 
     @staticmethod
+    def _as_utc(dt: datetime) -> datetime:
+        """Normalize a possibly-naive datetime to UTC-aware, assuming naive
+        input is already UTC — matches TenantService._as_utc, the same
+        boundary check used when the effective window is written."""
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+
+    @staticmethod
     def _compute_cache_ttl(db_key: APIKey) -> int:
         """Seconds until ``db_key`` expires, or the configured default TTL
         when it never expires. Never negative."""
@@ -224,6 +233,24 @@ class APIKeyService:
             return {"tier_id": db_key.cached_data["tier_id"]}
         return {}
 
+    @staticmethod
+    def _preserved_budget_window(db_key: APIKey) -> dict:
+        """budget_effective_from/to (AI4IDS-2995), like tier_id, is only safe
+        to force-write from set_budget_window_for_tenant (a genuine tier
+        assign/renew) — every other cache writer (refresh, DB-fallback
+        rehydrate, write-through-while-ineligible) must carry forward
+        whatever's already in cached_data instead of recomputing it from a
+        possibly-stale in-memory tenant row. Without this, any refresh
+        (e.g. reactivation) would silently drop the window that enforcement
+        in routes/validation.py depends on."""
+        if not db_key.cached_data:
+            return {}
+        return {
+            k: db_key.cached_data[k]
+            for k in ("budget_effective_from", "budget_effective_to")
+            if k in db_key.cached_data
+        }
+
     async def _refresh_redis_cache(
         self, db_key: APIKey, tenant_id: Optional[str]
     ) -> None:
@@ -244,7 +271,13 @@ class APIKeyService:
         # keeps both stores converging on the same values instead of just one.
         preserved = {**self._preserved_billing_fields(db_key), **preserved_from_redis}
         payload = self._build_cache_payload(
-            db_key, tenant_id, {**self._preserved_tier_id(db_key), **preserved}
+            db_key,
+            tenant_id,
+            {
+                **self._preserved_tier_id(db_key),
+                **self._preserved_budget_window(db_key),
+                **preserved,
+            },
         )
         await self._cache.set_api_key_cache(db_key.api_key, ttl, payload)
         await self._persist_cache_snapshot(db_key, payload)
@@ -259,7 +292,11 @@ class APIKeyService:
         stale permissions/expiry. Redis is deliberately left alone here —
         only the DB snapshot updates, since the key must not become servable
         again just because its details changed."""
-        payload = self._build_cache_payload(db_key, tenant_id, self._preserved_tier_id(db_key))
+        payload = self._build_cache_payload(
+            db_key,
+            tenant_id,
+            {**self._preserved_tier_id(db_key), **self._preserved_budget_window(db_key)},
+        )
         await self._persist_cache_snapshot(db_key, payload)
 
     async def evict_keys_for_application(self, application_id: int) -> None:
@@ -502,6 +539,30 @@ class APIKeyService:
         """
         await self._patch_all_tenant_key_caches(tenant_id, "tier_id", tier_id)
 
+    async def set_budget_window_for_tenant(
+        self, tenant_id: int, effective_from: datetime, effective_to: datetime
+    ) -> None:
+        """Force-write budget_effective_from/to (AI4IDS-2995) onto every
+        cached API key hash for the tenant, and mirror it onto cached_data —
+        same force-write pattern as set_tier_id_for_tenant, since every other
+        cache writer preserves cached_data's existing window instead of
+        recomputing it (see _preserved_budget_window). An assign/renew is the
+        one case that legitimately moves the window for already-issued keys.
+
+        Stored as ISO-8601 strings (the Redis hash, like every other field
+        here, is string-valued) — routes/validation.py parses
+        budget_effective_to back with datetime.fromisoformat to enforce
+        expiry. budget_effective_from is written through for
+        response/debugging completeness; enforcement only reads
+        budget_effective_to (ticket: "once now > budget_effective_to").
+        """
+        await self._patch_all_tenant_key_caches(
+            tenant_id, "budget_effective_from", effective_from.isoformat()
+        )
+        await self._patch_all_tenant_key_caches(
+            tenant_id, "budget_effective_to", effective_to.isoformat()
+        )
+
     async def reset_all_quota_fields(self) -> None:
         """HDEL every quota-* field from all active API key hashes across all tenants,
         and remove the same fields from cached_data. Called by the monthly cron on
@@ -651,6 +712,21 @@ class APIKeyService:
                 message="API key cannot be created: tenant has no active tier assignment.",
                 code="NO_ACTIVE_TIER",
             )
+        # AI4IDS-2995: a tenant can have an active tier_id but an expired
+        # effective window (renewal not done yet) — block new key issuance
+        # the same way the API-key validation path blocks inference on an
+        # already-issued key. NULL budget_effective_to (a tier assigned
+        # before this feature existed, or via create_tenant with no window
+        # given at all) means "no expiry configured" and is not blocked —
+        # a window that was never set can't yet have been "reached".
+        if tenant.budget_effective_to is not None:
+            to_utc = self._as_utc(tenant.budget_effective_to)
+            if datetime.now(timezone.utc) > to_utc:
+                raise ValidationError(
+                    message="API key cannot be created: the tenant's tier/budget window has expired. "
+                    "An administrator must renew the tier assignment with a new effective window.",
+                    code="TIER_BUDGET_EXPIRED",
+                )
 
         permission_ids = await self._resolve_permission_names(permissions)
 
@@ -902,6 +978,10 @@ class APIKeyService:
                 str(tenant.id),
                 {
                     "tier_id": str(tenant.tier_id),
+                    **({"budget_effective_from": tenant.budget_effective_from.isoformat()}
+                       if tenant.budget_effective_from else {}),
+                    **({"budget_effective_to": tenant.budget_effective_to.isoformat()}
+                       if tenant.budget_effective_to else {}),
                     **({"budget-exhausted": "1"} if exhausted else {}),
                 },
             )
