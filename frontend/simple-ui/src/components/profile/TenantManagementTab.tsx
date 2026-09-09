@@ -26,8 +26,6 @@ import {
   Heading,
   IconButton,
   Input,
-  InputGroup,
-  InputLeftAddon,
   Modal,
   ModalBody,
   ModalCloseButton,
@@ -125,21 +123,9 @@ import {
 import { dash, fmtDate } from "../../utils/valueFormatters";
 import type { TenantUserView, TenantView } from "../../types/tenant";
 
-const BUDGET_MAX_INTEGER_DIGITS = 7;
-
 /** Shown when assigning/reassigning a tier that has no mapped services. */
 const TIER_NO_SERVICES_MSG =
   `This Tier has no services mapped. Please map at least one service before assigning to ${INSTITUTION_ARTICLE} ${INSTITUTION.toLowerCase()}.`;
-
-function clampBudgetInput(raw: string): string {
-  const dotIndex = raw.indexOf(".");
-  const intPart = (dotIndex === -1 ? raw : raw.slice(0, dotIndex)).slice(
-    0,
-    BUDGET_MAX_INTEGER_DIGITS,
-  );
-  const decimalPart = dotIndex === -1 ? "" : raw.slice(dotIndex);
-  return intPart + decimalPart;
-}
 
 function isBudgetAssignmentExpired(tenant: TenantView | null | undefined): boolean {
   if (!tenant?.budget_effective_to) return false;
@@ -291,7 +277,7 @@ export default function TenantManagementTab({
     queryFn: () =>
       fetchAllServicesMatchingFilters({ taskTypes: enabledTaskTypesParam }),
     staleTime: 60_000,
-    enabled: isAdmin && (isViewTierOpen || tm.isTenantModalOpen),
+    enabled: isAdmin && isViewTierOpen,
   });
   const tierIdsWithServices = useMemo(() => {
     const ids = new Set<string>();
@@ -1544,98 +1530,6 @@ export default function TenantManagementTab({
                   {FIELD_HINTS.tenant.phone.helper}
                 </FieldHint>
               </FormControl>
-              <FormControl>
-                <FormLabel>Tier</FormLabel>
-                <TierSelect
-                  value={tm.tenantForm.tier_id}
-                  onChange={(id) =>
-                    tm.setTenantForm({ ...tm.tenantForm, tier_id: id })
-                  }
-                  tierOptions={tierOptions}
-                  serviceMappingsReady={serviceMappingsReady}
-                  tierIdsWithServices={tierIdsWithServices}
-                />
-                <FieldHint>{FIELD_HINTS.tenant.onboardTier.helper}</FieldHint>
-              </FormControl>
-              <FormControl
-                isInvalid={Boolean(tm.tenantFormErrors.allocated_budget)}
-              >
-                <FormLabel>Initial Budget</FormLabel>
-                <InputGroup size="sm">
-                  <InputLeftAddon>₹</InputLeftAddon>
-                  <Input
-                    value={tm.tenantForm.allocated_budget}
-                    onChange={(e) =>
-                      tm.setTenantForm({
-                        ...tm.tenantForm,
-                        allocated_budget: clampBudgetInput(e.target.value),
-                      })
-                    }
-                    placeholder={FIELD_HINTS.tenant.onboardBudget.placeholder}
-                    type="number"
-                    min={0}
-                    step="any"
-                  />
-                </InputGroup>
-                {tm.tenantFormErrors.allocated_budget && (
-                  <FormErrorMessage>
-                    {tm.tenantFormErrors.allocated_budget}
-                  </FormErrorMessage>
-                )}
-                <FieldHint show={!tm.tenantFormErrors.allocated_budget}>
-                  {FIELD_HINTS.tenant.onboardBudget.helper}
-                </FieldHint>
-              </FormControl>
-              <HStack spacing={4} align="flex-start">
-                <FormControl
-                  isInvalid={Boolean(tm.tenantFormErrors.budget_effective_from)}
-                >
-                  <FormLabel>Budget effective from</FormLabel>
-                  <Input
-                    type="date"
-                    size="sm"
-                    value={tm.tenantForm.budget_effective_from}
-                    onChange={(e) =>
-                      tm.setTenantForm({
-                        ...tm.tenantForm,
-                        budget_effective_from: e.target.value,
-                      })
-                    }
-                  />
-                  {tm.tenantFormErrors.budget_effective_from && (
-                    <FormErrorMessage>
-                      {tm.tenantFormErrors.budget_effective_from}
-                    </FormErrorMessage>
-                  )}
-                  <FieldHint show={!tm.tenantFormErrors.budget_effective_from}>
-                    {FIELD_HINTS.tenant.onboardBudgetEffectiveFrom.helper}
-                  </FieldHint>
-                </FormControl>
-                <FormControl
-                  isInvalid={Boolean(tm.tenantFormErrors.budget_effective_to)}
-                >
-                  <FormLabel>Budget effective to</FormLabel>
-                  <Input
-                    type="date"
-                    size="sm"
-                    value={tm.tenantForm.budget_effective_to}
-                    onChange={(e) =>
-                      tm.setTenantForm({
-                        ...tm.tenantForm,
-                        budget_effective_to: e.target.value,
-                      })
-                    }
-                  />
-                  {tm.tenantFormErrors.budget_effective_to && (
-                    <FormErrorMessage>
-                      {tm.tenantFormErrors.budget_effective_to}
-                    </FormErrorMessage>
-                  )}
-                  <FieldHint show={!tm.tenantFormErrors.budget_effective_to}>
-                    {FIELD_HINTS.tenant.onboardBudgetEffectiveTo.helper}
-                  </FieldHint>
-                </FormControl>
-              </HStack>
               <ConsentCheckbox
                 isChecked={tenantConsentAccepted}
                 onChange={(checked) => {
@@ -2293,8 +2187,8 @@ export default function TenantManagementTab({
                     <AlertIcon />
                     <AlertDescription fontSize="sm">
                       Previous tier/budget assignment has expired. API key
-                      access may be blocked until a new budget window is set
-                      (configured at institution onboarding).
+                      access may be blocked until a new budget window is
+                      available.
                     </AlertDescription>
                   </Alert>
                 )}
@@ -2355,8 +2249,8 @@ export default function TenantManagementTab({
                       cursor="default"
                     />
                     <FieldHint>
-                      Set at institution onboarding; not editable when changing
-                      tier.
+                      Budget window is set with the institution plan; not
+                      editable when changing tier.
                     </FieldHint>
                   </FormControl>
                 )}

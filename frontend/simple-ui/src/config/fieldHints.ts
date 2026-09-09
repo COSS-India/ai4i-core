@@ -31,19 +31,6 @@ export const FIELD_HINTS = {
       "If you change the contact email, the update takes effect only after the new address is verified.",
     emailPendingOnly: `The contact email can only be corrected while the ${org} is pending verification.`,
     planAppliesImmediately: "Tier and Budget changes apply immediately.",
-    onboardTier: {
-      helper: `Optional. Assign a pay-per-use tier when onboarding this ${org}.`,
-    },
-    onboardBudget: {
-      placeholder: "Enter budget amount",
-      helper: "Optional. Initial budget in ₹; must be 0 or greater when set.",
-    },
-    onboardBudgetEffectiveFrom: {
-      helper: "Optional. Start of the budget window; defaults can be set later in Manage Plan.",
-    },
-    onboardBudgetEffectiveTo: {
-      helper: "Optional. End of the budget window; must be after Effective From when both are set.",
-    },
   },
   tenantUser: {
     tenant: { helper: `Auto-filled from selected ${org}` },
