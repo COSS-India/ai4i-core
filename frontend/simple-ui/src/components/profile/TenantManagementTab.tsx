@@ -123,11 +123,6 @@ import {
   isDefaultTenant,
 } from "../../utils/defaultTenant";
 import { dash, fmtDate } from "../../utils/valueFormatters";
-import {
-  addDaysToDateInputValue,
-  dateInputToEndOfDayIso,
-  dateInputToStartOfDayIso,
-} from "../../utils/helpers";
 import type { TenantUserView, TenantView } from "../../types/tenant";
 
 const BUDGET_MAX_INTEGER_DIGITS = 7;
@@ -144,17 +139,6 @@ function clampBudgetInput(raw: string): string {
   );
   const decimalPart = dotIndex === -1 ? "" : raw.slice(dotIndex);
   return intPart + decimalPart;
-}
-
-function utcTodayDateInput(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function isoToDateInput(iso?: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toISOString().slice(0, 10);
 }
 
 function isBudgetAssignmentExpired(tenant: TenantView | null | undefined): boolean {
@@ -340,10 +324,6 @@ export default function TenantManagementTab({
   );
   const [isEditingTier, setIsEditingTier] = useState(false);
   const [budgetAmount, setBudgetAmount] = useState("");
-  const [manageEffectiveFrom, setManageEffectiveFrom] = useState("");
-  const [manageEffectiveTo, setManageEffectiveTo] = useState("");
-  const [originalEffectiveFrom, setOriginalEffectiveFrom] = useState("");
-  const [originalEffectiveTo, setOriginalEffectiveTo] = useState("");
   const [managePlanError, setManagePlanError] = useState<string | null>(null);
 
   const userFormRoleOptions = useMemo(() => {
@@ -409,16 +389,6 @@ export default function TenantManagementTab({
       if (manageTenant?.tenant_id === tenantId) {
         setManageTenant(fresh);
         setManageBudget(tenantBudgetNumber(fresh) ?? 0);
-        const from = isoToDateInput(fresh.budget_effective_from);
-        const to = isoToDateInput(fresh.budget_effective_to);
-        if (from) {
-          setManageEffectiveFrom(from);
-          setOriginalEffectiveFrom(from);
-        }
-        if (to) {
-          setManageEffectiveTo(to);
-          setOriginalEffectiveTo(to);
-        }
       }
     }
   };
@@ -439,22 +409,6 @@ export default function TenantManagementTab({
     setManageBudget(tenantBudgetNumber(tenant) ?? 0);
     setBudgetAmount("");
     setBudgetAction("topup");
-    const from =
-      !expired && (tenant.budget_effective_from || assignment?.budget_effective_from)
-        ? isoToDateInput(
-            tenant.budget_effective_from ?? assignment?.budget_effective_from,
-          )
-        : utcTodayDateInput();
-    const to =
-      !expired && (tenant.budget_effective_to || assignment?.budget_effective_to)
-        ? isoToDateInput(
-            tenant.budget_effective_to ?? assignment?.budget_effective_to,
-          )
-        : "";
-    setManageEffectiveFrom(from);
-    setManageEffectiveTo(to);
-    setOriginalEffectiveFrom(from);
-    setOriginalEffectiveTo(to);
     setManagePlanError(null);
     onViewTierOpen();
   };
@@ -471,10 +425,6 @@ export default function TenantManagementTab({
 
     setBudgetAmount("");
     setBudgetAction("topup");
-    setManageEffectiveFrom("");
-    setManageEffectiveTo("");
-    setOriginalEffectiveFrom("");
-    setOriginalEffectiveTo("");
     setManagePlanError(null);
   };
 
@@ -513,36 +463,6 @@ export default function TenantManagementTab({
       return;
     }
 
-    const today = utcTodayDateInput();
-    if (!manageEffectiveFrom || !manageEffectiveTo) {
-      setManagePlanError("Effective From and Effective To are required.");
-      return;
-    }
-    const fromChanged = manageEffectiveFrom !== originalEffectiveFrom;
-    if (fromChanged && manageEffectiveFrom < today) {
-      setManagePlanError("Effective From cannot be in the past.");
-      return;
-    }
-    if (manageEffectiveFrom === manageEffectiveTo) {
-      setManagePlanError(
-        "Effective From and Effective To cannot be the same date.",
-      );
-      return;
-    }
-    const effectiveFromIso = dateInputToStartOfDayIso(manageEffectiveFrom);
-    const effectiveToIso = dateInputToEndOfDayIso(manageEffectiveTo);
-    if (new Date(effectiveToIso) <= new Date(effectiveFromIso)) {
-      setManagePlanError("Effective To must be after Effective From.");
-      return;
-    }
-    // Effective To must be at least one calendar day after Effective From.
-    if (manageEffectiveTo < addDaysToDateInputValue(manageEffectiveFrom, 1)) {
-      setManagePlanError(
-        "Effective To must be at least one day after Effective From.",
-      );
-      return;
-    }
-
     setIsSavingPlan(true);
     setManagePlanError(null);
     try {
@@ -557,8 +477,6 @@ export default function TenantManagementTab({
       await queryClient.refetchQueries({ queryKey: ["tenant-tiers"] });
       await syncTenantAfterPlanChange(manageTenant.tenant_id);
       setOriginalTierId(manageTierId);
-      setOriginalEffectiveFrom(manageEffectiveFrom);
-      setOriginalEffectiveTo(manageEffectiveTo);
       setIsEditingTier(false);
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: unknown } } })
@@ -1669,7 +1587,9 @@ export default function TenantManagementTab({
                 </FieldHint>
               </FormControl>
               <HStack spacing={4} align="flex-start">
-                <FormControl>
+                <FormControl
+                  isInvalid={Boolean(tm.tenantFormErrors.budget_effective_from)}
+                >
                   <FormLabel>Budget effective from</FormLabel>
                   <Input
                     type="date"
@@ -1682,11 +1602,18 @@ export default function TenantManagementTab({
                       })
                     }
                   />
-                  <FieldHint>
+                  {tm.tenantFormErrors.budget_effective_from && (
+                    <FormErrorMessage>
+                      {tm.tenantFormErrors.budget_effective_from}
+                    </FormErrorMessage>
+                  )}
+                  <FieldHint show={!tm.tenantFormErrors.budget_effective_from}>
                     {FIELD_HINTS.tenant.onboardBudgetEffectiveFrom.helper}
                   </FieldHint>
                 </FormControl>
-                <FormControl>
+                <FormControl
+                  isInvalid={Boolean(tm.tenantFormErrors.budget_effective_to)}
+                >
                   <FormLabel>Budget effective to</FormLabel>
                   <Input
                     type="date"
@@ -1699,7 +1626,12 @@ export default function TenantManagementTab({
                       })
                     }
                   />
-                  <FieldHint>
+                  {tm.tenantFormErrors.budget_effective_to && (
+                    <FormErrorMessage>
+                      {tm.tenantFormErrors.budget_effective_to}
+                    </FormErrorMessage>
+                  )}
+                  <FieldHint show={!tm.tenantFormErrors.budget_effective_to}>
                     {FIELD_HINTS.tenant.onboardBudgetEffectiveTo.helper}
                   </FieldHint>
                 </FormControl>
@@ -2313,8 +2245,7 @@ export default function TenantManagementTab({
       serviceMappingsReady &&
       !tierIdsWithServices.has(String(manageTierId));
 
-    // Dates are validated on the FE before save; persistence of the window is BE.
-    // Save is only enabled when the tier itself changes.
+    // PATCH /tenants/{id}/tier accepts tier_id only — Save when the tier changes.
     const showSaveButton = isEditingTier && hasTierChanged && !!manageTierId;
 
     const selectedTierName =
@@ -2323,17 +2254,10 @@ export default function TenantManagementTab({
       manageTenant && hasActiveTierAssignment(manageTenant)
         ? "Manage Plan"
         : "Assign Tier";
-    const today = utcTodayDateInput();
-    const effectiveFromMinDate =
-      originalEffectiveFrom && originalEffectiveFrom < today
-        ? originalEffectiveFrom
-        : today;
-    const effectiveToMinDate = manageEffectiveFrom
-      ? (() => {
-          const dayAfterFrom = addDaysToDateInputValue(manageEffectiveFrom, 1);
-          return dayAfterFrom > today ? dayAfterFrom : today;
-        })()
-      : today;
+    const budgetWindowLabel =
+      manageTenant?.budget_effective_from || manageTenant?.budget_effective_to
+        ? `${fmtDate(manageTenant.budget_effective_from)} — ${fmtDate(manageTenant.budget_effective_to)}`
+        : null;
 
     return (
       <Drawer
@@ -2368,8 +2292,9 @@ export default function TenantManagementTab({
                   <Alert status="warning" borderRadius="md">
                     <AlertIcon />
                     <AlertDescription fontSize="sm">
-                      Previous tier/budget assignment has expired. Assign a new
-                      effective window to restore API key access.
+                      Previous tier/budget assignment has expired. API key
+                      access may be blocked until a new budget window is set
+                      (configured at institution onboarding).
                     </AlertDescription>
                   </Alert>
                 )}
@@ -2417,46 +2342,24 @@ export default function TenantManagementTab({
                   )}
                 </FormControl>
 
-                <HStack spacing={4} align="flex-start">
-                  <FormControl isRequired>
+                {budgetWindowLabel && (
+                  <FormControl>
                     <FormLabel fontWeight="semibold" fontSize="sm">
-                      Effective From
+                      Budget window
                     </FormLabel>
                     <Input
-                      type="date"
                       size="sm"
-                      value={manageEffectiveFrom}
-                      min={effectiveFromMinDate}
-                      onChange={(e) => {
-                        setManageEffectiveFrom(e.target.value);
-                        setManagePlanError(null);
-                      }}
-                      isDisabled={isSavingPlan}
+                      value={budgetWindowLabel}
+                      isReadOnly
+                      bg="gray.50"
+                      cursor="default"
                     />
                     <FieldHint>
-                      {FIELD_HINTS.assignTier.effectiveFrom.helper}
+                      Set at institution onboarding; not editable when changing
+                      tier.
                     </FieldHint>
                   </FormControl>
-                  <FormControl isRequired>
-                    <FormLabel fontWeight="semibold" fontSize="sm">
-                      Effective To
-                    </FormLabel>
-                    <Input
-                      type="date"
-                      size="sm"
-                      value={manageEffectiveTo}
-                      min={effectiveToMinDate}
-                      onChange={(e) => {
-                        setManageEffectiveTo(e.target.value);
-                        setManagePlanError(null);
-                      }}
-                      isDisabled={isSavingPlan}
-                    />
-                    <FieldHint>
-                      {FIELD_HINTS.assignTier.effectiveTo.helper}
-                    </FieldHint>
-                  </FormControl>
-                </HStack>
+                )}
 
                 <FormControl>
                   <FormLabel fontWeight="semibold" fontSize="sm">
@@ -2550,8 +2453,6 @@ export default function TenantManagementTab({
                 loadingText="Saving..."
                 isDisabled={
                   !manageTierId ||
-                  !manageEffectiveFrom ||
-                  !manageEffectiveTo ||
                   manageTierHasNoServices ||
                   servicesForTiersQuery.isLoading ||
                   servicesForTiersQuery.isError

@@ -99,12 +99,21 @@ const ServicesManagement: React.FC = () => {
     setPricePerUnit,
     unitSize,
     setUnitSize,
+    currency,
+    setCurrency,
     selectedTiers,
     toggleTier,
     availableTiers,
+    isCreateServiceTabDisabled,
     isCreateFormModelSelected,
     canCreateService,
+    isLlmTaskType,
     serviceIdError,
+    serviceIdLengthError,
+    serviceDescriptionError,
+    serviceNameError,
+    hardwareDescriptionError,
+    createFormEpoch,
     isSubmitting,
     handleSubmit,
     handleCancelForm,
@@ -354,7 +363,15 @@ const ServicesManagement: React.FC = () => {
               <TabList>
                 <Tab fontWeight="semibold">Service Registry</Tab>
                 {!isRegistryReadOnly && (
-                  <Tab fontWeight="semibold">
+                  <Tab
+                    fontWeight="semibold"
+                    isDisabled={isCreateServiceTabDisabled}
+                    title={
+                      isCreateServiceTabDisabled
+                        ? "Create at least one Tier before creating a Service."
+                        : undefined
+                    }
+                  >
                     {editingService ? "Edit Service" : "Create Service"}
                   </Tab>
                 )}
@@ -395,6 +412,9 @@ const ServicesManagement: React.FC = () => {
                 {!isRegistryReadOnly && (
                   <TabPanel px={0} pt={6}>
                     <ServiceFormTab
+                      // Remount on reset/edit-load so no field is left
+                      // marked as blurred from the previous form.
+                      key={createFormEpoch}
                       cardBg={cardBg}
                       cardBorder={cardBorder}
                       editingService={editingService}
@@ -410,12 +430,19 @@ const ServicesManagement: React.FC = () => {
                       onPricePerUnitChange={setPricePerUnit}
                       unitSize={unitSize}
                       onUnitSizeChange={setUnitSize}
+                      currency={currency}
+                      onCurrencyChange={setCurrency}
                       selectedTiers={selectedTiers}
                       onToggleTier={toggleTier}
                       availableTiers={availableTiers}
                       isCreateFormModelSelected={isCreateFormModelSelected}
                       canCreateService={canCreateService}
+                      isLlmTaskType={isLlmTaskType}
                       serviceIdError={serviceIdError}
+                      serviceIdLengthError={serviceIdLengthError}
+                      serviceDescriptionError={serviceDescriptionError}
+                      serviceNameError={serviceNameError}
+                      hardwareDescriptionError={hardwareDescriptionError}
                       isSubmitting={isSubmitting}
                       onSubmit={handleSubmit}
                       onCancel={handleCancelForm}

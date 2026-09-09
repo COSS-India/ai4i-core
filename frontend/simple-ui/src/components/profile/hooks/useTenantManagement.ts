@@ -26,6 +26,11 @@ import {
   validateOrganisationUnique,
 } from "../../../utils/tenantFormValidation";
 import {
+  addDaysToDateInputValue,
+  dateInputToEndOfDayIso,
+  dateInputToStartOfDayIso,
+} from "../../../utils/helpers";
+import {
   INSTITUTION,
   TENANT,
   TENANT_ADMIN_UPDATABLE_STATUSES,
@@ -128,12 +133,17 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   // Create tenant modal
   const [isTenantModalOpen, setIsTenantModalOpen] = useState(false);
-  const [tenantForm, setTenantForm] = useState<TenantFormState>({
+  const emptyTenantForm = (): TenantFormState => ({
     organisation: "",
     contact_name: "",
     email: "",
     phone_number: "",
+    tier_id: "",
+    allocated_budget: "",
+    budget_effective_from: "",
+    budget_effective_to: "",
   });
+  const [tenantForm, setTenantForm] = useState<TenantFormState>(emptyTenantForm);
   const [tenantFormErrors, setTenantFormErrors] = useState<
     Record<string, string>
   >({});
@@ -619,12 +629,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   // ----- Create tenant -----
   const openTenantModal = () => {
-    setTenantForm({
-      organisation: "",
-      contact_name: "",
-      email: "",
-      phone_number: "",
-    });
+    setTenantForm(emptyTenantForm());
     setTenantFormErrors({});
     createTenantEmailAvailability.clear();
     setIsTenantModalOpen(true);
@@ -772,6 +777,29 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (emailError) errors.email = emailError;
     const phoneError = validateE164Phone(tenantForm.phone_number);
     if (phoneError) errors.phone_number = phoneError;
+
+    const budgetRaw = tenantForm.allocated_budget.trim();
+    if (budgetRaw) {
+      const budget = Number(budgetRaw);
+      if (!Number.isFinite(budget) || budget < 0) {
+        errors.allocated_budget = "Budget must be 0 or greater.";
+      }
+    }
+
+    const from = tenantForm.budget_effective_from.trim();
+    const to = tenantForm.budget_effective_to.trim();
+    if ((from && !to) || (!from && to)) {
+      errors.budget_effective_to =
+        "Both Effective From and Effective To are required when setting a budget window.";
+    } else if (from && to) {
+      if (from === to) {
+        errors.budget_effective_to =
+          "Effective From and Effective To cannot be the same date.";
+      } else if (to < addDaysToDateInputValue(from, 1)) {
+        errors.budget_effective_to =
+          "Effective To must be at least one day after Effective From.";
+      }
+    }
     return errors;
   };
 
@@ -860,6 +888,24 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         email: tenantForm.email.trim(),
         phone_number: tenantForm.phone_number.trim() || undefined,
       };
+      if (tenantForm.tier_id.trim()) {
+        payload.tier_id = tenantForm.tier_id.trim();
+      }
+      const budgetRaw = tenantForm.allocated_budget.trim();
+      if (budgetRaw) {
+        const budget = Number(budgetRaw);
+        if (Number.isFinite(budget)) payload.allocated_budget = budget;
+      }
+      if (tenantForm.budget_effective_from.trim()) {
+        payload.budget_effective_from = dateInputToStartOfDayIso(
+          tenantForm.budget_effective_from.trim(),
+        );
+      }
+      if (tenantForm.budget_effective_to.trim()) {
+        payload.budget_effective_to = dateInputToEndOfDayIso(
+          tenantForm.budget_effective_to.trim(),
+        );
+      }
       const created = await tenantService.registerTenant(payload);
       setTenants((prev) => {
         if (prev.some((t) => t.tenant_id === created.tenant_id)) return prev;
@@ -1060,6 +1106,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     tenantForm.contact_name,
     tenantForm.email,
     tenantForm.phone_number,
+    tenantForm.allocated_budget,
+    tenantForm.budget_effective_from,
+    tenantForm.budget_effective_to,
     knownTenantEmails,
     knownUserEmails,
     tenants,
