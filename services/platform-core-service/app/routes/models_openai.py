@@ -3,10 +3,14 @@ OpenAI-compatible model listing.
 
 Served at ``GET /api/v1/models`` so a client can use
 ``base_url="https://<host>/api/v1"``. The platform's own model catalogue moved
-to ``GET /api/v1/modellist``.
+to ``GET /api/v1/models/list``.
 
-Each entry is an ACTIVE, published LLM service. ``id`` is the service ``name``
-(e.g. ``google/gemma-4-E4B-it``), matching how OpenAI ids read.
+Each entry is an ACTIVE, published LLM service. ``id`` is the ``serviceId`` —
+the value the chat proxy resolves out of an OpenAI ``model`` field — so a
+client can list here and post the id straight back to chat completions
+without translation. Service ``name`` is unsuitable as an id: it is free
+text that routinely contains slashes (``llm/bharathi``,
+``test-llm-aug6-3/``) and is not what the proxy looks up.
 """
 
 import logging
@@ -64,7 +68,7 @@ async def list_models_openai(
     items, _ = await svc.list_services(task_types=[_TASK_TYPE], is_published=True)
     data = [
         OpenAIModel(
-            id=item["name"],
+            id=item["serviceId"],
             object="model",
             created=_created_unix(item.get("createdAt")),
             owned_by=item.get("createdBy") or _DEFAULT_OWNER,
