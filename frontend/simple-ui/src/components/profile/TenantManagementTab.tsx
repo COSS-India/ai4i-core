@@ -25,6 +25,7 @@ import {
   HStack,
   Heading,
   IconButton,
+  Image,
   Input,
   Modal,
   ModalBody,
@@ -65,10 +66,10 @@ import {
   FiArrowLeft,
   FiEdit2,
   FiMail,
+  FiMinusCircle,
   FiPauseCircle,
   FiPlus,
   FiPower,
-  FiSliders,
   FiUserPlus,
 } from "react-icons/fi";
 import {
@@ -1165,7 +1166,13 @@ export default function TenantManagementTab({
   function renderTenantRowActions(t: TenantView) {
     const stopRowClick = (e: React.MouseEvent) => e.stopPropagation();
     const isProtectedDefaultOrg = isDefaultTenant(t);
-    const planActionLabel = "Assign Tier";
+    const tierAssignment = resolveTenantTierAssignment(
+      t,
+      tenantTierAssignments,
+      tierOptions,
+    );
+    const hasTier = Boolean(t.tier_id ?? tierAssignment?.tier_id);
+    const planActionLabel = hasTier ? "Manage Tier" : "Assign Tier";
 
     const items: RowActionMenuItem[] = (() => {
       if (isTenantStatus(t.status, TENANT.STATUS.PENDING)) {
@@ -1188,7 +1195,7 @@ export default function TenantManagementTab({
               tm.handleOpenTenantStatus(t, TENANT.STATUS.DEACTIVATED),
             color: "red.600",
             hoverBg: "red.50",
-            icon: <DeleteIcon boxSize={4} />,
+            icon: <FiMinusCircle size={16} />,
           });
         }
         return pendingItems;
@@ -1213,7 +1220,7 @@ export default function TenantManagementTab({
               tm.handleOpenTenantStatus(t, TENANT.STATUS.DEACTIVATED),
             color: "red.600",
             hoverBg: "red.50",
-            icon: <DeleteIcon boxSize={4} />,
+            icon: <FiMinusCircle size={16} />,
           },
         ];
       }
@@ -1237,7 +1244,7 @@ export default function TenantManagementTab({
               tm.handleOpenTenantStatus(t, TENANT.STATUS.DEACTIVATED),
             color: "red.600",
             hoverBg: "red.50",
-            icon: <DeleteIcon boxSize={4} />,
+            icon: <FiMinusCircle size={16} />,
           });
         }
         return suspendedItems;
@@ -1289,15 +1296,22 @@ export default function TenantManagementTab({
         <Tooltip label={planActionLabel}>
           <IconButton
             aria-label={planActionLabel}
-            icon={<FiSliders size={14} />}
-            size="xs"
-            w={4}
-            h={4}
-            minW={4}
-            variant="outline"
-            colorScheme="blue"
+            icon={
+              <Image
+                src={
+                  hasTier
+                    ? "/assests/icons/tier-assigned.svg"
+                    : "/assests/icons/tier-unassigned.svg"
+                }
+                alt=""
+                boxSize="24px"
+              />
+            }
+            size="sm"
+            variant="ghost"
+            colorScheme="gray"
             borderRadius="full"
-            _hover={{ bg: "blue.50" }}
+            _hover={{ bg: "gray.100" }}
             onClick={(e) => {
               stopRowClick(e);
               openManagePlan(t);
@@ -2125,7 +2139,7 @@ export default function TenantManagementTab({
 
     const selectedTierName =
       tierOptions.find((t) => t.id === manageTierId)?.name ?? "";
-    const planDrawerTitle = "Assign Tier";
+    const planDrawerTitle = originalTierId ? "Manage Tier" : "Assign Tier";
 
     return (
       <Drawer

@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="21.75 -0.25 110.5 110.5" fill="none">
+  <!-- Tier assigned: star medal + check badge. Art as supplied by design;
+       only the viewBox was tightened to the content bounds (was 0 0 150 128,
+       which letterboxed the glyph inside a 32px button) and squared to the
+       same 110.5 side as tier-unassigned.svg so the two states render at
+       identical scale. -->
+
+  <!-- Ribbon tails -->
+  <path
+    d="M38 57 L31 96 L55 82 L79 96 L72 57 Z"
+    fill="#716AB8"
+    stroke="#A9A4E8"
+    stroke-width="2.5"
+    stroke-linejoin="round"
+  />
+
+  <!-- Star medal -->
+  <circle
+    cx="55"
+    cy="42"
+    r="29"
+    fill="#443B91"
+    stroke="#AAA5E9"
+    stroke-width="5"
+  />
+
+  <path
+    d="M55 23 L60.7 35.2 L74 36.8 L64.2 45.8 L66.8 59 L55 52.3 L43.2 59 L45.8 45.8 L36 36.8 L49.3 35.2 Z"
+    fill="#F7F7F5"
+  />
+
+  <!-- Check badge -->
+  <circle
+    cx="108"
+    cy="77"
+    r="20"
+    fill="#443B91"
+    stroke="#AAA5E9"
+    stroke-width="5"
+  />
+
+  <path
+    d="M98 77 L105 85 L119 66"
+    stroke="#F7F7F5"
+    stroke-width="5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>
