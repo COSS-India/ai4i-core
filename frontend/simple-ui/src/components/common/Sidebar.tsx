@@ -3,33 +3,23 @@
 import {
   Box,
   Button,
-  Collapse,
   Divider,
   Heading,
   Icon,
-  Text,
   useColorModeValue,
   VStack,
 } from "@chakra-ui/react";
 import { useRouter } from "next/router";
 import React, { useCallback, useMemo, useState } from "react";
 import { IconType } from "react-icons";
-import { FaMicrophone } from "react-icons/fa";
 import {
-  IoHomeOutline,
+  IoCompassOutline,
   IoKeyOutline,
-  IoLanguageOutline,
-  IoSparklesOutline,
-  IoVolumeHighOutline,
   IoServerOutline,
   IoDocumentTextOutline,
-  IoSwapHorizontalOutline,
-  IoGlobeOutline,
   IoPeopleOutline,
-  IoRadioOutline,
   IoPricetagOutline,
   IoAppsOutline,
-  IoChevronDownOutline,
   IoPulseOutline,
   // Restore with Alerts / PII Guardrail nav items
   // IoNotificationsOutline,
@@ -37,11 +27,8 @@ import {
   IoFolderOpenOutline,
   IoStatsChartOutline,
 } from "react-icons/io5";
-import { INSTITUTION, MODEL_TASK_TYPE_NAV_LABEL, TABS } from "../../config/constants";
-import { getServiceTitle } from "../../config/serviceMetadata";
+import { INSTITUTION, TABS } from "../../config/constants";
 import { useAuth } from "../../hooks/useAuth";
-import { useGuestServices } from "../../hooks/useGuestServices";
-import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { getTenantIdFromToken } from "../../utils/helpers";
 import { getHomePath, getUsageDashboardOverviewPath } from "../../utils/navigation";
@@ -49,88 +36,14 @@ import {
   canAccessInstitutionManagement,
   canAccessServicesManagement,
   canAccessUsageDashboard,
-  canSeeServiceCards,
   isPlatformAdminUser,
   isTenantAdminUser,
   isUsageDashboardOnlyUser,
   userMayManageApiKeys,
 } from "../../utils/rbac";
 import AdopterLogo from "./AdopterLogo";
-import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
 
 const safeColorMap = {
-  [TABS.asr]: { // Coral → Pastel Coral
-    50:  "#FFE9E2",
-    300: "#FFB8A4",
-    400: "#FF9C86",
-    600: "#FF7A61",
-  },
-  [TABS.tts]: { // Royal Blue → Pastel Blue
-    50:  "#EAF0FF",
-    300: "#B3C7FF",
-    400: "#8CAEFF",
-    600: "#668FFF",
-  },
-  [TABS.nmt]: { // Emerald → Pastel Mint
-    50:  "#E7FAF1",
-    300: "#B3EFD4",
-    400: "#90E6C0",
-    600: "#6AD2A7",
-  },
-  [TABS.llm]: { // Magenta → Pastel Pink/Magenta
-    50:  "#FFE6FA",
-    300: "#FFB3EB",
-    400: "#FF8CDE",
-    600: "#F061C8",
-  },
-  [TABS.pipeline]: { // Purple → Pastel Lilac
-    50:  "#F8F0FA",
-    300: "#E4C9EE",
-    400: "#D8AFE8",
-    600: "#C08BD8",
-  },
-  [TABS.ocr]: { // Teal → Pastel Aqua
-    50:  "#E5F7F7",
-    300: "#B5E8E8",
-    400: "#90DDDD",
-    600: "#6BC7C7",
-  },
-  [TABS.transliteration]: { // Turquoise → Pastel Turquoise
-    50:  "#E8FCFA",
-    300: "#B5F3EC",
-    400: "#8DEBDD",
-    600: "#6BD2C1",
-  },
-  [TABS.languageDetection]: { // Crimson → Pastel Red
-    50:  "#FFE9EE",
-    300: "#FFBBC8",
-    400: "#FF9EAF",
-    600: "#FF7A8F",
-  },
-  [TABS.speakerDiarization]: { // Amber → Pastel Yellow/Amber
-    50:  "#FFF9E6",
-    300: "#FEE5A8",
-    400: "#FFDA7A",
-    600: "#F5C554",
-  },
-  [TABS.languageDiarization]: { // Lime → Pastel Lime Green
-    50:  "#F3FFE8",
-    300: "#D4FFAA",
-    400: "#C0FF85",
-    600: "#99F45A",
-  },
-  [TABS.audioLanguageDetection]: { // Replace gray → Pastel Electric Blue
-    50:  "#E7F7FF",
-    300: "#B3E4FF",
-    400: "#89D6FF",
-    600: "#63C5FF",
-  },
-  [TABS.ner]: { // Indigo → Pastel Indigo/Violet
-    50:  "#F1E8FF",
-    300: "#D0BBFF",
-    400: "#BA9AFF",
-    600: "#9D72FF",
-  },
   [TABS.modelManagement]: { // Rose → Pastel Rose
     50:  "#FFF1F2",
     300: "#FFC1C7",
@@ -212,18 +125,18 @@ interface NavItem {
   requiresAuth?: boolean;
 }
 
-// Unsigned-in users only see Home. Remaining top-nav items are role-gated.
+// Unsigned-in users only see Explore. Remaining top-nav items are role-gated.
 const topNavItems: NavItem[] = [
   {
     id: TABS.home,
-    label: "Home",
+    label: "Explore",
     path: "/",
-    icon: IoHomeOutline,
+    icon: IoCompassOutline,
     iconSize: 10,
     iconColor: "black.500",
     requiresAuth: false,
   },
-  // Usage Dashboard placed after Home — to restore previous order (after Logs),
+  // Usage Dashboard placed after Explore — to restore previous order (after Logs),
   // move this block back below Logs (see commented copy there) and remove this entry.
   {
     id: TABS.usageDashboard,
@@ -280,7 +193,7 @@ const topNavItems: NavItem[] = [
     requiresAuth: true,
   },
   // Previous Usage Dashboard position (after Logs) — uncomment and remove the
-  // entry after Home above to restore the original sidebar order.
+  // entry after Explore above to restore the original sidebar order.
   // {
   //   id: TABS.usageDashboard,
   //   label: "Usage Dashboard",
@@ -339,118 +252,6 @@ const topNavItems: NavItem[] = [
   },
 ];
 
-// Model task types (grouped under Model task type section) — order matches homepage
-const baseNavItems: NavItem[] = [
-  {
-    id: TABS.nmt,
-    label: getServiceTitle(TABS.nmt),
-    path: `/${TABS.nmt}`,
-    icon: IoLanguageOutline,
-    iconSize: 10,
-    iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: false, // Allow anonymous access with rate limiting
-  },
-  {
-    id: TABS.asr,
-    label: getServiceTitle(TABS.asr),
-    path: `/${TABS.asr}`,
-    icon: FaMicrophone,
-    iconSize: 10,
-    iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: true,
-  },
-  {
-    id: TABS.tts,
-    label: getServiceTitle(TABS.tts),
-    path: `/${TABS.tts}`,
-    icon: IoVolumeHighOutline,
-    iconSize: 10,
-    iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: true,
-  },
-  {
-    id: TABS.llm,
-    label: getServiceTitle(TABS.llm),
-    path: `/${TABS.llm}`,
-    icon: IoSparklesOutline,
-    iconSize: 10,
-    iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: false, // anonymous try-it
-  },
-  {
-    id: TABS.pipeline,
-    label: getServiceTitle(TABS.pipeline),
-    path: `/${TABS.pipeline}`,
-    icon: DoubleMicrophoneIcon,
-    iconSize: 10,
-    iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: true,
-  },
-  {
-    id: TABS.ocr,
-    label: getServiceTitle(TABS.ocr),
-    path: `/${TABS.ocr}`,
-    icon: IoDocumentTextOutline,
-    iconSize: 10,
-    iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: true,
-  },
-  {
-    id: TABS.transliteration,
-    label: getServiceTitle(TABS.transliteration),
-    path: `/${TABS.transliteration}`,
-    icon: IoSwapHorizontalOutline,
-    iconSize: 10,
-    iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: true,
-  },
-  {
-    id: TABS.languageDetection,
-    label: getServiceTitle(TABS.languageDetection),
-    path: `/${TABS.languageDetection}`,
-    icon: IoGlobeOutline,
-    iconSize: 10,
-    iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: true,
-  },
-  {
-    id: TABS.speakerDiarization,
-    label: getServiceTitle(TABS.speakerDiarization),
-    path: `/${TABS.speakerDiarization}`,
-    icon: IoPeopleOutline,
-    iconSize: 10,
-    iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: true,
-  },
-  {
-    id: TABS.languageDiarization,
-    label: getServiceTitle(TABS.languageDiarization),
-    path: `/${TABS.languageDiarization}`,
-    icon: IoLanguageOutline,
-    iconSize: 10,
-    iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: true,
-  },
-  {
-    id: TABS.audioLanguageDetection,
-    label: getServiceTitle(TABS.audioLanguageDetection),
-    path: `/${TABS.audioLanguageDetection}`,
-    icon: IoRadioOutline,
-    iconSize: 10,
-    iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: true,
-  },
-  {
-    id: TABS.ner,
-    label: getServiceTitle(TABS.ner),
-    path: `/${TABS.ner}`,
-    icon: IoPricetagOutline,
-    iconSize: 10,
-    iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: true,
-  },
-];
-
 interface TopNavFilterContext {
   isAuthenticated: boolean;
   isGuest: boolean;
@@ -505,11 +306,8 @@ function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean 
 const Sidebar: React.FC = () => {
   const router = useRouter();
   const { isLoading, user, isAuthenticated } = useAuth();
-  const { isGuest: isGuestFromAccess, isLoading: guestServicesLoading, allowedServiceIds } = useGuestServices();
-  const { enabledServiceIds, isLoading: inferenceTypesLoading } = useInferenceTypes();
   const { checkSessionExpiry } = useSessionExpiry();
   const [isExpanded, setIsExpanded] = useState(false);
-  const [isServicesExpanded, setIsServicesExpanded] = useState(false);
 
   // Check if user is GUEST or USER
   const isGuest = user?.roles?.includes('GUEST') || false;
@@ -518,8 +316,6 @@ const Sidebar: React.FC = () => {
   // Check if user is ADMIN
   const isAdmin = isPlatformAdminUser(user?.roles);
   const isTenantAdmin = isTenantAdminUser(user?.roles);
-
-  const showServiceCards = canSeeServiceCards(user?.roles);
 
   const showTenantManagement = canAccessInstitutionManagement(user?.roles);
 
@@ -554,43 +350,12 @@ const Sidebar: React.FC = () => {
     [topNavFilterContext],
   );
 
-  const serviceItems = useMemo(
-    () => {
-      if (!showServiceCards) return [];
-
-      return baseNavItems.filter((item) => {
-        // Guest allowlist — guests only.
-        if (isGuestFromAccess || isGuest) {
-          if (guestServicesLoading) return false;
-          if (!allowedServiceIds?.has(item.id)) return false;
-        }
-
-        // Deployment gate (ENABLED_TASK_TYPES). Env allowlist is available
-        // immediately via useInferenceTypes even before the catalog loads.
-        if (inferenceTypesLoading && enabledServiceIds.size === 0) return false;
-        if (!enabledServiceIds.has(item.id)) return false;
-        return true;
-      });
-    },
-    [
-      showServiceCards,
-      allowedServiceIds,
-      guestServicesLoading,
-      isGuest,
-      isGuestFromAccess,
-      enabledServiceIds,
-      inferenceTypesLoading,
-    ],
-  );
-
   const handleSidebarMouseEnter = useCallback(() => {
     setIsExpanded(true);
-    setIsServicesExpanded(true);
   }, []);
 
   const handleSidebarMouseLeave = useCallback(() => {
     setIsExpanded(false);
-    setIsServicesExpanded(false);
   }, []);
 
   // Role-aware: the Usage-Dashboard-only role has no access to "/".
@@ -611,28 +376,6 @@ const Sidebar: React.FC = () => {
     },
     [checkSessionExpiry, isLoading, router],
   );
-
-  const onServiceNavClick = useCallback(
-    (e: React.MouseEvent, path: string, requiresAuth: boolean) => {
-      e.preventDefault();
-      if (isLoading) return;
-      if (requiresAuth && !checkSessionExpiry()) return;
-      router.push(path);
-    },
-    [checkSessionExpiry, isLoading, router],
-  );
-
-  const handleServicesSectionMouseEnter = useCallback(() => {
-    if (isExpanded) setIsServicesExpanded(true);
-  }, [isExpanded]);
-
-  const handleServicesSectionMouseLeave = useCallback(() => {
-    if (!isExpanded) setIsServicesExpanded(false);
-  }, [isExpanded]);
-
-  const toggleServicesExpanded = useCallback(() => {
-    if (isExpanded) setIsServicesExpanded((open) => !open);
-  }, [isExpanded]);
 
   const bgColor = useColorModeValue("light.100", "dark.100");
   const borderColor = useColorModeValue("gray.200", "gray.700");
@@ -681,7 +424,7 @@ const Sidebar: React.FC = () => {
 
         <Divider />
 
-        {/* Top Navigation Items (Home and Model Management) */}
+        {/* Top Navigation Items (Explore and management pages) */}
         <VStack spacing={2} w="full" align="stretch">
           {topItems.map((item) => {
             const isActive = router.pathname === item.path;
@@ -731,108 +474,6 @@ const Sidebar: React.FC = () => {
             );
           })}
         </VStack>
-
-        {/* Services Section — hidden for roles without service-card access */}
-        {showServiceCards && (
-          <>
-            <Divider />
-
-            <VStack spacing={2} w="full" align="stretch" flex={1}>
-              {/* Services Header */}
-              <Box onMouseEnter={handleServicesSectionMouseEnter} onMouseLeave={handleServicesSectionMouseLeave}>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  h="3rem"
-                  minH="3rem"
-                  w="full"
-                  justifyContent={isExpanded ? "flex-start" : "center"}
-                  leftIcon={
-                    isExpanded ? (
-                      <Icon as={IoAppsOutline} boxSize={5} color="gray.600" />
-                    ) : undefined
-                  }
-                  rightIcon={
-                    isExpanded ? (
-                      <Icon
-                        as={IoChevronDownOutline}
-                        boxSize={4}
-                        color="gray.600"
-                        transform={isServicesExpanded ? "rotate(180deg)" : "rotate(0deg)"}
-                        transition="transform 0.2s"
-                      />
-                    ) : undefined
-                  }
-                  bg="transparent"
-                  color="gray.700"
-                  _hover={{
-                    bg: hoverBgColor,
-                    transform: "translateY(-1px)",
-                  }}
-                  transition="all 0.2s"
-                  px={isExpanded ? 3 : 0}
-                  onClick={toggleServicesExpanded}
-                >
-                  {isExpanded ? (
-                    <Heading size="sm" color="gray.800" fontWeight="medium">
-                      {MODEL_TASK_TYPE_NAV_LABEL}
-                    </Heading>
-                  ) : (
-                    <Icon as={IoAppsOutline} boxSize={6} color="gray.600" />
-                  )}
-                </Button>
-              </Box>
-
-              {/* Services List */}
-              <Collapse in={isExpanded && isServicesExpanded} animateOpacity style={{ paddingTop: "10px" }}>
-                <VStack spacing={1} w="full" align="stretch" pl={isExpanded ? 4 : 0}>
-                  {serviceItems.map((item) => {
-                    const isActive = router.pathname === item.path;
-                    const requiresAuth = item.requiresAuth ?? false;
-
-                    return (
-                      <Button
-                        key={item.id}
-                        variant="ghost"
-                        size="sm"
-                        h="2.5rem"
-                        minH="2.5rem"
-                        w="full"
-                        justifyContent="flex-start"
-                        leftIcon={
-                          <Icon
-                            as={item.icon}
-                            boxSize={4}
-                            color={getColor(item.id, 600)}
-                          />
-                        }
-                        bg={isActive ? "gray.200" : "transparent"}
-                        color={isActive ? "gray.800" : "gray.700"}
-                        boxShadow={isActive ? "sm" : "none"}
-                        borderLeft={isActive ? "3px solid" : "3px solid transparent"}
-                        borderLeftColor={isActive ? getColor(item.id, 600) : "transparent"}
-                        borderRadius="md"
-                        onClick={(e) => onServiceNavClick(e, item.path, requiresAuth)}
-                        _hover={{
-                          bg: isActive ? "gray.200" : hoverBgColor,
-                          transform: "translateY(-1px)",
-                          borderLeftColor: getColor(item.id, 600),
-                          borderLeft: "3px solid",
-                        }}
-                        transition="all 0.2s"
-                        px={1}
-                      >
-                        <Text fontSize="sm" color="gray.800" fontWeight="medium" whiteSpace="pre-line">
-                          {item.label}
-                        </Text>
-                      </Button>
-                    );
-                  })}
-                </VStack>
-              </Collapse>
-            </VStack>
-          </>
-        )}
       </VStack>
     </Box>
   );

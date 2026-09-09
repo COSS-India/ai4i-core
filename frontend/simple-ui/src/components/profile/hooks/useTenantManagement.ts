@@ -133,10 +133,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     contact_name: "",
     email: "",
     phone_number: "",
-    tier_id: "",
-    allocated_budget: "",
-    budget_effective_from: "",
-    budget_effective_to: "",
   });
   const [tenantFormErrors, setTenantFormErrors] = useState<
     Record<string, string>
@@ -628,10 +624,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       contact_name: "",
       email: "",
       phone_number: "",
-      tier_id: "",
-      allocated_budget: "",
-      budget_effective_from: "",
-      budget_effective_to: "",
     });
     setTenantFormErrors({});
     createTenantEmailAvailability.clear();
@@ -868,27 +860,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         email: tenantForm.email.trim(),
         phone_number: tenantForm.phone_number.trim() || undefined,
       };
-      const tierId = tenantForm.tier_id.trim();
-      if (tierId) payload.tier_id = tierId;
-      const budgetRaw = tenantForm.allocated_budget.trim();
-      if (budgetRaw) {
-        const budgetValue = Number(budgetRaw);
-        if (!Number.isFinite(budgetValue) || budgetValue <= 0) {
-          setTenantFormErrors((prev) => ({
-            ...prev,
-            allocated_budget: "Budget must be a positive value.",
-          }));
-          setIsSubmittingTenant(false);
-          return;
-        }
-        payload.allocated_budget = budgetValue;
-      }
-      if (tenantForm.budget_effective_from.trim()) {
-        payload.budget_effective_from = tenantForm.budget_effective_from.trim();
-      }
-      if (tenantForm.budget_effective_to.trim()) {
-        payload.budget_effective_to = tenantForm.budget_effective_to.trim();
-      }
       const created = await tenantService.registerTenant(payload);
       setTenants((prev) => {
         if (prev.some((t) => t.tenant_id === created.tenant_id)) return prev;
