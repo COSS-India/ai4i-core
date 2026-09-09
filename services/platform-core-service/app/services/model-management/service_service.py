@@ -684,7 +684,7 @@ class ServiceService:
     # ── Internals ──
 
     async def _validate_tier_ids_exist(self, tier_ids: Optional[List[str]]) -> None:
-        """Raise if any of ``tier_ids`` doesn't reference a real PPU tier."""
+        """Raise if any of ``tier_ids`` doesn't reference an ACTIVE PPU tier."""
         if not tier_ids:
             return
         found = await self._services.get_tier_names_by_ids(tier_ids)
@@ -695,6 +695,16 @@ class ServiceService:
                     f"tierIds references nonexistent tier(s): {', '.join(missing)}."
                 ),
                 code="TIER_NOT_FOUND",
+            )
+        active_ids = await self._services.get_active_tier_ids(tier_ids)
+        inactive = [tid for tid in tier_ids if tid not in active_ids]
+        if inactive:
+            raise ValidationError(
+                message=(
+                    f"tierIds references tier(s) that are not ACTIVE: {', '.join(inactive)}. "
+                    "Only ACTIVE tiers can be mapped to a service."
+                ),
+                code="TIER_NOT_ACTIVE",
             )
 
     def _resolve_inference_schema(

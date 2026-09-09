@@ -1,20 +1,50 @@
 import logging
+from datetime import datetime, timezone
 from typing import List, Optional
 from uuid import UUID
 
 import httpx
 from fastapi import HTTPException, status
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.constants import TierStatus
+from app.core.exceptions import ValidationError
 from app.models.pay_per_use.tier import Tier, TierQuota
 from app.repositories.pay_per_use.usage_repository import update_tier_cache
 from app.schemas.pay_per_use.tier import TierCreate, TierOut, TierQuotaOut, TierUpdate
 from app.services.pay_per_use import inference_type_cache
-from app.core.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
+
+# Five valid edges; DELETED has no outgoing edge (terminal).
+_ALLOWED_TIER_STATUS_TRANSITIONS: dict[TierStatus, frozenset[TierStatus]] = {
+    TierStatus.INACTIVE: frozenset({TierStatus.ACTIVE}),
+    TierStatus.ACTIVE: frozenset({TierStatus.DEACTIVATED}),
+    TierStatus.DEACTIVATED: frozenset({TierStatus.ACTIVE, TierStatus.DELETED}),
+    TierStatus.DELETED: frozenset(),
+}
+
+
+def assert_valid_tier_status_transition(current: TierStatus, target: TierStatus) -> None:
+    """Raise ValidationError when ``target`` is not reachable from ``current``."""
+    if current == target:
+        raise ValidationError(
+            message=f"Tier status is already {current.value}.",
+            code="TIER_STATUS_UNCHANGED",
+        )
+    allowed = _ALLOWED_TIER_STATUS_TRANSITIONS.get(current, frozenset())
+    if target in allowed:
+        return
+    allowed_labels = ", ".join(sorted(s.value for s in allowed)) or "none"
+    raise ValidationError(
+        message=(
+            f"Cannot change tier status from {current.value} to {target.value}. "
+            f"Allowed targets: {allowed_labels}."
+        ),
+        code="INVALID_TIER_STATUS_TRANSITION",
+    )
 
 
 async def _resolve_task_type_ids(
@@ -75,6 +105,7 @@ def _build_out(tier: Tier, quotas: List[TierQuota], names: dict) -> TierOut:
         id=str(tier.id),
         name=tier.name,
         description=tier.description,
+        status=tier.status,
         quotas=quota_out,
         createdAt=tier.created_at,
         updatedAt=tier.updated_at,
@@ -88,7 +119,7 @@ async def list_tiers(
     names = await inference_type_cache.get_name_by_id(session)
     stmt = (
         select(Tier)
-        .where(Tier.is_active.is_(True))
+        .where(Tier.status != TierStatus.DELETED)
         .options(selectinload(Tier.tier_quotas))
     )
     result = await session.execute(stmt)
@@ -118,7 +149,7 @@ async def get_tier_by_id(tier_id: str, session: AsyncSession) -> TierOut:
 
     result = await session.execute(
         select(Tier)
-        .where(Tier.id == uid, Tier.is_active.is_(True))
+        .where(Tier.id == uid, Tier.status != TierStatus.DELETED)
         .options(selectinload(Tier.tier_quotas))
     )
     tier = result.scalar_one_or_none()
@@ -137,7 +168,7 @@ async def create_tier(body: TierCreate, session: AsyncSession, created_by: Optio
             detail=f"Tier with name '{body.name}' already exists",
         )
 
-    tier = Tier(name=body.name, description=body.description, created_by=created_by, updated_by=created_by)
+    tier = Tier(name=body.name, description=body.description, status=TierStatus.INACTIVE, created_by=created_by, updated_by=created_by)
     session.add(tier)
     await session.flush()
 
@@ -198,7 +229,7 @@ async def _resolve_tier_for_update(body: TierUpdate, session: AsyncSession) -> T
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid tier_id format")
 
-    result = await session.execute(select(Tier).where(Tier.id == uid, Tier.is_active.is_(True)))
+    result = await session.execute(select(Tier).where(Tier.id == uid, Tier.status != TierStatus.DELETED))
     tier = result.scalar_one_or_none()
     if not tier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tier '{body.tier_id}' not found")
@@ -327,41 +358,98 @@ async def apply_pending_quotas(session: AsyncSession) -> int:
     return len(rows)
 
 
-async def delete_tier(tier_id: str, session: AsyncSession, auth_db: Optional[AsyncSession]) -> None:
+
+async def _get_tier_or_404(tier_id: str, session: AsyncSession) -> Tier:
     try:
         uid = UUID(tier_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid tier_id format")
-
-    result = await session.execute(
-        select(Tier).where(Tier.id == uid, Tier.is_active.is_(True))
-    )
+    result = await session.execute(select(Tier).where(Tier.id == uid, Tier.status != TierStatus.DELETED))
     tier = result.scalar_one_or_none()
     if not tier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tier '{tier_id}' not found")
+    return tier
 
-    # ppu_tenant_tier_assignments was dropped (AI4IDS-2923); tenants.tier_id
-    # (auth-service, via auth_db) is the sole source of truth now — see
-    # _fetch_tenant_ids_for_tier. Unlike that best-effort notification, this
-    # is a genuine safety guard (deleting an in-use tier breaks billing
-    # enforcement for its tenants), so an unavailable auth_db must fail
-    # closed here, not silently skip the check — same convention as
-    # auth-service's assign_tenant_tier's PLATFORM_CORE_DB_NOT_CONFIGURED.
-    if auth_db is None:
-        raise ValidationError(
-            message="Tier deletion cannot be verified: auth-service DB is not configured.",
-            code="AUTH_DB_NOT_CONFIGURED",
+
+async def update_tier_status(
+    tier_id: str,
+    target_status: TierStatus,
+    session: AsyncSession,
+    auth_service_url: str = "",
+    http_client: Optional[httpx.AsyncClient] = None,
+    auth_db: Optional[AsyncSession] = None,
+    updated_by: Optional[str] = None,
+) -> TierOut:
+    """Single entry point for all tier status transitions.
+
+    Allowed edges (enforced by assert_valid_tier_status_transition):
+      INACTIVE    → ACTIVE       (Publish)
+      ACTIVE      → DEACTIVATED  (Deactivate)
+      DEACTIVATED → ACTIVE       (Reactivate — triggers quota reset + Redis flag clear)
+      DEACTIVATED → DELETED      (Delete — only if no tenants are assigned)
+    """
+    tier = await _get_tier_or_404(tier_id, session)
+    previous_status = tier.status
+    assert_valid_tier_status_transition(previous_status, target_status)
+
+    if target_status == TierStatus.DELETED:
+        if auth_db is None:
+            raise ValidationError(
+                message="Tier deletion cannot be verified: auth-service DB is not configured.",
+                code="AUTH_DB_NOT_CONFIGURED",
+            )
+        assigned = await auth_db.execute(
+            text("SELECT 1 FROM tenants WHERE tier_id = :tier_id LIMIT 1"),
+            {"tier_id": tier.id},
         )
-    assigned = await auth_db.execute(
-        text("SELECT 1 FROM tenants WHERE tier_id = :tier_id LIMIT 1"),
-        {"tier_id": uid},
-    )
-    if assigned.first():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Tier is assigned to one or more tenants and cannot be deleted",
+        if assigned.first():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Tier is still assigned to one or more tenants. Reassign them to another tier or remove the tier assignment before deleting.",
+            )
+
+    # Side effects that must run before commit.
+    if target_status == TierStatus.ACTIVE and previous_status == TierStatus.DEACTIVATED:
+        # Reactivate: reset monthly quota usage for the current billing month.
+        from app.models.pay_per_use.quota_usage import QuotaUsage  # local import avoids circular
+        current_month = datetime.now(timezone.utc).strftime("%Y-%m")
+        await session.execute(
+            update(QuotaUsage)
+            .where(QuotaUsage.tier_id == tier.id, QuotaUsage.billing_month == current_month)
+            .values(monthly_quota_used=0)
         )
 
-    tier.is_active = False
+    tier.status = target_status
+    tier.is_active = target_status == TierStatus.ACTIVE
+    tier.updated_by = updated_by
     await session.commit()
+    await session.refresh(tier)
     update_tier_cache(tier.id, tier.name)
+
+    # Post-commit notifications (best-effort).
+    if target_status == TierStatus.ACTIVE and previous_status == TierStatus.DEACTIVATED:
+        await _notify_tier_reactivated(tier, auth_service_url, http_client, auth_db)
+
+    q_result = await session.execute(select(TierQuota).where(TierQuota.tier_id == tier.id))
+    names = await inference_type_cache.get_name_by_id(session)
+    return _build_out(tier, list(q_result.scalars().all()), names)
+
+
+async def _notify_tier_reactivated(
+    tier: Tier,
+    auth_service_url: str,
+    http_client: Optional[httpx.AsyncClient],
+    auth_db: Optional[AsyncSession],
+) -> None:
+    if not (auth_service_url and http_client):
+        return
+    try:
+        tenant_ids = await _fetch_tenant_ids_for_tier(tier.id, auth_db)
+        resp = await http_client.post(
+            f"{auth_service_url}/internal/ppu/tier/reactivated",
+            json={"tier_id": str(tier.id), "tenant_ids": tenant_ids},
+            timeout=5.0,
+        )
+        resp.raise_for_status()
+    except Exception as exc:
+        logger.warning("tier-reactivated notification failed for tier %s: %s", tier.id, exc)

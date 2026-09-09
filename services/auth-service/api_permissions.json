@@ -129,7 +129,7 @@
     { "endpoint": "GET:/api/v1/pay-per-use/tier",                          "permissionRequired": 140, "description": "Get PPU tier by ID (ppu.tier.read)" },
     { "endpoint": "POST:/api/v1/pay-per-use/tier",                         "permissionRequired": 141, "description": "Create PPU tier (ppu.tier.create)" },
     { "endpoint": "PATCH:/api/v1/pay-per-use/tier",                        "permissionRequired": 142, "description": "Update PPU tier (ppu.tier.update)" },
-    { "endpoint": "DELETE:/api/v1/pay-per-use/tier",                       "permissionRequired": 143, "description": "Delete PPU tier (ppu.tier.delete)" },
+    { "endpoint": "PATCH:/api/v1/pay-per-use/tier/{tier_id}/status",      "permissionRequired": 147, "description": "Update PPU tier lifecycle status (ppu.tier.status.update); admin only" },
 
     { "endpoint": "GET:/api/v1/pay-per-use/usage-summary",                             "permissionRequired": 134, "description": "PPU usage platform summary (usage.read); admin only (platform-wide)" },
     { "endpoint": "GET:/api/v1/pay-per-use/usage-tenants",                             "permissionRequired": 134, "description": "PPU usage tenant list (usage.read); admin only (platform-wide)" },

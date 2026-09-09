@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.core.exceptions import EntityNotFoundError
 from app.dependencies.services import get_api_key_service, get_quota_notification_service, get_tenant_service
-from app.schemas.quota import QuotaLimitUpdatedRequest
+from app.schemas.quota import QuotaLimitUpdatedRequest, TierReactivatedRequest
 from app.services.api_key_service import APIKeyService
 from app.services.quota_notification_service import QuotaNotificationService
 from app.services.tenant_service import TenantService
@@ -147,3 +147,18 @@ async def notify_quota_limit_updated(
     svc: QuotaNotificationService = Depends(get_quota_notification_service),
 ):
     await svc.notify_quota_limit_updated(body.tier_name, body.tenant_ids, background_tasks)
+
+
+@router.post("/ppu/tier/reactivated", status_code=status.HTTP_204_NO_CONTENT)
+async def notify_tier_reactivated(
+    body: TierReactivatedRequest,
+    svc: APIKeyService = Depends(get_api_key_service),
+):
+    """Clear quota-* exhaustion flags for all tenants on the reactivated tier.
+
+    Called by platform-core-service after a DEACTIVATED → ACTIVE transition so
+    that tenants don't keep receiving 429s from stale quota-exhausted flags set
+    before the tier was paused.
+    """
+    for tenant_id in body.tenant_ids:
+        await svc.clear_quota_flags_for_tenant(tenant_id)

@@ -933,7 +933,7 @@ class TenantService:
             )
         row = (
             await platform_core_db.execute(
-                text("SELECT id, name FROM tiers WHERE id = :tid AND is_active = true"),
+                text("SELECT id, name FROM tiers WHERE id = :tid AND status = 'ACTIVE'"),
                 {"tid": tier_uuid},
             )
         ).first()
