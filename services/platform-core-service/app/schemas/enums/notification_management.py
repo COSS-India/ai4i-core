@@ -11,13 +11,11 @@ from enum import Enum
 
 
 class NotificationName(str, Enum):
-    """The 7 notifications seeded by 1d3f8e77bac4_seed_notification_catalog.
-
-    Two ALERT-type values (QUOTA_THRESHOLD, BUDGET_THRESHOLD) exist in the
-    wider Notifications and Alerts design but are out of this ticket's scope
-    and are not seeded — adding them later is an additive
-    ``ALTER TYPE ... ADD VALUE`` plus a seed migration, not a rewrite.
-    """
+    """The 9 names seeded across 1d3f8e77bac4_seed_notification_catalog (the
+    7 NOTIFICATION-type rows) and add_alert_types_to_notification_catalog /
+    seed_alert_catalog_types (the 2 ALERT-type rows: QUOTA_THRESHOLD,
+    BUDGET_THRESHOLD — the standard alert catalog from the "Define Alerts"
+    ticket)."""
 
     TIER_ASSIGNED = "TIER_ASSIGNED"
     TIER_CHANGED = "TIER_CHANGED"
@@ -26,11 +24,14 @@ class NotificationName(str, Enum):
     QUOTA_LIMIT_UPDATED = "QUOTA_LIMIT_UPDATED"
     QUOTA_EXHAUSTED = "QUOTA_EXHAUSTED"
     BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
+    QUOTA_THRESHOLD = "QUOTA_THRESHOLD"
+    BUDGET_THRESHOLD = "BUDGET_THRESHOLD"
 
 
 class NotificationType(str, Enum):
-    """The family a catalog row belongs to. Every row seeded by this ticket
-    is NOTIFICATION; ALERT is declared for the enum's full, reviewed domain."""
+    """The family a catalog row belongs to: the 7 notification-management
+    rows are NOTIFICATION, the 2 alert-catalog rows (QUOTA_THRESHOLD,
+    BUDGET_THRESHOLD) are ALERT. What the two catalog screens filter on."""
 
     NOTIFICATION = "NOTIFICATION"
     ALERT = "ALERT"
