@@ -22,8 +22,7 @@ import React, { useMemo } from "react";
 import ManagementPageHeader from "../common/ManagementPageHeader";
 import type { Service } from "../../services/servicesManagementService";
 import ConfirmDialog from "../common/ConfirmDialog";
-import { useAdminTableSurface } from "../common/TableControls";
-import { type DataTableColumn } from "../common/table";
+import { useAdminTableSurface, type DataTableColumn } from "../common/table";
 import { useServicesManagement } from "../../hooks/useServicesManagement";
 import ServiceRegistryTab from "./ServiceRegistryTab";
 import ServiceFormTab from "./ServiceFormTab";
@@ -80,7 +79,7 @@ const ServicesManagement: React.FC = () => {
     taskTypeNames,
     hasActiveFilters,
     clearAllFilters,
-    nameSort,
+    registrySort,
     handleViewService,
     handleEditService,
     handleDeleteClick,
@@ -146,6 +145,7 @@ const ServicesManagement: React.FC = () => {
         id: "name",
         header: "Name",
         sortable: true,
+        sortAccessor: (service) => service.name ?? "",
         cell: (service) => (
           <Text fontSize="sm" noOfLines={1} title={service.name}>
             {service.name || "N/A"}
@@ -167,6 +167,9 @@ const ServicesManagement: React.FC = () => {
       {
         id: "tiers",
         header: "Tiers",
+        sortable: true,
+        sortAccessor: (service) =>
+          (service.tierNames ?? service.tiers ?? []).join(", ").toLowerCase(),
         cell: (service) => {
           const names = service.tierNames;
           if (!names || names.length === 0) {
@@ -209,6 +212,9 @@ const ServicesManagement: React.FC = () => {
       {
         id: "created",
         header: "Created At",
+        sortable: true,
+        sortAccessor: (service) =>
+          service.createdAt ? new Date(service.createdAt).getTime() : 0,
         cell: (service) => (
           <Text fontSize="sm" color="gray.600">
             {service.createdAt
@@ -323,7 +329,6 @@ const ServicesManagement: React.FC = () => {
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    nameSort,
     unpublishingServiceUuid,
     publishingServiceUuid,
     deletingServiceUuid,
@@ -379,8 +384,8 @@ const ServicesManagement: React.FC = () => {
                     cardBorder={cardBorder}
                     items={registryTableItems}
                     columns={serviceColumns}
-                    sort={nameSort.sort}
-                    onSortChange={nameSort.onSortChange}
+                    sort={registrySort.sort}
+                    onSortChange={registrySort.onSortChange}
                     isLoading={isLoading}
                     totalServicesCount={totalServicesCount}
                     onRowClick={(service) =>

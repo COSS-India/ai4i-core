@@ -6,8 +6,11 @@
  *   type DataTableColumn,
  *   createActionsColumn,
  *   FieldLabel,
+ *   useAdminTableSurface,
  * } from "@/components/common/table";
  * ```
+ *
+ * Prefer `search` + `filterDefs` for toolbars. Do not build filter layouts by hand.
  */
 export {
   DataTable as default,
@@ -16,6 +19,8 @@ export {
   DATA_TABLE_CELL_MAX_W,
   TableSearchField,
   TableSelectField,
+  TableTextField,
+  TableDateField,
   type DataTableColumn,
   type DataTableProps,
   type DataTableLayout,
@@ -28,8 +33,6 @@ export {
   type DataTableSortDirection,
 } from "./DataTable";
 
-export { DataTableShell } from "./dataTableUtils";
-
 export {
   DataTableActions,
   createActionsColumn,
@@ -41,7 +44,7 @@ export {
 
 export { default as FieldLabel, type FieldLabelProps, type FieldLabelVariant } from "./FieldLabel";
 
-export { TablePaginationBar } from "./TableControls";
+export { TablePaginationBar, useAdminTableSurface } from "./TableControls";
 
 export {
   DEFAULT_PAGE_SIZE_OPTIONS,

@@ -87,15 +87,13 @@ import {
   LATENCY_THRESHOLD_UNITS,
   PERCENTAGE_UNIT,
 } from "../../types/alerting";
-import { useAdminTableSurface } from "../common/TableControls";
 import DataTable, {
+  useAdminTableSurface,
   DEFAULT_PAGE_SIZE_OPTIONS,
-  TableSearchField,
-  TableSelectField,
   createActionsColumn,
   type DataTableColumn,
 } from "../common/table";
-import { useNameColumnSort } from "../../utils/tableSort";
+import { useDeferredColumnSort } from "../../utils/tableSort";
 import type { AlertDefinition, AlertHistoryItem } from "../../types/alerting";
 import StandardModal from "../common/StandardModal";
 
@@ -315,10 +313,55 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     return fromExpr;
   })();
 
-  const definitionsSort = useNameColumnSort("name");
-  const receiversSort = useNameColumnSort("name");
-  const rulesSort = useNameColumnSort("name");
-  const historySort = useNameColumnSort("name");
+  const definitionsSortAccessors = React.useMemo(
+    () => ({
+      name: (d: AlertDefinition) => d.name ?? "",
+      sub_category: (d: AlertDefinition) => d.sub_category ?? "",
+      created: (d: AlertDefinition) =>
+        d.created_at ? new Date(d.created_at).getTime() : 0,
+    }),
+    [],
+  );
+  const definitionsSort = useDeferredColumnSort("name", definitionsSortAccessors);
+
+  const receiversSortAccessors = React.useMemo(
+    () => ({
+      name: (r: NotificationReceiver) => r.receiver_name ?? "",
+      recipient: (r: NotificationReceiver) =>
+        r.rbac_role
+          ? `role:${r.rbac_role}`
+          : (r.email_to ?? []).join(", "),
+      created: (r: NotificationReceiver) =>
+        r.created_at ? new Date(r.created_at).getTime() : 0,
+    }),
+    [],
+  );
+  const receiversSort = useDeferredColumnSort("name", receiversSortAccessors);
+
+  const rulesSortAccessors = React.useMemo(
+    () => ({
+      name: (rule: NotificationReceiver) =>
+        (rule.rule_name ?? rule.receiver_name ?? "") as string,
+      definitions: (rule: NotificationReceiver) =>
+        (rule.alert_names ?? []).join(", "),
+      tenant: (rule: NotificationReceiver) => rule.tenant ?? "",
+    }),
+    [],
+  );
+  const rulesSort = useDeferredColumnSort("name", rulesSortAccessors);
+
+  const historySortAccessors = React.useMemo(
+    () => ({
+      name: (row: AlertHistoryItem) => row.alert_name ?? "",
+      triggered: (row: AlertHistoryItem) => {
+        const t = row.triggered_at ?? row.created_at ?? "";
+        return t ? new Date(t).getTime() : 0;
+      },
+      notified: (row: AlertHistoryItem) => row.notified_display ?? "",
+    }),
+    [],
+  );
+  const historySort = useDeferredColumnSort("name", historySortAccessors);
   const [receiversSearchQuery, setReceiversSearchQuery] = useState("");
 
   const defDeleteRef = useRef<HTMLButtonElement>(null);
@@ -338,12 +381,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
   }, [isActive]);
 
   const sortedDefinitions = React.useMemo(
-    () =>
-      definitionsSort.apply(
-        defs.filteredDefinitions,
-        (a) => a.name ?? "",
-        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-      ),
+    () => definitionsSort.apply(defs.filteredDefinitions),
     [defs.filteredDefinitions, definitionsSort],
   );
 
@@ -360,22 +398,12 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
   }, [recvs.filteredReceivers, receiversSearchQuery]);
 
   const sortedReceivers = React.useMemo(
-    () =>
-      receiversSort.apply(
-        filteredReceiversWithSearch,
-        (a) => a.receiver_name ?? "",
-        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-      ),
+    () => receiversSort.apply(filteredReceiversWithSearch),
     [filteredReceiversWithSearch, receiversSort],
   );
 
   const sortedRules = React.useMemo(
-    () =>
-      rulesSort.apply(
-        rules.filteredRules,
-        (a) => (a.rule_name ?? a.receiver_name ?? "") as string,
-        (a, b) => String(a.id).localeCompare(String(b.id), undefined, { sensitivity: "base" }),
-      ),
+    () => rulesSort.apply(rules.filteredRules),
     [rules.filteredRules, rulesSort],
   );
 
@@ -385,16 +413,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
   );
 
   const sortedHistoryItems = React.useMemo(
-    () =>
-      historySort.apply(
-        history.items,
-        (a) => a.alert_name ?? "",
-        (a, b) => {
-          const timeA = new Date(a.triggered_at ?? a.created_at ?? "").getTime();
-          const timeB = new Date(b.triggered_at ?? b.created_at ?? "").getTime();
-          return timeB - timeA;
-        },
-      ),
+    () => historySort.apply(history.items),
     [history.items, historySort],
   );
 
@@ -477,6 +496,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       id: "name",
       header: "Name",
       sortable: true,
+      sortAccessor: (d) => d.name ?? "",
       cell: (d) => <Text fontWeight="semibold">{d.name}</Text>,
     },
     {
@@ -500,6 +520,8 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     {
       id: "sub_category",
       header: "Subcategory",
+      sortable: true,
+      sortAccessor: (d) => d.sub_category ?? "",
       cell: (d) => (
         <Text fontSize="sm">
           {d.sub_category ? titleCase(d.sub_category.replaceAll("_", " ")) : "—"}
@@ -525,6 +547,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     {
       id: "created",
       header: "Created",
+      sortable: true,
+      sortAccessor: (d) =>
+        d.created_at ? new Date(d.created_at).getTime() : 0,
       cell: (d) => <Text fontSize="sm">{new Date(d.created_at).toLocaleDateString()}</Text>,
     },
     createActionsColumn<AlertDefinition>({
@@ -541,11 +566,15 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       id: "name",
       header: "Name",
       sortable: true,
+      sortAccessor: (r) => r.receiver_name ?? "",
       cell: (r) => <Text fontWeight="semibold" fontSize="sm">{r.receiver_name}</Text>,
     },
     {
       id: "recipient",
       header: "Recipient",
+      sortable: true,
+      sortAccessor: (r) =>
+        r.rbac_role ? `role:${r.rbac_role}` : (r.email_to ?? []).join(", "),
       cell: (r) =>
         r.rbac_role ? (
           <Badge colorScheme="purple">Role: {r.rbac_role}</Badge>
@@ -574,6 +603,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     {
       id: "created",
       header: "Created",
+      sortable: true,
+      sortAccessor: (r) =>
+        r.created_at ? new Date(r.created_at).getTime() : 0,
       cell: (r) => <Text fontSize="sm">{new Date(r.created_at).toLocaleDateString()}</Text>,
     },
     createActionsColumn<NotificationReceiver>({
@@ -590,11 +622,15 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       id: "name",
       header: "Rule Name",
       sortable: true,
+      sortAccessor: (rule) =>
+        (rule.rule_name ?? rule.receiver_name ?? "") as string,
       cell: (rule) => <Text fontWeight="semibold">{rule.rule_name ?? rule.receiver_name}</Text>,
     },
     {
       id: "definitions",
       header: "Alert Definitions",
+      sortable: true,
+      sortAccessor: (rule) => (rule.alert_names ?? []).join(", "),
       cell: (rule) =>
         rule.alert_names && rule.alert_names.length > 0 ? (
           <Text fontSize="sm" color="gray.700">
@@ -608,6 +644,8 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     {
       id: "tenant",
       header: INSTITUTION,
+      sortable: true,
+      sortAccessor: (rule) => rule.tenant ?? "",
       cell: (rule) =>
         rule.tenant ? (
           <Badge colorScheme="purple" variant="subtle" textTransform="none">{rule.tenant}</Badge>
@@ -657,6 +695,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       id: "name",
       header: "Name",
       sortable: true,
+      sortAccessor: (row) => row.alert_name ?? "",
       cell: (row) => (
         <Text fontWeight="semibold" noOfLines={2} title={row.alert_name} maxW="260px">
           {row.alert_name}
@@ -684,11 +723,18 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     {
       id: "triggered",
       header: "Triggered At",
+      sortable: true,
+      sortAccessor: (row) => {
+        const t = row.triggered_at ?? row.created_at ?? "";
+        return t ? new Date(t).getTime() : 0;
+      },
       cell: (row) => <Text fontSize="sm">{row.triggered_at ?? "—"}</Text>,
     },
     {
       id: "notified",
       header: "Notified",
+      sortable: true,
+      sortAccessor: (row) => row.notified_display ?? "",
       cell: (row) => (
         <Text fontSize="sm" noOfLines={2} title={row.notified_display ?? undefined} maxW="220px">
           {row.notified_display || "—"}
@@ -741,44 +787,60 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 Create Alert Definition
               </Button>
             )}
-            filters={(
-              <>
-                <TableSearchField
-                  value={defs.searchQuery}
-                  onChange={defs.setSearchQuery}
-                  placeholder="Search alerts..."
-                  formControlProps={{ maxW: "260px" }}
-                />
-                <TableSelectField
-                  label="Severity"
-                  value={defs.filterSeverity}
-                  onChange={defs.setFilterSeverity}
-                  selectProps={{ maxW: "130px" }}
-                >
-                  <option value="all">Severity</option>
-                  {SEVERITIES.map((s) => (<option key={s} value={s}>{titleCase(s)}</option>))}
-                </TableSelectField>
-                <TableSelectField
-                  label="Category"
-                  value={defs.filterCategory}
-                  onChange={defs.setFilterCategory}
-                  selectProps={{ maxW: "140px" }}
-                >
-                  <option value="all">Category</option>
-                  {CATEGORIES.map((c) => (<option key={c} value={c}>{titleCase(c)}</option>))}
-                </TableSelectField>
-                <TableSelectField
-                  label="Status"
-                  value={defs.filterEnabled}
-                  onChange={defs.setFilterEnabled}
-                  selectProps={{ maxW: "120px" }}
-                >
-                  <option value="all">Status</option>
-                  <option value="enabled">Active</option>
-                  <option value="disabled">Inactive</option>
-                </TableSelectField>
-              </>
-            )}
+            search={{
+              value: defs.searchQuery,
+              onChange: defs.setSearchQuery,
+              placeholder: "Search alerts...",
+              fields: ["name", "description"],
+            }}
+            filterDefs={[
+              {
+                id: "severity",
+                label: "Severity",
+                type: "select",
+                param: "severity",
+                value: defs.filterSeverity,
+                onChange: defs.setFilterSeverity,
+                width: "130px",
+                options: [
+                  { label: "Severity", value: "all" },
+                  ...SEVERITIES.map((s) => ({
+                    label: titleCase(s),
+                    value: s,
+                  })),
+                ],
+              },
+              {
+                id: "category",
+                label: "Category",
+                type: "select",
+                param: "category",
+                value: defs.filterCategory,
+                onChange: defs.setFilterCategory,
+                width: "140px",
+                options: [
+                  { label: "Category", value: "all" },
+                  ...CATEGORIES.map((c) => ({
+                    label: titleCase(c),
+                    value: c,
+                  })),
+                ],
+              },
+              {
+                id: "status",
+                label: "Status",
+                type: "select",
+                param: "enabled",
+                value: defs.filterEnabled,
+                onChange: defs.setFilterEnabled,
+                width: "120px",
+                options: [
+                  { label: "Status", value: "all" },
+                  { label: "Active", value: "enabled" },
+                  { label: "Inactive", value: "disabled" },
+                ],
+              },
+            ]}
           />
         </CardBody>
       </Card>
@@ -1709,27 +1771,29 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               recvs.setFilterEnabled("all");
               setReceiversSearchQuery("");
             }}
-            filters={(
-              <>
-                <TableSearchField
-                  label="Search"
-                  value={receiversSearchQuery}
-                  onChange={setReceiversSearchQuery}
-                  placeholder="Search receivers..."
-                  formControlProps={{ maxW: "260px" }}
-                />
-                <TableSelectField
-                  label="Status"
-                  value={recvs.filterEnabled}
-                  onChange={recvs.setFilterEnabled}
-                  formControlProps={{ maxW: "200px" }}
-                >
-                  <option value="all">All</option>
-                  <option value="enabled">Enabled</option>
-                  <option value="disabled">Disabled</option>
-                </TableSelectField>
-              </>
-            )}
+            search={{
+              label: "Search",
+              value: receiversSearchQuery,
+              onChange: setReceiversSearchQuery,
+              placeholder: "Search receivers...",
+              fields: ["name", "email", "role"],
+            }}
+            filterDefs={[
+              {
+                id: "status",
+                label: "Status",
+                type: "select",
+                param: "enabled",
+                value: recvs.filterEnabled,
+                onChange: recvs.setFilterEnabled,
+                width: "200px",
+                options: [
+                  { label: "All", value: "all" },
+                  { label: "Enabled", value: "enabled" },
+                  { label: "Disabled", value: "disabled" },
+                ],
+              },
+            ]}
           />
         </CardBody>
       </Card>
@@ -1973,26 +2037,28 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               Create Routing Rule
             </Button>
           )}
-          filters={(
-            <>
-              <TableSearchField
-                value={rules.searchQuery}
-                onChange={rules.setSearchQuery}
-                placeholder="Search routing rules..."
-                formControlProps={{ maxW: "280px" }}
-              />
-              <TableSelectField
-                label="Status"
-                value={rules.filterEnabled}
-                onChange={rules.setFilterEnabled}
-                selectProps={{ maxW: "120px" }}
-              >
-                <option value="all">Status</option>
-                <option value="enabled">Active</option>
-                <option value="disabled">Inactive</option>
-              </TableSelectField>
-            </>
-          )}
+          search={{
+            value: rules.searchQuery,
+            onChange: rules.setSearchQuery,
+            placeholder: "Search routing rules...",
+            fields: ["rule_name", "category"],
+          }}
+          filterDefs={[
+            {
+              id: "status",
+              label: "Status",
+              type: "select",
+              param: "enabled",
+              value: rules.filterEnabled,
+              onChange: rules.setFilterEnabled,
+              width: "120px",
+              options: [
+                { label: "Status", value: "all" },
+                { label: "Active", value: "enabled" },
+                { label: "Inactive", value: "disabled" },
+              ],
+            },
+          ]}
         />
       </Box>
 
@@ -2738,64 +2804,66 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             noResultsMessage="No entries match the current filters."
             hasActiveFilters={history.hasActiveFilters}
             onClearFilters={() => history.clearFilters()}
-            filters={(
-              <>
-                <TableSearchField
-                  value={history.searchQuery}
-                  onChange={history.setSearchQuery}
-                  placeholder="Search alerts..."
-                  formControlProps={{ maxW: "260px" }}
-                />
-                <TableSelectField
-                  label="Severity"
-                  value={history.filterSeverity}
-                  onChange={history.setFilterSeverity}
-                  selectProps={{ maxW: "130px" }}
-                >
-                  <option value="all">Severity</option>
-                  {SEVERITIES.map((s) => (
-                    <option key={s} value={s}>{titleCase(s)}</option>
-                  ))}
-                </TableSelectField>
-                <TableSelectField
-                  label="Category"
-                  value={history.filterCategory}
-                  onChange={history.setFilterCategory}
-                  selectProps={{ maxW: "140px" }}
-                >
-                  <option value="all">Category</option>
-                  {CATEGORIES.map((c) => (
-                    <option key={c} value={c}>{titleCase(c)}</option>
-                  ))}
-                </TableSelectField>
-                <HStack spacing={2} align="center" flexWrap="nowrap" flexShrink={0}>
-                  <Text fontSize="xs" fontWeight="semibold" color="gray.600" whiteSpace="nowrap">
-                    From
-                  </Text>
-                  <Input
-                    type="date"
-                    size="sm"
-                    w="140px"
-                    maxW="140px"
-                    value={history.dateFrom}
-                    onChange={(e) => history.setDateFrom(e.target.value)}
-                    bg={cardBg}
-                  />
-                  <Text fontSize="xs" fontWeight="semibold" color="gray.600" whiteSpace="nowrap">
-                    To
-                  </Text>
-                  <Input
-                    type="date"
-                    size="sm"
-                    w="140px"
-                    maxW="140px"
-                    value={history.dateTo}
-                    onChange={(e) => history.setDateTo(e.target.value)}
-                    bg={cardBg}
-                  />
-                </HStack>
-              </>
-            )}
+            search={{
+              value: history.searchQuery,
+              onChange: history.setSearchQuery,
+              placeholder: "Search alerts...",
+              fields: ["name", "message"],
+            }}
+            filterDefs={[
+              {
+                id: "severity",
+                label: "Severity",
+                type: "select",
+                param: "severity",
+                value: history.filterSeverity,
+                onChange: history.setFilterSeverity,
+                width: "130px",
+                options: [
+                  { label: "Severity", value: "all" },
+                  ...SEVERITIES.map((s) => ({
+                    label: titleCase(s),
+                    value: s,
+                  })),
+                ],
+              },
+              {
+                id: "category",
+                label: "Category",
+                type: "select",
+                param: "category",
+                value: history.filterCategory,
+                onChange: history.setFilterCategory,
+                width: "140px",
+                options: [
+                  { label: "Category", value: "all" },
+                  ...CATEGORIES.map((c) => ({
+                    label: titleCase(c),
+                    value: c,
+                  })),
+                ],
+              },
+              {
+                id: "dateFrom",
+                label: "From",
+                type: "date",
+                param: "from",
+                value: history.dateFrom,
+                onChange: history.setDateFrom,
+                inputType: "date",
+                width: "140px",
+              },
+              {
+                id: "dateTo",
+                label: "To",
+                type: "date",
+                param: "to",
+                value: history.dateTo,
+                onChange: history.setDateTo,
+                inputType: "date",
+                width: "140px",
+              },
+            ]}
           />
         </CardBody>
       </Card>

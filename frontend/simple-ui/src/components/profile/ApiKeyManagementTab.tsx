@@ -35,11 +35,11 @@ import ApiKeyBulkBudgetModal from "./ApiKeyBulkBudgetModal";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
 import { FiSlash } from "react-icons/fi";
 import { ViewIcon, EditIcon } from "@chakra-ui/icons";
-import { useAdminTableSurface } from "../common/TableControls";
 import DataTable, {
+  useAdminTableSurface,
   type DataTableColumn,
 } from "../common/table";
-import { useNameColumnSort } from "../../utils/tableSort";
+import { useDeferredColumnSort } from "../../utils/tableSort";
 import StandardModal from "../common/StandardModal";
 import {
   API_KEY,
@@ -77,20 +77,23 @@ export default function ApiKeyManagementTab({
     onSaved: mgmt.handleFetchAllApiKeys,
   });
 
-  const keyNameSort = useNameColumnSort("key_name");
+  const keySortAccessors = useMemo(
+    () => ({
+      key_name: (a: ApiKeyTableRow) => a.key_name ?? "",
+      budget: (a: ApiKeyTableRow) =>
+        a.allocated_percentage ?? a.allocated_budget ?? -1,
+      created: (a: ApiKeyTableRow) =>
+        a.created_at ? new Date(a.created_at).getTime() : 0,
+      expires: (a: ApiKeyTableRow) =>
+        a.expires_at ? new Date(a.expires_at).getTime() : Number.POSITIVE_INFINITY,
+    }),
+    [],
+  );
+  const keySort = useDeferredColumnSort("key_name", keySortAccessors);
 
   const sortedApiKeys = useMemo(
-    () =>
-      keyNameSort.apply(
-        mgmt.filteredApiKeys,
-        (a) => a.key_name ?? "",
-        (a, b) => {
-          const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
-          const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
-          return timeB - timeA;
-        },
-      ),
-    [mgmt.filteredApiKeys, keyNameSort],
+    () => keySort.apply(mgmt.filteredApiKeys),
+    [mgmt.filteredApiKeys, keySort],
   );
 
   const hasActiveFilters =
@@ -105,6 +108,7 @@ export default function ApiKeyManagementTab({
         id: "key_name",
         header: "Key Name",
         sortable: true,
+        sortAccessor: (key) => key.key_name ?? "",
         cell: (key) => (
           <Box>
             <Text fontWeight="semibold">{key.key_name}</Text>
@@ -147,6 +151,9 @@ export default function ApiKeyManagementTab({
       {
         id: "budget",
         header: "Budget",
+        sortable: true,
+        sortAccessor: (key) =>
+          key.allocated_percentage ?? key.allocated_budget ?? -1,
         cell: (key) => {
           const pctLabel = mgmt.formatBudgetPct(key);
           if (pctLabel === "—") {
@@ -190,6 +197,9 @@ export default function ApiKeyManagementTab({
       {
         id: "created",
         header: "Created",
+        sortable: true,
+        sortAccessor: (key) =>
+          key.created_at ? new Date(key.created_at).getTime() : 0,
         cell: (key) => (
           <Text fontSize="sm">
             {key.created_at ? new Date(key.created_at).toLocaleDateString() : "—"}
@@ -199,6 +209,11 @@ export default function ApiKeyManagementTab({
       {
         id: "expires",
         header: "Expires",
+        sortable: true,
+        sortAccessor: (key) =>
+          key.expires_at
+            ? new Date(key.expires_at).getTime()
+            : Number.POSITIVE_INFINITY,
         cell: (key) => (
           <Text fontSize="sm">
             {key.expires_at ? new Date(key.expires_at).toLocaleDateString() : "Never"}
@@ -331,8 +346,8 @@ export default function ApiKeyManagementTab({
             onClearFilters={mgmt.handleResetFilters}
             showFiltersHeading
             filtersHeading="Filters"
-            sort={keyNameSort.sort}
-            onSortChange={keyNameSort.onSortChange}
+            sort={keySort.sort}
+            onSortChange={keySort.onSortChange}
             search={{
               label: "Key Name",
               value: mgmt.keyNameSearch,

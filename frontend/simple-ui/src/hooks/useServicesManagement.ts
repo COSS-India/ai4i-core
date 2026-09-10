@@ -4,7 +4,8 @@ import { useDisclosure } from "@chakra-ui/react";
 import { useRouter } from "next/router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useDeferredNameSort } from "../utils/tableSort";
+import { useDeferredColumnSort } from "../utils/tableSort";
+import { resolveTaskType } from "../utils/platformService";
 import {
   fetchAllServicesMatchingFilters,
   fetchExistingServiceIds,
@@ -29,7 +30,6 @@ import { useAuth } from "./useAuth";
 import { isRegistryReadOnlyUser } from "../utils/rbac";
 import { useSessionExpiry } from "./useSessionExpiry";
 import { showError } from "../utils/errorHandler";
-import { resolveTaskType } from "../utils/platformService";
 import { showToast } from "../utils/toast";
 import { refreshUntil } from "../utils/postMutationRefresh";
 import { useInferenceTypes } from "./useInferenceTypes";
@@ -131,7 +131,16 @@ export function useServicesManagement() {
     if (taskTypeNames.length === 1) setFilterTaskType(taskTypeNames[0]);
     setTaskTypeFilterReady(true);
   }, [isLoadingTaskTypes, taskTypeNames]);
-  const nameSort = useDeferredNameSort("name");
+  const registrySortAccessors = useMemo(
+    () => ({
+      name: (s: Service) => s.name ?? "",
+      tiers: (s: Service) => (s.tierNames ?? s.tiers ?? []).join(", ").toLowerCase(),
+      created: (s: Service) =>
+        s.createdAt ? new Date(s.createdAt).getTime() : 0,
+    }),
+    [],
+  );
+  const registrySort = useDeferredColumnSort("name", registrySortAccessors);
   const [confirmPublishService, setConfirmPublishService] =
     useState<Service | null>(null);
   const [confirmUnpublishService, setConfirmUnpublishService] =
@@ -155,14 +164,14 @@ export function useServicesManagement() {
   const isRegistryReadOnly = isRegistryReadOnlyUser(user?.roles);
   const viewTabIndex = isRegistryReadOnly ? 1 : 2;
 
-  // Client-side name filter + sort over the full fetched registry list.
+  // Client-side name filter + multi-column sort over the full fetched registry list.
   const registryTableItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const filtered = q
       ? services.filter((s) => (s.name ?? "").toLowerCase().includes(q))
       : services;
-    return nameSort.apply(filtered, (s) => s.name ?? "");
-  }, [services, searchQuery, nameSort]);
+    return registrySort.apply(filtered);
+  }, [services, searchQuery, registrySort]);
 
   const showTaskTypeAllOption = taskTypeNames.length > 1;
   const hasActiveFilters =
@@ -1262,7 +1271,7 @@ export function useServicesManagement() {
     taskTypeNames,
     hasActiveFilters,
     clearAllFilters,
-    nameSort,
+    registrySort,
     handleViewService,
     handleEditService,
     handleDeleteClick,

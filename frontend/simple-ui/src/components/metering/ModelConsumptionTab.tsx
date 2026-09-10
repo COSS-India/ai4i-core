@@ -136,8 +136,6 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
       {
         id: "task_type",
         header: section.TABLE_TASK_TYPE,
-        sortable: true,
-        sortAccessor: sortAccessors.task_type,
         hint: section.TOOLTIPS.TASK_TYPE,
         cell: (row, i) =>
           row.task_type ? (

@@ -54,6 +54,7 @@ import { FIELD_HINTS } from "../../config/fieldHints";
 import FieldHint from "../common/FieldHint";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { generateUUID } from "../../utils/uuid";
+import { useDeferredColumnSort } from "../../utils/tableSort";
 
 function getTaskTypeBadgeColor(taskType: string): string {
   switch (taskType.toUpperCase()) {
@@ -103,6 +104,8 @@ const TIER_NAME_COLUMN: DataTableColumn<Tier> = {
   header: "Tier Name",
   thProps: { w: "420px", maxW: "420px" },
   tdProps: { maxW: "420px" },
+  sortable: true,
+  sortAccessor: (tier) => tier.name ?? "",
   cell: (tier) => (
     <Tooltip label={tier.name} placement="top" hasArrow openDelay={300}>
       <Text fontSize="sm" fontWeight="medium" isTruncated maxW="430px">
@@ -699,6 +702,18 @@ const TierManagement: React.FC = () => {
     cancelRef,
   } = useTierManagement();
 
+  const tierSortAccessors = useMemo(
+    () => ({
+      name: (tier: Tier) => tier.name ?? "",
+    }),
+    [],
+  );
+  const tierSort = useDeferredColumnSort("name", tierSortAccessors);
+  const sortedTiers = useMemo(
+    () => tierSort.apply(filteredTiers),
+    [filteredTiers, tierSort],
+  );
+
   const columns = useMemo(
     () => [
       TIER_NAME_COLUMN,
@@ -736,9 +751,11 @@ const TierManagement: React.FC = () => {
     <Box>
       <DataTable
         layout="admin"
-        items={filteredTiers}
+        items={sortedTiers}
         columns={columns}
         getRowKey={(tier) => tier.id}
+        sort={tierSort.sort}
+        onSortChange={tierSort.onSortChange}
         isLoading={isLoading}
         loadingMessage="Loading tiers..."
         emptyMessage="No tiers found. Create your first tier to get started."

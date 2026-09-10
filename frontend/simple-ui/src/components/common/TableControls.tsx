@@ -1,9 +1,8 @@
 import React from "react";
-import { TriangleDownIcon, TriangleUpIcon } from "@chakra-ui/icons";
 import {
+  Box,
   Button,
   HStack,
-  IconButton,
   Select,
   Text,
   Tooltip,
@@ -11,24 +10,6 @@ import {
 } from "@chakra-ui/react";
 import { FORM_LABEL_TO_INPUT_PT } from "./FormFieldsRow";
 import InfoTip from "./InfoTip";
-
-/** App-wide table — prefer importing from `./table` or `./DataTable`. */
-export {
-  DataTable as default,
-  DataTable,
-  TableSearchField,
-  TableSelectField,
-  DATA_TABLE_HEADER_SX,
-  DATA_TABLE_CELL_MAX_W,
-  type DataTableColumn,
-  type DataTableProps,
-} from "./DataTable";
-
-export {
-  useAdminDataTable,
-  useAdminDataTableServer,
-  DEFAULT_PAGE_SIZE_OPTIONS,
-} from "../../hooks/useAdminDataTable";
 
 /** Shared light/dark surface tokens for admin data tables (list pages, profile tabs, etc.). */
 export function useAdminTableSurface() {
@@ -42,6 +23,79 @@ export function useAdminTableSurface() {
 
 type SortDirection = "asc" | "desc";
 
+/** Compact up caret used in table sort controls. */
+function CaretUpIcon({ size = 10 }: { size?: number }) {
+  return (
+    <Box as="svg" viewBox="0 0 10 6" w={`${size}px`} h={`${size * 0.6}px`} fill="currentColor" aria-hidden>
+      <path d="M5 0.5L9.5 5.5H0.5L5 0.5Z" />
+    </Box>
+  );
+}
+
+/** Compact down caret used in table sort controls. */
+function CaretDownIcon({ size = 10 }: { size?: number }) {
+  return (
+    <Box as="svg" viewBox="0 0 10 6" w={`${size}px`} h={`${size * 0.6}px`} fill="currentColor" aria-hidden>
+      <path d="M5 5.5L0.5 0.5H9.5L5 5.5Z" />
+    </Box>
+  );
+}
+
+function SortCaretButton({
+  direction,
+  isActive,
+  label,
+  tooltip,
+  onClick,
+}: {
+  direction: SortDirection;
+  isActive: boolean;
+  label: string;
+  tooltip: string;
+  onClick: () => void;
+}) {
+  return (
+    <Tooltip label={tooltip} hasArrow openDelay={250}>
+      <Box
+        as="button"
+        type="button"
+        aria-label={label}
+        aria-pressed={isActive}
+        onClick={(e: React.MouseEvent) => {
+          e.stopPropagation();
+          onClick();
+        }}
+        display="flex"
+        alignItems="center"
+        justifyContent="center"
+        w="14px"
+        h="9px"
+        p={0}
+        m={0}
+        border="none"
+        bg="transparent"
+        cursor="pointer"
+        color={isActive ? "blue.500" : "gray.300"}
+        _hover={{ color: isActive ? "blue.600" : "gray.500" }}
+        _focusVisible={{
+          outline: "2px solid",
+          outlineColor: "blue.300",
+          outlineOffset: "1px",
+          borderRadius: "2px",
+        }}
+        transition="color 0.12s ease"
+        lineHeight={0}
+      >
+        {direction === "asc" ? <CaretUpIcon /> : <CaretDownIcon />}
+      </Box>
+    </Tooltip>
+  );
+}
+
+/**
+ * Column header with optional hint and a compact stacked asc/desc caret control.
+ * Inactive columns show muted dual carets; the active direction uses a blue caret.
+ */
 export function TableSortHeader({
   label,
   direction,
@@ -51,7 +105,7 @@ export function TableSortHeader({
   descAriaLabel,
   ascTooltipLabel,
   descTooltipLabel,
-  /** When false, neither button is solid (inactive column). Default true. */
+  /** When false, neither caret is emphasized (inactive column). Default true. */
   active = true,
   hint,
 }: {
@@ -69,39 +123,52 @@ export function TableSortHeader({
 }) {
   const ascTooltip = ascTooltipLabel ?? `Sort ${label} ascending`;
   const descTooltip = descTooltipLabel ?? `Sort ${label} descending`;
+  const ascActive = active && direction === "asc";
+  const descActive = active && direction === "desc";
+
   return (
-    <HStack spacing={1.5}>
+    <HStack spacing={1.5} align="center">
       <Text
         as="span"
         fontSize="11.5px"
         letterSpacing="0.05em"
-        color="gray.500"
+        color={active ? "gray.700" : "gray.500"}
         textTransform="uppercase"
         fontWeight="bold"
       >
         {label}
       </Text>
       {hint ? <InfoTip message={hint} /> : null}
-      <Tooltip label={ascTooltip} hasArrow>
-        <IconButton
-          aria-label={ascAriaLabel}
-          icon={<TriangleUpIcon />}
-          size="xs"
-          variant={active && direction === "asc" ? "solid" : "ghost"}
-          colorScheme="gray"
+      <Box
+        as="span"
+        display="inline-flex"
+        flexDirection="column"
+        alignItems="center"
+        justifyContent="center"
+        gap="1px"
+        px="2px"
+        py="1px"
+        borderRadius="4px"
+        bg={active ? "blue.50" : "transparent"}
+        _groupHover={{ bg: "gray.100" }}
+        transition="background 0.12s ease"
+        aria-hidden={false}
+      >
+        <SortCaretButton
+          direction="asc"
+          isActive={ascActive}
+          label={ascAriaLabel}
+          tooltip={ascTooltip}
           onClick={onAsc}
         />
-      </Tooltip>
-      <Tooltip label={descTooltip} hasArrow>
-        <IconButton
-          aria-label={descAriaLabel}
-          icon={<TriangleDownIcon />}
-          size="xs"
-          variant={active && direction === "desc" ? "solid" : "ghost"}
-          colorScheme="gray"
+        <SortCaretButton
+          direction="desc"
+          isActive={descActive}
+          label={descAriaLabel}
+          tooltip={descTooltip}
           onClick={onDesc}
         />
-      </Tooltip>
+      </Box>
     </HStack>
   );
 }

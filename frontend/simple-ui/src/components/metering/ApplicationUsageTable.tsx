@@ -88,6 +88,8 @@ const ApplicationUsageTable: React.FC<ApplicationUsageTableProps> = ({
         id: "spend",
         header: cols.SPEND,
         tip: tips.SPEND_COL,
+        sortable: true,
+        sortAccessor: (row) => row.spendBudget.amount,
         width: "22%",
         cell: (row) => {
           const limit = row.allocatedBudget.amount;
@@ -136,8 +138,8 @@ const ApplicationUsageTable: React.FC<ApplicationUsageTableProps> = ({
       columns={columns}
       rows={applications}
       rowKey={(row) => row.applicationId}
-      defaultSortKey="name"
-      defaultSortDirection="asc"
+      defaultSortKey="spend"
+      defaultSortDirection="desc"
       isLoading={isLoading}
       isEmpty={!isLoading && applications.length === 0}
       errorMessage={errorMessage}

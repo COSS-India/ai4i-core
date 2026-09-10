@@ -1,37 +1,8 @@
-import { Box, type BoxProps, type TableCellProps } from "@chakra-ui/react";
+import { Box, type TableCellProps } from "@chakra-ui/react";
 import React, { useCallback, useRef } from "react";
 
 /** Default max width for truncated table cells. */
 export const DATA_TABLE_CELL_MAX_W = "280px";
-
-/** Bordered scroll shell for rare children-based table markup. Prefer column-driven `DataTable`. */
-export function DataTableShell({ children, ...boxProps }: { children: React.ReactNode } & BoxProps) {
-  const onMouseOver = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const cell = (e.target as HTMLElement | null)?.closest?.("td, th") as HTMLTableCellElement | null;
-    if (!cell) return;
-    const overflowed = cell.scrollWidth > cell.clientWidth + 1;
-    if (overflowed) {
-      const text = (cell.textContent ?? "").trim();
-      if (text) cell.setAttribute("title", text);
-    } else {
-      cell.removeAttribute("title");
-    }
-  }, []);
-
-  return (
-    <Box
-      overflowX="auto"
-      borderWidth="1px"
-      borderColor="gray.200"
-      borderRadius="md"
-      bg="white"
-      onMouseOver={onMouseOver}
-      {...boxProps}
-    >
-      {children}
-    </Box>
-  );
-}
 
 const DEFAULT_TRUNCATE_CELL_PROPS = {
   maxW: DATA_TABLE_CELL_MAX_W,
@@ -75,7 +46,22 @@ export function TruncatingCellContent({ children }: { children: React.ReactNode 
   }, []);
 
   return (
-    <Box ref={ref} minW={0} maxW="100%" overflow="hidden" onMouseEnter={onMouseEnter}>
+    <Box
+      ref={ref}
+      minW={0}
+      maxW="100%"
+      overflow="hidden"
+      textOverflow="ellipsis"
+      whiteSpace="nowrap"
+      sx={{
+        "& > *": {
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        },
+      }}
+      onMouseEnter={onMouseEnter}
+    >
       {children}
     </Box>
   );

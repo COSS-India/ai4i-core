@@ -150,4 +150,4 @@ export interface ModalProps {
 }
 
 // Table Types — prefer DataTableColumn from components/common/table
-export type { DataTableColumn } from "../components/common/DataTable";
+export type { DataTableColumn } from "../components/common/table";

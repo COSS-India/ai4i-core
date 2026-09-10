@@ -59,6 +59,8 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
       {
         id: "keyName",
         header: cols.API_KEY,
+        sortable: true,
+        sortAccessor: (key) => key.keyName ?? "",
         cell: (key) => (
           <>
             <Text fontWeight="bold" fontSize="13.5px" color="gray.800">
@@ -80,6 +82,8 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
         id: "allocated",
         header: cols.ALLOCATED_SHORT,
         hint: tips.API_KEY_ALLOCATED,
+        sortable: true,
+        sortAccessor: (key) => key.allocatedBudget.amount,
         cell: (key) => {
           const keyLimit = key.allocatedBudget.amount;
           const keyHasBudget = keyLimit > 0;
@@ -104,6 +108,8 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
         id: "spend",
         header: cols.SPEND_SHORT,
         hint: tips.API_KEY_SPEND,
+        sortable: true,
+        sortAccessor: (key) => key.spendBudget.amount,
         cell: (key) => {
           const keyLimit = key.allocatedBudget.amount;
           const keySpent = key.spendBudget.amount;
@@ -131,6 +137,8 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
         id: "remaining",
         header: cols.REMAINING_SHORT,
         hint: tips.API_KEY_REMAINING,
+        sortable: true,
+        sortAccessor: (key) => key.remainingBudget.amount,
         cell: (key) => {
           const keyLimit = key.allocatedBudget.amount;
           const keyRemaining = key.remainingBudget.amount;
@@ -230,7 +238,8 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
               columns={apiKeyColumns}
               rows={detail.apiKeys}
               rowKey={(key) => key.keyId}
-              sortable={false}
+              defaultSortKey="keyName"
+              defaultSortDirection="asc"
               showFooter
               variant="compact"
               borderRadius="10px"

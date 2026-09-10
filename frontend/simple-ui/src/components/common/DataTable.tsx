@@ -38,8 +38,6 @@ import {
 import { useTableSort, type TableSortDirection } from "../../utils/tableSort";
 import FieldHint from "./FieldHint";
 import FieldLabel from "./FieldLabel";
-import { ThWithTip } from "./InfoTip";
-import SortableTh from "./SortableTh";
 import {
   TableFilterToolbar,
   TablePaginationBar,
@@ -53,13 +51,12 @@ import type {
 } from "./dataTableTypes";
 import {
   DATA_TABLE_CELL_MAX_W,
-  DataTableShell,
   TruncatingCellContent,
   getTruncateCellProps,
   shouldAutoTruncateColumn,
 } from "./dataTableUtils";
 
-export { DATA_TABLE_CELL_MAX_W, DataTableShell };
+export { DATA_TABLE_CELL_MAX_W };
 export type { DataTableSortDirection } from "./dataTableTypes";
 export type {
   DataTableFilterDef,
@@ -178,15 +175,11 @@ export interface DataTableAdminProps<T> extends DataTableSharedProps<T> {
    */
   search?: DataTableSearchConfig;
   /**
-   * Config-driven filter controls (select today; multiselect/date/text reserved).
+   * Config-driven filter controls (`select`, `text`, `date`; `multiselect` reserved).
    * Parent maps values → API via each filter’s `onChange` / `param`.
+   * `param` / `search.fields` are documentation for call sites — DataTable does not read them.
    */
   filterDefs?: DataTableFilterDef[];
-  /**
-   * Extra filter UI (escape hatch). Prefer `search` + `filterDefs` when possible.
-   * Combined with config-driven controls in the toolbar.
-   */
-  filters?: React.ReactNode;
   hasActiveFilters?: boolean;
   onClearFilters?: () => void;
   filterToolbarAlign?: "flex-start" | "center";
@@ -231,18 +224,18 @@ function buildSortAccessors<T>(columns: DataTableColumn<T>[]): Record<string, (r
   return accessors;
 }
 
-type AdminDataTableFilterContextValue = {
+type DataTableFilterContextValue = {
   resetPage: () => void;
   inputBg: string;
 };
 
-const AdminDataTableFilterContext = createContext<AdminDataTableFilterContextValue>({
+const DataTableFilterContext = createContext<DataTableFilterContextValue>({
   resetPage: () => {},
   inputBg: "white",
 });
 
-function useAdminDataTableFilterContext() {
-  return useContext(AdminDataTableFilterContext);
+function useDataTableFilterContext() {
+  return useContext(DataTableFilterContext);
 }
 
 /** Search field wired to reset pagination when the value changes. */
@@ -269,7 +262,7 @@ export function TableSearchField({
   inputGroupProps?: Omit<InputGroupProps, "children">;
   inputProps?: Omit<InputProps, "value" | "onChange" | "placeholder">;
 }) {
-  const { resetPage, inputBg } = useAdminDataTableFilterContext();
+  const { resetPage, inputBg } = useDataTableFilterContext();
   const [localValue, setLocalValue] = useState(value);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -323,6 +316,93 @@ export function TableSearchField({
   );
 }
 
+/** Plain text/number field wired to reset pagination when the value changes. */
+export function TableTextField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  helper,
+  hint,
+  inputType = "text",
+  formControlProps,
+  inputProps,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  helper?: string;
+  hint?: string;
+  inputType?: "text" | "number";
+  formControlProps?: FormControlProps;
+  inputProps?: Omit<InputProps, "value" | "onChange" | "placeholder" | "type">;
+}) {
+  const { resetPage, inputBg } = useDataTableFilterContext();
+
+  return (
+    <FormControl w={{ base: "full", sm: "200px" }} {...formControlProps}>
+      <FieldLabel hint={hint}>{label}</FieldLabel>
+      <Input
+        type={inputType}
+        size="sm"
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          resetPage();
+        }}
+        placeholder={placeholder}
+        bg={inputBg}
+        aria-label={label}
+        {...inputProps}
+      />
+      <FieldHint>{helper}</FieldHint>
+    </FormControl>
+  );
+}
+
+/** Date / datetime-local field wired to reset pagination when the value changes. */
+export function TableDateField({
+  label,
+  value,
+  onChange,
+  helper,
+  hint,
+  inputType = "date",
+  formControlProps,
+  inputProps,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  helper?: string;
+  hint?: string;
+  inputType?: "date" | "datetime-local";
+  formControlProps?: FormControlProps;
+  inputProps?: Omit<InputProps, "value" | "onChange" | "type">;
+}) {
+  const { resetPage, inputBg } = useDataTableFilterContext();
+
+  return (
+    <FormControl w={{ base: "full", sm: "220px" }} {...formControlProps}>
+      <FieldLabel hint={hint}>{label}</FieldLabel>
+      <Input
+        type={inputType}
+        size="sm"
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          resetPage();
+        }}
+        bg={inputBg}
+        aria-label={label}
+        {...inputProps}
+      />
+      <FieldHint>{helper}</FieldHint>
+    </FormControl>
+  );
+}
+
 /** Select field wired to reset pagination when the value changes. */
 export function TableSelectField({
   label,
@@ -343,7 +423,7 @@ export function TableSelectField({
   formControlProps?: FormControlProps;
   selectProps?: Omit<SelectProps, "value" | "onChange" | "children">;
 }) {
-  const { resetPage, inputBg } = useAdminDataTableFilterContext();
+  const { resetPage, inputBg } = useDataTableFilterContext();
   return (
     <FormControl w={{ base: "full", sm: "200px" }} {...formControlProps}>
       <FieldLabel hint={hint}>{label}</FieldLabel>
@@ -385,6 +465,10 @@ function ConfigDrivenFilters({
         />
       ) : null}
       {(filterDefs ?? []).map((def) => {
+        const widthProps = def.width
+          ? { w: def.width as FormControlProps["w"] }
+          : undefined;
+
         if (def.type === "select") {
           return (
             <TableSelectField
@@ -393,11 +477,7 @@ function ConfigDrivenFilters({
               value={def.value}
               onChange={def.onChange}
               helper={def.helper}
-              formControlProps={
-                def.width
-                  ? { w: def.width as FormControlProps["w"] }
-                  : undefined
-              }
+              formControlProps={widthProps ? { w: widthProps.w } : undefined}
             >
               {(def.options ?? []).map((opt) => (
                 <option key={opt.value} value={opt.value}>
@@ -407,22 +487,46 @@ function ConfigDrivenFilters({
             </TableSelectField>
           );
         }
-        // Future-ready: multiselect / date / text — render as text input for now
+
         if (def.type === "text") {
+          const textType = def.inputType === "number" ? "number" : "text";
           return (
-            <TableSearchField
+            <TableTextField
               key={def.id}
               label={def.label}
               value={def.value}
               onChange={def.onChange}
               placeholder={def.placeholder}
               helper={def.helper}
-              formControlProps={
-                def.width
-                  ? { w: def.width as FormControlProps["w"] }
-                  : { w: { base: "full", sm: "200px" } }
-              }
+              inputType={textType}
+              formControlProps={widthProps ? { w: widthProps.w } : undefined}
+              inputProps={textType === "number" ? { min: 0 } : undefined}
             />
+          );
+        }
+
+        if (def.type === "date") {
+          const dateType =
+            def.inputType === "datetime-local" ? "datetime-local" : "date";
+          return (
+            <TableDateField
+              key={def.id}
+              label={def.label}
+              value={def.value}
+              onChange={def.onChange}
+              helper={def.helper}
+              inputType={dateType}
+              formControlProps={widthProps ? { w: widthProps.w } : undefined}
+            />
+          );
+        }
+
+        // Reserved: multiselect is not implemented yet — fail loudly in dev
+        // so a misconfigured filterDefs entry is obvious (renders nothing otherwise).
+        if (process.env.NODE_ENV !== "production") {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[DataTable] filterDefs type "${def.type}" is not rendered yet (id="${def.id}").`,
           );
         }
         return null;
@@ -504,7 +608,7 @@ function CardLayoutDataTable<T>({
   const initialSortKey = defaultSortKey ?? columns.find((c) => c.sortable)?.id ?? columns[0]?.id ?? "";
   const parentOwnsSort = Boolean(onSortChange);
 
-  const { sortedRows, sortKey, sortDirection, toggleSort } = useTableSort(
+  const { sortedRows, sortKey, sortDirection, setSortState } = useTableSort(
     rows,
     initialSortKey,
     sortAccessors,
@@ -516,16 +620,12 @@ function CardLayoutDataTable<T>({
     ? (controlledSort?.direction ?? defaultSortDirection)
     : sortDirection;
 
-  const handleSort = (key: string) => {
+  const handleSortChange = (next: DataTableSortState) => {
     if (parentOwnsSort && onSortChange) {
-      const col = columns.find((c) => c.id === key || columnSortKey(c) === key);
-      const emitKey = col ? columnSortKey(col) : key;
-      const nextDir: TableSortDirection =
-        controlledSort?.key === emitKey && controlledSort.direction === "asc" ? "desc" : "asc";
-      onSortChange({ key: emitKey, direction: nextDir });
+      onSortChange(next);
       return;
     }
-    toggleSort(key);
+    setSortState(next);
   };
 
   const displayRows = sortingEnabled && !parentOwnsSort ? sortedRows : [...rows];
@@ -557,41 +657,27 @@ function CardLayoutDataTable<T>({
                 ...(col.isNumeric || col.align === "right" ? { textAlign: "right" as const } : {}),
                 ...(col.align === "center" ? { textAlign: "center" as const } : {}),
               };
-              if (sortingEnabled && col.sortable) {
-                return (
-                  <SortableTh
-                    key={col.id}
-                    sortKey={col.id}
-                    activeSortKey={activeSortKey === columnSortKey(col) ? col.id : activeSortKey}
-                    sortDirection={activeSortDirection}
-                    onSort={handleSort}
-                    message={hint}
-                    isNumeric={col.isNumeric}
-                    w={col.width}
-                    minW={col.minWidth}
-                    sx={headerSx}
-                  >
-                    {col.header}
-                  </SortableTh>
-                );
-              }
-              if (hint) {
-                return (
-                  <ThWithTip
-                    key={col.id}
-                    message={hint}
-                    isNumeric={col.isNumeric}
-                    w={col.width}
-                    minW={col.minWidth}
-                    sx={headerSx}
-                  >
-                    {col.header}
-                  </ThWithTip>
-                );
-              }
               return (
-                <Th key={col.id} w={col.width} minW={col.minWidth} sx={headerSx}>
-                  {col.header}
+                <Th
+                  key={col.id}
+                  w={col.width}
+                  minW={col.minWidth}
+                  isNumeric={col.isNumeric}
+                  sx={headerSx}
+                >
+                  {sortingEnabled && col.sortable ? (
+                    <AdminSortableHeader
+                      col={col}
+                      sort={{ key: activeSortKey, direction: activeSortDirection }}
+                      onSortChange={handleSortChange}
+                    />
+                  ) : hint ? (
+                    <FieldLabel variant="header" hint={hint}>
+                      {col.header}
+                    </FieldLabel>
+                  ) : (
+                    col.header
+                  )}
                 </Th>
               );
             })}
@@ -695,7 +781,6 @@ function AdminLayoutDataTable<T>({
   getRowKey,
   search,
   filterDefs,
-  filters,
   hasActiveFilters = false,
   onClearFilters,
   filterToolbarAlign = "flex-start",
@@ -783,7 +868,7 @@ function AdminLayoutDataTable<T>({
   const handleClearFilters = useCallback(() => {
     onClearFilters?.();
     pagination?.resetPage();
-  }, [onClearFilters, pagination]);
+  }, [onClearFilters, pagination?.resetPage]);
 
   const filterContextValue = useMemo(
     () => ({
@@ -830,7 +915,7 @@ function AdminLayoutDataTable<T>({
       />
     ) : null;
 
-  const hasFilterToolbar = Boolean(search || (filterDefs && filterDefs.length > 0) || filters);
+  const hasFilterToolbar = Boolean(search || (filterDefs && filterDefs.length > 0));
 
   // Outer shell owns border/radius; strip chrome overrides from container props.
   const {
@@ -935,7 +1020,7 @@ function AdminLayoutDataTable<T>({
   );
 
   return (
-    <AdminDataTableFilterContext.Provider value={filterContextValue}>
+    <DataTableFilterContext.Provider value={filterContextValue}>
       <VStack spacing={4} align="stretch" w="100%">
         {hasFilterToolbar ? (
           <VStack spacing={4} align="stretch">
@@ -951,7 +1036,6 @@ function AdminLayoutDataTable<T>({
               rightContent={filterToolbarRightContent}
             >
               <ConfigDrivenFilters search={search} filterDefs={filterDefs} />
-              {filters}
             </TableFilterToolbar>
           </VStack>
         ) : null}
@@ -982,7 +1066,7 @@ function AdminLayoutDataTable<T>({
           </Box>
         )}
       </VStack>
-    </AdminDataTableFilterContext.Provider>
+    </DataTableFilterContext.Provider>
   );
 }
 

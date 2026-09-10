@@ -6,7 +6,6 @@ import {
   FormControl,
   FormLabel,
   HStack,
-  Input,
   Switch,
   Text,
   Tooltip,
@@ -42,17 +41,15 @@ import { showToast } from "../utils/toast";
 import { INSTITUTION, INSTITUTIONS, INSTITUTION_ARTICLE, isTenantStatus, TENANT, formatModelTaskTypeLabel } from "../config/constants";
 import { useInferenceTypes } from "../hooks/useInferenceTypes";
 import { listTenants } from "../services/tenantService";
-import { useAdminTableSurface } from "../components/common/TableControls";
 import DataTable, {
-  TableSearchField,
-  TableSelectField,
+  useAdminTableSurface,
   type DataTableColumn,
 } from "../components/common/table";
+import { useDeferredColumnSort } from "../utils/tableSort";
 import TelemetryTraceDetailModal from "@/components/observability/TelemetryTraceDetailModal";
 import { getPlatformName } from "../config/runtimeConfig";
 import { FIELD_HINTS } from "../config/fieldHints";
 import FieldHint from "../components/common/FieldHint";
-import FormFieldsRow from "../components/common/FormFieldsRow";
 
 /** Auto-refresh interval when enabled (within 30–45s range). */
 const AUTO_REFRESH_MS = 37_000;
@@ -392,17 +389,30 @@ const LogsPage: React.FC = () => {
 
   const traceRows = tracesData?.data ?? [];
 
+  const logsSortAccessors = useMemo(
+    () => ({
+      timestamp: (row: TelemetryTraceRecord) =>
+        row.timestamp ? new Date(row.timestamp).getTime() : 0,
+      url: (row: TelemetryTraceRecord) => row.url ?? "",
+    }),
+    [],
+  );
+  const logsSort = useDeferredColumnSort("timestamp", logsSortAccessors);
+
   const displayedTraceRows = useMemo(() => {
-    if (!debouncedSearch) return traceRows;
-    const q = debouncedSearch.toLowerCase();
-    return traceRows.filter(
-      (row) =>
-        row.trace_id.toLowerCase().includes(q) ||
-        (row.url ?? "").toLowerCase().includes(q) ||
-        (row.task_type ?? "").toLowerCase().includes(q) ||
-        row.status.toLowerCase().includes(q)
-    );
-  }, [traceRows, debouncedSearch]);
+    const filtered = (() => {
+      if (!debouncedSearch) return traceRows;
+      const q = debouncedSearch.toLowerCase();
+      return traceRows.filter(
+        (row) =>
+          row.trace_id.toLowerCase().includes(q) ||
+          (row.url ?? "").toLowerCase().includes(q) ||
+          (row.task_type ?? "").toLowerCase().includes(q) ||
+          row.status.toLowerCase().includes(q)
+      );
+    })();
+    return logsSort.apply(filtered);
+  }, [traceRows, debouncedSearch, logsSort]);
 
   const aggregationStats = tracesData?.aggregations;
 
@@ -423,6 +433,9 @@ const LogsPage: React.FC = () => {
         id: "timestamp",
         header: "Timestamp",
         thProps: { fontWeight: "semibold", color: "gray.700", py: 3 },
+        sortable: true,
+        sortAccessor: (row) =>
+          row.timestamp ? new Date(row.timestamp).getTime() : 0,
         cell: (row) => (
           <Text fontSize="sm" color="gray.600" py={3}>
             {formatTimestamp(row.timestamp)}
@@ -460,6 +473,8 @@ const LogsPage: React.FC = () => {
         id: "url",
         header: "URL",
         thProps: { fontWeight: "semibold", color: "gray.700" },
+        sortable: true,
+        sortAccessor: (row) => row.url ?? "",
         cell: (row) => (
           <Text noOfLines={2} maxW="400px" fontSize="sm" color="gray.700" fontFamily="mono">
             {row.url}
@@ -633,6 +648,8 @@ const LogsPage: React.FC = () => {
                     getRowKey={(row) =>
                       `${row.trace_id}-${row.timestamp}-${row.task_type}-${row.url}`
                     }
+                    sort={logsSort.sort}
+                    onSortChange={logsSort.onSortChange}
                     onRowClick={(row) => {
                       if (row.trace_id) openTraceDetail(row.trace_id);
                     }}
@@ -655,110 +672,96 @@ const LogsPage: React.FC = () => {
                     noResultsMessage="No traces match the current filters."
                     hasActiveFilters={hasAppliedFilters}
                     onClearFilters={clearAllFilters}
-                    filters={
-                      <VStack align="stretch" spacing={3} flex="1" w="full">
-                        <FormFieldsRow spacing={3} w="full">
-                          <TableSearchField
-                            label="Search"
-                            value={searchQuery}
-                            onChange={setSearchQuery}
-                            placeholder={FIELD_HINTS.logs.search.placeholder}
-                            formControlProps={{ w: { base: "full", md: "280px" } }}
-                          />
-                          {canPickTenant && (
-                            <TableSelectField
-                              label={INSTITUTION}
-                              value={selectedTenantId}
-                              onChange={setSelectedTenantId}
-                              helper={FIELD_HINTS.logs.tenant.helper}
-                              formControlProps={{ w: { base: "full", sm: "200px" } }}
-                              selectProps={{ isDisabled: tenantsLoading }}
-                            >
-                              <option value="">All {INSTITUTIONS}</option>
-                              {tenantsLoading ? (
-                                <option value="" disabled>
-                                  Loading {INSTITUTIONS.toLowerCase()}…
-                                </option>
-                              ) : tenantsError ? (
-                                <option value="" disabled>
-                                  Error loading {INSTITUTIONS.toLowerCase()}
-                                </option>
-                              ) : activeTenants.length > 0 ? (
-                                activeTenants.map(
-                                  (tenant: { tenant_id: string; organisation?: string }) => (
-                                    <option key={tenant.tenant_id} value={tenant.tenant_id}>
-                                      {tenant.organisation || tenant.tenant_id}
-                                    </option>
-                                  )
-                                )
-                              ) : (
-                                <option value="" disabled>
-                                  No active {INSTITUTIONS.toLowerCase()}
-                                </option>
-                              )}
-                            </TableSelectField>
-                          )}
-                          <TableSelectField
-                            label="Task Type"
-                            value={taskType}
-                            onChange={setTaskType}
-                            formControlProps={{ w: { base: "full", sm: "160px" } }}
-                          >
-                            {taskTypeNames.map((tt) => (
-                              <option key={tt} value={tt}>
-                                {formatModelTaskTypeLabel(tt)}
-                              </option>
-                            ))}
-                          </TableSelectField>
-                          <TableSelectField
-                            label="Status"
-                            value={level}
-                            onChange={setLevel}
-                            formControlProps={{ w: { base: "full", sm: "140px" } }}
-                          >
-                            <option value="">All Statuses</option>
-                            <option value="success">Success</option>
-                            <option value="failure">Failure</option>
-                          </TableSelectField>
-                          <Box flex="1" minW={0} display={{ base: "none", lg: "block" }} />
-                        </FormFieldsRow>
-                        <FormFieldsRow spacing={3} w="full">
-                          <FormControl w={{ base: "full", sm: "220px" }}>
-                            <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
-                              Start Time
-                            </FormLabel>
-                            <Input
-                              type="datetime-local"
-                              size="sm"
-                              value={startTime}
-                              onChange={(e) => {
-                                setStartTime(e.target.value);
-                                setPage(1);
-                              }}
-                              bg={cardBg}
-                            />
-                            <FieldHint>{FIELD_HINTS.logs.startTime.helper}</FieldHint>
-                          </FormControl>
-                          <FormControl w={{ base: "full", sm: "220px" }}>
-                            <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
-                              End Time
-                            </FormLabel>
-                            <Input
-                              type="datetime-local"
-                              size="sm"
-                              value={endTime}
-                              onChange={(e) => {
-                                setEndTime(e.target.value);
-                                setPage(1);
-                              }}
-                              bg={cardBg}
-                            />
-                            <FieldHint>{FIELD_HINTS.logs.endTime.helper}</FieldHint>
-                          </FormControl>
-                          <Box flex="1" minW={0} display={{ base: "none", lg: "block" }} />
-                        </FormFieldsRow>
-                      </VStack>
-                    }
+                    search={{
+                      label: "Search",
+                      value: searchQuery,
+                      onChange: setSearchQuery,
+                      placeholder: FIELD_HINTS.logs.search.placeholder,
+                      fields: ["trace_id", "service", "operation"],
+                    }}
+                    filterDefs={[
+                      ...(canPickTenant
+                        ? [
+                            {
+                              id: "tenant",
+                              label: INSTITUTION,
+                              type: "select" as const,
+                              param: "tenant_id",
+                              value: selectedTenantId,
+                              onChange: setSelectedTenantId,
+                              helper: FIELD_HINTS.logs.tenant.helper,
+                              width: { base: "full", sm: "200px" },
+                              options: [
+                                { label: `All ${INSTITUTIONS}`, value: "" },
+                                ...(tenantsLoading
+                                  ? []
+                                  : tenantsError
+                                    ? []
+                                    : activeTenants.map(
+                                        (tenant: {
+                                          tenant_id: string;
+                                          organisation?: string;
+                                        }) => ({
+                                          label:
+                                            tenant.organisation ||
+                                            tenant.tenant_id,
+                                          value: tenant.tenant_id,
+                                        }),
+                                      )),
+                              ],
+                            },
+                          ]
+                        : []),
+                      {
+                        id: "taskType",
+                        label: "Task Type",
+                        type: "select",
+                        param: "task_type",
+                        value: taskType,
+                        onChange: setTaskType,
+                        width: { base: "full", sm: "160px" },
+                        options: taskTypeNames.map((tt) => ({
+                          label: formatModelTaskTypeLabel(tt),
+                          value: tt,
+                        })),
+                      },
+                      {
+                        id: "status",
+                        label: "Status",
+                        type: "select",
+                        param: "level",
+                        value: level,
+                        onChange: setLevel,
+                        width: { base: "full", sm: "140px" },
+                        options: [
+                          { label: "All Statuses", value: "" },
+                          { label: "Success", value: "success" },
+                          { label: "Failure", value: "failure" },
+                        ],
+                      },
+                      {
+                        id: "startTime",
+                        label: "Start Time",
+                        type: "date",
+                        param: "start_time",
+                        value: startTime,
+                        onChange: setStartTime,
+                        inputType: "datetime-local",
+                        helper: FIELD_HINTS.logs.startTime.helper,
+                        width: { base: "full", sm: "220px" },
+                      },
+                      {
+                        id: "endTime",
+                        label: "End Time",
+                        type: "date",
+                        param: "end_time",
+                        value: endTime,
+                        onChange: setEndTime,
+                        inputType: "datetime-local",
+                        helper: FIELD_HINTS.logs.endTime.helper,
+                        width: { base: "full", sm: "220px" },
+                      },
+                    ]}
                     filterToolbarRightContent={
                       <HStack spacing={3} flexWrap="wrap">
                         <FormControl display="flex" alignItems="center" w="auto">

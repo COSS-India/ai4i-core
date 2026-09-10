@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import {
   Alert,
   AlertIcon,
@@ -24,12 +24,12 @@ import { EditIcon, ViewIcon } from "@chakra-ui/icons";
 import { FiPlus, FiRefreshCw, FiSliders } from "react-icons/fi";
 import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
+  FieldLabel,
   type DataTableColumn,
 } from "../common/table";
 import StandardModal from "../common/StandardModal";
 import ApplicationBulkBudgetModal from "./ApplicationBulkBudgetModal";
 import FieldHint from "../common/FieldHint";
-import FieldLabel from "../common/FieldLabel";
 import PercentageStepper from "../common/PercentageStepper";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import { percentageBoundMessage } from "../../config/budgetMessages";
@@ -39,6 +39,7 @@ import {
   useApplicationManagement,
   type ApplicationForm,
 } from "./hooks/useApplicationManagement";
+import { useDeferredColumnSort } from "../../utils/tableSort";
 
 function formatPct(value: number | null | undefined): string {
   if (value == null) return "No ceiling";
@@ -118,10 +119,27 @@ export default function ApplicationManagementTab({
 }) {
   const mgr = useApplicationManagement(tenantId, institutionBudget);
 
+  const appSortAccessors = useMemo(
+    () => ({
+      name: (app: Application) => app.name ?? "",
+      domain: (app: Application) => app.domain ?? "",
+      budget: (app: Application) => app.allocated_percentage ?? -1,
+      status: (app: Application) => app.status ?? "",
+    }),
+    [],
+  );
+  const appSort = useDeferredColumnSort("name", appSortAccessors);
+  const sortedApplications = useMemo(
+    () => appSort.apply(mgr.applications),
+    [mgr.applications, appSort],
+  );
+
   const columns: DataTableColumn<Application>[] = [
     {
       id: "name",
       header: "Application",
+      sortable: true,
+      sortAccessor: (app) => app.name ?? "",
       cell: (app) => (
         <HStack spacing={3} align="center">
           <Box
@@ -153,6 +171,8 @@ export default function ApplicationManagementTab({
     {
       id: "domain",
       header: "Domain",
+      sortable: true,
+      sortAccessor: (app) => app.domain ?? "",
       cell: (app) => (
         <Badge
           variant="subtle"
@@ -173,6 +193,8 @@ export default function ApplicationManagementTab({
     {
       id: "budget",
       header: "Budget",
+      sortable: true,
+      sortAccessor: (app) => app.allocated_percentage ?? -1,
       cell: (app) => (
         <Text fontWeight="700">{formatPct(app.allocated_percentage)}</Text>
       ),
@@ -180,6 +202,8 @@ export default function ApplicationManagementTab({
     {
       id: "status",
       header: "Status",
+      sortable: true,
+      sortAccessor: (app) => app.status ?? "",
       cell: (app) => (
         <Badge colorScheme={app.status === "ACTIVE" ? "green" : "gray"}>
           {app.status === "ACTIVE" ? "Active" : "Inactive"}
@@ -321,9 +345,11 @@ export default function ApplicationManagementTab({
 
       <DataTable
         layout="admin"
-        items={mgr.applications}
+        items={sortedApplications}
         columns={columns}
         getRowKey={(app) => app.application_id}
+        sort={appSort.sort}
+        onSortChange={appSort.onSortChange}
         onRowClick={mgr.openView}
         paginate="server"
         paginationPosition="top"

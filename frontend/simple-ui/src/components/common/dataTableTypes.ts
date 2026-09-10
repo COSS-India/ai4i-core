@@ -47,6 +47,12 @@ export type DataTableFilterDef = {
   defaultValue?: string;
   placeholder?: string;
   helper?: string;
+  /**
+   * Input subtype for `text` / `date` filters.
+   * - text: `"text"` (default) or `"number"`
+   * - date: `"date"` (default) or `"datetime-local"`
+   */
+  inputType?: "text" | "number" | "date" | "datetime-local";
   /** Width hint for the control. */
   width?: string | Record<string, string>;
 };
