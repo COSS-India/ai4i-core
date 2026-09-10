@@ -209,18 +209,11 @@ class ApplicationUsageService:
                     keyName=key["key_name"],
                     maskedKey=_mask_key(key["api_key"]),
                     isActive=key["is_active"],
-                    # api_key.allocated_percentage is stored as % of the PARENT
-                    # APPLICATION's budget (api_key_service.py:547: allocated_budget =
-                    # application.allocated_budget * allocated_percentage / 100, capped
-                    # at 100% per application by sum_api_key_allocated_percentage) — a
-                    # different scale than Application.allocated_percentage (% of the
-                    # institution). Returning the raw stored value here under the same
-                    # field name the Application object uses for institution-scale %
-                    # would show e.g. a key at 60% sitting under its own app at 40%.
-                    # Recompute against the institution total so both objects in this
-                    # response share one scale, like get_application_list already does
-                    # for applications.
-                    allocatedBudget=_money_percent(key_allocated, tenant_budget),
+                    # % of the parent application's total budget assigned to this key,
+                    # not the institution's — matches api_key.allocated_percentage
+                    # (api_key_service.py:547: allocated_budget = application.allocated_budget
+                    # * allocated_percentage / 100).
+                    allocatedBudget=_money_percent(key_allocated, allocated_amount),
                     spendBudget=_money_percent(key_spend, key_allocated),
                     remainingBudget=_money_percent(key_remaining, key_allocated),
                 )
