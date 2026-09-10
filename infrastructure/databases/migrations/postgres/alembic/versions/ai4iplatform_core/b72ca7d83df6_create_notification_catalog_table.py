@@ -15,9 +15,16 @@ ticket's migration; Postgres enums are additive (ALTER TYPE ... ADD VALUE), so
 extending this one later is cheap.
 
 Revision ID: b72ca7d83df6
-Revises: 6144f82e9ad3
+Revises: b1c2d3e4f5a6
 Create Date: 2026-09-09 00:00:00.000000
 
+Rebased onto b1c2d3e4f5a6 (add_tier_status, PR #1571) — both this migration
+and that one originally branched off 6144f82e9ad3, which would have left two
+heads once both land on release-2.7. Chaining after theirs instead of
+6144f82e9ad3 directly resolves that without either PR needing a rebase once
+merged. If #1571 lands first, this needs no further change; if this PR lands
+first, whoever rebases #1571 should point it at this branch's new head
+instead.
 """
 from typing import Sequence, Union
 
@@ -27,7 +34,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = 'b72ca7d83df6'
-down_revision: Union[str, None] = '6144f82e9ad3'
+down_revision: Union[str, None] = 'b1c2d3e4f5a6'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
