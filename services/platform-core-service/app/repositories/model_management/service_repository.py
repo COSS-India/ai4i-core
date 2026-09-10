@@ -12,6 +12,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.model_management.model import Model
 from app.models.model_management.service import Service
+from app.core.constants import TierStatus
 from app.models.pay_per_use.tier import Tier
 
 
@@ -165,6 +166,16 @@ class ServiceRepository:
             .where(cast(Tier.id, String).in_(tier_ids))
         )
         return {row.id_str: row.name for row in result.all()}
+
+    async def get_active_tier_ids(self, tier_ids: List[str]) -> set[str]:
+        """Return the subset of ``tier_ids`` that are currently ACTIVE."""
+        if not tier_ids:
+            return set()
+        result = await self._db.execute(
+            select(cast(Tier.id, String).label("id_str"))
+            .where(cast(Tier.id, String).in_(tier_ids), Tier.status == TierStatus.ACTIVE)
+        )
+        return {row.id_str for row in result.all()}
 
     async def get_names_and_models_by_service_ids(
         self, service_ids: List[str]

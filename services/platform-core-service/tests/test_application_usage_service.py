@@ -350,15 +350,12 @@ class TestGetApplicationDetail:
     async def test_detail_includes_masked_keys_and_totals(self):
         # Institution budget = 1,000,000; Citizen Services holds 40% of it (400,000).
         #
-        # Key allocated_percentage is a share of the PARENT APPLICATION's budget, not
-        # the institution's (api_key_service.py:547: allocated_budget =
-        # application.allocated_budget * allocated_percentage / 100, capped at 100%
-        # per application by sum_api_key_allocated_percentage). So a key holding
-        # 240,000 of Citizen Services' 400,000 is stored as 60.00 (240000/400000),
-        # NOT 24.00 (240000/1000000) — this fixture derives allocated_percentage from
-        # the real write-path formula so it's a row create_api_key could actually
-        # produce, not one that only happens to match the expected institution-scale
-        # output by coincidence.
+        # Key allocated_percentage is a share of the PARENT APPLICATION's budget
+        # (api_key_service.py:547: allocated_budget = application.allocated_budget *
+        # allocated_percentage / 100, capped at 100% per application by
+        # sum_api_key_allocated_percentage). So a key holding 240,000 of Citizen
+        # Services' 400,000 is stored as 60.00 (240000/400000) — the response's
+        # allocatedBudget.percentage for a key is on this same application scale.
         auth_db = _make_auth_db(
             [
                 _budget_result(Decimal("1000000.00")),
@@ -388,11 +385,42 @@ class TestGetApplicationDetail:
         keys_by_id = {k.keyId: k for k in result.apiKeys}
         assert keys_by_id[10].maskedKey == "a91d"
         assert keys_by_id[10].spendBudget.percentage == pytest.approx(29.1666, rel=1e-3)
-        # allocatedBudget.percentage must be recomputed on the institution scale
-        # (240000/1000000=24, 160000/1000000=16) — NOT the raw stored
-        # api_key.allocated_percentage (60/40, the app scale), which would make a
-        # key appear to hold more of the budget than its own parent application
-        # (40%). This is the exact scale-mixing bug: the row's stored percentage
-        # (60/40) must differ from the response's percentage (24/16).
-        assert keys_by_id[10].allocatedBudget.percentage == 24.0
-        assert keys_by_id[11].allocatedBudget.percentage == 16.0
+        # allocatedBudget.percentage is % of the key's PARENT APPLICATION's budget,
+        # not the institution's (240000/400000=60, 160000/400000=40) — this matches
+        # the raw stored api_key.allocated_percentage (60/40) since both are on the
+        # application scale.
+        assert keys_by_id[10].allocatedBudget.percentage == 60.0
+        assert keys_by_id[11].allocatedBudget.percentage == 40.0
+
+    @pytest.mark.asyncio
+    async def test_reported_bug_scenario_key_984_reads_10_not_1_percent(self):
+        """Regression for the exact reported scenario: API key 984 has an
+        allocated amount of 2000, its application's budget is 20000, and the
+        institution's total budget is 200000. The bug returned 1.0%
+        (2000/200000, institution-scale); the fix must return 10.0%
+        (2000/20000, application-scale) — this is the concrete number from
+        the ticket, not a rescaled/simplified stand-in for it."""
+        auth_db = _make_auth_db(
+            [
+                _budget_result(Decimal("200000.00")),  # institution's total budget
+                _rows_result(
+                    [
+                        _Row(id=42, name="Reporting App", domain=None, allocated_percentage=Decimal("10.00"), allocated_budget=Decimal("20000.00"), status="ACTIVE"),
+                    ]
+                ),
+                _rows_result(
+                    [
+                        _Row(id=984, application_id=42, key_name="Prod Key", api_key="0" * 28 + "d984", allocated_percentage=Decimal("10.00"), allocated_budget=Decimal("2000.00"), is_active=True),
+                    ]
+                ),
+            ]
+        )
+        repo = _make_repo({984: Decimal("0.00")})
+        svc = ApplicationUsageService(repo)
+
+        result = await svc.get_application_detail(42, "1", auth_db)
+
+        key_984 = result.apiKeys[0]
+        assert key_984.keyId == 984
+        assert key_984.allocatedBudget.amount == 2000.0
+        assert key_984.allocatedBudget.percentage == 10.0  # not 1.0
