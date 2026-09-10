@@ -21,6 +21,8 @@ _STUBBED_MODULE_NAMES = (
     "app.models.model_management",
     "app.models.model_management.service",
     "app.models.model_management.model",
+    "app.models.pay_per_use",
+    "app.models.pay_per_use.inference_type",
     "app.repositories",
     "app.repositories.model_management",
     "app.repositories.model_management.model_repository",
@@ -45,6 +47,8 @@ _stub_svc("app.models")
 _stub_svc("app.models.model_management")
 _stub_svc("app.models.model_management.service", Service=MagicMock)
 _stub_svc("app.models.model_management.model", Model=MagicMock)
+_stub_svc("app.models.pay_per_use")
+_stub_svc("app.models.pay_per_use.inference_type", InferenceType=MagicMock())
 _stub_svc("app.repositories")
 _stub_svc("app.repositories.model_management")
 _stub_svc("app.repositories.model_management.model_repository", ModelRepository=MagicMock)

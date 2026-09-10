@@ -29,9 +29,16 @@ _ACTIVE_STATUS = "ACTIVE"
 
 
 class TierStatusCache(RefreshingCache):
-    def __init__(self, refresh_interval_seconds: int = DEFAULT_REFRESH_INTERVAL_SECONDS) -> None:
+    def __init__(self, refresh_interval_seconds: int) -> None:
         super().__init__(refresh_interval_seconds)
         self._statuses: dict[str, str] = {}
+        # True only after reload() has completed at least once — distinct from
+        # _statuses being non-empty, which can happen via set_status() before
+        # the first full load.
+        self._ever_loaded: bool = False
+        # Tracks tier_ids already warned this cycle so each unknown tier logs
+        # at most once per reload interval rather than once per request.
+        self._warned_ids: set[str] = set()
 
     def get_status(self, tier_id: str) -> Optional[str]:
         """Return the cached status string for ``tier_id``, or None on a miss."""
@@ -45,13 +52,19 @@ class TierStatusCache(RefreshingCache):
     def is_active(self, tier_id: str) -> bool:
         """True when the tier is ACTIVE or unknown (fail-open).
 
-        An empty cache (platform-core DB not configured, or first load pending)
-        returns True for every tier so that a cold start never blocks traffic.
+        Before the first reload() completes (including the window where
+        set_status() may have populated a single entry), every tier is treated
+        as ACTIVE and no warning is emitted — a cold-start should never block
+        traffic or flood logs.
+
+        After the first full load, each genuinely unknown tier_id is warned
+        once per reload cycle (not once per request) to keep the hot-path
+        log volume proportional to the number of unknown tiers, not to traffic.
         """
         status = self._statuses.get(tier_id)
         if status is None:
-            if self._statuses:
-                # Cache is loaded but tier is genuinely unknown — log and fail open.
+            if self._ever_loaded and tier_id not in self._warned_ids:
+                self._warned_ids.add(tier_id)
                 logger.warning(
                     "TierStatusCache: tier_id %s not found in cache; treating as ACTIVE (fail-open).",
                     tier_id,
@@ -68,6 +81,7 @@ class TierStatusCache(RefreshingCache):
         if factory is None:
             logger.debug("TierStatusCache: platform-core DB not configured; skipping reload.")
             return
+        pre = dict(self._statuses)  # snapshot before the await window opens
         new_map: dict[str, str] = {}
         async with factory() as session:
             result = await session.execute(
@@ -75,7 +89,16 @@ class TierStatusCache(RefreshingCache):
             )
             for tier_id, status in result.all():
                 new_map[tier_id] = status
-        self._statuses = new_map
+        for tier_id, db_status in new_map.items():
+            # If _statuses[tier_id] differs from pre, a push landed during the
+            # await window — keep the live pushed value instead of the stale DB value.
+            if self._statuses.get(tier_id) == pre.get(tier_id):
+                self._statuses[tier_id] = db_status
+        for k in list(self._statuses):
+            if k not in new_map:
+                del self._statuses[k]
+        self._ever_loaded = True
+        self._warned_ids.clear()
         logger.debug("TierStatusCache: reloaded %d tiers.", len(self._statuses))
 
 
