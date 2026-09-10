@@ -1,11 +1,15 @@
-"""notification_consumer — DUMMY SCAFFOLD (AI4IDS-3026).
+"""notification_consumer — Kafka Consumer Notification.
 
-No real logic yet. This exists purely so `kafka-consumers` can be built and
-deployed as a `--consumer notification_consumer` process ahead of the
-Notifications-and-Alerts design landing (see the updated diagram: an
-End-point/Inference event reaches a Kafka consumer that checks the saved
-notification config and fans out to Send Email / Slack). handler.py is a
-no-op; replace it once that design is final.
+Implements skills/notification-kafka-design/notification-kafka-design.md:
+reads notification/alert events off TOPIC_NOTIFICATION, decides whether each
+one needs an email per the notification's saved settings and per-tenant
+history, and sends it directly (no auth-service call). See catalog_cache.py,
+patterns.py, ledger.py, recipients.py, emailer.py, delivery.py and
+handler.py for the pieces; this file is just the consume loop wiring, plus
+opening the second (auth) database connection recipients.py depends on.
+
+Consumer-side only — the producers (5 admin-change endpoints, and
+payperuse_consumer's producer half) are separate work, not built here.
 
 Built on bootstrap/ (ManagedConsumer + lifecycle), the shipped shape new
 consumers should copy — unlike payperuse_consumer, which predates bootstrap/
@@ -23,7 +27,7 @@ from confluent_kafka import KafkaException
 
 from bootstrap.config import get_db_settings
 from bootstrap.consumers import CommitMode, ManagedConsumer
-from bootstrap.lifecycle import infra, shutdown_event
+from bootstrap.lifecycle import add_database, infra, shutdown_event
 from consumers.notification_consumer import config as cfg
 from consumers.notification_consumer.handler import handle_notification_event
 
@@ -40,6 +44,12 @@ async def run() -> None:
     settings = cfg.get_settings()
 
     async with infra(db_name=db.PLATFORM_CORE_DB):
+        # Second connection, named "auth" — recipients.py resolves who holds
+        # which role for a tenant by reading ai4iplatform_auth directly.
+        # Opened once here, not per-message; infra()'s own teardown closes
+        # every named connection alongside the default one.
+        await add_database("auth", db_name=settings.AUTH_SERVICE_DB)
+
         consumer = ManagedConsumer.build_bulk_message_consumer(
             group_id=GROUP_ID,
             topic=settings.TOPIC_NOTIFICATION,
