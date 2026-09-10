@@ -1,4 +1,3 @@
-import { Box, HStack, Table, Tbody, Td, Text, Thead, Tr } from "@chakra-ui/react";
 import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
 import type { TenantTierBreakdown, TierTaskTypeUsage } from "../../types/usageSpend";
@@ -7,8 +6,7 @@ import {
   taskTypeColor,
   type AggregatedTaskUsage,
 } from "../../utils/usageSpendHelpers";
-import { useTableSort } from "../../utils/tableSort";
-import SortableTh from "../common/SortableTh";
+import DataTable, { type DataTableColumn } from "../common/table";
 import { TaskTypeLabel, TierBadge, UsageCell } from "./UsageSpendCells";
 
 function quotaUsagePercentage(t: TierTaskTypeUsage | AggregatedTaskUsage): number {
@@ -18,12 +16,9 @@ function quotaUsagePercentage(t: TierTaskTypeUsage | AggregatedTaskUsage): numbe
 }
 
 type TaskUsageRow = {
-  kind: "task";
   task: TierTaskTypeUsage | AggregatedTaskUsage;
   tierName?: string;
 };
-
-type DisplayRow = { kind: "tier"; tier: TenantTierBreakdown } | TaskUsageRow;
 
 interface SpendByTaskTypeTableProps {
   tierBreakdown: TenantTierBreakdown[];
@@ -42,117 +37,91 @@ const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
     if (multiTier) {
       return tierBreakdown.flatMap((tier) =>
         (tier.taskTypes ?? []).map((t) => ({
-          kind: "task" as const,
           task: t,
           tierName: tier.tierName,
         })),
       );
     }
-    return aggregateTasks(tierBreakdown).map((t) => ({ kind: "task" as const, task: t }));
+    return aggregateTasks(tierBreakdown).map((t) => ({ task: t }));
   }, [tierBreakdown, multiTier]);
 
-  const sortAccessors = useMemo(
-    () => ({
-      taskType: (row: TaskUsageRow) => row.task?.taskType ?? "",
-      consumed: (row: TaskUsageRow) => row.task?.consumed ?? 0,
-    }),
-    [],
-  );
+  const columns = useMemo<DataTableColumn<TaskUsageRow>[]>(() => {
+    const cols: DataTableColumn<TaskUsageRow>[] = [
+      {
+        id: "taskType",
+        header: "Model Task Type",
+        sortable: true,
+        sortAccessor: (row) => row.task?.taskType ?? "",
+        width: multiTier ? "28%" : "36%",
+        cell: (row, idx) => {
+          const t = row.task;
+          if (!t) return null;
+          return (
+            <TaskTypeLabel
+              taskType={t.taskType}
+              color={taskTypeColor(t.taskType, idx)}
+              fontSize="sm"
+              fontWeight="semibold"
+            />
+          );
+        },
+      },
+    ];
 
-  const { sortedRows, sortKey, sortDirection, toggleSort } = useTableSort(
-    taskRows,
-    "consumed",
-    sortAccessors,
-  );
+    if (multiTier) {
+      cols.push({
+        id: "tier",
+        header: "Tier",
+        sortable: true,
+        sortAccessor: (row) => row.tierName ?? "",
+        width: "16%",
+        cell: (row) => (row.tierName ? <TierBadge label={row.tierName} /> : null),
+      });
+    }
 
-  const displayRows = useMemo((): DisplayRow[] => {
-    if (!multiTier) return sortedRows;
-    return tierBreakdown.flatMap((tier) => {
-      const tierTasks = sortedRows.filter((r) => r.tierName === tier.tierName);
-      return [{ kind: "tier" as const, tier }, ...tierTasks];
+    cols.push({
+      id: "consumed",
+      header: usageColumnLabel,
+      sortable: true,
+      sortAccessor: (row) => row.task?.consumed ?? 0,
+      hint: METERING.USAGE_SPEND.TOOLTIPS.USAGE,
+      width: multiTier ? "56%" : "64%",
+      cell: (row) => {
+        const t = row.task;
+        if (!t) return null;
+        return (
+          <UsageCell
+            consumed={t.consumed}
+            quotaLimit={t.quotaLimit}
+            remaining={t.remaining}
+            percentage={quotaUsagePercentage(t)}
+            unit={t.unit}
+            compact
+          />
+        );
+      },
     });
-  }, [multiTier, tierBreakdown, sortedRows]);
 
-  if (taskRows.length === 0) {
-    return (
-      <Text fontSize="sm" color="gray.400" py={8} textAlign="center">
-        {emptyMessage}
-      </Text>
-    );
-  }
-
-  const thSx = { fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" } as const;
+    return cols;
+  }, [multiTier, usageColumnLabel]);
 
   return (
-    <Box overflowX="auto" borderWidth="1px" borderColor="gray.200" borderRadius="md">
-      <Table size="sm" variant="simple" minW="400px" sx={{ tableLayout: "fixed" }}>
-        <Thead bg="gray.50">
-          <Tr>
-            <SortableTh
-              sortKey="taskType"
-              activeSortKey={sortKey}
-              sortDirection={sortDirection}
-              onSort={toggleSort}
-              w="36%"
-              sx={thSx}
-            >
-              MODEL TASK TYPE
-            </SortableTh>
-            <SortableTh
-              sortKey="consumed"
-              activeSortKey={sortKey}
-              sortDirection={sortDirection}
-              onSort={toggleSort}
-              message={METERING.USAGE_SPEND.TOOLTIPS.USAGE}
-              w="64%"
-              sx={thSx}
-            >
-              {usageColumnLabel}
-            </SortableTh>
-          </Tr>
-        </Thead>
-        <Tbody>
-          {displayRows.map((row, idx) => {
-            if (row.kind === "tier") {
-              return (
-                <Tr key={`tier-${row.tier.tierId}`}>
-                  <Td colSpan={2} bg="gray.50" py={2}>
-                    <HStack spacing={2}>
-                      <TierBadge label={row.tier.tierName} />
-                    </HStack>
-                  </Td>
-                </Tr>
-              );
-            }
-            const t = row.task;
-            if (!t) return null;
-            const color = taskTypeColor(t.taskType, idx);
-            return (
-              <Tr key={`${row.tierName ?? ""}-${t.taskType}-${idx}`}>
-                <Td>
-                  <TaskTypeLabel
-                    taskType={t.taskType}
-                    color={color}
-                    fontSize="sm"
-                    fontWeight="semibold"
-                  />
-                </Td>
-                <Td>
-                  <UsageCell
-                    consumed={t.consumed}
-                    quotaLimit={t.quotaLimit}
-                    remaining={t.remaining}
-                    percentage={quotaUsagePercentage(t)}
-                    unit={t.unit}
-                    compact
-                  />
-                </Td>
-              </Tr>
-            );
-          })}
-        </Tbody>
-      </Table>
-    </Box>
+    <DataTable
+      columns={columns}
+      rows={taskRows}
+      rowKey={(row) => `${row.tierName ?? ""}-${row.task?.taskType ?? "unknown"}`}
+      defaultSortKey="consumed"
+      defaultSortDirection="desc"
+      isEmpty={taskRows.length === 0}
+      emptyMessage={emptyMessage}
+      asyncStateHeight="auto"
+      borderRadius="md"
+      theadBg="gray.50"
+      cellPy={2}
+      tableMinWidth="400px"
+      containerMt={0}
+      tableProps={{ sx: { tableLayout: "fixed" } }}
+    />
   );
 };
 

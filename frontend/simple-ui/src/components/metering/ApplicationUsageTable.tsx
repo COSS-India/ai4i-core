@@ -3,7 +3,7 @@ import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
 import type { ApplicationUsageListItem } from "../../types/applicationUsage";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
-import DataTable, { type DataTableColumn } from "../common/DataTable";
+import DataTable, { type DataTableColumn } from "../common/table";
 import {
   AllocatedPctPill,
   ApplicationRemainingCell,
