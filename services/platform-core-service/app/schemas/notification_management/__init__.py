@@ -1,0 +1,1 @@
+"""Notification-management Pydantic schemas."""
