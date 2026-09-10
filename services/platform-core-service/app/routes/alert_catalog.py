@@ -23,7 +23,7 @@ from app.services.notification_management import catalog_service
 
 router = APIRouter(
     prefix="/alerts",
-    tags=["Alerts - Catalog"],
+    tags=["Notifications & Alerts"],
 )
 
 
