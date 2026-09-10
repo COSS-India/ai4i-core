@@ -1,0 +1,17 @@
+{% extends "_base.html" %}
+{% block title %}Your Tier has been reactivated{% endblock %}
+{% block preheader %}Your Tier {{ tier_name }} was reactivated and access to AI services has resumed.{% endblock %}
+{% block heading %}Your Tier has been reactivated{% endblock %}
+{% block body %}
+  <p style="margin:0 0 4px 0;">Dear {{ recipient_name }},</p>
+  <p style="margin:0 0 16px 0;">
+    Your Tier <strong>{{ tier_name }}</strong> was reactivated effective {{ effective_date }}.
+  </p>
+  <p style="margin:0 0 20px 0;">Access to AI services has resumed.</p>
+  {% set portal_link_text = "view full Tier details" %}
+  {% include "_portal_line.html" %}
+  <p style="margin:20px 0 0 0;">
+    Regards,<br>
+    AI4I-Orchestrate Team
+  </p>
+{% endblock %}

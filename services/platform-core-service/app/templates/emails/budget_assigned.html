@@ -1,0 +1,20 @@
+{% extends "_base.html" %}
+{% block title %}Your Budget has been set — {{ currency }} {{ budget_amount }}{% endblock %}
+{% block preheader %}A Budget of {{ currency }} {{ budget_amount }} has been set for your organisation.{% endblock %}
+{% block heading %}Your Budget has been set — {{ currency }} {{ budget_amount }}{% endblock %}
+{% block body %}
+  <p style="margin:0 0 4px 0;">Dear {{ recipient_name }},</p>
+  <p style="margin:0 0 16px 0;">
+    A Budget of <strong>{{ currency }} {{ budget_amount }}</strong> has been set for your organisation.
+  </p>
+  <p style="margin:0 0 20px 0;">
+    This is the maximum spend cap for the current contract period. You will be alerted as consumption
+    approaches this limit.
+  </p>
+  {% set portal_link_text = "view full Budget details" %}
+  {% include "_portal_line.html" %}
+  <p style="margin:20px 0 0 0;">
+    Regards,<br>
+    AI4I-Orchestrate Team
+  </p>
+{% endblock %}

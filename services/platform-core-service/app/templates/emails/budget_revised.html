@@ -1,0 +1,16 @@
+{% extends "_base.html" %}
+{% block title %}Your Budget has been revised{% endblock %}
+{% block preheader %}Your Budget has been revised from {{ currency }} {{ previous_value }} to {{ currency }} {{ new_value }}.{% endblock %}
+{% block heading %}Your Budget has been revised{% endblock %}
+{% block body %}
+  <p style="margin:0 0 4px 0;">Dear {{ recipient_name }},</p>
+  <p style="margin:0 0 20px 0;">
+    Your Budget has been revised from {{ currency }} {{ previous_value }} to {{ currency }} {{ new_value }},
+    effective immediately ({{ effective_date }}).
+  </p>
+  {% include "_portal_line.html" %}
+  <p style="margin:20px 0 0 0;">
+    Regards,<br>
+    AI4I-Orchestrate Team
+  </p>
+{% endblock %}

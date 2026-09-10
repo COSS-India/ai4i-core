@@ -1,0 +1,20 @@
+AI4I-Orchestrate
+================================
+
+Dear {{ recipient_name }},
+
+Your cumulative spend has reached {{ threshold }}% of your Budget.
+
+Spend to date: {{ currency }} {{ cumulative_spend }}
+Remaining Budget: {{ currency }} {{ remaining_budget }}
+
+Requests will be blocked once your Budget is exhausted.
+
+{% if portal_url -%}
+Log in to the AI4I-Orchestrate Portal to view full spend details: {{ portal_url }}
+{%- else -%}
+Log in to the AI4I-Orchestrate Portal to view full spend details.
+{%- endif %}
+
+Regards,
+AI4I-Orchestrate Team

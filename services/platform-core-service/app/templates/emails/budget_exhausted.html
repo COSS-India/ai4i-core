@@ -1,0 +1,18 @@
+{% extends "_base.html" %}
+{% block title %}Budget exhausted — requests blocked{% endblock %}
+{% block preheader %}Your Budget of {{ currency }} {{ budget_amount }} has been exhausted.{% endblock %}
+{% block heading %}Budget exhausted — requests blocked{% endblock %}
+{% block body %}
+  <p style="margin:0 0 4px 0;">Dear {{ recipient_name }},</p>
+  <p style="margin:0 0 16px 0;">
+    Your Budget of <strong>{{ currency }} {{ budget_amount }}</strong> has been exhausted.
+  </p>
+  <p style="margin:0 0 20px 0;">
+    All further requests are blocked until your Budget is revised. Please reach out to your Adopter Admin
+    to increase or revise your Budget.
+  </p>
+  <p style="margin:20px 0 0 0;">
+    Regards,<br>
+    AI4I-Orchestrate Team
+  </p>
+{% endblock %}

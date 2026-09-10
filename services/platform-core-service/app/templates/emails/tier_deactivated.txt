@@ -1,0 +1,12 @@
+AI4I-Orchestrate
+================================
+
+Dear {{ recipient_name }},
+
+Your Tier {{ tier_name }} was deactivated effective {{ effective_date }}.
+
+Access to AI services is suspended. Please contact your Adopter Admin for
+further information.
+
+Regards,
+AI4I-Orchestrate Team

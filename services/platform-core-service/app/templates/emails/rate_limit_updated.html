@@ -1,0 +1,16 @@
+{% extends "_base.html" %}
+{% block title %}Rate Limit updated{% endblock %}
+{% block preheader %}Your Rate Limit under the {{ tier_name }} Tier has been updated.{% endblock %}
+{% block heading %}Rate Limit updated{% endblock %}
+{% block body %}
+  <p style="margin:0 0 4px 0;">Dear {{ recipient_name }},</p>
+  <p style="margin:0 0 20px 0;">
+    Your Rate Limit under the <strong>{{ tier_name }}</strong> Tier has been updated from
+    {{ current_value }} to {{ new_value }}, effective {{ effective_date }}.
+  </p>
+  {% include "_portal_line.html" %}
+  <p style="margin:20px 0 0 0;">
+    Regards,<br>
+    AI4I-Orchestrate Team
+  </p>
+{% endblock %}

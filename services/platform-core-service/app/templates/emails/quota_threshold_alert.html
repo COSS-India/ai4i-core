@@ -1,0 +1,20 @@
+{% extends "_base.html" %}
+{% block title %}Quota alert — {{ model_task_type }} at {{ threshold }}% of limit{% endblock %}
+{% block preheader %}Consumption for {{ model_task_type }} has reached {{ threshold }}% of your Quota Limit.{% endblock %}
+{% block heading %}Quota alert — {{ model_task_type }} at {{ threshold }}% of limit{% endblock %}
+{% block body %}
+  <p style="margin:0 0 4px 0;">Dear {{ recipient_name }},</p>
+  <p style="margin:0 0 16px 0;">
+    Consumption for <strong>{{ model_task_type }}</strong> under your <strong>{{ tier_name }}</strong> Tier
+    has reached <strong>{{ threshold }}%</strong> of your Quota Limit.
+  </p>
+  <p style="margin:0 0 4px 0;">Consumed: {{ consumed }}</p>
+  <p style="margin:0 0 4px 0;">Remaining: {{ remaining }}</p>
+  <p style="margin:0 0 20px 0;">Quota resets on: {{ reset_date }}</p>
+  {% set portal_link_text = "view full consumption details" %}
+  {% include "_portal_line.html" %}
+  <p style="margin:20px 0 0 0;">
+    Regards,<br>
+    AI4I-Orchestrate Team
+  </p>
+{% endblock %}

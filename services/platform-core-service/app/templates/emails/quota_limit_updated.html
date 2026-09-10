@@ -1,0 +1,16 @@
+{% extends "_base.html" %}
+{% block title %}Quota Limit updated — {{ model_task_type }}{% endblock %}
+{% block preheader %}Your Quota Limit for {{ model_task_type }} has been updated.{% endblock %}
+{% block heading %}Quota Limit updated — {{ model_task_type }}{% endblock %}
+{% block body %}
+  <p style="margin:0 0 4px 0;">Dear {{ recipient_name }},</p>
+  <p style="margin:0 0 20px 0;">
+    The Quota Limit for <strong>{{ model_task_type }}</strong> under your <strong>{{ tier_name }}</strong> Tier
+    has been updated from {{ current_value }} to {{ new_value }}, effective {{ effective_date }}.
+  </p>
+  {% include "_portal_line.html" %}
+  <p style="margin:20px 0 0 0;">
+    Regards,<br>
+    AI4I-Orchestrate Team
+  </p>
+{% endblock %}

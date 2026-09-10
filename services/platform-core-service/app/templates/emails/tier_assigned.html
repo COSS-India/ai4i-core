@@ -1,0 +1,24 @@
+{% extends "_base.html" %}
+{% block title %}Your Tier has been assigned — {{ tier_name }}{% endblock %}
+{% block preheader %}Your organisation has been assigned to the {{ tier_name }} Tier.{% endblock %}
+{% block heading %}Your Tier has been assigned — {{ tier_name }}{% endblock %}
+{% block body %}
+  <p style="margin:0 0 4px 0;">Dear {{ recipient_name }},</p>
+  <p style="margin:0 0 16px 0;">
+    Your organisation has been assigned to the <strong>{{ tier_name }}</strong> Tier, effective {{ effective_date }}.
+  </p>
+  <p style="margin:0 0 16px 0;">Tier description: {{ tier_description }}</p>
+  <p style="margin:0 0 4px 0;"><strong>Quota details:</strong></p>
+  <ul style="margin:0 0 16px 0; padding-left:20px;">
+    {% for line in quota_lines %}
+    <li>{{ line }}</li>
+    {% endfor %}
+  </ul>
+  <p style="margin:0 0 20px 0;">Rate Limit: {{ rate_limit_value }} requests/hour per API key</p>
+  {% set portal_link_text = "view full Tier details" %}
+  {% include "_portal_line.html" %}
+  <p style="margin:20px 0 0 0;">
+    Regards,<br>
+    AI4I-Orchestrate Team
+  </p>
+{% endblock %}

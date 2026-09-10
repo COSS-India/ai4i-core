@@ -1,0 +1,18 @@
+AI4I-Orchestrate
+================================
+
+Dear {{ recipient_name }},
+
+A Budget of {{ currency }} {{ budget_amount }} has been set for your organisation.
+
+This is the maximum spend cap for the current contract period. You will be
+alerted as consumption approaches this limit.
+
+{% if portal_url -%}
+Log in to the AI4I-Orchestrate Portal to view full Budget details: {{ portal_url }}
+{%- else -%}
+Log in to the AI4I-Orchestrate Portal to view full Budget details.
+{%- endif %}
+
+Regards,
+AI4I-Orchestrate Team

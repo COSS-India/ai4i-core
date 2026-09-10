@@ -1,0 +1,19 @@
+{% extends "_base.html" %}
+{% block title %}Budget alert — {{ threshold }}% of Budget reached{% endblock %}
+{% block preheader %}Your cumulative spend has reached {{ threshold }}% of your Budget.{% endblock %}
+{% block heading %}Budget alert — {{ threshold }}% of Budget reached{% endblock %}
+{% block body %}
+  <p style="margin:0 0 4px 0;">Dear {{ recipient_name }},</p>
+  <p style="margin:0 0 16px 0;">
+    Your cumulative spend has reached <strong>{{ threshold }}%</strong> of your Budget.
+  </p>
+  <p style="margin:0 0 4px 0;">Spend to date: {{ currency }} {{ cumulative_spend }}</p>
+  <p style="margin:0 0 16px 0;">Remaining Budget: {{ currency }} {{ remaining_budget }}</p>
+  <p style="margin:0 0 20px 0;">Requests will be blocked once your Budget is exhausted.</p>
+  {% set portal_link_text = "view full spend details" %}
+  {% include "_portal_line.html" %}
+  <p style="margin:20px 0 0 0;">
+    Regards,<br>
+    AI4I-Orchestrate Team
+  </p>
+{% endblock %}

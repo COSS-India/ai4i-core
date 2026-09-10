@@ -1,0 +1,17 @@
+{% extends "_base.html" %}
+{% block title %}Your Tier has been deactivated{% endblock %}
+{% block preheader %}Your Tier {{ tier_name }} was deactivated and access to AI services is suspended.{% endblock %}
+{% block heading %}Your Tier has been deactivated{% endblock %}
+{% block body %}
+  <p style="margin:0 0 4px 0;">Dear {{ recipient_name }},</p>
+  <p style="margin:0 0 16px 0;">
+    Your Tier <strong>{{ tier_name }}</strong> was deactivated effective {{ effective_date }}.
+  </p>
+  <p style="margin:0 0 20px 0;">
+    Access to AI services is suspended. Please contact your Adopter Admin for further information.
+  </p>
+  <p style="margin:20px 0 0 0;">
+    Regards,<br>
+    AI4I-Orchestrate Team
+  </p>
+{% endblock %}

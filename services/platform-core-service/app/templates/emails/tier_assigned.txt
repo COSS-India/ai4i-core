@@ -1,0 +1,24 @@
+AI4I-Orchestrate
+================================
+
+Dear {{ recipient_name }},
+
+Your organisation has been assigned to the {{ tier_name }} Tier, effective
+{{ effective_date }}.
+
+Tier description: {{ tier_description }}
+
+Quota details:
+{% for line in quota_lines %}
+ - {{ line }}
+{% endfor %}
+Rate Limit: {{ rate_limit_value }} requests/hour per API key
+
+{% if portal_url -%}
+Log in to the AI4I-Orchestrate Portal to view full Tier details: {{ portal_url }}
+{%- else -%}
+Log in to the AI4I-Orchestrate Portal to view full Tier details.
+{%- endif %}
+
+Regards,
+AI4I-Orchestrate Team
