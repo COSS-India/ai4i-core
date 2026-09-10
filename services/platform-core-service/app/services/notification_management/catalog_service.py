@@ -4,7 +4,9 @@ The catalog GET is a join in code, not a serialiser over the table: each DB
 row is decorated with its display name/description/detail line from
 catalog_metadata.py, which the API never exposes for editing. One function
 serves both NOTIFICATION and ALERT rows, filtered by ``type``; PATCH updates
-one row by the ``id`` the GET returned.
+one row by ``name`` — unique, stable and meaningful, unlike the bigserial
+``id`` (whose values depend on seed history and can differ across
+environments).
 """
 
 from typing import Dict, List, Optional
@@ -98,14 +100,13 @@ def _validate_thresholds(name: str, thresholds: Dict[str, bool]) -> None:
 
 async def update_catalog(
     session: AsyncSession,
-    catalog_id: int,
+    name: str,
     payload: CatalogUpdate,
     *,
     updated_by: Optional[str] = None,
 ) -> CatalogItem:
-    """Update one catalog row, looked up by its own id (as returned by the
-    GET) — the row's type is whatever is already stored, not something the
-    caller asserts.
+    """Update one catalog row, looked up by its own ``name`` — the row's
+    type is whatever is already stored, not something the caller asserts.
 
     ``thresholds`` is ALERT-only (the key only ever exists in ``config`` for
     ALERT-type rows); sending it for a NOTIFICATION row is a validation
@@ -115,12 +116,21 @@ async def update_catalog(
     replacements: every key already stored on the row keeps its current
     value unless the payload names it, in which case it's set to exactly
     what the payload says."""
+    # Validate against the enum in Python before it ever reaches the query:
+    # `name` is arbitrary path-param text, and comparing a non-member string
+    # to a Postgres ENUM column raises an invalid-input-value DB error (a
+    # 500) rather than the clean 404 an unknown catalog name should be.
+    try:
+        NotificationName(name)
+    except ValueError:
+        raise EntityNotFoundError(f"Catalog entry '{name}'")
+
     result = await session.execute(
-        select(ConfigNotificationAlert).where(ConfigNotificationAlert.id == catalog_id)
+        select(ConfigNotificationAlert).where(ConfigNotificationAlert.name == name)
     )
     row = result.scalar_one_or_none()
     if row is None:
-        raise EntityNotFoundError(f"Catalog entry {catalog_id}")
+        raise EntityNotFoundError(f"Catalog entry '{name}'")
 
     if payload.thresholds is not None and row.type != NotificationType.ALERT.value:
         raise ValidationError(

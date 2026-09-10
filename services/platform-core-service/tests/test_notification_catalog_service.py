@@ -68,15 +68,15 @@ class _Session:
         # returning self.rows/self.found regardless of what was asked —
         # otherwise a dropped/broken filter in the service would go
         # unnoticed here. SQLAlchemy auto-names a bound param after the
-        # column it filters on plus a counter, e.g. `type_1`/`id_1`.
+        # column it filters on plus a counter, e.g. `type_1`/`name_1`.
         params = stmt.compile().params
         result = MagicMock()
         if "type_1" in params:
             result.scalars.return_value.all.return_value = [
                 row for row in self.rows if row.type == params["type_1"]
             ]
-        elif "id_1" in params:
-            found = self.found if self.found is not None and self.found.id == params["id_1"] else None
+        elif "name_1" in params:
+            found = self.found if self.found is not None and self.found.name == params["name_1"] else None
             result.scalar_one_or_none.return_value = found
         else:
             raise AssertionError(f"fake _Session.execute doesn't recognize this query: {stmt}")
@@ -160,22 +160,28 @@ class TestListCatalog:
 
 @pytest.mark.asyncio
 class TestUpdateCatalog:
-    async def test_missing_row_is_not_found(self):
+    async def test_unknown_name_is_not_found(self):
         with pytest.raises(EntityNotFoundError):
-            await svc.update_catalog(_Session(found=None), 999, CatalogUpdate())
+            await svc.update_catalog(_Session(found=None), "NOT_A_NAME", CatalogUpdate())
+
+    async def test_missing_row_is_not_found(self):
+        # A legal enum value with no matching row — distinct from an
+        # unrecognized name entirely (test above).
+        with pytest.raises(EntityNotFoundError):
+            await svc.update_catalog(_Session(found=None), "QUOTA_THRESHOLD", CatalogUpdate())
 
     async def test_thresholds_is_rejected_for_a_notification_row(self):
         row = _row(id=1, name="TIER_ASSIGNED", type="NOTIFICATION")
         with pytest.raises(ValidationError):
             await svc.update_catalog(
-                _Session(found=row), row.id, CatalogUpdate(thresholds={"50": True})
+                _Session(found=row), row.name, CatalogUpdate(thresholds={"50": True})
             )
 
     async def test_legal_recipient_role_allowed_for_a_notification_row(self):
         row = _row(id=1, name="TIER_ASSIGNED", type="NOTIFICATION")
         session = _Session(found=row)
         item = await svc.update_catalog(
-            session, row.id, CatalogUpdate(recipient_roles={"TENANT ADMIN": True})
+            session, row.name, CatalogUpdate(recipient_roles={"TENANT ADMIN": True})
         )
         assert row.recipient_roles == {"TENANT ADMIN": True}
         assert item.thresholds is None
@@ -187,14 +193,14 @@ class TestUpdateCatalog:
         row = _row(id=1, name="TIER_ASSIGNED", type="NOTIFICATION")
         with pytest.raises(ValidationError):
             await svc.update_catalog(
-                _Session(found=row), row.id, CatalogUpdate(recipient_roles={"TENANT_ADMIN": True})
+                _Session(found=row), row.name, CatalogUpdate(recipient_roles={"TENANT_ADMIN": True})
             )
 
     async def test_recipient_roles_write_to_the_column_not_config(self):
         row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT", config={"thresholds": {"50": False}})
         session = _Session(found=row)
         await svc.update_catalog(
-            session, row.id, CatalogUpdate(recipient_roles={"TENANT ADMIN": True})
+            session, row.name, CatalogUpdate(recipient_roles={"TENANT ADMIN": True})
         )
         assert row.recipient_roles == {"TENANT ADMIN": True}
         assert row.config == {"thresholds": {"50": False}}, "thresholds must survive untouched"
@@ -205,7 +211,7 @@ class TestUpdateCatalog:
         row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT")
         with pytest.raises(ValidationError):
             await svc.update_catalog(
-                _Session(found=row), row.id, CatalogUpdate(recipient_roles={"MODERATOR": True})
+                _Session(found=row), row.name, CatalogUpdate(recipient_roles={"MODERATOR": True})
             )
 
     async def test_thresholds_write_into_config_without_touching_recipient_roles(self):
@@ -215,7 +221,7 @@ class TestUpdateCatalog:
         )
         session = _Session(found=row)
         await svc.update_catalog(
-            session, row.id, CatalogUpdate(thresholds={"50": True, "75": True})
+            session, row.name, CatalogUpdate(thresholds={"50": True, "75": True})
         )
         assert row.config == {"thresholds": {"50": True, "75": True}}
         assert row.recipient_roles == {"ADMIN": True}, "recipient_roles must survive untouched"
@@ -230,7 +236,7 @@ class TestUpdateCatalog:
         )
         session = _Session(found=row)
         await svc.update_catalog(
-            session, row.id, CatalogUpdate(recipient_roles={"ADMIN": False})
+            session, row.name, CatalogUpdate(recipient_roles={"ADMIN": False})
         )
         assert row.recipient_roles == {"TENANT ADMIN": True, "ADMIN": False}
 
@@ -240,7 +246,7 @@ class TestUpdateCatalog:
             config={"thresholds": {"50": True, "75": True, "90": True}},
         )
         session = _Session(found=row)
-        await svc.update_catalog(session, row.id, CatalogUpdate(thresholds={"90": False}))
+        await svc.update_catalog(session, row.name, CatalogUpdate(thresholds={"90": False}))
         assert row.config == {"thresholds": {"50": True, "75": True, "90": False}}
 
     async def test_too_many_threshold_keys_is_rejected(self):
@@ -248,27 +254,27 @@ class TestUpdateCatalog:
         thresholds = {str(n): True for n in (10, 20, 30, 40, 50, 60)}  # 6 > MAX_THRESHOLD_KEYS
         with pytest.raises(ValidationError):
             await svc.update_catalog(
-                _Session(found=row), row.id, CatalogUpdate(thresholds=thresholds)
+                _Session(found=row), row.name, CatalogUpdate(thresholds=thresholds)
             )
 
     async def test_threshold_key_out_of_range_is_rejected(self):
         row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT")
         with pytest.raises(ValidationError):
             await svc.update_catalog(
-                _Session(found=row), row.id, CatalogUpdate(thresholds={"100": True})
+                _Session(found=row), row.name, CatalogUpdate(thresholds={"100": True})
             )
 
     async def test_non_digit_threshold_key_is_rejected(self):
         row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT")
         with pytest.raises(ValidationError):
             await svc.update_catalog(
-                _Session(found=row), row.id, CatalogUpdate(thresholds={"fifty": True})
+                _Session(found=row), row.name, CatalogUpdate(thresholds={"fifty": True})
             )
 
     async def test_channels_are_replaced(self):
         row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT", channels=("EMAIL",))
         session = _Session(found=row)
-        await svc.update_catalog(session, row.id, CatalogUpdate(channels=["EMAIL", "SMS"]))
+        await svc.update_catalog(session, row.name, CatalogUpdate(channels=["EMAIL", "SMS"]))
         assert row.channels == ["EMAIL", "SMS"]
 
     async def test_omitted_fields_are_left_alone(self):
@@ -277,14 +283,14 @@ class TestUpdateCatalog:
             recipient_roles={"ADMIN": True}, config={"thresholds": {"50": True}},
         )
         session = _Session(found=row)
-        await svc.update_catalog(session, row.id, CatalogUpdate())
+        await svc.update_catalog(session, row.name, CatalogUpdate())
         assert row.recipient_roles == {"ADMIN": True}
         assert row.config == {"thresholds": {"50": True}}
 
     async def test_commits_and_refreshes_on_success(self):
         row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT")
         session = _Session(found=row)
-        await svc.update_catalog(session, row.id, CatalogUpdate(recipient_roles={"ADMIN": True}))
+        await svc.update_catalog(session, row.name, CatalogUpdate(recipient_roles={"ADMIN": True}))
         assert session.commits == 1
         assert session.refreshed == [row]
 
@@ -292,7 +298,7 @@ class TestUpdateCatalog:
         row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT")
         session = _Session(found=row)
         await svc.update_catalog(
-            session, row.id, CatalogUpdate(recipient_roles={"ADMIN": True}), updated_by="u42"
+            session, row.name, CatalogUpdate(recipient_roles={"ADMIN": True}), updated_by="u42"
         )
         assert row.updated_by == "u42"
 
@@ -300,14 +306,14 @@ class TestUpdateCatalog:
         row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT")
         row.updated_by = "someone-else"
         session = _Session(found=row)
-        await svc.update_catalog(session, row.id, CatalogUpdate(recipient_roles={"ADMIN": True}))
+        await svc.update_catalog(session, row.name, CatalogUpdate(recipient_roles={"ADMIN": True}))
         assert row.updated_by == "someone-else"
 
     async def test_returns_the_updated_item(self):
         row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT", config={"thresholds": {"50": True}})
         session = _Session(found=row)
         item = await svc.update_catalog(
-            session, row.id, CatalogUpdate(recipient_roles={"ADMIN": True})
+            session, row.name, CatalogUpdate(recipient_roles={"ADMIN": True})
         )
         assert item.recipient_roles == {"ADMIN": True}
         assert item.thresholds == {"50": True}

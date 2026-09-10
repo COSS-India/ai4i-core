@@ -33,7 +33,7 @@ class CatalogResponse(BaseModel):
 
 
 class CatalogUpdate(BaseModel):
-    """PATCH /catalog/{id} body. Every field optional — only the fields
+    """PATCH /notification-alerts/catalog/{name} body. Every field optional — only the fields
     present are changed; recipient_roles/thresholds each replace their own
     column/config-key wholesale (the mockup's checkbox group sends its whole
     current state) without disturbing the other, unset one."""
@@ -57,13 +57,13 @@ class CatalogUpdate(BaseModel):
 
 
 class ListCatalogResponse(SuccessResponse):
-    """GET /catalog?type=NOTIFICATION|ALERT"""
+    """GET /notification-alerts/catalog?type=NOTIFICATION|ALERT"""
 
     data: CatalogResponse
 
 
 class UpdateCatalogResponse(SuccessResponseWithMeta):
-    """PATCH /catalog/{id}"""
+    """PATCH /notification-alerts/catalog/{name}"""
 
     data: CatalogItem
     meta: MessageMeta

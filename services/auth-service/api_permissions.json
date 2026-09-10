@@ -159,7 +159,7 @@
     { "endpoint": "PATCH:/api/v1/alerts/routing-rules/timing",             "permissionRequired": 118, "description": "Update routing rule timing (alerts.update)" },
     { "endpoint": "GET:/api/v1/alerts/history",                            "permissionRequired": 116, "description": "List alert history (alerts.read)" },
 
-    { "endpoint": "GET:/api/v1/catalog",                                   "permissionRequired": 1,   "description": "List notification/alert catalog (admin sentinel — ADMIN only)" },
-    { "endpoint": "PATCH:/api/v1/catalog/{id}",                            "permissionRequired": 1,   "description": "Update notification/alert catalog entry (admin sentinel — ADMIN only)" }
+    { "endpoint": "GET:/api/v1/notification-alerts/catalog",              "permissionRequired": 1,   "description": "List notification/alert catalog (admin sentinel — ADMIN only)" },
+    { "endpoint": "PATCH:/api/v1/notification-alerts/catalog/{name}",     "permissionRequired": 1,   "description": "Update notification/alert catalog entry (admin sentinel — ADMIN only)" }
   ]
 }

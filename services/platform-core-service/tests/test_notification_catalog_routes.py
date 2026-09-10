@@ -9,8 +9,8 @@ silently:
   PATCH;
 * GET's ``type`` being a required query parameter aliased from
   ``catalog_type`` and reaching the service unchanged; PATCH instead
-  addresses a row by ``id`` (no type param — the row's own type decides
-  what's valid);
+  addresses a row by ``name`` (unique/stable, unlike the bigserial ``id`` —
+  no type param either, the row's own stored type decides what's valid);
 * ``response_model_exclude_none=True`` on the GET route, which is what
   actually drops ``thresholds`` from a NOTIFICATION row's JSON rather than
   sending it as ``null``;
@@ -131,7 +131,7 @@ class TestListCatalogRouteShape:
 
     def test_path(self):
         route = next(r for r in _notification_routes.router.routes if "GET" in r.methods)
-        assert route.path == "/catalog"
+        assert route.path == "/notification-alerts/catalog"
 
     def test_excludes_none_fields(self):
         route = next(r for r in _notification_routes.router.routes if "GET" in r.methods)
@@ -157,58 +157,58 @@ class TestListCatalogRouteShape:
 class TestUpdateCatalogRoute:
     async def test_wraps_the_updated_item_with_a_message(self, monkeypatch):
         stub = AsyncMock(
-            return_value=_item(id=2, name="QUOTA_THRESHOLD", type=NotificationType.ALERT)
+            return_value=_item(name="QUOTA_THRESHOLD", type=NotificationType.ALERT)
         )
         monkeypatch.setattr(_alert_catalog_routes.catalog_service, "update_catalog", stub)
         resp = await _alert_catalog_routes.update_catalog(
-            id=2, payload=CatalogUpdate(), request=_request(), session=_SESSION
+            name="QUOTA_THRESHOLD", payload=CatalogUpdate(), request=_request(), session=_SESSION
         )
         assert resp.success is True
         assert resp.data.name == "QUOTA_THRESHOLD"
         assert "QUOTA_THRESHOLD" in resp.meta.message
 
-    async def test_forwards_id_and_payload(self, monkeypatch):
-        stub = AsyncMock(return_value=_item(id=2, type=NotificationType.ALERT))
+    async def test_forwards_name_and_payload(self, monkeypatch):
+        stub = AsyncMock(return_value=_item(type=NotificationType.ALERT))
         monkeypatch.setattr(_alert_catalog_routes.catalog_service, "update_catalog", stub)
         payload = CatalogUpdate(recipient_roles={"ADMIN": True})
         await _alert_catalog_routes.update_catalog(
-            id=2, payload=payload, request=_request(), session=_SESSION
+            name="QUOTA_THRESHOLD", payload=payload, request=_request(), session=_SESSION
         )
         args = stub.await_args.args
-        assert args[1] == 2
+        assert args[1] == "QUOTA_THRESHOLD"
         assert args[2] is payload
 
     async def test_forwards_updated_by_from_x_user_id_header(self, monkeypatch):
-        stub = AsyncMock(return_value=_item(id=2, type=NotificationType.ALERT))
+        stub = AsyncMock(return_value=_item(type=NotificationType.ALERT))
         monkeypatch.setattr(_alert_catalog_routes.catalog_service, "update_catalog", stub)
         await _alert_catalog_routes.update_catalog(
-            id=2, payload=CatalogUpdate(), request=_request("u42"), session=_SESSION
+            name="QUOTA_THRESHOLD", payload=CatalogUpdate(), request=_request("u42"), session=_SESSION
         )
         assert stub.await_args.kwargs["updated_by"] == "u42"
 
     async def test_404_propagates(self, monkeypatch):
-        stub = AsyncMock(side_effect=EntityNotFoundError("Catalog entry 999"))
+        stub = AsyncMock(side_effect=EntityNotFoundError("Catalog entry 'NOPE'"))
         monkeypatch.setattr(_alert_catalog_routes.catalog_service, "update_catalog", stub)
         with pytest.raises(EntityNotFoundError):
             await _alert_catalog_routes.update_catalog(
-                id=999, payload=CatalogUpdate(), request=_request(), session=_SESSION
+                name="NOPE", payload=CatalogUpdate(), request=_request(), session=_SESSION
             )
 
 
 class TestUpdateCatalogRouteShape:
     def test_path(self):
         route = next(r for r in _alert_catalog_routes.router.routes if "PATCH" in r.methods)
-        assert route.path == "/catalog/{id}"
+        assert route.path == "/notification-alerts/catalog/{name}"
 
     def test_404_is_documented(self):
         route = next(r for r in _alert_catalog_routes.router.routes if "PATCH" in r.methods)
         assert 404 in route.responses
 
-    def test_id_path_param_is_int(self):
+    def test_name_path_param_is_str(self):
         import inspect
 
         sig = inspect.signature(_alert_catalog_routes.update_catalog)
-        assert sig.parameters["id"].annotation is int
+        assert sig.parameters["name"].annotation is str
 
 
 class TestCatalogUpdateValidation:

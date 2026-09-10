@@ -15,6 +15,7 @@ from app.schemas.notification_management.catalog import CatalogResponse, ListCat
 from app.services.notification_management import catalog_service
 
 router = APIRouter(
+    prefix="/notification-alerts",
     tags=["Notifications & Alerts"],
 )
 
