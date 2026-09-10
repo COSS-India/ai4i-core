@@ -401,10 +401,11 @@ async def update_tier_status(
     previous_status = tier.status
     assert_valid_tier_status_transition(previous_status, target_status)
 
-    if target_status == TierStatus.DELETED:
+    if target_status in {TierStatus.DEACTIVATED, TierStatus.DELETED}:
+        action = "deactivating" if target_status == TierStatus.DEACTIVATED else "deleting"
         if auth_db is None:
             raise ValidationError(
-                message="Tier deletion cannot be verified: auth-service DB is not configured.",
+                message=f"Tier {action} cannot be verified: auth-service DB is not configured.",
                 code="AUTH_DB_NOT_CONFIGURED",
             )
         assigned = await auth_db.execute(
@@ -414,7 +415,7 @@ async def update_tier_status(
         if assigned.first():
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Tier is still assigned to one or more tenants. Reassign them to another tier or remove the tier assignment before deleting.",
+                detail=f"Tier is still assigned to one or more tenants. Reassign them to another tier or remove the tier assignment before {action}.",
             )
         mapped = await session.execute(
             text("SELECT 1 FROM mm_services WHERE :tier_id = ANY(tier_ids) LIMIT 1"),
@@ -423,7 +424,7 @@ async def update_tier_status(
         if mapped.first():
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Tier is still mapped to one or more services. Remove the tier mapping from all services before deleting.",
+                detail=f"Tier is still mapped to one or more services. Remove the tier mapping from all services before {action}.",
             )
 
     # Side effects that must run before commit.
