@@ -150,6 +150,19 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
   const idError = serviceIdError ?? afterBlur("serviceId", serviceIdLengthError);
 
   const [tierSearch, setTierSearch] = useState("");
+
+  /**
+   * Names of the selected tiers, limited to those still in `availableTiers`
+   * (ACTIVE only) — a mapping to an inactive tier is omitted, not printed raw.
+   */
+  const selectedTierNames = useMemo(
+    () =>
+      selectedTiers
+        .map((id) => availableTiers.find((t) => t.id === id)?.name)
+        .filter((name): name is string => !!name),
+    [selectedTiers, availableTiers],
+  );
+
   const filteredTiers = useMemo(() => {
     const q = tierSearch.trim().toLowerCase();
     if (!q) return availableTiers;
@@ -514,14 +527,8 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   justifyContent="space-between"
                 >
                   <Text as="span" isTruncated display="block" minW={0}>
-                    {selectedTiers.length > 0
-                      ? selectedTiers
-                          .map(
-                            (id) =>
-                              availableTiers.find((t) => t.id === id)?.name ??
-                              id,
-                          )
-                          .join(", ")
+                    {selectedTierNames.length > 0
+                      ? selectedTierNames.join(", ")
                       : FIELD_HINTS.service.tier.placeholder}
                   </Text>
                 </MenuButton>

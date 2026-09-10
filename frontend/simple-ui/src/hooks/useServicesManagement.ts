@@ -349,11 +349,10 @@ export function useServicesManagement() {
     fetchModels();
   }, []);
 
-  // Fetch tiers for the Create Service form dropdown
   useEffect(() => {
     if (isLoadingTaskTypes) return;
     setTiersLoaded(false);
-    fetchTiers(enabledTaskTypesParam)
+    fetchTiers(enabledTaskTypesParam, "ACTIVE")
       .then((res) => {
         setAvailableTiers(res.data ?? []);
         setTiersLoaded(true);
@@ -364,6 +363,16 @@ export function useServicesManagement() {
         setTiersLoaded(false);
       });
   }, [isLoadingTaskTypes, enabledTaskTypesParam]);
+
+  useEffect(() => {
+    if (!editingService || !tiersLoaded) return;
+    setSelectedTiers((prev) => {
+      const kept = prev.filter((id) =>
+        availableTiers.some((tier) => tier.id === id),
+      );
+      return kept.length === prev.length ? prev : kept;
+    });
+  }, [editingService, tiersLoaded, availableTiers]);
 
   /** AI4IDS-2949: block Create Service when the platform has no tiers. Edit remains allowed. */
   const isCreateServiceTabDisabled =
