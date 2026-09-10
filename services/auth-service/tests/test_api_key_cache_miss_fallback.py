@@ -337,6 +337,49 @@ class TestRefreshAndCreatePersistCachedData:
         assert persisted["budget-exhausted"] == "0"  # both stores converge on "0"
 
     @pytest.mark.asyncio
+    async def test_refresh_redis_cache_carries_budget_expired_forward_from_cached_data_alone(self) -> None:
+        """The exact bug this pins: a tenant's window has lapsed, so
+        budget-expired=1 is sitting in cached_data (written by
+        TenantService.refresh_budget_expiry_flag), but Redis is cold —
+        then something completely unrelated (a key rename, a tenant
+        reactivation) triggers _refresh_redis_cache. Before adding
+        budget-expired to the preserve filters, this rebuild would produce
+        a payload with NO budget-expired field at all, so /auth/validate's
+        `result.get("budget-expired") == "1"` check would read as false and
+        let the still-expired tenant validate again — silently, with
+        nothing having actually renewed their budget."""
+        svc, repo, cache = _service()
+        cache.get_api_key_cache = AsyncMock(return_value=None)  # Redis cold
+        key = _api_key(
+            cached_data={"api_key": _TOKEN, "budget-expired": "1", "tenant_id": "1"}
+        )
+        await svc._refresh_redis_cache(key, "1")
+        written = cache.set_api_key_cache.await_args.args[2]
+        persisted = repo.update.await_args.args[1]["cached_data"]
+        assert written["budget-expired"] == "1"
+        assert persisted["budget-expired"] == "1"
+
+    @pytest.mark.asyncio
+    async def test_refresh_redis_cache_live_redis_budget_expired_zero_overrides_stale_cached_data_one(
+        self,
+    ) -> None:
+        """Same override direction as budget-exhausted's own test: Redis's
+        live budget-expired="0" (a renewal that reached Redis but whose
+        cached_data patch failed/hasn't landed) must win over a stale "1"
+        still sitting in cached_data — not resurrect the block into both
+        stores on an unrelated refresh."""
+        svc, repo, cache = _service()
+        cache.get_api_key_cache = AsyncMock(return_value={"budget-expired": "0"})
+        key = _api_key(
+            cached_data={"api_key": _TOKEN, "budget-expired": "1", "tenant_id": "1"}
+        )
+        await svc._refresh_redis_cache(key, "1")
+        written = cache.set_api_key_cache.await_args.args[2]
+        persisted = repo.update.await_args.args[1]["cached_data"]
+        assert written["budget-expired"] == "0"
+        assert persisted["budget-expired"] == "0"
+
+    @pytest.mark.asyncio
     async def test_refresh_redis_cache_preserves_tier_id_from_existing_cached_data(self) -> None:
         """tier_id can only be correctly computed at create_api_key time (a read
         of tenants.tier_id) — a refresh must carry it forward from cached_data,

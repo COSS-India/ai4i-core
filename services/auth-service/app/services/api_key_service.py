@@ -59,6 +59,22 @@ _TENANT_CASCADE_PAGE_SIZE = 500
 _open_db_session = asynccontextmanager(get_db)
 
 
+# Cache fields a full-payload rebuild (_preserved_billing_fields /
+# _refresh_redis_cache's own preserved_from_redis) must carry forward rather
+# than silently drop — enforcement state computed from something OTHER than
+# the api_key row itself (budget_usage, tenants.budget_effective_to, PPU
+# quota), so it isn't reconstructed by rebuilding the payload from that row.
+# quota-<name> is a prefix, not a fixed set — kept as a startswith check
+# rather than enumerated via _quota_field_names, since the latter can miss a
+# type deleted from the catalogue (see that function's own KNOWN GAP) and a
+# preserve-list must never drop a field just because the catalogue moved on.
+_PRESERVED_BILLING_FIELD_NAMES = frozenset({"budget-exhausted", "budget-expired"})
+
+
+def _is_preserved_billing_field(field: str) -> bool:
+    return field in _PRESERVED_BILLING_FIELD_NAMES or field.startswith("quota-")
+
+
 async def _quota_field_names() -> list[str]:
     """``quota-<name>`` fields to clear, one per catalogue entry.
 
@@ -194,15 +210,16 @@ class APIKeyService:
 
     @staticmethod
     def _preserved_billing_fields(db_key: APIKey) -> dict:
-        """budget-exhausted/quota-* already in cached_data, carried forward so a
-        refresh never erases billing state the PPU write-through path
-        (patch_cached_data_field_for_tenant et al.) wrote directly into
-        cached_data — mirrors how _refresh_redis_cache's own ``preserved``
-        carries the same fields forward from the live Redis hash."""
+        """budget-exhausted/budget-expired/quota-* already in cached_data,
+        carried forward so a refresh never erases billing/enforcement state
+        the PPU write-through path (patch_cached_data_field_for_tenant et
+        al.) wrote directly into cached_data — mirrors how
+        _refresh_redis_cache's own ``preserved`` carries the same fields
+        forward from the live Redis hash."""
         return {
             k: v
             for k, v in (db_key.cached_data or {}).items()
-            if k == "budget-exhausted" or k.startswith("quota-")
+            if _is_preserved_billing_field(k)
         }
 
     async def _persist_cache_snapshot(self, db_key: APIKey, payload: dict) -> None:
@@ -234,11 +251,12 @@ class APIKeyService:
         existing = await self._cache.get_api_key_cache(db_key.api_key)
         # No value filter: a live "0" is evidence too — filtering to v == "1"
         # would let a stale "1" in cached_data win the merge below and
-        # resurrect a cleared budget-exhausted flag into both stores.
+        # resurrect a cleared budget-exhausted/budget-expired flag into both
+        # stores.
         preserved_from_redis = {
             k: v
             for k, v in (existing or {}).items()
-            if k == "budget-exhausted" or k.startswith("quota-")
+            if _is_preserved_billing_field(k)
         }
         # cached_data's own billing state is the base (covers a cold/evicted Redis
         # hash with nothing to preserve); Redis's live state, if any, overrides it —
