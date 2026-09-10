@@ -761,17 +761,20 @@ class TestReviseTenantBudgetCascade:
 
 
 class TestReviseTenantBudgetEffectiveWindow:
-    """budget_effective_from/budget_effective_to are required on every
-    revision (schema-level, see TenantBudgetRequest) and validated
-    server-side here (From must not be before today UTC; To must be at
-    least one calendar day after From) — see _validate_budget_window.
+    """These tests all exercise the tenant's window being ABSENT (the
+    `_tenant()` fixture never sets budget_effective_to) — so every call
+    here lands in revise_tenant_budget's "no window yet" branch, requiring
+    both dates and validating From against today
+    (_validate_new_effective_from) and To against From
+    (_validate_effective_to_after_from). See TestReviseTenantBudgetLocking
+    below for the ACTIVE-window branch (From locked, To extend-only).
 
-    Before this, the ONLY place these fields could ever be set was tenant
-    creation (TenantCreate), with zero validation and no way to correct or
-    renew them afterwards — a tenant created with, say, a same-day
-    From/To, or one whose window has since expired, had no path back to a
-    sane window short of a raw DB edit. These tests cover that gap
-    directly, not a simplified stand-in for it.
+    Before any of this, the ONLY place these fields could ever be set was
+    tenant creation (TenantCreate), with zero validation and no way to
+    correct or renew them afterwards — a tenant created with, say, a
+    same-day From/To, or one whose window has since expired, had no path
+    back to a sane window short of a raw DB edit. These tests cover that
+    gap directly, not a simplified stand-in for it.
     """
 
     @pytest.mark.asyncio
@@ -793,10 +796,12 @@ class TestReviseTenantBudgetEffectiveWindow:
 
         assert exc_info.value.status_code == 422
         assert exc_info.value.detail["error"] == "budget_effective_from_invalid"
-        # Validated before the tenant is even loaded — a cheap, local-only
-        # check must fail fastest, same reasoning as the top-down spend
-        # gate's own ordering elsewhere in this method.
-        svc._tenants.get_by_id_for_update.assert_not_awaited()
+        # Validated right after the tenant is loaded — the tenant row is now
+        # needed first (to see whether a window is already active, which
+        # decides what's even required), unlike the top-down spend gate
+        # elsewhere in this method, which stays purely request-local.
+        svc._tenants.get_by_id_for_update.assert_awaited_once()
+        svc._tenants.update.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_effective_to_same_calendar_day_as_from_rejected(self) -> None:
@@ -817,7 +822,7 @@ class TestReviseTenantBudgetEffectiveWindow:
 
         assert exc_info.value.status_code == 422
         assert exc_info.value.detail["error"] == "budget_effective_to_invalid"
-        svc._tenants.get_by_id_for_update.assert_not_awaited()
+        svc._tenants.update.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_effective_to_exactly_one_day_after_from_allowed(self) -> None:
@@ -895,6 +900,169 @@ class TestReviseTenantBudgetEffectiveWindow:
         await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("100"), naive_from, naive_to)
 
         svc._tenants.update.assert_awaited_once()
+
+
+def _tenant_with_active_window(*, allocated_budget=None) -> Tenant:
+    tenant = _tenant(allocated_budget=allocated_budget)
+    tenant.budget_effective_from = _VALID_EFFECTIVE_FROM - timedelta(days=10)
+    tenant.budget_effective_to = _VALID_EFFECTIVE_FROM + timedelta(days=10)
+    return tenant
+
+
+class TestReviseTenantBudgetLocking:
+    """The ACTIVE-window branch: budget_effective_from is locked once a
+    window is live (AI4IDS-2995: "Effective From is locked and cannot be
+    edited"), budget_effective_to is optional and extend-only, and — the
+    exact bug this closes — omitting both must still work as a plain
+    amount top-up/top-down, since that's literally what the shipped UI
+    (frontend/simple-ui's adjustTenantBudget) sends today: only
+    {action, amount}, never any date. Requiring both unconditionally would
+    422 every existing top-up/top-down the moment this deployed."""
+
+    @pytest.mark.asyncio
+    async def test_supplying_effective_from_while_window_active_is_rejected(self) -> None:
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant_with_active_window(allocated_budget=Decimal("100"))
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.revise_tenant_budget(
+                _admin_user(), 1, "top-up", Decimal("100"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO
+            )
+
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["error"] == "effective_from_locked"
+        svc._tenants.update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_plain_amount_change_with_both_dates_omitted_leaves_window_untouched(self) -> None:
+        """THE exact bug scenario: the shipped frontend's adjustTenantBudget
+        sends only {action, amount} — this must keep working unchanged
+        once the fields are required-on-some-tenants, not 422 every
+        existing top-up/top-down on deploy."""
+        tenant = _tenant_with_active_window(allocated_budget=Decimal("100"))
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
+        svc._tenants.update = AsyncMock()
+
+        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("50"))
+
+        written = svc._tenants.update.await_args.args[1]
+        assert written["allocated_budget"] == Decimal("150")
+        assert written["budget_effective_from"] == tenant.budget_effective_from
+        assert written["budget_effective_to"] == tenant.budget_effective_to
+
+    @pytest.mark.asyncio
+    async def test_extending_effective_to_while_from_omitted_is_allowed(self) -> None:
+        tenant = _tenant_with_active_window(allocated_budget=Decimal("100"))
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
+        svc._tenants.update = AsyncMock()
+        extended_to = tenant.budget_effective_to + timedelta(days=30)
+
+        await svc.revise_tenant_budget(
+            _admin_user(), 1, "top-up", Decimal("100"), budget_effective_to=extended_to
+        )
+
+        written = svc._tenants.update.await_args.args[1]
+        assert written["budget_effective_from"] == tenant.budget_effective_from
+        assert written["budget_effective_to"] == extended_to
+
+    @pytest.mark.asyncio
+    async def test_extended_to_validated_against_stored_from_not_todays_date(self) -> None:
+        """The From used for the "at least one calendar day after" check
+        must be the STORED From (set up to 10 days ago here), not a
+        newly-supplied one — there isn't one, since From is locked. A To
+        just one day after the stored From must be accepted even though
+        it's not one day after "today"."""
+        tenant = _tenant_with_active_window(allocated_budget=Decimal("100"))
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
+        svc._tenants.update = AsyncMock()
+        to_just_after_stored_from = tenant.budget_effective_from + timedelta(days=1)
+
+        await svc.revise_tenant_budget(
+            _admin_user(), 1, "top-up", Decimal("100"), budget_effective_to=to_just_after_stored_from
+        )
+
+        svc._tenants.update.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_extension_still_validated_against_stored_from(self) -> None:
+        """A To that fails the calendar-day check against the stored From
+        (same day) is still rejected, even though no new From was given."""
+        tenant = _tenant_with_active_window(allocated_budget=Decimal("100"))
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
+        same_day_as_stored_from = tenant.budget_effective_from.replace(hour=23, minute=59)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.revise_tenant_budget(
+                _admin_user(), 1, "top-up", Decimal("100"), budget_effective_to=same_day_as_stored_from
+            )
+
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["error"] == "budget_effective_to_invalid"
+        svc._tenants.update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_both_omitted_when_no_window_exists_is_rejected(self) -> None:
+        """No window at all (never assigned, or lapsed) and nothing
+        supplied — this can't be a plain amount change, since there's no
+        existing window to leave "untouched"."""
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant(allocated_budget=Decimal("100"))
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("100"))
+
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["error"] == "effective_window_required"
+        svc._tenants.update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_only_one_field_given_when_no_window_exists_is_rejected(self) -> None:
+        """Partial isn't allowed when there's nothing to fall back to —
+        giving only To (or only From) with no existing window must not
+        silently pick a default for the other one."""
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant(allocated_budget=Decimal("100"))
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.revise_tenant_budget(
+                _admin_user(), 1, "top-up", Decimal("100"), budget_effective_to=_VALID_EFFECTIVE_TO
+            )
+
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["error"] == "effective_window_required"
+
+    @pytest.mark.asyncio
+    async def test_renewing_after_expiry_is_treated_as_a_fresh_assignment_not_locked(self) -> None:
+        """Ties back to TestReviseTenantBudgetEffectiveWindow's
+        test_renewing_an_already_expired_window_succeeds, from the locking
+        angle specifically: a LAPSED window (not merely "has some From/To
+        on file") does not count as "active", so From is open again here —
+        confirms the lock is tied to the window's liveness, not to whether
+        the fields have ever been set at all."""
+        expired_tenant = _tenant(allocated_budget=Decimal("100"))
+        expired_tenant.budget_effective_from = _VALID_EFFECTIVE_FROM - timedelta(days=240)
+        expired_tenant.budget_effective_to = _VALID_EFFECTIVE_FROM - timedelta(days=180)
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=expired_tenant)
+        svc._tenants.update = AsyncMock()
+
+        await svc.revise_tenant_budget(
+            _admin_user(), 1, "top-up", Decimal("1200"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO
+        )
+
+        written = svc._tenants.update.await_args.args[1]
+        assert written["budget_effective_from"] == _VALID_EFFECTIVE_FROM
+        assert written["budget_effective_to"] == _VALID_EFFECTIVE_TO
 
 
 class TestRefreshBudgetExpiryFlag:

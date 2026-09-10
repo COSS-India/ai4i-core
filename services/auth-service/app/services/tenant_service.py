@@ -91,24 +91,22 @@ MAX_TENANT_BUDGET = Decimal(10) ** (
 ) - Decimal(1).scaleb(-_allocated_budget_type.scale)
 
 
-def _validate_budget_window(budget_effective_from: datetime, budget_effective_to: datetime) -> None:
-    """Enforce revise_tenant_budget's From/To contract, comparing calendar
-    dates in UTC (not wall-clock instants) so a From of "today at 00:00 UTC"
-    is always valid regardless of what time the request lands, and a
-    same-day From/To pair is rejected consistently regardless of the time
-    portion either side happened to send. A naive (no tzinfo) datetime is
-    treated as already being UTC, matching the field's documented contract
-    ("(UTC)" — see TenantBudgetRequest.budget_effective_from/_to) rather than
-    silently reinterpreting it as local time.
-    """
-    from_date = (
-        budget_effective_from.astimezone(timezone.utc) if budget_effective_from.tzinfo else budget_effective_from
-    ).date()
-    to_date = (
-        budget_effective_to.astimezone(timezone.utc) if budget_effective_to.tzinfo else budget_effective_to
-    ).date()
-    today_utc = datetime.now(timezone.utc).date()
+def _as_utc_date(value: datetime):
+    """Calendar date in UTC, not the wall-clock instant — a naive (no
+    tzinfo) datetime is treated as already being UTC, matching every
+    budget-window field's documented contract ("(UTC)" — see
+    TenantBudgetRequest.budget_effective_from/_to), rather than silently
+    reinterpreting it as local time."""
+    return (value.astimezone(timezone.utc) if value.tzinfo else value).date()
 
+
+def _validate_new_effective_from(budget_effective_from: datetime) -> None:
+    """Only applies to a From being set for the first time (no active
+    window exists yet) — an already-stored From is never re-validated
+    against "today", since today has moved on since it was first set and
+    that's expected (see revise_tenant_budget's locking rule)."""
+    from_date = _as_utc_date(budget_effective_from)
+    today_utc = datetime.now(timezone.utc).date()
     if from_date < today_utc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -120,6 +118,16 @@ def _validate_budget_window(budget_effective_from: datetime, budget_effective_to
                 ),
             },
         )
+
+
+def _validate_effective_to_after_from(budget_effective_from: datetime, budget_effective_to: datetime) -> None:
+    """Compares whichever From is actually in effect — the one just
+    supplied (fresh assignment) or the one already on file (extending an
+    active window) — against the proposed To. Calendar dates in UTC, so a
+    same-day pair is rejected consistently regardless of either side's time
+    portion."""
+    from_date = _as_utc_date(budget_effective_from)
+    to_date = _as_utc_date(budget_effective_to)
     if to_date < from_date + timedelta(days=1):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1134,8 +1142,8 @@ class TenantService:
         tenant_id: int,
         action: Literal["top-up", "top-down"],
         amount: Decimal,
-        budget_effective_from: datetime,
-        budget_effective_to: datetime,
+        budget_effective_from: Optional[datetime] = None,
+        budget_effective_to: Optional[datetime] = None,
         platform_core_db: Optional[AsyncSession] = None,
     ) -> tuple[Tenant, int, int, bool]:
         """Top-up or top-down a tenant's budget — PATCH /auth/tenants/{id}/budget.
@@ -1146,21 +1154,39 @@ class TenantService:
         lives in platform-core's budget_usage ledger, summed here across
         every API key under the tenant.
 
-        ``budget_effective_from``/``budget_effective_to`` are required on
-        every revision — previously the only way to set these was at tenant
-        creation (TenantCreate), with no way to ever change or even validate
-        them afterwards. Validated by ``_validate_budget_window`` before
-        anything else runs (cheap, local-only, so it fails fastest): From
-        must not be before today (compared as a UTC calendar date, not a
-        wall-clock instant — so any time on today's date is valid), and To
-        must be at least one calendar day after From (same-day From/To is
-        rejected). Violations are this endpoint's own named 422s
-        (``budget_effective_from_invalid`` / ``budget_effective_to_invalid``),
-        same error-body shape as the other checks below. Both fields are
-        always overwritten with the new values on every revision (there is
-        no "leave unchanged" option) and persisted together with
-        ``allocated_budget`` in the same update — see the ``_tenants.update``
-        call below.
+        ``budget_effective_from``/``budget_effective_to`` are both optional
+        and their required-ness depends on whether this tenant currently has
+        a LIVE window (``budget_effective_to`` set and not yet reached — see
+        is_budget_window_expired):
+
+          * Window still active: ``budget_effective_from`` is LOCKED — it
+            can never move once the window it belongs to is live, so
+            supplying it here raises 422 ``effective_from_locked``.
+            ``budget_effective_to`` is optional: omitted means "leave
+            unchanged" (a plain amount top-up/top-down untouches the
+            window entirely — this is what the shipped UI already does,
+            since it only ever sends action+amount); given, it's validated
+            against the *stored* From (never a client-supplied one, since
+            that's locked) and may only extend the window, never shrink or
+            re-found it.
+          * No window yet, or the old one has already lapsed: this call
+            IS the assignment (first time, or a fresh one after expiry —
+            e.g. a tenant whose Jan-Feb window lapsed getting a new
+            Sep-Oct one) — both fields become REQUIRED (422
+            ``effective_window_required`` if either is missing), since
+            there's nothing on file to fall back to. From is validated
+            against today (``_validate_new_effective_from``); To against
+            the newly-given From (``_validate_effective_to_after_from``).
+
+        Either way, To is always validated against whichever From ends up
+        in effect (the newly-given one, or the existing stored one) via
+        ``_validate_effective_to_after_from`` — at least one calendar day
+        after, comparing UTC calendar dates, not wall-clock instants (a
+        same-day pair is rejected regardless of the time portion either side
+        sent). This whole decision needs the Tenant row loaded first (to see
+        what's already on file), so it runs right after
+        ``_load_tenant_for_update_or_404`` below, not before it as a
+        request-only check would.
 
         The revision never moves any Application's own ₹: every Application
         under the tenant keeps exactly the allocated_budget it already
@@ -1229,9 +1255,48 @@ class TenantService:
                 },
             )
 
-        _validate_budget_window(budget_effective_from, budget_effective_to)
-
         tenant = await self._load_tenant_for_update_or_404(tenant_id)
+
+        window_active = tenant.budget_effective_to is not None and not is_budget_window_expired(
+            tenant.budget_effective_to
+        )
+        if window_active:
+            if budget_effective_from is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={
+                        "error": "effective_from_locked",
+                        "message": (
+                            "budget_effective_from is locked while this tenant's budget "
+                            f"window is still active ({tenant.budget_effective_from} to "
+                            f"{tenant.budget_effective_to}) — omit it, or extend "
+                            "budget_effective_to instead."
+                        ),
+                    },
+                )
+            new_effective_from = tenant.budget_effective_from
+            new_effective_to = (
+                budget_effective_to if budget_effective_to is not None else tenant.budget_effective_to
+            )
+            if budget_effective_to is not None:
+                _validate_effective_to_after_from(new_effective_from, new_effective_to)
+        else:
+            if budget_effective_from is None or budget_effective_to is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={
+                        "error": "effective_window_required",
+                        "message": (
+                            "This tenant has no active budget window (never assigned, or "
+                            "it has lapsed) — budget_effective_from and "
+                            "budget_effective_to are both required to assign one."
+                        ),
+                    },
+                )
+            _validate_new_effective_from(budget_effective_from)
+            _validate_effective_to_after_from(budget_effective_from, budget_effective_to)
+            new_effective_from = budget_effective_from
+            new_effective_to = budget_effective_to
 
         current_budget = tenant.allocated_budget or Decimal("0")
         delta = amount if action == "top-up" else -amount
@@ -1331,8 +1396,8 @@ class TenantService:
             tenant,
             {
                 "allocated_budget": new_budget,
-                "budget_effective_from": budget_effective_from,
-                "budget_effective_to": budget_effective_to,
+                "budget_effective_from": new_effective_from,
+                "budget_effective_to": new_effective_to,
                 "updated_by": current_user.id,
             },
         )

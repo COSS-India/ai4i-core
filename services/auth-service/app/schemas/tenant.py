@@ -397,19 +397,27 @@ class TenantBudgetRequest(BaseSchema):
 
     action: Literal["top-up", "top-down"]
     amount: Decimal = Field(..., gt=0, max_digits=15, decimal_places=2)
-    # Required on every revision (not just at tenant creation, where these
-    # were previously the only place they could ever be set — see
-    # TenantCreate.budget_effective_from/_to). Semantic validation (From
-    # must not be before today UTC; To must be at least one calendar day
-    # after From) happens in TenantService.revise_tenant_budget, not here —
-    # same reasoning as allocated_budget's own missing `ge=0` above: a
-    # violation must surface as this contract's named 422, not a generic
-    # Pydantic field-constraint error.
-    budget_effective_from: datetime = Field(
-        ..., description="Start of the budget's effective window (UTC)."
+    # Both optional here — whether either is actually required depends on
+    # tenant state TenantService.revise_tenant_budget alone can see (does
+    # this tenant already have a LIVE window?), not something this schema
+    # can express. Omitting both is the common case: a plain amount top-up/
+    # top-down that doesn't touch the window at all (what the shipped UI
+    # already sends). See revise_tenant_budget's own docstring for the full
+    # required-ness matrix and the 422s it can raise
+    # (effective_from_locked / effective_window_required /
+    # budget_effective_from_invalid / budget_effective_to_invalid) — all
+    # semantic, so all live in the service, not as Pydantic constraints
+    # here, same reasoning as allocated_budget's own missing `ge=0` above.
+    budget_effective_from: Optional[datetime] = Field(
+        None,
+        description="Start of the budget's effective window (UTC). Omit unless "
+        "assigning a window for the first time, or after the previous one has "
+        "lapsed — it's locked while a window is active.",
     )
-    budget_effective_to: datetime = Field(
-        ..., description="End of the budget's effective window (UTC)."
+    budget_effective_to: Optional[datetime] = Field(
+        None,
+        description="End of the budget's effective window (UTC). Omit to leave an "
+        "active window unchanged; give a later date to extend it.",
     )
 
 

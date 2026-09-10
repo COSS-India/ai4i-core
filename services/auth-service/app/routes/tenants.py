@@ -250,12 +250,17 @@ async def revise_tenant_budget(
     no longer exists. Response is unwrapped (no success/data envelope),
     matching the endpoint it replaces.
 
-    ``budget_effective_from``/``budget_effective_to`` are required on every
-    call and are always overwritten with the given values (no partial/
-    leave-unchanged option). Validated server-side: From must not be before
-    today (UTC calendar date), and To must be at least one calendar day
-    after From — see tenant_service._validate_budget_window for the exact
-    422s (``budget_effective_from_invalid`` / ``budget_effective_to_invalid``).
+    ``budget_effective_from``/``budget_effective_to`` are both optional —
+    both omitted is a plain amount top-up/top-down that leaves an existing
+    window untouched. Whether either is actually required depends on
+    whether this tenant currently has a LIVE window: if so,
+    ``budget_effective_from`` is locked (422 ``effective_from_locked`` if
+    given) and ``budget_effective_to`` may only extend it; if the tenant has
+    no window yet, or the old one has lapsed, this call IS the assignment
+    and both become required (422 ``effective_window_required`` if either
+    is missing). See TenantService.revise_tenant_budget for the full
+    matrix and the remaining 422s (``budget_effective_from_invalid`` /
+    ``budget_effective_to_invalid``).
 
     No Application's own ₹ ever moves as a result of this revision — only
     its allocated_percentage is recomputed, since the same ₹ is now a
