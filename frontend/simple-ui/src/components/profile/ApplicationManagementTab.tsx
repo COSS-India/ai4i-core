@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import {
   Alert,
   AlertIcon,
@@ -22,15 +22,14 @@ import {
 } from "@chakra-ui/react";
 import { EditIcon, ViewIcon } from "@chakra-ui/icons";
 import { FiPlus, FiRefreshCw, FiSliders } from "react-icons/fi";
-import AdminDataTable, {
+import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
-  TableSearchField,
-  type AdminTableColumn,
-} from "../common/AdminDataTable";
+  FieldLabel,
+  type DataTableColumn,
+} from "../common/table";
 import StandardModal from "../common/StandardModal";
 import ApplicationBulkBudgetModal from "./ApplicationBulkBudgetModal";
 import FieldHint from "../common/FieldHint";
-import InfoTip from "../common/InfoTip";
 import PercentageStepper from "../common/PercentageStepper";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import { percentageBoundMessage } from "../../config/budgetMessages";
@@ -40,6 +39,7 @@ import {
   useApplicationManagement,
   type ApplicationForm,
 } from "./hooks/useApplicationManagement";
+import { useDeferredColumnSort } from "../../utils/tableSort";
 
 function formatPct(value: number | null | undefined): string {
   if (value == null) return "No ceiling";
@@ -66,18 +66,11 @@ function ApplicationSummaryCard({
   return (
     <Card bg="#EDF2FB" borderColor="#E1E8F5" borderWidth="1px" boxShadow="none">
       <CardBody py={4} px={5}>
-        <HStack spacing={1.5} mb={2} align="center">
-          <Text
-            fontSize="11.5px"
-            fontWeight="700"
-            color="blue.500"
-            letterSpacing="0.5px"
-            textTransform="uppercase"
-          >
+        <Box mb={2}>
+          <FieldLabel variant="metric" hint={tooltip}>
             {label}
-          </Text>
-          <InfoTip message={tooltip} />
-        </HStack>
+          </FieldLabel>
+        </Box>
         <Text fontSize="23px" fontWeight="800" letterSpacing="-0.4px">
           {value}
         </Text>
@@ -92,14 +85,7 @@ function ApplicationSummaryCard({
 }
 
 function ViewLabelWithTip({ label, tooltip }: { label: string; tooltip: string }) {
-  return (
-    <HStack spacing={1.5} align="center">
-      <Text fontSize="sm" color="gray.500">
-        {label}
-      </Text>
-      <InfoTip message={tooltip} />
-    </HStack>
-  );
+  return <FieldLabel variant="inline" hint={tooltip}>{label}</FieldLabel>;
 }
 
 const AVATAR_COLORS = [
@@ -133,10 +119,27 @@ export default function ApplicationManagementTab({
 }) {
   const mgr = useApplicationManagement(tenantId, institutionBudget);
 
-  const columns: AdminTableColumn<Application>[] = [
+  const appSortAccessors = useMemo(
+    () => ({
+      name: (app: Application) => app.name ?? "",
+      domain: (app: Application) => app.domain ?? "",
+      budget: (app: Application) => app.allocated_percentage ?? -1,
+      status: (app: Application) => app.status ?? "",
+    }),
+    [],
+  );
+  const appSort = useDeferredColumnSort("name", appSortAccessors);
+  const sortedApplications = useMemo(
+    () => appSort.apply(mgr.applications),
+    [mgr.applications, appSort],
+  );
+
+  const columns: DataTableColumn<Application>[] = [
     {
       id: "name",
       header: "Application",
+      sortable: true,
+      sortAccessor: (app) => app.name ?? "",
       cell: (app) => (
         <HStack spacing={3} align="center">
           <Box
@@ -168,6 +171,8 @@ export default function ApplicationManagementTab({
     {
       id: "domain",
       header: "Domain",
+      sortable: true,
+      sortAccessor: (app) => app.domain ?? "",
       cell: (app) => (
         <Badge
           variant="subtle"
@@ -188,6 +193,8 @@ export default function ApplicationManagementTab({
     {
       id: "budget",
       header: "Budget",
+      sortable: true,
+      sortAccessor: (app) => app.allocated_percentage ?? -1,
       cell: (app) => (
         <Text fontWeight="700">{formatPct(app.allocated_percentage)}</Text>
       ),
@@ -195,6 +202,8 @@ export default function ApplicationManagementTab({
     {
       id: "status",
       header: "Status",
+      sortable: true,
+      sortAccessor: (app) => app.status ?? "",
       cell: (app) => (
         <Badge colorScheme={app.status === "ACTIVE" ? "green" : "gray"}>
           {app.status === "ACTIVE" ? "Active" : "Inactive"}
@@ -334,20 +343,13 @@ export default function ApplicationManagementTab({
         </Alert>
       )}
 
-      <Box>
-        <TableSearchField
-          label="Application Name or Domain"
-          placeholder={FIELD_HINTS.application.search.placeholder}
-          helper={FIELD_HINTS.application.search.helper}
-          value={mgr.searchInput}
-          onChange={mgr.setSearchInput}
-        />
-      </Box>
-
-      <AdminDataTable
-        items={mgr.applications}
+      <DataTable
+        layout="admin"
+        items={sortedApplications}
         columns={columns}
         getRowKey={(app) => app.application_id}
+        sort={appSort.sort}
+        onSortChange={appSort.onSortChange}
         onRowClick={mgr.openView}
         paginate="server"
         paginationPosition="top"
@@ -366,6 +368,14 @@ export default function ApplicationManagementTab({
         unfilteredCount={mgr.total}
         hasActiveFilters={mgr.searchInput.trim() !== ""}
         onClearFilters={() => mgr.setSearchInput("")}
+        search={{
+          label: "Application Name or Domain",
+          value: mgr.searchInput,
+          onChange: mgr.setSearchInput,
+          placeholder: FIELD_HINTS.application.search.placeholder,
+          helper: FIELD_HINTS.application.search.helper,
+          fields: ["name", "domain"],
+        }}
         tableContainerProps={{
           borderWidth: "1px",
           borderColor: "gray.300",
@@ -513,12 +523,18 @@ export default function ApplicationManagementTab({
         <VStack align="stretch" spacing={4}>
           <Box bg="blue.50" borderRadius="md" p={4}>
             <HStack justify="space-between" mb={2}>
-              <HStack spacing={1.5} align="center">
-                <Text fontSize="xs" fontWeight="bold" color="gray.500" textTransform="uppercase">
-                  Institution Budget allocated
-                </Text>
-                <InfoTip message={FIELD_HINTS.application.tooltips.institutionBudgetAllocated} />
-              </HStack>
+              <FieldLabel
+                variant="inline"
+                hint={FIELD_HINTS.application.tooltips.institutionBudgetAllocated}
+                textProps={{
+                  fontSize: "xs",
+                  fontWeight: "bold",
+                  color: "gray.500",
+                  textTransform: "uppercase",
+                }}
+              >
+                Institution Budget allocated
+              </FieldLabel>
               <Text fontWeight="bold">{formatPct(mgr.budgetLiveTotal)}</Text>
             </HStack>
             <Box h="8px" bg="gray.200" borderRadius="full" overflow="hidden">

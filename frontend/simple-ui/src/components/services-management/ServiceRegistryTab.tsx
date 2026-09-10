@@ -1,21 +1,16 @@
 // Service Registry tab: filterable/searchable table of all registered services
 import {
-  Badge,
   Card,
   CardBody,
   CardHeader,
   Heading,
-  HStack,
-  VStack,
 } from "@chakra-ui/react";
-import FormFieldsRow from "../common/FormFieldsRow";
 import React from "react";
-import AdminDataTable, {
+import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
-  TableSearchField,
-  TableSelectField,
-  type AdminTableColumn,
-} from "../common/AdminDataTable";
+  type DataTableColumn,
+  type DataTableSortState,
+} from "../common/table";
 import { formatModelTaskTypeLabel } from "../../config/constants";
 import type { Service } from "../../services/servicesManagementService";
 
@@ -23,7 +18,9 @@ interface ServiceRegistryTabProps {
   cardBg: string;
   cardBorder: string;
   items: Service[];
-  columns: AdminTableColumn<Service>[];
+  columns: DataTableColumn<Service>[];
+  sort?: DataTableSortState;
+  onSortChange?: (next: DataTableSortState) => void;
   isLoading: boolean;
   totalServicesCount: number;
   onRowClick: (service: Service) => void;
@@ -44,6 +41,8 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
   cardBorder,
   items,
   columns,
+  sort,
+  onSortChange,
   isLoading,
   totalServicesCount,
   onRowClick,
@@ -71,10 +70,13 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
         </Heading>
       </CardHeader>
       <CardBody>
-        <AdminDataTable
+        <DataTable
+          layout="admin"
           key={tableKey}
           items={items}
           columns={columns}
+          sort={sort}
+          onSortChange={onSortChange}
           getRowKey={(service) => service.serviceId || service.service_id || ""}
           onRowClick={onRowClick}
           paginate="client"
@@ -86,91 +88,45 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
           unfilteredCount={totalServicesCount}
           hasActiveFilters={hasActiveFilters}
           onClearFilters={onClearFilters}
-          filters={
-            <VStack align="stretch" spacing={3} w="full">
-              <FormFieldsRow>
-                <TableSearchField
-                  label="Search"
-                  value={searchQuery}
-                  onChange={onSearchQueryChange}
-                  placeholder="Search by service name..."
-                  formControlProps={{ w: { base: "full", md: "280px" } }}
-                />
-                <TableSelectField
-                  label="Status"
-                  value={filterStatus}
-                  onChange={onFilterStatusChange}
-                  formControlProps={{ w: { base: "full", sm: "140px" } }}
-                >
-                  <option value="">All</option>
-                  <option value="published">Published</option>
-                  <option value="unpublished">Unpublished</option>
-                </TableSelectField>
-                <TableSelectField
-                  label="Model Task Type"
-                  value={filterTaskType}
-                  onChange={onFilterTaskTypeChange}
-                  formControlProps={{ w: { base: "full", sm: "160px" } }}
-                >
-                  {taskTypeNames.length > 1 && (
-                    <option value="">All</option>
-                  )}
-                  {taskTypeNames?.map((t) => (
-                    <option key={t} value={t}>
-                      {formatModelTaskTypeLabel(t)}
-                    </option>
-                  ))}
-                </TableSelectField>
-              </FormFieldsRow>
-              {hasActiveFilters && (
-                <HStack spacing={2} flexWrap="wrap">
-                  {searchQuery.trim() && (
-                    <Badge
-                      colorScheme="blue"
-                      fontSize="xs"
-                      px={2}
-                      py={1}
-                      cursor="pointer"
-                      onClick={() => onSearchQueryChange("")}
-                      _hover={{ opacity: 0.8 }}
-                    >
-                      Search: &quot;{searchQuery.trim()}&quot; ×
-                    </Badge>
-                  )}
-                  {filterStatus && (
-                    <Badge
-                      colorScheme="gray"
-                      fontSize="xs"
-                      px={2}
-                      py={1}
-                      cursor="pointer"
-                      onClick={() => onFilterStatusChange("")}
-                      _hover={{ opacity: 0.8 }}
-                    >
-                      Status:{" "}
-                      {filterStatus === "published"
-                        ? "Published"
-                        : "Unpublished"}{" "}
-                      ×
-                    </Badge>
-                  )}
-                  {taskTypeNames.length > 1 && filterTaskType && (
-                    <Badge
-                      colorScheme="purple"
-                      fontSize="xs"
-                      px={2}
-                      py={1}
-                      cursor="pointer"
-                      onClick={() => onFilterTaskTypeChange("")}
-                      _hover={{ opacity: 0.8 }}
-                    >
-                      Task type: {formatModelTaskTypeLabel(filterTaskType)} ×
-                    </Badge>
-                  )}
-                </HStack>
-              )}
-            </VStack>
-          }
+          search={{
+            label: "Search",
+            value: searchQuery,
+            onChange: onSearchQueryChange,
+            placeholder: "Search by service name...",
+            fields: ["service_name", "name"],
+          }}
+          filterDefs={[
+            {
+              id: "status",
+              label: "Status",
+              type: "select",
+              param: "status",
+              value: filterStatus,
+              onChange: onFilterStatusChange,
+              width: { base: "full", sm: "140px" },
+              options: [
+                { label: "All", value: "" },
+                { label: "Published", value: "published" },
+                { label: "Unpublished", value: "unpublished" },
+              ],
+            },
+            {
+              id: "taskType",
+              label: "Model Task Type",
+              type: "select",
+              param: "model_task_type",
+              value: filterTaskType,
+              onChange: onFilterTaskTypeChange,
+              width: { base: "full", sm: "160px" },
+              options: [
+                ...(taskTypeNames.length > 1 ? [{ label: "All", value: "" }] : []),
+                ...taskTypeNames.map((t) => ({
+                  label: formatModelTaskTypeLabel(t),
+                  value: t,
+                })),
+              ],
+            },
+          ]}
         />
       </CardBody>
     </Card>

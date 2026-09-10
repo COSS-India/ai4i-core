@@ -88,11 +88,9 @@ import ConfirmDialog from "../common/ConfirmDialog";
 import ConsentCheckbox, {
   getConsentValidationError,
 } from "../common/ConsentCheckbox";
-import AdminDataTable, {
-  TableSearchField,
-  TableSelectField,
-  type AdminTableColumn,
-} from "../common/AdminDataTable";
+import DataTable, {
+  type DataTableColumn,
+} from "../common/table";
 import TenantUserRoleBadges from "../common/TenantUserRoleBadges";
 import TierSelect from "./TierSelect";
 import { TENANT_USER_ROLE_OPTIONS } from "./types";
@@ -114,6 +112,7 @@ import {
   isAdopterInstitutionManager,
   isPlatformAdminUser,
 } from "../../utils/rbac";
+import { useDeferredColumnSort } from "../../utils/tableSort";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import FieldHint from "../common/FieldHint";
 import {
@@ -569,13 +568,49 @@ export default function TenantManagementTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tm.tenantDetailView?.tenant_id]);
 
-  const tenantColumns = useMemo((): AdminTableColumn<TenantView>[] => {
+  const tenantSortAccessors = useMemo(
+    () => ({
+      organisation: (t: TenantView) => t.organisation ?? "",
+      contact: (t: TenantView) => t.contact_name ?? "",
+      email: (t: TenantView) => t.email ?? "",
+      created: (t: TenantView) =>
+        t.created_at ? new Date(t.created_at).getTime() : 0,
+    }),
+    [],
+  );
+  const tenantSort = useDeferredColumnSort("organisation", tenantSortAccessors);
+  const sortedTenants = useMemo(
+    () => tenantSort.apply(tm.filteredTenants),
+    [tm.filteredTenants, tenantSort],
+  );
+
+  const userSortAccessors = useMemo(
+    () => ({
+      username: (u: TenantUserView) => u.username ?? u.email ?? "",
+      email: (u: TenantUserView) => u.email ?? "",
+      full_name: (u: TenantUserView) => u.full_name ?? "",
+      created: (u: TenantUserView) => {
+        const created = (u as { created_at?: string }).created_at;
+        return created ? new Date(created).getTime() : 0;
+      },
+    }),
+    [],
+  );
+  const userSort = useDeferredColumnSort("username", userSortAccessors);
+  const sortedTenantUsers = useMemo(
+    () => userSort.apply(tm.filteredTenantUsers),
+    [tm.filteredTenantUsers, userSort],
+  );
+
+  const tenantColumns = useMemo((): DataTableColumn<TenantView>[] => {
     return [
       {
         id: "organisation",
         header: INSTITUTION,
         thProps: { w: "420px", maxW: "420px" },
         tdProps: { maxW: "420px" },
+        sortable: true,
+        sortAccessor: (t) => t.organisation ?? "",
         cell: (t) => (
           <HStack spacing={3} minW={0}>
             <Center
@@ -620,6 +655,8 @@ export default function TenantManagementTab({
         header: "Contact",
         thProps: { w: "280px", maxW: "280px" },
         tdProps: { maxW: "280px" },
+        sortable: true,
+        sortAccessor: (t) => t.contact_name ?? "",
         cell: (t) => (
           <Tooltip
             label={dash(t.contact_name)}
@@ -633,7 +670,13 @@ export default function TenantManagementTab({
           </Tooltip>
         ),
       },
-      { id: "email", header: "Email", cell: (t) => dash(t.email) },
+      {
+        id: "email",
+        header: "Email",
+        sortable: true,
+        sortAccessor: (t) => t.email ?? "",
+        cell: (t) => dash(t.email),
+      },
       {
         id: "status",
         header: "Status",
@@ -646,6 +689,9 @@ export default function TenantManagementTab({
       {
         id: "created",
         header: "Onboarded",
+        sortable: true,
+        sortAccessor: (t) =>
+          t.created_at ? new Date(t.created_at).getTime() : 0,
         cell: (t) => fmtDate(t.created_at),
       },
       {
@@ -658,15 +704,29 @@ export default function TenantManagementTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tm]);
 
-  const userColumns = useMemo((): AdminTableColumn<TenantUserView>[] => {
+  const userColumns = useMemo((): DataTableColumn<TenantUserView>[] => {
     return [
       {
         id: "username",
         header: "Username",
+        sortable: true,
+        sortAccessor: (u) => u.username ?? u.email ?? "",
         cell: (u) => u.username ?? dash(u.email),
       },
-      { id: "email", header: "Email", cell: (u) => dash(u.email) },
-      { id: "full_name", header: "Full Name", cell: (u) => dash(u.full_name) },
+      {
+        id: "email",
+        header: "Email",
+        sortable: true,
+        sortAccessor: (u) => u.email ?? "",
+        cell: (u) => dash(u.email),
+      },
+      {
+        id: "full_name",
+        header: "Full Name",
+        sortable: true,
+        sortAccessor: (u) => u.full_name ?? "",
+        cell: (u) => dash(u.full_name),
+      },
       {
         id: "roles",
         header: "Roles",
@@ -688,6 +748,11 @@ export default function TenantManagementTab({
       {
         id: "created",
         header: "Created",
+        sortable: true,
+        sortAccessor: (u) => {
+          const created = (u as { created_at?: string }).created_at;
+          return created ? new Date(created).getTime() : 0;
+        },
         cell: (u) => fmtDate((u as { created_at?: string }).created_at),
       },
       {
@@ -742,10 +807,13 @@ export default function TenantManagementTab({
           </HStack>
         </CardHeader>
         <CardBody>
-          <AdminDataTable
-            items={tm.filteredTenants}
+          <DataTable
+            layout="admin"
+            items={sortedTenants}
             columns={tenantColumns}
             getRowKey={(t) => t.tenant_id}
+            sort={tenantSort.sort}
+            onSortChange={tenantSort.onSortChange}
             onRowClick={tm.handleViewTenant}
             isLoading={tm.isLoadingTenants}
             emptyMessage={`No ${INSTITUTIONS.toLowerCase()} found.`}
@@ -758,28 +826,30 @@ export default function TenantManagementTab({
               tm.setTenantFilterStatus("all");
               tm.setTenantSearch("");
             }}
-            filters={
-              <>
-                <TableSearchField
-                  placeholder={`Search by organisation or ${INSTITUTION.toLowerCase()} ID`}
-                  value={tm.tenantSearch}
-                  onChange={tm.setTenantSearch}
-                />
-                <TableSelectField
-                  label="Status"
-                  value={tm.tenantFilterStatus}
-                  onChange={tm.setTenantFilterStatus}
-                  formControlProps={{ w: { base: "full", sm: "200px" } }}
-                >
-                  <option value="all">All statuses</option>
-                  {TENANT_STATUS_LIST.map((s) => (
-                    <option key={s} value={s}>
-                      {formatTenantStatusLabel(s)}
-                    </option>
-                  ))}
-                </TableSelectField>
-              </>
-            }
+            search={{
+              value: tm.tenantSearch,
+              onChange: tm.setTenantSearch,
+              placeholder: `Search by organisation or ${INSTITUTION.toLowerCase()} ID`,
+              fields: ["organisation", "tenant_id"],
+            }}
+            filterDefs={[
+              {
+                id: "status",
+                label: "Status",
+                type: "select",
+                param: "status",
+                value: tm.tenantFilterStatus,
+                onChange: tm.setTenantFilterStatus,
+                width: { base: "full", sm: "200px" },
+                options: [
+                  { label: "All statuses", value: "all" },
+                  ...TENANT_STATUS_LIST.map((s) => ({
+                    label: formatTenantStatusLabel(s),
+                    value: s,
+                  })),
+                ],
+              },
+            ]}
           />
         </CardBody>
       </Card>
@@ -849,11 +919,14 @@ export default function TenantManagementTab({
 
   function renderTenantUsersTable() {
     return (
-      <AdminDataTable
+      <DataTable
+        layout="admin"
         key={tm.tenantDetailView?.tenant_id ?? "tenant-users"}
-        items={tm.filteredTenantUsers}
+        items={sortedTenantUsers}
         columns={userColumns}
         getRowKey={(u) => u.user_id}
+        sort={userSort.sort}
+        onSortChange={userSort.onSortChange}
         onRowClick={tm.handleViewUser}
         isLoading={tm.isLoadingTenantUsers}
         emptyMessage={`No users in this ${INSTITUTION.toLowerCase()}.`}
@@ -865,41 +938,46 @@ export default function TenantManagementTab({
           tm.userSearch.trim() !== ""
         }
         onClearFilters={tm.handleResetUserFilters}
-        filters={
-          <>
-            <TableSearchField
-              placeholder="Search by username, email, or full name"
-              value={tm.userSearch}
-              onChange={tm.setUserSearch}
-            />
-            <TableSelectField
-              label="Status"
-              value={tm.userFilterStatus}
-              onChange={tm.setUserFilterStatus}
-              formControlProps={{ w: { base: "full", sm: "200px" } }}
-            >
-              <option value="all">All statuses</option>
-              {TENANT_USER_STATUS_LIST.map((s) => (
-                <option key={s} value={s}>
-                  {formatTenantUserStatusLabel(s)}
-                </option>
-              ))}
-            </TableSelectField>
-            <TableSelectField
-              label="Role"
-              value={tm.userFilterRole}
-              onChange={tm.setUserFilterRole}
-              formControlProps={{ w: { base: "full", sm: "200px" } }}
-            >
-              <option value="all">All roles</option>
-              {tm.tenantUserRoleFilterOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </TableSelectField>
-          </>
-        }
+        search={{
+          value: tm.userSearch,
+          onChange: tm.setUserSearch,
+          placeholder: "Search by username, email, or full name",
+          fields: ["username", "email", "full_name"],
+        }}
+        filterDefs={[
+          {
+            id: "status",
+            label: "Status",
+            type: "select",
+            param: "status",
+            value: tm.userFilterStatus,
+            onChange: tm.setUserFilterStatus,
+            width: { base: "full", sm: "200px" },
+            options: [
+              { label: "All statuses", value: "all" },
+              ...TENANT_USER_STATUS_LIST.map((s) => ({
+                label: formatTenantUserStatusLabel(s),
+                value: s,
+              })),
+            ],
+          },
+          {
+            id: "role",
+            label: "Role",
+            type: "select",
+            param: "role",
+            value: tm.userFilterRole,
+            onChange: tm.setUserFilterRole,
+            width: { base: "full", sm: "200px" },
+            options: [
+              { label: "All roles", value: "all" },
+              ...tm.tenantUserRoleFilterOptions.map((opt) => ({
+                label: opt.label,
+                value: opt.value,
+              })),
+            ],
+          },
+        ]}
       />
     );
   }

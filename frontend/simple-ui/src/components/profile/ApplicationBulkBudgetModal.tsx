@@ -8,17 +8,11 @@ import {
   FormControl,
   FormErrorMessage,
   HStack,
-  Input,
-  Table,
-  Tbody,
-  Td,
   Text,
-  Th,
-  Thead,
-  Tr,
   VStack,
 } from "@chakra-ui/react";
 import StandardModal from "../common/StandardModal";
+import DataTable, { type DataTableColumn } from "../common/table";
 import InfoTip from "../common/InfoTip";
 import PercentageStepper, {
   type PercentageBound,
@@ -32,6 +26,11 @@ function formatPct(value: number | null | undefined): string {
   if (value == null) return "—";
   const rounded = Math.round(value * 100) / 100;
   return `${rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(2)}%`;
+}
+
+function parsePctInput(value: string): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : -1;
 }
 
 export default function ApplicationBulkBudgetModal({
@@ -69,106 +68,122 @@ export default function ApplicationBulkBudgetModal({
 }) {
   const totalOver = liveTotalPct > 100 + 1e-6;
 
-  const body = useMemo(() => {
-    if (isLoading) {
-      return (
-        <Text color="gray.500" py={8} textAlign="center">
-          Loading Applications…
-        </Text>
-      );
-    }
-    if (rows.length === 0) {
-      return (
-        <Text color="gray.500" py={8} textAlign="center">
-          No Applications to edit.
-        </Text>
-      );
-    }
-    return (
-      <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" overflow="hidden">
-        <Table size="sm">
-          <Thead bg="gray.50">
-            <Tr>
-              <Th>Application</Th>
-              <Th>Used</Th>
-              <Th>Budget %</Th>
-              <Th>Key preview</Th>
-            </Tr>
-          </Thead>
-          <Tbody>
-            {rows.map((row) => {
-              const editable = row.status === "ACTIVE";
-              return (
-              <Tr key={row.application_id} verticalAlign="top" opacity={editable ? 1 : 0.75}>
-                <Td>
-                  <Text fontWeight="600" fontSize="sm">{row.name}</Text>
-                  {!editable ? (
-                    <Badge mt={1} colorScheme="gray" fontSize="10px">
-                      Inactive
-                    </Badge>
-                  ) : null}
-                </Td>
-                <Td>
-                  {row.consumed_percentage != null ? (
-                    <>
-                      <Text fontSize="sm">{formatPct(row.consumed_percentage)}</Text>
-                      <Text fontSize="xs" color="gray.500">
-                        {formatSpendMoney(row.consumed_budget ?? 0, currency)}
-                      </Text>
-                    </>
-                  ) : row.rowError?.startsWith("Could not load") ? (
-                    <Text fontSize="sm" color="red.500">
-                      Load failed — refocus to retry
-                    </Text>
-                  ) : (
-                    <Text fontSize="sm" color="gray.400">
-                      {row.keysLoading ? "Loading…" : "Focus row to load keys"}
-                    </Text>
-                  )}
-                </Td>
-                <Td>
-                  <FormControl isInvalid={Boolean(row.rowError)}>
-                    <PercentageStepper
-                      variant="inline"
-                      value={row.pctInput}
-                      onChange={(next) => onPctChange(row.application_id, next)}
-                      onBoundHit={(bound) => onPctBoundHit(row.application_id, bound)}
-                      onFocus={() => onRowFocus(row.application_id)}
-                      isDisabled={!editable}
-                    />
-                    {row.rowError ? (
-                      <FormErrorMessage mt={1}>{row.rowError}</FormErrorMessage>
-                    ) : null}
-                  </FormControl>
-                </Td>
-                <Td maxW="220px">
-                  {row.keysLoading ? (
-                    <Text fontSize="xs" color="gray.500">Loading keys…</Text>
-                  ) : row.keyPreviews.length === 0 ? (
-                    <Text fontSize="xs" color="gray.400">—</Text>
-                  ) : (
-                    <VStack align="stretch" spacing={1}>
-                      {row.keyPreviews.map((key) => (
-                        <Text
-                          key={key.id}
-                          fontSize="xs"
-                          color={key.floorViolation ? "red.500" : "gray.600"}
-                        >
-                          {key.key_name}: {formatPct(key.allocated_percentage)} ·{" "}
-                          {formatSpendMoney(key.allocated_budget, currency)}
-                        </Text>
-                      ))}
-                    </VStack>
-                  )}
-                </Td>
-              </Tr>
+  const columns = useMemo<DataTableColumn<BulkBudgetDraft>[]>(
+    () => [
+      {
+        id: "name",
+        header: "Application",
+        sortable: true,
+        sortAccessor: (row) => row.name ?? "",
+        cell: (row) => {
+          const editable = row.status === "ACTIVE";
+          return (
+            <Box opacity={editable ? 1 : 0.75}>
+              <Text fontWeight="600" fontSize="sm">
+                {row.name}
+              </Text>
+              {!editable ? (
+                <Badge mt={1} colorScheme="gray" fontSize="10px">
+                  Inactive
+                </Badge>
+              ) : null}
+            </Box>
+          );
+        },
+      },
+      {
+        id: "used",
+        header: "Used",
+        sortable: true,
+        sortAccessor: (row) => row.consumed_percentage ?? -1,
+        cell: (row) => {
+          if (row.consumed_percentage != null) {
+            return (
+              <>
+                <Text fontSize="sm">{formatPct(row.consumed_percentage)}</Text>
+                <Text fontSize="xs" color="gray.500">
+                  {formatSpendMoney(row.consumed_budget ?? 0, currency)}
+                </Text>
+              </>
             );
-            })}
-          </Tbody>
-        </Table>
-      </Box>
-    );
-  }, [isLoading, rows, currency, onPctChange, onPctBoundHit, onRowFocus]);
+          }
+          if (row.rowError?.startsWith("Could not load")) {
+            return (
+              <Text fontSize="sm" color="red.500">
+                Load failed — refocus to retry
+              </Text>
+            );
+          }
+          return (
+            <Text fontSize="sm" color="gray.400">
+              {row.keysLoading ? "Loading…" : "Focus row to load keys"}
+            </Text>
+          );
+        },
+      },
+      {
+        id: "budgetPct",
+        header: "Budget %",
+        sortable: true,
+        sortAccessor: (row) => parsePctInput(row.pctInput),
+        cell: (row) => {
+          const editable = row.status === "ACTIVE";
+          return (
+            <FormControl isInvalid={Boolean(row.rowError)}>
+              <PercentageStepper
+                variant="inline"
+                value={row.pctInput}
+                onChange={(next) => onPctChange(row.application_id, next)}
+                onBoundHit={(bound) => onPctBoundHit(row.application_id, bound)}
+                onFocus={() => onRowFocus(row.application_id)}
+                isDisabled={!editable}
+              />
+              {row.rowError ? (
+                <FormErrorMessage mt={1}>{row.rowError}</FormErrorMessage>
+              ) : null}
+            </FormControl>
+          );
+        },
+      },
+      {
+        id: "keyPreview",
+        header: "Key preview",
+        sortable: true,
+        sortAccessor: (row) => row.keyPreviews.length,
+        cell: (row) => {
+          if (row.keysLoading) {
+            return (
+              <Text fontSize="xs" color="gray.500">
+                Loading keys…
+              </Text>
+            );
+          }
+          if (row.keyPreviews.length === 0) {
+            return (
+              <Text fontSize="xs" color="gray.400">
+                —
+              </Text>
+            );
+          }
+          return (
+            <VStack align="stretch" spacing={1} maxW="220px">
+              {row.keyPreviews.map((key) => (
+                <Text
+                  key={key.id}
+                  fontSize="xs"
+                  color={key.floorViolation ? "red.500" : "gray.600"}
+                >
+                  {key.key_name}: {formatPct(key.allocated_percentage)} ·{" "}
+                  {formatSpendMoney(key.allocated_budget, currency)}
+                </Text>
+              ))}
+            </VStack>
+          );
+        },
+      },
+    ],
+    [currency, onPctChange, onPctBoundHit, onRowFocus],
+  );
 
   return (
     <StandardModal
@@ -178,7 +193,9 @@ export default function ApplicationBulkBudgetModal({
       size="6xl"
       footer={
         <HStack spacing={3}>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
           <Button
             colorScheme="blue"
             isLoading={isSaving}
@@ -198,10 +215,17 @@ export default function ApplicationBulkBudgetModal({
         <Box bg="blue.50" borderRadius="md" p={4}>
           <HStack justify="space-between" mb={2}>
             <HStack spacing={1.5}>
-              <Text fontSize="xs" fontWeight="bold" color="gray.500" textTransform="uppercase">
+              <Text
+                fontSize="xs"
+                fontWeight="bold"
+                color="gray.500"
+                textTransform="uppercase"
+              >
                 {FIELD_HINTS.application.bulkBudgetEdit.institutionBudgetAllocatedLabel}
               </Text>
-              <InfoTip message={FIELD_HINTS.application.tooltips.institutionBudgetAllocated} />
+              <InfoTip
+                message={FIELD_HINTS.application.tooltips.institutionBudgetAllocated}
+              />
             </HStack>
             <Text fontWeight="bold" color={totalOver ? "red.500" : undefined}>
               {formatPct(liveTotalPct)}
@@ -241,7 +265,21 @@ export default function ApplicationBulkBudgetModal({
           </Alert>
         )}
 
-        {body}
+        <DataTable
+          columns={columns}
+          rows={rows}
+          rowKey={(row) => row.application_id}
+          defaultSortKey="name"
+          defaultSortDirection="asc"
+          isLoading={isLoading}
+          isEmpty={!isLoading && rows.length === 0}
+          emptyMessage="No Applications to edit."
+          asyncStateHeight="160px"
+          borderRadius="md"
+          theadBg="gray.50"
+          cellPy={2}
+          containerMt={0}
+        />
       </VStack>
     </StandardModal>
   );
