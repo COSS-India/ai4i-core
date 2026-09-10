@@ -21,8 +21,8 @@ import {
   IoPricetagOutline,
   IoAppsOutline,
   IoPulseOutline,
-  // Restore with Alerts / PII Guardrail nav items
-  // IoNotificationsOutline,
+  IoNotificationsOutline,
+  // Restore with PII Guardrail nav item
   // IoShieldCheckmarkOutline,
   IoFolderOpenOutline,
   IoStatsChartOutline,
@@ -80,13 +80,19 @@ const safeColorMap = {
     400: "#AB47BC",
     600: "#8E24AA",
   },
-  // Alerts Management removed from UI — uncomment to restore
+  // Legacy Alerts Management (definitions/receivers) removed — uncomment to restore
   // [TABS.alertsManagement]: { // Amber/Yellow → Pastel Amber
   //   50:  "#FFF8E1",
   //   300: "#FFD54F",
   //   400: "#FFCA28",
   //   600: "#F9A825",
   // },
+  [TABS.notificationsAlerts]: {
+    50: "#FFF8E1",
+    300: "#FFD54F",
+    400: "#FFCA28",
+    600: "#F9A825",
+  },
   // PII Guardrail removed from UI — uncomment to restore
   // [TABS.piiManagement]: {
   //   50:  "#E8EAF6",
@@ -212,16 +218,25 @@ const topNavItems: NavItem[] = [
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
   },
-  // Alerts Management removed from UI — uncomment to restore
+  // Legacy Alerts Management (definitions/receivers) removed — uncomment to restore
   // {
   //   id: TABS.alertsManagement,
   //   label: "Alerts Management",
   //   path: `/${TABS.alertsManagement}`,
   //   icon: IoNotificationsOutline,
   //   iconSize: 10,
-  //   iconColor: "", // Will be computed from safeColorMap
+  //   iconColor: "",
   //   requiresAuth: true,
   // },
+  {
+    id: TABS.notificationsAlerts,
+    label: "Notifications & Alerts",
+    path: `/${TABS.notificationsAlerts}`,
+    icon: IoNotificationsOutline,
+    iconSize: 10,
+    iconColor: "",
+    requiresAuth: true,
+  },
   // PII Guardrail removed from UI — uncomment to restore
   // {
   //   id: TABS.piiManagement,
@@ -290,9 +305,11 @@ function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean 
       return !ctx.isUser && !ctx.isGuest && Boolean(ctx.tenantId || ctx.isAdmin);
     case TABS.usageDashboard:
       return canAccessUsageDashboard(ctx.userRoles);
-    // Alerts Management removed from UI — uncomment to restore
+    // Legacy Alerts Management removed — uncomment to restore
     // case TABS.alertsManagement:
     //   return ctx.isAdmin;
+    case TABS.notificationsAlerts:
+      return ctx.isAdmin;
     // PII Guardrail removed from UI — uncomment to restore
     // case TABS.piiManagement:
     //   return ctx.isAdmin || ctx.isTenantAdmin;

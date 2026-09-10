@@ -19,11 +19,12 @@ const protectedRoutes = new Set([
   '/logs', '/usage-dashboard', '/traces',
   // Restore '/alerts-management', '/pii-management' when re-enabling UI
   '/policy-management',
+  '/notifications-alerts',
 ]);
 
 // Routes that require ADMIN role
-// Alerts Management removed from UI — restore '/alerts-management' when re-enabling
-const adminOnlyRoutes = new Set<string>([/* '/alerts-management' */]);
+// Legacy Alerts Management removed — restore '/alerts-management' when re-enabling
+const adminOnlyRoutes = new Set<string>(['/notifications-alerts']);
 
 // Routes limited to Usage Dashboard eligible roles (Adopter Admin, Tenant Admin, platform ADMIN)
 const usageDashboardRoutes = new Set(['/usage-dashboard']);
