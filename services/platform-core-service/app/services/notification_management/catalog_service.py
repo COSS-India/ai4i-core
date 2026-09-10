@@ -3,8 +3,8 @@
 The catalog GET is a join in code, not a serialiser over the table: each DB
 row is decorated with its display name/description/detail line from
 catalog_metadata.py, which the API never exposes for editing. One function
-serves both NOTIFICATION and ALERT rows, filtered by ``type`` — the alert
-catalog additionally supports a PATCH.
+serves both NOTIFICATION and ALERT rows, filtered by ``type``; PATCH updates
+one row by the ``id`` the GET returned.
 """
 
 from typing import Dict, List
@@ -31,6 +31,7 @@ def _to_catalog_item(row: ConfigNotificationAlert) -> CatalogItem:
     meta = NOTIFICATION_METADATA.get(row.name)
     is_alert = row.type == NotificationType.ALERT.value
     return CatalogItem(
+        id=row.id,
         name=row.name,
         display_name=meta.display_name if meta else row.name,
         description=meta.description if meta else "",
@@ -98,11 +99,11 @@ def _validate_thresholds(name: str, thresholds: Dict[str, bool]) -> None:
 
 
 async def update_catalog(
-    session: AsyncSession, name: str, catalog_type: NotificationType, payload: CatalogUpdate
+    session: AsyncSession, catalog_id: int, payload: CatalogUpdate
 ) -> CatalogItem:
-    """Update one catalog row. ``catalog_type`` must match the row's actual
-    type (mirrors the GET's ``?type=``) — a NOTIFICATION name PATCHed as
-    ALERT (or vice versa) is a 404, same as an unknown name.
+    """Update one catalog row, looked up by its own id (as returned by the
+    GET) — the row's type is whatever is already stored, not something the
+    caller asserts.
 
     ``thresholds`` is ALERT-only (the key only ever exists in ``config`` for
     ALERT-type rows); sending it for a NOTIFICATION row is a validation
@@ -112,37 +113,28 @@ async def update_catalog(
     replacements: every key already stored on the row is kept, any key named
     in the payload is set to exactly what it says, and any key not named
     defaults to False rather than being dropped."""
-    # Validate against the enum in Python before it ever reaches the query:
-    # `name` is arbitrary path-param text, and comparing a non-member string
-    # to a Postgres ENUM column raises an invalid-input-value DB error (a
-    # 500) rather than the clean 404 an unknown catalog name should be.
-    try:
-        NotificationName(name)
-    except ValueError:
-        raise EntityNotFoundError(f"Catalog entry '{name}'")
-
     result = await session.execute(
-        select(ConfigNotificationAlert).where(ConfigNotificationAlert.name == name)
+        select(ConfigNotificationAlert).where(ConfigNotificationAlert.id == catalog_id)
     )
     row = result.scalar_one_or_none()
-    if row is None or row.type != catalog_type.value:
-        raise EntityNotFoundError(f"Catalog entry '{name}'")
+    if row is None:
+        raise EntityNotFoundError(f"Catalog entry {catalog_id}")
 
-    if payload.thresholds is not None and catalog_type != NotificationType.ALERT:
+    if payload.thresholds is not None and row.type != NotificationType.ALERT.value:
         raise ValidationError(
-            message=f"'{name}' is a NOTIFICATION-type entry; thresholds do not apply to it.",
+            message=f"'{row.name}' is a NOTIFICATION-type entry; thresholds do not apply to it.",
             code="INVALID_THRESHOLDS",
         )
 
     if payload.recipient_roles is not None:
         merged = _merged_bool_dict(row.recipient_roles or {}, payload.recipient_roles)
-        _validate_recipient_roles(name, merged)
+        _validate_recipient_roles(row.name, merged)
         row.recipient_roles = merged
 
     if payload.thresholds is not None:
         existing_thresholds = (row.config or {}).get("thresholds", {})
         merged = _merged_bool_dict(existing_thresholds, payload.thresholds)
-        _validate_thresholds(name, merged)
+        _validate_thresholds(row.name, merged)
         config = dict(row.config or {})
         config["thresholds"] = merged
         row.config = config

@@ -17,6 +17,7 @@ class CatalogItem(BaseModel):
     response) rather than sent as an always-empty ``{}`` — that key only
     ever exists in ``config`` for ALERT-type rows (design section 6.1)."""
 
+    id: int
     name: str
     display_name: str
     description: str
@@ -32,7 +33,7 @@ class CatalogResponse(BaseModel):
 
 
 class CatalogUpdate(BaseModel):
-    """PATCH /catalog/{name} body. Every field optional — only the fields
+    """PATCH /catalog/{id} body. Every field optional — only the fields
     present are changed; recipient_roles/thresholds each replace their own
     column/config-key wholesale (the mockup's checkbox group sends its whole
     current state) without disturbing the other, unset one."""
@@ -62,7 +63,7 @@ class ListCatalogResponse(SuccessResponse):
 
 
 class UpdateCatalogResponse(SuccessResponseWithMeta):
-    """PATCH /alerts/catalog/{name}"""
+    """PATCH /catalog/{id}"""
 
     data: CatalogItem
     meta: MessageMeta

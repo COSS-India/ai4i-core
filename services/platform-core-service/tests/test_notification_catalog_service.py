@@ -147,51 +147,31 @@ class TestListCatalog:
 
 @pytest.mark.asyncio
 class TestUpdateCatalog:
-    async def test_unknown_name_is_not_found(self):
-        with pytest.raises(EntityNotFoundError):
-            await svc.update_catalog(
-                _Session(found=None), "NOT_A_NAME", NotificationType.ALERT, CatalogUpdate()
-            )
-
     async def test_missing_row_is_not_found(self):
         with pytest.raises(EntityNotFoundError):
-            await svc.update_catalog(
-                _Session(found=None), "QUOTA_THRESHOLD", NotificationType.ALERT, CatalogUpdate()
-            )
-
-    async def test_type_mismatch_is_not_found(self):
-        # TIER_ASSIGNED is a legal enum value and a real row, but it's a
-        # NOTIFICATION row — PATCHing it with type=ALERT must not match.
-        row = _row(name="TIER_ASSIGNED", type="NOTIFICATION")
-        with pytest.raises(EntityNotFoundError):
-            await svc.update_catalog(
-                _Session(found=row), "TIER_ASSIGNED", NotificationType.ALERT, CatalogUpdate()
-            )
+            await svc.update_catalog(_Session(found=None), 999, CatalogUpdate())
 
     async def test_thresholds_is_rejected_for_a_notification_row(self):
-        row = _row(name="TIER_ASSIGNED", type="NOTIFICATION")
+        row = _row(id=1, name="TIER_ASSIGNED", type="NOTIFICATION")
         with pytest.raises(ValidationError):
             await svc.update_catalog(
-                _Session(found=row), "TIER_ASSIGNED", NotificationType.NOTIFICATION,
-                CatalogUpdate(thresholds={"50": True}),
+                _Session(found=row), row.id, CatalogUpdate(thresholds={"50": True})
             )
 
     async def test_recipient_roles_allowed_for_a_notification_row(self):
-        row = _row(name="TIER_ASSIGNED", type="NOTIFICATION")
+        row = _row(id=1, name="TIER_ASSIGNED", type="NOTIFICATION")
         session = _Session(found=row)
         item = await svc.update_catalog(
-            session, "TIER_ASSIGNED", NotificationType.NOTIFICATION,
-            CatalogUpdate(recipient_roles={"TENANT ADMIN": True}),
+            session, row.id, CatalogUpdate(recipient_roles={"TENANT ADMIN": True})
         )
         assert row.recipient_roles == {"TENANT ADMIN": True}
         assert item.thresholds is None
 
     async def test_recipient_roles_write_to_the_column_not_config(self):
-        row = _row(name="QUOTA_THRESHOLD", type="ALERT", config={"thresholds": {"50": False}})
+        row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT", config={"thresholds": {"50": False}})
         session = _Session(found=row)
         await svc.update_catalog(
-            session, "QUOTA_THRESHOLD", NotificationType.ALERT,
-            CatalogUpdate(recipient_roles={"TENANT ADMIN": True}),
+            session, row.id, CatalogUpdate(recipient_roles={"TENANT ADMIN": True})
         )
         assert row.recipient_roles == {"TENANT ADMIN": True}
         assert row.config == {"thresholds": {"50": False}}, "thresholds must survive untouched"
@@ -199,22 +179,20 @@ class TestUpdateCatalog:
     async def test_illegal_recipient_role_is_rejected(self):
         # Per ALERT_LEGAL_RECIPIENT_ROLES, only TENANT ADMIN / ADMIN are legal
         # for QUOTA_THRESHOLD.
-        row = _row(name="QUOTA_THRESHOLD", type="ALERT")
+        row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT")
         with pytest.raises(ValidationError):
             await svc.update_catalog(
-                _Session(found=row), "QUOTA_THRESHOLD", NotificationType.ALERT,
-                CatalogUpdate(recipient_roles={"MODERATOR": True}),
+                _Session(found=row), row.id, CatalogUpdate(recipient_roles={"MODERATOR": True})
             )
 
     async def test_thresholds_write_into_config_without_touching_recipient_roles(self):
         row = _row(
-            name="BUDGET_THRESHOLD", type="ALERT",
+            id=3, name="BUDGET_THRESHOLD", type="ALERT",
             recipient_roles={"ADMIN": True}, config={"thresholds": {"50": False}},
         )
         session = _Session(found=row)
         await svc.update_catalog(
-            session, "BUDGET_THRESHOLD", NotificationType.ALERT,
-            CatalogUpdate(thresholds={"50": True, "75": True}),
+            session, row.id, CatalogUpdate(thresholds={"50": True, "75": True})
         )
         assert row.config == {"thresholds": {"50": True, "75": True}}
         assert row.recipient_roles == {"ADMIN": True}, "recipient_roles must survive untouched"
@@ -224,90 +202,75 @@ class TestUpdateCatalog:
         # only one of them must not drop the other key — it flips to False,
         # it isn't removed.
         row = _row(
-            name="QUOTA_THRESHOLD", type="ALERT",
+            id=2, name="QUOTA_THRESHOLD", type="ALERT",
             recipient_roles={"TENANT ADMIN": True, "ADMIN": True},
         )
         session = _Session(found=row)
         await svc.update_catalog(
-            session, "QUOTA_THRESHOLD", NotificationType.ALERT,
-            CatalogUpdate(recipient_roles={"ADMIN": True}),
+            session, row.id, CatalogUpdate(recipient_roles={"ADMIN": True})
         )
         assert row.recipient_roles == {"TENANT ADMIN": False, "ADMIN": True}
 
     async def test_partial_thresholds_update_keeps_other_keys_and_defaults_them_false(self):
         row = _row(
-            name="QUOTA_THRESHOLD", type="ALERT",
+            id=2, name="QUOTA_THRESHOLD", type="ALERT",
             config={"thresholds": {"50": True, "75": True, "90": True}},
         )
         session = _Session(found=row)
-        await svc.update_catalog(
-            session, "QUOTA_THRESHOLD", NotificationType.ALERT,
-            CatalogUpdate(thresholds={"90": False}),
-        )
+        await svc.update_catalog(session, row.id, CatalogUpdate(thresholds={"90": False}))
         assert row.config == {"thresholds": {"50": False, "75": False, "90": False}}
 
     async def test_too_many_threshold_keys_is_rejected(self):
-        row = _row(name="QUOTA_THRESHOLD", type="ALERT")
+        row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT")
         thresholds = {str(n): True for n in (10, 20, 30, 40, 50, 60)}  # 6 > MAX_THRESHOLD_KEYS
         with pytest.raises(ValidationError):
             await svc.update_catalog(
-                _Session(found=row), "QUOTA_THRESHOLD", NotificationType.ALERT,
-                CatalogUpdate(thresholds=thresholds),
+                _Session(found=row), row.id, CatalogUpdate(thresholds=thresholds)
             )
 
     async def test_threshold_key_out_of_range_is_rejected(self):
-        row = _row(name="QUOTA_THRESHOLD", type="ALERT")
+        row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT")
         with pytest.raises(ValidationError):
             await svc.update_catalog(
-                _Session(found=row), "QUOTA_THRESHOLD", NotificationType.ALERT,
-                CatalogUpdate(thresholds={"100": True}),
+                _Session(found=row), row.id, CatalogUpdate(thresholds={"100": True})
             )
 
     async def test_non_digit_threshold_key_is_rejected(self):
-        row = _row(name="QUOTA_THRESHOLD", type="ALERT")
+        row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT")
         with pytest.raises(ValidationError):
             await svc.update_catalog(
-                _Session(found=row), "QUOTA_THRESHOLD", NotificationType.ALERT,
-                CatalogUpdate(thresholds={"fifty": True}),
+                _Session(found=row), row.id, CatalogUpdate(thresholds={"fifty": True})
             )
 
     async def test_channels_are_replaced(self):
-        row = _row(name="QUOTA_THRESHOLD", type="ALERT", channels=("EMAIL",))
+        row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT", channels=("EMAIL",))
         session = _Session(found=row)
-        await svc.update_catalog(
-            session, "QUOTA_THRESHOLD", NotificationType.ALERT,
-            CatalogUpdate(channels=["EMAIL", "SMS"]),
-        )
+        await svc.update_catalog(session, row.id, CatalogUpdate(channels=["EMAIL", "SMS"]))
         assert row.channels == ["EMAIL", "SMS"]
 
     async def test_omitted_fields_are_left_alone(self):
         row = _row(
-            name="QUOTA_THRESHOLD", type="ALERT",
+            id=2, name="QUOTA_THRESHOLD", type="ALERT",
             recipient_roles={"ADMIN": True}, config={"thresholds": {"50": True}},
         )
         session = _Session(found=row)
-        await svc.update_catalog(
-            session, "QUOTA_THRESHOLD", NotificationType.ALERT, CatalogUpdate()
-        )
+        await svc.update_catalog(session, row.id, CatalogUpdate())
         assert row.recipient_roles == {"ADMIN": True}
         assert row.config == {"thresholds": {"50": True}}
 
     async def test_commits_and_refreshes_on_success(self):
-        row = _row(name="QUOTA_THRESHOLD", type="ALERT")
+        row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT")
         session = _Session(found=row)
-        await svc.update_catalog(
-            session, "QUOTA_THRESHOLD", NotificationType.ALERT,
-            CatalogUpdate(recipient_roles={"ADMIN": True}),
-        )
+        await svc.update_catalog(session, row.id, CatalogUpdate(recipient_roles={"ADMIN": True}))
         assert session.commits == 1
         assert session.refreshed == [row]
 
     async def test_returns_the_updated_item(self):
-        row = _row(name="QUOTA_THRESHOLD", type="ALERT", config={"thresholds": {"50": True}})
+        row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT", config={"thresholds": {"50": True}})
         session = _Session(found=row)
         item = await svc.update_catalog(
-            session, "QUOTA_THRESHOLD", NotificationType.ALERT,
-            CatalogUpdate(recipient_roles={"ADMIN": True}),
+            session, row.id, CatalogUpdate(recipient_roles={"ADMIN": True})
         )
         assert item.recipient_roles == {"ADMIN": True}
         assert item.thresholds == {"50": True}
+        assert item.id == 2
