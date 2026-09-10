@@ -14,7 +14,7 @@ for any catalog row, plus thresholds for the 2 ALERT-type rows
 service rejects them for a NOTIFICATION-type row.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,6 +32,7 @@ router = APIRouter(
 async def update_catalog(
     id: int,
     payload: CatalogUpdate,
+    request: Request,
     session: AsyncSession = Depends(get_db),
 ) -> UpdateCatalogResponse:
     """Update one catalog row by id (NOTIFICATION or ALERT — whichever that
@@ -42,7 +43,8 @@ async def update_catalog(
     is rejected for a NOTIFICATION-type row. Within recipient_roles/
     thresholds, existing keys are never dropped or reset — a key omitted
     from the body keeps its current value."""
-    item = await catalog_service.update_catalog(session, id, payload)
+    updated_by = request.headers.get("X-User-Id")
+    item = await catalog_service.update_catalog(session, id, payload, updated_by=updated_by)
     return UpdateCatalogResponse(
         success=True, data=item, meta=MessageMeta(message=f"'{item.name}' updated.")
     )

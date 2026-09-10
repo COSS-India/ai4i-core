@@ -66,6 +66,12 @@ def _item(id=1, name="TIER_ASSIGNED", type=NotificationType.NOTIFICATION, thresh
 _SESSION = MagicMock()
 
 
+def _request(user_id: str | None = "u1") -> MagicMock:
+    request = MagicMock()
+    request.headers = {"X-User-Id": user_id} if user_id is not None else {}
+    return request
+
+
 @pytest.mark.asyncio
 class TestListCatalogRoute:
     async def test_wraps_items_in_the_envelope(self, monkeypatch):
@@ -155,7 +161,7 @@ class TestUpdateCatalogRoute:
         )
         monkeypatch.setattr(_alert_catalog_routes.catalog_service, "update_catalog", stub)
         resp = await _alert_catalog_routes.update_catalog(
-            id=2, payload=CatalogUpdate(), session=_SESSION
+            id=2, payload=CatalogUpdate(), request=_request(), session=_SESSION
         )
         assert resp.success is True
         assert resp.data.name == "QUOTA_THRESHOLD"
@@ -165,17 +171,27 @@ class TestUpdateCatalogRoute:
         stub = AsyncMock(return_value=_item(id=2, type=NotificationType.ALERT))
         monkeypatch.setattr(_alert_catalog_routes.catalog_service, "update_catalog", stub)
         payload = CatalogUpdate(recipient_roles={"ADMIN": True})
-        await _alert_catalog_routes.update_catalog(id=2, payload=payload, session=_SESSION)
+        await _alert_catalog_routes.update_catalog(
+            id=2, payload=payload, request=_request(), session=_SESSION
+        )
         args = stub.await_args.args
         assert args[1] == 2
         assert args[2] is payload
+
+    async def test_forwards_updated_by_from_x_user_id_header(self, monkeypatch):
+        stub = AsyncMock(return_value=_item(id=2, type=NotificationType.ALERT))
+        monkeypatch.setattr(_alert_catalog_routes.catalog_service, "update_catalog", stub)
+        await _alert_catalog_routes.update_catalog(
+            id=2, payload=CatalogUpdate(), request=_request("u42"), session=_SESSION
+        )
+        assert stub.await_args.kwargs["updated_by"] == "u42"
 
     async def test_404_propagates(self, monkeypatch):
         stub = AsyncMock(side_effect=EntityNotFoundError("Catalog entry 999"))
         monkeypatch.setattr(_alert_catalog_routes.catalog_service, "update_catalog", stub)
         with pytest.raises(EntityNotFoundError):
             await _alert_catalog_routes.update_catalog(
-                id=999, payload=CatalogUpdate(), session=_SESSION
+                id=999, payload=CatalogUpdate(), request=_request(), session=_SESSION
             )
 
 

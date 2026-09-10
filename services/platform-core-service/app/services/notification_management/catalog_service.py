@@ -7,7 +7,7 @@ serves both NOTIFICATION and ALERT rows, filtered by ``type``; PATCH updates
 one row by the ``id`` the GET returned.
 """
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -97,7 +97,11 @@ def _validate_thresholds(name: str, thresholds: Dict[str, bool]) -> None:
 
 
 async def update_catalog(
-    session: AsyncSession, catalog_id: int, payload: CatalogUpdate
+    session: AsyncSession,
+    catalog_id: int,
+    payload: CatalogUpdate,
+    *,
+    updated_by: Optional[str] = None,
 ) -> CatalogItem:
     """Update one catalog row, looked up by its own id (as returned by the
     GET) — the row's type is whatever is already stored, not something the
@@ -139,6 +143,9 @@ async def update_catalog(
 
     if payload.channels is not None:
         row.channels = [channel.value for channel in payload.channels]
+
+    if updated_by is not None:
+        row.updated_by = updated_by
 
     await session.commit()
     await session.refresh(row)

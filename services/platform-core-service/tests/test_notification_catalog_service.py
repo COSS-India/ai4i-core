@@ -275,6 +275,21 @@ class TestUpdateCatalog:
         assert session.commits == 1
         assert session.refreshed == [row]
 
+    async def test_updated_by_is_recorded(self):
+        row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT")
+        session = _Session(found=row)
+        await svc.update_catalog(
+            session, row.id, CatalogUpdate(recipient_roles={"ADMIN": True}), updated_by="u42"
+        )
+        assert row.updated_by == "u42"
+
+    async def test_updated_by_omitted_leaves_the_column_untouched(self):
+        row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT")
+        row.updated_by = "someone-else"
+        session = _Session(found=row)
+        await svc.update_catalog(session, row.id, CatalogUpdate(recipient_roles={"ADMIN": True}))
+        assert row.updated_by == "someone-else"
+
     async def test_returns_the_updated_item(self):
         row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT", config={"thresholds": {"50": True}})
         session = _Session(found=row)
