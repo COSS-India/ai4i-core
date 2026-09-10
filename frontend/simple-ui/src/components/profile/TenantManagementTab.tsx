@@ -25,6 +25,7 @@ import {
   HStack,
   Heading,
   IconButton,
+  Image,
   Input,
   Modal,
   ModalBody,
@@ -65,10 +66,10 @@ import {
   FiArrowLeft,
   FiEdit2,
   FiMail,
+  FiMinusCircle,
   FiPauseCircle,
   FiPlus,
   FiPower,
-  FiSliders,
   FiUserPlus,
 } from "react-icons/fi";
 import {
@@ -126,6 +127,17 @@ import type { TenantUserView, TenantView } from "../../types/tenant";
 /** Shown when assigning/reassigning a tier that has no mapped services. */
 const TIER_NO_SERVICES_MSG =
   `This Tier has no services mapped. Please map at least one service before assigning to ${INSTITUTION_ARTICLE} ${INSTITUTION.toLowerCase()}.`;
+
+function isBudgetAssignmentExpired(tenant: TenantView | null | undefined): boolean {
+  if (!tenant?.budget_effective_to) return false;
+  const to = new Date(tenant.budget_effective_to).getTime();
+  if (Number.isNaN(to)) return false;
+  return Date.now() > to;
+}
+
+function hasActiveTierAssignment(tenant: TenantView): boolean {
+  return Boolean(tenant.tier_id) && !isBudgetAssignmentExpired(tenant);
+}
 
 export interface TenantManagementTabProps {
   isActive?: boolean;
@@ -299,6 +311,7 @@ export default function TenantManagementTab({
   );
   const [isEditingTier, setIsEditingTier] = useState(false);
   const [budgetAmount, setBudgetAmount] = useState("");
+  const [managePlanError, setManagePlanError] = useState<string | null>(null);
 
   const userFormRoleOptions = useMemo(() => {
     const tenantId =
@@ -376,12 +389,14 @@ export default function TenantManagementTab({
     setViewTierTenant(assignment);
     setManageTenant(tenant);
     const tierId = tenant.tier_id ?? assignment?.tier_id ?? "";
+    const expired = isBudgetAssignmentExpired(tenant);
     setManageTierId(tierId);
-    setOriginalTierId(tierId);
-    setIsEditingTier(!tierId);
+    setOriginalTierId(expired ? "" : tierId);
+    setIsEditingTier(!tierId || expired);
     setManageBudget(tenantBudgetNumber(tenant) ?? 0);
     setBudgetAmount("");
     setBudgetAction("topup");
+    setManagePlanError(null);
     onViewTierOpen();
   };
 
@@ -397,6 +412,7 @@ export default function TenantManagementTab({
 
     setBudgetAmount("");
     setBudgetAction("topup");
+    setManagePlanError(null);
   };
 
   const handleSaveManagePlan = async () => {
@@ -435,6 +451,7 @@ export default function TenantManagementTab({
     }
 
     setIsSavingPlan(true);
+    setManagePlanError(null);
     try {
       await changeTenantTier(String(manageTenant.tenant_id), manageTierId);
       toast({
@@ -1165,7 +1182,8 @@ export default function TenantManagementTab({
   function renderTenantRowActions(t: TenantView) {
     const stopRowClick = (e: React.MouseEvent) => e.stopPropagation();
     const isProtectedDefaultOrg = isDefaultTenant(t);
-    const planActionLabel = "Assign Tier";
+    const hasTier = hasActiveTierAssignment(t);
+    const planActionLabel = hasTier ? "Manage Plan" : "Assign Tier";
 
     const items: RowActionMenuItem[] = (() => {
       if (isTenantStatus(t.status, TENANT.STATUS.PENDING)) {
@@ -1188,7 +1206,7 @@ export default function TenantManagementTab({
               tm.handleOpenTenantStatus(t, TENANT.STATUS.DEACTIVATED),
             color: "red.600",
             hoverBg: "red.50",
-            icon: <DeleteIcon boxSize={4} />,
+            icon: <FiMinusCircle size={16} />,
           });
         }
         return pendingItems;
@@ -1213,7 +1231,7 @@ export default function TenantManagementTab({
               tm.handleOpenTenantStatus(t, TENANT.STATUS.DEACTIVATED),
             color: "red.600",
             hoverBg: "red.50",
-            icon: <DeleteIcon boxSize={4} />,
+            icon: <FiMinusCircle size={16} />,
           },
         ];
       }
@@ -1237,7 +1255,7 @@ export default function TenantManagementTab({
               tm.handleOpenTenantStatus(t, TENANT.STATUS.DEACTIVATED),
             color: "red.600",
             hoverBg: "red.50",
-            icon: <DeleteIcon boxSize={4} />,
+            icon: <FiMinusCircle size={16} />,
           });
         }
         return suspendedItems;
@@ -1289,15 +1307,22 @@ export default function TenantManagementTab({
         <Tooltip label={planActionLabel}>
           <IconButton
             aria-label={planActionLabel}
-            icon={<FiSliders size={14} />}
-            size="xs"
-            w={4}
-            h={4}
-            minW={4}
-            variant="outline"
-            colorScheme="blue"
+            icon={
+              <Image
+                src={
+                  hasTier
+                    ? "/assests/icons/tier-assigned.svg"
+                    : "/assests/icons/tier-unassigned.svg"
+                }
+                alt=""
+                boxSize="24px"
+              />
+            }
+            size="sm"
+            variant="ghost"
+            colorScheme="gray"
             borderRadius="full"
-            _hover={{ bg: "blue.50" }}
+            _hover={{ bg: "gray.100" }}
             onClick={(e) => {
               stopRowClick(e);
               openManagePlan(t);
@@ -2121,11 +2146,19 @@ export default function TenantManagementTab({
       serviceMappingsReady &&
       !tierIdsWithServices.has(String(manageTierId));
 
-    const showSaveButton = isEditingTier && hasTierChanged && manageTierId;
+    // PATCH /tenants/{id}/tier accepts tier_id only — Save when the tier changes.
+    const showSaveButton = isEditingTier && hasTierChanged && !!manageTierId;
 
     const selectedTierName =
       tierOptions.find((t) => t.id === manageTierId)?.name ?? "";
-    const planDrawerTitle = "Assign Tier";
+    const planDrawerTitle =
+      manageTenant && hasActiveTierAssignment(manageTenant)
+        ? "Manage Plan"
+        : "Assign Tier";
+    const budgetWindowLabel =
+      manageTenant?.budget_effective_from || manageTenant?.budget_effective_to
+        ? `${fmtDate(manageTenant.budget_effective_from)} — ${fmtDate(manageTenant.budget_effective_to)}`
+        : null;
 
     return (
       <Drawer
@@ -2148,6 +2181,24 @@ export default function TenantManagementTab({
           <DrawerBody py={6}>
             {manageTenant ? (
               <VStack align="stretch" spacing={5}>
+                {managePlanError && (
+                  <Alert status="error" borderRadius="md">
+                    <AlertIcon />
+                    <AlertDescription fontSize="sm">
+                      {managePlanError}
+                    </AlertDescription>
+                  </Alert>
+                )}
+                {isBudgetAssignmentExpired(manageTenant) && (
+                  <Alert status="warning" borderRadius="md">
+                    <AlertIcon />
+                    <AlertDescription fontSize="sm">
+                      Previous tier/budget assignment has expired. API key
+                      access may be blocked until a new budget window is
+                      available.
+                    </AlertDescription>
+                  </Alert>
+                )}
                 <FormControl>
                   <FormLabel>Tier</FormLabel>
                   {!isEditingTier && originalTierId ? (
@@ -2191,6 +2242,25 @@ export default function TenantManagementTab({
                     <FieldHint tone="error">{TIER_NO_SERVICES_MSG}</FieldHint>
                   )}
                 </FormControl>
+
+                {budgetWindowLabel && (
+                  <FormControl>
+                    <FormLabel fontWeight="semibold" fontSize="sm">
+                      Budget window
+                    </FormLabel>
+                    <Input
+                      size="sm"
+                      value={budgetWindowLabel}
+                      isReadOnly
+                      bg="gray.50"
+                      cursor="default"
+                    />
+                    <FieldHint>
+                      Budget window is set with the institution plan; not
+                      editable when changing tier.
+                    </FieldHint>
+                  </FormControl>
+                )}
 
                 <FormControl>
                   <FormLabel fontWeight="semibold" fontSize="sm">
@@ -2268,7 +2338,7 @@ export default function TenantManagementTab({
                 </FormControl>
               </VStack>
             ) : (
-              <Text>Select an institution to assign a tier.</Text>
+              <Text>Select an institution to manage plan.</Text>
             )}
           </DrawerBody>
           <DrawerFooter
@@ -2289,7 +2359,7 @@ export default function TenantManagementTab({
                   servicesForTiersQuery.isError
                 }
               >
-                Change Tier
+                {originalTierId ? "Change Tier" : "Assign Tier"}
               </Button>
             )}
           </DrawerFooter>

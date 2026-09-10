@@ -39,7 +39,7 @@ versioning = APIVersioning(
 # ── v1 routes ──
 v1_router = versioning.create_router("v1")
 # OpenAI-compatible listing owns /api/v1/models; the platform catalogue
-# (model_router) now serves /api/v1/modellist.
+# (model_router) now serves /api/v1/models/list.
 v1_router.include_router(models_openai_router)
 v1_router.include_router(model_router)
 v1_router.include_router(service_router)

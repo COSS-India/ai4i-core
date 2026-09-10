@@ -13,9 +13,10 @@ import {
   Tooltip,
   VStack,
 } from "@chakra-ui/react";
-import { FaDownload, FaUpload } from "react-icons/fa";
+import { MdOutlineCheckCircle, MdOutlineUnpublished } from "react-icons/md";
 import React from "react";
 import type { Service } from "../../services/servicesManagementService";
+import { resolveTaskType } from "../../utils/platformService";
 
 interface ServiceDetailTabProps {
   cardBg: string;
@@ -46,6 +47,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
   onRequestUnpublish,
   onRequestPublish,
 }) => {
+  const taskType = resolveTaskType(selectedService);
   return (
     <Card
       bg={cardBg}
@@ -110,19 +112,11 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
                 Model Task Type
               </Text>
               <Badge
-                colorScheme={getTaskColor(
-                  selectedService?.model?.task?.type ||
-                    selectedService?.task?.type ||
-                    selectedService.task_type,
-                )}
+                colorScheme={getTaskColor(taskType)}
                 fontSize="sm"
                 p={2}
               >
-                {(
-                  selectedService?.model?.task?.type ||
-                  selectedService?.task?.type ||
-                  selectedService.task_type
-                )?.toUpperCase() || "N/A"}
+                {taskType ? taskType.toUpperCase() : "N/A"}
               </Badge>
             </Box>
             <Box>
@@ -146,7 +140,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
                     <Tooltip label="Unpublish" placement="top" hasArrow>
                       <IconButton
                         aria-label="Unpublish"
-                        icon={<FaDownload />}
+                        icon={<MdOutlineUnpublished />}
                         size="sm"
                         colorScheme="red"
                         variant="outline"
@@ -174,7 +168,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
                       <Box as="span" display="inline-block">
                         <IconButton
                           aria-label="Publish"
-                          icon={<FaUpload />}
+                          icon={<MdOutlineCheckCircle />}
                           size="sm"
                           colorScheme="green"
                           variant="outline"

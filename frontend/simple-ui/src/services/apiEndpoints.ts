@@ -99,9 +99,10 @@ export const apiEndpoints = {
 
   platform: {
     models: {
-      base: `${API_V1}/models`,
+      /** Platform model catalogue (OpenAI-compatible list owns GET /models). */
+      base: `${API_V1}/models/list`,
       byId: (modelId: string) =>
-        `${API_V1}/models/${encodeURIComponent(modelId)}`,
+        `${API_V1}/models/list/${encodeURIComponent(modelId)}`,
     },
     services: {
       base: `${API_V1}/services`,

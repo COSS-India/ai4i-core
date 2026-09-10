@@ -94,7 +94,6 @@ export default function ApplicationBulkBudgetModal({
               <Th>Application</Th>
               <Th>Used</Th>
               <Th>Budget %</Th>
-              <Th>Budget ({currency})</Th>
               <Th>Key preview</Th>
             </Tr>
           </Thead>
@@ -143,21 +142,6 @@ export default function ApplicationBulkBudgetModal({
                       <FormErrorMessage mt={1}>{row.rowError}</FormErrorMessage>
                     ) : null}
                   </FormControl>
-                </Td>
-                <Td>
-                  <Input
-                    type="number"
-                    size="sm"
-                    w="120px"
-                    bg="white"
-                    value={row.amountInput}
-                    onFocus={() => onRowFocus(row.application_id)}
-                    onChange={(e) => onAmountChange(row.application_id, e.target.value)}
-                    min={row.consumed_budget ?? undefined}
-                    step={0.01}
-                    isDisabled={!editable || institutionBudgetUnset}
-                    placeholder={institutionBudgetUnset ? "—" : undefined}
-                  />
                 </Td>
                 <Td maxW="220px">
                   {row.keysLoading ? (
