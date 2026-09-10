@@ -62,6 +62,7 @@ _stub_svc("app.repositories.model_management.service_repository", ServiceReposit
 
 from app.core.exceptions import ValidationError  # noqa: E402
 from app.schemas.model_management.service import (  # noqa: E402
+    DESCRIPTION_MAX_LEN,
     InferenceAPIEndPoint,
     ServiceCreateRequest,
     ServiceUpdateRequest,
@@ -201,10 +202,15 @@ class TestDescriptionRequired:
         assert req.description == _LONG_DESCRIPTION
 
     def test_update_description_too_short_when_supplied_is_accepted(self) -> None:
-        """The 25-1000 char rule fires on create only (same scoping as
-        SERVICE_ID_MIN_LEN_ON_CREATE) — the admin edit form resends the
-        stored description on every update, so a pre-existing service with
-        a short one must not 422 on an unrelated edit."""
+        """At the Pydantic layer, neither bound of the 25-1000 char rule
+        fires on update (same scoping as SERVICE_ID_MIN_LEN_ON_CREATE) —
+        the admin edit form resends the stored description on every
+        update, so a pre-existing service with a short one must not 422 on
+        an unrelated edit. The 1000-char upper bound IS enforced, but one
+        layer up, in ServiceService.update_service — see
+        TestDescriptionLengthOnUpdate — where the stored value is
+        available to tell "unchanged legacy value" apart from "a change
+        that's newly too long"."""
         req = ServiceUpdateRequest(
             serviceId="svc-1",
             description="too short",
@@ -774,3 +780,145 @@ class TestSchemaDerivationAndTaskTypeConsistency:
                 existing_task_type="asr",
                 existing_schema=None,
             )
+
+
+# ── description upper bound on update: enforced only against a real change ──
+
+
+class TestDescriptionLengthOnUpdate:
+    """ServiceUpdateRequest itself no longer enforces DESCRIPTION_MAX_LEN
+    (see TestDescriptionRequired.test_update_description_too_short_when_supplied_is_accepted)
+    — the cap is applied one layer up, in
+    ServiceService._validate_description_length_on_update, which compares
+    against the stored value so a pre-existing over-length row can still
+    round-trip through an unrelated edit."""
+
+    def test_helper_allows_new_value_within_cap(self) -> None:
+        service_repo, model_repo, cache = MagicMock(), MagicMock(), MagicMock()
+        svc = ServiceService(service_repo=service_repo, model_repo=model_repo, cache=cache)
+
+        svc._validate_description_length_on_update(
+            new_description="A perfectly reasonable, short description.",
+            existing_description=_LONG_DESCRIPTION,
+        )  # must not raise
+
+    def test_helper_allows_no_description_supplied(self) -> None:
+        """`description` omitted from the update entirely — nothing to
+        check, regardless of what's on file."""
+        service_repo, model_repo, cache = MagicMock(), MagicMock(), MagicMock()
+        svc = ServiceService(service_repo=service_repo, model_repo=model_repo, cache=cache)
+
+        svc._validate_description_length_on_update(
+            new_description=None,
+            existing_description="x" * (DESCRIPTION_MAX_LEN + 1),
+        )  # must not raise
+
+    def test_helper_allows_unchanged_legacy_value_over_cap(self) -> None:
+        """The round-trip case: a service created before the cap existed
+        can have a stored description over DESCRIPTION_MAX_LEN (the column
+        is a plain Text, no DB-level limit). The edit form resends that
+        same value on every save — an unrelated edit (e.g. isPublished)
+        must not 422 just because the untouched description is still too
+        long."""
+        service_repo, model_repo, cache = MagicMock(), MagicMock(), MagicMock()
+        svc = ServiceService(service_repo=service_repo, model_repo=model_repo, cache=cache)
+        stored = "x" * (DESCRIPTION_MAX_LEN + 1)
+
+        svc._validate_description_length_on_update(
+            new_description=stored,
+            existing_description=stored,
+        )  # must not raise — identical to what's on file
+
+    def test_helper_rejects_changed_value_over_cap(self) -> None:
+        """A genuinely new value that happens to exceed the cap IS
+        rejected — the exemption above only protects resending the
+        existing stored value unchanged, not new oversized input."""
+        service_repo, model_repo, cache = MagicMock(), MagicMock(), MagicMock()
+        svc = ServiceService(service_repo=service_repo, model_repo=model_repo, cache=cache)
+
+        with pytest.raises(ValidationError, match=f"must not exceed {DESCRIPTION_MAX_LEN} characters"):
+            svc._validate_description_length_on_update(
+                new_description="y" * (DESCRIPTION_MAX_LEN + 1),
+                existing_description=_LONG_DESCRIPTION,
+            )
+
+    def test_helper_rejects_legacy_value_lengthened_past_cap(self) -> None:
+        """A stored value already over the cap can still be rejected if
+        the incoming edit changes it to something else that's also over
+        the cap — "unchanged" is the only exemption, not "was already
+        long"."""
+        service_repo, model_repo, cache = MagicMock(), MagicMock(), MagicMock()
+        svc = ServiceService(service_repo=service_repo, model_repo=model_repo, cache=cache)
+        stored = "x" * (DESCRIPTION_MAX_LEN + 1)
+
+        with pytest.raises(ValidationError, match=f"must not exceed {DESCRIPTION_MAX_LEN} characters"):
+            svc._validate_description_length_on_update(
+                new_description="y" * (DESCRIPTION_MAX_LEN + 50),
+                existing_description=stored,
+            )
+
+    @pytest.mark.asyncio
+    async def test_update_service_rejects_changed_overlong_description(self) -> None:
+        """End-to-end: the one scenario reachable through the real API —
+        editing an unrelated field (isPublished) while also supplying a
+        brand-new, over-cap description must 422 before anything is
+        persisted."""
+        service_repo = MagicMock()
+        instance_mock = MagicMock(
+            model_id="model-1", model_version="1.0", api_key=None,
+            endpoint="http://existing", task_type="asr",
+            inference_schema=_SCHEMA_ENTRY,
+            service_description=_LONG_DESCRIPTION,
+        )
+        service_repo.get_by_service_id = AsyncMock(return_value=instance_mock)
+        service_repo.get_tier_names_by_ids = AsyncMock(return_value={"tier-1": "Tier 1"})
+        model_repo = MagicMock()
+        cache = MagicMock()
+        svc = ServiceService(service_repo=service_repo, model_repo=model_repo, cache=cache)
+
+        payload = ServiceUpdateRequest(
+            serviceId="svc-1",
+            description="z" * (DESCRIPTION_MAX_LEN + 1),
+            taskType="asr",
+            costPerUnit=1.0,
+            unitSize=1,
+            tierIds=["tier-1"],
+        )
+
+        with pytest.raises(ValidationError, match=f"must not exceed {DESCRIPTION_MAX_LEN} characters"):
+            await svc.update_service(payload, updated_by="user-1")
+
+    @pytest.mark.asyncio
+    async def test_update_service_allows_resending_stored_overlong_description(self) -> None:
+        """End-to-end companion to the rejection case above: a legacy
+        service whose stored description already exceeds the cap must
+        still be editable (e.g. changing costPerUnit) as long as the
+        description resent with the request matches what's on file."""
+        service_repo = MagicMock()
+        stored = "x" * (DESCRIPTION_MAX_LEN + 1)
+        instance_mock = MagicMock(
+            model_id="model-1", model_version="1.0", api_key=None,
+            endpoint="http://existing", task_type="asr",
+            inference_schema=_SCHEMA_ENTRY,
+            service_description=stored,
+        )
+        service_repo.get_by_service_id = AsyncMock(return_value=instance_mock)
+        service_repo.get_tier_names_by_ids = AsyncMock(return_value={"tier-1": "Tier 1"})
+        service_repo.apply_updates = AsyncMock()
+        service_repo.commit = AsyncMock()
+        model_repo = MagicMock()
+        model_repo.get_by_id_version = AsyncMock(return_value=None)
+        cache = MagicMock()
+        cache.invalidate_service = MagicMock()
+        svc = ServiceService(service_repo=service_repo, model_repo=model_repo, cache=cache)
+
+        payload = ServiceUpdateRequest(
+            serviceId="svc-1",
+            description=stored,
+            taskType="asr",
+            costPerUnit=2.0,
+            unitSize=1,
+            tierIds=["tier-1"],
+        )
+
+        await svc.update_service(payload, updated_by="user-1")  # must not raise
