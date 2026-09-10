@@ -28,6 +28,7 @@ import { useAuth } from "./useAuth";
 import { isRegistryReadOnlyUser } from "../utils/rbac";
 import { useSessionExpiry } from "./useSessionExpiry";
 import { showError } from "../utils/errorHandler";
+import { resolveTaskType } from "../utils/platformService";
 import { showToast } from "../utils/toast";
 import { refreshUntil } from "../utils/postMutationRefresh";
 import { useInferenceTypes } from "./useInferenceTypes";
@@ -96,6 +97,8 @@ export function useServicesManagement() {
   const [currency, setCurrency] = useState<string>("INR");
   const [selectedTiers, setSelectedTiers] = useState<string[]>([]);
   const [availableTiers, setAvailableTiers] = useState<Tier[]>([]);
+  /** True after a successful tiers list fetch (used to gate Create Service). */
+  const [tiersLoaded, setTiersLoaded] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [createFormEpoch, setCreateFormEpoch] = useState(0);
@@ -350,14 +353,29 @@ export function useServicesManagement() {
   // Fetch tiers for the Create Service form dropdown
   useEffect(() => {
     if (isLoadingTaskTypes) return;
+    setTiersLoaded(false);
     fetchTiers(enabledTaskTypesParam)
-      .then((res) => setAvailableTiers(res.data))
-      .catch(() => {});
+      .then((res) => {
+        setAvailableTiers(res.data ?? []);
+        setTiersLoaded(true);
+      })
+      .catch(() => {
+        // Leave create tab enabled on fetch failure; form validation still requires tiers.
+        setAvailableTiers([]);
+        setTiersLoaded(false);
+      });
   }, [isLoadingTaskTypes, enabledTaskTypesParam]);
+
+  /** AI4IDS-2949: block Create Service when the platform has no tiers. Edit remains allowed. */
+  const isCreateServiceTabDisabled =
+    !editingService && tiersLoaded && availableTiers.length === 0;
 
   // Sync URL tab param to activeTab (e.g. when header back clears tab=2, show list)
   useEffect(() => {
     const t = router.query.tab;
+    const hasEditDeepLink =
+      typeof router.query.editServiceId === "string" &&
+      !!router.query.editServiceId;
     if (isRegistryReadOnly && (t === "1" || t === "create")) {
       setActiveTab(0);
       if (
@@ -377,10 +395,37 @@ export function useServicesManagement() {
       }
       return;
     }
+    // No tiers → keep users off the Create Service deep link (edit deep links still work).
+    if (
+      isCreateServiceTabDisabled &&
+      (t === "1" || t === "create") &&
+      !hasEditDeepLink
+    ) {
+      setActiveTab(0);
+      if (router.query.tab || router.query.modelId) {
+        const q = { ...router.query } as Record<string, string>;
+        delete q.tab;
+        delete q.modelId;
+        router.replace(
+          { pathname: "/services-management", query: q },
+          undefined,
+          { shallow: true },
+        );
+      }
+      return;
+    }
     if (t === "2") setActiveTab(viewTabIndex);
     else if (t === "1" || t === "create") setActiveTab(1);
     else if (t !== "1" && t !== "2") setActiveTab(0);
-  }, [router.query.tab, isRegistryReadOnly, router, viewTabIndex]);
+  }, [
+    router.query.tab,
+    router.query.editServiceId,
+    router.query.modelId,
+    isRegistryReadOnly,
+    isCreateServiceTabDisabled,
+    router,
+    viewTabIndex,
+  ]);
 
   // Handle query parameters for pre-selecting model from model-management page
   useEffect(() => {
@@ -389,9 +434,13 @@ export function useServicesManagement() {
     if (!modelId || typeof modelId !== "string") return;
 
     const runPreselect = async () => {
-      // Switch to Create Service tab if specified
+      // Switch to Create Service tab if specified (blocked when no tiers exist)
       if (tab === "create") {
-        setActiveTab(1);
+        if (isCreateServiceTabDisabled) {
+          setActiveTab(0);
+        } else {
+          setActiveTab(1);
+        }
       }
 
       const inActiveList = models.some(
@@ -445,7 +494,7 @@ export function useServicesManagement() {
       runPreselect();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router.query, models]);
+  }, [router.query, models, isCreateServiceTabDisabled]);
 
   // Handle ?editServiceId= deep link (e.g. page refresh while editing a service)
   useEffect(() => {
@@ -528,11 +577,7 @@ export function useServicesManagement() {
           modelDetails?.model_id ||
           "";
 
-        const rawModelTaskType =
-          modelDetails?.task?.type ||
-          modelDetails?.task_type ||
-          modelDetails?.taskType ||
-          "";
+        const rawModelTaskType = resolveTaskType(modelDetails);
         // Select options use catalog `taskTypeNames` exactly — resolve
         // case-insensitively and ignore values outside the enabled set.
         const resolvedModelTaskType =
@@ -782,11 +827,7 @@ export function useServicesManagement() {
   // Unit type is derived from task type (billing is server-driven via inference_types).
   const unitType = unitByTaskType[formData.task_type || ""] || "";
 
-  const viewServiceTaskType =
-    selectedService?.model?.task?.type ||
-    selectedService?.task?.type ||
-    selectedService?.task_type ||
-    "";
+  const viewServiceTaskType = resolveTaskType(selectedService);
   const viewServiceUnitType =
     unitByTaskType[viewServiceTaskType] ||
     selectedService?.billingUnitType ||
@@ -794,11 +835,7 @@ export function useServicesManagement() {
 
   const filteredModelsForDropdown = formData.task_type
     ? modelsForDropdown.filter((model) => {
-        const modelTaskType =
-          model?.task?.type ||
-          (model as any).task_type ||
-          (model as any).taskType ||
-          "";
+        const modelTaskType = resolveTaskType(model);
         return (
           modelTaskType.toLowerCase() === formData.task_type?.toLowerCase()
         );
@@ -940,11 +977,7 @@ export function useServicesManagement() {
         modelId,
         modelName: service.model?.name || modelId,
         endpoint: service.endpoint || service.endpoint_url || "",
-        task_type:
-          service.model?.task?.type ||
-          service.task?.type ||
-          service.task_type ||
-          "",
+        task_type: resolveTaskType(service),
         modelSubmissionDate: "",
         modelVersion: service.modelVersion || service.model_version || "1.0",
       });
@@ -998,6 +1031,8 @@ export function useServicesManagement() {
 
   const handleTabChange = (index: number) => {
     if (isRegistryReadOnly && index === 1) return;
+    // AI4IDS-2949: Create Service is unavailable until at least one Tier exists
+    if (index === 1 && isCreateServiceTabDisabled) return;
     setActiveTab(index);
     if (index !== viewTabIndex) {
       setIsViewingService(false);
@@ -1272,6 +1307,7 @@ export function useServicesManagement() {
     selectedTiers,
     toggleTier,
     availableTiers,
+    isCreateServiceTabDisabled,
     isCreateFormModelSelected,
     canCreateService,
     isLlmTaskType,
