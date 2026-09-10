@@ -363,6 +363,8 @@ class DeleteTenantUserData(BaseSchema):
 
 _TENANT_TIER_ASSIGN_REQUEST_EXAMPLE = {
     "tier_id": "<place your uuid here>",
+    "budget_effective_from": "2026-09-10T00:00:00Z",
+    "budget_effective_to": "2026-10-10T00:00:00Z",
 }
 
 
@@ -375,11 +377,25 @@ class TenantTierAssignRequest(BaseSchema):
     tier_id: str = Field(
         ..., description="Tier UUID (as a string). Replace the example value with a real tier ID from your system."
     )
+    # No ordering/backdating constraints here: those must surface as the
+    # contract's named 422 codes (checked in TenantService.assign_tenant_tier),
+    # not a generic Pydantic field-constraint error — same reasoning as
+    # allocated_budget above.
+    budget_effective_from: datetime = Field(
+        ..., description="Start of the tier/budget window (UTC). Cannot be before today (UTC)."
+    )
+    budget_effective_to: datetime = Field(
+        ...,
+        description="End of the tier/budget window (UTC). Must be at least one calendar day "
+        "after budget_effective_from.",
+    )
 
 
 class TenantTierAssignData(BaseSchema):
     tenant_id: int
     tier_id: UUID
+    budget_effective_from: Optional[datetime] = None
+    budget_effective_to: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     updated_by: Optional[UUID] = None
 

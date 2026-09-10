@@ -206,7 +206,7 @@ async def update_tenant_status(
 @router.patch(
     "/{tenant_id}/tier",
     response_model=TenantTierAssignResponse,
-    responses=error_responses(400, 403, 404, 409),
+    responses=error_responses(400, 403, 404, 409, 422),
 )
 async def assign_tenant_tier(
     tenant_id: int,
@@ -215,16 +215,26 @@ async def assign_tenant_tier(
     svc: TenantService = Depends(get_tenant_service),
     platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
 ):
-    """Assign (or reassign) a tenant's tier. ADMIN-only.
+    """Assign (or reassign) a tenant's tier, budget_effective_from and
+    budget_effective_to. ADMIN-only.
 
     Replaces the old POST /pay-per-use/tenant/tier and PATCH
     /pay-per-use/tenant/tier/reassign — now a single idempotent PATCH.
     """
-    tenant = await svc.assign_tenant_tier(current_user, tenant_id, str(body.tier_id), platform_core_db)
+    tenant = await svc.assign_tenant_tier(
+        current_user,
+        tenant_id,
+        str(body.tier_id),
+        body.budget_effective_from,
+        body.budget_effective_to,
+        platform_core_db,
+    )
     return TenantTierAssignResponse(
         data=TenantTierAssignData(
             tenant_id=tenant.id,
             tier_id=tenant.tier_id,
+            budget_effective_from=tenant.budget_effective_from,
+            budget_effective_to=tenant.budget_effective_to,
             updated_at=tenant.updated_at,
             updated_by=tenant.updated_by,
         )
