@@ -1,11 +1,12 @@
 """Shared helper for comparing tenants.budget_effective_to against "now".
 
-Used by both TenantService.refresh_budget_expiry_flag (the Kafka-billing-
-driven Redis flag /auth/validate reads) and APIKeyService.create_api_key
-(the create-time gate) — kept in one place so the two never drift on what
-"expired" means (UTC calendar instant, naive datetimes treated as already
-being UTC, None meaning "no window was ever set" rather than "always
-expired").
+Used by APIKeyService.create_api_key (the create-time gate, reading
+tenants.budget_effective_to directly) and validation.py's
+_cached_budget_window_is_expired (comparing the value cached in the API
+key's own payload — see APIKeyService._build_cache_payload) — kept in one
+place so neither ever drifts on what "expired" means (UTC calendar instant,
+naive datetimes treated as already being UTC, None meaning "no window was
+ever set" rather than "always expired").
 """
 from datetime import datetime, timezone
 from typing import Optional

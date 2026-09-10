@@ -13,6 +13,7 @@ import base64
 import binascii
 import json
 import logging
+from datetime import datetime
 from urllib.parse import quote
 
 from ai4i_core.ppu import get_catalogue
@@ -35,6 +36,32 @@ from app.schemas.token import (
 from app.services.api_key_service import APIKeyService
 from app.services.cache_service import CacheService
 from app.services.tenant_name_cache import tenant_name_cache
+from app.utils.budget_window import is_budget_window_expired
+
+
+def _cached_budget_window_is_expired(result: dict) -> bool:
+    """True if this key's cached budget_effective_to (see
+    APIKeyService._build_cache_payload) has already been reached — computed
+    directly from the cached value, not a separately pushed boolean flag,
+    so the result is correct on the very first request after the window
+    lapses and for a tenant whose traffic never reaches Kafka billing at
+    all (an unpriced service, or one that always costs 0 — both early-
+    return in payperuse_consumer._bill_usage before ever notifying
+    auth-service). An absent/empty value means no window was ever cached
+    (a pre-fix key, or a tenant with no window) — never expired. A value
+    that fails to parse is logged and treated as not-expired (fail open —
+    a cache-corruption bug must not itself become an outage) rather than
+    blocking every request for it.
+    """
+    raw = result.get("budget_effective_to")
+    if not raw:
+        return False
+    try:
+        budget_effective_to = datetime.fromisoformat(raw)
+    except (TypeError, ValueError):
+        logger.warning("Unparseable cached budget_effective_to=%r — treating as not expired", raw)
+        return False
+    return is_budget_window_expired(budget_effective_to)
 
 
 async def _resolve_service(uri: str) -> dict | None:
@@ -214,15 +241,16 @@ async def _validate_api_key(
     )
     quota_header = {"X-Quota-Exhausted-Services": ",".join(exhausted_services)}
 
-    if result.get("budget-expired") == "1":
+    if _cached_budget_window_is_expired(result):
         # Checked before budget-exhausted: a lapsed effective window is a
         # harder stop than running out of budget within an otherwise-valid
         # one — 403 (the request is outside what was ever authorized), not
         # 429 (would imply "try again once the period resets", which isn't
         # true here without an admin renewing the window via PATCH
-        # /auth/tenants/{id}/budget). Written by the Kafka billing consumer
-        # via TenantService.refresh_budget_expiry_flag — see
-        # POST /internal/ppu/tenant/{id}/budget-expiry-check.
+        # /auth/tenants/{id}/budget). Computed directly from budget_effective_to
+        # in the cached payload (see _cached_budget_window_is_expired) —
+        # deterministic on the very first request after the window lapses,
+        # unlike a flag someone else would have to have pushed first.
         return JSONResponse(
             status_code=403,
             content=ValidateTokenErrorResponse(

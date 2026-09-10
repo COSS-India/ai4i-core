@@ -1,7 +1,8 @@
 """app.utils.budget_window.is_budget_window_expired — the single source of
 truth for "has this tenant's budget effective window ended", shared by
-TenantService.refresh_budget_expiry_flag (drives /auth/validate's Redis
-flag) and APIKeyService.create_api_key (the create-time gate), so the two
+validation.py's _cached_budget_window_is_expired (compares the value
+cached in the API key's own payload) and APIKeyService.create_api_key (the
+create-time gate, reading tenants.budget_effective_to directly), so the two
 can never disagree on what "expired" means.
 """
 from datetime import datetime, timedelta, timezone

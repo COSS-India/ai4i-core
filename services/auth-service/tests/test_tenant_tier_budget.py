@@ -1065,75 +1065,48 @@ class TestReviseTenantBudgetLocking:
         assert written["budget_effective_to"] == _VALID_EFFECTIVE_TO
 
 
-class TestRefreshBudgetExpiryFlag:
-    """TenantService.refresh_budget_expiry_flag — recomputes tenants.
-    budget_effective_to vs now and mirrors the result onto every cached API
-    key for the tenant via APIKeyService.set_budget_expired_for_tenant. Two
-    callers exercise this: the Kafka billing consumer (via the new
-    POST /internal/ppu/tenant/{id}/budget-expiry-check route) and
-    revise_tenant_budget itself (covered separately below, in
-    TestReviseTenantBudgetTriggersExpiryRefresh) — this class covers the
-    method directly."""
+class TestSyncBudgetEffectiveToCache:
+    """TenantService.sync_budget_effective_to_cache — force-pushes
+    tenants.budget_effective_to (the raw date, not a computed boolean) onto
+    every cached API key for the tenant via APIKeyService.
+    set_budget_effective_to_for_tenant. The only caller is
+    revise_tenant_budget (covered separately below, in
+    TestReviseTenantBudgetSyncsCache) — this class covers the method
+    directly."""
 
     @pytest.mark.asyncio
-    async def test_past_effective_to_is_expired(self) -> None:
+    async def test_pushes_the_tenants_stored_effective_to(self) -> None:
         svc = _svc()
         tenant = _tenant()
-        tenant.budget_effective_to = datetime.now(timezone.utc) - timedelta(days=1)
+        tenant.budget_effective_to = _VALID_EFFECTIVE_TO
         svc._tenants.get_by_id = AsyncMock(return_value=tenant)
 
-        result = await svc.refresh_budget_expiry_flag(1)
+        result = await svc.sync_budget_effective_to_cache(1)
 
-        assert result is True
-        svc._api_keys.set_budget_expired_for_tenant.assert_awaited_once_with(1, True)
-
-    @pytest.mark.asyncio
-    async def test_future_effective_to_is_not_expired(self) -> None:
-        svc = _svc()
-        tenant = _tenant()
-        tenant.budget_effective_to = datetime.now(timezone.utc) + timedelta(days=1)
-        svc._tenants.get_by_id = AsyncMock(return_value=tenant)
-
-        result = await svc.refresh_budget_expiry_flag(1)
-
-        assert result is False
-        svc._api_keys.set_budget_expired_for_tenant.assert_awaited_once_with(1, False)
+        assert result == _VALID_EFFECTIVE_TO
+        svc._api_keys.set_budget_effective_to_for_tenant.assert_awaited_once_with(1, _VALID_EFFECTIVE_TO)
 
     @pytest.mark.asyncio
-    async def test_no_effective_to_never_expires(self) -> None:
-        """None means "no window was ever set" (or a pre-fix row), not
-        "always expired" — must not default to blocking every request for
-        every tenant that predates this feature."""
+    async def test_no_effective_to_pushes_none(self) -> None:
         svc = _svc()
         tenant = _tenant()
         tenant.budget_effective_to = None
         svc._tenants.get_by_id = AsyncMock(return_value=tenant)
 
-        result = await svc.refresh_budget_expiry_flag(1)
+        result = await svc.sync_budget_effective_to_cache(1)
 
-        assert result is False
-        svc._api_keys.set_budget_expired_for_tenant.assert_awaited_once_with(1, False)
-
-    @pytest.mark.asyncio
-    async def test_naive_effective_to_treated_as_utc(self) -> None:
-        svc = _svc()
-        tenant = _tenant()
-        tenant.budget_effective_to = (datetime.now(timezone.utc) - timedelta(days=1)).replace(tzinfo=None)
-        svc._tenants.get_by_id = AsyncMock(return_value=tenant)
-
-        result = await svc.refresh_budget_expiry_flag(1)
-
-        assert result is True
+        assert result is None
+        svc._api_keys.set_budget_effective_to_for_tenant.assert_awaited_once_with(1, None)
 
     @pytest.mark.asyncio
     async def test_unknown_tenant_is_a_noop(self) -> None:
         svc = _svc()
         svc._tenants.get_by_id = AsyncMock(return_value=None)
 
-        result = await svc.refresh_budget_expiry_flag(999)
+        result = await svc.sync_budget_effective_to_cache(999)
 
         assert result is None
-        svc._api_keys.set_budget_expired_for_tenant.assert_not_awaited()
+        svc._api_keys.set_budget_effective_to_for_tenant.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_missing_api_key_service_skips_without_even_loading_the_tenant(self) -> None:
@@ -1141,41 +1114,42 @@ class TestRefreshBudgetExpiryFlag:
         svc._api_keys = None
         svc._tenants.get_by_id = AsyncMock(return_value=_tenant())
 
-        result = await svc.refresh_budget_expiry_flag(1)
+        result = await svc.sync_budget_effective_to_cache(1)
 
         assert result is None
         svc._tenants.get_by_id.assert_not_awaited()
 
 
-class TestReviseTenantBudgetTriggersExpiryRefresh:
-    """revise_tenant_budget calls refresh_budget_expiry_flag right after
-    persisting the new window — the self-heal that keeps an admin's renewal
-    of an expired tenant from being permanently stuck: once /auth/validate
-    starts 403'ing a tenant on budget-expired=1, no further span from that
-    tenant can ever reach Kafka billing again to naturally clear it, so the
-    endpoint that fixes the window has to also be the thing that clears the
-    flag."""
+class TestReviseTenantBudgetSyncsCache:
+    """revise_tenant_budget calls sync_budget_effective_to_cache right
+    after persisting the new window — without this, revise_tenant_budget
+    changes tenants.budget_effective_to directly without touching any
+    api_key row, so an already-cached key would never see the new date
+    until something unrelated (a rename, a tier reassignment) happened to
+    rebuild its cache."""
 
     @pytest.mark.asyncio
-    async def test_revision_clears_a_previously_expired_flag(self) -> None:
+    async def test_revision_pushes_the_new_effective_to_to_the_cache(self) -> None:
         svc = _svc()
         svc._tenants.get_by_id_for_update = AsyncMock(
             return_value=_tenant(allocated_budget=Decimal("100"))
         )
         svc._tenants.update = AsyncMock()
-        svc._tenants.get_by_id = AsyncMock(return_value=_tenant(allocated_budget=Decimal("600")))
+        revised_tenant = _tenant(allocated_budget=Decimal("600"))
+        revised_tenant.budget_effective_to = _VALID_EFFECTIVE_TO
+        svc._tenants.get_by_id = AsyncMock(return_value=revised_tenant)
 
         await svc.revise_tenant_budget(
             _admin_user(), 1, "top-up", Decimal("500"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO
         )
 
-        svc._api_keys.set_budget_expired_for_tenant.assert_awaited_once_with(1, False)
+        svc._api_keys.set_budget_effective_to_for_tenant.assert_awaited_once_with(1, _VALID_EFFECTIVE_TO)
 
     @pytest.mark.asyncio
-    async def test_expiry_refresh_failure_does_not_roll_back_the_revision(self) -> None:
+    async def test_sync_failure_does_not_roll_back_the_revision(self) -> None:
         """Best-effort, same as the wallet/exhaustion sync it sits next to —
         the Tenant row already committed by the time this runs, so a
-        failure here must degrade to a stale cached flag, not undo the
+        failure here must degrade to a stale cached date, not undo the
         revision or raise past this method."""
         svc = _svc()
         svc._tenants.get_by_id_for_update = AsyncMock(
