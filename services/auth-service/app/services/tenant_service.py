@@ -535,6 +535,13 @@ class TenantService:
 
         Tenant starts PENDING. The contact admin receives one welcome/set-password email.
         Tenant becomes ACTIVE only after they set a password (see AuthService.set_password_with_token).
+
+        budget_effective_from/_to are optional (both omitted = no window
+        assigned yet), but if given, both are required together and
+        validated the same way revise_tenant_budget validates a fresh
+        window — 422 effective_window_required if only one is given, 422
+        budget_effective_from_invalid/budget_effective_to_invalid for a
+        backdated From or an inverted/same-day window.
         """
         if await self._tenants.get_by_email(body.email):
             raise HTTPException(
@@ -551,6 +558,34 @@ class TenantService:
                 message="allocated_budget must not be negative.",
                 code="INVALID_BUDGET",
             )
+        # Same validation revise_tenant_budget applies when a tenant has no
+        # window yet — these columns were inert display data before
+        # create_api_key/validate started enforcing them (see
+        # is_budget_window_expired's callers), so an unvalidated window set
+        # here could create a tenant that's already dead on arrival (an
+        # already-past budget_effective_to 422s every create_api_key call
+        # with BUDGET_EXPIRED and no obvious cause) or inverted (To before
+        # From). Both omitted is fine (no window assigned yet, same as
+        # always); giving only one is rejected the same way
+        # revise_tenant_budget rejects a partial window with nothing on
+        # file to fall back to — reuses that endpoint's own
+        # effective_window_required/budget_effective_*_invalid codes so a
+        # client sees identical errors for the identical violation
+        # regardless of which endpoint it came from.
+        if (body.budget_effective_from is None) != (body.budget_effective_to is None):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "effective_window_required",
+                    "message": (
+                        "budget_effective_from and budget_effective_to must be given "
+                        "together, or both omitted."
+                    ),
+                },
+            )
+        if body.budget_effective_from is not None and body.budget_effective_to is not None:
+            _validate_new_effective_from(body.budget_effective_from)
+            _validate_effective_to_after_from(body.budget_effective_from, body.budget_effective_to)
         if body.tier_id is not None:
             # Same lookup assign_tenant_tier uses — without it, a tenant
             # created with an unknown/inactive tier id would pass

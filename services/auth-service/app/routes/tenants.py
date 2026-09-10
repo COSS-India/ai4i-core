@@ -72,7 +72,11 @@ async def create_tenant(
     The tenant starts PENDING. The contact admin receives a set-password
     email; the tenant becomes ACTIVE after they set a password. Duplicate
     email or organisation returns 409. An unknown/inactive tier_id returns
-    404 TIER_NOT_FOUND. Returned contact PII is masked.
+    404 TIER_NOT_FOUND. budget_effective_from/_to are optional but must be
+    given together — 422 effective_window_required if only one is given,
+    422 budget_effective_from_invalid/budget_effective_to_invalid for a
+    backdated From or an inverted/same-day window. Returned contact PII is
+    masked.
     """
     tenant = await svc.create_tenant(body, current_user, background_tasks, platform_core_db)
     return CreateTenantResponse(
