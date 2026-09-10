@@ -42,6 +42,7 @@ from app.models.tenant import Tenant, TenantStatus
 from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.application_repository import ApplicationRepository
 from app.repositories.tenant_repository import TenantRepository
+from app.utils.budget_window import is_budget_window_expired
 from app.services import budget_usage
 from app.services.cache_service import CacheService
 
@@ -660,6 +661,25 @@ class APIKeyService:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={"code": "APPLICATION_NOT_FOUND", "message": "Application not found."},
+            )
+
+        # Checked before tier assignment — a lapsed budget window is a more
+        # fundamental block than a missing tier, and cheaper to check (no
+        # further lookups needed). Same is_budget_window_expired helper
+        # TenantService.refresh_budget_expiry_flag uses to drive the
+        # /auth/validate 403 — kept in one place so "expired" means the
+        # same UTC-instant comparison in both places. Unlike /auth/validate
+        # (which reads a Redis flag the Kafka consumer pushes reactively,
+        # so it can lag), this reads tenants.budget_effective_to directly —
+        # create_api_key is a low-volume, already-DB-bound admin action, so
+        # there's no hot-path reason to accept that same lag here; a key
+        # must never be issued against a window that's already over, even
+        # one second after it lapsed and before any billed traffic has
+        # caught up to it.
+        if is_budget_window_expired(tenant.budget_effective_to):
+            raise ValidationError(
+                message="API key cannot be created: this tenant's budget effective window has ended.",
+                code="BUDGET_EXPIRED",
             )
 
         # Checked via tenants.tier_id directly (no cross-DB PPU lookup needed

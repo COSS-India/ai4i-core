@@ -30,6 +30,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
+from app.utils.budget_window import is_budget_window_expired
 from app.utils.common import role_name_to_str
 from app.models.tenant import Tenant, TenantStatus
 from app.models.tenant_plan import TenantPlan
@@ -1043,13 +1044,7 @@ class TenantService:
         tenant = await self._tenants.get_by_id(tenant_id)
         if tenant is None:
             return None
-        if tenant.budget_effective_to is None:
-            expired = False
-        else:
-            effective_to = tenant.budget_effective_to
-            if effective_to.tzinfo is None:
-                effective_to = effective_to.replace(tzinfo=timezone.utc)
-            expired = datetime.now(timezone.utc) >= effective_to
+        expired = is_budget_window_expired(tenant.budget_effective_to)
         await self._api_keys.set_budget_expired_for_tenant(tenant_id, expired)
         return expired
 
