@@ -16,6 +16,7 @@ import {
 import { MdOutlineCheckCircle, MdOutlineUnpublished } from "react-icons/md";
 import React from "react";
 import type { Service } from "../../services/servicesManagementService";
+import { resolveTaskType } from "../../utils/platformService";
 
 interface ServiceDetailTabProps {
   cardBg: string;
@@ -46,6 +47,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
   onRequestUnpublish,
   onRequestPublish,
 }) => {
+  const taskType = resolveTaskType(selectedService);
   return (
     <Card
       bg={cardBg}
@@ -110,19 +112,11 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
                 Model Task Type
               </Text>
               <Badge
-                colorScheme={getTaskColor(
-                  selectedService?.model?.task?.type ||
-                    selectedService?.task?.type ||
-                    selectedService.task_type,
-                )}
+                colorScheme={getTaskColor(taskType)}
                 fontSize="sm"
                 p={2}
               >
-                {(
-                  selectedService?.model?.task?.type ||
-                  selectedService?.task?.type ||
-                  selectedService.task_type
-                )?.toUpperCase() || "N/A"}
+                {taskType ? taskType.toUpperCase() : "N/A"}
               </Badge>
             </Box>
             <Box>
