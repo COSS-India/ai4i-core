@@ -1,0 +1,18 @@
+AI4I-Orchestrate
+================================
+
+Dear {{ recipient_name }},
+
+{{ notification_headline }}
+
+{% for line in notification_details -%}
+{{ line }}
+{% endfor %}
+{% if portal_url -%}
+Log in to the AI4I-Orchestrate Portal to view full details: {{ portal_url }}
+{%- else -%}
+Log in to the AI4I-Orchestrate Portal to view full details.
+{%- endif %}
+
+Regards,
+AI4I-Orchestrate Team
