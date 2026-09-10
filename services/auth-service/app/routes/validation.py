@@ -214,6 +214,23 @@ async def _validate_api_key(
     )
     quota_header = {"X-Quota-Exhausted-Services": ",".join(exhausted_services)}
 
+    if result.get("budget-expired") == "1":
+        # Checked before budget-exhausted: a lapsed effective window is a
+        # harder stop than running out of budget within an otherwise-valid
+        # one — 403 (the request is outside what was ever authorized), not
+        # 429 (would imply "try again once the period resets", which isn't
+        # true here without an admin renewing the window via PATCH
+        # /auth/tenants/{id}/budget). Written by the Kafka billing consumer
+        # via TenantService.refresh_budget_expiry_flag — see
+        # POST /internal/ppu/tenant/{id}/budget-expiry-check.
+        return JSONResponse(
+            status_code=403,
+            content=ValidateTokenErrorResponse(
+                error="BUDGET_EXPIRED",
+                message="Tenant's budget effective window has ended.",
+            ).model_dump(),
+        )
+
     if result.get("budget-exhausted") == "1":
         return JSONResponse(
             status_code=429,

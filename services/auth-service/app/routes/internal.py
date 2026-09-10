@@ -115,6 +115,25 @@ async def set_quota_exhausted(
     await svc.set_quota_exhausted_for_tenant(tid, body.inference_name)
 
 
+@router.post("/ppu/tenant/{tenant_id}/budget-expiry-check", status_code=status.HTTP_204_NO_CONTENT)
+async def check_tenant_budget_expiry(
+    tenant_id: str,
+    svc: TenantService = Depends(get_tenant_service),
+):
+    """Recompute tenants.budget_effective_to vs now and mirror the result
+    onto every cached API key for this tenant as budget-expired=0/1 (see
+    TenantService.refresh_budget_expiry_flag). Called by the Kafka billing
+    consumer on every billed message — no request body, since the tenant's
+    own budget_effective_to (this DB) is the only input, not anything the
+    consumer knows.
+    """
+    try:
+        tid = int(tenant_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid tenant_id")
+    await svc.refresh_budget_expiry_flag(tid)
+
+
 @router.post("/ppu/quota-reset", status_code=status.HTTP_204_NO_CONTENT,include_in_schema=False)
 async def reset_monthly_quota(svc: APIKeyService = Depends(get_api_key_service)):
     """HDEL all quota-* fields from every active tenant API key hash.

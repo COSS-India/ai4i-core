@@ -1010,6 +1010,49 @@ class TenantService:
             await self._api_keys.set_tier_id_for_tenant(tenant_id, str(tier_uuid))
         return tenant
 
+    async def refresh_budget_expiry_flag(self, tenant_id: int) -> Optional[bool]:
+        """Recompute whether tenant_id's budget window has lapsed (now UTC
+        >= tenants.budget_effective_to) and mirror the result onto every
+        cached API key for this tenant via APIKeyService.
+        set_budget_expired_for_tenant — the ``budget-expired`` Redis field
+        ``/auth/validate`` reads to 403 a request outside the window.
+
+        Two callers:
+          * The Kafka billing consumer, on every billed message (POST
+            /internal/ppu/tenant/{id}/budget-expiry-check) — the same
+            place budget-exhausted/quota-exhausted get pushed, so a lapsed
+            window is caught on the tenant's very next billed request.
+          * revise_tenant_budget, right after persisting a revised window —
+            without this, once /auth/validate starts rejecting a tenant's
+            requests with budget-expired=1, no further span for that tenant
+            can ever reach Kafka billing again (every request now 403s
+            before the inference call that would produce one), so an admin
+            renewing the window here would have no way to ever clear the
+            stale flag. Calling it here closes that loop immediately instead
+            of leaving the tenant permanently locked out after a genuine fix.
+
+        A tenant with no budget_effective_to (never given a window, or one
+        of the pre-fix rows created before this was required) is never
+        expired — None means "no expiry", not "always expired." Returns the
+        computed expired bool (None if the tenant doesn't exist or
+        APIKeyService isn't wired), mainly for tests/observability — no
+        caller currently branches on it.
+        """
+        if self._api_keys is None:
+            return None
+        tenant = await self._tenants.get_by_id(tenant_id)
+        if tenant is None:
+            return None
+        if tenant.budget_effective_to is None:
+            expired = False
+        else:
+            effective_to = tenant.budget_effective_to
+            if effective_to.tzinfo is None:
+                effective_to = effective_to.replace(tzinfo=timezone.utc)
+            expired = datetime.now(timezone.utc) >= effective_to
+        await self._api_keys.set_budget_expired_for_tenant(tenant_id, expired)
+        return expired
+
     async def _sync_ppu_wallet_and_exhaustion(
         self,
         tenant_id: int,
@@ -1316,6 +1359,22 @@ class TenantService:
             )
         if platform_core_db is not None:
             await self._sync_ppu_wallet_and_exhaustion(tenant_id, new_budget, platform_core_db)
+        try:
+            # Best-effort, same reasoning as the sync above: the primary
+            # write already committed, so a failure here degrades to a
+            # stale cached budget-expired flag (self-heals on this
+            # tenant's next billed request via the Kafka consumer's own
+            # call to the same method) rather than rolling back an
+            # otherwise-successful revision. Unconditional — doesn't need
+            # platform_core_db — so this still runs even when the sync
+            # above is skipped for lacking it.
+            await self.refresh_budget_expiry_flag(tenant_id)
+        except Exception:
+            logger.exception(
+                "Failed to refresh budget-expired flag for tenant_id=%s after a budget "
+                "revision; tenants.budget_effective_to/_from were still updated.",
+                tenant_id,
+            )
         return tenant, applications_recomputed, keys_recomputed, snapshot_write_failed
 
     async def list_tenant_tiers(

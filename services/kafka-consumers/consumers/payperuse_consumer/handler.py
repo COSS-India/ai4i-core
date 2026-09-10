@@ -87,12 +87,22 @@ async def _post_billing(
     — a JWT-authenticated request, or the gateway not yet forwarding
     X-API-Key-ID): there's no key to flag. quota_exhausted stays tenant-wide
     — a tier's monthly quota is a tenant-level entitlement, not a per-key
-    ceiling, so it's correct for it to affect every key under the tenant."""
+    ceiling, so it's correct for it to affect every key under the tenant.
+
+    Also always re-checks this tenant's budget effective window (unlike the
+    two flags above, unconditional — expiry isn't something *this* billing
+    event computed, it's a standing fact about the tenant that's cheap to
+    recheck on every message so a lapsed window is caught on the very next
+    billed request rather than some separate cron). auth-service owns the
+    tenants row (budget_effective_to) and the Redis write, so this consumer
+    only ever triggers the recheck — it carries no date of its own."""
     if wallet_exhausted and api_key_id:
         await _notify_auth(
             f"/internal/ppu/api-key/{api_key_id}/budget-exhausted",
             {"exhausted": True},
         )
+
+    await _notify_auth(f"/internal/ppu/tenant/{tenant_id}/budget-expiry-check", {})
 
     if quota_exhausted:
         await _notify_auth(

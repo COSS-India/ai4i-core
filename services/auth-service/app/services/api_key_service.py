@@ -406,6 +406,24 @@ class APIKeyService:
             tenant_id, "budget-exhausted", "1" if exhausted else "0"
         )
 
+    async def set_budget_expired_for_tenant(self, tenant_id: int, expired: bool) -> None:
+        """Flip budget-expired on all cached API key hashes for the tenant.
+
+        Unlike budget-exhausted (tracked per key, via budget_usage), a
+        budget window (tenants.budget_effective_from/_to) is a tenant-level
+        concept only — there's no per-key window — so this is always a
+        tenant-wide fan-out, the same shape as set_budget_exhausted_for_tenant
+        above, never a per-key equivalent.
+
+        Called by TenantService.refresh_budget_expiry_flag, which is the
+        only thing that ever computes this value (from tenants.
+        budget_effective_to vs "now") — this method itself has no opinion on
+        expiry, it only ever mirrors the bool it's given onto the cache.
+        """
+        await self._patch_all_tenant_key_caches(
+            tenant_id, "budget-expired", "1" if expired else "0"
+        )
+
     async def set_budget_exhausted_for_key(self, key_id: int, exhausted: bool) -> None:
         """Flip budget-exhausted on exactly ONE cached API key — the
         per-request billing signal (Kafka's payperuse consumer, via

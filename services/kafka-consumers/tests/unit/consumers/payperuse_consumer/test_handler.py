@@ -155,48 +155,64 @@ class TestGetOtelAttributes:
         assert tier is None
 
 
+_BUDGET_EXPIRY_CHECK_CALL = ("/internal/ppu/tenant/tenant-1/budget-expiry-check", {})
+
+
 class TestPostBilling:
     """_post_billing had no coverage on either side of the per-key rescope —
     the whole point of the change (one Key's own usage notifying by
     api_key_id, not tenant_id, and skipping entirely when there's no key on
-    the span) had nothing pinning it."""
+    the span) had nothing pinning it.
+
+    Every case here now also always sees the budget-expiry-check call —
+    unlike wallet/quota exhaustion, that recheck isn't conditional on
+    anything this billing event computed (see _post_billing's own
+    docstring), so it fires on every invocation regardless of the other
+    two flags."""
 
     async def test_wallet_exhausted_notifies_by_api_key_id_not_tenant_id(self):
         with patch("consumers.payperuse_consumer.handler._notify_auth", AsyncMock()) as notify:
             await _post_billing(True, False, "tenant-1", 42, "nmt")
-        notify.assert_awaited_once_with(
-            "/internal/ppu/api-key/42/budget-exhausted", {"exhausted": True}
-        )
+        calls = [c.args for c in notify.await_args_list]
+        assert ("/internal/ppu/api-key/42/budget-exhausted", {"exhausted": True}) in calls
+        assert _BUDGET_EXPIRY_CHECK_CALL in calls
+        assert notify.await_count == 2
 
     async def test_wallet_exhausted_but_no_api_key_id_is_skipped(self):
         """api_key_id=0 means no Key on this span (a JWT-authenticated
         request, or the gateway not yet forwarding X-API-Key-ID) — nothing
-        to flag; must not notify about api_key_id "0"."""
+        to flag; must not notify about api_key_id "0". The tenant-wide
+        budget-expiry-check is unaffected by api_key_id and still fires."""
         with patch("consumers.payperuse_consumer.handler._notify_auth", AsyncMock()) as notify:
             await _post_billing(True, False, "tenant-1", 0, "nmt")
-        notify.assert_not_awaited()
+        notify.assert_awaited_once_with(*_BUDGET_EXPIRY_CHECK_CALL)
 
-    async def test_not_exhausted_never_notifies_regardless_of_api_key_id(self):
+    async def test_not_exhausted_still_runs_the_budget_expiry_check(self):
+        """Neither wallet nor quota exhausted must not suppress the
+        budget-expiry-check — it's an independent, unconditional recheck,
+        not a symptom of exhaustion."""
         with patch("consumers.payperuse_consumer.handler._notify_auth", AsyncMock()) as notify:
             await _post_billing(False, False, "tenant-1", 42, "nmt")
-        notify.assert_not_awaited()
+        notify.assert_awaited_once_with(*_BUDGET_EXPIRY_CHECK_CALL)
 
     async def test_quota_exhausted_still_notifies_by_tenant_id(self):
         """Unaffected by the per-key rescope — quota is a tier-wide
         entitlement, not a per-Key ₹ ceiling, so it stays tenant-scoped."""
         with patch("consumers.payperuse_consumer.handler._notify_auth", AsyncMock()) as notify:
             await _post_billing(False, True, "tenant-1", 0, "nmt")
-        notify.assert_awaited_once_with(
-            "/internal/ppu/tenant/tenant-1/quota-exhausted", {"inference_name": "nmt"}
-        )
+        calls = [c.args for c in notify.await_args_list]
+        assert ("/internal/ppu/tenant/tenant-1/quota-exhausted", {"inference_name": "nmt"}) in calls
+        assert _BUDGET_EXPIRY_CHECK_CALL in calls
+        assert notify.await_count == 2
 
-    async def test_both_exhausted_notifies_both_paths(self):
+    async def test_both_exhausted_notifies_both_paths_plus_expiry_check(self):
         with patch("consumers.payperuse_consumer.handler._notify_auth", AsyncMock()) as notify:
             await _post_billing(True, True, "tenant-1", 42, "nmt")
-        assert notify.await_count == 2
+        assert notify.await_count == 3
         calls = [c.args for c in notify.await_args_list]
         assert ("/internal/ppu/api-key/42/budget-exhausted", {"exhausted": True}) in calls
         assert ("/internal/ppu/tenant/tenant-1/quota-exhausted", {"inference_name": "nmt"}) in calls
+        assert _BUDGET_EXPIRY_CHECK_CALL in calls
 
 
 class TestBillUsageThreadsInferenceTypeId:

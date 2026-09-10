@@ -266,6 +266,33 @@ class TestSetBudgetExhaustedForTenant:
         cache.patch_api_key_cache_field.assert_not_awaited()
 
 
+class TestSetBudgetExpiredForTenant:
+    """Always tenant-wide, unlike budget-exhausted — there's no per-key
+    budget window, only tenants.budget_effective_from/_to, so this has no
+    per-key sibling the way set_budget_exhausted_for_key does."""
+
+    @pytest.mark.asyncio
+    async def test_patches_redis_and_cached_data(self) -> None:
+        svc, repo, cache, key = _service_with_one_active_key()
+        await svc.set_budget_expired_for_tenant(1, True)
+        cache.patch_api_key_cache_field.assert_awaited_once_with(key.api_key, "budget-expired", "1")
+        repo.patch_cached_data_field_for_tenant.assert_awaited_once_with(1, "budget-expired", "1")
+        repo.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_clearing_writes_string_zero(self) -> None:
+        svc, repo, _cache, _key = _service_with_one_active_key()
+        await svc.set_budget_expired_for_tenant(1, False)
+        repo.patch_cached_data_field_for_tenant.assert_awaited_once_with(1, "budget-expired", "0")
+
+    @pytest.mark.asyncio
+    async def test_missing_repo_skips_everything(self) -> None:
+        cache = AsyncMock()
+        svc = APIKeyService(None, cache)
+        await svc.set_budget_expired_for_tenant(1, True)
+        cache.patch_api_key_cache_field.assert_not_awaited()
+
+
 class TestSetQuotaExhaustedForTenant:
     @pytest.mark.asyncio
     async def test_patches_redis_and_cached_data(self) -> None:
