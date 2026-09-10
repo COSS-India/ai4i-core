@@ -32,7 +32,7 @@ from app.schemas.model_management.model import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/models",
+    prefix="/models/list",
     tags=["Model Management"],
 )
 

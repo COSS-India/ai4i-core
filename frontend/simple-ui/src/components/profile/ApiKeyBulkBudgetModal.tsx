@@ -5,6 +5,7 @@ import {
   Box,
   Button,
   FormControl,
+  FormErrorMessage,
   FormLabel,
   HStack,
   Input,
@@ -20,6 +21,9 @@ import {
 } from "@chakra-ui/react";
 import StandardModal from "../common/StandardModal";
 import InfoTip from "../common/InfoTip";
+import PercentageStepper, {
+  type PercentageBound,
+} from "../common/PercentageStepper";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import { editKeyBudgetTitle, totalApiKeysExceeds100 } from "../../config/budgetMessages";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
@@ -30,37 +34,6 @@ function formatPct(value: number | null | undefined): string {
   if (value == null) return "—";
   const rounded = Math.round(value * 100) / 100;
   return `${rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(2)}%`;
-}
-
-function PercentageStepper({
-  value,
-  onChange,
-  min = 0,
-  max = 100,
-}: {
-  value: string;
-  onChange: (next: string) => void;
-  min?: number;
-  max?: number;
-}) {
-  return (
-    <HStack spacing={1} align="center">
-      <Input
-        type="number"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        min={min}
-        max={max}
-        step={0.01}
-        size="sm"
-        w="88px"
-        bg="white"
-      />
-      <Text color="gray.500" fontSize="sm" fontWeight="semibold">
-        %
-      </Text>
-    </HStack>
-  );
 }
 
 export default function ApiKeyBulkBudgetModal({
@@ -79,6 +52,7 @@ export default function ApiKeyBulkBudgetModal({
   liveTotalPct,
   rows,
   onPctChange,
+  onPctBoundHit,
   onAmountChange,
   onSave,
   canSave,
@@ -98,6 +72,7 @@ export default function ApiKeyBulkBudgetModal({
   liveTotalPct: number;
   rows: KeyBudgetDraft[];
   onPctChange: (apiKeyId: number, value: string) => void;
+  onPctBoundHit: (apiKeyId: number, bound: PercentageBound) => void;
   onAmountChange: (apiKeyId: number, value: string) => void;
   onSave: () => void;
   canSave: boolean;
@@ -145,11 +120,6 @@ export default function ApiKeyBulkBudgetModal({
                   <Text fontWeight="600" fontSize="sm">
                     {row.key_name}
                   </Text>
-                  {row.rowError ? (
-                    <Text fontSize="xs" color="red.500" mt={1}>
-                      {row.rowError}
-                    </Text>
-                  ) : null}
                 </Td>
                 <Td>
                   <Text fontSize="sm">{formatPct(row.consumed_percentage)}</Text>
@@ -158,12 +128,17 @@ export default function ApiKeyBulkBudgetModal({
                   </Text>
                 </Td>
                 <Td>
-                  <PercentageStepper
-                    value={row.pctInput}
-                    onChange={(next) => onPctChange(row.api_key_id, next)}
-                    min={row.consumed_percentage ?? 0}
-                    max={100}
-                  />
+                  <FormControl isInvalid={Boolean(row.rowError)}>
+                    <PercentageStepper
+                      variant="inline"
+                      value={row.pctInput}
+                      onChange={(next) => onPctChange(row.api_key_id, next)}
+                      onBoundHit={(bound) => onPctBoundHit(row.api_key_id, bound)}
+                    />
+                    {row.rowError ? (
+                      <FormErrorMessage mt={1}>{row.rowError}</FormErrorMessage>
+                    ) : null}
+                  </FormControl>
                 </Td>
                 <Td>
                   <Input
@@ -190,6 +165,7 @@ export default function ApiKeyBulkBudgetModal({
     isLoading,
     rows,
     onPctChange,
+    onPctBoundHit,
     onAmountChange,
     applicationBudgetUnset,
   ]);

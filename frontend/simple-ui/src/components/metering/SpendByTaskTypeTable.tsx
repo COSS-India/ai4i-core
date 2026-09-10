@@ -53,8 +53,8 @@ const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
 
   const sortAccessors = useMemo(
     () => ({
-      taskType: (row: TaskUsageRow) => row.task.taskType,
-      consumed: (row: TaskUsageRow) => row.task.consumed,
+      taskType: (row: TaskUsageRow) => row.task?.taskType ?? "",
+      consumed: (row: TaskUsageRow) => row.task?.consumed ?? 0,
     }),
     [],
   );
@@ -125,6 +125,7 @@ const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
               );
             }
             const t = row.task;
+            if (!t) return null;
             const color = taskTypeColor(t.taskType, idx);
             return (
               <Tr key={`${row.tierName ?? ""}-${t.taskType}-${idx}`}>

@@ -20,6 +20,9 @@ import {
 } from "@chakra-ui/react";
 import StandardModal from "../common/StandardModal";
 import InfoTip from "../common/InfoTip";
+import PercentageStepper, {
+  type PercentageBound,
+} from "../common/PercentageStepper";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import { totalApplicationsExceeds100 } from "../../config/budgetMessages";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
@@ -29,42 +32,6 @@ function formatPct(value: number | null | undefined): string {
   if (value == null) return "—";
   const rounded = Math.round(value * 100) / 100;
   return `${rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(2)}%`;
-}
-
-function PercentageStepper({
-  value,
-  onChange,
-  onFocus,
-  min = 0,
-  max = 100,
-  isDisabled = false,
-}: {
-  value: string;
-  onChange: (next: string) => void;
-  onFocus?: () => void;
-  min?: number;
-  max?: number;
-  isDisabled?: boolean;
-}) {
-  const numeric = value.trim() === "" ? null : Number(value);
-  return (
-    <HStack spacing={1} align="center">
-      <Input
-        type="number"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onFocus={onFocus}
-        min={min}
-        max={max}
-        step={0.01}
-        size="sm"
-        w="88px"
-        bg="white"
-        isDisabled={isDisabled}
-      />
-      <Text color="gray.500" fontSize="sm" fontWeight="semibold">%</Text>
-    </HStack>
-  );
 }
 
 export default function ApplicationBulkBudgetModal({
@@ -80,6 +47,7 @@ export default function ApplicationBulkBudgetModal({
   rows,
   onRowFocus,
   onPctChange,
+  onPctBoundHit,
   onAmountChange,
   onSave,
   canSave,
@@ -96,6 +64,7 @@ export default function ApplicationBulkBudgetModal({
   rows: BulkBudgetDraft[];
   onRowFocus: (applicationId: string) => void;
   onPctChange: (applicationId: string, value: string) => void;
+  onPctBoundHit: (applicationId: string, bound: PercentageBound) => void;
   onAmountChange: (applicationId: string, value: string) => void;
   onSave: () => void;
   canSave: boolean;
@@ -125,7 +94,6 @@ export default function ApplicationBulkBudgetModal({
               <Th>Application</Th>
               <Th>Used</Th>
               <Th>Budget %</Th>
-              <Th>Budget ({currency})</Th>
               <Th>Key preview</Th>
             </Tr>
           </Thead>
@@ -141,9 +109,6 @@ export default function ApplicationBulkBudgetModal({
                       Inactive
                     </Badge>
                   ) : null}
-                  {row.rowError ? (
-                    <Text fontSize="xs" color="red.500" mt={1}>{row.rowError}</Text>
-                  ) : null}
                 </Td>
                 <Td>
                   {row.consumed_percentage != null ? (
@@ -153,7 +118,7 @@ export default function ApplicationBulkBudgetModal({
                         {formatSpendMoney(row.consumed_budget ?? 0, currency)}
                       </Text>
                     </>
-                  ) : row.rowError ? (
+                  ) : row.rowError?.startsWith("Could not load") ? (
                     <Text fontSize="sm" color="red.500">
                       Load failed — refocus to retry
                     </Text>
@@ -166,31 +131,17 @@ export default function ApplicationBulkBudgetModal({
                 <Td>
                   <FormControl isInvalid={Boolean(row.rowError)}>
                     <PercentageStepper
+                      variant="inline"
                       value={row.pctInput}
                       onChange={(next) => onPctChange(row.application_id, next)}
+                      onBoundHit={(bound) => onPctBoundHit(row.application_id, bound)}
                       onFocus={() => onRowFocus(row.application_id)}
-                      min={
-                        row.consumed_percentage != null ? row.consumed_percentage : 0
-                      }
-                      max={100}
                       isDisabled={!editable}
                     />
+                    {row.rowError ? (
+                      <FormErrorMessage mt={1}>{row.rowError}</FormErrorMessage>
+                    ) : null}
                   </FormControl>
-                </Td>
-                <Td>
-                  <Input
-                    type="number"
-                    size="sm"
-                    w="120px"
-                    bg="white"
-                    value={row.amountInput}
-                    onFocus={() => onRowFocus(row.application_id)}
-                    onChange={(e) => onAmountChange(row.application_id, e.target.value)}
-                    min={row.consumed_budget ?? undefined}
-                    step={0.01}
-                    isDisabled={!editable || institutionBudgetUnset}
-                    placeholder={institutionBudgetUnset ? "—" : undefined}
-                  />
                 </Td>
                 <Td maxW="220px">
                   {row.keysLoading ? (
@@ -224,6 +175,7 @@ export default function ApplicationBulkBudgetModal({
     rows,
     currency,
     onPctChange,
+    onPctBoundHit,
     onAmountChange,
     onRowFocus,
     institutionBudgetUnset,

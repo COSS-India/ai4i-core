@@ -69,7 +69,7 @@ def get_token_service() -> TokenService:
 def get_role_service(
     db: AsyncSession = Depends(get_db),
 ) -> RoleService:
-    return RoleService(RoleRepository(db))
+    return RoleService(RoleRepository(db), UserRepository(db), TenantRepository(db))
 
 
 def get_user_service(

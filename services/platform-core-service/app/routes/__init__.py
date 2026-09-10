@@ -17,6 +17,7 @@ from app.routes.internal import router as internal_router
 from app.routes.metering import router as metering_router
 from app.routes.inference_types import router as inference_types_router
 from app.routes.model import router as model_router
+from app.routes.models_openai import router as models_openai_router
 from app.routes.pay_per_use import router as pay_per_use_router
 from app.routes.pii import router as pii_router
 from app.routes.service import router as service_router
@@ -35,6 +36,9 @@ versioning = APIVersioning(
 
 # ── v1 routes ──
 v1_router = versioning.create_router("v1")
+# OpenAI-compatible listing owns /api/v1/models; the platform catalogue
+# (model_router) now serves /api/v1/models/list.
+v1_router.include_router(models_openai_router)
 v1_router.include_router(model_router)
 v1_router.include_router(service_router)
 v1_router.include_router(alert_router)

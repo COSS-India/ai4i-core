@@ -31,17 +31,6 @@ export const FIELD_HINTS = {
       "If you change the contact email, the update takes effect only after the new address is verified.",
     emailPendingOnly: `The contact email can only be corrected while the ${org} is pending verification.`,
     planAppliesImmediately: "Tier and Budget changes apply immediately.",
-    onboardTier: { helper: "Optional. Tier applies when the institution is activated." },
-    onboardBudget: {
-      placeholder: "Enter initial budget amount",
-      helper: "Optional initial ₹ total. Must be greater than 0 when provided.",
-    },
-    onboardBudgetEffectiveFrom: {
-      helper: "Optional. Defaults to today; cannot be backdated.",
-    },
-    onboardBudgetEffectiveTo: {
-      helper: "Optional. Must be after Effective From.",
-    },
   },
   tenantUser: {
     tenant: { helper: `Auto-filled from selected ${org}` },
@@ -68,7 +57,7 @@ export const FIELD_HINTS = {
   assignTier: {
     budget: { placeholder: "Enter budget amount", helper: "Must be greater than 0" },
     effectiveFrom: { helper: "Defaults to today; cannot be backdated" },
-    effectiveTo: { helper: "Must be a later date than Effective From" },
+    effectiveTo: { helper: "Must be at least one day after Effective From" },
   },
   model: {
     jsonUpload: {
@@ -221,8 +210,6 @@ export const FIELD_HINTS = {
       "This Institution does not have a Budget (₹) assigned yet. Assign a Tier and Budget from Institution Management before saving Application budget allocations.",
     inactiveBudgetNotEditable:
       "Inactive applications cannot have their budget allocation changed. Reactivate the application to edit its budget.",
-    amountRequiresInstitutionBudget:
-      "Assign an Institution Budget (₹) before entering amounts.",
     bulkBudgetEdit: {
       intro:
         "Rebalance Budget % across all Applications. Only changed rows are submitted. Unallocated % can remain at the Institution level. Inactive applications are shown for reference but cannot be edited.",

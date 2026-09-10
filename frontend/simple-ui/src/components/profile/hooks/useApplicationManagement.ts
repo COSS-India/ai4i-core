@@ -36,9 +36,11 @@ import {
   keyWouldDropBelowConsumed,
   mapAllocationError,
   mapBelowConsumedError,
+  percentageBoundMessage,
   totalApplicationsOver100,
 } from "../../../config/budgetMessages";
 import { FIELD_HINTS } from "../../../config/fieldHints";
+import type { PercentageBound } from "../../common/PercentageStepper";
 
 const PAGE_SIZE = 25;
 
@@ -64,10 +66,8 @@ export type BulkBudgetDraft = {
   consumed_budget: number | null;
   originalPct: number | null;
   pctInput: string;
-  amountInput: string;
   resolvedPct: number | null;
   resolvedAmount: number | null;
-  lastEditMode: "percentage" | "amount";
   keysLoading: boolean;
   keysLoaded: boolean;
   keys: ApplicationApiKeyRow[];
@@ -124,11 +124,6 @@ function pctString(value: number | null): string {
   return String(value);
 }
 
-function amountString(value: number | null): string {
-  if (value == null) return "";
-  return String(value);
-}
-
 function sumAllocatedPercentage(apps: Application[]): number {
   return apps.reduce((sum, app) => sum + (app.allocated_percentage ?? 0), 0);
 }
@@ -136,12 +131,6 @@ function sumAllocatedPercentage(apps: Application[]): number {
 
 function buildAllocationUpdate(row: BulkBudgetDraft): AllocationUpdate | null {
   if (row.resolvedPct == null) return null;
-  if (row.lastEditMode === "amount" && row.resolvedAmount != null) {
-    return {
-      application_id: row.application_id,
-      allocation: { type: "FIXED", value: row.resolvedAmount },
-    };
-  }
   return {
     application_id: row.application_id,
     allocation: { type: "PERCENTAGE", value: row.resolvedPct },
@@ -194,10 +183,8 @@ function buildDraftFromApplication(app: Application): BulkBudgetDraft {
     consumed_budget: app.consumed_budget ?? null,
     originalPct: pct,
     pctInput: pctString(pct),
-    amountInput: amountString(amount),
     resolvedPct: pct,
     resolvedAmount: amount,
-    lastEditMode: "percentage",
     keysLoading: false,
     keysLoaded: false,
     keys: [],
@@ -211,6 +198,9 @@ function evaluateRowError(
   tenantBudget: number,
 ): string | null {
   if (row.resolvedPct == null) return null;
+  if (row.resolvedPct < 0 || row.resolvedPct > 100) {
+    return BUDGET_VALIDATION.percentageMustBeBetween0And100;
+  }
   if (
     row.consumed_percentage != null &&
     row.resolvedPct < row.consumed_percentage - 1e-6
@@ -237,7 +227,6 @@ function evaluateRowError(
 function applyResolved(
   row: BulkBudgetDraft,
   tenantBudget: number,
-  mode: "percentage" | "amount",
   raw: string,
 ): BulkBudgetDraft {
   const trimmed = raw.trim();
@@ -245,7 +234,6 @@ function applyResolved(
     const next = {
       ...row,
       pctInput: "",
-      amountInput: "",
       resolvedPct: null,
       resolvedAmount: null,
       keyPreviews: [],
@@ -257,15 +245,8 @@ function applyResolved(
   if (!Number.isFinite(numeric)) {
     return { ...row, rowError: BUDGET_VALIDATION.enterValidNumber };
   }
-  const resolved = resolveApplicationBudget(mode, numeric, tenantBudget);
+  const resolved = resolveApplicationBudget("percentage", numeric, tenantBudget);
   if (!resolved) {
-    if (mode === "amount") {
-      return {
-        ...row,
-        amountInput: trimmed,
-        rowError: FIELD_HINTS.application.amountRequiresInstitutionBudget,
-      };
-    }
     return { ...row, rowError: BUDGET_VALIDATION.enterValidNumber };
   }
   const keys = row.keys.filter((k) => k.is_active);
@@ -276,7 +257,6 @@ function applyResolved(
   const next: BulkBudgetDraft = {
     ...row,
     pctInput: String(resolved.pct),
-    amountInput: resolved.amount != null ? String(resolved.amount) : "",
     resolvedPct: resolved.pct,
     resolvedAmount: resolved.amount,
     keyPreviews,
@@ -485,7 +465,6 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
           effectiveBudget > 0
         ) {
           draft.resolvedAmount = roundMoney((effectiveBudget * draft.resolvedPct) / 100);
-          draft.amountInput = String(draft.resolvedAmount);
         }
         return draft;
       });
@@ -525,6 +504,16 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     },
     [tenantBudget, onBulkRowFocus],
   );
+
+  const onBulkPctBoundHit = useCallback((applicationId: string, bound: PercentageBound) => {
+    setBulkRows((prev) =>
+      prev.map((row) =>
+        row.application_id === applicationId && isApplicationBudgetEditable(row.status)
+          ? { ...row, rowError: percentageBoundMessage(bound) }
+          : row,
+      ),
+    );
+  }, []);
 
   const onBulkAmountChange = useCallback(
     (applicationId: string, value: string) => {
@@ -662,6 +651,9 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
   const budgetFieldError = useMemo(() => {
     if (budgetParsed === "invalid") return BUDGET_VALIDATION.enterValidPercentage;
     if (budgetParsed != null && budgetParsed < 0) return BUDGET_VALIDATION.budgetCannotBeNegative;
+    if (budgetParsed != null && budgetParsed > 100) {
+      return BUDGET_VALIDATION.percentageMustBeBetween0And100;
+    }
     if (budgetParsed != null && budgetFloor > 0 && budgetParsed < budgetFloor - 1e-6) {
       return belowConsumedPctRaw(budgetFloor);
     }
@@ -677,7 +669,9 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     const pct = parsePct(form.allocated_percentage);
     if (pct === "invalid") errors.allocated_percentage = BUDGET_VALIDATION.enterValidPercentage;
     else if (pct != null && pct < 0) errors.allocated_percentage = BUDGET_VALIDATION.budgetCannotBeNegative;
-    else if (pct != null && pct > remainingPct + 1e-6) {
+    else if (pct != null && pct > 100) {
+      errors.allocated_percentage = BUDGET_VALIDATION.percentageMustBeBetween0And100;
+    } else if (pct != null && pct > remainingPct + 1e-6) {
       errors.allocated_percentage = `Cannot exceed ${remainingPct.toFixed(2)}% still available.`;
     }
     setFormErrors(errors);
@@ -857,13 +851,8 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
       setBudgetDraft(next);
       setBudgetStepperHint(null);
     },
-    onBudgetBoundHit: (bound: "min" | "max") => {
-      if (bound === "min" && budgetFloor > 0) {
-        setBudgetStepperHint(belowConsumedPctRaw(budgetFloor));
-        return;
-      }
-      const wouldBe = budgetOthersAllocated + budgetAvailable + 1;
-      setBudgetStepperHint(totalApplicationsOver100(wouldBe));
+    onBudgetBoundHit: (bound: PercentageBound) => {
+      setBudgetStepperHint(percentageBoundMessage(bound));
     },
     budgetStepperHint,
     budgetLiveTotal,
@@ -881,6 +870,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     openBulkBudget,
     onBulkRowFocus,
     onBulkPctChange,
+    onBulkPctBoundHit,
     onBulkAmountChange,
     handleSaveBulkBudget,
     statusBusyId,

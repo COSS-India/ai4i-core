@@ -37,7 +37,7 @@ function label(
     : tier.name;
 }
 
-/** Searchable tier dropdown shared by Assign Tier and Manage Plan. */
+/** Searchable tier dropdown shared by the Assign Tier panel. */
 export default function TierSelect({
   value,
   onChange,

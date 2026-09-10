@@ -78,6 +78,7 @@ import {
 } from "../config/constants";
 import { useInferenceTypes } from "../hooks/useInferenceTypes";
 import { getPlatformName } from "../config/runtimeConfig";
+import { resolveTaskType } from "../utils/platformService";
 
 /** Registry UI model row — requires fields used in forms/tables. */
 type Model = ModelDetails & {
@@ -249,7 +250,8 @@ const ModelManagementPage: React.FC = () => {
     setFilterTaskType(taskTypeNames.length === 1 ? taskTypeNames[0] : "");
   };
 
-  const getTaskColor = (taskType: string) => {
+  const getTaskColor = (taskType?: string | null) => {
+    if (!taskType) return "gray";
     switch (taskType.toLowerCase()) {
       case "asr":
         return "orange";
@@ -257,10 +259,14 @@ const ModelManagementPage: React.FC = () => {
         return "green";
       case "tts":
         return "blue";
+      case "llm":
+        return "purple";
       default:
         return "gray";
     }
   };
+
+  const selectedModelTaskType = resolveTaskType(selectedModel);
 
   const handleInputChange = (
     field: keyof Model,
@@ -592,7 +598,7 @@ const ModelManagementPage: React.FC = () => {
       setSelectedModel(model as unknown as Model);
       setUpdateFormData({
         ...(model as unknown as Partial<Model>),
-        task: { type: model.task?.type ?? model.task_type ?? model.taskType ?? "" },
+        task: { type: resolveTaskType(model) },
       });
       setIsViewingModel(true);
       setActiveTab(viewTabIndex);
@@ -811,11 +817,14 @@ const ModelManagementPage: React.FC = () => {
       {
         id: "task",
         header: "Task Type",
-        cell: (model) => (
-          <Badge colorScheme={getTaskColor(model.task.type)} fontSize="xs">
-            {model.task.type.toUpperCase()}
-          </Badge>
-        ),
+        cell: (model) => {
+          const taskType = resolveTaskType(model);
+          return (
+            <Badge colorScheme={getTaskColor(taskType)} fontSize="xs">
+              {taskType ? taskType.toUpperCase() : "N/A"}
+            </Badge>
+          );
+        },
       },
       {
         id: "created",
@@ -1376,11 +1385,13 @@ const ModelManagementPage: React.FC = () => {
                                   Task type
                                 </Text>
                                 <Badge
-                                  colorScheme={getTaskColor(selectedModel.task.type)}
+                                  colorScheme={getTaskColor(selectedModelTaskType)}
                                   fontSize="sm"
                                   p={2}
                                 >
-                                  {selectedModel.task.type.toUpperCase()}
+                                  {selectedModelTaskType
+                                    ? selectedModelTaskType.toUpperCase()
+                                    : "N/A"}
                                 </Badge>
                               </Box>
                             </SimpleGrid>

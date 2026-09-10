@@ -45,7 +45,7 @@ import AdminDataTable, {
   type AdminTableColumn,
 } from "../common/AdminDataTable";
 import ConfirmDialog from "../common/ConfirmDialog";
-import { FORM_LABEL_TO_INPUT_PT } from "../common/FormFieldsRow";
+import FormFieldsRow, { FORM_LABEL_TO_INPUT_PT } from "../common/FormFieldsRow";
 import StandardModal from "../common/StandardModal";
 import { useTierManagement } from "../../hooks/useTierManagement";
 import type { Tier } from "../../services/tierManagementService";
@@ -805,9 +805,9 @@ const TierManagement: React.FC = () => {
           </Button>
         }
         filters={
-          <HStack spacing={3} flexWrap="wrap" align="flex-end">
+          <FormFieldsRow>
             <TableSearchField
-              label=""
+              label="Search"
               value={searchQuery}
               onChange={setSearchQuery}
               placeholder="Search tiers..."
@@ -815,7 +815,7 @@ const TierManagement: React.FC = () => {
               inputGroupProps={{ size: "sm" }}
             />
             <TableSelectField
-              label=""
+              label="Model Task Type"
               value={filterTaskType}
               onChange={setFilterTaskType}
               formControlProps={{ w: { base: "full", sm: "210px" }, mb: 0 }}
@@ -830,7 +830,7 @@ const TierManagement: React.FC = () => {
                 </option>
               ))}
             </TableSelectField>
-          </HStack>
+          </FormFieldsRow>
         }
       />
 

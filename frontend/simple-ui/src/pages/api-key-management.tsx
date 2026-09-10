@@ -41,8 +41,8 @@ const ApiKeyManagementPage: React.FC = () => {
 
   const tabs = useMemo(() => {
     const t: { id: "create" | "manage"; label: string; show: boolean }[] = [
-      { id: "create", label: "Create API Key", show: isAdmin || isTenantAdmin },
       { id: "manage", label: "Manage API Keys", show: isAdmin || isTenantAdmin },
+      { id: "create", label: "Create API Key", show: isAdmin || isTenantAdmin },
     ];
     return t.filter((x) => x.show);
   }, [isAdmin, isTenantAdmin]);
