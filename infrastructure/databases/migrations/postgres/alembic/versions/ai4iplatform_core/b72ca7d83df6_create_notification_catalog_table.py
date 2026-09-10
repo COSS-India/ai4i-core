@@ -2,8 +2,10 @@
 
 Adds configs_notification_alert — the notification catalog described in the
 Notifications and Alerts design (rev 3, 2026-09-08). One row per notification
-type; the Adopter Admin's saved recipient-role/threshold selection lives in
-its config jsonb (populated by a later ticket). Nothing existing is altered.
+type. recipient_roles is its own jsonb column; config holds only thresholds
+(ALERT-type rows) — kept separate so "who gets it" and "when it fires" are
+independently queryable/patchable, and neither can silently blank the other
+on write. Nothing existing is altered.
 
 Scoped to the four enums and the one column set the "Define Notifications"
 ticket needs. notification_alert_name_enum holds only the 7 NOTIFICATION-type
@@ -83,7 +85,7 @@ def upgrade() -> None:
             nullable=False,
             server_default="{EMAIL}",
         ),
-        sa.Column("is_enabled", sa.Boolean(), nullable=False, server_default=sa.false()),
+        sa.Column("recipient_roles", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default="{}"),
         sa.Column("config", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default="{}"),
         sa.Column("created_by", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
