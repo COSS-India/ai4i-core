@@ -39,11 +39,10 @@ import {
   ViewIcon,
 } from "@chakra-ui/icons";
 import { FiCalendar } from "react-icons/fi";
-import AdminDataTable, {
-  TableSearchField,
-  TableSelectField,
-  type AdminTableColumn,
-} from "../common/AdminDataTable";
+import DataTable, {
+  createActionsColumn,
+  type DataTableColumn,
+} from "../common/table";
 import ConfirmDialog from "../common/ConfirmDialog";
 import FormFieldsRow, { FORM_LABEL_TO_INPUT_PT } from "../common/FormFieldsRow";
 import StandardModal from "../common/StandardModal";
@@ -55,6 +54,7 @@ import { FIELD_HINTS } from "../../config/fieldHints";
 import FieldHint from "../common/FieldHint";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { generateUUID } from "../../utils/uuid";
+import { useDeferredColumnSort } from "../../utils/tableSort";
 
 function getTaskTypeBadgeColor(taskType: string): string {
   switch (taskType.toUpperCase()) {
@@ -99,11 +99,13 @@ function formatQuotaAmount(
 
 // ─── Column cell renderers (defined outside TierManagement to avoid S6478) ───
 
-const TIER_NAME_COLUMN: AdminTableColumn<Tier> = {
+const TIER_NAME_COLUMN: DataTableColumn<Tier> = {
   id: "name",
   header: "Tier Name",
   thProps: { w: "420px", maxW: "420px" },
   tdProps: { maxW: "420px" },
+  sortable: true,
+  sortAccessor: (tier) => tier.name ?? "",
   cell: (tier) => (
     <Tooltip label={tier.name} placement="top" hasArrow openDelay={300}>
       <Text fontSize="sm" fontWeight="medium" isTruncated maxW="430px">
@@ -115,7 +117,7 @@ const TIER_NAME_COLUMN: AdminTableColumn<Tier> = {
 
 const TIER_TASK_TYPES_VISIBLE_COUNT = 4;
 
-const TIER_TASK_TYPES_COLUMN: AdminTableColumn<Tier> = {
+const TIER_TASK_TYPES_COLUMN: DataTableColumn<Tier> = {
   id: "taskTypes",
   header: "Model Task Types",
   thProps: { textAlign: "center" },
@@ -147,86 +149,40 @@ const TIER_TASK_TYPES_COLUMN: AdminTableColumn<Tier> = {
   ),
 };
 
-interface TierActionsCellProps {
-  readonly tier: Tier;
-  readonly deletingId: string | null;
-  readonly onView: (tier: Tier) => void;
-  readonly onEdit: (tier: Tier) => void;
-  readonly onDelete: (tier: Tier) => void;
-}
-
-function TierActionsCell({
-  tier,
-  deletingId,
-  onView,
-  onEdit,
-  onDelete,
-}: TierActionsCellProps) {
-  return (
-    <HStack spacing={1} justify="center">
-      <Tooltip label="View" placement="top" hasArrow>
-        <IconButton
-          aria-label="View tier"
-          icon={<ViewIcon />}
-          size="sm"
-          variant="ghost"
-          colorScheme="blue"
-          _hover={{ bg: "blue.50" }}
-          onClick={() => onView(tier)}
-        />
-      </Tooltip>
-      <Tooltip label="Edit" placement="top" hasArrow>
-        <IconButton
-          aria-label="Edit tier"
-          icon={<EditIcon />}
-          size="sm"
-          variant="ghost"
-          colorScheme="green"
-          _hover={{ bg: "green.50" }}
-          onClick={() => onEdit(tier)}
-        />
-      </Tooltip>
-      <Tooltip label="Delete" placement="top" hasArrow>
-        <IconButton
-          aria-label="Delete tier"
-          icon={<DeleteIcon />}
-          size="sm"
-          variant="ghost"
-          colorScheme="red"
-          _hover={{ bg: "red.50" }}
-          onClick={() => onDelete(tier)}
-          isLoading={deletingId === tier.id}
-          isDisabled={deletingId !== null}
-        />
-      </Tooltip>
-    </HStack>
-  );
-}
-
 function makeTierActionsColumn(
   deletingId: string | null,
   onView: (tier: Tier) => void,
   onEdit: (tier: Tier) => void,
   onDelete: (tier: Tier) => void,
-): AdminTableColumn<Tier> {
-  return {
-    id: "actions",
-    header: "Actions",
-    thProps: { textAlign: "center" },
-    tdProps: {
-      textAlign: "center",
-      onClick: (e: React.MouseEvent) => e.stopPropagation(),
-    },
-    cell: (tier) => (
-      <TierActionsCell
-        tier={tier}
-        deletingId={deletingId}
-        onView={onView}
-        onEdit={onEdit}
-        onDelete={onDelete}
-      />
-    ),
-  };
+): DataTableColumn<Tier> {
+  return createActionsColumn<Tier>({
+    align: "center",
+    getActions: (tier) => [
+      {
+        id: "view",
+        label: "View",
+        icon: <ViewIcon />,
+        onClick: () => onView(tier),
+        "aria-label": "View tier",
+      },
+      {
+        id: "edit",
+        label: "Edit",
+        icon: <EditIcon />,
+        onClick: () => onEdit(tier),
+        "aria-label": "Edit tier",
+      },
+      {
+        id: "delete",
+        label: "Delete",
+        icon: <DeleteIcon />,
+        onClick: () => onDelete(tier),
+        disabled: deletingId !== null,
+        isLoading: deletingId === tier.id,
+        "aria-label": "Delete tier",
+      },
+    ],
+  });
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -746,6 +702,18 @@ const TierManagement: React.FC = () => {
     cancelRef,
   } = useTierManagement();
 
+  const tierSortAccessors = useMemo(
+    () => ({
+      name: (tier: Tier) => tier.name ?? "",
+    }),
+    [],
+  );
+  const tierSort = useDeferredColumnSort("name", tierSortAccessors);
+  const sortedTiers = useMemo(
+    () => tierSort.apply(filteredTiers),
+    [filteredTiers, tierSort],
+  );
+
   const columns = useMemo(
     () => [
       TIER_NAME_COLUMN,
@@ -781,10 +749,13 @@ const TierManagement: React.FC = () => {
 
   return (
     <Box>
-      <AdminDataTable
-        items={filteredTiers}
+      <DataTable
+        layout="admin"
+        items={sortedTiers}
         columns={columns}
         getRowKey={(tier) => tier.id}
+        sort={tierSort.sort}
+        onSortChange={tierSort.onSortChange}
         isLoading={isLoading}
         loadingMessage="Loading tiers..."
         emptyMessage="No tiers found. Create your first tier to get started."
@@ -804,34 +775,29 @@ const TierManagement: React.FC = () => {
             Create Tier
           </Button>
         }
-        filters={
-          <FormFieldsRow>
-            <TableSearchField
-              label="Search"
-              value={searchQuery}
-              onChange={setSearchQuery}
-              placeholder="Search tiers..."
-              formControlProps={{ w: { base: "full", md: "220px" }, mb: 0 }}
-              inputGroupProps={{ size: "sm" }}
-            />
-            <TableSelectField
-              label="Model Task Type"
-              value={filterTaskType}
-              onChange={setFilterTaskType}
-              formControlProps={{ w: { base: "full", sm: "210px" }, mb: 0 }}
-              selectProps={{ size: "sm" }}
-            >
-              {taskTypeNames.length > 1 && (
-                <option value="">All</option>
-              )}
-              {taskTypeNames.map((t) => (
-                <option key={t} value={t}>
-                  {formatModelTaskTypeLabel(t)}
-                </option>
-              ))}
-            </TableSelectField>
-          </FormFieldsRow>
-        }
+        search={{
+          value: searchQuery,
+          onChange: setSearchQuery,
+          placeholder: "Search tiers...",
+          fields: ["name"],
+        }}
+        filterDefs={[
+          {
+            id: "taskType",
+            label: "Model Task Type",
+            type: "select",
+            param: "model_task_type",
+            value: filterTaskType,
+            onChange: setFilterTaskType,
+            options: [
+              ...(taskTypeNames.length > 1 ? [{ label: "All", value: "" }] : []),
+              ...taskTypeNames.map((t) => ({
+                label: formatModelTaskTypeLabel(t),
+                value: t,
+              })),
+            ],
+          },
+        ]}
       />
 
       {/* Delete confirmation */}

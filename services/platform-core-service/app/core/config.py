@@ -168,6 +168,10 @@ class CoreSettings(BaseSettings):
     # ── External services ──
     auth_service_url: str = ""
     model_management_url: str = ""
+    # Adopter-facing portal URL, linked from notification/alert emails
+    # ("Log in to the AI4I-Orchestrate Portal ..."). None → link renders as
+    # plain text instead of an <a href>.
+    portal_url: Optional[str] = None
 
     # ── Logging / Observability ──
     log_level: str = "INFO"

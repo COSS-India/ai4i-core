@@ -4,6 +4,8 @@ import { useDisclosure } from "@chakra-ui/react";
 import { useRouter } from "next/router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredColumnSort } from "../utils/tableSort";
+import { resolveTaskType } from "../utils/platformService";
 import {
   fetchAllServicesMatchingFilters,
   fetchExistingServiceIds,
@@ -28,7 +30,6 @@ import { useAuth } from "./useAuth";
 import { isRegistryReadOnlyUser } from "../utils/rbac";
 import { useSessionExpiry } from "./useSessionExpiry";
 import { showError } from "../utils/errorHandler";
-import { resolveTaskType } from "../utils/platformService";
 import { showToast } from "../utils/toast";
 import { refreshUntil } from "../utils/postMutationRefresh";
 import { useInferenceTypes } from "./useInferenceTypes";
@@ -130,10 +131,16 @@ export function useServicesManagement() {
     if (taskTypeNames.length === 1) setFilterTaskType(taskTypeNames[0]);
     setTaskTypeFilterReady(true);
   }, [isLoadingTaskTypes, taskTypeNames]);
-  const [sortBy, setSortBy] = useState<"time" | "name">("time");
-  const [nameSortDirection, setNameSortDirection] = useState<"asc" | "desc">(
-    "asc",
+  const registrySortAccessors = useMemo(
+    () => ({
+      name: (s: Service) => s.name ?? "",
+      tiers: (s: Service) => (s.tierNames ?? s.tiers ?? []).join(", ").toLowerCase(),
+      created: (s: Service) =>
+        s.createdAt ? new Date(s.createdAt).getTime() : 0,
+    }),
+    [],
   );
+  const registrySort = useDeferredColumnSort("name", registrySortAccessors);
   const [confirmPublishService, setConfirmPublishService] =
     useState<Service | null>(null);
   const [confirmUnpublishService, setConfirmUnpublishService] =
@@ -157,22 +164,14 @@ export function useServicesManagement() {
   const isRegistryReadOnly = isRegistryReadOnlyUser(user?.roles);
   const viewTabIndex = isRegistryReadOnly ? 1 : 2;
 
-  // Client-side name filter + sort over the full fetched registry list.
+  // Client-side name filter + multi-column sort over the full fetched registry list.
   const registryTableItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const filtered = q
       ? services.filter((s) => (s.name ?? "").toLowerCase().includes(q))
       : services;
-    if (sortBy === "time") return filtered;
-    return [...filtered].sort((a, b) => {
-      const nameCmp = (a.name ?? "").localeCompare(b.name ?? "", undefined, {
-        sensitivity: "base",
-      });
-      if (nameCmp !== 0)
-        return nameSortDirection === "asc" ? nameCmp : -nameCmp;
-      return 0;
-    });
-  }, [services, searchQuery, sortBy, nameSortDirection]);
+    return registrySort.apply(filtered);
+  }, [services, searchQuery, registrySort]);
 
   const showTaskTypeAllOption = taskTypeNames.length > 1;
   const hasActiveFilters =
@@ -1251,15 +1250,6 @@ export function useServicesManagement() {
     }
   };
 
-  const handleSortNameAsc = () => {
-    setSortBy("name");
-    setNameSortDirection("asc");
-  };
-
-  const handleSortNameDesc = () => {
-    setSortBy("name");
-    setNameSortDirection("desc");
-  };
 
   return {
     isRegistryReadOnly,
@@ -1281,9 +1271,7 @@ export function useServicesManagement() {
     taskTypeNames,
     hasActiveFilters,
     clearAllFilters,
-    nameSortDirection,
-    handleSortNameAsc,
-    handleSortNameDesc,
+    registrySort,
     handleViewService,
     handleEditService,
     handleDeleteClick,

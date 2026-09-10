@@ -149,5 +149,5 @@ export interface ModalProps {
   children: React.ReactNode;
 }
 
-// Table Types — use AdminDataTable + AdminTableColumn from components/common/AdminDataTable.tsx
-export type { AdminTableColumn } from "../components/common/AdminDataTable";
+// Table Types — prefer DataTableColumn from components/common/table
+export type { DataTableColumn } from "../components/common/table";
