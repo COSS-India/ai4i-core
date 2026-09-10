@@ -16,6 +16,7 @@ from app.models.pay_per_use.tier import Tier, TierQuota
 from app.repositories.pay_per_use.usage_repository import update_tier_cache
 from app.schemas.pay_per_use.tier import TierCreate, TierOut, TierQuotaOut, TierUpdate
 from app.services.pay_per_use import inference_type_cache
+from app.models.pay_per_use.quota_usage import QuotaUsage
 
 logger = logging.getLogger(__name__)
 
@@ -121,15 +122,15 @@ def _build_out(tier: Tier, quotas: List[TierQuota], names: dict) -> TierOut:
 
 
 async def list_tiers(
-    session: AsyncSession, task_types: Optional[str] = None
+    session: AsyncSession,
+    task_types: Optional[str] = None,
+    status: Optional[TierStatus] = None,
 ) -> dict:
     type_ids = await _resolve_task_type_ids(session, task_types)
     names = await inference_type_cache.get_name_by_id(session)
-    stmt = (
-        select(Tier)
-        .where(Tier.status != TierStatus.DELETED)
-        .options(selectinload(Tier.tier_quotas))
-    )
+    stmt = select(Tier).where(Tier.status != TierStatus.DELETED).options(selectinload(Tier.tier_quotas))
+    if status is not None:
+        stmt = stmt.where(Tier.status == status)
     result = await session.execute(stmt)
     tiers = result.scalars().all()
 
@@ -169,7 +170,7 @@ async def get_tier_by_id(tier_id: str, session: AsyncSession) -> TierOut:
 
 
 async def create_tier(body: TierCreate, session: AsyncSession, created_by: Optional[str] = None) -> TierOut:
-    existing = await session.execute(select(Tier).where(Tier.name == body.name))
+    existing = await session.execute(select(Tier).where(Tier.name == body.name, Tier.status != TierStatus.DELETED))
     if existing.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -428,7 +429,7 @@ async def update_tier_status(
     # Side effects that must run before commit.
     if target_status == TierStatus.ACTIVE and previous_status == TierStatus.DEACTIVATED:
         # Reactivate: reset monthly quota usage for the current billing month.
-        from app.models.pay_per_use.quota_usage import QuotaUsage  # local import avoids circular
+        # local import avoids circular
         current_month = datetime.now(timezone.utc).strftime("%Y-%m")
         await session.execute(
             update(QuotaUsage)

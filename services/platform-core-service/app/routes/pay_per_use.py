@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_auth_db_optional, get_db
+from app.core.constants import TierStatus
 from app.schemas.pay_per_use.tier import ListTiersResponse, TierCreate, TierOut, TierStatusUpdate, TierUpdate
 from app.services.pay_per_use import tier_service
 from app.core.config import settings
@@ -28,10 +29,14 @@ async def list_tiers(
         None,
         description="Comma-separated model task type filter: nmt, llm, asr, tts, ocr, transliteration, ner, language-detection, speaker-diarization, audio-lang-detection, language-diarization",
     ),
+    status: Optional[TierStatus] = Query(
+        None,
+        description="Filter by tier status: INACTIVE, ACTIVE, DEACTIVATED",
+    ),
     session: AsyncSession = Depends(get_db),
 ):
-    """List active PPU tiers, optionally filtered by task type."""
-    return await tier_service.list_tiers(session, task_types=task_types)
+    """List PPU tiers, optionally filtered by task type and/or status."""
+    return await tier_service.list_tiers(session, task_types=task_types, status=status)
 
 
 @router.get("/tier", response_model=TierOut)
