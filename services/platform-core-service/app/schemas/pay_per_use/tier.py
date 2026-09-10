@@ -3,6 +3,8 @@ from typing import Any, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.core.constants import TierStatus
+
 
 class TierQuotaIn(BaseModel):
     modelTaskType: str = Field(..., min_length=1)
@@ -101,11 +103,16 @@ class TierOut(BaseModel):
     id: str
     name: str
     description: Optional[str] = None
+    status: TierStatus = TierStatus.INACTIVE
     quotas: List[TierQuotaOut] = []
     createdAt: Optional[datetime] = None
     updatedAt: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
+
+
+class TierStatusUpdate(BaseModel):
+    status: TierStatus = Field(..., description="Target status. Allowed transitions: INACTIVE→ACTIVE, ACTIVE→DEACTIVATED, DEACTIVATED→ACTIVE.")
 
 
 class ListTiersResponse(BaseModel):

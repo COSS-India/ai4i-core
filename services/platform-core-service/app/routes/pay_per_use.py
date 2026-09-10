@@ -10,11 +10,12 @@ tenant_assignment_service.py's removal in the same change.
 """
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_auth_db_optional, get_db
-from app.schemas.pay_per_use.tier import ListTiersResponse, TierCreate, TierOut, TierUpdate
+from app.core.constants import TierStatus
+from app.schemas.pay_per_use.tier import ListTiersResponse, TierCreate, TierOut, TierStatusUpdate, TierUpdate
 from app.services.pay_per_use import tier_service
 from app.core.config import settings
 
@@ -28,10 +29,14 @@ async def list_tiers(
         None,
         description="Comma-separated model task type filter: nmt, llm, asr, tts, ocr, transliteration, ner, language-detection, speaker-diarization, audio-lang-detection, language-diarization",
     ),
+    status: Optional[TierStatus] = Query(
+        None,
+        description="Filter by tier status: INACTIVE, ACTIVE, DEACTIVATED",
+    ),
     session: AsyncSession = Depends(get_db),
 ):
-    """List active PPU tiers, optionally filtered by task type."""
-    return await tier_service.list_tiers(session, task_types=task_types)
+    """List PPU tiers, optionally filtered by task type and/or status."""
+    return await tier_service.list_tiers(session, task_types=task_types, status=status)
 
 
 @router.get("/tier", response_model=TierOut)
@@ -73,18 +78,30 @@ async def update_tier(
     )
 
 
-@router.delete(
-    "/tier",
-    status_code=status.HTTP_204_NO_CONTENT,
-    response_class=Response,
-    responses={204: {"description": "Tier deleted successfully. No content is returned."}},
-)
-async def delete_tier(
-    tier_id: str = Query(...),
+
+@router.patch("/tier/{tier_id}/status", response_model=TierOut)
+async def update_tier_status(
+    request: Request,
+    tier_id: str,
+    body: TierStatusUpdate,
     session: AsyncSession = Depends(get_db),
     auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ):
-    """Delete a PPU tier. Returns 204 No Content on success — a delete never
-    has a response body."""
-    await tier_service.delete_tier(tier_id, session, auth_db)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    """Update a tier's lifecycle status.
+
+    Allowed transitions:
+    - INACTIVE → ACTIVE (Publish)
+    - ACTIVE → DEACTIVATED (Deactivate — tenants stay assigned, requests blocked)
+    - DEACTIVATED → ACTIVE (Reactivate — resets monthly quota, clears Redis flags)
+    - DEACTIVATED → DELETED (Delete — only if no tenants are assigned)
+    """
+    updated_by = request.headers.get("X-User-Id")
+    return await tier_service.update_tier_status(
+        tier_id,
+        body.status,
+        session,
+        auth_service_url=settings.auth_service_url,
+        http_client=request.app.state.http_client,
+        auth_db=auth_db,
+        updated_by=updated_by,
+    )

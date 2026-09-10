@@ -518,8 +518,10 @@ class ServiceService:
         if "unitSize" in request_dict:
             update_data["unit_size"] = request_dict["unitSize"]
         if "tierIds" in request_dict:
-            await self._validate_tier_ids_exist(request_dict["tierIds"])
-            update_data["tier_ids"] = request_dict["tierIds"]
+            new_tier_ids = request_dict["tierIds"]
+            if set(new_tier_ids or []) != set(instance.tier_ids or []):
+                await self._validate_tier_ids_exist(new_tier_ids)
+            update_data["tier_ids"] = new_tier_ids
 
         # Recompute unit_rate whenever either factor changes.
         if "cost_per_unit" in update_data or "unit_size" in update_data:
@@ -690,7 +692,7 @@ class ServiceService:
     # ── Internals ──
 
     async def _validate_tier_ids_exist(self, tier_ids: Optional[List[str]]) -> None:
-        """Raise if any of ``tier_ids`` doesn't reference a real PPU tier."""
+        """Raise if any of ``tier_ids`` doesn't reference an ACTIVE PPU tier."""
         if not tier_ids:
             return
         found = await self._services.get_tier_names_by_ids(tier_ids)
@@ -701,6 +703,16 @@ class ServiceService:
                     f"tierIds references nonexistent tier(s): {', '.join(missing)}."
                 ),
                 code="TIER_NOT_FOUND",
+            )
+        active_ids = await self._services.get_active_tier_ids(tier_ids)
+        inactive = [tid for tid in tier_ids if tid not in active_ids]
+        if inactive:
+            raise ValidationError(
+                message=(
+                    f"tierIds references tier(s) that are not ACTIVE: {', '.join(inactive)}. "
+                    "Only ACTIVE tiers can be mapped to a service."
+                ),
+                code="TIER_NOT_ACTIVE",
             )
 
     def _resolve_inference_schema(

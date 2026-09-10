@@ -41,12 +41,11 @@ import {
 } from "@chakra-ui/icons";
 import StandardModal from "../common/StandardModal";
 import ConfirmDialog from "../common/ConfirmDialog";
-import AdminDataTable, {
-  TableSearchField,
-  TableSelectField,
-  type AdminTableColumn,
-} from "../common/AdminDataTable";
-import { useAdminTableSurface } from "../common/TableControls";
+import DataTable, {
+  useAdminTableSurface,
+  type DataTableColumn,
+} from "../common/table";
+import { useDeferredColumnSort } from "../../utils/tableSort";
 import {
   policyService,
   type AuditLogOut,
@@ -57,7 +56,6 @@ import {
 import { INSTITUTION, INSTITUTION_ARTICLE, INSTITUTIONS, isTenantStatus, TENANT } from "../../config/constants";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import FieldHint from "../common/FieldHint";
-import FormFieldsRow from "../common/FormFieldsRow";
 import { listTenants } from "../../services/tenantService";
 import type { TenantView } from "../../types/tenant";
 
@@ -238,8 +236,21 @@ function PoliciesPanel() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterActive, setFilterActive] = useState("");
   const [filterGlobal, setFilterGlobal] = useState("");
-  const [sortBy, setSortBy] = useState<"time" | "name">("time");
-  const [nameSortDirection, setNameSortDirection] = useState<"asc" | "desc">("asc");
+  const policySortAccessors = useMemo(
+    () => ({
+      name: (row: PolicyOut) => row.name ?? "",
+      piiTypes: (row: PolicyOut) => row.pii_types?.length ?? 0,
+      languages: (row: PolicyOut) => (row.supported_languages ?? []).join(", "),
+      tenants: (row: PolicyOut) =>
+        row.is_global
+          ? `All ${INSTITUTIONS.toLowerCase()}`
+          : (row.tenant_ids ?? []).join(", "),
+      created: (row: PolicyOut) =>
+        row.created_at ? new Date(row.created_at).getTime() : 0,
+    }),
+    [],
+  );
+  const policySort = useDeferredColumnSort("name", policySortAccessors);
   const [tableEpoch, setTableEpoch] = useState(0);
   const modal = useDisclosure();
   const viewModal = useDisclosure();
@@ -323,19 +334,11 @@ function PoliciesPanel() {
       if (filterGlobal === "false" && row.is_global) return false;
       return true;
     });
-    return [...filtered].sort((a, b) => {
-      const createdA = getSortTimestamp(a.created_at);
-      const createdB = getSortTimestamp(b.created_at);
-      const nameCmp = (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" });
-      if (sortBy === "time") {
-        if (createdB !== createdA) return createdB - createdA;
-        return 0;
-      }
-      if (nameCmp !== 0) return nameSortDirection === "asc" ? nameCmp : -nameCmp;
-      if (createdB !== createdA) return createdB - createdA;
-      return 0;
-    });
-  }, [allPolicies, searchQuery, filterActive, filterGlobal, sortBy, nameSortDirection]);
+    const byCreatedDesc = [...filtered].sort(
+      (a, b) => getSortTimestamp(b.created_at) - getSortTimestamp(a.created_at),
+    );
+    return policySort.apply(byCreatedDesc);
+  }, [allPolicies, searchQuery, filterActive, filterGlobal, policySort]);
 
   const hasActiveFilters =
     filterActive !== "" || filterGlobal !== "" || searchQuery.trim() !== "";
@@ -441,36 +444,26 @@ function PoliciesPanel() {
     }
   };
 
-  const policyColumns = useMemo((): AdminTableColumn<PolicyOut>[] => [
+  const policyColumns = useMemo((): DataTableColumn<PolicyOut>[] => [
     {
       id: "name",
       header: "Name",
-      sortable: {
-        label: "Name",
-        direction: nameSortDirection,
-        onAsc: () => {
-          setSortBy("name");
-          setNameSortDirection("asc");
-          bumpTablePage();
-        },
-        onDesc: () => {
-          setSortBy("name");
-          setNameSortDirection("desc");
-          bumpTablePage();
-        },
-        ascAriaLabel: "Sort policies by name ascending",
-        descAriaLabel: "Sort policies by name descending",
-      },
+      sortable: true,
+      sortAccessor: (row) => row.name ?? "",
       cell: (row) => <Text fontWeight="medium">{row.name}</Text>,
     },
     {
       id: "piiTypes",
       header: "PII types",
+      sortable: true,
+      sortAccessor: (row) => row.pii_types?.length ?? 0,
       cell: (row) => row.pii_types?.length ?? 0,
     },
     {
       id: "languages",
       header: "Languages",
+      sortable: true,
+      sortAccessor: (row) => (row.supported_languages ?? []).join(", "),
       cell: (row) => row.supported_languages?.join(", ") || "—",
     },
     {
@@ -491,6 +484,11 @@ function PoliciesPanel() {
       id: "tenants",
       header: INSTITUTIONS,
       tdProps: { maxW: "180px", isTruncated: true },
+      sortable: true,
+      sortAccessor: (row) =>
+        row.is_global
+          ? `All ${INSTITUTIONS.toLowerCase()}`
+          : (row.tenant_ids ?? []).join(", "),
       cell: (row) => {
         const tenantLabel = row.is_global
           ? `All ${INSTITUTIONS.toLowerCase()}`
@@ -508,6 +506,9 @@ function PoliciesPanel() {
       id: "created",
       header: "Created",
       tdProps: { whiteSpace: "nowrap" },
+      sortable: true,
+      sortAccessor: (row) =>
+        row.created_at ? new Date(row.created_at).getTime() : 0,
       cell: (row) => formatDt(row.created_at),
     },
     {
@@ -572,8 +573,6 @@ function PoliciesPanel() {
       ),
     },
   ], [
-    nameSortDirection,
-    bumpTablePage,
     activeStatusTooltipId,
     policyStatusBusyId,
     openEdit,
@@ -600,98 +599,51 @@ function PoliciesPanel() {
         boxShadow="none"
       >
         <CardBody>
-          <AdminDataTable<PolicyOut>
+          <DataTable<PolicyOut>
+            layout="admin"
             key={tableEpoch}
             items={filteredPolicies}
             columns={policyColumns}
+          sort={policySort.sort}
+          onSortChange={(next) => { policySort.onSortChange(next); bumpTablePage(); }}
             getRowKey={(row) => row.policy_id}
-            filters={
-              <VStack align="stretch" spacing={3} flex="1" w="full">
-                <FormFieldsRow spacing={3} w="full">
-                  <TableSearchField
-                    label="Search"
-                    value={searchQuery}
-                    onChange={setSearchQuery}
-                    placeholder="Search by policy name…"
-                    formControlProps={{ w: { base: "full", md: "280px" } }}
-                    inputProps={{ pl: 10 }}
-                  />
-                  <TableSelectField
-                    label="Active"
-                    value={filterActive}
-                    onChange={setFilterActive}
-                    formControlProps={{ w: { base: "full", sm: "140px" } }}
-                  >
-                    <option value="">All</option>
-                    <option value="true">Active</option>
-                    <option value="false">Inactive</option>
-                  </TableSelectField>
-                  <TableSelectField
-                    label="Scope"
-                    value={filterGlobal}
-                    onChange={setFilterGlobal}
-                    formControlProps={{ w: { base: "full", sm: "160px" } }}
-                  >
-                    <option value="">All</option>
-                    <option value="true">Global</option>
-                    <option value="false">{INSTITUTION}-scoped</option>
-                  </TableSelectField>
-                  <Box flex="1" minW={0} />
-                </FormFieldsRow>
-                {hasActiveFilters ? (
-                  <HStack spacing={2} flexWrap="wrap">
-                    {searchQuery.trim() ? (
-                      <Badge
-                        colorScheme="blue"
-                        fontSize="xs"
-                        px={2}
-                        py={1}
-                        cursor="pointer"
-                        onClick={() => {
-                          setSearchQuery("");
-                          bumpTablePage();
-                        }}
-                        _hover={{ opacity: 0.8 }}
-                      >
-                        Search: &quot;{searchQuery.trim()}&quot; ×
-                      </Badge>
-                    ) : null}
-                    {filterActive ? (
-                      <Badge
-                        colorScheme="gray"
-                        fontSize="xs"
-                        px={2}
-                        py={1}
-                        cursor="pointer"
-                        onClick={() => {
-                          setFilterActive("");
-                          bumpTablePage();
-                        }}
-                        _hover={{ opacity: 0.8 }}
-                      >
-                        Active: {filterActive === "true" ? "Active" : "Inactive"} ×
-                      </Badge>
-                    ) : null}
-                    {filterGlobal ? (
-                      <Badge
-                        colorScheme="gray"
-                        fontSize="xs"
-                        px={2}
-                        py={1}
-                        cursor="pointer"
-                        onClick={() => {
-                          setFilterGlobal("");
-                          bumpTablePage();
-                        }}
-                        _hover={{ opacity: 0.8 }}
-                      >
-                        Scope: {filterGlobal === "true" ? "Global" : `${INSTITUTION}-scoped`} ×
-                      </Badge>
-                    ) : null}
-                  </HStack>
-                ) : null}
-              </VStack>
-            }
+            search={{
+              label: "Search",
+              value: searchQuery,
+              onChange: setSearchQuery,
+              placeholder: "Search by policy name…",
+              fields: ["name"],
+            }}
+            filterDefs={[
+              {
+                id: "active",
+                label: "Active",
+                type: "select",
+                param: "is_active",
+                value: filterActive,
+                onChange: setFilterActive,
+                width: { base: "full", sm: "140px" },
+                options: [
+                  { label: "All", value: "" },
+                  { label: "Active", value: "true" },
+                  { label: "Inactive", value: "false" },
+                ],
+              },
+              {
+                id: "scope",
+                label: "Scope",
+                type: "select",
+                param: "is_global",
+                value: filterGlobal,
+                onChange: setFilterGlobal,
+                width: { base: "full", sm: "160px" },
+                options: [
+                  { label: "All", value: "" },
+                  { label: "Global", value: "true" },
+                  { label: `${INSTITUTION}-scoped`, value: "false" },
+                ],
+              },
+            ]}
             hasActiveFilters={hasActiveFilters}
             onClearFilters={clearAllFilters}
             filterToolbarRightContent={
@@ -1325,8 +1277,16 @@ function PiiTypesPanel() {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterMask, setFilterMask] = useState("");
-  const [sortBy, setSortBy] = useState<"time" | "label">("time");
-  const [labelSortDirection, setLabelSortDirection] = useState<"asc" | "desc">("asc");
+  const piiTypeSortAccessors = useMemo(
+    () => ({
+      label: (row: PiiTypeOut) => row.pii_type_label ?? "",
+      regex: (row: PiiTypeOut) => row.regex_pattern ?? "",
+      created: (row: PiiTypeOut) =>
+        row.created_at ? new Date(row.created_at).getTime() : 0,
+    }),
+    [],
+  );
+  const piiTypeSort = useDeferredColumnSort("label", piiTypeSortAccessors);
   const [tableEpoch, setTableEpoch] = useState(0);
   const modal = useDisclosure();
   const viewModal = useDisclosure();
@@ -1389,21 +1349,11 @@ function PiiTypesPanel() {
       if (filterMask && row.mask_format !== filterMask) return false;
       return true;
     });
-    return [...filtered].sort((a, b) => {
-      const createdA = getSortTimestamp(a.created_at);
-      const createdB = getSortTimestamp(b.created_at);
-      const labelCmp = (a.pii_type_label ?? "").localeCompare(b.pii_type_label ?? "", undefined, {
-        sensitivity: "base",
-      });
-      if (sortBy === "time") {
-        if (createdB !== createdA) return createdB - createdA;
-        return 0;
-      }
-      if (labelCmp !== 0) return labelSortDirection === "asc" ? labelCmp : -labelCmp;
-      if (createdB !== createdA) return createdB - createdA;
-      return 0;
-    });
-  }, [allTypes, searchQuery, filterMask, sortBy, labelSortDirection]);
+    const byCreatedDesc = [...filtered].sort(
+      (a, b) => getSortTimestamp(b.created_at) - getSortTimestamp(a.created_at),
+    );
+    return piiTypeSort.apply(byCreatedDesc);
+  }, [allTypes, searchQuery, filterMask, piiTypeSort]);
 
   const hasActiveFilters = filterMask !== "" || searchQuery.trim() !== "";
   const clearAllFilters = () => {
@@ -1524,26 +1474,12 @@ function PiiTypesPanel() {
     }
   };
 
-  const piiColumns = useMemo((): AdminTableColumn<PiiTypeOut>[] => [
+  const piiColumns = useMemo((): DataTableColumn<PiiTypeOut>[] => [
     {
       id: "label",
       header: "Label",
-      sortable: {
-        label: "Label",
-        direction: labelSortDirection,
-        onAsc: () => {
-          setSortBy("label");
-          setLabelSortDirection("asc");
-          bumpTablePage();
-        },
-        onDesc: () => {
-          setSortBy("label");
-          setLabelSortDirection("desc");
-          bumpTablePage();
-        },
-        ascAriaLabel: "Sort PII types by label ascending",
-        descAriaLabel: "Sort PII types by label descending",
-      },
+      sortable: true,
+      sortAccessor: (row) => row.pii_type_label ?? "",
       cell: (row) => <Text fontWeight="medium">{row.pii_type_label}</Text>,
     },
     {
@@ -1555,6 +1491,8 @@ function PiiTypesPanel() {
       id: "regex",
       header: "Regex",
       tdProps: { maxW: "280px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+      sortable: true,
+      sortAccessor: (row) => row.regex_pattern ?? "",
       cell: (row) => (
         <Box as="span" title={row.regex_pattern} display="block" isTruncated maxW="280px">
           {row.regex_pattern}
@@ -1565,6 +1503,9 @@ function PiiTypesPanel() {
       id: "created",
       header: "Created",
       tdProps: { whiteSpace: "nowrap" },
+      sortable: true,
+      sortAccessor: (row) =>
+        row.created_at ? new Date(row.created_at).getTime() : 0,
       cell: (row) => formatDt(row.created_at),
     },
     {
@@ -1599,7 +1540,7 @@ function PiiTypesPanel() {
         </HStack>
       ),
     },
-  ], [labelSortDirection, bumpTablePage, openEdit, requestDelete]);
+  ], [openEdit, requestDelete]);
 
   return (
     <Box>
@@ -1618,75 +1559,36 @@ function PiiTypesPanel() {
         boxShadow="none"
       >
         <CardBody>
-          <AdminDataTable<PiiTypeOut>
+          <DataTable<PiiTypeOut>
+            layout="admin"
             key={tableEpoch}
             items={filteredPiiTypes}
             columns={piiColumns}
+          sort={piiTypeSort.sort}
+          onSortChange={(next) => { piiTypeSort.onSortChange(next); bumpTablePage(); }}
             getRowKey={(row) => row.pii_type_id}
-            filters={
-              <VStack align="stretch" spacing={3} flex="1" w="full">
-                <FormFieldsRow spacing={3} w="full">
-                  <TableSearchField
-                    label="Search"
-                    value={searchQuery}
-                    onChange={setSearchQuery}
-                    placeholder="Search by label or regex…"
-                    formControlProps={{ w: { base: "full", md: "280px" } }}
-                    inputProps={{ pl: 10 }}
-                  />
-                  <TableSelectField
-                    label="Mask format"
-                    value={filterMask}
-                    onChange={setFilterMask}
-                    formControlProps={{ w: { base: "full", sm: "160px" } }}
-                  >
-                    <option value="">All</option>
-                    {MASK_OPTIONS.map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
-                    ))}
-                  </TableSelectField>
-                  <Box flex="1" minW={0} />
-                </FormFieldsRow>
-                {hasActiveFilters ? (
-                  <HStack spacing={2} flexWrap="wrap">
-                    {searchQuery.trim() ? (
-                      <Badge
-                        colorScheme="blue"
-                        fontSize="xs"
-                        px={2}
-                        py={1}
-                        cursor="pointer"
-                        onClick={() => {
-                          setSearchQuery("");
-                          bumpTablePage();
-                        }}
-                        _hover={{ opacity: 0.8 }}
-                      >
-                        Search: &quot;{searchQuery.trim()}&quot; ×
-                      </Badge>
-                    ) : null}
-                    {filterMask ? (
-                      <Badge
-                        colorScheme="gray"
-                        fontSize="xs"
-                        px={2}
-                        py={1}
-                        cursor="pointer"
-                        onClick={() => {
-                          setFilterMask("");
-                          bumpTablePage();
-                        }}
-                        _hover={{ opacity: 0.8 }}
-                      >
-                        Mask: {filterMask} ×
-                      </Badge>
-                    ) : null}
-                  </HStack>
-                ) : null}
-              </VStack>
-            }
+            search={{
+              label: "Search",
+              value: searchQuery,
+              onChange: setSearchQuery,
+              placeholder: "Search by label or regex…",
+              fields: ["label", "regex"],
+            }}
+            filterDefs={[
+              {
+                id: "mask",
+                label: "Mask format",
+                type: "select",
+                param: "mask_format",
+                value: filterMask,
+                onChange: setFilterMask,
+                width: { base: "full", sm: "160px" },
+                options: [
+                  { label: "All", value: "" },
+                  ...MASK_OPTIONS.map((m) => ({ label: m, value: m })),
+                ],
+              },
+            ]}
             hasActiveFilters={hasActiveFilters}
             onClearFilters={clearAllFilters}
             filterToolbarRightContent={
@@ -1811,7 +1713,17 @@ function AuditPanel() {
   const [policyIdFilter, setPolicyIdFilter] = useState("");
   const [traceIdFilter, setTraceIdFilter] = useState("");
   const [minPii, setMinPii] = useState("");
-  const [auditCreatedSort, setAuditCreatedSort] = useState<"asc" | "desc">("desc");
+  const auditSortAccessors = useMemo(
+    () => ({
+      context: (row: AuditLogOut) => row.target_context ?? "",
+      piiCount: (row: AuditLogOut) => row.pii_count ?? 0,
+      ms: (row: AuditLogOut) => row.processing_ms ?? 0,
+      created: (row: AuditLogOut) =>
+        row.created_at ? new Date(row.created_at).getTime() : 0,
+    }),
+    [],
+  );
+  const auditSort = useDeferredColumnSort("created", auditSortAccessors);
   const detailModal = useDisclosure();
   const [detailJson, setDetailJson] = useState<string>("");
 
@@ -1881,16 +1793,10 @@ function AuditPanel() {
     setMeta((m) => ({ ...m, page: 1 }));
   };
 
-  const displayItems = useMemo(() => {
-    const copy = [...items];
-    copy.sort((a, b) => {
-      const ta = new Date(a.created_at).getTime();
-      const tb = new Date(b.created_at).getTime();
-      if (Number.isNaN(ta) || Number.isNaN(tb)) return 0;
-      return auditCreatedSort === "desc" ? tb - ta : ta - tb;
-    });
-    return copy;
-  }, [items, auditCreatedSort]);
+  const displayItems = useMemo(
+    () => auditSort.apply(items),
+    [items, auditSort],
+  );
 
   const openDetail = async (id: string) => {
     try {
@@ -1905,10 +1811,7 @@ function AuditPanel() {
     }
   };
 
-  const formatAuditChipId = (id: string, maxLen = 14) =>
-    id.length > maxLen ? `${id.slice(0, 8)}…` : id;
-
-  const auditColumns = useMemo((): AdminTableColumn<AuditLogOut>[] => [
+  const auditColumns = useMemo((): DataTableColumn<AuditLogOut>[] => [
     {
       id: "tenant",
       header: INSTITUTION,
@@ -1934,6 +1837,8 @@ function AuditPanel() {
       id: "context",
       header: "Context",
       tdProps: { maxW: "200px", isTruncated: true },
+      sortable: true,
+      sortAccessor: (row) => row.target_context ?? "",
       cell: (row) => (
         <Box as="span" title={row.target_context || ""} display="block" isTruncated maxW="200px">
           {row.target_context || "—"}
@@ -1945,6 +1850,8 @@ function AuditPanel() {
       header: "PII #",
       thProps: { isNumeric: true },
       tdProps: { isNumeric: true },
+      sortable: true,
+      sortAccessor: (row) => row.pii_count ?? 0,
       cell: (row) => row.pii_count ?? "—",
     },
     {
@@ -1952,19 +1859,16 @@ function AuditPanel() {
       header: "ms",
       thProps: { isNumeric: true },
       tdProps: { isNumeric: true },
+      sortable: true,
+      sortAccessor: (row) => row.processing_ms ?? 0,
       cell: (row) => row.processing_ms ?? "—",
     },
     {
       id: "created",
       header: "Created",
-      sortable: {
-        label: "Created",
-        direction: auditCreatedSort,
-        onAsc: () => setAuditCreatedSort("asc"),
-        onDesc: () => setAuditCreatedSort("desc"),
-        ascAriaLabel: "Sort audit rows by created time ascending",
-        descAriaLabel: "Sort audit rows by created time descending",
-      },
+      sortable: true,
+      sortAccessor: (row) =>
+        row.created_at ? new Date(row.created_at).getTime() : 0,
       tdProps: { whiteSpace: "nowrap" },
       cell: (row) => formatDt(row.created_at),
     },
@@ -1987,7 +1891,7 @@ function AuditPanel() {
         </Tooltip>
       ),
     },
-  ], [auditCreatedSort, openDetail]);
+  ], [openDetail]);
 
   return (
     <Box>
@@ -1998,121 +1902,55 @@ function AuditPanel() {
         </Alert>
       )}
 
-      <AdminDataTable<AuditLogOut>
+      <DataTable<AuditLogOut>
+        layout="admin"
         items={displayItems}
         columns={auditColumns}
+          sort={auditSort.sort}
+          onSortChange={auditSort.onSortChange}
         getRowKey={(row) => row.pii_audit_id}
-        filters={
-          <VStack align="stretch" spacing={3} flex="1" w="full">
-            <FormFieldsRow spacing={3} w="full">
-              <FormControl w={{ base: "full", sm: "200px" }}>
-                <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
-                  {INSTITUTION} ID
-                </FormLabel>
-                <Input
-                  size="sm"
-                  value={tenantFilter}
-                  onChange={(e) => setTenantFilter(e.target.value)}
-                  placeholder="Filter…"
-                  bg={cardBg}
-                />
-              </FormControl>
-              <FormControl w={{ base: "full", sm: "200px" }}>
-                <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
-                  Policy ID
-                </FormLabel>
-                <Input
-                  size="sm"
-                  value={policyIdFilter}
-                  onChange={(e) => setPolicyIdFilter(e.target.value)}
-                  placeholder="UUID…"
-                  bg={cardBg}
-                />
-              </FormControl>
-              <FormControl w={{ base: "full", sm: "200px" }}>
-                <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
-                  Trace ID
-                </FormLabel>
-                <Input
-                  size="sm"
-                  value={traceIdFilter}
-                  onChange={(e) => setTraceIdFilter(e.target.value)}
-                  placeholder="Filter…"
-                  bg={cardBg}
-                />
-              </FormControl>
-              <FormControl w={{ base: "full", sm: "140px" }}>
-                <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
-                  Min PII count
-                </FormLabel>
-                <Input
-                  size="sm"
-                  type="number"
-                  min={0}
-                  value={minPii}
-                  onChange={(e) => setMinPii(e.target.value)}
-                  bg={cardBg}
-                />
-              </FormControl>
-            </FormFieldsRow>
-            {hasActiveFilters ? (
-              <HStack spacing={2} flexWrap="wrap">
-                {debouncedFilters.tenant !== "" ? (
-                  <Badge
-                    colorScheme="blue"
-                    fontSize="xs"
-                    px={2}
-                    py={1}
-                    cursor="pointer"
-                    onClick={() => setTenantFilter("")}
-                    _hover={{ opacity: 0.8 }}
-                  >
-                    {INSTITUTION}: {debouncedFilters.tenant} ×
-                  </Badge>
-                ) : null}
-                {debouncedFilters.policy !== "" ? (
-                  <Badge
-                    colorScheme="gray"
-                    fontSize="xs"
-                    px={2}
-                    py={1}
-                    cursor="pointer"
-                    onClick={() => setPolicyIdFilter("")}
-                    _hover={{ opacity: 0.8 }}
-                  >
-                    Policy: {formatAuditChipId(debouncedFilters.policy)} ×
-                  </Badge>
-                ) : null}
-                {debouncedFilters.trace !== "" ? (
-                  <Badge
-                    colorScheme="gray"
-                    fontSize="xs"
-                    px={2}
-                    py={1}
-                    cursor="pointer"
-                    onClick={() => setTraceIdFilter("")}
-                    _hover={{ opacity: 0.8 }}
-                  >
-                    Trace: {formatAuditChipId(debouncedFilters.trace)} ×
-                  </Badge>
-                ) : null}
-                {debouncedFilters.minPii !== "" ? (
-                  <Badge
-                    colorScheme="gray"
-                    fontSize="xs"
-                    px={2}
-                    py={1}
-                    cursor="pointer"
-                    onClick={() => setMinPii("")}
-                    _hover={{ opacity: 0.8 }}
-                  >
-                    Min PII: {debouncedFilters.minPii} ×
-                  </Badge>
-                ) : null}
-              </HStack>
-            ) : null}
-          </VStack>
-        }
+        filterDefs={[
+          {
+            id: "tenantId",
+            label: `${INSTITUTION} ID`,
+            type: "text",
+            param: "tenant_id",
+            value: tenantFilter,
+            onChange: setTenantFilter,
+            placeholder: "Filter…",
+            width: { base: "full", sm: "200px" },
+          },
+          {
+            id: "policyId",
+            label: "Policy ID",
+            type: "text",
+            param: "policy_id",
+            value: policyIdFilter,
+            onChange: setPolicyIdFilter,
+            placeholder: "UUID…",
+            width: { base: "full", sm: "200px" },
+          },
+          {
+            id: "traceId",
+            label: "Trace ID",
+            type: "text",
+            param: "trace_id",
+            value: traceIdFilter,
+            onChange: setTraceIdFilter,
+            placeholder: "Filter…",
+            width: { base: "full", sm: "200px" },
+          },
+          {
+            id: "minPii",
+            label: "Min PII count",
+            type: "text",
+            param: "min_pii",
+            value: minPii,
+            onChange: setMinPii,
+            inputType: "number",
+            width: { base: "full", sm: "140px" },
+          },
+        ]}
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearAllFilters}
         isLoading={loading}

@@ -44,6 +44,8 @@ _STUBBED_MODULE_NAMES = (
     "app.models.model_management",
     "app.models.model_management.service",
     "app.models.model_management.model",
+    "app.models.pay_per_use",
+    "app.models.pay_per_use.inference_type",
     "app.repositories",
     "app.repositories.model_management",
     "app.repositories.model_management.model_repository",
@@ -55,6 +57,8 @@ _stub_svc("app.models")
 _stub_svc("app.models.model_management")
 _stub_svc("app.models.model_management.service", Service=MagicMock)
 _stub_svc("app.models.model_management.model", Model=MagicMock)
+_stub_svc("app.models.pay_per_use")
+_stub_svc("app.models.pay_per_use.inference_type", InferenceType=MagicMock())
 _stub_svc("app.repositories")
 _stub_svc("app.repositories.model_management")
 _stub_svc("app.repositories.model_management.model_repository", ModelRepository=MagicMock)
@@ -123,6 +127,7 @@ def _make_svc() -> "ServiceService":
     service_repo.commit = AsyncMock()
     service_repo.rollback = AsyncMock()
     service_repo.get_tier_names_by_ids = AsyncMock(return_value={"tier-1": "Tier 1"})
+    service_repo.get_active_tier_ids = AsyncMock(return_value={"tier-1"})
 
     model_repo = MagicMock()
     model_mock = MagicMock()
@@ -424,6 +429,7 @@ class TestNewFieldsPersistence:
             # test_service_update.py's _make_service_orm for why that
             # distinction matters here.
             inference_schema=None,
+            tier_ids=["tier-1"],
         )
         service_repo.get_by_service_id = AsyncMock(return_value=instance_mock)
         service_repo.apply_updates = AsyncMock()

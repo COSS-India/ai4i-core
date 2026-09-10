@@ -599,7 +599,7 @@ class TenantService:
                 )
             tier_row = (
                 await platform_core_db.execute(
-                    text("SELECT id FROM tiers WHERE id = :tid AND is_active = true"),
+                    text("SELECT id FROM tiers WHERE id = :tid AND status = 'ACTIVE'"),
                     {"tid": body.tier_id},
                 )
             ).first()
@@ -1019,7 +1019,7 @@ class TenantService:
             )
         row = (
             await platform_core_db.execute(
-                text("SELECT id, name FROM tiers WHERE id = :tid AND is_active = true"),
+                text("SELECT id, name FROM tiers WHERE id = :tid AND status = 'ACTIVE'"),
                 {"tid": tier_uuid},
             )
         ).first()
@@ -1513,12 +1513,12 @@ class TenantService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail={"code": "INVALID_TIER_ID", "message": "tier_id must be a valid UUID."},
                 )
-            # is_active = true, matching assign_tenant_tier's lookup — a tier
+            # status = 'ACTIVE', matching assign_tenant_tier's lookup — a tier
             # listable here but rejected as not-found on assign would be a
             # visible inconsistency between the two endpoints.
             exists = (
                 await platform_core_db.execute(
-                    text("SELECT 1 FROM tiers WHERE id = :tid AND is_active = true"), {"tid": tier_uuid}
+                    text("SELECT 1 FROM tiers WHERE id = :tid AND status = 'ACTIVE'"), {"tid": tier_uuid}
                 )
             ).first()
             if exists is None:

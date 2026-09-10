@@ -7,7 +7,7 @@ interface InfoTipProps {
   message: string;
 }
 
-/** Circled-i hover tip. */
+/** Circled-i hover tip. Prefer {@link FieldLabel} when pairing with a text label. */
 const InfoTip: React.FC<InfoTipProps> = ({ message }) => (
   <Tooltip label={message} hasArrow placement="top" openDelay={200} maxW="260px">
     <Box as="span" display="inline-flex" cursor="help" color="gray.400" lineHeight={1}>

@@ -40,7 +40,6 @@ import { useRouter } from "next/router";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import FieldHint from "../components/common/FieldHint";
-import FormFieldsRow from "../components/common/FormFieldsRow";
 import { FIELD_HINTS } from "../config/fieldHints";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import {
@@ -59,13 +58,12 @@ import { SAMPLE_MODEL_JSON } from "../utils/sampleModelJson";
 import { stripJsonComments } from "../utils/stripJsonComments";
 import { showToast } from "../utils/toast";
 import ConfirmDialog from "../components/common/ConfirmDialog";
-import { useAdminTableSurface } from "../components/common/TableControls";
-import AdminDataTable, {
+import DataTable, {
+  useAdminTableSurface,
   DEFAULT_PAGE_SIZE_OPTIONS,
-  TableSearchField,
-  TableSelectField,
-  type AdminTableColumn,
-} from "../components/common/AdminDataTable";
+  type DataTableColumn,
+} from "../components/common/table";
+import { useDeferredColumnSort } from "../utils/tableSort";
 import {
   MODEL_VERSION,
   MODEL_VERSION_FILTER_LIST,
@@ -139,8 +137,19 @@ const ModelManagementPage: React.FC = () => {
     if (taskTypeNames.length === 1) setFilterTaskType(taskTypeNames[0]);
     setTaskTypeFilterReady(true);
   }, [isLoadingTaskTypes, taskTypeNames]);
-  const [sortBy, setSortBy] = useState<"time" | "name">("time");
-  const [nameSortDirection, setNameSortDirection] = useState<"asc" | "desc">("asc");
+  const modelSortAccessors = useMemo(
+    () => ({
+      name: (m: Model) => m.name ?? "",
+      version: (m: Model) => m.version ?? "",
+      created: (m: Model) => {
+        if (m.createdAt != null) return new Date(m.createdAt).getTime();
+        if (m.submittedOn != null) return m.submittedOn * 1000;
+        return 0;
+      },
+    }),
+    [],
+  );
+  const modelSort = useDeferredColumnSort("name", modelSortAccessors);
   const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure();
   const cancelConfirmRef = React.useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -225,19 +234,14 @@ const ModelManagementPage: React.FC = () => {
 
   const { cardBg, borderColor: cardBorder } = useAdminTableSurface();
 
-  // Client-side name filter + sort over the full fetched registry list.
+  // Client-side name filter + multi-column sort over the full fetched registry list.
   const registryTableItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const filtered = q
       ? models.filter((m) => (m.name ?? "").toLowerCase().includes(q))
       : models;
-    if (sortBy === "time") return filtered;
-    return [...filtered].sort((a, b) => {
-      const nameCmp = (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" });
-      if (nameCmp !== 0) return nameSortDirection === "asc" ? nameCmp : -nameCmp;
-      return 0;
-    });
-  }, [models, searchQuery, sortBy, nameSortDirection]);
+    return modelSort.apply(filtered);
+  }, [models, searchQuery, modelSort]);
 
   const showTaskTypeAllOption = taskTypeNames.length > 1;
   const hasActiveFilters =
@@ -768,34 +772,25 @@ const ModelManagementPage: React.FC = () => {
     setConfirmAction(null);
   };
 
-  const modelColumns = useMemo((): AdminTableColumn<Model>[] => {
+  const modelColumns = useMemo((): DataTableColumn<Model>[] => {
     return [
       {
         id: "name",
         header: "Name",
-        sortable: {
-          label: "Name",
-          direction: nameSortDirection,
-          onAsc: () => {
-            setSortBy("name");
-            setNameSortDirection("asc");
-          },
-          onDesc: () => {
-            setSortBy("name");
-            setNameSortDirection("desc");
-          },
-          ascAriaLabel: "Sort models by name ascending",
-          descAriaLabel: "Sort models by name descending",
-        },
+        truncate: false,
+        sortable: true,
+        sortAccessor: (model) => model.name ?? "",
         cell: (model) => (
-          <Text fontSize="sm" noOfLines={1} title={model.name}>
-            {model.name}
+          <Text fontWeight="bold" fontSize="14px" color="gray.800" noOfLines={1} title={model.name || model.modelId}>
+            {model.name || model.modelId || "—"}
           </Text>
         ),
       },
       {
         id: "version",
         header: "Version",
+        sortable: true,
+        sortAccessor: (model) => model.version ?? "",
         cell: (model) => (
           <Text fontSize="sm" fontWeight="medium">
             {model.version || "1.0"}
@@ -829,11 +824,25 @@ const ModelManagementPage: React.FC = () => {
       {
         id: "created",
         header: "Created At",
-        cell: (model) => (
-          <Text fontSize="sm" color="gray.600">
-            {model.createdAt ? new Date(model.createdAt).toLocaleDateString() : "N/A"}
-          </Text>
-        ),
+        sortable: true,
+        sortAccessor: (model) => {
+          if (model.createdAt != null) return new Date(model.createdAt).getTime();
+          if (model.submittedOn != null) return model.submittedOn * 1000;
+          return 0;
+        },
+        cell: (model) => {
+          const createdMs =
+            model.createdAt != null
+              ? new Date(model.createdAt).getTime()
+              : model.submittedOn != null
+                ? model.submittedOn * 1000
+                : NaN;
+          return (
+            <Text fontSize="sm" color="gray.600">
+              {Number.isFinite(createdMs) ? new Date(createdMs).toLocaleDateString() : "N/A"}
+            </Text>
+          );
+        },
       },
       {
         id: "actions",
@@ -886,7 +895,7 @@ const ModelManagementPage: React.FC = () => {
       },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nameSortDirection, modelIdsWithPublishedService, updatingModelId, isRegistryReadOnly]);
+  }, [modelSort, modelIdsWithPublishedService, updatingModelId, isRegistryReadOnly]);
 
   return (
     <>
@@ -949,10 +958,13 @@ const ModelManagementPage: React.FC = () => {
                       </Heading>
                     </CardHeader>
                     <CardBody>
-                      <AdminDataTable
+                      <DataTable
+                        layout="admin"
                         key={`${filterTaskType}-${filterVersionStatus}`}
                         items={registryTableItems}
                         columns={modelColumns}
+            sort={modelSort.sort}
+            onSortChange={modelSort.onSortChange}
                         getRowKey={(model) => model.modelId}
                         onRowClick={(model) => handleViewModel(model.modelId)}
                         paginate="client"
@@ -964,90 +976,49 @@ const ModelManagementPage: React.FC = () => {
                         unfilteredCount={models.length}
                         hasActiveFilters={hasActiveFilters}
                         onClearFilters={clearAllFilters}
-                        filters={
-                          <VStack align="stretch" spacing={3} w="full">
-                            <FormFieldsRow>
-                              <TableSearchField
-                                label="Search"
-                                value={searchQuery}
-                                onChange={setSearchQuery}
-                                placeholder="Search by model name..."
-                                formControlProps={{ w: { base: "full", md: "280px" } }}
-                              />
-                              <TableSelectField
-                                label="Status"
-                                value={filterVersionStatus}
-                                onChange={setFilterVersionStatus}
-                                formControlProps={{ w: { base: "full", sm: "140px" } }}
-                              >
-                                <option value={MODEL_VERSION.FILTER.ALL}>All</option>
-                                {MODEL_VERSION_FILTER_LIST.map((s) => (
-                                  <option key={s} value={s}>
-                                    {formatModelVersionFilterLabel(s)}
-                                  </option>
-                                ))}
-                              </TableSelectField>
-                              <TableSelectField
-                                label="Task type"
-                                value={filterTaskType}
-                                onChange={setFilterTaskType}
-                                formControlProps={{ w: { base: "full", sm: "160px" } }}
-                              >
-                                {showTaskTypeAllOption && (
-                                  <option value="">All</option>
-                                )}
-                                {taskTypeNames?.map((t) => (
-                                  <option key={t} value={t}>
-                                    {formatModelTaskTypeLabel(t)}
-                                  </option>
-                                ))}
-                              </TableSelectField>
-                            </FormFieldsRow>
-                            {hasActiveFilters && (
-                              <HStack spacing={2} flexWrap="wrap">
-                                {searchQuery.trim() && (
-                                  <Badge
-                                    colorScheme="blue"
-                                    fontSize="xs"
-                                    px={2}
-                                    py={1}
-                                    cursor="pointer"
-                                    onClick={() => setSearchQuery("")}
-                                    _hover={{ opacity: 0.8 }}
-                                  >
-                                    Search: &quot;{searchQuery.trim()}&quot; ×
-                                  </Badge>
-                                )}
-                                {filterVersionStatus && (
-                                  <Badge
-                                    colorScheme="gray"
-                                    fontSize="xs"
-                                    px={2}
-                                    py={1}
-                                    cursor="pointer"
-                                    onClick={() => setFilterVersionStatus("")}
-                                    _hover={{ opacity: 0.8 }}
-                                  >
-                                    Status: {formatModelVersionFilterLabel(filterVersionStatus)} ×
-                                  </Badge>
-                                )}
-                                {showTaskTypeAllOption && filterTaskType && (
-                                  <Badge
-                                    colorScheme="purple"
-                                    fontSize="xs"
-                                    px={2}
-                                    py={1}
-                                    cursor="pointer"
-                                    onClick={() => setFilterTaskType("")}
-                                    _hover={{ opacity: 0.8 }}
-                                  >
-                                    Task type: {formatModelTaskTypeLabel(filterTaskType)} ×
-                                  </Badge>
-                                )}
-                              </HStack>
-                            )}
-                          </VStack>
-                        }
+                        search={{
+                          label: "Search",
+                          value: searchQuery,
+                          onChange: setSearchQuery,
+                          placeholder: "Search by model name...",
+                          fields: ["model_name", "name"],
+                        }}
+                        filterDefs={[
+                          {
+                            id: "status",
+                            label: "Status",
+                            type: "select",
+                            param: "version_status",
+                            value: filterVersionStatus,
+                            onChange: setFilterVersionStatus,
+                            width: { base: "full", sm: "140px" },
+                            options: [
+                              { label: "All", value: MODEL_VERSION.FILTER.ALL },
+                              ...MODEL_VERSION_FILTER_LIST.map((s) => ({
+                                label: formatModelVersionFilterLabel(s),
+                                value: s,
+                              })),
+                            ],
+                          },
+                          {
+                            id: "taskType",
+                            label: "Task type",
+                            type: "select",
+                            param: "model_task_type",
+                            value: filterTaskType,
+                            onChange: setFilterTaskType,
+                            width: { base: "full", sm: "160px" },
+                            options: [
+                              ...(showTaskTypeAllOption
+                                ? [{ label: "All", value: "" }]
+                                : []),
+                              ...taskTypeNames.map((t) => ({
+                                label: formatModelTaskTypeLabel(t),
+                                value: t,
+                              })),
+                            ],
+                          },
+                        ]}
                       />
                     </CardBody>
                   </Card>

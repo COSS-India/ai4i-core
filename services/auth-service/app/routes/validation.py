@@ -36,6 +36,7 @@ from app.schemas.token import (
 from app.services.api_key_service import APIKeyService
 from app.services.cache_service import CacheService
 from app.services.tenant_name_cache import tenant_name_cache
+from app.services.tier_status_cache import tier_status_cache
 from app.utils.budget_window import is_budget_window_expired
 
 
@@ -229,6 +230,22 @@ async def _validate_api_key(
     application_id = result.get("application_id")
     api_key_id = result.get("id")
     tenant_id = result.get("tenant_id")
+
+    # ── Tier status check — runs before budget/quota ────────────────────────
+    # A paused tier outranks an exhausted quota: reporting "quota exceeded" for
+    # a suspended tenant sends them chasing the wrong thing. 403, not 429 —
+    # this is not a rate condition that clears on retry.
+    # API-key branch only; JWT emits an empty tier_id and skips this block.
+    # Fails open: an unknown tier (cache not yet loaded) is treated as ACTIVE.
+    _tier_id = result.get("tier_id")
+    if _tier_id and not tier_status_cache.is_active(_tier_id):
+        return JSONResponse(
+            status_code=403,
+            content=ValidateTokenErrorResponse(
+                error="TIER_DEACTIVATED",
+                message="Your tier has been deactivated. Please contact your administrator.",
+            ).model_dump(),
+        )
 
     # ── PPU enforcement — decided HERE, not in APISIX ──────────────────────
     # APISIX only forward-auths (and rate-limits); a 429 from this endpoint

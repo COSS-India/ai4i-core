@@ -89,6 +89,10 @@ class AuthSettings(BaseSettings):
     # a stale tombstone.
     invalid_api_key_cache_ttl_seconds: int = 1 * 24 * 60 * 60
 
+    # ── Tier status cache (in-memory, loaded from platform-core DB) ──
+    # Propagation bound for Deactivate/Reactivate at the validation hot path.
+    tier_status_cache_refresh_interval_seconds: int = 600  # 10 minutes
+
     # ── PII field encryption (email / phone at rest) ──
     # Base64- or hex-encoded AES-SIV key (decodes to 32, 48, or 64 bytes; use
     # 64 for AES-256-SIV). Deterministic so encrypted email can be compared
