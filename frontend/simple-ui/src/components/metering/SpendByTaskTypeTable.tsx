@@ -1,15 +1,15 @@
 import { Box, HStack, Table, Tbody, Td, Text, Thead, Tr } from "@chakra-ui/react";
 import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
+import type { TenantTierBreakdown, TierTaskTypeUsage } from "../../types/usageSpend";
 import {
   aggregateTasks,
   taskTypeColor,
   type AggregatedTaskUsage,
 } from "../../utils/usageSpendHelpers";
-import { useMeteringTableSort } from "../../utils/meteringTableSort";
-import type { TenantTierBreakdown, TierTaskTypeUsage } from "../../types/usageSpend";
+import { useTableSort } from "../../utils/tableSort";
+import SortableTh from "../common/SortableTh";
 import { TaskTypeLabel, TierBadge, UsageCell } from "./UsageSpendCells";
-import SortableTh from "./SortableTh";
 
 function quotaUsagePercentage(t: TierTaskTypeUsage | AggregatedTaskUsage): number {
   const limit = t.quotaLimit ?? 0;
@@ -59,7 +59,7 @@ const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
     [],
   );
 
-  const { sortedRows, sortKey, sortDirection, toggleSort } = useMeteringTableSort(
+  const { sortedRows, sortKey, sortDirection, toggleSort } = useTableSort(
     taskRows,
     "consumed",
     sortAccessors,

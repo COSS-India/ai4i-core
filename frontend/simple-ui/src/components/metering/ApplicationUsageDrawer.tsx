@@ -12,18 +12,14 @@ import {
   DrawerOverlay,
   HStack,
   Spinner,
-  Table,
-  Tbody,
-  Td,
   Text,
-  Thead,
-  Tr,
   VStack,
 } from "@chakra-ui/react";
-import React from "react";
+import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
 import type { ApplicationUsageDetail } from "../../types/applicationUsage";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
+import DataTable, { type DataTableColumn } from "../common/table";
 import {
   AllocatedPctPill,
   ApiKeyStatusBadge,
@@ -31,7 +27,6 @@ import {
   ApplicationSpendCell,
 } from "./ApplicationUsageCells";
 import { BudgetCell, TenantAvatar } from "./UsageSpendCells";
-import { ThWithTip } from "../common/InfoTip";
 
 interface ApplicationUsageDrawerProps {
   isOpen: boolean;
@@ -44,6 +39,8 @@ interface ApplicationUsageDrawerProps {
 
 const CARD_BG = "#eef3fb";
 
+type ApiKeyRow = ApplicationUsageDetail["apiKeys"][number];
+
 const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
   isOpen,
   onClose,
@@ -55,6 +52,107 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
   const copy = METERING.APPLICATION_USAGE;
   const tips = copy.TOOLTIPS;
   const cols = copy.TABLE;
+
+  const apiKeyColumns = useMemo<DataTableColumn<ApiKeyRow>[]>(() => {
+    if (!detail) return [];
+    return [
+      {
+        id: "keyName",
+        header: cols.API_KEY,
+        cell: (key) => (
+          <>
+            <Text fontWeight="bold" fontSize="13.5px" color="gray.800">
+              {key.keyName}
+            </Text>
+            <Text fontFamily="mono" fontSize="11px" color="gray.500" mt="2px">
+              •••• {key.maskedKey}
+            </Text>
+            <ApiKeyStatusBadge isActive={key.isActive} />
+          </>
+        ),
+        footer: (
+          <Text fontWeight="extrabold" fontSize="13px" color="gray.800">
+            Total
+          </Text>
+        ),
+      },
+      {
+        id: "allocated",
+        header: cols.ALLOCATED_SHORT,
+        hint: tips.API_KEY_ALLOCATED,
+        cell: (key) => {
+          const keyLimit = key.allocatedBudget.amount;
+          const keyHasBudget = keyLimit > 0;
+          return keyHasBudget ? (
+            <Text fontSize="13px" fontWeight="bold" color="gray.800">
+              {formatSpendMoney(keyLimit, currency)}
+              <AllocatedPctPill pct={key.allocatedBudget.percentage} />
+            </Text>
+          ) : (
+            <Text fontSize="12px" color="gray.500" fontStyle="italic">
+              {cols.NO_BUDGET}
+            </Text>
+          );
+        },
+        footer: (
+          <Text fontWeight="extrabold" fontSize="13px" color="gray.800">
+            {formatSpendMoney(detail.totals.allocatedBudget, currency)}
+          </Text>
+        ),
+      },
+      {
+        id: "spend",
+        header: cols.SPEND_SHORT,
+        hint: tips.API_KEY_SPEND,
+        cell: (key) => {
+          const keyLimit = key.allocatedBudget.amount;
+          const keySpent = key.spendBudget.amount;
+          const keyRemaining = key.remainingBudget.amount;
+          const keyHasBudget = keyLimit > 0;
+          const keyPct = keyHasBudget ? (keySpent / keyLimit) * 100 : 0;
+          return (
+            <ApplicationSpendCell
+              spent={keySpent}
+              remaining={keyRemaining}
+              pctUsed={keyPct}
+              currency={currency}
+              hasBudget={keyHasBudget}
+              noBudgetLabel={cols.NO_BUDGET}
+            />
+          );
+        },
+        footer: (
+          <Text fontWeight="extrabold" fontSize="13px" color="gray.800">
+            {formatSpendMoney(detail.totals.spendBudget, currency)}
+          </Text>
+        ),
+      },
+      {
+        id: "remaining",
+        header: cols.REMAINING_SHORT,
+        hint: tips.API_KEY_REMAINING,
+        cell: (key) => {
+          const keyLimit = key.allocatedBudget.amount;
+          const keyRemaining = key.remainingBudget.amount;
+          const keyHasBudget = keyLimit > 0;
+          return (
+            <ApplicationRemainingCell
+              remaining={keyRemaining}
+              pctOfAllocation={key.remainingBudget.percentage}
+              currency={currency}
+              hasBudget={keyHasBudget}
+              ofAllocationLabel={cols.REMAINING_OF_KEY_ALLOCATION}
+            />
+          );
+        },
+        footer: (
+          <Text fontWeight="extrabold" fontSize="13px" color="gray.800">
+            {formatSpendMoney(detail.totals.remainingBudget, currency)}
+          </Text>
+        ),
+      },
+    ];
+  }, [cols, currency, detail, tips]);
 
   let body: React.ReactNode = null;
   if (isLoading && !detail) {
@@ -128,108 +226,17 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
               {copy.DRAWER_NO_KEYS}
             </Text>
           ) : (
-            <Box overflowX="auto" borderWidth="1px" borderColor="gray.300" borderRadius="10px">
-              <Table size="sm" variant="simple">
-                <Thead bg="#FAFBFD">
-                  <Tr>
-                    <ThWithTip fontSize="10.5px" letterSpacing="0.03em" color="gray.500">
-                      {cols.API_KEY}
-                    </ThWithTip>
-                    <ThWithTip
-                      fontSize="10.5px"
-                      letterSpacing="0.03em"
-                      color="gray.500"
-                      message={tips.API_KEY_ALLOCATED}
-                    >
-                      {cols.ALLOCATED_SHORT}
-                    </ThWithTip>
-                    <ThWithTip
-                      fontSize="10.5px"
-                      letterSpacing="0.03em"
-                      color="gray.500"
-                      message={tips.API_KEY_SPEND}
-                    >
-                      {cols.SPEND_SHORT}
-                    </ThWithTip>
-                    <ThWithTip
-                      fontSize="10.5px"
-                      letterSpacing="0.03em"
-                      color="gray.500"
-                      message={tips.API_KEY_REMAINING}
-                    >
-                      {cols.REMAINING_SHORT}
-                    </ThWithTip>
-                  </Tr>
-                </Thead>
-                <Tbody>
-                  {detail.apiKeys.map((key) => {
-                    const keyLimit = key.allocatedBudget.amount;
-                    const keySpent = key.spendBudget.amount;
-                    const keyRemaining = key.remainingBudget.amount;
-                    const keyHasBudget = keyLimit > 0;
-                    const keyPct = keyHasBudget ? (keySpent / keyLimit) * 100 : 0;
-                    return (
-                      <Tr key={key.keyId}>
-                        <Td verticalAlign="top">
-                          <Text fontWeight="bold" fontSize="13.5px" color="gray.800">
-                            {key.keyName}
-                          </Text>
-                          <Text fontFamily="mono" fontSize="11px" color="gray.500" mt="2px">
-                            •••• {key.maskedKey}
-                          </Text>
-                          <ApiKeyStatusBadge isActive={key.isActive} />
-                        </Td>
-                        <Td verticalAlign="top">
-                          {keyHasBudget ? (
-                            <Text fontSize="13px" fontWeight="bold" color="gray.800">
-                              {formatSpendMoney(keyLimit, currency)}
-                              <AllocatedPctPill pct={key.allocatedBudget.percentage} />
-                            </Text>
-                          ) : (
-                            <Text fontSize="12px" color="gray.500" fontStyle="italic">
-                              {cols.NO_BUDGET}
-                            </Text>
-                          )}
-                        </Td>
-                        <Td verticalAlign="top">
-                          <ApplicationSpendCell
-                            spent={keySpent}
-                            remaining={keyRemaining}
-                            pctUsed={keyPct}
-                            currency={currency}
-                            hasBudget={keyHasBudget}
-                            noBudgetLabel={cols.NO_BUDGET}
-                          />
-                        </Td>
-                        <Td verticalAlign="top">
-                          <ApplicationRemainingCell
-                            remaining={keyRemaining}
-                            pctOfAllocation={key.remainingBudget.percentage}
-                            currency={currency}
-                            hasBudget={keyHasBudget}
-                            ofAllocationLabel={cols.REMAINING_OF_KEY_ALLOCATION}
-                          />
-                        </Td>
-                      </Tr>
-                    );
-                  })}
-                  <Tr bg="#FAFBFD">
-                    <Td fontWeight="extrabold" fontSize="13px" color="gray.800">
-                      Total
-                    </Td>
-                    <Td fontWeight="extrabold" fontSize="13px" color="gray.800">
-                      {formatSpendMoney(detail.totals.allocatedBudget, currency)}
-                    </Td>
-                    <Td fontWeight="extrabold" fontSize="13px" color="gray.800">
-                      {formatSpendMoney(detail.totals.spendBudget, currency)}
-                    </Td>
-                    <Td fontWeight="extrabold" fontSize="13px" color="gray.800">
-                      {formatSpendMoney(detail.totals.remainingBudget, currency)}
-                    </Td>
-                  </Tr>
-                </Tbody>
-              </Table>
-            </Box>
+            <DataTable
+              columns={apiKeyColumns}
+              rows={detail.apiKeys}
+              rowKey={(key) => key.keyId}
+              sortable={false}
+              showFooter
+              variant="compact"
+              borderRadius="10px"
+              theadBg="#FAFBFD"
+              showAsyncState={false}
+            />
           )}
         </Box>
       </VStack>

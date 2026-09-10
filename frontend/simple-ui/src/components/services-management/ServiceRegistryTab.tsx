@@ -10,12 +10,13 @@ import {
 } from "@chakra-ui/react";
 import FormFieldsRow from "../common/FormFieldsRow";
 import React from "react";
-import AdminDataTable, {
+import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
   TableSearchField,
   TableSelectField,
-  type AdminTableColumn,
-} from "../common/AdminDataTable";
+  type DataTableColumn,
+  type DataTableSortState,
+} from "../common/table";
 import { formatModelTaskTypeLabel } from "../../config/constants";
 import type { Service } from "../../services/servicesManagementService";
 
@@ -23,7 +24,9 @@ interface ServiceRegistryTabProps {
   cardBg: string;
   cardBorder: string;
   items: Service[];
-  columns: AdminTableColumn<Service>[];
+  columns: DataTableColumn<Service>[];
+  sort?: DataTableSortState;
+  onSortChange?: (next: DataTableSortState) => void;
   isLoading: boolean;
   totalServicesCount: number;
   onRowClick: (service: Service) => void;
@@ -44,6 +47,8 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
   cardBorder,
   items,
   columns,
+  sort,
+  onSortChange,
   isLoading,
   totalServicesCount,
   onRowClick,
@@ -71,10 +76,13 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
         </Heading>
       </CardHeader>
       <CardBody>
-        <AdminDataTable
+        <DataTable
+          layout="admin"
           key={tableKey}
           items={items}
           columns={columns}
+          sort={sort}
+          onSortChange={onSortChange}
           getRowKey={(service) => service.serviceId || service.service_id || ""}
           onRowClick={onRowClick}
           paginate="client"

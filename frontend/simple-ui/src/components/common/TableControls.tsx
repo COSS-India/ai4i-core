@@ -1,16 +1,34 @@
 import React from "react";
-import { Button, HStack, IconButton, Select, Text, Tooltip, useColorModeValue } from "@chakra-ui/react";
+import { TriangleDownIcon, TriangleUpIcon } from "@chakra-ui/icons";
+import {
+  Button,
+  HStack,
+  IconButton,
+  Select,
+  Text,
+  Tooltip,
+  useColorModeValue,
+} from "@chakra-ui/react";
 import { FORM_LABEL_TO_INPUT_PT } from "./FormFieldsRow";
+import InfoTip from "./InfoTip";
 
+/** App-wide table — prefer importing from `./table` or `./DataTable`. */
 export {
-  default as AdminDataTable,
+  DataTable as default,
+  DataTable,
   TableSearchField,
   TableSelectField,
+  DATA_TABLE_HEADER_SX,
+  DATA_TABLE_CELL_MAX_W,
+  type DataTableColumn,
+  type DataTableProps,
+} from "./DataTable";
+
+export {
   useAdminDataTable,
   useAdminDataTableServer,
   DEFAULT_PAGE_SIZE_OPTIONS,
-} from "./AdminDataTable";
-export type { AdminTableColumn, AdminDataTableProps } from "./AdminDataTable";
+} from "../../hooks/useAdminDataTable";
 
 /** Shared light/dark surface tokens for admin data tables (list pages, profile tabs, etc.). */
 export function useAdminTableSurface() {
@@ -21,7 +39,6 @@ export function useAdminTableSurface() {
   const borderColor = useColorModeValue("gray.200", "gray.700");
   return { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor };
 }
-import { TriangleDownIcon, TriangleUpIcon } from "@chakra-ui/icons";
 
 type SortDirection = "asc" | "desc";
 
@@ -34,6 +51,9 @@ export function TableSortHeader({
   descAriaLabel,
   ascTooltipLabel,
   descTooltipLabel,
+  /** When false, neither button is solid (inactive column). Default true. */
+  active = true,
+  hint,
 }: {
   label: string;
   direction: SortDirection;
@@ -43,18 +63,31 @@ export function TableSortHeader({
   descAriaLabel: string;
   ascTooltipLabel?: string;
   descTooltipLabel?: string;
+  active?: boolean;
+  /** Optional circled-i tip beside the label. */
+  hint?: string;
 }) {
   const ascTooltip = ascTooltipLabel ?? `Sort ${label} ascending`;
   const descTooltip = descTooltipLabel ?? `Sort ${label} descending`;
   return (
-    <HStack spacing={2}>
-      <Text>{label}</Text>
+    <HStack spacing={1.5}>
+      <Text
+        as="span"
+        fontSize="11.5px"
+        letterSpacing="0.05em"
+        color="gray.500"
+        textTransform="uppercase"
+        fontWeight="bold"
+      >
+        {label}
+      </Text>
+      {hint ? <InfoTip message={hint} /> : null}
       <Tooltip label={ascTooltip} hasArrow>
         <IconButton
           aria-label={ascAriaLabel}
           icon={<TriangleUpIcon />}
           size="xs"
-          variant={direction === "asc" ? "solid" : "ghost"}
+          variant={active && direction === "asc" ? "solid" : "ghost"}
           colorScheme="gray"
           onClick={onAsc}
         />
@@ -64,7 +97,7 @@ export function TableSortHeader({
           aria-label={descAriaLabel}
           icon={<TriangleDownIcon />}
           size="xs"
-          variant={direction === "desc" ? "solid" : "ghost"}
+          variant={active && direction === "desc" ? "solid" : "ghost"}
           colorScheme="gray"
           onClick={onDesc}
         />
@@ -73,6 +106,22 @@ export function TableSortHeader({
   );
 }
 
+const PAGINATION_BTN_SX = {
+  size: "sm" as const,
+  variant: "ghost" as const,
+  color: "gray.700",
+  fontWeight: "medium" as const,
+  borderRadius: "8px",
+  px: 3,
+  h: "32px",
+  _hover: { bg: "gray.100", color: "gray.900" },
+  _disabled: { opacity: 0.4, cursor: "not-allowed" },
+};
+
+/**
+ * Existing pagination controls used by {@link DataTable}.
+ * Logic/API unchanged — visual styles aligned with the DataTable shell.
+ */
 export function TablePaginationBar({
   startRow,
   endRow,
@@ -88,8 +137,15 @@ export function TablePaginationBar({
   onLast,
   canPrev,
   canNext,
-  borderColor = "gray.200",
-  bg = "white",
+  borderColor = "gray.300",
+  bg = "#FAFBFD",
+  /**
+   * - `attached` — flush footer/header inside the DataTable border shell (default for DataTable)
+   * - `standalone` — spaced bar for rare external use
+   */
+  variant = "attached",
+  /** Which edge of the table the bar sits on (controls divider side). */
+  placement = "bottom",
 }: {
   startRow: number;
   endRow: number;
@@ -107,52 +163,92 @@ export function TablePaginationBar({
   canNext: boolean;
   borderColor?: string;
   bg?: string;
+  variant?: "attached" | "standalone";
+  placement?: "top" | "bottom";
 }) {
+  const attached = variant === "attached";
+  const edgeBorder =
+    placement === "top"
+      ? { borderBottomWidth: "1px" as const, borderTopWidth: 0 as const }
+      : { borderTopWidth: "1px" as const, borderBottomWidth: 0 as const };
+
   return (
     <HStack
-      mt={4}
+      mt={attached ? 0 : 4}
+      px={4}
+      py={3}
       justify="space-between"
       align="center"
       flexWrap="wrap"
-      gap={2}
-      borderTopWidth="1px"
+      gap={3}
+      bg={bg}
       borderColor={borderColor}
-      pt={4}
+      {...edgeBorder}
+      aria-label="Table pagination"
     >
-      <Text fontSize="sm" color="gray.600">
+      <Text fontSize="sm" color="gray.600" fontWeight="medium">
         {totalItems === 0 ? "No items" : `${startRow}–${endRow} of ${totalItems}`}
       </Text>
-      <HStack spacing={2} align="center" flexWrap="wrap">
-        <Text fontSize="sm" color="gray.600" whiteSpace="nowrap">
-          Rows per page
-        </Text>
-        <Select
-          size="sm"
-          w="70px"
-          value={pageSize}
-          onChange={(e) => onPageSizeChange(Number(e.target.value))}
-          bg={bg}
+      <HStack spacing={3} align="center" flexWrap="wrap">
+        <HStack spacing={2} align="center">
+          <Text
+            fontSize="11.5px"
+            letterSpacing="0.04em"
+            color="gray.500"
+            textTransform="uppercase"
+            fontWeight="bold"
+            whiteSpace="nowrap"
+          >
+            Rows per page
+          </Text>
+          <Select
+            size="sm"
+            w="72px"
+            value={pageSize}
+            onChange={(e) => onPageSizeChange(Number(e.target.value))}
+            bg="white"
+            borderColor="gray.300"
+            borderRadius="8px"
+            h="32px"
+            aria-label="Rows per page"
+          >
+            {pageSizeOptions.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </Select>
+        </HStack>
+        <HStack
+          spacing={0.5}
+          align="center"
+          borderWidth="1px"
+          borderColor="gray.300"
+          borderRadius="10px"
+          bg="white"
+          p="2px"
         >
-          {pageSizeOptions.map((n) => (
-            <option key={n} value={n}>
-              {n}
-            </option>
-          ))}
-        </Select>
-        <HStack spacing={1}>
-          <Button size="sm" variant="outline" onClick={onFirst} isDisabled={!canPrev} aria-label="First page">
+          <Button {...PAGINATION_BTN_SX} onClick={onFirst} isDisabled={!canPrev} aria-label="First page">
             First
           </Button>
-          <Button size="sm" variant="outline" onClick={onPrev} isDisabled={!canPrev} aria-label="Previous page">
+          <Button {...PAGINATION_BTN_SX} onClick={onPrev} isDisabled={!canPrev} aria-label="Previous page">
             Previous
           </Button>
-          <Text fontSize="sm" color="gray.600" px={2}>
+          <Text
+            fontSize="sm"
+            color="gray.700"
+            fontWeight="semibold"
+            px={3}
+            minW="7.5rem"
+            textAlign="center"
+            userSelect="none"
+          >
             Page {page} of {totalPages}
           </Text>
-          <Button size="sm" variant="outline" onClick={onNext} isDisabled={!canNext} aria-label="Next page">
+          <Button {...PAGINATION_BTN_SX} onClick={onNext} isDisabled={!canNext} aria-label="Next page">
             Next
           </Button>
-          <Button size="sm" variant="outline" onClick={onLast} isDisabled={!canNext} aria-label="Last page">
+          <Button {...PAGINATION_BTN_SX} onClick={onLast} isDisabled={!canNext} aria-label="Last page">
             Last
           </Button>
         </HStack>

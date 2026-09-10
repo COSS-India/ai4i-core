@@ -4,6 +4,7 @@ import { useDisclosure } from "@chakra-ui/react";
 import { useRouter } from "next/router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredNameSort } from "../utils/tableSort";
 import {
   fetchAllServicesMatchingFilters,
   fetchExistingServiceIds,
@@ -130,10 +131,7 @@ export function useServicesManagement() {
     if (taskTypeNames.length === 1) setFilterTaskType(taskTypeNames[0]);
     setTaskTypeFilterReady(true);
   }, [isLoadingTaskTypes, taskTypeNames]);
-  const [sortBy, setSortBy] = useState<"time" | "name">("time");
-  const [nameSortDirection, setNameSortDirection] = useState<"asc" | "desc">(
-    "asc",
-  );
+  const nameSort = useDeferredNameSort("name");
   const [confirmPublishService, setConfirmPublishService] =
     useState<Service | null>(null);
   const [confirmUnpublishService, setConfirmUnpublishService] =
@@ -163,16 +161,8 @@ export function useServicesManagement() {
     const filtered = q
       ? services.filter((s) => (s.name ?? "").toLowerCase().includes(q))
       : services;
-    if (sortBy === "time") return filtered;
-    return [...filtered].sort((a, b) => {
-      const nameCmp = (a.name ?? "").localeCompare(b.name ?? "", undefined, {
-        sensitivity: "base",
-      });
-      if (nameCmp !== 0)
-        return nameSortDirection === "asc" ? nameCmp : -nameCmp;
-      return 0;
-    });
-  }, [services, searchQuery, sortBy, nameSortDirection]);
+    return nameSort.apply(filtered, (s) => s.name ?? "");
+  }, [services, searchQuery, nameSort]);
 
   const showTaskTypeAllOption = taskTypeNames.length > 1;
   const hasActiveFilters =
@@ -1251,15 +1241,6 @@ export function useServicesManagement() {
     }
   };
 
-  const handleSortNameAsc = () => {
-    setSortBy("name");
-    setNameSortDirection("asc");
-  };
-
-  const handleSortNameDesc = () => {
-    setSortBy("name");
-    setNameSortDirection("desc");
-  };
 
   return {
     isRegistryReadOnly,
@@ -1281,9 +1262,7 @@ export function useServicesManagement() {
     taskTypeNames,
     hasActiveFilters,
     clearAllFilters,
-    nameSortDirection,
-    handleSortNameAsc,
-    handleSortNameDesc,
+    nameSort,
     handleViewService,
     handleEditService,
     handleDeleteClick,

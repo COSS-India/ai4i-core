@@ -23,7 +23,7 @@ import ManagementPageHeader from "../common/ManagementPageHeader";
 import type { Service } from "../../services/servicesManagementService";
 import ConfirmDialog from "../common/ConfirmDialog";
 import { useAdminTableSurface } from "../common/TableControls";
-import { type AdminTableColumn } from "../common/AdminDataTable";
+import { type DataTableColumn } from "../common/table";
 import { useServicesManagement } from "../../hooks/useServicesManagement";
 import ServiceRegistryTab from "./ServiceRegistryTab";
 import ServiceFormTab from "./ServiceFormTab";
@@ -80,9 +80,7 @@ const ServicesManagement: React.FC = () => {
     taskTypeNames,
     hasActiveFilters,
     clearAllFilters,
-    nameSortDirection,
-    handleSortNameAsc,
-    handleSortNameDesc,
+    nameSort,
     handleViewService,
     handleEditService,
     handleDeleteClick,
@@ -142,19 +140,12 @@ const ServicesManagement: React.FC = () => {
     cancelUnpublishRef,
   } = useServicesManagement();
 
-  const serviceColumns = useMemo((): AdminTableColumn<Service>[] => {
+  const serviceColumns = useMemo((): DataTableColumn<Service>[] => {
     return [
       {
         id: "name",
         header: "Name",
-        sortable: {
-          label: "Name",
-          direction: nameSortDirection,
-          onAsc: handleSortNameAsc,
-          onDesc: handleSortNameDesc,
-          ascAriaLabel: "Sort services by name ascending",
-          descAriaLabel: "Sort services by name descending",
-        },
+        sortable: true,
         cell: (service) => (
           <Text fontSize="sm" noOfLines={1} title={service.name}>
             {service.name || "N/A"}
@@ -332,7 +323,7 @@ const ServicesManagement: React.FC = () => {
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    nameSortDirection,
+    nameSort,
     unpublishingServiceUuid,
     publishingServiceUuid,
     deletingServiceUuid,
@@ -388,6 +379,8 @@ const ServicesManagement: React.FC = () => {
                     cardBorder={cardBorder}
                     items={registryTableItems}
                     columns={serviceColumns}
+                    sort={nameSort.sort}
+                    onSortChange={nameSort.onSortChange}
                     isLoading={isLoading}
                     totalServicesCount={totalServicesCount}
                     onRowClick={(service) =>

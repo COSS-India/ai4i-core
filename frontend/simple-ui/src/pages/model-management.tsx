@@ -60,12 +60,13 @@ import { stripJsonComments } from "../utils/stripJsonComments";
 import { showToast } from "../utils/toast";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import { useAdminTableSurface } from "../components/common/TableControls";
-import AdminDataTable, {
+import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
   TableSearchField,
   TableSelectField,
-  type AdminTableColumn,
-} from "../components/common/AdminDataTable";
+  type DataTableColumn,
+} from "../components/common/table";
+import { useDeferredNameSort } from "../utils/tableSort";
 import {
   MODEL_VERSION,
   MODEL_VERSION_FILTER_LIST,
@@ -139,8 +140,7 @@ const ModelManagementPage: React.FC = () => {
     if (taskTypeNames.length === 1) setFilterTaskType(taskTypeNames[0]);
     setTaskTypeFilterReady(true);
   }, [isLoadingTaskTypes, taskTypeNames]);
-  const [sortBy, setSortBy] = useState<"time" | "name">("time");
-  const [nameSortDirection, setNameSortDirection] = useState<"asc" | "desc">("asc");
+  const nameSort = useDeferredNameSort("name");
   const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure();
   const cancelConfirmRef = React.useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -231,13 +231,8 @@ const ModelManagementPage: React.FC = () => {
     const filtered = q
       ? models.filter((m) => (m.name ?? "").toLowerCase().includes(q))
       : models;
-    if (sortBy === "time") return filtered;
-    return [...filtered].sort((a, b) => {
-      const nameCmp = (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" });
-      if (nameCmp !== 0) return nameSortDirection === "asc" ? nameCmp : -nameCmp;
-      return 0;
-    });
-  }, [models, searchQuery, sortBy, nameSortDirection]);
+    return nameSort.apply(filtered, (m) => m.name ?? "");
+  }, [models, searchQuery, nameSort]);
 
   const showTaskTypeAllOption = taskTypeNames.length > 1;
   const hasActiveFilters =
@@ -768,28 +763,16 @@ const ModelManagementPage: React.FC = () => {
     setConfirmAction(null);
   };
 
-  const modelColumns = useMemo((): AdminTableColumn<Model>[] => {
+  const modelColumns = useMemo((): DataTableColumn<Model>[] => {
     return [
       {
         id: "name",
         header: "Name",
-        sortable: {
-          label: "Name",
-          direction: nameSortDirection,
-          onAsc: () => {
-            setSortBy("name");
-            setNameSortDirection("asc");
-          },
-          onDesc: () => {
-            setSortBy("name");
-            setNameSortDirection("desc");
-          },
-          ascAriaLabel: "Sort models by name ascending",
-          descAriaLabel: "Sort models by name descending",
-        },
+        truncate: false,
+        sortable: true,
         cell: (model) => (
-          <Text fontSize="sm" noOfLines={1} title={model.name}>
-            {model.name}
+          <Text fontWeight="bold" fontSize="14px" color="gray.800" noOfLines={1} title={model.name || model.modelId}>
+            {model.name || model.modelId || "—"}
           </Text>
         ),
       },
@@ -829,11 +812,19 @@ const ModelManagementPage: React.FC = () => {
       {
         id: "created",
         header: "Created At",
-        cell: (model) => (
-          <Text fontSize="sm" color="gray.600">
-            {model.createdAt ? new Date(model.createdAt).toLocaleDateString() : "N/A"}
-          </Text>
-        ),
+        cell: (model) => {
+          const createdMs =
+            model.createdAt != null
+              ? new Date(model.createdAt).getTime()
+              : model.submittedOn != null
+                ? model.submittedOn * 1000
+                : NaN;
+          return (
+            <Text fontSize="sm" color="gray.600">
+              {Number.isFinite(createdMs) ? new Date(createdMs).toLocaleDateString() : "N/A"}
+            </Text>
+          );
+        },
       },
       {
         id: "actions",
@@ -886,7 +877,7 @@ const ModelManagementPage: React.FC = () => {
       },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nameSortDirection, modelIdsWithPublishedService, updatingModelId, isRegistryReadOnly]);
+  }, [nameSort, modelIdsWithPublishedService, updatingModelId, isRegistryReadOnly]);
 
   return (
     <>
@@ -949,10 +940,13 @@ const ModelManagementPage: React.FC = () => {
                       </Heading>
                     </CardHeader>
                     <CardBody>
-                      <AdminDataTable
+                      <DataTable
+                        layout="admin"
                         key={`${filterTaskType}-${filterVersionStatus}`}
                         items={registryTableItems}
                         columns={modelColumns}
+            sort={nameSort.sort}
+            onSortChange={nameSort.onSortChange}
                         getRowKey={(model) => model.modelId}
                         onRowClick={(model) => handleViewModel(model.modelId)}
                         paginate="client"

@@ -36,11 +36,10 @@ import { formatSpendMoney } from "../../utils/usageSpendHelpers";
 import { FiSlash } from "react-icons/fi";
 import { ViewIcon, EditIcon } from "@chakra-ui/icons";
 import { useAdminTableSurface } from "../common/TableControls";
-import AdminDataTable, {
-  TableSearchField,
-  TableSelectField,
-  type AdminTableColumn,
-} from "../common/AdminDataTable";
+import DataTable, {
+  type DataTableColumn,
+} from "../common/table";
+import { useNameColumnSort } from "../../utils/tableSort";
 import StandardModal from "../common/StandardModal";
 import {
   API_KEY,
@@ -78,20 +77,21 @@ export default function ApiKeyManagementTab({
     onSaved: mgmt.handleFetchAllApiKeys,
   });
 
-  const [keyNameSortDirection, setKeyNameSortDirection] = useState<"asc" | "desc">("asc");
+  const keyNameSort = useNameColumnSort("key_name");
 
-  const sortedApiKeys = useMemo(() => {
-    return [...mgmt.filteredApiKeys].sort((a, b) => {
-      const aName = a.key_name ?? "";
-      const bName = b.key_name ?? "";
-      const nameCmp = aName.localeCompare(bName, undefined, { sensitivity: "base" });
-      if (nameCmp !== 0) return keyNameSortDirection === "asc" ? nameCmp : -nameCmp;
-
-      const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
-      const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
-      return timeB - timeA;
-    });
-  }, [mgmt.filteredApiKeys, keyNameSortDirection]);
+  const sortedApiKeys = useMemo(
+    () =>
+      keyNameSort.apply(
+        mgmt.filteredApiKeys,
+        (a) => a.key_name ?? "",
+        (a, b) => {
+          const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+          return timeB - timeA;
+        },
+      ),
+    [mgmt.filteredApiKeys, keyNameSort],
+  );
 
   const hasActiveFilters =
     mgmt.filterApplication !== "all" ||
@@ -99,19 +99,12 @@ export default function ApiKeyManagementTab({
     mgmt.filterActive !== "all" ||
     mgmt.keyNameSearch.trim() !== "";
 
-  const apiKeyColumns = useMemo((): AdminTableColumn<ApiKeyTableRow>[] => {
+  const apiKeyColumns = useMemo((): DataTableColumn<ApiKeyTableRow>[] => {
     return [
       {
         id: "key_name",
         header: "Key Name",
-        sortable: {
-          label: "Key Name",
-          direction: keyNameSortDirection,
-          onAsc: () => setKeyNameSortDirection("asc"),
-          onDesc: () => setKeyNameSortDirection("desc"),
-          ascAriaLabel: "Sort API keys by name ascending",
-          descAriaLabel: "Sort API keys by name descending",
-        },
+        sortable: true,
         cell: (key) => (
           <Box>
             <Text fontWeight="semibold">{key.key_name}</Text>
@@ -278,7 +271,7 @@ export default function ApiKeyManagementTab({
         ),
       },
     ];
-  }, [keyNameSortDirection, mgmt]);
+  }, [mgmt]);
 
   useEffect(() => {
     onRegisterRefresh?.(mgmt.handleFetchAllApiKeys);
@@ -321,7 +314,8 @@ export default function ApiKeyManagementTab({
           </HStack>
         </CardHeader>
         <CardBody>
-          <AdminDataTable
+          <DataTable
+            layout="admin"
             items={sortedApiKeys}
             columns={apiKeyColumns}
             getRowKey={(key) =>
@@ -337,55 +331,65 @@ export default function ApiKeyManagementTab({
             onClearFilters={mgmt.handleResetFilters}
             showFiltersHeading
             filtersHeading="Filters"
-            filters={
-              <>
-                <TableSearchField
-                  label="Key Name"
-                  value={mgmt.keyNameSearch}
-                  onChange={mgmt.setKeyNameSearch}
-                  placeholder={FIELD_HINTS.apiKey.search.placeholder}
-                />
-                <TableSelectField
-                  label="Application"
-                  value={mgmt.filterApplication}
-                  onChange={mgmt.setFilterApplication}
-                  formControlProps={{ w: { base: "full", md: "280px" } }}
-                >
-                  <option value="all">All Applications</option>
-                  {mgmt.applications.map((app) => (
-                    <option key={app.application_id} value={app.application_id}>
-                      {app.name}
-                    </option>
-                  ))}
-                </TableSelectField>
-                <TableSelectField
-                  label="Permission"
-                  value={mgmt.filterPermission}
-                  onChange={mgmt.setFilterPermission}
-                  formControlProps={{ w: { base: "full", md: "320px" } }}
-                >
-                  <option value="all">All Permissions</option>
-                  {mgmt.permissionFilterOptions.map((perm) => (
-                    <option key={perm.name} value={perm.name}>
-                      {perm.label}
-                    </option>
-                  ))}
-                </TableSelectField>
-                <TableSelectField
-                  label="Status"
-                  value={mgmt.filterActive}
-                  onChange={mgmt.setFilterActive}
-                  formControlProps={{ w: { base: "full", sm: "160px" } }}
-                >
-                  <option value={API_KEY.FILTER_STATUS.ALL}>All</option>
-                  {API_KEY_FILTER_STATUS_LIST.map((s) => (
-                    <option key={s} value={s}>
-                      {formatApiKeyFilterStatusLabel(s)}
-                    </option>
-                  ))}
-                </TableSelectField>
-              </>
-            }
+            sort={keyNameSort.sort}
+            onSortChange={keyNameSort.onSortChange}
+            search={{
+              label: "Key Name",
+              value: mgmt.keyNameSearch,
+              onChange: mgmt.setKeyNameSearch,
+              placeholder: FIELD_HINTS.apiKey.search.placeholder,
+              fields: ["key_name"],
+            }}
+            filterDefs={[
+              {
+                id: "application",
+                label: "Application",
+                type: "select",
+                param: "application_id",
+                value: mgmt.filterApplication,
+                onChange: mgmt.setFilterApplication,
+                width: { base: "full", md: "280px" },
+                options: [
+                  { label: "All Applications", value: "all" },
+                  ...mgmt.applications.map((app) => ({
+                    label: app.name,
+                    value: app.application_id,
+                  })),
+                ],
+              },
+              {
+                id: "permission",
+                label: "Permission",
+                type: "select",
+                param: "permission",
+                value: mgmt.filterPermission,
+                onChange: mgmt.setFilterPermission,
+                width: { base: "full", md: "320px" },
+                options: [
+                  { label: "All Permissions", value: "all" },
+                  ...mgmt.permissionFilterOptions.map((perm) => ({
+                    label: perm.label,
+                    value: perm.name,
+                  })),
+                ],
+              },
+              {
+                id: "status",
+                label: "Status",
+                type: "select",
+                param: "status",
+                value: mgmt.filterActive,
+                onChange: mgmt.setFilterActive,
+                width: { base: "full", sm: "160px" },
+                options: [
+                  { label: "All", value: API_KEY.FILTER_STATUS.ALL },
+                  ...API_KEY_FILTER_STATUS_LIST.map((s) => ({
+                    label: formatApiKeyFilterStatusLabel(s),
+                    value: s,
+                  })),
+                ],
+              },
+            ]}
           />
         </CardBody>
       </Card>

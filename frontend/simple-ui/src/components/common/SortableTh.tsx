@@ -1,13 +1,12 @@
 import { Text } from "@chakra-ui/react";
 import React from "react";
-import { ThWithTip } from "../common/InfoTip";
-import type { MeteringSortDirection } from "../../utils/meteringTableSort";
-import { sortIndicator } from "../../utils/meteringTableSort";
+import { tableSortIndicator, type TableSortDirection } from "../../utils/tableSort";
+import { ThWithTip } from "./InfoTip";
 
-interface SortableThProps {
+export interface SortableThProps {
   sortKey: string;
   activeSortKey: string;
-  sortDirection: MeteringSortDirection;
+  sortDirection: TableSortDirection;
   onSort: (key: string) => void;
   children: React.ReactNode;
   message?: string;
@@ -17,7 +16,7 @@ interface SortableThProps {
   sx?: Record<string, unknown>;
 }
 
-/** Sortable metering table header — click toggles asc/desc on that column. */
+/** Clickable table header that toggles client-side sort on a column. */
 export const SortableTh: React.FC<SortableThProps> = ({
   sortKey,
   activeSortKey,
@@ -43,7 +42,7 @@ export const SortableTh: React.FC<SortableThProps> = ({
     <Text as="span">
       {children}{" "}
       <Text as="span" fontSize="10px" color="gray.400">
-        {sortIndicator(activeSortKey === sortKey, sortDirection)}
+        {tableSortIndicator(activeSortKey === sortKey, sortDirection)}
       </Text>
     </Text>
   </ThWithTip>

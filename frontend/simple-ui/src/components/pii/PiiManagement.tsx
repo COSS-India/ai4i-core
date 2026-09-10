@@ -36,12 +36,13 @@ import { INSTITUTION, INSTITUTIONS } from "../../config/constants";
 import { DeleteIcon, EditIcon } from "@chakra-ui/icons";
 import { piiService } from "../../services/piiService";
 import { useAdminTableSurface } from "../common/TableControls";
-import AdminDataTable, {
+import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
   TableSearchField,
   TableSelectField,
-  type AdminTableColumn,
-} from "../common/AdminDataTable";
+  type DataTableColumn,
+} from "../common/table";
+import { useNameColumnSort } from "../../utils/tableSort";
 import StandardModal from "../common/StandardModal";
 
 interface Rule {
@@ -119,14 +120,14 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
   const [adminDataError, setAdminDataError] = useState<string | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLogRow[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
-  const [rulesSortDirection, setRulesSortDirection] = useState<"asc" | "desc">("asc");
+  const rulesSort = useNameColumnSort("entity");
   const [mappingSearch, setMappingSearch] = useState("");
   const [mappingDomainFilter, setMappingDomainFilter] = useState("all");
-  const [mappingSortDirection, setMappingSortDirection] = useState<"asc" | "desc">("asc");
+  const mappingSort = useNameColumnSort("tenant");
   const [auditSearch, setAuditSearch] = useState("");
   const [auditDomainFilter, setAuditDomainFilter] = useState("all");
   const [auditTenantFilter, setAuditTenantFilter] = useState("all");
-  const [auditSortDirection, setAuditSortDirection] = useState<"asc" | "desc">("desc");
+  const auditSort = useNameColumnSort("created", "desc");
 
   useEffect(() => {
     if (!isAdmin || activeTab !== "audit") return;
@@ -299,16 +300,10 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
 
   const activeDomainCount = allDomains.filter((d) => d.is_active).length;
 
-  const sortedRules = useMemo(() => {
-    const copy = [...editingRules];
-    copy.sort((a, b) => {
-      const nameCmp = (a.entity_type ?? "").localeCompare(b.entity_type ?? "", undefined, {
-        sensitivity: "base",
-      });
-      return rulesSortDirection === "asc" ? nameCmp : -nameCmp;
-    });
-    return copy;
-  }, [editingRules, rulesSortDirection]);
+  const sortedRules = useMemo(
+    () => rulesSort.apply(editingRules, (a) => a.entity_type ?? ""),
+    [editingRules, rulesSort],
+  );
 
   const sortedMappings = useMemo(() => {
     const q = mappingSearch.trim().toLowerCase();
@@ -320,15 +315,8 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
         (row.domain_id ?? "").toLowerCase().includes(q)
       );
     });
-    const copy = [...filtered];
-    copy.sort((a, b) => {
-      const nameCmp = (a.tenant_id ?? "").localeCompare(b.tenant_id ?? "", undefined, {
-        sensitivity: "base",
-      });
-      return mappingSortDirection === "asc" ? nameCmp : -nameCmp;
-    });
-    return copy;
-  }, [tenantMappings, mappingSearch, mappingDomainFilter, mappingSortDirection]);
+    return mappingSort.apply(filtered, (a) => a.tenant_id ?? "");
+  }, [tenantMappings, mappingSearch, mappingDomainFilter, mappingSort]);
 
   const sortedAuditLogs = useMemo(() => {
     const q = auditSearch.trim().toLowerCase();
@@ -343,14 +331,12 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
         (row.target_context ?? "").toLowerCase().includes(q)
       );
     });
-    const copy = [...filtered];
-    copy.sort((a, b) => {
+    return [...filtered].sort((a, b) => {
       const timeA = a.created_at ? new Date(a.created_at).getTime() : -Infinity;
       const timeB = b.created_at ? new Date(b.created_at).getTime() : -Infinity;
-      return auditSortDirection === "asc" ? timeA - timeB : timeB - timeA;
+      return auditSort.direction === "asc" ? timeA - timeB : timeB - timeA;
     });
-    return copy;
-  }, [auditLogs, auditSearch, auditDomainFilter, auditTenantFilter, auditSortDirection]);
+  }, [auditLogs, auditSearch, auditDomainFilter, auditTenantFilter, auditSort.direction]);
 
   const auditDomainOptions = useMemo(() => {
     const ids = new Set<string>();
@@ -374,19 +360,12 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
   const auditHasActiveFilters =
     !!auditSearch.trim() || auditDomainFilter !== "all" || auditTenantFilter !== "all";
 
-  const rulesColumns: AdminTableColumn<Rule>[] = useMemo(
+  const rulesColumns: DataTableColumn<Rule>[] = useMemo(
     () => [
       {
         id: "entity",
         header: "Entity",
-        sortable: {
-          label: "Entity",
-          direction: rulesSortDirection,
-          onAsc: () => setRulesSortDirection("asc"),
-          onDesc: () => setRulesSortDirection("desc"),
-          ascAriaLabel: "Sort rules by entity ascending",
-          descAriaLabel: "Sort rules by entity descending",
-        },
+        sortable: true,
         cell: (r) => (
           <Text fontWeight="bold" fontSize="sm">
             {r.entity_type}
@@ -425,22 +404,15 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
         ),
       },
     ],
-    [rulesSortDirection]
+    [rulesSort]
   );
 
-  const mappingColumns: AdminTableColumn<TenantDomainMappingRow>[] = useMemo(
+  const mappingColumns: DataTableColumn<TenantDomainMappingRow>[] = useMemo(
     () => [
       {
         id: "tenant",
         header: `${INSTITUTION} ID`,
-        sortable: {
-          label: `${INSTITUTION} ID`,
-          direction: mappingSortDirection,
-          onAsc: () => setMappingSortDirection("asc"),
-          onDesc: () => setMappingSortDirection("desc"),
-          ascAriaLabel: `Sort mappings by ${INSTITUTION.toLowerCase()} ascending`,
-          descAriaLabel: `Sort mappings by ${INSTITUTION.toLowerCase()} descending`,
-        },
+        sortable: true,
         cell: (row) => (
           <Text fontFamily="mono" fontSize="xs">
             {row.tenant_id}
@@ -488,22 +460,15 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
         ),
       },
     ],
-    [mappingSortDirection, mutedText]
+    [mappingSort, mutedText]
   );
 
-  const auditColumns: AdminTableColumn<AuditLogRow>[] = useMemo(
+  const auditColumns: DataTableColumn<AuditLogRow>[] = useMemo(
     () => [
       {
         id: "time",
         header: "Time",
-        sortable: {
-          label: "Time",
-          direction: auditSortDirection,
-          onAsc: () => setAuditSortDirection("asc"),
-          onDesc: () => setAuditSortDirection("desc"),
-          ascAriaLabel: "Sort audit logs by time ascending",
-          descAriaLabel: "Sort audit logs by time descending",
-        },
+        sortable: true,
         cell: (row) => (
           <Text fontSize="xs" color={mutedText} whiteSpace="nowrap">
             {row.created_at ? new Date(row.created_at).toLocaleString() : "—"}
@@ -560,7 +525,7 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
         cell: (row) => <Text fontSize="sm">{row.processing_ms ?? 0} ms</Text>,
       },
     ],
-    [auditSortDirection, mutedText]
+    [auditSort, mutedText]
   );
 
   const tabIndex = activeTab === "admin" ? 0 : 1;
@@ -729,10 +694,13 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
                     </HStack>
 
                     <Box flex="1" mb={4}>
-                      <AdminDataTable
-                        key={`rules-${editingDomainId ?? "none"}-${rulesSortDirection}`}
+                      <DataTable
+                        layout="admin"
+                        key={`rules-${editingDomainId ?? "none"}-${rulesSort.direction}`}
                         items={sortedRules}
                         columns={rulesColumns}
+                      sort={rulesSort.sort}
+                      onSortChange={rulesSort.onSortChange}
                         getRowKey={(r) => `${r.entity_type}-${r.action}-${r.custom_regex ?? ""}`}
                         paginate="client"
                         initialPageSize={10}
@@ -868,10 +836,13 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
                         <AlertDescription fontSize="xs">{adminDataError}</AlertDescription>
                       </Alert>
                     ) : null}
-                    <AdminDataTable
-                      key={`mappings-${mappingSortDirection}`}
+                    <DataTable
+                      layout="admin"
+                      key={`mappings-${mappingSort.direction}`}
                       items={sortedMappings}
                       columns={mappingColumns}
+                      sort={mappingSort.sort}
+                      onSortChange={mappingSort.onSortChange}
                       getRowKey={(row) => row.tenant_id}
                       paginate="client"
                       initialPageSize={10}
@@ -968,10 +939,13 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
               </SimpleGrid>
               <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
                 <CardBody>
-                  <AdminDataTable
-                    key={`audit-${auditSortDirection}`}
+                  <DataTable
+                    layout="admin"
+                    key={`audit-${auditSort.direction}`}
                     items={sortedAuditLogs}
                     columns={auditColumns}
+                      sort={auditSort.sort}
+                      onSortChange={auditSort.onSortChange}
                     getRowKey={(row) => String(row.id)}
                     paginate="client"
                     initialPageSize={10}

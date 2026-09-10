@@ -88,11 +88,11 @@ import ConfirmDialog from "../common/ConfirmDialog";
 import ConsentCheckbox, {
   getConsentValidationError,
 } from "../common/ConsentCheckbox";
-import AdminDataTable, {
+import DataTable, {
   TableSearchField,
   TableSelectField,
-  type AdminTableColumn,
-} from "../common/AdminDataTable";
+  type DataTableColumn,
+} from "../common/table";
 import TenantUserRoleBadges from "../common/TenantUserRoleBadges";
 import TierSelect from "./TierSelect";
 import { TENANT_USER_ROLE_OPTIONS } from "./types";
@@ -569,7 +569,7 @@ export default function TenantManagementTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tm.tenantDetailView?.tenant_id]);
 
-  const tenantColumns = useMemo((): AdminTableColumn<TenantView>[] => {
+  const tenantColumns = useMemo((): DataTableColumn<TenantView>[] => {
     return [
       {
         id: "organisation",
@@ -658,7 +658,7 @@ export default function TenantManagementTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tm]);
 
-  const userColumns = useMemo((): AdminTableColumn<TenantUserView>[] => {
+  const userColumns = useMemo((): DataTableColumn<TenantUserView>[] => {
     return [
       {
         id: "username",
@@ -742,7 +742,8 @@ export default function TenantManagementTab({
           </HStack>
         </CardHeader>
         <CardBody>
-          <AdminDataTable
+          <DataTable
+            layout="admin"
             items={tm.filteredTenants}
             columns={tenantColumns}
             getRowKey={(t) => t.tenant_id}
@@ -849,7 +850,8 @@ export default function TenantManagementTab({
 
   function renderTenantUsersTable() {
     return (
-      <AdminDataTable
+      <DataTable
+        layout="admin"
         key={tm.tenantDetailView?.tenant_id ?? "tenant-users"}
         items={tm.filteredTenantUsers}
         columns={userColumns}

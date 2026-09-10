@@ -42,14 +42,12 @@ import { showToast } from "../utils/toast";
 import { INSTITUTION, INSTITUTIONS, INSTITUTION_ARTICLE, isTenantStatus, TENANT, formatModelTaskTypeLabel } from "../config/constants";
 import { useInferenceTypes } from "../hooks/useInferenceTypes";
 import { listTenants } from "../services/tenantService";
-import {
-  useAdminTableSurface,
+import { useAdminTableSurface } from "../components/common/TableControls";
+import DataTable, {
   TableSearchField,
   TableSelectField,
-} from "../components/common/TableControls";
-import AdminDataTable, {
-  type AdminTableColumn,
-} from "../components/common/AdminDataTable";
+  type DataTableColumn,
+} from "../components/common/table";
 import TelemetryTraceDetailModal from "@/components/observability/TelemetryTraceDetailModal";
 import { getPlatformName } from "../config/runtimeConfig";
 import { FIELD_HINTS } from "../config/fieldHints";
@@ -419,7 +417,7 @@ const LogsPage: React.FC = () => {
     setSelectedTraceId(null);
   }, []);
 
-  const traceColumns = useMemo((): AdminTableColumn<TelemetryTraceRecord>[] => {
+  const traceColumns = useMemo((): DataTableColumn<TelemetryTraceRecord>[] => {
     return [
       {
         id: "timestamp",
@@ -628,7 +626,8 @@ const LogsPage: React.FC = () => {
             <CardBody>
               {!tracesError && (
                 <>
-                  <AdminDataTable
+                  <DataTable
+                    layout="admin"
                     items={displayedTraceRows}
                     columns={traceColumns}
                     getRowKey={(row) =>

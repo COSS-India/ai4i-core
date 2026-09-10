@@ -88,12 +88,14 @@ import {
   PERCENTAGE_UNIT,
 } from "../../types/alerting";
 import { useAdminTableSurface } from "../common/TableControls";
-import AdminDataTable, {
+import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
   TableSearchField,
   TableSelectField,
-  type AdminTableColumn,
-} from "../common/AdminDataTable";
+  createActionsColumn,
+  type DataTableColumn,
+} from "../common/table";
+import { useNameColumnSort } from "../../utils/tableSort";
 import type { AlertDefinition, AlertHistoryItem } from "../../types/alerting";
 import StandardModal from "../common/StandardModal";
 
@@ -313,10 +315,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     return fromExpr;
   })();
 
-  const [definitionsNameSortDirection, setDefinitionsNameSortDirection] = useState<"asc" | "desc">("asc");
-  const [receiversNameSortDirection, setReceiversNameSortDirection] = useState<"asc" | "desc">("asc");
-  const [rulesNameSortDirection, setRulesNameSortDirection] = useState<"asc" | "desc">("asc");
-  const [historyNameSortDirection, setHistoryNameSortDirection] = useState<"asc" | "desc">("asc");
+  const definitionsSort = useNameColumnSort("name");
+  const receiversSort = useNameColumnSort("name");
+  const rulesSort = useNameColumnSort("name");
+  const historySort = useNameColumnSort("name");
   const [receiversSearchQuery, setReceiversSearchQuery] = useState("");
 
   const defDeleteRef = useRef<HTMLButtonElement>(null);
@@ -335,19 +337,15 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive]);
 
-  const sortedDefinitions = React.useMemo(() => {
-    return [...defs.filteredDefinitions].sort((a, b) => {
-      const aName = a.name ?? "";
-      const bName = b.name ?? "";
-      const nameCmp = aName.localeCompare(bName, undefined, { sensitivity: "base" });
-      if (nameCmp !== 0) return definitionsNameSortDirection === "asc" ? nameCmp : -nameCmp;
-
-      // Tie-breaker: newest first
-      const timeA = new Date(a.created_at).getTime();
-      const timeB = new Date(b.created_at).getTime();
-      return timeB - timeA;
-    });
-  }, [defs.filteredDefinitions, definitionsNameSortDirection]);
+  const sortedDefinitions = React.useMemo(
+    () =>
+      definitionsSort.apply(
+        defs.filteredDefinitions,
+        (a) => a.name ?? "",
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      ),
+    [defs.filteredDefinitions, definitionsSort],
+  );
 
   const filteredReceiversWithSearch = React.useMemo(() => {
     const q = receiversSearchQuery.trim().toLowerCase();
@@ -361,48 +359,44 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     });
   }, [recvs.filteredReceivers, receiversSearchQuery]);
 
-  const sortedReceivers = React.useMemo(() => {
-    return [...filteredReceiversWithSearch].sort((a, b) => {
-      const aName = a.receiver_name ?? "";
-      const bName = b.receiver_name ?? "";
-      const nameCmp = aName.localeCompare(bName, undefined, { sensitivity: "base" });
-      if (nameCmp !== 0) return receiversNameSortDirection === "asc" ? nameCmp : -nameCmp;
+  const sortedReceivers = React.useMemo(
+    () =>
+      receiversSort.apply(
+        filteredReceiversWithSearch,
+        (a) => a.receiver_name ?? "",
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      ),
+    [filteredReceiversWithSearch, receiversSort],
+  );
 
-      // Tie-breaker: newest first
-      const timeA = new Date(a.created_at).getTime();
-      const timeB = new Date(b.created_at).getTime();
-      return timeB - timeA;
-    });
-  }, [filteredReceiversWithSearch, receiversNameSortDirection]);
-
-  const sortedRules = React.useMemo(() => {
-    return [...rules.filteredRules].sort((a, b) => {
-      const aName = (a.rule_name ?? a.receiver_name ?? "") as string;
-      const bName = (b.rule_name ?? b.receiver_name ?? "") as string;
-      const nameCmp = aName.localeCompare(bName, undefined, { sensitivity: "base" });
-      if (nameCmp !== 0) return rulesNameSortDirection === "asc" ? nameCmp : -nameCmp;
-
-      // Tie-breaker: stable id
-      return String(a.id).localeCompare(String(b.id), undefined, { sensitivity: "base" });
-    });
-  }, [rules.filteredRules, rulesNameSortDirection]);
+  const sortedRules = React.useMemo(
+    () =>
+      rulesSort.apply(
+        rules.filteredRules,
+        (a) => (a.rule_name ?? a.receiver_name ?? "") as string,
+        (a, b) => String(a.id).localeCompare(String(b.id), undefined, { sensitivity: "base" }),
+      ),
+    [rules.filteredRules, rulesSort],
+  );
 
   const activeAlertDefinitions = React.useMemo(
     () => defs.definitions.filter((d) => d.enabled),
     [defs.definitions]
   );
 
-  const sortedHistoryItems = React.useMemo(() => {
-    return [...history.items].sort((a, b) => {
-      const aName = a.alert_name ?? "";
-      const bName = b.alert_name ?? "";
-      const nameCmp = aName.localeCompare(bName, undefined, { sensitivity: "base" });
-      if (nameCmp !== 0) return historyNameSortDirection === "asc" ? nameCmp : -nameCmp;
-      const timeA = new Date(a.triggered_at ?? a.created_at ?? "").getTime();
-      const timeB = new Date(b.triggered_at ?? b.created_at ?? "").getTime();
-      return timeB - timeA;
-    });
-  }, [history.items, historyNameSortDirection]);
+  const sortedHistoryItems = React.useMemo(
+    () =>
+      historySort.apply(
+        history.items,
+        (a) => a.alert_name ?? "",
+        (a, b) => {
+          const timeA = new Date(a.triggered_at ?? a.created_at ?? "").getTime();
+          const timeB = new Date(b.triggered_at ?? b.created_at ?? "").getTime();
+          return timeB - timeA;
+        },
+      ),
+    [history.items, historySort],
+  );
 
   // Re-initialize edit-rule category / severity / linked-def once definitions are available
   // (they may not be loaded yet when the drawer first opens — this effect fires again once they arrive)
@@ -478,18 +472,11 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     return d.promql_expr || "—";
   };
 
-  const definitionColumns: AdminTableColumn<AlertDefinition>[] = [
+  const definitionColumns: DataTableColumn<AlertDefinition>[] = [
     {
       id: "name",
       header: "Name",
-      sortable: {
-        label: "Name",
-        direction: definitionsNameSortDirection,
-        onAsc: () => setDefinitionsNameSortDirection("asc"),
-        onDesc: () => setDefinitionsNameSortDirection("desc"),
-        ascAriaLabel: "Sort definitions by name ascending",
-        descAriaLabel: "Sort definitions by name descending",
-      },
+      sortable: true,
       cell: (d) => <Text fontWeight="semibold">{d.name}</Text>,
     },
     {
@@ -540,62 +527,20 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       header: "Created",
       cell: (d) => <Text fontSize="sm">{new Date(d.created_at).toLocaleDateString()}</Text>,
     },
-    {
-      id: "actions",
-      header: "Actions",
-      tdProps: { onClick: (e) => e.stopPropagation() },
-      cell: (d) => (
-        <HStack spacing={1} className="row-actions">
-          <Tooltip label="View" placement="top" hasArrow>
-            <IconButton
-              aria-label="View"
-              icon={<ViewIcon />}
-              size="sm"
-              variant="ghost"
-              color="gray.700"
-              _hover={{ color: "blue.500", bg: "blue.50" }}
-              onClick={() => defs.openView(d)}
-            />
-          </Tooltip>
-          <Tooltip label="Edit" placement="top" hasArrow>
-            <IconButton
-              aria-label="Edit"
-              icon={<EditIcon />}
-              size="sm"
-              variant="ghost"
-              color="gray.700"
-              _hover={{ color: "green.500", bg: "green.50" }}
-              onClick={() => defs.openUpdate(d)}
-            />
-          </Tooltip>
-          <Tooltip label="Delete" placement="top" hasArrow>
-            <IconButton
-              aria-label="Delete"
-              icon={<DeleteIcon />}
-              size="sm"
-              variant="ghost"
-              color="gray.700"
-              _hover={{ color: "red.500", bg: "red.50" }}
-              onClick={() => defs.openDelete(d)}
-            />
-          </Tooltip>
-        </HStack>
-      ),
-    },
+    createActionsColumn<AlertDefinition>({
+      getActions: (d) => [
+        { id: "view", label: "View", icon: <ViewIcon />, onClick: () => defs.openView(d) },
+        { id: "edit", label: "Edit", icon: <EditIcon />, onClick: () => defs.openUpdate(d) },
+        { id: "delete", label: "Delete", icon: <DeleteIcon />, onClick: () => defs.openDelete(d) },
+      ],
+    }),
   ];
 
-  const receiverColumns: AdminTableColumn<NotificationReceiver>[] = [
+  const receiverColumns: DataTableColumn<NotificationReceiver>[] = [
     {
       id: "name",
       header: "Name",
-      sortable: {
-        label: "Name",
-        direction: receiversNameSortDirection,
-        onAsc: () => setReceiversNameSortDirection("asc"),
-        onDesc: () => setReceiversNameSortDirection("desc"),
-        ascAriaLabel: "Sort receivers by name ascending",
-        descAriaLabel: "Sort receivers by name descending",
-      },
+      sortable: true,
       cell: (r) => <Text fontWeight="semibold" fontSize="sm">{r.receiver_name}</Text>,
     },
     {
@@ -631,38 +576,20 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       header: "Created",
       cell: (r) => <Text fontSize="sm">{new Date(r.created_at).toLocaleDateString()}</Text>,
     },
-    {
-      id: "actions",
-      header: "Actions",
-      tdProps: { onClick: (e) => e.stopPropagation() },
-      cell: (r) => (
-        <HStack spacing={1} className="row-actions">
-          <Tooltip label="View" placement="top" hasArrow>
-            <IconButton aria-label="View" icon={<ViewIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "blue.500", bg: "blue.50" }} onClick={() => recvs.openView(r)} />
-          </Tooltip>
-          <Tooltip label="Edit" placement="top" hasArrow>
-            <IconButton aria-label="Edit" icon={<EditIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "green.500", bg: "green.50" }} onClick={() => recvs.openUpdate(r)} />
-          </Tooltip>
-          <Tooltip label="Delete" placement="top" hasArrow>
-            <IconButton aria-label="Delete" icon={<DeleteIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "red.500", bg: "red.50" }} onClick={() => recvs.openDelete(r)} />
-          </Tooltip>
-        </HStack>
-      ),
-    },
+    createActionsColumn<NotificationReceiver>({
+      getActions: (r) => [
+        { id: "view", label: "View", icon: <ViewIcon />, onClick: () => recvs.openView(r) },
+        { id: "edit", label: "Edit", icon: <EditIcon />, onClick: () => recvs.openUpdate(r) },
+        { id: "delete", label: "Delete", icon: <DeleteIcon />, onClick: () => recvs.openDelete(r) },
+      ],
+    }),
   ];
 
-  const routingRuleColumns: AdminTableColumn<NotificationReceiver>[] = [
+  const routingRuleColumns: DataTableColumn<NotificationReceiver>[] = [
     {
       id: "name",
       header: "Rule Name",
-      sortable: {
-        label: "Rule Name",
-        direction: rulesNameSortDirection,
-        onAsc: () => setRulesNameSortDirection("asc"),
-        onDesc: () => setRulesNameSortDirection("desc"),
-        ascAriaLabel: "Sort rules by name ascending",
-        descAriaLabel: "Sort rules by name descending",
-      },
+      sortable: true,
       cell: (rule) => <Text fontWeight="semibold">{rule.rule_name ?? rule.receiver_name}</Text>,
     },
     {
@@ -697,44 +624,39 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
         </Badge>
       ),
     },
-    {
-      id: "actions",
-      header: "Actions",
-      tdProps: { onClick: (e) => e.stopPropagation() },
-      cell: (rule) => (
-        <HStack spacing={1} className="row-actions">
-          <Tooltip label="View" placement="top" hasArrow>
-            <IconButton aria-label="View" icon={<ViewIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "blue.500", bg: "blue.50" }} onClick={() => { defs.fetchDefinitions(); rules.openView(rule); }} />
-          </Tooltip>
-          <Tooltip label="Edit" placement="top" hasArrow>
-            <IconButton aria-label="Edit" icon={<EditIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "green.500", bg: "green.50" }} onClick={() => {
-              defs.fetchDefinitions();
-              fetchTenants();
-              resetEditRuleExtras();
-              initEditRuleExtras(rule);
-              rules.openUpdate(rule);
-            }} />
-          </Tooltip>
-          <Tooltip label="Delete" placement="top" hasArrow>
-            <IconButton aria-label="Delete" icon={<DeleteIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "red.500", bg: "red.50" }} onClick={() => rules.openDelete(rule)} />
-          </Tooltip>
-        </HStack>
-      ),
-    },
+    createActionsColumn<NotificationReceiver>({
+      getActions: (rule) => [
+        {
+          id: "view",
+          label: "View",
+          icon: <ViewIcon />,
+          onClick: () => {
+            defs.fetchDefinitions();
+            rules.openView(rule);
+          },
+        },
+        {
+          id: "edit",
+          label: "Edit",
+          icon: <EditIcon />,
+          onClick: () => {
+            defs.fetchDefinitions();
+            fetchTenants();
+            resetEditRuleExtras();
+            initEditRuleExtras(rule);
+            rules.openUpdate(rule);
+          },
+        },
+        { id: "delete", label: "Delete", icon: <DeleteIcon />, onClick: () => rules.openDelete(rule) },
+      ],
+    }),
   ];
 
-  const historyColumns: AdminTableColumn<AlertHistoryItem>[] = [
+  const historyColumns: DataTableColumn<AlertHistoryItem>[] = [
     {
       id: "name",
       header: "Name",
-      sortable: {
-        label: "Name",
-        direction: historyNameSortDirection,
-        onAsc: () => setHistoryNameSortDirection("asc"),
-        onDesc: () => setHistoryNameSortDirection("desc"),
-        ascAriaLabel: "Sort alert history by name ascending",
-        descAriaLabel: "Sort alert history by name descending",
-      },
+      sortable: true,
       cell: (row) => (
         <Text fontWeight="semibold" noOfLines={2} title={row.alert_name} maxW="260px">
           {row.alert_name}
@@ -773,26 +695,11 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
         </Text>
       ),
     },
-    {
-      id: "actions",
-      header: "Actions",
-      tdProps: { onClick: (e) => e.stopPropagation() },
-      cell: (row) => (
-        <HStack spacing={1} className="row-actions">
-          <Tooltip label="View" placement="top" hasArrow>
-            <IconButton
-              aria-label="View"
-              icon={<ViewIcon />}
-              size="sm"
-              variant="ghost"
-              color="gray.700"
-              _hover={{ color: "blue.500", bg: "blue.50" }}
-              onClick={() => history.openView(row)}
-            />
-          </Tooltip>
-        </HStack>
-      ),
-    },
+    createActionsColumn<AlertHistoryItem>({
+      getActions: (row) => [
+        { id: "view", label: "View", icon: <ViewIcon />, onClick: () => history.openView(row) },
+      ],
+    }),
   ];
 
   // ═══════════════════════════════════════════════
@@ -802,9 +709,12 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     <>
       <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
         <CardBody>
-          <AdminDataTable
+          <DataTable
+            layout="admin"
             items={sortedDefinitions}
             columns={definitionColumns}
+            sort={definitionsSort.sort}
+            onSortChange={definitionsSort.onSortChange}
             getRowKey={(d) => String(d.id)}
             onRowClick={defs.openView}
             paginate="client"
@@ -1779,9 +1689,12 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
           </HStack>
         </CardHeader>
         <CardBody>
-          <AdminDataTable
+          <DataTable
+            layout="admin"
             items={sortedReceivers}
             columns={receiverColumns}
+            sort={receiversSort.sort}
+            onSortChange={receiversSort.onSortChange}
             getRowKey={(r) => String(r.id)}
             onRowClick={recvs.openView}
             paginate="client"
@@ -2027,9 +1940,12 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
   const renderRoutingRulesSection = () => (
     <>
       <Box bg={cardBg} borderColor={cardBorder} borderWidth="1px" borderRadius="lg" p={4}>
-        <AdminDataTable
+        <DataTable
+          layout="admin"
           items={sortedRules}
           columns={routingRuleColumns}
+          sort={rulesSort.sort}
+          onSortChange={rulesSort.onSortChange}
           getRowKey={(rule) => String(rule.id)}
           onRowClick={(rule) => {
             defs.fetchDefinitions();
@@ -2797,9 +2713,12 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       {/* Same shell + filter toolbar pattern as Alert Definitions (Card, toolbar, Clear all) */}
       <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
         <CardBody>
-          <AdminDataTable
+          <DataTable
+            layout="admin"
             items={sortedHistoryItems}
             columns={historyColumns}
+            sort={historySort.sort}
+            onSortChange={historySort.onSortChange}
             getRowKey={(row) => String(row.id)}
             onRowClick={history.openView}
             paginate="server"

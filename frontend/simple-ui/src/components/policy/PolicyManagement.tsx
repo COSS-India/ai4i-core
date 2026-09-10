@@ -41,11 +41,12 @@ import {
 } from "@chakra-ui/icons";
 import StandardModal from "../common/StandardModal";
 import ConfirmDialog from "../common/ConfirmDialog";
-import AdminDataTable, {
+import DataTable, {
   TableSearchField,
   TableSelectField,
-  type AdminTableColumn,
-} from "../common/AdminDataTable";
+  type DataTableColumn,
+} from "../common/table";
+import { useDeferredNameSort, useNameColumnSort } from "../../utils/tableSort";
 import { useAdminTableSurface } from "../common/TableControls";
 import {
   policyService,
@@ -238,8 +239,7 @@ function PoliciesPanel() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterActive, setFilterActive] = useState("");
   const [filterGlobal, setFilterGlobal] = useState("");
-  const [sortBy, setSortBy] = useState<"time" | "name">("time");
-  const [nameSortDirection, setNameSortDirection] = useState<"asc" | "desc">("asc");
+  const nameSort = useDeferredNameSort("name");
   const [tableEpoch, setTableEpoch] = useState(0);
   const modal = useDisclosure();
   const viewModal = useDisclosure();
@@ -323,19 +323,13 @@ function PoliciesPanel() {
       if (filterGlobal === "false" && row.is_global) return false;
       return true;
     });
-    return [...filtered].sort((a, b) => {
-      const createdA = getSortTimestamp(a.created_at);
-      const createdB = getSortTimestamp(b.created_at);
-      const nameCmp = (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" });
-      if (sortBy === "time") {
-        if (createdB !== createdA) return createdB - createdA;
-        return 0;
-      }
-      if (nameCmp !== 0) return nameSortDirection === "asc" ? nameCmp : -nameCmp;
-      if (createdB !== createdA) return createdB - createdA;
-      return 0;
+    const byCreatedDesc = (a: typeof filtered[number], b: typeof filtered[number]) =>
+      getSortTimestamp(b.created_at) - getSortTimestamp(a.created_at);
+    return nameSort.apply(filtered, (row) => row.name ?? "", {
+      timeCompare: byCreatedDesc,
+      tieBreak: byCreatedDesc,
     });
-  }, [allPolicies, searchQuery, filterActive, filterGlobal, sortBy, nameSortDirection]);
+  }, [allPolicies, searchQuery, filterActive, filterGlobal, nameSort]);
 
   const hasActiveFilters =
     filterActive !== "" || filterGlobal !== "" || searchQuery.trim() !== "";
@@ -441,26 +435,11 @@ function PoliciesPanel() {
     }
   };
 
-  const policyColumns = useMemo((): AdminTableColumn<PolicyOut>[] => [
+  const policyColumns = useMemo((): DataTableColumn<PolicyOut>[] => [
     {
       id: "name",
       header: "Name",
-      sortable: {
-        label: "Name",
-        direction: nameSortDirection,
-        onAsc: () => {
-          setSortBy("name");
-          setNameSortDirection("asc");
-          bumpTablePage();
-        },
-        onDesc: () => {
-          setSortBy("name");
-          setNameSortDirection("desc");
-          bumpTablePage();
-        },
-        ascAriaLabel: "Sort policies by name ascending",
-        descAriaLabel: "Sort policies by name descending",
-      },
+      sortable: true,
       cell: (row) => <Text fontWeight="medium">{row.name}</Text>,
     },
     {
@@ -572,7 +551,7 @@ function PoliciesPanel() {
       ),
     },
   ], [
-    nameSortDirection,
+    nameSort,
     bumpTablePage,
     activeStatusTooltipId,
     policyStatusBusyId,
@@ -600,10 +579,13 @@ function PoliciesPanel() {
         boxShadow="none"
       >
         <CardBody>
-          <AdminDataTable<PolicyOut>
+          <DataTable<PolicyOut>
+            layout="admin"
             key={tableEpoch}
             items={filteredPolicies}
             columns={policyColumns}
+          sort={nameSort.sort}
+          onSortChange={(next) => { nameSort.onSortChange(next); bumpTablePage(); }}
             getRowKey={(row) => row.policy_id}
             filters={
               <VStack align="stretch" spacing={3} flex="1" w="full">
@@ -1325,8 +1307,7 @@ function PiiTypesPanel() {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterMask, setFilterMask] = useState("");
-  const [sortBy, setSortBy] = useState<"time" | "label">("time");
-  const [labelSortDirection, setLabelSortDirection] = useState<"asc" | "desc">("asc");
+  const labelSort = useDeferredNameSort("label");
   const [tableEpoch, setTableEpoch] = useState(0);
   const modal = useDisclosure();
   const viewModal = useDisclosure();
@@ -1389,21 +1370,13 @@ function PiiTypesPanel() {
       if (filterMask && row.mask_format !== filterMask) return false;
       return true;
     });
-    return [...filtered].sort((a, b) => {
-      const createdA = getSortTimestamp(a.created_at);
-      const createdB = getSortTimestamp(b.created_at);
-      const labelCmp = (a.pii_type_label ?? "").localeCompare(b.pii_type_label ?? "", undefined, {
-        sensitivity: "base",
-      });
-      if (sortBy === "time") {
-        if (createdB !== createdA) return createdB - createdA;
-        return 0;
-      }
-      if (labelCmp !== 0) return labelSortDirection === "asc" ? labelCmp : -labelCmp;
-      if (createdB !== createdA) return createdB - createdA;
-      return 0;
+    const byCreatedDesc = (a: typeof filtered[number], b: typeof filtered[number]) =>
+      getSortTimestamp(b.created_at) - getSortTimestamp(a.created_at);
+    return labelSort.apply(filtered, (row) => row.pii_type_label ?? "", {
+      timeCompare: byCreatedDesc,
+      tieBreak: byCreatedDesc,
     });
-  }, [allTypes, searchQuery, filterMask, sortBy, labelSortDirection]);
+  }, [allTypes, searchQuery, filterMask, labelSort]);
 
   const hasActiveFilters = filterMask !== "" || searchQuery.trim() !== "";
   const clearAllFilters = () => {
@@ -1524,26 +1497,11 @@ function PiiTypesPanel() {
     }
   };
 
-  const piiColumns = useMemo((): AdminTableColumn<PiiTypeOut>[] => [
+  const piiColumns = useMemo((): DataTableColumn<PiiTypeOut>[] => [
     {
       id: "label",
       header: "Label",
-      sortable: {
-        label: "Label",
-        direction: labelSortDirection,
-        onAsc: () => {
-          setSortBy("label");
-          setLabelSortDirection("asc");
-          bumpTablePage();
-        },
-        onDesc: () => {
-          setSortBy("label");
-          setLabelSortDirection("desc");
-          bumpTablePage();
-        },
-        ascAriaLabel: "Sort PII types by label ascending",
-        descAriaLabel: "Sort PII types by label descending",
-      },
+      sortable: true,
       cell: (row) => <Text fontWeight="medium">{row.pii_type_label}</Text>,
     },
     {
@@ -1599,7 +1557,7 @@ function PiiTypesPanel() {
         </HStack>
       ),
     },
-  ], [labelSortDirection, bumpTablePage, openEdit, requestDelete]);
+  ], [labelSort, bumpTablePage, openEdit, requestDelete]);
 
   return (
     <Box>
@@ -1618,10 +1576,13 @@ function PiiTypesPanel() {
         boxShadow="none"
       >
         <CardBody>
-          <AdminDataTable<PiiTypeOut>
+          <DataTable<PiiTypeOut>
+            layout="admin"
             key={tableEpoch}
             items={filteredPiiTypes}
             columns={piiColumns}
+          sort={labelSort.sort}
+          onSortChange={(next) => { labelSort.onSortChange(next); bumpTablePage(); }}
             getRowKey={(row) => row.pii_type_id}
             filters={
               <VStack align="stretch" spacing={3} flex="1" w="full">
@@ -1811,7 +1772,7 @@ function AuditPanel() {
   const [policyIdFilter, setPolicyIdFilter] = useState("");
   const [traceIdFilter, setTraceIdFilter] = useState("");
   const [minPii, setMinPii] = useState("");
-  const [auditCreatedSort, setAuditCreatedSort] = useState<"asc" | "desc">("desc");
+  const auditCreatedSort = useNameColumnSort("created", "desc");
   const detailModal = useDisclosure();
   const [detailJson, setDetailJson] = useState<string>("");
 
@@ -1882,15 +1843,13 @@ function AuditPanel() {
   };
 
   const displayItems = useMemo(() => {
-    const copy = [...items];
-    copy.sort((a, b) => {
+    return [...items].sort((a, b) => {
       const ta = new Date(a.created_at).getTime();
       const tb = new Date(b.created_at).getTime();
       if (Number.isNaN(ta) || Number.isNaN(tb)) return 0;
-      return auditCreatedSort === "desc" ? tb - ta : ta - tb;
+      return auditCreatedSort.direction === "desc" ? tb - ta : ta - tb;
     });
-    return copy;
-  }, [items, auditCreatedSort]);
+  }, [items, auditCreatedSort.direction]);
 
   const openDetail = async (id: string) => {
     try {
@@ -1908,7 +1867,7 @@ function AuditPanel() {
   const formatAuditChipId = (id: string, maxLen = 14) =>
     id.length > maxLen ? `${id.slice(0, 8)}…` : id;
 
-  const auditColumns = useMemo((): AdminTableColumn<AuditLogOut>[] => [
+  const auditColumns = useMemo((): DataTableColumn<AuditLogOut>[] => [
     {
       id: "tenant",
       header: INSTITUTION,
@@ -1957,14 +1916,7 @@ function AuditPanel() {
     {
       id: "created",
       header: "Created",
-      sortable: {
-        label: "Created",
-        direction: auditCreatedSort,
-        onAsc: () => setAuditCreatedSort("asc"),
-        onDesc: () => setAuditCreatedSort("desc"),
-        ascAriaLabel: "Sort audit rows by created time ascending",
-        descAriaLabel: "Sort audit rows by created time descending",
-      },
+      sortable: true,
       tdProps: { whiteSpace: "nowrap" },
       cell: (row) => formatDt(row.created_at),
     },
@@ -1998,9 +1950,12 @@ function AuditPanel() {
         </Alert>
       )}
 
-      <AdminDataTable<AuditLogOut>
+      <DataTable<AuditLogOut>
+        layout="admin"
         items={displayItems}
         columns={auditColumns}
+          sort={auditCreatedSort.sort}
+          onSortChange={auditCreatedSort.onSortChange}
         getRowKey={(row) => row.pii_audit_id}
         filters={
           <VStack align="stretch" spacing={3} flex="1" w="full">
