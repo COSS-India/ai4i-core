@@ -593,7 +593,6 @@ export default function ApplicationManagementTab({
         onRowFocus={mgr.onBulkRowFocus}
         onPctChange={mgr.onBulkPctChange}
         onPctBoundHit={mgr.onBulkPctBoundHit}
-        onAmountChange={mgr.onBulkAmountChange}
         onSave={() => void mgr.handleSaveBulkBudget()}
         canSave={mgr.bulkCanSave}
       />
