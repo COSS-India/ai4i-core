@@ -4,7 +4,7 @@ AI4I-Orchestrate
 Dear {{ recipient_name }},
 
 {{ alert_name }} has reached {{ threshold }}% for {{ institution_name }} as of
-{{ effective_date }}.
+{{ alert_datetime }}.
 
 Current value: {{ current_value }}
 

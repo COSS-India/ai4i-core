@@ -1,15 +1,16 @@
 {% extends "_base.html" %}
 {% block title %}{{ notification_name }} — {{ institution_name }}{% endblock %}
-{% block preheader %}{{ notification_name }} has occurred for {{ institution_name }}.{% endblock %}
+{% block preheader %}{{ notification_headline }}{% endblock %}
 {% block heading %}{{ notification_name }} — {{ institution_name }}{% endblock %}
 {% block body %}
   <p style="margin:0 0 4px 0;">Dear {{ recipient_name }},</p>
-  <p style="margin:0 0 20px 0;">
-    This is to inform you that <strong>{{ notification_name }}</strong> has occurred for
-    <strong>{{ institution_name }}</strong>, effective {{ effective_date }}.
-  </p>
-  <p style="margin:0 0 20px 0;">{{ notification_details }}</p>
-  {% include "_portal_line.html" %}
+  <p style="margin:0 0 16px 0;">{{ notification_headline }}</p>
+  {% for line in notification_details %}
+  <p style="margin:0 0 4px 0;">{{ line }}</p>
+  {% endfor %}
+  <div style="margin-top:16px;">
+    {% include "_portal_line.html" %}
+  </div>
   <p style="margin:20px 0 0 0;">
     Regards,<br>
     AI4I-Orchestrate Team

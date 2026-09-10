@@ -6,7 +6,7 @@
   <p style="margin:0 0 4px 0;">Dear {{ recipient_name }},</p>
   <p style="margin:0 0 8px 0;">
     <strong>{{ alert_name }}</strong> has reached <strong>{{ threshold }}%</strong> for
-    <strong>{{ institution_name }}</strong> as of {{ effective_date }}.
+    <strong>{{ institution_name }}</strong> as of {{ alert_datetime }}.
   </p>
   <p style="margin:0 0 20px 0;">Current value: {{ current_value }}</p>
   {% include "_portal_line.html" %}
