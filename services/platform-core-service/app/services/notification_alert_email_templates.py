@@ -25,6 +25,7 @@ having to hand-format that text (or remember a magic string like
 Templates live alongside this module under app/templates/emails/.
 """
 
+from enum import Enum
 from pathlib import Path
 from typing import List
 
@@ -34,6 +35,29 @@ from app.core.config import settings
 
 _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates" / "emails"
 _renderer = TemplateRenderer([_TEMPLATE_DIR])
+
+
+class NotificationName(str, Enum):
+    """The ``[Notification Name]`` each wrapper below fills into the Standard
+    Notification subject line ("[Notification Name] — [Institution Name]").
+    Rename an event here — not in the wrapper that uses it."""
+
+    TIER_ASSIGNED = "Tier Assigned"
+    BUDGET_ASSIGNED = "Budget Assigned"
+    TIER_REASSIGNMENT = "Tier Reassignment"
+    QUOTA_LIMIT_UPDATED = "Quota Limit Updated"
+    BUDGET_REVISED = "Budget Revised"
+    QUOTA_EXHAUSTED = "Quota Exhausted"
+    BUDGET_EXHAUSTED = "Budget Exhausted"
+
+
+class AlertName(str, Enum):
+    """The ``[Alert Name]`` each wrapper below fills into the Standard Alert
+    subject line ("[Alert Name] at [Threshold]% — [Institution Name]").
+    Rename an event here — not in the wrapper that uses it."""
+
+    QUOTA_THRESHOLD = "Quota Threshold"
+    BUDGET_THRESHOLD = "Budget Threshold"
 
 
 def _render(template: str, *, to: str, subject: str, ctx: dict) -> EmailMessage:
@@ -133,7 +157,7 @@ def render_tier_assigned_email(
     return render_notification_email(
         to=to,
         recipient_name=recipient_name,
-        notification_name="Tier Assigned",
+        notification_name=NotificationName.TIER_ASSIGNED.value,
         institution_name=institution_name,
         notification_headline=f"A Tier has been assigned to {institution_name}.",
         notification_details=details,
@@ -151,7 +175,7 @@ def render_budget_assigned_email(
     return render_notification_email(
         to=to,
         recipient_name=recipient_name,
-        notification_name="Budget Assigned",
+        notification_name=NotificationName.BUDGET_ASSIGNED.value,
         institution_name=institution_name,
         notification_headline=f"A Budget has been assigned to {institution_name}.",
         notification_details=[f"Budget: {currency} {budget_amount}"],
@@ -184,7 +208,7 @@ def render_tier_reassigned_email(
     return render_notification_email(
         to=to,
         recipient_name=recipient_name,
-        notification_name="Tier Reassignment",
+        notification_name=NotificationName.TIER_REASSIGNMENT.value,
         institution_name=institution_name,
         notification_headline=f"The Tier for {institution_name} has been reassigned.",
         notification_details=details,
@@ -206,7 +230,7 @@ def render_quota_limit_updated_email(
     return render_notification_email(
         to=to,
         recipient_name=recipient_name,
-        notification_name="Quota Limit Updated",
+        notification_name=NotificationName.QUOTA_LIMIT_UPDATED.value,
         institution_name=institution_name,
         notification_headline=f"The Quota Limit for {institution_name} has been updated.",
         notification_details=details,
@@ -226,7 +250,7 @@ def render_budget_revised_email(
     return render_notification_email(
         to=to,
         recipient_name=recipient_name,
-        notification_name="Budget Revised",
+        notification_name=NotificationName.BUDGET_REVISED.value,
         institution_name=institution_name,
         notification_headline=f"The Budget for {institution_name} has been revised.",
         notification_details=[
@@ -250,7 +274,7 @@ def render_quota_exhausted_email(
     return render_notification_email(
         to=to,
         recipient_name=recipient_name,
-        notification_name="Quota Exhausted",
+        notification_name=NotificationName.QUOTA_EXHAUSTED.value,
         institution_name=institution_name,
         notification_headline=f"The Quota for {institution_name} has been fully consumed.",
         notification_details=details,
@@ -268,7 +292,7 @@ def render_budget_exhausted_email(
     return render_notification_email(
         to=to,
         recipient_name=recipient_name,
-        notification_name="Budget Exhausted",
+        notification_name=NotificationName.BUDGET_EXHAUSTED.value,
         institution_name=institution_name,
         notification_headline=f"The Budget for {institution_name} has been fully consumed.",
         notification_details=[f"Budget: {currency} {budget_amount}"],
@@ -292,7 +316,7 @@ def render_quota_threshold_alert_email(
     return render_alert_email(
         to=to,
         recipient_name=recipient_name,
-        alert_name="Quota Threshold",
+        alert_name=AlertName.QUOTA_THRESHOLD.value,
         institution_name=institution_name,
         alert_datetime=alert_datetime,
         threshold=threshold,
@@ -314,7 +338,7 @@ def render_budget_threshold_alert_email(
     return render_alert_email(
         to=to,
         recipient_name=recipient_name,
-        alert_name="Budget Threshold",
+        alert_name=AlertName.BUDGET_THRESHOLD.value,
         institution_name=institution_name,
         alert_datetime=alert_datetime,
         threshold=threshold,
