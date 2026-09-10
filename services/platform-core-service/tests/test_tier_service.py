@@ -14,9 +14,11 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import httpx
 import pytest
 from fastapi import HTTPException
 
+from app.core.constants import TierStatus
 from app.core.exceptions import ValidationError
 from app.models.pay_per_use.tier import Tier
 from app.schemas.pay_per_use.tier import TierUpdate
@@ -65,8 +67,10 @@ def _mock_result(*, scalar=None, all_rows=None, first=None):
     return r
 
 
-def _tier(*, tier_id=None, name="Gold", is_active=True) -> Tier:
-    return Tier(id=tier_id or uuid4(), name=name, description=None, is_active=is_active)
+def _tier(*, tier_id=None, name="Gold", status=TierStatus.INACTIVE) -> Tier:
+    t = Tier(id=tier_id or uuid4(), name=name, description=None)
+    t.status = status
+    return t
 
 
 class TestFetchTenantIdsForTier:
@@ -201,7 +205,9 @@ class TestDeleteTier:
     @pytest.mark.asyncio
     async def test_invalid_uuid_rejected(self):
         with pytest.raises(HTTPException) as exc_info:
-            await tier_service.delete_tier("not-a-uuid", AsyncMock(), AsyncMock())
+            await tier_service.update_tier_status(
+                "not-a-uuid", TierStatus.DELETED, AsyncMock(), auth_db=AsyncMock()
+            )
         assert exc_info.value.status_code == 400
 
     @pytest.mark.asyncio
@@ -209,7 +215,9 @@ class TestDeleteTier:
         session = AsyncMock()
         session.execute = AsyncMock(return_value=_mock_result(scalar=None))
         with pytest.raises(HTTPException) as exc_info:
-            await tier_service.delete_tier(str(uuid4()), session, AsyncMock())
+            await tier_service.update_tier_status(
+                str(uuid4()), TierStatus.DELETED, session, auth_db=AsyncMock()
+            )
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
@@ -219,12 +227,14 @@ class TestDeleteTier:
         tier, so this must reject the delete rather than let it proceed
         unchecked (or crash on the dropped table, as it did before)."""
         tier_id = uuid4()
-        tier = _tier(tier_id=tier_id)
+        tier = _tier(tier_id=tier_id, status=TierStatus.DEACTIVATED)
         session = AsyncMock()
         session.execute = AsyncMock(return_value=_mock_result(scalar=tier))
 
         with pytest.raises(ValidationError) as exc_info:
-            await tier_service.delete_tier(str(tier_id), session, None)
+            await tier_service.update_tier_status(
+                str(tier_id), TierStatus.DELETED, session, auth_db=None
+            )
 
         assert exc_info.value.code == "AUTH_DB_NOT_CONFIGURED"
         session.commit.assert_not_awaited()
@@ -232,7 +242,7 @@ class TestDeleteTier:
     @pytest.mark.asyncio
     async def test_tier_still_assigned_to_a_tenant_rejected(self):
         tier_id = uuid4()
-        tier = _tier(tier_id=tier_id)
+        tier = _tier(tier_id=tier_id, status=TierStatus.DEACTIVATED)
         session = AsyncMock()
         session.execute = AsyncMock(return_value=_mock_result(scalar=tier))
         session.commit = AsyncMock()
@@ -240,7 +250,9 @@ class TestDeleteTier:
         auth_db.execute = AsyncMock(return_value=_mock_result(first=(1,)))
 
         with pytest.raises(HTTPException) as exc_info:
-            await tier_service.delete_tier(str(tier_id), session, auth_db)
+            await tier_service.update_tier_status(
+                str(tier_id), TierStatus.DELETED, session, auth_db=auth_db
+            )
 
         assert exc_info.value.status_code == 409
         session.commit.assert_not_awaited()
@@ -251,14 +263,101 @@ class TestDeleteTier:
     @pytest.mark.asyncio
     async def test_tier_with_no_tenants_deletes_successfully(self):
         tier_id = uuid4()
-        tier = _tier(tier_id=tier_id, name="Bronze")
+        tier = _tier(tier_id=tier_id, name="Bronze", status=TierStatus.DEACTIVATED)
         session = AsyncMock()
         session.execute = AsyncMock(return_value=_mock_result(scalar=tier))
         session.commit = AsyncMock()
         auth_db = AsyncMock()
         auth_db.execute = AsyncMock(return_value=_mock_result(first=None))
 
-        await tier_service.delete_tier(str(tier_id), session, auth_db)
+        await tier_service.update_tier_status(
+            str(tier_id), TierStatus.DELETED, session, auth_db=auth_db
+        )
 
-        assert tier.is_active is False
+        assert tier.status == TierStatus.DELETED
         session.commit.assert_awaited_once()
+
+
+class TestNotifyTierReactivated:
+    @pytest.mark.asyncio
+    async def test_skips_when_no_url_or_client(self):
+        auth_db = AsyncMock()
+        await tier_service._notify_tier_reactivated(_tier(), "", None, auth_db)
+        auth_db.execute.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_auth_db_failure_skips_without_raising(self):
+        auth_db = AsyncMock()
+        auth_db.execute = AsyncMock(side_effect=RuntimeError("gone"))
+        http_client = AsyncMock()
+
+        await tier_service._notify_tier_reactivated(
+            _tier(), "http://auth-service", http_client, auth_db
+        )
+
+        http_client.post.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_retries_on_transient_error_and_succeeds(self, monkeypatch):
+        auth_db = AsyncMock()
+        auth_db.execute = AsyncMock(return_value=_mock_result(all_rows=[]))
+        ok = MagicMock(raise_for_status=MagicMock())
+        http_client = AsyncMock()
+        http_client.post = AsyncMock(side_effect=[httpx.ConnectError("refused"), ok])
+
+        slept = []
+
+        async def _fake_sleep(s):
+            slept.append(s)
+
+        monkeypatch.setattr("asyncio.sleep", _fake_sleep)
+
+        await tier_service._notify_tier_reactivated(
+            _tier(), "http://auth-service", http_client, auth_db
+        )
+
+        assert http_client.post.await_count == 2
+        assert len(slept) == 1
+
+    @pytest.mark.asyncio
+    async def test_no_retry_on_4xx(self, monkeypatch):
+        auth_db = AsyncMock()
+        auth_db.execute = AsyncMock(return_value=_mock_result(all_rows=[]))
+        resp = MagicMock(status_code=404)
+        http_client = AsyncMock()
+        http_client.post = AsyncMock(
+            side_effect=httpx.HTTPStatusError("not found", request=MagicMock(), response=resp)
+        )
+
+        slept = []
+
+        async def _fake_sleep(s):
+            slept.append(s)
+
+        monkeypatch.setattr("asyncio.sleep", _fake_sleep)
+
+        await tier_service._notify_tier_reactivated(
+            _tier(), "http://auth-service", http_client, auth_db
+        )
+
+        assert http_client.post.await_count == 1
+        assert not slept
+
+    @pytest.mark.asyncio
+    async def test_error_logged_after_max_attempts(self, monkeypatch, caplog):
+        import logging
+
+        auth_db = AsyncMock()
+        auth_db.execute = AsyncMock(return_value=_mock_result(all_rows=[]))
+        http_client = AsyncMock()
+        http_client.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
+
+        monkeypatch.setattr("asyncio.sleep", AsyncMock())
+
+        with caplog.at_level(logging.ERROR, logger="app.services.pay_per_use.tier_service"):
+            await tier_service._notify_tier_reactivated(
+                _tier(), "http://auth-service", http_client, auth_db
+            )
+
+        assert http_client.post.await_count == tier_service._REACTIVATE_NOTIFY_MAX_ATTEMPTS
+        assert any("failed after" in r.message for r in caplog.records if r.levelno >= logging.ERROR)

@@ -197,7 +197,6 @@ _deps_stub.get_metering_service = MagicMock()
 _redis_stub = _conftest_stub("app.core.redis")
 _redis_stub.get_redis = MagicMock()
 
-
 # ── the inference-type catalogue, as tests see it ───────────────────────────
 #
 # metering_service reads unit labels through

@@ -15,3 +15,8 @@ class QuotaLimitUpdatedRequest(BaseModel):
     tenant_ids: List[str] = Field(
         ..., description="Tenant IDs affected by this tier's quota-limit change. Replace the example values with real tenant IDs from your system."
     )
+
+
+class TierReactivatedRequest(BaseModel):
+    tier_id: str = Field(..., description="UUID of the reactivated tier.")
+    tenant_ids: List[int] = Field(..., description="Tenant IDs currently assigned to this tier.")
