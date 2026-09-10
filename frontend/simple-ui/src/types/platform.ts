@@ -190,7 +190,7 @@ export type LanguageRecord = Record<string, unknown>;
 
 export type ModelVersionStatus = "ACTIVE" | "DEPRECATED" | string;
 
-/** GET /models, GET /models/{id} — single model record. */
+/** GET /models/list, GET /models/list/{id} — single model record. */
 export interface ModelResponse {
   modelId: string;
   name: string;
