@@ -387,6 +387,8 @@ class TenantTierAssignData(BaseSchema):
 _TENANT_BUDGET_REQUEST_EXAMPLE = {
     "action": "top-up",
     "amount": 5000.00,
+    "budget_effective_from": "2026-09-10T00:00:00Z",
+    "budget_effective_to": "2026-10-10T00:00:00Z",
 }
 
 
@@ -395,6 +397,20 @@ class TenantBudgetRequest(BaseSchema):
 
     action: Literal["top-up", "top-down"]
     amount: Decimal = Field(..., gt=0, max_digits=15, decimal_places=2)
+    # Required on every revision (not just at tenant creation, where these
+    # were previously the only place they could ever be set — see
+    # TenantCreate.budget_effective_from/_to). Semantic validation (From
+    # must not be before today UTC; To must be at least one calendar day
+    # after From) happens in TenantService.revise_tenant_budget, not here —
+    # same reasoning as allocated_budget's own missing `ge=0` above: a
+    # violation must surface as this contract's named 422, not a generic
+    # Pydantic field-constraint error.
+    budget_effective_from: datetime = Field(
+        ..., description="Start of the budget's effective window (UTC)."
+    )
+    budget_effective_to: datetime = Field(
+        ..., description="End of the budget's effective window (UTC)."
+    )
 
 
 class TenantBudgetData(BaseSchema):
@@ -403,6 +419,8 @@ class TenantBudgetData(BaseSchema):
 
     tenant_id: int
     allocated_budget: Optional[Decimal] = None
+    budget_effective_from: Optional[datetime] = None
+    budget_effective_to: Optional[datetime] = None
     applications_recomputed: Optional[int] = Field(
         None,
         description="Count of Applications under this Tenant whose allocated_percentage "

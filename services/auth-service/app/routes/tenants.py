@@ -250,6 +250,13 @@ async def revise_tenant_budget(
     no longer exists. Response is unwrapped (no success/data envelope),
     matching the endpoint it replaces.
 
+    ``budget_effective_from``/``budget_effective_to`` are required on every
+    call and are always overwritten with the given values (no partial/
+    leave-unchanged option). Validated server-side: From must not be before
+    today (UTC calendar date), and To must be at least one calendar day
+    after From — see tenant_service._validate_budget_window for the exact
+    422s (``budget_effective_from_invalid`` / ``budget_effective_to_invalid``).
+
     No Application's own ₹ ever moves as a result of this revision — only
     its allocated_percentage is recomputed, since the same ₹ is now a
     different share of a different-sized total (``applications_recomputed``
@@ -271,12 +278,20 @@ async def revise_tenant_budget(
     """
     tenant, applications_recomputed, keys_recomputed, snapshot_write_failed = (
         await svc.revise_tenant_budget(
-            current_user, tenant_id, body.action, body.amount, platform_core_db
+            current_user,
+            tenant_id,
+            body.action,
+            body.amount,
+            body.budget_effective_from,
+            body.budget_effective_to,
+            platform_core_db,
         )
     )
     return TenantBudgetData(
         tenant_id=tenant.id,
         allocated_budget=tenant.allocated_budget,
+        budget_effective_from=tenant.budget_effective_from,
+        budget_effective_to=tenant.budget_effective_to,
         applications_recomputed=applications_recomputed,
         keys_recomputed=keys_recomputed,
         snapshot_write_failed=snapshot_write_failed,

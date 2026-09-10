@@ -9,7 +9,7 @@ repository access and provisioning lives in this file.
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Callable, Dict, Literal, Optional
 from uuid import UUID
@@ -88,6 +88,48 @@ _allocated_budget_type = Tenant.__table__.c.allocated_budget.type
 MAX_TENANT_BUDGET = Decimal(10) ** (
     _allocated_budget_type.precision - _allocated_budget_type.scale
 ) - Decimal(1).scaleb(-_allocated_budget_type.scale)
+
+
+def _validate_budget_window(budget_effective_from: datetime, budget_effective_to: datetime) -> None:
+    """Enforce revise_tenant_budget's From/To contract, comparing calendar
+    dates in UTC (not wall-clock instants) so a From of "today at 00:00 UTC"
+    is always valid regardless of what time the request lands, and a
+    same-day From/To pair is rejected consistently regardless of the time
+    portion either side happened to send. A naive (no tzinfo) datetime is
+    treated as already being UTC, matching the field's documented contract
+    ("(UTC)" — see TenantBudgetRequest.budget_effective_from/_to) rather than
+    silently reinterpreting it as local time.
+    """
+    from_date = (
+        budget_effective_from.astimezone(timezone.utc) if budget_effective_from.tzinfo else budget_effective_from
+    ).date()
+    to_date = (
+        budget_effective_to.astimezone(timezone.utc) if budget_effective_to.tzinfo else budget_effective_to
+    ).date()
+    today_utc = datetime.now(timezone.utc).date()
+
+    if from_date < today_utc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "budget_effective_from_invalid",
+                "message": (
+                    f"budget_effective_from ({from_date.isoformat()}) must not be before "
+                    f"today ({today_utc.isoformat()}) UTC."
+                ),
+            },
+        )
+    if to_date < from_date + timedelta(days=1):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "budget_effective_to_invalid",
+                "message": (
+                    f"budget_effective_to ({to_date.isoformat()}) must be at least one "
+                    f"calendar day after budget_effective_from ({from_date.isoformat()})."
+                ),
+            },
+        )
 
 
 async def _assign_plan_to_tenant(tenant_id: int, plan_id: UUID, db: AsyncSession) -> None:
@@ -1054,6 +1096,8 @@ class TenantService:
         tenant_id: int,
         action: Literal["top-up", "top-down"],
         amount: Decimal,
+        budget_effective_from: datetime,
+        budget_effective_to: datetime,
         platform_core_db: Optional[AsyncSession] = None,
     ) -> tuple[Tenant, int, int, bool]:
         """Top-up or top-down a tenant's budget — PATCH /auth/tenants/{id}/budget.
@@ -1063,6 +1107,22 @@ class TenantService:
         (or any other spend-tracking figure) on ``tenants`` itself — spend
         lives in platform-core's budget_usage ledger, summed here across
         every API key under the tenant.
+
+        ``budget_effective_from``/``budget_effective_to`` are required on
+        every revision — previously the only way to set these was at tenant
+        creation (TenantCreate), with no way to ever change or even validate
+        them afterwards. Validated by ``_validate_budget_window`` before
+        anything else runs (cheap, local-only, so it fails fastest): From
+        must not be before today (compared as a UTC calendar date, not a
+        wall-clock instant — so any time on today's date is valid), and To
+        must be at least one calendar day after From (same-day From/To is
+        rejected). Violations are this endpoint's own named 422s
+        (``budget_effective_from_invalid`` / ``budget_effective_to_invalid``),
+        same error-body shape as the other checks below. Both fields are
+        always overwritten with the new values on every revision (there is
+        no "leave unchanged" option) and persisted together with
+        ``allocated_budget`` in the same update — see the ``_tenants.update``
+        call below.
 
         The revision never moves any Application's own ₹: every Application
         under the tenant keeps exactly the allocated_budget it already
@@ -1130,6 +1190,8 @@ class TenantService:
                     "message": "Only administrators can revise a tenant's budget.",
                 },
             )
+
+        _validate_budget_window(budget_effective_from, budget_effective_to)
 
         tenant = await self._load_tenant_for_update_or_404(tenant_id)
 
@@ -1231,6 +1293,8 @@ class TenantService:
             tenant,
             {
                 "allocated_budget": new_budget,
+                "budget_effective_from": budget_effective_from,
+                "budget_effective_to": budget_effective_to,
                 "updated_by": current_user.id,
             },
         )

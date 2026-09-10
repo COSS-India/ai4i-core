@@ -19,6 +19,7 @@ budget top-up must clear a stale budget-exhausted flag) still holds under the
 new implementation, without depending on a table that no longer exists.
 """
 
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -30,6 +31,12 @@ from app.core.exceptions import ValidationError
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User
 from app.services.tenant_service import TenantService
+
+# A valid budget window for tests that aren't specifically exercising the
+# From/To validation itself — From is "now" (always >= today's UTC date),
+# To is comfortably more than one calendar day after it.
+_VALID_EFFECTIVE_FROM = datetime.now(timezone.utc)
+_VALID_EFFECTIVE_TO = _VALID_EFFECTIVE_FROM + timedelta(days=30)
 
 
 def _admin_user() -> User:
@@ -257,7 +264,7 @@ class TestReviseTenantBudget:
     async def test_non_admin_rejected(self) -> None:
         svc = _svc(roles=["TENANT ADMIN"])
         with pytest.raises(HTTPException) as exc_info:
-            await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("100"))
+            await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("100"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO)
         assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
@@ -268,8 +275,7 @@ class TestReviseTenantBudget:
         )
         with pytest.raises(HTTPException) as exc_info:
             await svc.revise_tenant_budget(
-                _admin_user(), 1, "top-up", Decimal("99999999999999.00")
-            )
+                _admin_user(), 1, "top-up", Decimal("99999999999999.00"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO)
         assert exc_info.value.status_code == 422
         assert exc_info.value.detail["error"] == "budget_limit_exceeded"
 
@@ -280,7 +286,7 @@ class TestReviseTenantBudget:
             return_value=_tenant(allocated_budget=Decimal("50"))
         )
         with pytest.raises(HTTPException) as exc_info:
-            await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("100"))
+            await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("100"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO)
         assert exc_info.value.status_code == 422
         assert exc_info.value.detail["error"] == "budget_negative"
 
@@ -301,7 +307,7 @@ class TestReviseTenantBudget:
 
         with pytest.raises(HTTPException) as exc_info:
             # 1000 - 400 = 600, below the 700 already spent across both keys.
-            await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("400"), db)
+            await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("400"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db)
 
         assert exc_info.value.status_code == 409
         assert exc_info.value.detail["error"] == "budget_below_consumed"
@@ -319,7 +325,7 @@ class TestReviseTenantBudget:
         db = _core_db(budget_usage_rows=[rows, rows])  # verification, then the post-commit sync
 
         # 1000 - 200 = 800, still above the 300 already spent.
-        await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("200"), db)
+        await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("200"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db)
 
         svc._tenants.update.assert_awaited_once()
         assert svc._tenants.update.await_args.args[1]["allocated_budget"] == Decimal("800")
@@ -339,7 +345,7 @@ class TestReviseTenantBudget:
         svc._tenants.update = AsyncMock()
 
         with pytest.raises(HTTPException) as exc_info:
-            await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("200"), None)
+            await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("200"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, None)
 
         assert exc_info.value.status_code == 503
         assert exc_info.value.detail["error"] == "spend_verification_unavailable"
@@ -356,7 +362,7 @@ class TestReviseTenantBudget:
         db = AsyncMock()
 
         with pytest.raises(HTTPException) as exc_info:
-            await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("200"), db)
+            await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("200"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db)
 
         assert exc_info.value.status_code == 503
         assert exc_info.value.detail["error"] == "spend_verification_unavailable"
@@ -375,7 +381,7 @@ class TestReviseTenantBudget:
         db = AsyncMock()
 
         with pytest.raises(HTTPException) as exc_info:
-            await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("200"), db)
+            await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("200"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db)
 
         assert exc_info.value.status_code == 503
         assert exc_info.value.detail["error"] == "spend_verification_unavailable"
@@ -407,7 +413,7 @@ class TestReviseTenantBudget:
         usage_rows = [self._usage_row(10, Decimal("60.00")), self._usage_row(11, Decimal("40.00"))]
         db = _core_db(budget_usage_rows=usage_rows)
 
-        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), db)
+        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db)
 
         svc._api_keys.set_budget_exhausted_for_tenant.assert_not_awaited()
         svc._api_keys.set_budget_exhausted_for_keys.assert_awaited_once_with([10, 11], False)
@@ -430,7 +436,7 @@ class TestReviseTenantBudget:
         ]
         db = _core_db(budget_usage_rows=usage_rows)
 
-        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), db)
+        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db)
 
         svc._api_keys.set_budget_exhausted_for_tenant.assert_not_awaited()
         svc._api_keys.set_budget_exhausted_for_keys.assert_awaited_once_with([10], False)
@@ -453,7 +459,7 @@ class TestReviseTenantBudget:
         rows = [self._usage_row(10, Decimal("0"))]
         db = _core_db(budget_usage_rows=[rows, rows])
 
-        await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("500"), db)
+        await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("500"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db)
 
         svc._api_keys.set_budget_exhausted_for_tenant.assert_awaited_once_with(1, True)
 
@@ -470,7 +476,7 @@ class TestReviseTenantBudget:
         svc._api_keys.list_key_ids_for_tenant = AsyncMock(return_value=[10])
         db = _core_db(budget_usage_rows=[self._usage_row(10, Decimal("1200.00"))])
 
-        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("0"), db)
+        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("0"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db)
 
         svc._api_keys.set_budget_exhausted_for_tenant.assert_awaited_once_with(1, True)
 
@@ -488,7 +494,7 @@ class TestReviseTenantBudget:
         svc._api_keys.list_key_ids_for_tenant = AsyncMock(return_value=[])
         db = _core_db()  # fetch_budget_usage short-circuits on empty key_ids — no execute call
 
-        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), db)
+        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db)
 
         svc._api_keys.set_budget_exhausted_for_tenant.assert_not_awaited()
         svc._api_keys.set_budget_exhausted_for_keys.assert_awaited_once_with([], False)
@@ -506,8 +512,7 @@ class TestReviseTenantBudget:
         svc._tenants.update = AsyncMock()
 
         tenant = await svc.revise_tenant_budget(
-            _admin_user(), 1, "top-up", Decimal("500"), None
-        )
+            _admin_user(), 1, "top-up", Decimal("500"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, None)
 
         svc._tenants.update.assert_awaited_once()
         assert svc._tenants.update.await_args.args[1]["allocated_budget"] == Decimal("500")
@@ -528,7 +533,7 @@ class TestReviseTenantBudget:
         )
         db = AsyncMock()
 
-        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), db)
+        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db)
 
         # The primary write already happened before the sync ever runs —
         # checking the call args, not tenant.allocated_budget, since
@@ -559,7 +564,7 @@ class TestReviseTenantBudget:
         db = AsyncMock()
         db.execute = AsyncMock(side_effect=RuntimeError("platform-core unreachable"))
 
-        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("0"), db)
+        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("0"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db)
 
         assert svc._tenants.update.await_args.args[1]["allocated_budget"] == Decimal("1000")
         svc._api_keys.set_budget_exhausted_for_tenant.assert_not_awaited()
@@ -576,7 +581,7 @@ class TestReviseTenantBudget:
         svc._tenants.update = AsyncMock()
         db = AsyncMock()
 
-        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), db)
+        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db)
 
         assert svc._tenants.update.await_args.args[1]["allocated_budget"] == Decimal("500")
         db.execute.assert_not_awaited()
@@ -608,7 +613,7 @@ class TestReviseTenantBudgetCascade:
         svc._tenants.update = AsyncMock()
 
         with pytest.raises(HTTPException) as exc_info:
-            await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"))
+            await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO)
 
         assert exc_info.value.status_code == 503
         assert exc_info.value.detail["error"] == "allocation_cascade_unavailable"
@@ -631,7 +636,7 @@ class TestReviseTenantBudgetCascade:
         )
         svc._tenants.update = AsyncMock()
 
-        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"))
+        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO)
 
         allocation_service.cascade_tenant_budget_revision.assert_awaited_once_with(
             1, Decimal("1500"), ANY, None
@@ -654,7 +659,7 @@ class TestReviseTenantBudgetCascade:
         svc._tenants.update = AsyncMock()
 
         tenant, applications_recomputed, keys_recomputed, snapshot_write_failed = (
-            await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"))
+            await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO)
         )
 
         assert (applications_recomputed, keys_recomputed) == (3, 5)
@@ -678,7 +683,7 @@ class TestReviseTenantBudgetCascade:
         db = _core_db(budget_usage_rows=[rows, rows])
 
         tenant, applications_recomputed, keys_recomputed, snapshot_write_failed = (
-            await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("200"), db)
+            await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("200"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db)
         )
 
         assert (applications_recomputed, keys_recomputed) == (2, 4)
@@ -716,7 +721,7 @@ class TestReviseTenantBudgetCascade:
         db = _core_db(budget_usage_rows=rows)  # only the pre-cascade spend-verification fetch runs
 
         with pytest.raises(ValidationError):
-            await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("200"), db)
+            await svc.revise_tenant_budget(_admin_user(), 1, "top-down", Decimal("200"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db)
 
         svc._tenants.update.assert_not_awaited()
         svc._tenants.commit.assert_not_awaited()
@@ -744,7 +749,7 @@ class TestReviseTenantBudgetCascade:
             "app.services.tenant_service.write_budget_snapshot", AsyncMock(return_value=False)
         ):
             tenant, applications_recomputed, keys_recomputed, snapshot_write_failed = (
-                await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"))
+                await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO)
             )
 
         # The revision itself still fully succeeded — not rolled back, not
@@ -753,6 +758,143 @@ class TestReviseTenantBudgetCascade:
         svc._tenants.commit.assert_awaited_once()
         assert (applications_recomputed, keys_recomputed) == (2, 3)
         assert snapshot_write_failed is True
+
+
+class TestReviseTenantBudgetEffectiveWindow:
+    """budget_effective_from/budget_effective_to are required on every
+    revision (schema-level, see TenantBudgetRequest) and validated
+    server-side here (From must not be before today UTC; To must be at
+    least one calendar day after From) — see _validate_budget_window.
+
+    Before this, the ONLY place these fields could ever be set was tenant
+    creation (TenantCreate), with zero validation and no way to correct or
+    renew them afterwards — a tenant created with, say, a same-day
+    From/To, or one whose window has since expired, had no path back to a
+    sane window short of a raw DB edit. These tests cover that gap
+    directly, not a simplified stand-in for it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_effective_from_before_today_rejected(self) -> None:
+        """The concrete failing scenario this closes: an admin resubmits
+        yesterday's date (e.g. a stale form, or a client in a
+        behind-UTC timezone that computed "today" wrong) as From — must be
+        rejected, not silently persisted as an already-expired window."""
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant(allocated_budget=Decimal("100"))
+        )
+        yesterday = _VALID_EFFECTIVE_FROM - timedelta(days=1)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.revise_tenant_budget(
+                _admin_user(), 1, "top-up", Decimal("100"), yesterday, yesterday + timedelta(days=30)
+            )
+
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["error"] == "budget_effective_from_invalid"
+        # Validated before the tenant is even loaded — a cheap, local-only
+        # check must fail fastest, same reasoning as the top-down spend
+        # gate's own ordering elsewhere in this method.
+        svc._tenants.get_by_id_for_update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_effective_to_same_calendar_day_as_from_rejected(self) -> None:
+        """The other concrete failing scenario: a caller passes From/To on
+        the same date (or To before From) — e.g. a UI bug that defaults
+        both date pickers to "today". Must be rejected as too narrow a
+        window, not accepted as a zero/negative-length one."""
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant(allocated_budget=Decimal("100"))
+        )
+        same_day_to = _VALID_EFFECTIVE_FROM.replace(hour=23, minute=59)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.revise_tenant_budget(
+                _admin_user(), 1, "top-up", Decimal("100"), _VALID_EFFECTIVE_FROM, same_day_to
+            )
+
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["error"] == "budget_effective_to_invalid"
+        svc._tenants.get_by_id_for_update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_effective_to_exactly_one_day_after_from_allowed(self) -> None:
+        """Boundary: "at least one calendar day after" must accept exactly
+        one day, not reject it off-by-one."""
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant(allocated_budget=Decimal("100"))
+        )
+        svc._tenants.update = AsyncMock()
+        from_dt = _VALID_EFFECTIVE_FROM
+        to_dt = from_dt + timedelta(days=1)
+
+        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("100"), from_dt, to_dt)
+
+        svc._tenants.update.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_effective_window_persisted_alongside_allocated_budget(self) -> None:
+        """The revised window must actually be written, not just
+        validated-and-discarded."""
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant(allocated_budget=Decimal("100"))
+        )
+        svc._tenants.update = AsyncMock()
+        from_dt = _VALID_EFFECTIVE_FROM
+        to_dt = _VALID_EFFECTIVE_TO
+
+        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("100"), from_dt, to_dt)
+
+        written = svc._tenants.update.await_args.args[1]
+        assert written["budget_effective_from"] == from_dt
+        assert written["budget_effective_to"] == to_dt
+
+    @pytest.mark.asyncio
+    async def test_renewing_an_already_expired_window_succeeds(self) -> None:
+        """End-to-end version of the real-world gap: a tenant whose budget
+        window already lapsed (budget_effective_to in the past) previously
+        had no endpoint that could ever move that date — revise_tenant_budget
+        only ever touched allocated_budget. An admin renewing the tenant now
+        does it in the same top-up call, and the new window replaces the
+        expired one."""
+        expired_tenant = _tenant(allocated_budget=Decimal("100"))
+        expired_tenant.budget_effective_from = _VALID_EFFECTIVE_FROM - timedelta(days=60)
+        expired_tenant.budget_effective_to = _VALID_EFFECTIVE_FROM - timedelta(days=1)
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=expired_tenant)
+        svc._tenants.update = AsyncMock()
+        new_from = _VALID_EFFECTIVE_FROM
+        new_to = _VALID_EFFECTIVE_TO
+
+        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), new_from, new_to)
+
+        written = svc._tenants.update.await_args.args[1]
+        assert written["budget_effective_from"] == new_from
+        assert written["budget_effective_to"] == new_to
+        assert written["allocated_budget"] == Decimal("600")
+
+    @pytest.mark.asyncio
+    async def test_naive_datetime_treated_as_utc_not_local(self) -> None:
+        """A naive (no tzinfo) From/To — e.g. a client that stripped the
+        offset — must be compared as UTC, matching the field's documented
+        contract, not silently reinterpreted as local time (which would
+        make the from/to check pass or fail differently depending on the
+        server's own timezone)."""
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=_tenant(allocated_budget=Decimal("100"))
+        )
+        svc._tenants.update = AsyncMock()
+        naive_from = datetime.now(timezone.utc).replace(tzinfo=None)
+        naive_to = naive_from + timedelta(days=1)
+
+        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("100"), naive_from, naive_to)
+
+        svc._tenants.update.assert_awaited_once()
 
 
 class TestListTenantTiers:
