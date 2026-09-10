@@ -492,7 +492,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
         prev.map((row) => {
           if (row.application_id !== applicationId) return row;
           if (!isApplicationBudgetEditable(row.status)) return row;
-          const next = { ...applyResolved(row, tenantBudget, "percentage", value), lastEditMode: "percentage" as const };
+          const next = applyResolved(row, tenantBudget, value);
           if (row.keysLoaded && next.resolvedAmount != null) {
             next.keyPreviews = previewKeyCascade(next.resolvedAmount, row.keys);
             next.rowError = evaluateRowError(next, tenantBudget);
@@ -514,25 +514,6 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
       ),
     );
   }, []);
-
-  const onBulkAmountChange = useCallback(
-    (applicationId: string, value: string) => {
-      setBulkRows((prev) =>
-        prev.map((row) => {
-          if (row.application_id !== applicationId) return row;
-          if (!isApplicationBudgetEditable(row.status)) return row;
-          const next = { ...applyResolved(row, tenantBudget, "amount", value), lastEditMode: "amount" as const };
-          if (row.keysLoaded && next.resolvedAmount != null) {
-            next.keyPreviews = previewKeyCascade(next.resolvedAmount, row.keys);
-            next.rowError = evaluateRowError(next, tenantBudget);
-          }
-          return next;
-        }),
-      );
-      onBulkRowFocus(applicationId);
-    },
-    [tenantBudget, onBulkRowFocus],
-  );
 
   const handleSaveBulkBudget = async () => {
     if (!bulkCanSave) return;
@@ -871,7 +852,6 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     onBulkRowFocus,
     onBulkPctChange,
     onBulkPctBoundHit,
-    onBulkAmountChange,
     handleSaveBulkBudget,
     statusBusyId,
     handleToggleStatus,

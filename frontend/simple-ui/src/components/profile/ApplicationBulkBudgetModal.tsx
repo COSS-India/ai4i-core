@@ -48,7 +48,6 @@ export default function ApplicationBulkBudgetModal({
   onRowFocus,
   onPctChange,
   onPctBoundHit,
-  onAmountChange,
   onSave,
   canSave,
 }: {
@@ -65,7 +64,6 @@ export default function ApplicationBulkBudgetModal({
   onRowFocus: (applicationId: string) => void;
   onPctChange: (applicationId: string, value: string) => void;
   onPctBoundHit: (applicationId: string, bound: PercentageBound) => void;
-  onAmountChange: (applicationId: string, value: string) => void;
   onSave: () => void;
   canSave: boolean;
 }) {
@@ -170,16 +168,7 @@ export default function ApplicationBulkBudgetModal({
         </Table>
       </Box>
     );
-  }, [
-    isLoading,
-    rows,
-    currency,
-    onPctChange,
-    onPctBoundHit,
-    onAmountChange,
-    onRowFocus,
-    institutionBudgetUnset,
-  ]);
+  }, [isLoading, rows, currency, onPctChange, onPctBoundHit, onRowFocus]);
 
   return (
     <StandardModal
