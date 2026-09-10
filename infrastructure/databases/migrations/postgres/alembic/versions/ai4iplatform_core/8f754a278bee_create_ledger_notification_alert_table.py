@@ -45,8 +45,8 @@ def upgrade() -> None:
         sa.Column("subject", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default="{}"),
         sa.Column("channel", channel_enum, nullable=False),
         sa.Column("status", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default="{}"),
-        sa.Column("created_by", postgresql.UUID(as_uuid=True), nullable=True),
-        sa.Column("updated_by", postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column("created_by", sa.String(length=255), nullable=True),
+        sa.Column("updated_by", sa.String(length=255), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column(
             "updated_at",
