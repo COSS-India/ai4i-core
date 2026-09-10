@@ -1,10 +1,10 @@
 """Notification and alert catalog reads/writes.
 
-Both catalog GETs are a join in code, not a serialiser over the table: each
-DB row is decorated with its display name/description/detail line from
-catalog_metadata.py, which the API never exposes for editing. The alert
-catalog additionally supports a PATCH — the notification catalog's PATCH is
-a separate, later ticket.
+The catalog GET is a join in code, not a serialiser over the table: each DB
+row is decorated with its display name/description/detail line from
+catalog_metadata.py, which the API never exposes for editing. One function
+serves both NOTIFICATION and ALERT rows, filtered by ``type`` — the alert
+catalog additionally supports a PATCH.
 """
 
 from typing import Dict, List
@@ -17,11 +17,7 @@ from app.models.notification_management.config_notification_alert import (
     ConfigNotificationAlert,
 )
 from app.schemas.enums.notification_management import NotificationName, NotificationType
-from app.schemas.notification_management.catalog import (
-    AlertCatalogItem,
-    AlertCatalogUpdate,
-    NotificationCatalogItem,
-)
+from app.schemas.notification_management.catalog import CatalogItem, CatalogUpdate
 from app.services.notification_management.catalog_metadata import (
     ALERT_LEGAL_RECIPIENT_ROLES,
     MAX_THRESHOLD_KEYS,
@@ -31,57 +27,31 @@ from app.services.notification_management.catalog_metadata import (
 )
 
 
-async def list_notification_catalog(session: AsyncSession) -> List[NotificationCatalogItem]:
-    result = await session.execute(
-        select(ConfigNotificationAlert).order_by(ConfigNotificationAlert.id)
-    )
-    rows = result.scalars().all()
-
-    items = []
-    for row in rows:
-        meta = NOTIFICATION_METADATA.get(row.name)
-        items.append(
-            NotificationCatalogItem(
-                name=row.name,
-                display_name=meta.display_name if meta else row.name,
-                description=meta.description if meta else "",
-                type=row.type,
-                module=row.module,
-                channels=list(row.channels or []),
-                is_enabled=row.is_enabled,
-                recipient_roles=(row.config or {}).get("recipient_roles", {}),
-            )
-        )
-    return items
-
-
-# ── Alert catalog (ALERT-type rows only) ──
-
-
-def _to_alert_catalog_item(row: ConfigNotificationAlert) -> AlertCatalogItem:
+def _to_catalog_item(row: ConfigNotificationAlert) -> CatalogItem:
     meta = NOTIFICATION_METADATA.get(row.name)
-    config = row.config or {}
-    return AlertCatalogItem(
+    is_alert = row.type == NotificationType.ALERT.value
+    return CatalogItem(
         name=row.name,
         display_name=meta.display_name if meta else row.name,
         description=meta.description if meta else "",
         type=row.type,
         module=row.module,
         channels=list(row.channels or []),
-        is_enabled=row.is_enabled,
-        recipient_roles=config.get("recipient_roles", {}),
-        thresholds=config.get("thresholds", {}),
+        recipient_roles=row.recipient_roles or {},
+        # None (dropped from the response) on a NOTIFICATION row — that key
+        # only ever exists in config for ALERT-type rows.
+        thresholds=(row.config or {}).get("thresholds", {}) if is_alert else None,
     )
 
 
-async def list_alert_catalog(session: AsyncSession) -> List[AlertCatalogItem]:
+async def list_catalog(session: AsyncSession, catalog_type: NotificationType) -> List[CatalogItem]:
     result = await session.execute(
         select(ConfigNotificationAlert)
-        .where(ConfigNotificationAlert.type == NotificationType.ALERT.value)
+        .where(ConfigNotificationAlert.type == catalog_type.value)
         .order_by(ConfigNotificationAlert.id)
     )
     rows = result.scalars().all()
-    return [_to_alert_catalog_item(row) for row in rows]
+    return [_to_catalog_item(row) for row in rows]
 
 
 def _validate_recipient_roles(name: str, recipient_roles: Dict[str, bool]) -> None:
@@ -118,8 +88,8 @@ def _validate_thresholds(name: str, thresholds: Dict[str, bool]) -> None:
 
 
 async def update_alert_catalog(
-    session: AsyncSession, name: str, payload: AlertCatalogUpdate
-) -> AlertCatalogItem:
+    session: AsyncSession, name: str, payload: CatalogUpdate
+) -> CatalogItem:
     # Validate against the enum in Python before it ever reaches the query:
     # `name` is arbitrary path-param text, and comparing a non-member string
     # to a Postgres ENUM column raises an invalid-input-value DB error (a
@@ -136,24 +106,19 @@ async def update_alert_catalog(
     if row is None or row.type != NotificationType.ALERT.value:
         raise EntityNotFoundError(f"Alert '{name}'")
 
-    config = dict(row.config or {})
-
     if payload.recipient_roles is not None:
         _validate_recipient_roles(name, payload.recipient_roles)
-        config["recipient_roles"] = payload.recipient_roles
+        row.recipient_roles = payload.recipient_roles
 
     if payload.thresholds is not None:
         _validate_thresholds(name, payload.thresholds)
+        config = dict(row.config or {})
         config["thresholds"] = payload.thresholds
-
-    row.config = config
-
-    if payload.is_enabled is not None:
-        row.is_enabled = payload.is_enabled
+        row.config = config
 
     if payload.channels is not None:
         row.channels = [channel.value for channel in payload.channels]
 
     await session.commit()
     await session.refresh(row)
-    return _to_alert_catalog_item(row)
+    return _to_catalog_item(row)
