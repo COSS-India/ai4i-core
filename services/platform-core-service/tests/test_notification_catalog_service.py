@@ -64,9 +64,22 @@ class _Session:
         self.refreshed = []
 
     async def execute(self, stmt):
+        # Honour the statement's actual WHERE value rather than always
+        # returning self.rows/self.found regardless of what was asked —
+        # otherwise a dropped/broken filter in the service would go
+        # unnoticed here. SQLAlchemy auto-names a bound param after the
+        # column it filters on plus a counter, e.g. `type_1`/`id_1`.
+        params = stmt.compile().params
         result = MagicMock()
-        result.scalars.return_value.all.return_value = self.rows
-        result.scalar_one_or_none.return_value = self.found
+        if "type_1" in params:
+            result.scalars.return_value.all.return_value = [
+                row for row in self.rows if row.type == params["type_1"]
+            ]
+        elif "id_1" in params:
+            found = self.found if self.found is not None and self.found.id == params["id_1"] else None
+            result.scalar_one_or_none.return_value = found
+        else:
+            raise AssertionError(f"fake _Session.execute doesn't recognize this query: {stmt}")
         return result
 
     async def commit(self):

@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, UniqueConstraint
+from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, Index, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY, ENUM, JSONB, UUID
 from sqlalchemy.sql import func
 
@@ -32,6 +32,7 @@ class ConfigNotificationAlert(Base):
     __table_args__ = (
         UniqueConstraint("name", name="uq_configs_notification_alert_name"),
         CheckConstraint("cardinality(channels) > 0", name="ck_configs_notification_alert_channels"),
+        Index("ix_configs_notification_alert_channels", "channels", postgresql_using="gin"),
     )
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
