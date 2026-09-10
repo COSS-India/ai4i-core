@@ -1,5 +1,5 @@
-from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, Index, UniqueConstraint
-from sqlalchemy.dialects.postgresql import ARRAY, ENUM, JSONB, UUID
+from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, Index, String, UniqueConstraint
+from sqlalchemy.dialects.postgresql import ARRAY, ENUM, JSONB
 from sqlalchemy.sql import func
 
 from app.models import Base
@@ -42,9 +42,9 @@ class ConfigNotificationAlert(Base):
     channels = Column(ARRAY(_CHANNEL_ENUM), nullable=False, server_default="{EMAIL}")
     recipient_roles = Column(JSONB, nullable=False, server_default="{}")
     config = Column(JSONB, nullable=False, server_default="{}")
-    created_by = Column(UUID(as_uuid=True), nullable=True)
+    created_by = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    updated_by = Column(UUID(as_uuid=True), nullable=True)
+    updated_by = Column(String(255), nullable=True)
     updated_at = Column(
         DateTime(timezone=True),
         nullable=False,
