@@ -57,11 +57,11 @@ async def list_catalog(session: AsyncSession, catalog_type: NotificationType) ->
 
 def _merged_bool_dict(existing: Dict[str, bool], incoming: Dict[str, bool]) -> Dict[str, bool]:
     """PATCH semantics for recipient_roles/thresholds: the payload only
-    needs to carry the key(s) that changed. Every key already on the row is
-    kept (never dropped) and defaults to False unless the payload says
-    otherwise; any key the payload names is set to exactly what it says."""
-    keys = set(existing) | set(incoming)
-    return {key: incoming.get(key, False) for key in keys}
+    needs to carry the key(s) that changed. Every key already on the row
+    keeps its current value unless the payload names it, in which case it's
+    set to exactly what the payload says — no key is ever dropped or reset
+    to False just for being omitted."""
+    return {**existing, **incoming}
 
 
 def _validate_recipient_roles(name: str, recipient_roles: Dict[str, bool]) -> None:
@@ -110,9 +110,9 @@ async def update_catalog(
     error. channels/recipient_roles are accepted for both types.
 
     recipient_roles/thresholds are partial-update dicts, not wholesale
-    replacements: every key already stored on the row is kept, any key named
-    in the payload is set to exactly what it says, and any key not named
-    defaults to False rather than being dropped."""
+    replacements: every key already stored on the row keeps its current
+    value unless the payload names it, in which case it's set to exactly
+    what the payload says."""
     result = await session.execute(
         select(ConfigNotificationAlert).where(ConfigNotificationAlert.id == catalog_id)
     )

@@ -197,28 +197,28 @@ class TestUpdateCatalog:
         assert row.config == {"thresholds": {"50": True, "75": True}}
         assert row.recipient_roles == {"ADMIN": True}, "recipient_roles must survive untouched"
 
-    async def test_partial_recipient_roles_update_keeps_other_keys_and_defaults_them_false(self):
+    async def test_partial_recipient_roles_update_keeps_other_keys_at_their_current_value(self):
         # Existing row already has both legal roles set true. A PATCH naming
-        # only one of them must not drop the other key — it flips to False,
-        # it isn't removed.
+        # only one of them must not touch the other — it stays True, it
+        # isn't reset to False just for being omitted.
         row = _row(
             id=2, name="QUOTA_THRESHOLD", type="ALERT",
             recipient_roles={"TENANT ADMIN": True, "ADMIN": True},
         )
         session = _Session(found=row)
         await svc.update_catalog(
-            session, row.id, CatalogUpdate(recipient_roles={"ADMIN": True})
+            session, row.id, CatalogUpdate(recipient_roles={"ADMIN": False})
         )
-        assert row.recipient_roles == {"TENANT ADMIN": False, "ADMIN": True}
+        assert row.recipient_roles == {"TENANT ADMIN": True, "ADMIN": False}
 
-    async def test_partial_thresholds_update_keeps_other_keys_and_defaults_them_false(self):
+    async def test_partial_thresholds_update_keeps_other_keys_at_their_current_value(self):
         row = _row(
             id=2, name="QUOTA_THRESHOLD", type="ALERT",
             config={"thresholds": {"50": True, "75": True, "90": True}},
         )
         session = _Session(found=row)
         await svc.update_catalog(session, row.id, CatalogUpdate(thresholds={"90": False}))
-        assert row.config == {"thresholds": {"50": False, "75": False, "90": False}}
+        assert row.config == {"thresholds": {"50": True, "75": True, "90": False}}
 
     async def test_too_many_threshold_keys_is_rejected(self):
         row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT")

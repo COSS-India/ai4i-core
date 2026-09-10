@@ -40,8 +40,8 @@ async def update_catalog(
     independent (recipient_roles is its own column; thresholds is the only
     key left in config) so setting one never disturbs the other. thresholds
     is rejected for a NOTIFICATION-type row. Within recipient_roles/
-    thresholds, existing keys are never dropped — a key omitted from the
-    body is kept and simply defaults to False."""
+    thresholds, existing keys are never dropped or reset — a key omitted
+    from the body keeps its current value."""
     item = await catalog_service.update_catalog(session, id, payload)
     return UpdateCatalogResponse(
         success=True, data=item, meta=MessageMeta(message=f"'{item.name}' updated.")
