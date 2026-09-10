@@ -122,6 +122,7 @@ def _make_svc() -> "ServiceService":
     service_repo.commit = AsyncMock()
     service_repo.rollback = AsyncMock()
     service_repo.get_tier_names_by_ids = AsyncMock(return_value={"tier-1": "Tier 1"})
+    service_repo.get_active_tier_ids = AsyncMock(return_value={"tier-1"})
 
     model_repo = MagicMock()
     model_mock = MagicMock()
@@ -418,6 +419,7 @@ class TestNewFieldsPersistence:
             # test_service_update.py's _make_service_orm for why that
             # distinction matters here.
             inference_schema=None,
+            tier_ids=["tier-1"],
         )
         service_repo.get_by_service_id = AsyncMock(return_value=instance_mock)
         service_repo.apply_updates = AsyncMock()

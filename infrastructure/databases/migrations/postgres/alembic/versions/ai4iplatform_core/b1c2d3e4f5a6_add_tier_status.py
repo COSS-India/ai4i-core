@@ -37,6 +37,7 @@ def upgrade() -> None:
             "status",
             sa.Enum(*_ENUM_VALUES, name=_ENUM_NAME, create_type=False),
             nullable=True,
+            server_default="INACTIVE",
         ),
     )
 

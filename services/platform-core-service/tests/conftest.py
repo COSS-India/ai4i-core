@@ -197,6 +197,13 @@ _deps_stub.get_metering_service = MagicMock()
 _redis_stub = _conftest_stub("app.core.redis")
 _redis_stub.get_redis = MagicMock()
 
+# Pre-stub app.models.pay_per_use.inference_type so that inference_type_cache
+# can be imported even when a test file stubs app.models as a flat non-package
+# module. Python's import machinery checks sys.modules for the full dotted name
+# first; finding it here short-circuits the parent-chain traversal that would
+# otherwise fail with "'app.models' is not a package".
+_conftest_stub("app.models.pay_per_use.inference_type", InferenceType=MagicMock())
+
 
 # ── the inference-type catalogue, as tests see it ───────────────────────────
 #

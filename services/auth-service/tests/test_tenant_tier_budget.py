@@ -783,16 +783,16 @@ class TestListTenantTiers:
 
     @pytest.mark.asyncio
     async def test_inactive_tier_filter_404s_consistently_with_assign(self) -> None:
-        """The existence check must apply the same is_active = true filter
+        """The existence check must apply the same status = 'ACTIVE' filter
         assign_tenant_tier uses — otherwise a tier listable here could be
         rejected as not-found by assign, a visible inconsistency."""
         svc = _svc()
-        db = _core_db(tier_row=None)  # is_active filter excludes it
+        db = _core_db(tier_row=None)  # status filter excludes inactive tiers
         with pytest.raises(HTTPException) as exc_info:
             await svc.list_tenant_tiers(_admin_user(), str(uuid4()), db)
         assert exc_info.value.status_code == 404
         query_sql = str(db.execute.await_args_list[0].args[0])
-        assert "is_active = true" in query_sql
+        assert "status = 'ACTIVE'" in query_sql
 
     @pytest.mark.asyncio
     async def test_resolves_tier_names_for_listed_tenants(self) -> None:

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -17,6 +18,13 @@ from app.schemas.pay_per_use.tier import TierCreate, TierOut, TierQuotaOut, Tier
 from app.services.pay_per_use import inference_type_cache
 
 logger = logging.getLogger(__name__)
+
+# Bounded retry for the post-reactivation notification to auth-service.
+# Transient unreachability (connect error, timeout, 5xx) is retried up to this
+# many times so that quota-exhausted flags don't stay set indefinitely from a
+# brief outage. 4xx errors are not retried (they won't be fixed by retrying).
+_REACTIVATE_NOTIFY_MAX_ATTEMPTS = 3
+_REACTIVATE_NOTIFY_BACKOFF = (1.0, 2.0)  # seconds between successive attempts
 
 # Five valid edges; DELETED has no outgoing edge (terminal).
 _ALLOWED_TIER_STATUS_TRANSITIONS: dict[TierStatus, frozenset[TierStatus]] = {
@@ -407,6 +415,15 @@ async def update_tier_status(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Tier is still assigned to one or more tenants. Reassign them to another tier or remove the tier assignment before deleting.",
             )
+        mapped = await session.execute(
+            text("SELECT 1 FROM mm_services WHERE :tier_id = ANY(tier_ids) LIMIT 1"),
+            {"tier_id": str(tier.id)},
+        )
+        if mapped.first():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Tier is still mapped to one or more services. Remove the tier mapping from all services before deleting.",
+            )
 
     # Side effects that must run before commit.
     if target_status == TierStatus.ACTIVE and previous_status == TierStatus.DEACTIVATED:
@@ -420,7 +437,6 @@ async def update_tier_status(
         )
 
     tier.status = target_status
-    tier.is_active = target_status == TierStatus.ACTIVE
     tier.updated_by = updated_by
     await session.commit()
     await session.refresh(tier)
@@ -429,6 +445,8 @@ async def update_tier_status(
     # Post-commit notifications (best-effort).
     if target_status == TierStatus.ACTIVE and previous_status == TierStatus.DEACTIVATED:
         await _notify_tier_reactivated(tier, auth_service_url, http_client, auth_db)
+    elif target_status == TierStatus.DEACTIVATED:
+        await _notify_tier_deactivated(tier, auth_service_url, http_client)
 
     q_result = await session.execute(select(TierQuota).where(TierQuota.tier_id == tier.id))
     names = await inference_type_cache.get_name_by_id(session)
@@ -443,13 +461,117 @@ async def _notify_tier_reactivated(
 ) -> None:
     if not (auth_service_url and http_client):
         return
+
     try:
         tenant_ids = await _fetch_tenant_ids_for_tier(tier.id, auth_db)
-        resp = await http_client.post(
-            f"{auth_service_url}/internal/ppu/tier/reactivated",
-            json={"tier_id": str(tier.id), "tenant_ids": tenant_ids},
-            timeout=5.0,
-        )
-        resp.raise_for_status()
     except Exception as exc:
-        logger.warning("tier-reactivated notification failed for tier %s: %s", tier.id, exc)
+        logger.warning(
+            "tier-reactivated notification for tier %s skipped: "
+            "auth-db query for tenant IDs failed (%s); "
+            "quota-exhausted flags may remain set until the next reactivation",
+            tier.id, exc,
+        )
+        return
+
+    payload = {"tier_id": str(tier.id), "tenant_ids": tenant_ids}
+    failure: str = "unknown"
+
+    for attempt in range(1, _REACTIVATE_NOTIFY_MAX_ATTEMPTS + 1):
+        try:
+            resp = await http_client.post(
+                f"{auth_service_url}/internal/ppu/tier/reactivated",
+                json=payload,
+                timeout=5.0,
+            )
+            resp.raise_for_status()
+            return
+        except httpx.HTTPStatusError as exc:
+            failure = f"HTTP {exc.response.status_code}"
+            if exc.response.status_code < 500:
+                # 4xx will not be fixed by retrying; log and bail.
+                logger.warning(
+                    "tier-reactivated notification for tier %s rejected "
+                    "(HTTP %s, not retrying): quota-exhausted flags may remain "
+                    "set for %d tenant(s)",
+                    tier.id, exc.response.status_code, len(tenant_ids),
+                )
+                return
+        except httpx.TimeoutException:
+            failure = "request timed out"
+        except httpx.ConnectError as exc:
+            failure = f"connection refused/unreachable: {exc}"
+        except Exception as exc:
+            failure = str(exc)
+
+        if attempt < _REACTIVATE_NOTIFY_MAX_ATTEMPTS:
+            delay = _REACTIVATE_NOTIFY_BACKOFF[attempt - 1]
+            logger.warning(
+                "tier-reactivated notification for tier %s failed "
+                "(attempt %d/%d, %s); retrying in %.0fs",
+                tier.id, attempt, _REACTIVATE_NOTIFY_MAX_ATTEMPTS, failure, delay,
+            )
+            await asyncio.sleep(delay)
+
+    logger.error(
+        "tier-reactivated notification for tier %s failed after %d attempts (%s): "
+        "quota-exhausted flags may remain set for %d tenant(s) until next reactivation",
+        tier.id, _REACTIVATE_NOTIFY_MAX_ATTEMPTS, failure, len(tenant_ids),
+    )
+
+
+async def _notify_tier_deactivated(
+    tier: Tier,
+    auth_service_url: str,
+    http_client: Optional[httpx.AsyncClient],
+) -> None:
+    """Push an ACTIVE → DEACTIVATED status change to auth-service immediately after commit.
+
+    Without this push, auth-service coasts on its cached ACTIVE status for up to
+    tier_status_cache_refresh_interval_seconds, serving entitled traffic during that
+    window. The periodic reload remains as a backstop.
+    """
+    if not (auth_service_url and http_client):
+        return
+
+    payload = {"tier_id": str(tier.id)}
+    failure: str = "unknown"
+
+    for attempt in range(1, _REACTIVATE_NOTIFY_MAX_ATTEMPTS + 1):
+        try:
+            resp = await http_client.post(
+                f"{auth_service_url}/internal/ppu/tier/deactivated",
+                json=payload,
+                timeout=5.0,
+            )
+            resp.raise_for_status()
+            return
+        except httpx.HTTPStatusError as exc:
+            failure = f"HTTP {exc.response.status_code}"
+            if exc.response.status_code < 500:
+                logger.warning(
+                    "tier-deactivated notification for tier %s rejected "
+                    "(HTTP %s, not retrying): auth-service status cache may be stale",
+                    tier.id, exc.response.status_code,
+                )
+                return
+        except httpx.TimeoutException:
+            failure = "request timed out"
+        except httpx.ConnectError as exc:
+            failure = f"connection refused/unreachable: {exc}"
+        except Exception as exc:
+            failure = str(exc)
+
+        if attempt < _REACTIVATE_NOTIFY_MAX_ATTEMPTS:
+            delay = _REACTIVATE_NOTIFY_BACKOFF[attempt - 1]
+            logger.warning(
+                "tier-deactivated notification for tier %s failed "
+                "(attempt %d/%d, %s); retrying in %.0fs",
+                tier.id, attempt, _REACTIVATE_NOTIFY_MAX_ATTEMPTS, failure, delay,
+            )
+            await asyncio.sleep(delay)
+
+    logger.error(
+        "tier-deactivated notification for tier %s failed after %d attempts (%s): "
+        "auth-service will enforce deactivation on next cache reload",
+        tier.id, _REACTIVATE_NOTIFY_MAX_ATTEMPTS, failure,
+    )

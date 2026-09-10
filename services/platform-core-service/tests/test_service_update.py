@@ -67,6 +67,7 @@ def _make_service_orm(
     # which would make that check misfire for every test in this file that
     # isn't specifically exercising it.
     instance.inference_schema = inference_schema
+    instance.tier_ids = ["tier-1"]
     return instance
 
 
@@ -77,6 +78,7 @@ def _make_svc(service_id: str = "svc-abc") -> ServiceService:
     service_repo.commit = AsyncMock()
     service_repo.rollback = AsyncMock()
     service_repo.get_tier_names_by_ids = AsyncMock(return_value={"tier-1": "Tier 1"})
+    service_repo.get_active_tier_ids = AsyncMock(return_value={"tier-1"})
 
     model_repo = MagicMock()
     model_repo.get_by_id_version = AsyncMock(return_value=None)

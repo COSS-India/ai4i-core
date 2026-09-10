@@ -19,8 +19,9 @@ from typing import Optional
 
 from sqlalchemy import text
 
+from app.core.config import settings
 from app.core.database import get_platform_core_session_factory
-from app.services.refreshing_cache import DEFAULT_REFRESH_INTERVAL_SECONDS, RefreshingCache
+from app.services.refreshing_cache import RefreshingCache
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,11 @@ class TierStatusCache(RefreshingCache):
     def get_status(self, tier_id: str) -> Optional[str]:
         """Return the cached status string for ``tier_id``, or None on a miss."""
         return self._statuses.get(tier_id)
+
+    def set_status(self, tier_id: str, status: str) -> None:
+        """Immediately update one entry — used by push notifications from platform-core
+        so that status changes take effect without waiting for the next reload cycle."""
+        self._statuses[tier_id] = status
 
     def is_active(self, tier_id: str) -> bool:
         """True when the tier is ACTIVE or unknown (fail-open).
@@ -74,4 +80,4 @@ class TierStatusCache(RefreshingCache):
 
 
 # Module-level singleton — started in lifespan (main.py).
-tier_status_cache = TierStatusCache()
+tier_status_cache = TierStatusCache(settings.tier_status_cache_refresh_interval_seconds)

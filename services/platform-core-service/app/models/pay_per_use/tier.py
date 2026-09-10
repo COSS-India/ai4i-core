@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -18,7 +18,6 @@ class Tier(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
-    is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     status = Column(
         Enum(
             TierStatus,

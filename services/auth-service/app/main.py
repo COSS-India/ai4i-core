@@ -92,7 +92,6 @@ async def lifespan(app: FastAPI):
     await role_permission_cache.start()
     await tenant_name_cache.start()
 
-    tier_status_cache._refresh_interval = settings.tier_status_cache_refresh_interval_seconds
     await tier_status_cache.start()
 
     yield

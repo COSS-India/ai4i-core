@@ -512,8 +512,10 @@ class ServiceService:
         if "unitSize" in request_dict:
             update_data["unit_size"] = request_dict["unitSize"]
         if "tierIds" in request_dict:
-            await self._validate_tier_ids_exist(request_dict["tierIds"])
-            update_data["tier_ids"] = request_dict["tierIds"]
+            new_tier_ids = request_dict["tierIds"]
+            if set(new_tier_ids or []) != set(instance.tier_ids or []):
+                await self._validate_tier_ids_exist(new_tier_ids)
+            update_data["tier_ids"] = new_tier_ids
 
         # Recompute unit_rate whenever either factor changes.
         if "cost_per_unit" in update_data or "unit_size" in update_data:
