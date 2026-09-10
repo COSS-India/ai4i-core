@@ -157,6 +157,9 @@
     { "endpoint": "PUT:/api/v1/alerts/routing-rules/{rule_id}",            "permissionRequired": 118, "description": "Update routing rule (alerts.update)" },
     { "endpoint": "DELETE:/api/v1/alerts/routing-rules/{rule_id}",         "permissionRequired": 119, "description": "Delete routing rule (alerts.delete)" },
     { "endpoint": "PATCH:/api/v1/alerts/routing-rules/timing",             "permissionRequired": 118, "description": "Update routing rule timing (alerts.update)" },
-    { "endpoint": "GET:/api/v1/alerts/history",                            "permissionRequired": 116, "description": "List alert history (alerts.read)" }
+    { "endpoint": "GET:/api/v1/alerts/history",                            "permissionRequired": 116, "description": "List alert history (alerts.read)" },
+
+    { "endpoint": "GET:/api/v1/notification-alerts/catalog",              "permissionRequired": 1,   "description": "List notification/alert catalog (admin sentinel — ADMIN only)" },
+    { "endpoint": "PATCH:/api/v1/notification-alerts/catalog/{name}",     "permissionRequired": 1,   "description": "Update notification/alert catalog entry (admin sentinel — ADMIN only)" }
   ]
 }

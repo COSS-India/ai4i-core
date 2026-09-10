@@ -1,13 +1,15 @@
 """Notification and alert catalog reads/writes.
 
-Both catalog GETs are a join in code, not a serialiser over the table: each
-DB row is decorated with its display name/description/detail line from
-catalog_metadata.py, which the API never exposes for editing. The alert
-catalog additionally supports a PATCH — the notification catalog's PATCH is
-a separate, later ticket.
+The catalog GET is a join in code, not a serialiser over the table: each DB
+row is decorated with its display name/description/detail line from
+catalog_metadata.py, which the API never exposes for editing. One function
+serves both NOTIFICATION and ALERT rows, filtered by ``type``; PATCH updates
+one row by ``name`` — unique, stable and meaningful, unlike the bigserial
+``id`` (whose values depend on seed history and can differ across
+environments).
 """
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,13 +19,9 @@ from app.models.notification_management.config_notification_alert import (
     ConfigNotificationAlert,
 )
 from app.schemas.enums.notification_management import NotificationName, NotificationType
-from app.schemas.notification_management.catalog import (
-    AlertCatalogItem,
-    AlertCatalogUpdate,
-    NotificationCatalogItem,
-)
+from app.schemas.notification_management.catalog import CatalogItem, CatalogUpdate
 from app.services.notification_management.catalog_metadata import (
-    ALERT_LEGAL_RECIPIENT_ROLES,
+    LEGAL_RECIPIENT_ROLES,
     MAX_THRESHOLD_KEYS,
     MAX_THRESHOLD_PERCENT,
     MIN_THRESHOLD_PERCENT,
@@ -31,64 +29,47 @@ from app.services.notification_management.catalog_metadata import (
 )
 
 
-async def list_notification_catalog(session: AsyncSession) -> List[NotificationCatalogItem]:
-    result = await session.execute(
-        select(ConfigNotificationAlert).order_by(ConfigNotificationAlert.id)
-    )
-    rows = result.scalars().all()
-
-    items = []
-    for row in rows:
-        meta = NOTIFICATION_METADATA.get(row.name)
-        items.append(
-            NotificationCatalogItem(
-                name=row.name,
-                display_name=meta.display_name if meta else row.name,
-                description=meta.description if meta else "",
-                type=row.type,
-                module=row.module,
-                channels=list(row.channels or []),
-                is_enabled=row.is_enabled,
-                recipient_roles=(row.config or {}).get("recipient_roles", {}),
-            )
-        )
-    return items
-
-
-# ── Alert catalog (ALERT-type rows only) ──
-
-
-def _to_alert_catalog_item(row: ConfigNotificationAlert) -> AlertCatalogItem:
+def _to_catalog_item(row: ConfigNotificationAlert) -> CatalogItem:
     meta = NOTIFICATION_METADATA.get(row.name)
-    config = row.config or {}
-    return AlertCatalogItem(
+    is_alert = row.type == NotificationType.ALERT.value
+    return CatalogItem(
+        id=row.id,
         name=row.name,
         display_name=meta.display_name if meta else row.name,
         description=meta.description if meta else "",
         type=row.type,
         module=row.module,
         channels=list(row.channels or []),
-        is_enabled=row.is_enabled,
-        recipient_roles=config.get("recipient_roles", {}),
-        thresholds=config.get("thresholds", {}),
+        recipient_roles=row.recipient_roles or {},
+        # None (dropped from the response) on a NOTIFICATION row — that key
+        # only ever exists in config for ALERT-type rows.
+        thresholds=(row.config or {}).get("thresholds", {}) if is_alert else None,
     )
 
 
-async def list_alert_catalog(session: AsyncSession) -> List[AlertCatalogItem]:
+async def list_catalog(session: AsyncSession, catalog_type: NotificationType) -> List[CatalogItem]:
     result = await session.execute(
         select(ConfigNotificationAlert)
-        .where(ConfigNotificationAlert.type == NotificationType.ALERT.value)
+        .where(ConfigNotificationAlert.type == catalog_type.value)
         .order_by(ConfigNotificationAlert.id)
     )
     rows = result.scalars().all()
-    return [_to_alert_catalog_item(row) for row in rows]
+    return [_to_catalog_item(row) for row in rows]
+
+
+def _merged_bool_dict(existing: Dict[str, bool], incoming: Dict[str, bool]) -> Dict[str, bool]:
+    """PATCH semantics for recipient_roles/thresholds: the payload only
+    needs to carry the key(s) that changed. Every key already on the row
+    keeps its current value unless the payload names it, in which case it's
+    set to exactly what the payload says — no key is ever dropped or reset
+    to False just for being omitted."""
+    return {**existing, **incoming}
 
 
 def _validate_recipient_roles(name: str, recipient_roles: Dict[str, bool]) -> None:
-    try:
-        legal_roles = ALERT_LEGAL_RECIPIENT_ROLES.get(NotificationName(name), frozenset())
-    except ValueError:
-        legal_roles = frozenset()
+    # All 9 catalog rows — NOTIFICATION and ALERT alike — are restricted to
+    # ADMIN / TENANT ADMIN (design 6.1).
+    legal_roles = LEGAL_RECIPIENT_ROLES[NotificationName(name)]
     illegal = set(recipient_roles) - legal_roles
     if illegal:
         raise ValidationError(
@@ -117,9 +98,24 @@ def _validate_thresholds(name: str, thresholds: Dict[str, bool]) -> None:
             )
 
 
-async def update_alert_catalog(
-    session: AsyncSession, name: str, payload: AlertCatalogUpdate
-) -> AlertCatalogItem:
+async def update_catalog(
+    session: AsyncSession,
+    name: str,
+    payload: CatalogUpdate,
+    *,
+    updated_by: Optional[str] = None,
+) -> CatalogItem:
+    """Update one catalog row, looked up by its own ``name`` — the row's
+    type is whatever is already stored, not something the caller asserts.
+
+    ``thresholds`` is ALERT-only (the key only ever exists in ``config`` for
+    ALERT-type rows); sending it for a NOTIFICATION row is a validation
+    error. channels/recipient_roles are accepted for both types.
+
+    recipient_roles/thresholds are partial-update dicts, not wholesale
+    replacements: every key already stored on the row keeps its current
+    value unless the payload names it, in which case it's set to exactly
+    what the payload says."""
     # Validate against the enum in Python before it ever reaches the query:
     # `name` is arbitrary path-param text, and comparing a non-member string
     # to a Postgres ENUM column raises an invalid-input-value DB error (a
@@ -127,33 +123,40 @@ async def update_alert_catalog(
     try:
         NotificationName(name)
     except ValueError:
-        raise EntityNotFoundError(f"Alert '{name}'")
+        raise EntityNotFoundError(f"Catalog entry '{name}'")
 
     result = await session.execute(
         select(ConfigNotificationAlert).where(ConfigNotificationAlert.name == name)
     )
     row = result.scalar_one_or_none()
-    if row is None or row.type != NotificationType.ALERT.value:
-        raise EntityNotFoundError(f"Alert '{name}'")
+    if row is None:
+        raise EntityNotFoundError(f"Catalog entry '{name}'")
 
-    config = dict(row.config or {})
+    if payload.thresholds is not None and row.type != NotificationType.ALERT.value:
+        raise ValidationError(
+            message=f"'{row.name}' is a NOTIFICATION-type entry; thresholds do not apply to it.",
+            code="INVALID_THRESHOLDS",
+        )
 
     if payload.recipient_roles is not None:
-        _validate_recipient_roles(name, payload.recipient_roles)
-        config["recipient_roles"] = payload.recipient_roles
+        merged = _merged_bool_dict(row.recipient_roles or {}, payload.recipient_roles)
+        _validate_recipient_roles(row.name, merged)
+        row.recipient_roles = merged
 
     if payload.thresholds is not None:
-        _validate_thresholds(name, payload.thresholds)
-        config["thresholds"] = payload.thresholds
-
-    row.config = config
-
-    if payload.is_enabled is not None:
-        row.is_enabled = payload.is_enabled
+        existing_thresholds = (row.config or {}).get("thresholds", {})
+        merged = _merged_bool_dict(existing_thresholds, payload.thresholds)
+        _validate_thresholds(row.name, merged)
+        config = dict(row.config or {})
+        config["thresholds"] = merged
+        row.config = config
 
     if payload.channels is not None:
         row.channels = [channel.value for channel in payload.channels]
 
+    if updated_by is not None:
+        row.updated_by = updated_by
+
     await session.commit()
     await session.refresh(row)
-    return _to_alert_catalog_item(row)
+    return _to_catalog_item(row)
