@@ -54,11 +54,21 @@ async def list_catalog(session: AsyncSession, catalog_type: NotificationType) ->
     return [_to_catalog_item(row) for row in rows]
 
 
+def _merged_bool_dict(existing: Dict[str, bool], incoming: Dict[str, bool]) -> Dict[str, bool]:
+    """PATCH semantics for recipient_roles/thresholds: the payload only
+    needs to carry the key(s) that changed. Every key already on the row is
+    kept (never dropped) and defaults to False unless the payload says
+    otherwise; any key the payload names is set to exactly what it says."""
+    keys = set(existing) | set(incoming)
+    return {key: incoming.get(key, False) for key in keys}
+
+
 def _validate_recipient_roles(name: str, recipient_roles: Dict[str, bool]) -> None:
-    try:
-        legal_roles = ALERT_LEGAL_RECIPIENT_ROLES.get(NotificationName(name), frozenset())
-    except ValueError:
-        legal_roles = frozenset()
+    # Only the 2 ALERT-type rows have a legal-roles whitelist (design 6.1).
+    # NOTIFICATION-type rows have no such table, so any role is accepted.
+    if NotificationName(name) not in ALERT_LEGAL_RECIPIENT_ROLES:
+        return
+    legal_roles = ALERT_LEGAL_RECIPIENT_ROLES[NotificationName(name)]
     illegal = set(recipient_roles) - legal_roles
     if illegal:
         raise ValidationError(
@@ -87,9 +97,21 @@ def _validate_thresholds(name: str, thresholds: Dict[str, bool]) -> None:
             )
 
 
-async def update_alert_catalog(
-    session: AsyncSession, name: str, payload: CatalogUpdate
+async def update_catalog(
+    session: AsyncSession, name: str, catalog_type: NotificationType, payload: CatalogUpdate
 ) -> CatalogItem:
+    """Update one catalog row. ``catalog_type`` must match the row's actual
+    type (mirrors the GET's ``?type=``) — a NOTIFICATION name PATCHed as
+    ALERT (or vice versa) is a 404, same as an unknown name.
+
+    ``thresholds`` is ALERT-only (the key only ever exists in ``config`` for
+    ALERT-type rows); sending it for a NOTIFICATION row is a validation
+    error. channels/recipient_roles are accepted for both types.
+
+    recipient_roles/thresholds are partial-update dicts, not wholesale
+    replacements: every key already stored on the row is kept, any key named
+    in the payload is set to exactly what it says, and any key not named
+    defaults to False rather than being dropped."""
     # Validate against the enum in Python before it ever reaches the query:
     # `name` is arbitrary path-param text, and comparing a non-member string
     # to a Postgres ENUM column raises an invalid-input-value DB error (a
@@ -97,23 +119,32 @@ async def update_alert_catalog(
     try:
         NotificationName(name)
     except ValueError:
-        raise EntityNotFoundError(f"Alert '{name}'")
+        raise EntityNotFoundError(f"Catalog entry '{name}'")
 
     result = await session.execute(
         select(ConfigNotificationAlert).where(ConfigNotificationAlert.name == name)
     )
     row = result.scalar_one_or_none()
-    if row is None or row.type != NotificationType.ALERT.value:
-        raise EntityNotFoundError(f"Alert '{name}'")
+    if row is None or row.type != catalog_type.value:
+        raise EntityNotFoundError(f"Catalog entry '{name}'")
+
+    if payload.thresholds is not None and catalog_type != NotificationType.ALERT:
+        raise ValidationError(
+            message=f"'{name}' is a NOTIFICATION-type entry; thresholds do not apply to it.",
+            code="INVALID_THRESHOLDS",
+        )
 
     if payload.recipient_roles is not None:
-        _validate_recipient_roles(name, payload.recipient_roles)
-        row.recipient_roles = payload.recipient_roles
+        merged = _merged_bool_dict(row.recipient_roles or {}, payload.recipient_roles)
+        _validate_recipient_roles(name, merged)
+        row.recipient_roles = merged
 
     if payload.thresholds is not None:
-        _validate_thresholds(name, payload.thresholds)
+        existing_thresholds = (row.config or {}).get("thresholds", {})
+        merged = _merged_bool_dict(existing_thresholds, payload.thresholds)
+        _validate_thresholds(name, merged)
         config = dict(row.config or {})
-        config["thresholds"] = payload.thresholds
+        config["thresholds"] = merged
         row.config = config
 
     if payload.channels is not None:

@@ -145,46 +145,69 @@ class TestListCatalogRouteShape:
 
 
 @pytest.mark.asyncio
-class TestUpdateAlertCatalogRoute:
+class TestUpdateCatalogRoute:
     async def test_wraps_the_updated_item_with_a_message(self, monkeypatch):
         stub = AsyncMock(return_value=_item(name="QUOTA_THRESHOLD", type=NotificationType.ALERT))
-        monkeypatch.setattr(_alert_catalog_routes.catalog_service, "update_alert_catalog", stub)
-        resp = await _alert_catalog_routes.update_alert_catalog(
-            name="QUOTA_THRESHOLD", payload=CatalogUpdate(), session=_SESSION
+        monkeypatch.setattr(_alert_catalog_routes.catalog_service, "update_catalog", stub)
+        resp = await _alert_catalog_routes.update_catalog(
+            name="QUOTA_THRESHOLD", payload=CatalogUpdate(),
+            catalog_type=NotificationType.ALERT, session=_SESSION,
         )
         assert resp.success is True
         assert resp.data.name == "QUOTA_THRESHOLD"
         assert "QUOTA_THRESHOLD" in resp.meta.message
 
-    async def test_forwards_name_and_payload(self, monkeypatch):
+    async def test_forwards_name_type_and_payload(self, monkeypatch):
         stub = AsyncMock(return_value=_item(type=NotificationType.ALERT))
-        monkeypatch.setattr(_alert_catalog_routes.catalog_service, "update_alert_catalog", stub)
+        monkeypatch.setattr(_alert_catalog_routes.catalog_service, "update_catalog", stub)
         payload = CatalogUpdate(recipient_roles={"ADMIN": True})
-        await _alert_catalog_routes.update_alert_catalog(
-            name="QUOTA_THRESHOLD", payload=payload, session=_SESSION
+        await _alert_catalog_routes.update_catalog(
+            name="QUOTA_THRESHOLD", payload=payload,
+            catalog_type=NotificationType.ALERT, session=_SESSION,
         )
         args = stub.await_args.args
         assert args[1] == "QUOTA_THRESHOLD"
-        assert args[2] is payload
+        assert args[2] == NotificationType.ALERT
+        assert args[3] is payload
+
+    async def test_forwards_notification_type_too(self, monkeypatch):
+        stub = AsyncMock(return_value=_item(type=NotificationType.NOTIFICATION))
+        monkeypatch.setattr(_alert_catalog_routes.catalog_service, "update_catalog", stub)
+        await _alert_catalog_routes.update_catalog(
+            name="TIER_ASSIGNED", payload=CatalogUpdate(),
+            catalog_type=NotificationType.NOTIFICATION, session=_SESSION,
+        )
+        assert stub.await_args.args[2] == NotificationType.NOTIFICATION
 
     async def test_404_propagates(self, monkeypatch):
-        stub = AsyncMock(side_effect=EntityNotFoundError("Alert 'NOPE'"))
-        monkeypatch.setattr(_alert_catalog_routes.catalog_service, "update_alert_catalog", stub)
+        stub = AsyncMock(side_effect=EntityNotFoundError("Catalog entry 'NOPE'"))
+        monkeypatch.setattr(_alert_catalog_routes.catalog_service, "update_catalog", stub)
         with pytest.raises(EntityNotFoundError):
-            await _alert_catalog_routes.update_alert_catalog(
-                name="NOPE", payload=CatalogUpdate(), session=_SESSION
+            await _alert_catalog_routes.update_catalog(
+                name="NOPE", payload=CatalogUpdate(),
+                catalog_type=NotificationType.ALERT, session=_SESSION,
             )
 
 
-class TestUpdateAlertCatalogRouteShape:
-    def test_prefix_and_path(self):
-        assert _alert_catalog_routes.router.prefix == "/alerts"
+class TestUpdateCatalogRouteShape:
+    def test_path(self):
         route = next(r for r in _alert_catalog_routes.router.routes if "PATCH" in r.methods)
-        assert route.path == "/alerts/catalog/{name}"
+        assert route.path == "/catalog/{name}"
 
     def test_404_is_documented(self):
         route = next(r for r in _alert_catalog_routes.router.routes if "PATCH" in r.methods)
         assert 404 in route.responses
+
+    def test_type_query_param_is_required(self):
+        import inspect
+
+        from fastapi.params import Query as QueryParam
+
+        sig = inspect.signature(_alert_catalog_routes.update_catalog)
+        default = sig.parameters["catalog_type"].default
+        assert isinstance(default, QueryParam)
+        assert default.is_required(), "?type= must be required, not optional"
+        assert default.alias == "type"
 
 
 class TestCatalogUpdateValidation:
