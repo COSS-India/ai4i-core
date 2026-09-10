@@ -17,7 +17,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { DeleteIcon, EditIcon, ViewIcon } from "@chakra-ui/icons";
-import { FaDownload, FaUpload } from "react-icons/fa";
+import { MdOutlineCheckCircle, MdOutlineUnpublished } from "react-icons/md";
 import React, { useMemo } from "react";
 import ManagementPageHeader from "../common/ManagementPageHeader";
 import type { Service } from "../../services/servicesManagementService";
@@ -269,7 +269,7 @@ const ServicesManagement: React.FC = () => {
                 <Tooltip label="Unpublish" placement="top" hasArrow>
                   <IconButton
                     aria-label="Unpublish"
-                    icon={<FaDownload />}
+                    icon={<MdOutlineUnpublished />}
                     size="sm"
                     variant="ghost"
                     colorScheme="red"
@@ -295,7 +295,7 @@ const ServicesManagement: React.FC = () => {
                   <Box as="span" display="inline-block">
                     <IconButton
                       aria-label="Publish"
-                      icon={<FaUpload />}
+                      icon={<MdOutlineCheckCircle />}
                       size="sm"
                       variant="ghost"
                       colorScheme="green"

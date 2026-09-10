@@ -13,7 +13,7 @@ import {
   Tooltip,
   VStack,
 } from "@chakra-ui/react";
-import { FaDownload, FaUpload } from "react-icons/fa";
+import { MdOutlineCheckCircle, MdOutlineUnpublished } from "react-icons/md";
 import React from "react";
 import type { Service } from "../../services/servicesManagementService";
 import { resolveTaskType } from "../../utils/platformService";
@@ -140,7 +140,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
                     <Tooltip label="Unpublish" placement="top" hasArrow>
                       <IconButton
                         aria-label="Unpublish"
-                        icon={<FaDownload />}
+                        icon={<MdOutlineUnpublished />}
                         size="sm"
                         colorScheme="red"
                         variant="outline"
@@ -168,7 +168,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
                       <Box as="span" display="inline-block">
                         <IconButton
                           aria-label="Publish"
-                          icon={<FaUpload />}
+                          icon={<MdOutlineCheckCircle />}
                           size="sm"
                           colorScheme="green"
                           variant="outline"
