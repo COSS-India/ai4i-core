@@ -19,7 +19,7 @@ from app.models.notification_management.config_notification_alert import (
 from app.schemas.enums.notification_management import NotificationName, NotificationType
 from app.schemas.notification_management.catalog import CatalogItem, CatalogUpdate
 from app.services.notification_management.catalog_metadata import (
-    ALERT_LEGAL_RECIPIENT_ROLES,
+    LEGAL_RECIPIENT_ROLES,
     MAX_THRESHOLD_KEYS,
     MAX_THRESHOLD_PERCENT,
     MIN_THRESHOLD_PERCENT,
@@ -65,11 +65,9 @@ def _merged_bool_dict(existing: Dict[str, bool], incoming: Dict[str, bool]) -> D
 
 
 def _validate_recipient_roles(name: str, recipient_roles: Dict[str, bool]) -> None:
-    # Only the 2 ALERT-type rows have a legal-roles whitelist (design 6.1).
-    # NOTIFICATION-type rows have no such table, so any role is accepted.
-    if NotificationName(name) not in ALERT_LEGAL_RECIPIENT_ROLES:
-        return
-    legal_roles = ALERT_LEGAL_RECIPIENT_ROLES[NotificationName(name)]
+    # All 9 catalog rows — NOTIFICATION and ALERT alike — are restricted to
+    # ADMIN / TENANT ADMIN (design 6.1).
+    legal_roles = LEGAL_RECIPIENT_ROLES[NotificationName(name)]
     illegal = set(recipient_roles) - legal_roles
     if illegal:
         raise ValidationError(

@@ -158,7 +158,7 @@ class TestUpdateCatalog:
                 _Session(found=row), row.id, CatalogUpdate(thresholds={"50": True})
             )
 
-    async def test_recipient_roles_allowed_for_a_notification_row(self):
+    async def test_legal_recipient_role_allowed_for_a_notification_row(self):
         row = _row(id=1, name="TIER_ASSIGNED", type="NOTIFICATION")
         session = _Session(found=row)
         item = await svc.update_catalog(
@@ -166,6 +166,16 @@ class TestUpdateCatalog:
         )
         assert row.recipient_roles == {"TENANT ADMIN": True}
         assert item.thresholds is None
+
+    async def test_illegal_recipient_role_is_rejected_for_a_notification_row(self):
+        # NOTIFICATION rows are restricted to ADMIN / TENANT ADMIN too, same
+        # as ALERT rows — a typo'd or unsupported role must not silently
+        # pass and leave the notification addressed to nobody.
+        row = _row(id=1, name="TIER_ASSIGNED", type="NOTIFICATION")
+        with pytest.raises(ValidationError):
+            await svc.update_catalog(
+                _Session(found=row), row.id, CatalogUpdate(recipient_roles={"TENANT_ADMIN": True})
+            )
 
     async def test_recipient_roles_write_to_the_column_not_config(self):
         row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT", config={"thresholds": {"50": False}})
@@ -177,7 +187,7 @@ class TestUpdateCatalog:
         assert row.config == {"thresholds": {"50": False}}, "thresholds must survive untouched"
 
     async def test_illegal_recipient_role_is_rejected(self):
-        # Per ALERT_LEGAL_RECIPIENT_ROLES, only TENANT ADMIN / ADMIN are legal
+        # Per LEGAL_RECIPIENT_ROLES, only TENANT ADMIN / ADMIN are legal
         # for QUOTA_THRESHOLD.
         row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT")
         with pytest.raises(ValidationError):

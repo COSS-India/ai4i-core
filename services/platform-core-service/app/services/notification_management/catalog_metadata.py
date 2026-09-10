@@ -105,15 +105,17 @@ NOTIFICATION_METADATA: dict[NotificationName, NotificationMetadata] = {
 }
 
 
-# ── Alert-catalog PATCH validation (code-side, per the design's 6.1 "Legal
+# ── Catalog PATCH validation (code-side, per the design's 6.1 "Legal
 # recipient roles per notification" table) ──
 
-#: Legal ``recipient_roles`` keys per ALERT-type name. Gate 4 of the send
-#: gate validates against this at runtime; the alert-catalog PATCH enforces
-#: the same set on write, per the design ("Enforced by the API").
-ALERT_LEGAL_RECIPIENT_ROLES: dict[NotificationName, frozenset[str]] = {
-    NotificationName.QUOTA_THRESHOLD: frozenset({"TENANT ADMIN", "ADMIN"}),
-    NotificationName.BUDGET_THRESHOLD: frozenset({"TENANT ADMIN", "ADMIN"}),
+#: Legal ``recipient_roles`` keys per catalog name — NOTIFICATION and ALERT
+#: rows alike, all 9 restricted to ADMIN / TENANT ADMIN. Gate 4 of the send
+#: gate validates against this at runtime; the catalog PATCH enforces the
+#: same set on write, per the design ("Enforced by the API").
+_ADMIN_AND_TENANT_ADMIN = frozenset({"TENANT ADMIN", "ADMIN"})
+
+LEGAL_RECIPIENT_ROLES: dict[NotificationName, frozenset[str]] = {
+    name: _ADMIN_AND_TENANT_ADMIN for name in NotificationName
 }
 
 #: ``thresholds`` keys: whole percents 1-99, at most 5 keys. Not expressible
