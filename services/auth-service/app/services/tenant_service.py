@@ -898,9 +898,7 @@ class TenantService:
     ) -> None:
         """Fire TIER_ASSIGNED/TIER_CHANGED after the tier write commits.
         Best-effort — a Kafka outage must never fail the tier assignment
-        itself, matching _notify_tier_updated's existing framing. effective_date
-        (design doc §9) is handled by publish_admin_event — an instant action,
-        so it defaults to the same timestamp as occurred_at.
+        itself, matching _notify_tier_updated's existing framing.
 
         Before publishing, ledger_notification_alert (design doc §5-7) is
         checked/updated with the identical occurred_at: it's the atomic,
@@ -1306,11 +1304,10 @@ class TenantService:
         await self._tenants.commit()
         await self._tenants.refresh(tenant)
 
-        # effective_date (design doc §9) handled by publish_admin_event —
-        # an instant action, defaults to occurred_at. ledger_notification_alert
-        # is the atomic dedup guard (design doc §5-7) — see _publish_tier_event
-        # for the full reasoning; is_notification_enabled is only the fast
-        # "anyone listening" pre-check.
+        # ledger_notification_alert is the atomic dedup guard (design doc
+        # §5-7) — see _publish_tier_event for the full reasoning;
+        # is_notification_enabled is only the fast "anyone listening"
+        # pre-check.
         budget_event_name = "BUDGET_ASSIGNED" if current_budget == 0 else "BUDGET_UPDATED"
         if platform_core_db is not None and await is_notification_enabled(platform_core_db, budget_event_name):
             occurred_at = datetime.now(timezone.utc).isoformat()
