@@ -17,7 +17,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     TOPIC_NOTIFICATION: str = Field(
         description="Kafka topic this consumer subscribes to. Placeholder until "
-        "the notification-events topic is finalised in the updated design."
+        "the notification.events topic is finalised in the updated design."
     )
 
     class Config:
