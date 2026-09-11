@@ -62,7 +62,6 @@ const CatalogToolbar: React.FC<CatalogToolbarProps> = ({
 interface RecipientRoleCheckboxesProps {
   tenantChecked: boolean;
   adopterChecked: boolean;
-  tenantDisabled?: boolean;
   onTenantChange: (checked: boolean) => void;
   onAdopterChange: (checked: boolean) => void;
 }
@@ -70,7 +69,6 @@ interface RecipientRoleCheckboxesProps {
 export const RecipientRoleCheckboxes: React.FC<RecipientRoleCheckboxesProps> = ({
   tenantChecked,
   adopterChecked,
-  tenantDisabled = false,
   onTenantChange,
   onAdopterChange,
 }) => {
@@ -78,14 +76,7 @@ export const RecipientRoleCheckboxes: React.FC<RecipientRoleCheckboxesProps> = (
     <Box>
       <Checkbox
         isChecked={tenantChecked}
-        isDisabled={tenantDisabled}
         onChange={(e) => onTenantChange(e.target.checked)}
-        title={
-          tenantDisabled
-            ? "Tenant Admin is only configurable on Tier Assigned and Tier Changed right now"
-            : undefined
-        }
-        opacity={tenantDisabled ? 0.45 : 1}
         mb={1}
         display="flex"
       >

@@ -7,29 +7,43 @@ import type {
   NotificationAlertType,
   RecipientRoleKey,
 } from "../types/notificationAlerts";
+import {
+  DEFAULT_ENABLE_ROLE,
+  isCatalogItemEnabled,
+} from "../types/notificationAlerts";
 
 export interface CatalogDraft {
-  enabled: boolean;
   recipient_roles: Record<RecipientRoleKey, boolean>;
   thresholds?: Record<string, boolean>;
 }
 
+export interface CatalogSubmitResult {
+  succeeded: string[];
+  failed?: { name: string; message: string };
+}
+
 function toDraft(item: NotificationAlertCatalogItem): CatalogDraft {
   return {
-    enabled: item.enabled,
     recipient_roles: { ...item.recipient_roles },
     thresholds: item.thresholds ? { ...item.thresholds } : undefined,
   };
 }
 
+function draftEnabled(draft: CatalogDraft): boolean {
+  return isCatalogItemEnabled(draft.recipient_roles);
+}
+
 function draftsEqual(a: CatalogDraft, b: CatalogDraft): boolean {
-  if (a.enabled !== b.enabled) return false;
-  if (a.recipient_roles["TENANT ADMIN"] !== b.recipient_roles["TENANT ADMIN"]) return false;
+  if (a.recipient_roles["TENANT ADMIN"] !== b.recipient_roles["TENANT ADMIN"]) {
+    return false;
+  }
   if (a.recipient_roles.ADMIN !== b.recipient_roles.ADMIN) return false;
   const aKeys = Object.keys(a.thresholds ?? {});
   const bKeys = Object.keys(b.thresholds ?? {});
   if (aKeys.length !== bKeys.length) return false;
-  return aKeys.every((key) => (a.thresholds?.[key] ?? false) === (b.thresholds?.[key] ?? false));
+  return aKeys.every(
+    (key) => (a.thresholds?.[key] ?? false) === (b.thresholds?.[key] ?? false),
+  );
 }
 
 function catalogErrorMessage(error: unknown, fallback: string): string {
@@ -66,35 +80,37 @@ export function useNotificationCatalog(type: NotificationAlertType) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async (signal?: AbortSignal) => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const rows = await notificationAlertsService.listCatalog(type, signal);
-      if (signal?.aborted) return;
-      setItems(rows);
-      const nextDrafts: Record<string, CatalogDraft> = {};
-      rows.forEach((row) => {
-        nextDrafts[row.name] = toDraft(row);
-      });
-      setDrafts(nextDrafts);
-    } catch (e) {
-      if (signal?.aborted) return;
-      // Axios cancel / AbortError — ignore (Strict Mode remount).
-      if (
-        (e as { code?: string; name?: string })?.code === "ERR_CANCELED" ||
-        (e as { name?: string })?.name === "CanceledError" ||
-        (e as { name?: string })?.name === "AbortError"
-      ) {
-        return;
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const rows = await notificationAlertsService.listCatalog(type, signal);
+        if (signal?.aborted) return;
+        setItems(rows);
+        const nextDrafts: Record<string, CatalogDraft> = {};
+        rows.forEach((row) => {
+          nextDrafts[row.name] = toDraft(row);
+        });
+        setDrafts(nextDrafts);
+      } catch (e) {
+        if (signal?.aborted) return;
+        if (
+          (e as { code?: string; name?: string })?.code === "ERR_CANCELED" ||
+          (e as { name?: string })?.name === "CanceledError" ||
+          (e as { name?: string })?.name === "AbortError"
+        ) {
+          return;
+        }
+        setError(catalogErrorMessage(e, "Failed to load catalog."));
+      } finally {
+        if (!signal?.aborted) {
+          setIsLoading(false);
+        }
       }
-      setError(catalogErrorMessage(e, "Failed to load catalog."));
-    } finally {
-      if (!signal?.aborted) {
-        setIsLoading(false);
-      }
-    }
-  }, [type]);
+    },
+    [type],
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -102,46 +118,44 @@ export function useNotificationCatalog(type: NotificationAlertType) {
     return () => controller.abort();
   }, [load]);
 
-  const filteredItems = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return items.filter((item) => {
-      const draft = drafts[item.name] ?? toDraft(item);
-      const matchesName =
-        !q ||
-        item.display_name.toLowerCase().includes(q) ||
-        item.name.toLowerCase().includes(q);
-      const matchesStatus =
-        statusFilter === "all" ||
-        (statusFilter === "enabled" && draft.enabled) ||
-        (statusFilter === "disabled" && !draft.enabled);
-      return matchesName && matchesStatus;
-    });
-  }, [items, drafts, search, statusFilter]);
-
   const getDraft = useCallback(
     (item: NotificationAlertCatalogItem): CatalogDraft =>
       drafts[item.name] ?? toDraft(item),
     [drafts],
   );
 
+  const filteredItems = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return items.filter((item) => {
+      const draft = getDraft(item);
+      const enabled = draftEnabled(draft);
+      const matchesName =
+        !q ||
+        item.display_name.toLowerCase().includes(q) ||
+        item.name.toLowerCase().includes(q);
+      const matchesStatus =
+        statusFilter === "all" ||
+        (statusFilter === "enabled" && enabled) ||
+        (statusFilter === "disabled" && !enabled);
+      return matchesName && matchesStatus;
+    });
+  }, [items, getDraft, search, statusFilter]);
+
   const updateDraft = useCallback(
     (
       name: string,
       patch: {
-        enabled?: boolean;
         recipient_roles?: Partial<Record<RecipientRoleKey, boolean>>;
         thresholds?: Record<string, boolean>;
       },
     ) => {
       setDrafts((prev) => {
         const current =
-          prev[name] ??
-          toDraft(items.find((item) => item.name === name)!);
+          prev[name] ?? toDraft(items.find((item) => item.name === name)!);
         return {
           ...prev,
           [name]: {
             ...current,
-            enabled: patch.enabled ?? current.enabled,
             recipient_roles: patch.recipient_roles
               ? { ...current.recipient_roles, ...patch.recipient_roles }
               : current.recipient_roles,
@@ -155,11 +169,38 @@ export function useNotificationCatalog(type: NotificationAlertType) {
     [items],
   );
 
+  /** Enable/disable maps to recipient_roles only (no wire `enabled` field). */
   const setEnabled = useCallback(
     (name: string, enabled: boolean) => {
-      updateDraft(name, { enabled });
+      setDrafts((prev) => {
+        const item = items.find((row) => row.name === name);
+        if (!item) return prev;
+        const current = prev[name] ?? toDraft(item);
+        if (!enabled) {
+          return {
+            ...prev,
+            [name]: {
+              ...current,
+              recipient_roles: { "TENANT ADMIN": false, ADMIN: false },
+            },
+          };
+        }
+        const hasRole = isCatalogItemEnabled(current.recipient_roles);
+        return {
+          ...prev,
+          [name]: {
+            ...current,
+            recipient_roles: hasRole
+              ? current.recipient_roles
+              : {
+                  "TENANT ADMIN": DEFAULT_ENABLE_ROLE === "TENANT ADMIN",
+                  ADMIN: DEFAULT_ENABLE_ROLE === "ADMIN",
+                },
+          },
+        };
+      });
     },
-    [updateDraft],
+    [items],
   );
 
   const setAllEnabled = useCallback(
@@ -168,7 +209,23 @@ export function useNotificationCatalog(type: NotificationAlertType) {
         const next = { ...prev };
         filteredItems.forEach((item) => {
           const current = next[item.name] ?? toDraft(item);
-          next[item.name] = { ...current, enabled };
+          if (!enabled) {
+            next[item.name] = {
+              ...current,
+              recipient_roles: { "TENANT ADMIN": false, ADMIN: false },
+            };
+            return;
+          }
+          const hasRole = isCatalogItemEnabled(current.recipient_roles);
+          next[item.name] = {
+            ...current,
+            recipient_roles: hasRole
+              ? current.recipient_roles
+              : {
+                  "TENANT ADMIN": DEFAULT_ENABLE_ROLE === "TENANT ADMIN",
+                  ADMIN: DEFAULT_ENABLE_ROLE === "ADMIN",
+                },
+          };
         });
         return next;
       });
@@ -180,7 +237,6 @@ export function useNotificationCatalog(type: NotificationAlertType) {
     (name: string, role: RecipientRoleKey, checked: boolean) => {
       updateDraft(name, {
         recipient_roles: { [role]: checked },
-        ...(checked ? { enabled: true } : {}),
       });
     },
     [updateDraft],
@@ -189,10 +245,7 @@ export function useNotificationCatalog(type: NotificationAlertType) {
   const setThreshold = useCallback(
     (name: string, threshold: string, checked: boolean) => {
       const item = items.find((row) => row.name === name);
-      const current =
-        drafts[name]?.thresholds ??
-        item?.thresholds ??
-        {};
+      const current = drafts[name]?.thresholds ?? item?.thresholds ?? {};
       updateDraft(name, {
         thresholds: { ...current, [threshold]: checked },
       });
@@ -202,7 +255,7 @@ export function useNotificationCatalog(type: NotificationAlertType) {
 
   const allFilteredEnabled =
     filteredItems.length > 0 &&
-    filteredItems.every((item) => getDraft(item).enabled);
+    filteredItems.every((item) => draftEnabled(getDraft(item)));
 
   const dirtyCount = useMemo(() => {
     return items.reduce((count, item) => {
@@ -212,41 +265,49 @@ export function useNotificationCatalog(type: NotificationAlertType) {
     }, 0);
   }, [items, drafts]);
 
-  const submit = useCallback(async (): Promise<number> => {
+  const submit = useCallback(async (): Promise<CatalogSubmitResult> => {
     setIsSubmitting(true);
     setError(null);
+    const succeeded: string[] = [];
     try {
-      let changed = 0;
       for (const item of items) {
         const draft = drafts[item.name];
         if (!draft || draftsEqual(draft, toDraft(item))) continue;
 
         const payload: CatalogUpdatePayload = {
-          enabled: draft.enabled,
           recipient_roles: draft.recipient_roles,
         };
         if (item.type === "ALERT" && draft.thresholds) {
           payload.thresholds = draft.thresholds;
         }
 
-        const updated = await notificationAlertsService.updateCatalog(
-          item.name,
-          payload,
-        );
-        changed += 1;
-        setItems((prev) =>
-          prev.map((row) => (row.name === updated.name ? updated : row)),
-        );
-        setDrafts((prev) => ({
-          ...prev,
-          [updated.name]: toDraft(updated),
-        }));
+        try {
+          const updated = await notificationAlertsService.updateCatalog(
+            item.name,
+            payload,
+          );
+          succeeded.push(updated.name);
+          setItems((prev) =>
+            prev.map((row) => (row.name === updated.name ? updated : row)),
+          );
+          setDrafts((prev) => ({
+            ...prev,
+            [updated.name]: toDraft(updated),
+          }));
+        } catch (e) {
+          const message = catalogErrorMessage(
+            e,
+            `Failed to save '${item.display_name}'.`,
+          );
+          setError(
+            succeeded.length > 0
+              ? `Saved ${succeeded.length} row(s), then failed on '${item.display_name}': ${message}`
+              : message,
+          );
+          return { succeeded, failed: { name: item.name, message } };
+        }
       }
-      return changed;
-    } catch (e) {
-      const message = catalogErrorMessage(e, "Failed to save catalog changes.");
-      setError(message);
-      throw new Error(message);
+      return { succeeded };
     } finally {
       setIsSubmitting(false);
     }
@@ -263,6 +324,7 @@ export function useNotificationCatalog(type: NotificationAlertType) {
     isSubmitting,
     error,
     getDraft,
+    draftEnabled,
     setEnabled,
     setAllEnabled,
     setRecipientRole,

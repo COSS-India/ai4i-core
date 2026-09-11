@@ -11,7 +11,7 @@ export type RecipientRoleKey = "TENANT ADMIN" | "ADMIN";
 /**
  * One catalog row for the UI.
  * API fields come from `GET /api/v1/notification-alerts/catalog`.
- * `enabled` / `origin` are UI helpers (API has no explicit enabled flag).
+ * `enabled` is derived from recipient_roles (API has no enabled flag).
  */
 export interface NotificationAlertCatalogItem {
   id: number;
@@ -34,11 +34,6 @@ export interface CatalogUpdatePayload {
   channels?: NotificationChannel[];
   recipient_roles?: Partial<Record<RecipientRoleKey, boolean>>;
   thresholds?: Record<string, boolean>;
-  /**
-   * UI-only. Mapped to recipient_roles on the wire:
-   * disabled → both roles false; enabled → draft roles as-is.
-   */
-  enabled?: boolean;
 }
 
 export type CatalogStatusFilter = "all" | "enabled" | "disabled";
@@ -48,11 +43,8 @@ export const RECIPIENT_ROLE_LABELS: Record<RecipientRoleKey, string> = {
   ADMIN: "Adopter Admin",
 };
 
-/** Tenant Admin is only editable for these notification names (prototype rule). */
-export const TENANT_ADMIN_EDITABLE_NAMES = new Set([
-  "TIER_ASSIGNED",
-  "TIER_CHANGED",
-]);
+/** Default role when enabling a row that has none selected. */
+export const DEFAULT_ENABLE_ROLE: RecipientRoleKey = "TENANT ADMIN";
 
 /** Fallback bands when an alert row has no thresholds keys yet (matches BE seed). */
 export const DEFAULT_ALERT_THRESHOLDS = ["50", "75", "90"] as const;
