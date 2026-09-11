@@ -48,7 +48,14 @@ async def resolve(db: AsyncSession, *, tenant_id: str, roles: List[str]) -> List
             "  JOIN user_role ur ON ur.user_id = u.id"
             "  JOIN roles r ON r.id = ur.role_id"
             " WHERE r.name = ANY(:roles)"
-            "   AND u.tenant_id = :tenant_id"
+            # ADMIN is the Adopter Admin — a platform-wide role, not scoped to
+            # any one tenant, so it must resolve regardless of which tenant
+            # the event is for. The only seeded ADMIN user sits in the seed
+            # org's own tenant (2362774ac241_seed_default_data.py); filtering
+            # it by u.tenant_id = :tenant_id resolved to nobody for every
+            # other tenant. TENANT ADMIN (and any other tenant-scoped role)
+            # keeps the tenant filter.
+            "   AND (r.name = 'ADMIN' OR u.tenant_id = :tenant_id)"
             "   AND u.is_delete IS NOT TRUE"
             "   AND u.is_active IS TRUE"
         ),

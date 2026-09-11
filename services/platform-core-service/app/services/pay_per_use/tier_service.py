@@ -348,10 +348,15 @@ def _first_of_next_month(dt: datetime) -> str:
     monthly cron (apply_pending_quotas, below) is what promotes it to
     monthly_quota, on the 1st. So the change genuinely doesn't take effect
     until then, unlike the other 4 Group A events (instant, no
-    effective_date of their own)."""
+    effective_date of their own).
+
+    A plain date (YYYY-MM-DD), not a full ISO timestamp — the time-of-day
+    is meaningless here (the cron runs once on the 1st, nobody cares which
+    second) and a bare isoformat() rendered as "effective
+    2026-10-01T00:00:00+00:00" in the email body."""
     year = dt.year + (1 if dt.month == 12 else 0)
     month = 1 if dt.month == 12 else dt.month + 1
-    return dt.replace(year=year, month=month, day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    return dt.replace(year=year, month=month, day=1).date().isoformat()
 
 
 async def _publish_quota_limit_updated(

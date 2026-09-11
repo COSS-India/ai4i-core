@@ -149,15 +149,33 @@ async def _process_channel(
     if not won:
         return  # a concurrent redelivery/replica already claimed this send
 
-    async with session_scope(name="auth") as auth_db:
-        outcome = await delivery.deliver(
-            auth_db,
-            tenant_id=envelope["tenant_id"],
-            roles=enabled_roles,
-            event_name=envelope["event_name"],
-            details=envelope["details"],
+    # Once claim_send has committed "sending", the row MUST be settled no
+    # matter what happens next — a raise here (a decrypt failure on a
+    # mismatched PII_ENCRYPTION_KEY, a StrictUndefined render miss, the auth
+    # DB dropping mid-query) would otherwise leave the row stuck at
+    # "sending" forever: handle_notification_event's own try/except just
+    # logs and moves on, the offset still commits, and every later pass
+    # hits the "Unexpected delivery state" branch above and refuses to
+    # touch it — the notification is lost with no failed record and no
+    # recovery short of a manual UPDATE.
+    try:
+        async with session_scope(name="auth") as auth_db:
+            outcome = await delivery.deliver(
+                auth_db,
+                tenant_id=envelope["tenant_id"],
+                roles=enabled_roles,
+                event_name=envelope["event_name"],
+                details=envelope["details"],
+            )
+        delivery_status = "sent" if outcome == "sent" else "failed"
+    except Exception:
+        logger.exception(
+            "Delivery raised — settling ledger row to failed | event_name=%s "
+            "tenant_id=%s channel=%s ledger_id=%s",
+            envelope["event_name"], envelope["tenant_id"], channel, row_id,
         )
-    delivery_status = "sent" if outcome == "sent" else "failed"
+        outcome = "error"
+        delivery_status = "failed"
     await ledger.mark_delivery(db, row_id=row_id, delivery=delivery_status)
     logger.info(
         "Notification delivery settled | event_name=%s tenant_id=%s channel=%s "

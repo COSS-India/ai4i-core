@@ -31,10 +31,25 @@ async def deliver(
         )
         return "no_recipients"
 
+    # return_exceptions=True: one recipient raising (e.g. a missing details
+    # key at render time) must not discard every other recipient's already-
+    # decided outcome, nor propagate out of deliver() — a raise here would
+    # skip mark_delivery entirely and wedge the ledger row at "sending"
+    # (see handler.py's own try/except around this call for the same
+    # concern at the next layer up). An exception counts as that
+    # recipient's send having failed, nothing more.
     outcomes = await asyncio.gather(
         *(
             emailer.send_one(recipient=person, event_name=event_name, details=details)
             for person in people
-        )
+        ),
+        return_exceptions=True,
     )
-    return "sent" if any(outcomes) else "failed"
+    for person, outcome in zip(people, outcomes):
+        if isinstance(outcome, Exception):
+            logger.error(
+                "send_one raised for recipient=%s event_name=%s tenant_id=%s: %s",
+                person.user_id, event_name, tenant_id, outcome, exc_info=outcome,
+            )
+    sent_ok = [o for o in outcomes if o is True]
+    return "sent" if sent_ok else "failed"

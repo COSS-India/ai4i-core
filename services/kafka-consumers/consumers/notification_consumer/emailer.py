@@ -81,19 +81,31 @@ async def send_one(*, recipient: Recipient, event_name: str, details: Dict[str, 
     (EmailClient.send_safe), and a hang past the deadline is treated the
     same way, so one bad or unreachable recipient can't take the others
     (or the whole consumer) down with it."""
-    ctx = {**details, "recipient_name": recipient.display_name}
-    html_body, text_body = _renderer().render(event_name.lower(), ctx)
-    message = EmailMessage(
-        to=recipient.email,
-        subject=_subject_for(event_name, details),
-        html_body=html_body,
-        text_body=text_body,
-    )
     try:
+        ctx = {**details, "recipient_name": recipient.display_name}
+        html_body, text_body = _renderer().render(event_name.lower(), ctx)
+        message = EmailMessage(
+            to=recipient.email,
+            subject=_subject_for(event_name, details),
+            html_body=html_body,
+            text_body=text_body,
+        )
         return await asyncio.wait_for(_client().send_safe(message), timeout=_SEND_DEADLINE_S)
     except asyncio.TimeoutError:
         logger.error(
-            "Email send timed out after %.0fs — treating as failed | to=%s subject=%s",
-            _SEND_DEADLINE_S, recipient.email, message.subject,
+            "Email send timed out after %.0fs — treating as failed | to=%s event_name=%s",
+            _SEND_DEADLINE_S, recipient.email, event_name,
+        )
+        return False
+    except Exception:
+        # Render lives inside this try too (a StrictUndefined miss on a
+        # details key this event_name's template expects, or a malformed
+        # template) — this function's contract is "never raises", so any
+        # failure here is reported as False, not propagated. delivery.py's
+        # gather(return_exceptions=True) is a second, independent guard
+        # against this same class of bug, not a substitute for it.
+        logger.exception(
+            "send_one failed before/during send | to=%s event_name=%s",
+            recipient.email, event_name,
         )
         return False
