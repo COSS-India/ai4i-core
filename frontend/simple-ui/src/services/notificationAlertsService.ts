@@ -1,12 +1,27 @@
+import apiClient from "./api";
+import { apiEndpoints } from "./apiEndpoints";
 import { MOCK_NOTIFICATION_ALERT_CATALOG } from "./notificationAlertsMockData";
+import {
+  catalogListResponseSchema,
+  catalogUpdateResponseSchema,
+  type ApiCatalogItem,
+} from "./dto/schemas/notificationAlerts";
 import type {
   CatalogUpdatePayload,
   NotificationAlertCatalogItem,
   NotificationAlertType,
+  RecipientRoleKey,
+} from "../types/notificationAlerts";
+import {
+  isCatalogItemEnabled,
+  normalizeRecipientRoles,
 } from "../types/notificationAlerts";
 
-/** Flip to `false` once gateway catalog APIs are deployed. */
-export const USE_NOTIFICATION_ALERTS_MOCK = true;
+/**
+ * Set `true` only for offline UI work without the gateway.
+ * Dev catalog routes are live at `/api/v1/notification-alerts/catalog`.
+ */
+export const USE_NOTIFICATION_ALERTS_MOCK = false;
 
 const MOCK_LATENCY_MS = 250;
 
@@ -25,8 +40,28 @@ function cloneItem(item: NotificationAlertCatalogItem): NotificationAlertCatalog
   };
 }
 
-/** In-memory store so Submit persists across tab switches within the session. */
-let mockStore: NotificationAlertCatalogItem[] = MOCK_NOTIFICATION_ALERT_CATALOG.map(cloneItem);
+function fromApiItem(item: ApiCatalogItem): NotificationAlertCatalogItem {
+  const recipient_roles = normalizeRecipientRoles(item.recipient_roles);
+  return {
+    id: item.id,
+    name: item.name,
+    display_name: item.display_name,
+    description: item.description,
+    type: item.type,
+    module: item.module,
+    channels: [...item.channels],
+    recipient_roles,
+    thresholds:
+      item.thresholds == null ? undefined : { ...item.thresholds },
+    enabled: isCatalogItemEnabled(item.recipient_roles),
+    // Catalog is system-seeded only in v1 (no custom create API).
+    origin: "seeded",
+  };
+}
+
+/** In-memory store for mock mode. */
+let mockStore: NotificationAlertCatalogItem[] =
+  MOCK_NOTIFICATION_ALERT_CATALOG.map(cloneItem);
 
 export function resetNotificationAlertsMockStore(): void {
   mockStore = MOCK_NOTIFICATION_ALERT_CATALOG.map(cloneItem);
@@ -54,15 +89,21 @@ async function updateCatalogMock(
     throw new Error("thresholds is not valid for NOTIFICATION catalog rows.");
   }
 
+  const recipient_roles = normalizeRecipientRoles({
+    ...current.recipient_roles,
+    ...(payload.recipient_roles ?? {}),
+  });
+  const enabled =
+    payload.enabled !== undefined
+      ? payload.enabled
+      : isCatalogItemEnabled(recipient_roles);
+
   const next: NotificationAlertCatalogItem = {
     ...current,
     channels: payload.channels ? [...payload.channels] : [...current.channels],
-    recipient_roles: payload.recipient_roles
-      ? {
-          ...current.recipient_roles,
-          ...payload.recipient_roles,
-        }
-      : { ...current.recipient_roles },
+    recipient_roles: enabled
+      ? recipient_roles
+      : { "TENANT ADMIN": false, ADMIN: false },
     thresholds:
       current.type === "ALERT"
         ? payload.thresholds
@@ -71,28 +112,77 @@ async function updateCatalogMock(
             ? { ...current.thresholds }
             : undefined
         : undefined,
-    enabled: payload.enabled ?? current.enabled,
+    enabled,
   };
 
   mockStore[index] = next;
   return cloneItem(next);
 }
 
+function toApiUpdateBody(payload: CatalogUpdatePayload): {
+  channels?: string[];
+  recipient_roles?: Partial<Record<RecipientRoleKey, boolean>>;
+  thresholds?: Record<string, boolean>;
+} {
+  const body: {
+    channels?: string[];
+    recipient_roles?: Partial<Record<RecipientRoleKey, boolean>>;
+    thresholds?: Record<string, boolean>;
+  } = {};
+
+  if (payload.channels) {
+    body.channels = [...payload.channels];
+  }
+
+  if (payload.enabled === false) {
+    body.recipient_roles = { "TENANT ADMIN": false, ADMIN: false };
+  } else if (payload.recipient_roles) {
+    body.recipient_roles = { ...payload.recipient_roles };
+  }
+
+  if (payload.thresholds) {
+    body.thresholds = { ...payload.thresholds };
+  }
+
+  return body;
+}
+
+async function listCatalogApi(
+  type: NotificationAlertType,
+  signal?: AbortSignal,
+): Promise<NotificationAlertCatalogItem[]> {
+  const response = await apiClient.get(apiEndpoints.notificationAlerts.catalog, {
+    params: { type },
+    signal,
+  });
+  const parsed = catalogListResponseSchema.parse(response.data);
+  return parsed.data.items.map(fromApiItem);
+}
+
+async function updateCatalogApi(
+  name: string,
+  payload: CatalogUpdatePayload,
+): Promise<NotificationAlertCatalogItem> {
+  const response = await apiClient.patch(
+    apiEndpoints.notificationAlerts.catalogByName(name),
+    toApiUpdateBody(payload),
+  );
+  const parsed = catalogUpdateResponseSchema.parse(response.data);
+  return fromApiItem(parsed.data);
+}
+
 /**
- * Catalog service facade. Uses prototype mock data until
- * `USE_NOTIFICATION_ALERTS_MOCK` is flipped off.
+ * Catalog service — real gateway APIs by default; mock retained for offline UI.
  */
 export const notificationAlertsService = {
   async listCatalog(
     type: NotificationAlertType,
+    signal?: AbortSignal,
   ): Promise<NotificationAlertCatalogItem[]> {
     if (USE_NOTIFICATION_ALERTS_MOCK) {
       return listCatalogMock(type);
     }
-    // Real API wiring lands with gateway deployment (AI4IDS-3094).
-    throw new Error(
-      "Notification/Alert catalog API is not wired yet. Keep USE_NOTIFICATION_ALERTS_MOCK=true.",
-    );
+    return listCatalogApi(type, signal);
   },
 
   async updateCatalog(
@@ -102,8 +192,6 @@ export const notificationAlertsService = {
     if (USE_NOTIFICATION_ALERTS_MOCK) {
       return updateCatalogMock(name, payload);
     }
-    throw new Error(
-      "Notification/Alert catalog API is not wired yet. Keep USE_NOTIFICATION_ALERTS_MOCK=true.",
-    );
+    return updateCatalogApi(name, payload);
   },
 };

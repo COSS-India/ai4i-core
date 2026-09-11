@@ -19,7 +19,7 @@ import {
 import React from "react";
 import { useToastWithDeduplication } from "../../utils/toast";
 import { useNotificationCatalog } from "../../hooks/useNotificationCatalog";
-import { STANDARD_ALERT_THRESHOLDS } from "../../types/notificationAlerts";
+import { thresholdKeysForItem } from "../../types/notificationAlerts";
 import CatalogToolbar, { RecipientRoleCheckboxes } from "./CatalogToolbar";
 
 const AlertsCatalogTab: React.FC = () => {
@@ -171,7 +171,7 @@ const AlertsCatalogTab: React.FC = () => {
                     </Td>
                     <Td verticalAlign="top" pt={3}>
                       <VStack align="start" spacing={1}>
-                        {STANDARD_ALERT_THRESHOLDS.map((threshold) => (
+                        {thresholdKeysForItem(draft.thresholds).map((threshold) => (
                           <Checkbox
                             key={threshold}
                             isChecked={Boolean(draft.thresholds?.[threshold])}

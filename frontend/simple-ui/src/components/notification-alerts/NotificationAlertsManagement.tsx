@@ -1,6 +1,5 @@
 import { Box, Tab, TabList, TabPanel, TabPanels, Tabs, Text } from "@chakra-ui/react";
 import React from "react";
-import { USE_NOTIFICATION_ALERTS_MOCK } from "../../services/notificationAlertsService";
 import AlertsCatalogTab from "./AlertsCatalogTab";
 import NotificationsCatalogTab from "./NotificationsCatalogTab";
 
@@ -12,12 +11,6 @@ const TAB_CONFIG = [
 const NotificationAlertsManagement: React.FC = () => {
   return (
     <Box>
-      {USE_NOTIFICATION_ALERTS_MOCK ? (
-        <Text fontSize="sm" color="orange.600" mb={4}>
-          Using prototype mock data — catalog APIs are not deployed yet.
-        </Text>
-      ) : null}
-
       <Tabs colorScheme="blue" isLazy>
         <TabList>
           {TAB_CONFIG.map((tab) => (

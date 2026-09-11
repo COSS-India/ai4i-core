@@ -120,6 +120,9 @@ const SERVICE_BASE_PATHS = [
   apiEndpoints.policy.base,
   apiEndpoints.tiers.base,
   apiEndpoints.usage.base,
+  apiEndpoints.alerts.base,
+  // Catalog lives under /api/v1/notification-alerts (not …/catalog alone).
+  apiEndpoints.notificationAlerts.catalog.replace(/\/catalog$/, ""),
   apiEndpoints.platform.inferenceTypes,
 ];
 

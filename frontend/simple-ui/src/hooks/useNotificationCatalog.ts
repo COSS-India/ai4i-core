@@ -32,6 +32,31 @@ function draftsEqual(a: CatalogDraft, b: CatalogDraft): boolean {
   return aKeys.every((key) => (a.thresholds?.[key] ?? false) === (b.thresholds?.[key] ?? false));
 }
 
+function catalogErrorMessage(error: unknown, fallback: string): string {
+  if (!error || typeof error !== "object") {
+    return error instanceof Error ? error.message : fallback;
+  }
+  const maybeAxios = error as {
+    message?: string;
+    response?: {
+      data?: {
+        detail?: string | { message?: string };
+        error?: { message?: string };
+        message?: string;
+      };
+    };
+  };
+  const detail = maybeAxios.response?.data?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (detail && typeof detail === "object" && detail.message) return detail.message;
+  if (maybeAxios.response?.data?.error?.message) {
+    return maybeAxios.response.data.error.message;
+  }
+  if (maybeAxios.response?.data?.message) return maybeAxios.response.data.message;
+  if (maybeAxios.message) return maybeAxios.message;
+  return fallback;
+}
+
 export function useNotificationCatalog(type: NotificationAlertType) {
   const [items, setItems] = useState<NotificationAlertCatalogItem[]>([]);
   const [drafts, setDrafts] = useState<Record<string, CatalogDraft>>({});
@@ -41,11 +66,12 @@ export function useNotificationCatalog(type: NotificationAlertType) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     setIsLoading(true);
     setError(null);
     try {
-      const rows = await notificationAlertsService.listCatalog(type);
+      const rows = await notificationAlertsService.listCatalog(type, signal);
+      if (signal?.aborted) return;
       setItems(rows);
       const nextDrafts: Record<string, CatalogDraft> = {};
       rows.forEach((row) => {
@@ -53,14 +79,27 @@ export function useNotificationCatalog(type: NotificationAlertType) {
       });
       setDrafts(nextDrafts);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load catalog.");
+      if (signal?.aborted) return;
+      // Axios cancel / AbortError — ignore (Strict Mode remount).
+      if (
+        (e as { code?: string; name?: string })?.code === "ERR_CANCELED" ||
+        (e as { name?: string })?.name === "CanceledError" ||
+        (e as { name?: string })?.name === "AbortError"
+      ) {
+        return;
+      }
+      setError(catalogErrorMessage(e, "Failed to load catalog."));
     } finally {
-      setIsLoading(false);
+      if (!signal?.aborted) {
+        setIsLoading(false);
+      }
     }
   }, [type]);
 
   useEffect(() => {
-    void load();
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
   }, [load]);
 
   const filteredItems = useMemo(() => {
@@ -141,6 +180,7 @@ export function useNotificationCatalog(type: NotificationAlertType) {
     (name: string, role: RecipientRoleKey, checked: boolean) => {
       updateDraft(name, {
         recipient_roles: { [role]: checked },
+        ...(checked ? { enabled: true } : {}),
       });
     },
     [updateDraft],
@@ -204,8 +244,9 @@ export function useNotificationCatalog(type: NotificationAlertType) {
       }
       return changed;
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to save catalog changes.");
-      throw e;
+      const message = catalogErrorMessage(e, "Failed to save catalog changes.");
+      setError(message);
+      throw new Error(message);
     } finally {
       setIsSubmitting(false);
     }
