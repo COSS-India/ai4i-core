@@ -332,6 +332,18 @@ async def _notify_tier_updated(
         logger.warning("quota-limit-updated notification failed for tier %s: %s", tier.id, exc)
 
 
+def _first_of_next_month(dt: datetime) -> str:
+    """QUOTA_LIMIT_UPDATED's effective_date (design doc §9): the edit lands
+    now, but _upsert_quotas only ever writes pending_monthly_quota — the
+    monthly cron (apply_pending_quotas, below) is what promotes it to
+    monthly_quota, on the 1st. So the change genuinely doesn't take effect
+    until then, unlike the other 4 Group A events (instant, no
+    effective_date of their own)."""
+    year = dt.year + (1 if dt.month == 12 else 0)
+    month = 1 if dt.month == 12 else dt.month + 1
+    return dt.replace(year=year, month=month, day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+
 async def _publish_quota_limit_updated(
     tier: Tier,
     quota_changes: List[dict],
@@ -352,7 +364,9 @@ async def _publish_quota_limit_updated(
         return
     try:
         tenant_ids = await _fetch_tenant_ids_for_tier(tier.id, auth_db)
-        occurred_at = datetime.now(timezone.utc).isoformat()
+        occurred_at_dt = datetime.now(timezone.utc)
+        occurred_at = occurred_at_dt.isoformat()
+        effective_date = _first_of_next_month(occurred_at_dt)
         for tenant_id in tenant_ids:
             for change in quota_changes:
                 subject = {"model_task_type": change["inference_name"]}
@@ -369,6 +383,7 @@ async def _publish_quota_limit_updated(
                         "inference_name": change["inference_name"],
                         "previous": change["previous"],
                         "current": change["current"],
+                        "effective_date": effective_date,
                     },
                     actor_id=str(updated_by or ""),
                     occurred_at=occurred_at,

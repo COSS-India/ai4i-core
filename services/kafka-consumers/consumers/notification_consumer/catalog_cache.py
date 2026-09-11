@@ -24,11 +24,13 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
+import redis.asyncio as aioredis
 from ai4i_core.kafka import NOTIFICATION_SETTINGS_CHANNEL
 from ai4i_core.logging import get_logger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from bootstrap.config import get_redis_settings
 from consumers.notification_consumer.config import Constants
 
 logger = get_logger(__name__)
@@ -56,6 +58,15 @@ class _Cache:
         self._loaded_at: float = 0.0
 
     def _is_stale(self) -> bool:
+        # Never-loaded must be unconditionally stale — time.monotonic()'s
+        # reference point is unspecified (often system/VM boot), so on a
+        # short-uptime host (WSL2 recently restarted, etc.) it can return a
+        # value smaller than CONFIG_CACHE_TTL_SECONDS even on a process's
+        # very first check. Comparing only against the clock let _by_name
+        # stay permanently empty — this is what the shared producer-side
+        # cache's own `if _rows and (...)` guard already protects against.
+        if not self._by_name:
+            return True
         return (time.monotonic() - self._loaded_at) >= Constants.CONFIG_CACHE_TTL_SECONDS
 
     def invalidate(self) -> None:
@@ -119,22 +130,16 @@ def invalidate() -> None:
     _cache.invalidate()
 
 
-def start_listener(redis_client) -> None:
+def start_listener() -> None:
     """Subscribe to NOTIFICATION_SETTINGS_CHANNEL and invalidate the cache
-    on every message — mirrors libs/ai4i_core/ai4i_core/kafka/
-    notification_settings_cache.py's own start_listener() exactly (same
-    reconnect-on-error backoff, same pubsub.aclose() cleanup discipline),
-    just invalidating this consumer's cache instead of the producer-side
-    one. Call once at startup (main.py, after infra() opens Redis).
-
-    Parameters
-    ----------
-    redis_client : aioredis client instance
+    on every message. Call once at startup (main.py, after infra() opens
+    Redis) — but note this does NOT reuse the shared get_redis_client()
+    connection (see _listen()'s docstring for why: its socket_timeout is
+    wrong for a blocking pub/sub read). A dedicated connection is opened
+    and closed by this module alone.
     """
     global _listener_task
-    _listener_task = asyncio.create_task(
-        _listen(redis_client), name="catalog_cache_listener"
-    )
+    _listener_task = asyncio.create_task(_listen(), name="catalog_cache_listener")
 
 
 async def stop_listener() -> None:
@@ -145,9 +150,21 @@ async def stop_listener() -> None:
     _listener_task = None
 
 
-async def _listen(redis_client) -> None:
+async def _listen() -> None:
+    """Own connection, socket_timeout=None — deliberately NOT the shared
+    get_redis_client() one. That client is built with socket_timeout=10 (or
+    whatever REDIS_TIMEOUT is), which is correct for ordinary request/reply
+    calls but wrong here: pubsub.listen() blocks waiting for the NEXT
+    message, which may legitimately be much more than 10s away. Sharing
+    that client made this loop time out and reconnect every ~10-15s even
+    when nothing was wrong — a silent, useless reconnect storm that not
+    only spammed the log but could exhaust Redis's connection limit over
+    time. A dedicated, no-timeout connection is what makes "block until a
+    message arrives" actually mean that."""
+    rd = get_redis_settings()
     while True:
-        pubsub = redis_client.pubsub()
+        client = aioredis.from_url(rd.get_redis_url(), socket_timeout=None, decode_responses=True)
+        pubsub = client.pubsub()
         try:
             await pubsub.subscribe(NOTIFICATION_SETTINGS_CHANNEL)
             logger.info(
@@ -171,5 +188,9 @@ async def _listen(redis_client) -> None:
             # this listener until the process is restarted.
             try:
                 await pubsub.aclose()
+            except Exception:
+                pass
+            try:
+                await client.aclose()
             except Exception:
                 pass

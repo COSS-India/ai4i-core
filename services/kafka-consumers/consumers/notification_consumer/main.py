@@ -24,7 +24,6 @@ GROUP_ID is a brand-new group: KAFKA_AUTO_OFFSET_RESET must be set to
 """
 from __future__ import annotations
 
-from ai4i_core.bootstrap import get_redis_client
 from ai4i_core.logging import get_logger
 from confluent_kafka import KafkaError, KafkaException, Message
 
@@ -92,8 +91,10 @@ async def run() -> None:
         await add_database("auth", db_name=settings.AUTH_SERVICE_DB)
 
         # Live cache invalidation — see catalog_cache.py's module docstring.
-        # Redis is already up at this point (infra() opened it above).
-        catalog_cache.start_listener(get_redis_client())
+        # Opens its own dedicated Redis connection (not the shared one from
+        # infra() — that one's socket_timeout is wrong for a blocking
+        # pub/sub read).
+        catalog_cache.start_listener()
 
         consumer = ManagedConsumer.build_bulk_message_consumer(
             group_id=GROUP_ID,
