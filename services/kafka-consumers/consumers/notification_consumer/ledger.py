@@ -31,7 +31,7 @@ async def fetch_current_status(
         " WHERE notification_id = :notification_id"
         "   AND tenant_id = :tenant_id"
         "   AND subject = :subject"
-        "   AND channel = :channel::notification_alert_channel_enum"
+        "   AND channel = CAST(:channel AS notification_alert_channel_enum)"
     ).bindparams(bindparam("subject", type_=JSONB))
     result = await db.execute(
         stmt,
@@ -90,7 +90,7 @@ async def claim(
         "INSERT INTO ledger_notification_alert"
         "    (notification_id, tenant_id, subject, channel, status, created_by, updated_by)"
         " VALUES"
-        "    (:notification_id, :tenant_id, :subject, :channel::notification_alert_channel_enum,"
+        "    (:notification_id, :tenant_id, :subject, CAST(:channel AS notification_alert_channel_enum),"
         "     :status, :actor_id, :actor_id)"
         " ON CONFLICT (notification_id, tenant_id, subject, channel)"
         " DO UPDATE SET"
@@ -127,7 +127,7 @@ async def mark_delivery(
     await db.execute(
         text(
             "UPDATE ledger_notification_alert"
-            " SET status = jsonb_set(status, '{delivery}', to_jsonb(:delivery::text)),"
+            " SET status = jsonb_set(status, '{delivery}', to_jsonb(CAST(:delivery AS text))),"
             "     updated_at = now()"
             " WHERE id = :row_id"
         ),

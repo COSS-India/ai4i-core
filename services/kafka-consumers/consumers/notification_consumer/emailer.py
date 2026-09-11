@@ -10,6 +10,7 @@ Jinja Environment is reusable across renders.
 """
 from __future__ import annotations
 
+import asyncio
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict
@@ -24,6 +25,16 @@ from consumers.notification_consumer.recipients import Recipient
 logger = get_logger(__name__)
 
 _TEMPLATE_DIR = Path(__file__).resolve().parent / "templates" / "emails"
+
+# Belt-and-braces on top of EmailSettings.smtp_timeout (which aiosmtplib.send
+# is given directly): a hung DNS lookup or a silently-dropped TCP connect
+# (a firewall dropping outbound SMTP with no RST, common on WSL/corporate
+# networks) isn't guaranteed to be covered by the provider's own timeout, and
+# this consumer's loop is fully sequential — one stuck send blocks every
+# other Kafka message behind it, and eventually costs the group its
+# partition (KAFKA_MAX_POLL_INTERVAL_MS). A hard deadline here means a
+# send that can't complete becomes "failed", not "wedged forever".
+_SEND_DEADLINE_S = 20.0
 
 # One subject line per event_name, filled from `details`. Kept separate from
 # the .html/.txt template bodies — the subject is plain text (no HTML), and
@@ -65,9 +76,11 @@ def _subject_for(event_name: str, details: Dict[str, Any]) -> str:
 
 
 async def send_one(*, recipient: Recipient, event_name: str, details: Dict[str, Any]) -> bool:
-    """True on a confirmed send. Never raises — provider failures are
-    logged and reported as False (EmailClient.send_safe), so one bad
-    recipient can't take the others down."""
+    """True on a confirmed send. Never raises and never blocks past
+    _SEND_DEADLINE_S — provider failures are logged and reported as False
+    (EmailClient.send_safe), and a hang past the deadline is treated the
+    same way, so one bad or unreachable recipient can't take the others
+    (or the whole consumer) down with it."""
     ctx = {**details, "recipient_name": recipient.display_name}
     html_body, text_body = _renderer().render(event_name.lower(), ctx)
     message = EmailMessage(
@@ -76,4 +89,11 @@ async def send_one(*, recipient: Recipient, event_name: str, details: Dict[str, 
         html_body=html_body,
         text_body=text_body,
     )
-    return await _client().send_safe(message)
+    try:
+        return await asyncio.wait_for(_client().send_safe(message), timeout=_SEND_DEADLINE_S)
+    except asyncio.TimeoutError:
+        logger.error(
+            "Email send timed out after %.0fs — treating as failed | to=%s subject=%s",
+            _SEND_DEADLINE_S, recipient.email, message.subject,
+        )
+        return False

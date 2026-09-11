@@ -30,9 +30,25 @@ _PREFIX = "enc:v1:"
 EMAIL_CONTEXT = b"email"
 _KEY_ENV_VAR = "PII_ENCRYPTION_KEY"
 
+#: Set by main.py at startup from cfg.get_settings().PII_ENCRYPTION_KEY.
+#: Takes precedence over the bare os.environ lookup below — matching
+#: auth-service's own pii_crypto.py exactly, for the same reason: pydantic-
+#: settings loads .env into a Settings *object*, not into os.environ, so a
+#: plain os.getenv() here sees nothing unless something explicitly hands the
+#: value over. configure_key() is that handoff.
+_configured_key: Optional[str] = None
+
 
 class PIIEncryptionError(RuntimeError):
     pass
+
+
+def configure_key(key: Optional[str]) -> None:
+    """Register the raw (base64/hex) key string and reset the cached cipher.
+    Call once, at startup — see main.py."""
+    global _configured_key
+    _configured_key = key.strip() if isinstance(key, str) and key.strip() else None
+    _cipher.cache_clear()
 
 
 def _decode_key(raw: str) -> bytes:
@@ -49,9 +65,12 @@ def _decode_key(raw: str) -> bytes:
 
 @lru_cache(maxsize=1)
 def _cipher() -> AESSIV:
-    raw = os.getenv(_KEY_ENV_VAR)
+    raw = _configured_key or os.getenv(_KEY_ENV_VAR)
     if not raw:
-        raise PIIEncryptionError(f"{_KEY_ENV_VAR} is not set.")
+        raise PIIEncryptionError(
+            f"{_KEY_ENV_VAR} is not set — neither configure_key() nor the "
+            f"{_KEY_ENV_VAR} environment variable provided one."
+        )
     key = _decode_key(raw)
     if len(key) not in (32, 48, 64):
         raise PIIEncryptionError(

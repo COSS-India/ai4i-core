@@ -75,11 +75,15 @@ async def handle_notification_event(msg: Message) -> None:
                 )
                 return
 
-            # design doc §8, step 3 — one gate, before any per-channel work.
-            if not cfg.is_enabled:
-                return
+            # design doc §8, step 3's gate — no separate is_enabled column
+            # exists on this table; "off" is exactly "no role toggled on".
             enabled_roles = [role for role, on in cfg.recipient_roles.items() if on]
             if not enabled_roles:
+                logger.info(
+                    "Gated — no recipient_roles enabled for event_name=%s tenant_id=%s "
+                    "(PATCH /api/v1/notification-alerts/catalog/%s to enable it)",
+                    envelope["event_name"], envelope["tenant_id"], envelope["event_name"],
+                )
                 return
 
             for channel in cfg.channels:
@@ -143,4 +147,10 @@ async def _process_channel(
             event_name=envelope["event_name"],
             details=envelope["details"],
         )
-    await ledger.mark_delivery(db, row_id=row_id, delivery="sent" if outcome == "sent" else "failed")
+    delivery_status = "sent" if outcome == "sent" else "failed"
+    await ledger.mark_delivery(db, row_id=row_id, delivery=delivery_status)
+    logger.info(
+        "Notification delivery settled | event_name=%s tenant_id=%s channel=%s "
+        "ledger_id=%s outcome=%s delivery=%s",
+        envelope["event_name"], envelope["tenant_id"], channel, row_id, outcome, delivery_status,
+    )

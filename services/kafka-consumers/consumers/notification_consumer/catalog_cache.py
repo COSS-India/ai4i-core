@@ -23,14 +23,16 @@ logger = get_logger(__name__)
 
 @dataclass(frozen=True)
 class NotificationConfig:
-    """One row of configs_notification_alert, as this consumer needs it."""
+    """One row of configs_notification_alert, as this consumer needs it.
+
+    No separate is_enabled column exists — "off" is expressed purely as
+    "no role in recipient_roles is True" (handler.py's gate)."""
 
     id: int
     name: str
     type: str
     module: str
     channels: list
-    is_enabled: bool
     recipient_roles: Dict[str, bool] = field(default_factory=dict)
     thresholds: Dict[str, bool] = field(default_factory=dict)
 
@@ -51,15 +53,19 @@ class _Cache:
     async def _refresh(self, db: AsyncSession) -> None:
         result = await db.execute(
             text(
-                "SELECT id, name, type, module, channels, is_enabled, config"
+                "SELECT id, name, type, module, channels, recipient_roles, config"
                 "  FROM configs_notification_alert"
             )
         )
         by_name: Dict[str, NotificationConfig] = {}
         for row in result.mappings():
+            recipient_roles = row["recipient_roles"] or {}
             config = row["config"] or {}
             # Defensive: some raw-SQL/driver paths hand back jsonb as text
             # rather than an already-decoded object — never trust the shape.
+            if isinstance(recipient_roles, str):
+                import json
+                recipient_roles = json.loads(recipient_roles) if recipient_roles else {}
             if isinstance(config, str):
                 import json
                 config = json.loads(config) if config else {}
@@ -69,8 +75,7 @@ class _Cache:
                 type=row["type"],
                 module=row["module"],
                 channels=list(row["channels"] or []),
-                is_enabled=bool(row["is_enabled"]),
-                recipient_roles=config.get("recipient_roles", {}) or {},
+                recipient_roles=recipient_roles,
                 thresholds=config.get("thresholds", {}) or {},
             )
         self._by_name = by_name

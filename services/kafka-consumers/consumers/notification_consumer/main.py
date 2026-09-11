@@ -23,12 +23,12 @@ GROUP_ID is a brand-new group: KAFKA_AUTO_OFFSET_RESET must be set to
 from __future__ import annotations
 
 from ai4i_core.logging import get_logger
-from confluent_kafka import KafkaException
+from confluent_kafka import KafkaError, KafkaException, Message
 
 from bootstrap.config import get_db_settings
 from bootstrap.consumers import CommitMode, ManagedConsumer
 from bootstrap.lifecycle import add_database, infra, shutdown_event
-from consumers.notification_consumer import config as cfg
+from consumers.notification_consumer import config as cfg, pii_crypto
 from consumers.notification_consumer.handler import handle_notification_event
 
 logger = get_logger(__name__)
@@ -39,9 +39,47 @@ logger = get_logger(__name__)
 GROUP_ID = "notification-service"
 
 
+def _usable(msg: Message) -> bool:
+    """Error classification, mirroring payperuse_consumer's own _usable()
+    (ARCHITECTURE.md §6.3) — only a fatal error, or _AUTO_OFFSET_RESET
+    specifically, may take the process down.
+
+    _AUTO_OFFSET_RESET means KAFKA_AUTO_OFFSET_RESET=error fired: this group
+    has no valid committed offset and cannot proceed on its own. Left as a
+    plain ERROR log (the old behaviour here) it repeats on every poll
+    forever without ever processing a real message — logging loudly is not
+    the same as failing loudly. Raising crashes the process so the
+    orchestrator restarts it and an on-call engineer actually gets paged,
+    instead of a consumer that looks alive while doing nothing.
+    """
+    err = msg.error()
+    if err is None:
+        return True
+
+    if err.code() == KafkaError._PARTITION_EOF:
+        return False  # informational, not a failure
+
+    if err.code() == KafkaError._AUTO_OFFSET_RESET or err.fatal():
+        logger.critical(
+            "Fatal Kafka error — exiting for restart | code=%s: %s", err.name(), err.str()
+        )
+        raise KafkaException(err)
+
+    logger.error("Kafka error entry | code=%s: %s", err.name(), err.str())
+    return False
+
+
 async def run() -> None:
     db = get_db_settings()
     settings = cfg.get_settings()
+
+    # Hand the key to pii_crypto explicitly — pydantic-settings loads .env
+    # into `settings`, not into os.environ, so a bare os.getenv() inside
+    # pii_crypto would never see it. Mirrors auth-service's own
+    # config.py -> pii_crypto.configure_key() handoff exactly.
+    pii_crypto.configure_key(
+        settings.PII_ENCRYPTION_KEY.get_secret_value() if settings.PII_ENCRYPTION_KEY else None
+    )
 
     async with infra(db_name=db.PLATFORM_CORE_DB):
         # Second connection, named "auth" — recipients.py resolves who holds
@@ -86,8 +124,7 @@ async def run() -> None:
                         )
                         continue
 
-                    if msg.error() is not None:
-                        logger.error("Kafka error entry | %s", msg.error().str())
+                    if not _usable(msg):
                         continue
 
                     await handle_notification_event(msg)
