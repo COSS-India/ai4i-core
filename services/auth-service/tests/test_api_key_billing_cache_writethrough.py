@@ -266,6 +266,47 @@ class TestSetBudgetExhaustedForTenant:
         cache.patch_api_key_cache_field.assert_not_awaited()
 
 
+class TestSetBudgetEffectiveToForTenant:
+    """Always tenant-wide, unlike budget-exhausted — there's no per-key
+    budget window, only tenants.budget_effective_from/_to, so this has no
+    per-key sibling the way set_budget_exhausted_for_key does. Force-writes
+    the raw date (not a derived boolean) — /auth/validate compares it
+    directly against "now" (app.utils.budget_window.is_budget_window_expired)."""
+
+    @pytest.mark.asyncio
+    async def test_patches_redis_and_cached_data_with_iso_string(self) -> None:
+        svc, repo, cache, key = _service_with_one_active_key()
+        value = datetime(2030, 6, 15, tzinfo=timezone.utc)
+
+        await svc.set_budget_effective_to_for_tenant(1, value)
+
+        cache.patch_api_key_cache_field.assert_awaited_once_with(
+            key.api_key, "budget_effective_to", value.isoformat()
+        )
+        repo.patch_cached_data_field_for_tenant.assert_awaited_once_with(
+            1, "budget_effective_to", value.isoformat()
+        )
+        repo.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_none_writes_empty_string(self) -> None:
+        """No window (never assigned, or intentionally cleared) is written
+        as an empty string, not the literal word "None" — is_budget_window_
+        expired's caller treats a falsy string as "never expires", and an
+        empty string round-trips through Redis (which only stores strings)
+        cleanly, unlike a Python None."""
+        svc, repo, _cache, _key = _service_with_one_active_key()
+        await svc.set_budget_effective_to_for_tenant(1, None)
+        repo.patch_cached_data_field_for_tenant.assert_awaited_once_with(1, "budget_effective_to", "")
+
+    @pytest.mark.asyncio
+    async def test_missing_repo_skips_everything(self) -> None:
+        cache = AsyncMock()
+        svc = APIKeyService(None, cache)
+        await svc.set_budget_effective_to_for_tenant(1, datetime.now(timezone.utc))
+        cache.patch_api_key_cache_field.assert_not_awaited()
+
+
 class TestSetQuotaExhaustedForTenant:
     @pytest.mark.asyncio
     async def test_patches_redis_and_cached_data(self) -> None:

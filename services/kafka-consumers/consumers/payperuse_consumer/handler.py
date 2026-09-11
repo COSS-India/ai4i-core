@@ -87,7 +87,19 @@ async def _post_billing(
     — a JWT-authenticated request, or the gateway not yet forwarding
     X-API-Key-ID): there's no key to flag. quota_exhausted stays tenant-wide
     — a tier's monthly quota is a tenant-level entitlement, not a per-key
-    ceiling, so it's correct for it to affect every key under the tenant."""
+    ceiling, so it's correct for it to affect every key under the tenant.
+
+    No longer notifies about the tenant's budget effective window at all —
+    /auth/validate now compares budget_effective_to directly from the
+    key's own cached payload (see auth-service's validation.py:
+    _cached_budget_window_is_expired) instead of trusting a boolean this
+    consumer used to push here on every message. That push was wasteful
+    (a tenant-wide Redis+DB write on nearly every billed message, most of
+    which changed nothing) and still incomplete (a tenant whose spans never
+    reach billing — no pricing row, or cost == 0, both early-return in
+    _bill_usage above — would never get flagged no matter how expired).
+    Comparing the stored date directly is both cheaper and correct for
+    every tenant, billed or not."""
     if wallet_exhausted and api_key_id:
         await _notify_auth(
             f"/internal/ppu/api-key/{api_key_id}/budget-exhausted",

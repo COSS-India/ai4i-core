@@ -159,7 +159,12 @@ class TestPostBilling:
     """_post_billing had no coverage on either side of the per-key rescope —
     the whole point of the change (one Key's own usage notifying by
     api_key_id, not tenant_id, and skipping entirely when there's no key on
-    the span) had nothing pinning it."""
+    the span) had nothing pinning it.
+
+    No longer covers a budget-expiry-check call — that push was removed
+    (see _post_billing's own docstring): /auth/validate now compares
+    budget_effective_to directly from the key's cached payload instead of
+    a boolean this consumer used to push on every message."""
 
     async def test_wallet_exhausted_notifies_by_api_key_id_not_tenant_id(self):
         with patch("consumers.payperuse_consumer.handler._notify_auth", AsyncMock()) as notify:

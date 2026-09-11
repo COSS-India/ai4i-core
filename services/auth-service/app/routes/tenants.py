@@ -72,7 +72,11 @@ async def create_tenant(
     The tenant starts PENDING. The contact admin receives a set-password
     email; the tenant becomes ACTIVE after they set a password. Duplicate
     email or organisation returns 409. An unknown/inactive tier_id returns
-    404 TIER_NOT_FOUND. Returned contact PII is masked.
+    404 TIER_NOT_FOUND. budget_effective_from/_to are optional but must be
+    given together — 422 effective_window_required if only one is given,
+    422 budget_effective_from_invalid/budget_effective_to_invalid for a
+    backdated From or an inverted/same-day window. Returned contact PII is
+    masked.
     """
     tenant = await svc.create_tenant(body, current_user, background_tasks, platform_core_db)
     return CreateTenantResponse(
@@ -250,6 +254,18 @@ async def revise_tenant_budget(
     no longer exists. Response is unwrapped (no success/data envelope),
     matching the endpoint it replaces.
 
+    ``budget_effective_from``/``budget_effective_to`` are both optional —
+    both omitted is a plain amount top-up/top-down that leaves an existing
+    window untouched. Whether either is actually required depends on
+    whether this tenant currently has a LIVE window: if so,
+    ``budget_effective_from`` is locked (422 ``effective_from_locked`` if
+    given) and ``budget_effective_to`` may only extend it; if the tenant has
+    no window yet, or the old one has lapsed, this call IS the assignment
+    and both become required (422 ``effective_window_required`` if either
+    is missing). See TenantService.revise_tenant_budget for the full
+    matrix and the remaining 422s (``budget_effective_from_invalid`` /
+    ``budget_effective_to_invalid``).
+
     No Application's own ₹ ever moves as a result of this revision — only
     its allocated_percentage is recomputed, since the same ₹ is now a
     different share of a different-sized total (``applications_recomputed``
@@ -271,12 +287,20 @@ async def revise_tenant_budget(
     """
     tenant, applications_recomputed, keys_recomputed, snapshot_write_failed = (
         await svc.revise_tenant_budget(
-            current_user, tenant_id, body.action, body.amount, platform_core_db
+            current_user,
+            tenant_id,
+            body.action,
+            body.amount,
+            body.budget_effective_from,
+            body.budget_effective_to,
+            platform_core_db,
         )
     )
     return TenantBudgetData(
         tenant_id=tenant.id,
         allocated_budget=tenant.allocated_budget,
+        budget_effective_from=tenant.budget_effective_from,
+        budget_effective_to=tenant.budget_effective_to,
         applications_recomputed=applications_recomputed,
         keys_recomputed=keys_recomputed,
         snapshot_write_failed=snapshot_write_failed,

@@ -139,6 +139,120 @@ class TestAllocationCapLockOrdering:
         repo.create.assert_not_called()
 
 
+class TestBudgetExpiredBlocksKeyCreation:
+    """create_api_key must not hand out a new key against a tenant whose
+    budget effective window has already ended — before this, nothing here
+    ever looked at budget_effective_to at all: a key could be freely
+    created (and would even work for its very first request, since
+    /auth/validate's budget-expired Redis flag only gets set reactively by
+    the next Kafka-billed message) for a tenant that was already expired.
+    This checks tenants.budget_effective_to directly, not the Redis flag, so
+    it can't have that same lag — see app.utils.budget_window."""
+
+    @pytest.mark.asyncio
+    async def test_expired_window_rejected_before_tier_check(self) -> None:
+        """Checked ahead of NO_ACTIVE_TIER — a lapsed window is the more
+        fundamental block, and cheaper (no further lookups needed either
+        way, but this comes first in the method)."""
+        application = _application()
+        tenant = _tenant(tier_id=None)  # would ALSO fail NO_ACTIVE_TIER — proves ordering
+        tenant.budget_effective_to = datetime.now(timezone.utc) - timedelta(days=1)
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        tenants = AsyncMock()
+        tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+
+        with pytest.raises(ValidationError) as exc_info:
+            await svc.create_api_key(
+                actor_user_id=uuid4(),
+                key_name="test",
+                permissions=["nmt.inference"],
+                application_id=1,
+                allocated_percentage=Decimal("20"),
+                caller_tenant_id=1,
+            )
+
+        assert exc_info.value.code == "BUDGET_EXPIRED"
+        repo.create.assert_not_called()
+        applications.get_by_id_for_update.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_future_effective_to_is_allowed(self) -> None:
+        application = _application()
+        tenant = _tenant()
+        tenant.budget_effective_to = datetime.now(timezone.utc) + timedelta(days=30)
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        applications.get_by_id_for_update = AsyncMock(return_value=application)
+        applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("0"))
+        tenants = AsyncMock()
+        tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+
+        await svc.create_api_key(
+            actor_user_id=uuid4(),
+            key_name="test",
+            permissions=["nmt.inference"],
+            application_id=1,
+            allocated_percentage=Decimal("20"),
+            caller_tenant_id=1,
+        )
+
+        repo.create.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_no_effective_to_is_allowed(self) -> None:
+        """None means no window was ever set (or a pre-fix row) — must not
+        block key creation for every tenant that predates this feature."""
+        application = _application()
+        tenant = _tenant()
+        tenant.budget_effective_to = None
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        applications.get_by_id_for_update = AsyncMock(return_value=application)
+        applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("0"))
+        tenants = AsyncMock()
+        tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+
+        await svc.create_api_key(
+            actor_user_id=uuid4(),
+            key_name="test",
+            permissions=["nmt.inference"],
+            application_id=1,
+            allocated_percentage=Decimal("20"),
+            caller_tenant_id=1,
+        )
+
+        repo.create.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_naive_effective_to_treated_as_utc(self) -> None:
+        application = _application()
+        tenant = _tenant(tier_id=None)
+        tenant.budget_effective_to = (datetime.now(timezone.utc) - timedelta(days=1)).replace(tzinfo=None)
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        tenants = AsyncMock()
+        tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+
+        with pytest.raises(ValidationError) as exc_info:
+            await svc.create_api_key(
+                actor_user_id=uuid4(),
+                key_name="test",
+                permissions=["nmt.inference"],
+                application_id=1,
+                allocated_percentage=Decimal("20"),
+                caller_tenant_id=1,
+            )
+
+        assert exc_info.value.code == "BUDGET_EXPIRED"
+
+
 class TestExplicitZeroAllocationRejected:
     """ALLOCATION_REQUIRED only catches the omitted-entirely case (None is
     not 0) — a caller can route around it by passing an explicit 0 instead,

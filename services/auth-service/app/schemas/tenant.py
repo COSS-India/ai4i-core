@@ -387,6 +387,8 @@ class TenantTierAssignData(BaseSchema):
 _TENANT_BUDGET_REQUEST_EXAMPLE = {
     "action": "top-up",
     "amount": 5000.00,
+    "budget_effective_from": "2026-09-10T00:00:00Z",
+    "budget_effective_to": "2026-10-10T00:00:00Z",
 }
 
 
@@ -395,6 +397,28 @@ class TenantBudgetRequest(BaseSchema):
 
     action: Literal["top-up", "top-down"]
     amount: Decimal = Field(..., gt=0, max_digits=15, decimal_places=2)
+    # Both optional here — whether either is actually required depends on
+    # tenant state TenantService.revise_tenant_budget alone can see (does
+    # this tenant already have a LIVE window?), not something this schema
+    # can express. Omitting both is the common case: a plain amount top-up/
+    # top-down that doesn't touch the window at all (what the shipped UI
+    # already sends). See revise_tenant_budget's own docstring for the full
+    # required-ness matrix and the 422s it can raise
+    # (effective_from_locked / effective_window_required /
+    # budget_effective_from_invalid / budget_effective_to_invalid) — all
+    # semantic, so all live in the service, not as Pydantic constraints
+    # here, same reasoning as allocated_budget's own missing `ge=0` above.
+    budget_effective_from: Optional[datetime] = Field(
+        None,
+        description="Start of the budget's effective window (UTC). Omit unless "
+        "assigning a window for the first time, or after the previous one has "
+        "lapsed — it's locked while a window is active.",
+    )
+    budget_effective_to: Optional[datetime] = Field(
+        None,
+        description="End of the budget's effective window (UTC). Omit to leave an "
+        "active window unchanged; give a later date to extend it.",
+    )
 
 
 class TenantBudgetData(BaseSchema):
@@ -403,6 +427,8 @@ class TenantBudgetData(BaseSchema):
 
     tenant_id: int
     allocated_budget: Optional[Decimal] = None
+    budget_effective_from: Optional[datetime] = None
+    budget_effective_to: Optional[datetime] = None
     applications_recomputed: Optional[int] = Field(
         None,
         description="Count of Applications under this Tenant whose allocated_percentage "
