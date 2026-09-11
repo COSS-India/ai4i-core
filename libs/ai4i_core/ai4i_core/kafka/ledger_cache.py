@@ -40,16 +40,24 @@ def _key(notification_id: int, tenant_id: str, subject_json: str, channel: str) 
 def matches_cached_status(
     notification_id: int, tenant_id: str, subject_json: str, channel: str, status: Dict[str, Any]
 ) -> bool:
-    """True only when this exact status is already known to be current for
-    this row — safe to skip the DB entirely. False for a miss, an expired
-    entry, or a different status (all of which fall through to the DB)."""
+    """True only when this exact status.value is already known to be
+    current for this row — safe to skip the DB entirely. False for a miss,
+    an expired entry, or a different value (all of which fall through to
+    the DB).
+
+    Compares only status["value"], not the whole {"value", "delivery"}
+    object — delivery is updated independently downstream (the consumer
+    marking a row sent/failed/skipped after this producer already wrote
+    "in_progress"), and that alone must never look like "this is a new
+    occurrence" to either this cache or the DB's own guard (ledger.py's
+    _UPSERT_SQL WHERE clause makes the identical comparison)."""
     entry = _cache.get(_key(notification_id, tenant_id, subject_json, channel))
     if entry is None:
         return False
     cached_status, loaded_at = entry
     if (time.monotonic() - loaded_at) >= TTL_SECONDS:
         return False
-    return cached_status == status
+    return cached_status.get("value") == status.get("value")
 
 
 def set_cached_status(
