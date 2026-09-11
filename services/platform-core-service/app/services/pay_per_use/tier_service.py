@@ -16,6 +16,7 @@ from app.models.pay_per_use.tier import Tier, TierQuota
 from app.repositories.pay_per_use.usage_repository import update_tier_cache
 from app.schemas.pay_per_use.tier import TierCreate, TierOut, TierQuotaOut, TierUpdate
 from app.services.pay_per_use import inference_type_cache
+from app.models.pay_per_use.quota_usage import QuotaUsage
 
 logger = logging.getLogger(__name__)
 
@@ -121,15 +122,15 @@ def _build_out(tier: Tier, quotas: List[TierQuota], names: dict) -> TierOut:
 
 
 async def list_tiers(
-    session: AsyncSession, task_types: Optional[str] = None
+    session: AsyncSession,
+    task_types: Optional[str] = None,
+    status: Optional[TierStatus] = None,
 ) -> dict:
     type_ids = await _resolve_task_type_ids(session, task_types)
     names = await inference_type_cache.get_name_by_id(session)
-    stmt = (
-        select(Tier)
-        .where(Tier.status != TierStatus.DELETED)
-        .options(selectinload(Tier.tier_quotas))
-    )
+    stmt = select(Tier).where(Tier.status != TierStatus.DELETED).options(selectinload(Tier.tier_quotas))
+    if status is not None:
+        stmt = stmt.where(Tier.status == status)
     result = await session.execute(stmt)
     tiers = result.scalars().all()
 
@@ -169,7 +170,7 @@ async def get_tier_by_id(tier_id: str, session: AsyncSession) -> TierOut:
 
 
 async def create_tier(body: TierCreate, session: AsyncSession, created_by: Optional[str] = None) -> TierOut:
-    existing = await session.execute(select(Tier).where(Tier.name == body.name))
+    existing = await session.execute(select(Tier).where(Tier.name == body.name, Tier.status != TierStatus.DELETED))
     if existing.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -400,10 +401,11 @@ async def update_tier_status(
     previous_status = tier.status
     assert_valid_tier_status_transition(previous_status, target_status)
 
-    if target_status == TierStatus.DELETED:
+    if target_status in {TierStatus.DEACTIVATED, TierStatus.DELETED}:
+        action = "deactivating" if target_status == TierStatus.DEACTIVATED else "deleting"
         if auth_db is None:
             raise ValidationError(
-                message="Tier deletion cannot be verified: auth-service DB is not configured.",
+                message=f"Tier {action} cannot be verified: auth-service DB is not configured.",
                 code="AUTH_DB_NOT_CONFIGURED",
             )
         assigned = await auth_db.execute(
@@ -413,7 +415,7 @@ async def update_tier_status(
         if assigned.first():
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Tier is still assigned to one or more tenants. Reassign them to another tier or remove the tier assignment before deleting.",
+                detail=f"Tier is still assigned to one or more tenants. Reassign them to another tier or remove the tier assignment before {action}.",
             )
         mapped = await session.execute(
             text("SELECT 1 FROM mm_services WHERE :tier_id = ANY(tier_ids) LIMIT 1"),
@@ -422,13 +424,13 @@ async def update_tier_status(
         if mapped.first():
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Tier is still mapped to one or more services. Remove the tier mapping from all services before deleting.",
+                detail=f"Tier is still mapped to one or more services. Remove the tier mapping from all services before {action}.",
             )
 
     # Side effects that must run before commit.
     if target_status == TierStatus.ACTIVE and previous_status == TierStatus.DEACTIVATED:
         # Reactivate: reset monthly quota usage for the current billing month.
-        from app.models.pay_per_use.quota_usage import QuotaUsage  # local import avoids circular
+        # local import avoids circular
         current_month = datetime.now(timezone.utc).strftime("%Y-%m")
         await session.execute(
             update(QuotaUsage)
