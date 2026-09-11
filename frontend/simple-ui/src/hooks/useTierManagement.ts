@@ -21,6 +21,7 @@ import { useInferenceTypes } from "./useInferenceTypes";
 import { generateUUID } from "../utils/uuid";
 import { resolveTaskType } from "../utils/platformService";
 import type { TierFormData, TierFormQuota } from "../types/tierManagement";
+import { validateQuotaLimit } from "../components/tier-management/tierFormValidation";
 
 const TIER_QUERY_KEY = "tiers";
 
@@ -86,8 +87,8 @@ function defaultFormData(): TierFormData {
 /**
  * Validate the quota rows of a tier form. Returns a user-facing error message
  * for the first problem found, or null when every row is valid. Enforces that
- * each row has a model task type, a non-empty unit, and a limit strictly
- * greater than 0 (rejecting empty, non-numeric, 0, and negative limits).
+ * each row has a model task type, a non-empty unit, and a limit the backend's
+ * `TierQuotaIn` will accept (see `validateQuotaLimit`).
  */
 function validateQuotas(quotas: TierFormQuota[]): string | null {
   for (const q of quotas) {
@@ -97,9 +98,9 @@ function validateQuotas(quotas: TierFormQuota[]): string | null {
     if (!q.unit.trim()) {
       return "Unit is required for each quota.";
     }
-    const limitNum = Number(q.limit);
-    if (q.limit.trim() === "" || !Number.isFinite(limitNum) || limitNum <= 0) {
-      return "Limit must be greater than 0.";
+    const limitIssue = validateQuotaLimit(q.limit);
+    if (limitIssue) {
+      return limitIssue;
     }
   }
   return null;
@@ -144,6 +145,14 @@ export function useTierManagement() {
     null,
   );
   const [scheduleLimit, setScheduleLimit] = useState("");
+  /**
+   * The schedule modal posts through the same `TierQuotaIn` as the tier form,
+   * so it owes the same verdict — surfaced inline instead of only as a toast.
+   */
+  const scheduleLimitError = useMemo(
+    () => validateQuotaLimit(scheduleLimit),
+    [scheduleLimit],
+  );
   const [isScheduling, setIsScheduling] = useState(false);
   const [cancelingTaskType, setCancelingTaskType] = useState<string | null>(
     null,
@@ -632,16 +641,16 @@ export function useTierManagement() {
   const handleScheduleConfirm = useCallback(async () => {
     if (!checkSessionExpiry()) return;
     if (!scheduleTarget || !editingTier) return;
-    const newLimit = Number(scheduleLimit);
-    if (!scheduleLimit || !Number.isFinite(newLimit) || newLimit <= 0) {
+    if (scheduleLimitError) {
       toast({
-        title: "Enter a valid quota limit",
+        title: scheduleLimitError,
         status: "warning",
         duration: 3000,
         isClosable: true,
       });
       return;
     }
+    const newLimit = Number(scheduleLimit);
     setIsScheduling(true);
     try {
       await updateTier(editingTier.id, {
@@ -681,6 +690,7 @@ export function useTierManagement() {
     scheduleTarget,
     editingTier,
     scheduleLimit,
+    scheduleLimitError,
     formData,
     toast,
     handleScheduleClose,
@@ -785,6 +795,7 @@ export function useTierManagement() {
     scheduleTarget,
     scheduleLimit,
     setScheduleLimit,
+    scheduleLimitError,
     isScheduleOpen,
     isScheduling,
     handleOpenSchedule,

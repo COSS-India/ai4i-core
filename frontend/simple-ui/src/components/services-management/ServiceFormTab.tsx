@@ -38,6 +38,7 @@ import type { Tier } from "../../types/tierManagement";
 import {
   INFRA_DESCRIPTION_MAX_LEN,
   INFRA_DESCRIPTION_MIN_LEN,
+  PRICE_PER_UNIT_MAX,
   SERVICE_DESCRIPTION_MAX_LEN,
   SERVICE_DESCRIPTION_MIN_LEN,
   SERVICE_ID_MAX_LEN,
@@ -64,6 +65,7 @@ interface ServiceFormTabProps {
   filteredModelsForDropdown: ModelDetails[];
   unitType: string;
   pricePerUnit: string;
+  pricePerUnitError?: string | null;
   onPricePerUnitChange: (value: string) => void;
   unitSize: string;
   onUnitSizeChange: (value: string) => void;
@@ -110,6 +112,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
   filteredModelsForDropdown,
   unitType,
   pricePerUnit,
+  pricePerUnitError,
   onPricePerUnitChange,
   unitSize,
   onUnitSizeChange,
@@ -147,6 +150,10 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
   const nameError = afterBlur("name", serviceNameError);
   const descriptionError = afterBlur("serviceDescription", serviceDescriptionError);
   const infraError = afterBlur("hardwareDescription", hardwareDescriptionError);
+  
+  const priceError = pricePerUnit.trim()
+    ? (pricePerUnitError ?? null)
+    : afterBlur("pricePerUnit", pricePerUnitError);
   // Duplicate clash wins and shows immediately; length waits for blur.
   const idError = serviceIdError ?? afterBlur("serviceId", serviceIdLengthError);
 
@@ -497,17 +504,23 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 Price per unit size &amp; Currency
               </Text>
               <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                <FormControl isRequired>
+                <FormControl isRequired isInvalid={!!priceError}>
                   <FormLabel fontWeight="semibold">Price per unit size</FormLabel>
                   <Input
                     value={pricePerUnit}
                     onChange={(e) => onPricePerUnitChange(e.target.value)}
+                    onBlur={() => markBlurred("pricePerUnit")}
                     placeholder={FIELD_HINTS.service.price.placeholder}
                     type="number"
                     min={0}
+                    max={PRICE_PER_UNIT_MAX}
                     bg="white"
                   />
-                  <FieldHint>{FIELD_HINTS.service.price.helper}</FieldHint>
+                  {priceError ? (
+                    <FormErrorMessage>{priceError}</FormErrorMessage>
+                  ) : (
+                    <FieldHint>{FIELD_HINTS.service.price.helper}</FieldHint>
+                  )}
                 </FormControl>
 
                 <FormControl isRequired>
