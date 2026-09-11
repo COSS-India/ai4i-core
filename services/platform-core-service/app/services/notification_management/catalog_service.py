@@ -9,12 +9,14 @@ one row by ``name`` — unique, stable and meaningful, unlike the bigserial
 environments).
 """
 
+import logging
 from typing import Dict, List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import EntityNotFoundError, ValidationError
+from app.core.redis import get_redis_client
 from app.models.notification_management.config_notification_alert import (
     ConfigNotificationAlert,
 )
@@ -27,6 +29,14 @@ from app.services.notification_management.catalog_metadata import (
     MIN_THRESHOLD_PERCENT,
     NOTIFICATION_METADATA,
 )
+
+logger = logging.getLogger(__name__)
+
+# payperuse_consumer's in-memory threshold-bands cache subscribes to this
+# channel and refreshes the one row named in the message — see
+# services/kafka-consumers/consumers/payperuse_consumer/_thresholds.py.
+# Mirrors this service's own pii "policy_updates" channel (app/routes/pii.py).
+NOTIFICATION_ALERT_UPDATES_CHANNEL = "notification_alert_updates"
 
 
 def _to_catalog_item(row: ConfigNotificationAlert) -> CatalogItem:
@@ -159,4 +169,22 @@ async def update_catalog(
 
     await session.commit()
     await session.refresh(row)
+
+    if payload.thresholds is not None or payload.recipient_roles is not None:
+        # Every producer's in-memory settings cache (ai4i_core.kafka.
+        # notification_settings_cache) subscribes to this channel and does a
+        # full reload on any message — recipient_roles changes matter there
+        # too (a notification with no roles selected is treated as "off"),
+        # not just thresholds. Best-effort: a cache falls back to its last
+        # known value (and its own DB reload on next restart) if this fails,
+        # same framing as every other pub/sub-notify call in this codebase.
+        try:
+            redis = get_redis_client()
+            await redis.publish(NOTIFICATION_ALERT_UPDATES_CHANNEL, row.name)
+        except Exception as exc:
+            logger.warning(
+                "Failed to publish %s update to '%s': %s",
+                NOTIFICATION_ALERT_UPDATES_CHANNEL, row.name, exc,
+            )
+
     return _to_catalog_item(row)

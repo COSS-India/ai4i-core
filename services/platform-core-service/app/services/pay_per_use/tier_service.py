@@ -13,6 +13,11 @@ from sqlalchemy.orm import selectinload
 
 from app.core.constants import TierStatus
 from app.core.exceptions import ValidationError
+from ai4i_core.kafka import (
+    publish_admin_event as publish_notification_event,
+    is_notification_enabled,
+    check_and_record_actions_bulk,
+)
 from app.models.pay_per_use.tier import Tier, TierQuota
 from app.repositories.pay_per_use.usage_repository import update_tier_cache
 from app.schemas.pay_per_use.tier import TierCreate, TierOut, TierQuotaOut, TierUpdate
@@ -257,7 +262,10 @@ async def _resolve_tier_for_update(body: TierUpdate, session: AsyncSession) -> T
 
 async def _upsert_quotas(
     session: AsyncSession, tier: Tier, quotas: List, updated_by: Optional[str]
-) -> None:
+) -> List[dict]:
+    """Returns one {inference_name, previous, current} dict per quota
+    actually changed — the raw material for QUOTA_LIMIT_UPDATED events."""
+    changes: List[dict] = []
     for q in quotas:
         # Two distinct 400s now: not in the catalogue at all, versus in the
         # catalogue but not granted on this tier. The second message is
@@ -280,8 +288,16 @@ async def _upsert_quotas(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Model task type '{q.modelTaskType}' does not exist in this tier. Adding new model task types is not allowed via update.",
             )
+        changes.append(
+            {
+                "inference_name": q.modelTaskType,
+                "previous": existing.monthly_quota,
+                "current": q.limit,
+            }
+        )
         existing.pending_monthly_quota = q.limit
         existing.updated_by = updated_by
+    return changes
 
 
 async def _cancel_pending_quotas(
@@ -326,6 +342,60 @@ async def _notify_tier_updated(
         logger.warning("quota-limit-updated notification failed for tier %s: %s", tier.id, exc)
 
 
+async def _publish_quota_limit_updated(
+    tier: Tier,
+    quota_changes: List[dict],
+    updated_by: Optional[str],
+    auth_db: Optional[AsyncSession],
+    session: AsyncSession,
+) -> None:
+    """Fire QUOTA_LIMIT_UPDATED for every tenant on this tier, once per
+    changed model task type — best-effort, mirrors _notify_tier_updated's
+    framing so a Kafka outage never fails the tier update itself.
+
+    ledger_notification_alert (design doc §5-7) lives in this service's own
+    DB (``session``, not ``auth_db`` — that one is only for reading
+    tenants.tier_id) and is the atomic dedup guard, checked/updated once
+    for the whole (tenant_id, inference_name) fan-out via
+    check_and_record_actions_bulk — a single round trip and a single
+    commit, not one per pair (a tier with 200 tenants and 3 changed quotas
+    would otherwise be 600 commits before this PATCH can respond). All
+    pairs share the identical occurred_at, since they're all the same
+    admin action; publishing happens only after that one commit succeeds."""
+    if not await is_notification_enabled(session, "QUOTA_LIMIT_UPDATED"):
+        return
+    try:
+        tenant_ids = await _fetch_tenant_ids_for_tier(tier.id, auth_db)
+        occurred_at = datetime.now(timezone.utc).isoformat()
+        tenant_subjects = [
+            (str(tenant_id), {"model_task_type": change["inference_name"]})
+            for tenant_id in tenant_ids
+            for change in quota_changes
+        ]
+        fired_pairs = await check_and_record_actions_bulk(
+            session, "QUOTA_LIMIT_UPDATED", tenant_subjects, occurred_at, str(updated_by or "")
+        )
+        fired_set = {(tenant_id, subject["model_task_type"]) for tenant_id, subject in fired_pairs}
+        for tenant_id in tenant_ids:
+            for change in quota_changes:
+                if (str(tenant_id), change["inference_name"]) not in fired_set:
+                    continue
+                publish_notification_event(
+                    event_name="QUOTA_LIMIT_UPDATED",
+                    tenant_id=str(tenant_id),
+                    subject={"model_task_type": change["inference_name"]},
+                    details={
+                        "inference_name": change["inference_name"],
+                        "previous": change["previous"],
+                        "current": change["current"],
+                    },
+                    actor_id=str(updated_by or ""),
+                    occurred_at=occurred_at,
+                )
+    except Exception as exc:
+        logger.warning("QUOTA_LIMIT_UPDATED publish failed for tier %s: %s", tier.id, exc)
+
+
 async def update_tier(
     body: TierUpdate,
     session: AsyncSession,
@@ -342,8 +412,9 @@ async def update_tier(
         tier.description = body.description
     tier.updated_by = updated_by
 
+    quota_changes: List[dict] = []
     if body.quotas is not None:
-        await _upsert_quotas(session, tier, body.quotas, updated_by)
+        quota_changes = await _upsert_quotas(session, tier, body.quotas, updated_by)
 
     if body.cancel_pending_quota:
         await _cancel_pending_quotas(session, tier, body.cancel_pending_quota, updated_by)
@@ -363,6 +434,9 @@ async def update_tier(
 
     if body.quotas is not None or body.cancel_pending_quota:
         await _notify_tier_updated(tier, auth_service_url, http_client, auth_db)
+
+    if quota_changes:
+        await _publish_quota_limit_updated(tier, quota_changes, updated_by, auth_db, session)
 
     q_result = await session.execute(select(TierQuota).where(TierQuota.tier_id == tier.id))
     quotas = list(q_result.scalars().all())

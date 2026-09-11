@@ -1,5 +1,5 @@
 # ── Shared platform library (consolidated) ──
-ai4i-core==1.0.25
+ai4i-core==1.0.27
 
 # ── Core framework ──
 fastapi>=0.104.0
@@ -14,6 +14,9 @@ alembic>=1.13.0
 
 # ── Redis ──
 redis>=5.0.0
+
+# ── Kafka (notification producer) ──
+kafka-python==2.3.2
 
 # ── HTTP client (endpoint validation probing + alert-sync reloads) ──
 httpx>=0.25.0

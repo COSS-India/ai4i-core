@@ -18,9 +18,17 @@ import time
 from ai4i_core.logging import get_logger
 from confluent_kafka import KafkaError, KafkaException, Message
 
-from bootstrap.config import get_db_settings
+from ai4i_core.bootstrap import get_redis_client
+from ai4i_core.kafka import (
+    init_kafka_producer,
+    close_kafka_producer,
+    refresh_notification_settings_cache,
+    start_notification_settings_listener,
+    stop_notification_settings_listener,
+)
+from bootstrap.config import get_db_settings, get_kafka_settings
 from bootstrap.consumers import CommitMode, ManagedConsumer
-from bootstrap.lifecycle import infra, shutdown_event
+from bootstrap.lifecycle import infra, session_scope, shutdown_event
 from consumers.payperuse_consumer import config as cfg
 from consumers.payperuse_consumer.handler import handle_ppu_usage
 
@@ -41,6 +49,14 @@ async def run() -> None:
     settings = cfg.get_settings()
 
     async with infra(db_name=db.PLATFORM_CORE_DB):
+        init_kafka_producer(
+            bootstrap_servers=get_kafka_settings().KAFKA_SERVER,
+            topic=settings.TOPIC_NOTIFICATION,
+            enabled=settings.NOTIFICATION_PRODUCER_ENABLED,
+        )
+        async with session_scope() as _db:
+            await refresh_notification_settings_cache(_db)
+        start_notification_settings_listener(get_redis_client())
         consumer = ManagedConsumer.build_bulk_message_consumer(
             group_id=GROUP_ID,
             topic=settings.TOPIC_PAY_PER_USE,
@@ -125,6 +141,8 @@ async def run() -> None:
                     )
         finally:
             consumer.shutdown()
+            await stop_notification_settings_listener()
+            close_kafka_producer()
 
 
 def _usable(msg: Message) -> bool:

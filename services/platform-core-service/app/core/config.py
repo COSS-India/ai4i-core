@@ -66,6 +66,11 @@ class CoreSettings(BaseSettings):
     auth_db_port: Optional[int] = None
     auth_db_name: Optional[str] = None
 
+    # ── Kafka (notification producer) ──
+    kafka_enabled: bool = False
+    kafka_server: str = "localhost:9093"
+    topic_notification: str = "notification.events"
+
     # ── Alert config sync (background reconciliation against Prometheus / Alertmanager) ──
     # All optional; alert_sync_enabled defaults to False so the merged service can run
     # without alerting wired up. Step 8 (lifespan) gates the background task on this flag.

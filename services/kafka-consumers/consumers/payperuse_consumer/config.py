@@ -48,6 +48,14 @@ class Constants:
 class Settings(BaseSettings):
     TOPIC_PAY_PER_USE: str = Field(description="Kafka topic carrying OTel spans")
     AUTH_SERVICE_URL: str = Field(description="Base URL of auth-service for internal PPU state updates")
+    TOPIC_NOTIFICATION: str = Field(
+        "notification.events",
+        description="Kafka topic this consumer PUBLISHES QUOTA_THRESHOLD/BUDGET_THRESHOLD/"
+        "QUOTA_EXHAUSTED/BUDGET_EXHAUSTED events to (same topic notification_consumer reads).",
+    )
+    NOTIFICATION_PRODUCER_ENABLED: bool = Field(
+        False, description="Feature flag for the notification-event producer side-channel."
+    )
 
     class Config:
         env_file = ".env"

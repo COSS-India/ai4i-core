@@ -43,6 +43,8 @@ class BillingWriteResult:
     budget_exhausted: bool
     quota_recorded: bool
     quota_exhausted: bool
+    quota_used: Optional[Decimal] = None
+    quota_snap: Optional[Decimal] = None
 
 
 async def get_service_pricing(
@@ -303,6 +305,8 @@ async def deduct_balance_and_update_quota(
 
     quota_recorded = row is not None and row.monthly_quota_used is not None
     quota_exhausted = (not quota_recorded) or (row.monthly_quota_used >= row.monthly_quota_snap)
+    quota_used = row.monthly_quota_used if quota_recorded else None
+    quota_snap = row.monthly_quota_snap if quota_recorded else None
 
     return BillingWriteResult(
         api_key_budget_used=budget_used,
@@ -311,6 +315,8 @@ async def deduct_balance_and_update_quota(
         budget_exhausted=budget_exhausted,
         quota_recorded=quota_recorded,
         quota_exhausted=quota_exhausted,
+        quota_used=quota_used,
+        quota_snap=quota_snap,
     )
 
 
