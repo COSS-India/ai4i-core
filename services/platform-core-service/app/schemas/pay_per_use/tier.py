@@ -1,5 +1,4 @@
 from datetime import datetime
-from decimal import Decimal
 from typing import Any, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -9,7 +8,7 @@ from app.core.constants import TierStatus
 
 class TierQuotaIn(BaseModel):
     modelTaskType: str = Field(..., min_length=1)
-    limit: Decimal = Field(..., ge=0, le=100_000_000_000)
+    limit: int = Field(..., ge=0, le=100_000_000_000)
 
     @field_validator("modelTaskType", mode="before")
     @classmethod
@@ -33,8 +32,8 @@ class TierQuotaIn(BaseModel):
 
 class TierQuotaOut(BaseModel):
     modelTaskType: str
-    limit: Decimal
-    pendingLimit: Optional[Decimal] = None
+    limit: int
+    pendingLimit: Optional[int] = None
 
     model_config = {"from_attributes": True}
 

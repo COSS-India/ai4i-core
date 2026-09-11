@@ -349,7 +349,7 @@ class ServiceService:
             raise
         except DBAPIError as exc:
             await self._services.rollback()
-            if "NumericValueOutOfRange" in str(exc.orig) or "numeric field overflow" in str(exc).lower():
+            if getattr(exc.orig, "sqlstate", None) == "22003":
                 raise ValidationError(
                     message="Cost per unit must be between 0 and 10,000,000 (10 million)",
                     code="INVALID_COST_PER_UNIT",
@@ -565,7 +565,7 @@ class ServiceService:
             await self._services.commit()
         except DBAPIError as exc:
             await self._services.rollback()
-            if "NumericValueOutOfRange" in str(exc.orig) or "numeric field overflow" in str(exc).lower():
+            if getattr(exc.orig, "sqlstate", None) == "22003":
                 raise ValidationError(
                     message="Cost per unit must be between 0 and 10,000,000 (10 million)",
                     code="INVALID_COST_PER_UNIT",

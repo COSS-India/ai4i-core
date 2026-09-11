@@ -209,7 +209,7 @@ async def create_tier(body: TierCreate, session: AsyncSession, created_by: Optio
         await session.commit()
     except DBAPIError as exc:
         await session.rollback()
-        if "NumericValueOutOfRange" in str(exc.orig) or "numeric field overflow" in str(exc).lower():
+        if getattr(exc.orig, "sqlstate", None) == "22003":
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Quota limit must be between 0 and 100,000,000,000 (100 billion)",
@@ -352,7 +352,7 @@ async def update_tier(
         await session.commit()
     except DBAPIError as exc:
         await session.rollback()
-        if "NumericValueOutOfRange" in str(exc.orig) or "numeric field overflow" in str(exc).lower():
+        if getattr(exc.orig, "sqlstate", None) == "22003":
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Quota limit must be between 0 and 100,000,000,000 (100 billion)",
