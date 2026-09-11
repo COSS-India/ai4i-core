@@ -2,6 +2,7 @@ import apiClient from "./api";
 import { apiEndpoints } from "./apiEndpoints";
 import type {
   Tier,
+  TierStatus,
   TiersListResponse,
   CreateTierPayload,
   UpdateTierPayload,
@@ -9,16 +10,20 @@ import type {
 
 export type {
   Tier,
+  TierStatus,
   TiersListResponse,
   CreateTierPayload,
   UpdateTierPayload,
+  UpdateTierStatusPayload,
 } from "../types/tierManagement";
 
 export async function fetchTiers(
   modelTaskType?: string,
+  status?: TierStatus,
 ): Promise<TiersListResponse> {
   const params: Record<string, string> = {};
   if (modelTaskType) params.task_types = modelTaskType;
+  if (status) params.status = status;
   const response = await apiClient.get(apiEndpoints.tiers.list, { params });
   return response.data;
 }
@@ -39,10 +44,37 @@ export async function updateTier(
   return response.data;
 }
 
-export async function deleteTier(tierId: string): Promise<void> {
-  await apiClient.delete(apiEndpoints.tiers.update, {
-    params: { tier_id: tierId },
+/**
+ * PATCH /pay-per-use/tier/{tier_id}/status — single entry point for every
+ * lifecycle transition. The backend enforces the allowed edges and answers 400
+ * with a `detail` naming the reachable targets when one is not allowed:
+ *
+ *   INACTIVE    → ACTIVE       (Publish)
+ *   ACTIVE      → DEACTIVATED  (Deactivate)
+ *   DEACTIVATED → ACTIVE       (Reactivate)
+ *   DEACTIVATED → DELETED      (Delete)
+ *
+ * Returns the full updated tier, so callers can seed the cache from the
+ * response instead of refetching.
+ */
+export async function updateTierStatus(
+  tierId: string,
+  status: TierStatus,
+): Promise<Tier> {
+  const response = await apiClient.patch(apiEndpoints.tiers.status(tierId), {
+    status,
   });
+  return response.data;
+}
+
+/**
+ * Deletion goes through the status endpoint: `DELETE /pay-per-use/tier` no
+ * longer exists server-side, and DELETED is reachable only from DEACTIVATED.
+ * The backend answers 409 when the tier is still assigned to a tenant or
+ * mapped to a service.
+ */
+export async function deleteTier(tierId: string): Promise<Tier> {
+  return updateTierStatus(tierId, "DELETED");
 }
 
 /** PATCH /auth/tenants/{tenant_id}/tier — assign or change tier (single endpoint). */
@@ -80,11 +112,17 @@ export interface AdjustTenantBudgetPayload {
   tenant_id: string;
   action: "top-up" | "top-down";
   amount: number;
+  /** ISO 8601, UTC. */
+  budget_effective_from?: string;
+  /** ISO 8601, UTC. The LAST day the window is usable, inclusive. */
+  budget_effective_to?: string;
 }
 
 export interface AdjustTenantBudgetResponse {
   tenant_id: string;
   allocated_budget: number | string;
+  budget_effective_from?: string | null;
+  budget_effective_to?: string | null;
   applications_recomputed?: number;
   keys_recomputed?: number;
   updated_at: string;
@@ -98,6 +136,12 @@ export async function adjustTenantBudget(
     {
       action: payload.action,
       amount: payload.amount,
+      ...(payload.budget_effective_from
+        ? { budget_effective_from: payload.budget_effective_from }
+        : {}),
+      ...(payload.budget_effective_to
+        ? { budget_effective_to: payload.budget_effective_to }
+        : {}),
     },
   );
 

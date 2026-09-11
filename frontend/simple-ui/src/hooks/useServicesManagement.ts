@@ -21,6 +21,7 @@ import type { Tier } from "../types/tierManagement";
 import {
   SERVICE_NAME_MAX_LEN,
   validateHardwareDescription,
+  validatePricePerUnit,
   validateServiceDescription,
   validateServiceIdLength,
   validateServiceName,
@@ -349,11 +350,10 @@ export function useServicesManagement() {
     fetchModels();
   }, []);
 
-  // Fetch tiers for the Create Service form dropdown
   useEffect(() => {
     if (isLoadingTaskTypes) return;
     setTiersLoaded(false);
-    fetchTiers(enabledTaskTypesParam)
+    fetchTiers(enabledTaskTypesParam, "ACTIVE")
       .then((res) => {
         setAvailableTiers(res.data ?? []);
         setTiersLoaded(true);
@@ -843,6 +843,12 @@ export function useServicesManagement() {
 
   const isUnitSizeValid = /^\d+$/.test(unitSize.trim()) && Number(unitSize) > 0;
 
+  /**
+   * Price bounds hold on PATCH as well as POST, so this one is not gated on
+   * create mode the way the length rules below are.
+   */
+  const pricePerUnitError = validatePricePerUnit(pricePerUnit);
+
   // Duplicate serviceId check — only in create mode (serviceId is read-only when editing)
   const serviceIdExists =
     !editingService &&
@@ -910,7 +916,7 @@ export function useServicesManagement() {
     !!formData.modelId?.trim() &&
     !!formData.endpoint?.trim() &&
     !!formData.task_type?.trim() &&
-    !!pricePerUnit.trim() &&
+    !pricePerUnitError &&
     !!currency.trim() &&
     isUnitSizeValid &&
     selectedTiers.length > 0;
@@ -1288,6 +1294,7 @@ export function useServicesManagement() {
     unitType,
     pricePerUnit,
     setPricePerUnit,
+    pricePerUnitError,
     unitSize,
     setUnitSize,
     currency,

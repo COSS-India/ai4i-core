@@ -56,7 +56,7 @@ async def run() -> None:
         )
         async with session_scope() as _db:
             await refresh_notification_settings_cache(_db)
-        start_notification_settings_listener(get_redis_client(), session_scope)
+        start_notification_settings_listener(get_redis_client())
         consumer = ManagedConsumer.build_bulk_message_consumer(
             group_id=GROUP_ID,
             topic=settings.TOPIC_PAY_PER_USE,

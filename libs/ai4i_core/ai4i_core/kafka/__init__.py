@@ -27,6 +27,7 @@ from .ledger import (
     check_and_record_threshold,
     check_and_record_exhaustion,
     check_and_record_action,
+    check_and_record_actions_bulk,
 )
 
 __all__ = [
@@ -47,4 +48,5 @@ __all__ = [
     "check_and_record_threshold",
     "check_and_record_exhaustion",
     "check_and_record_action",
+    "check_and_record_actions_bulk",
 ]

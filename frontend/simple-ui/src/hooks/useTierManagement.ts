@@ -9,8 +9,10 @@ import {
   createTier,
   updateTier,
   deleteTier,
+  updateTierStatus,
   fetchTenantTiers,
   type Tier,
+  type TierStatus,
 } from "../services/tierManagementService";
 import { listTenants } from "../services/tenantService";
 import { INSTITUTION } from "../config/constants";
@@ -19,8 +21,55 @@ import { useInferenceTypes } from "./useInferenceTypes";
 import { generateUUID } from "../utils/uuid";
 import { resolveTaskType } from "../utils/platformService";
 import type { TierFormData, TierFormQuota } from "../types/tierManagement";
+import { validateQuotaLimit } from "../components/tier-management/tierFormValidation";
 
 const TIER_QUERY_KEY = "tiers";
+
+const TIER_STATUS_ACTIONS = {
+  INACTIVE: {
+    target: "ACTIVE" as TierStatus,
+    label: "Publish",
+    title: "Publish Tier",
+    body: "Are you sure you want to publish this Tier?",
+    confirmLabel: "Publish",
+    colorScheme: "blue",
+    loadingText: "Publishing...",
+    successTitle: "Tier published",
+    successDescription:
+      "It is now available for service mapping and tenant assignment.",
+  },
+  ACTIVE: {
+    target: "DEACTIVATED" as TierStatus,
+    label: "Deactivate",
+    title: "Deactivate Tier",
+    body: "Are you sure you want to deactivate this Tier?",
+    confirmLabel: "Deactivate",
+    colorScheme: "orange",
+    loadingText: "Deactivating...",
+    successTitle: "Tier deactivated",
+    successDescription:
+      "Assigned tenants keep the tier, but their requests are now blocked.",
+  },
+  DEACTIVATED: {
+    target: "ACTIVE" as TierStatus,
+    label: "Reactivate",
+    title: "Reactivate Tier",
+    body: "Are you sure you want to reactivate this Tier?",
+    confirmLabel: "Reactivate",
+    colorScheme: "green",
+    loadingText: "Reactivating...",
+    successTitle: "Tier reactivated",
+    successDescription: "Monthly quota has been reset.",
+  },
+} as const;
+
+export type TierStatusActionKey = keyof typeof TIER_STATUS_ACTIONS;
+
+/** The lifecycle action available for `status`, or null when there is none. */
+export function getTierStatusAction(status: TierStatus | undefined) {
+  if (!status) return null;
+  return TIER_STATUS_ACTIONS[status as TierStatusActionKey] ?? null;
+}
 
 function newQuota(): TierFormQuota {
   return {
@@ -38,8 +87,8 @@ function defaultFormData(): TierFormData {
 /**
  * Validate the quota rows of a tier form. Returns a user-facing error message
  * for the first problem found, or null when every row is valid. Enforces that
- * each row has a model task type, a non-empty unit, and a limit strictly
- * greater than 0 (rejecting empty, non-numeric, 0, and negative limits).
+ * each row has a model task type, a non-empty unit, and a limit the backend's
+ * `TierQuotaIn` will accept (see `validateQuotaLimit`).
  */
 function validateQuotas(quotas: TierFormQuota[]): string | null {
   for (const q of quotas) {
@@ -49,9 +98,9 @@ function validateQuotas(quotas: TierFormQuota[]): string | null {
     if (!q.unit.trim()) {
       return "Unit is required for each quota.";
     }
-    const limitNum = Number(q.limit);
-    if (q.limit.trim() === "" || !Number.isFinite(limitNum) || limitNum <= 0) {
-      return "Limit must be greater than 0.";
+    const limitIssue = validateQuotaLimit(q.limit);
+    if (limitIssue) {
+      return limitIssue;
     }
   }
   return null;
@@ -82,6 +131,10 @@ export function useTierManagement() {
   const [tierToDelete, setTierToDelete] = useState<Tier | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  // Lifecycle status transitions (publish / deactivate / reactivate).
+  const [statusTier, setStatusTier] = useState<Tier | null>(null);
+  const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
+
   const [viewTierId, setViewTierId] = useState<string | null>(null);
   const [formData, setFormData] = useState<TierFormData>(defaultFormData);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -92,6 +145,14 @@ export function useTierManagement() {
     null,
   );
   const [scheduleLimit, setScheduleLimit] = useState("");
+  /**
+   * The schedule modal posts through the same `TierQuotaIn` as the tier form,
+   * so it owes the same verdict — surfaced inline instead of only as a toast.
+   */
+  const scheduleLimitError = useMemo(
+    () => validateQuotaLimit(scheduleLimit),
+    [scheduleLimit],
+  );
   const [isScheduling, setIsScheduling] = useState(false);
   const [cancelingTaskType, setCancelingTaskType] = useState<string | null>(
     null,
@@ -102,6 +163,11 @@ export function useTierManagement() {
     isOpen: isDeleteOpen,
     onOpen: onDeleteOpen,
     onClose: onDeleteClose,
+  } = useDisclosure();
+  const {
+    isOpen: isStatusOpen,
+    onOpen: onStatusOpen,
+    onClose: onStatusClose,
   } = useDisclosure();
   const {
     isOpen: isCreateOpen,
@@ -293,6 +359,55 @@ export function useTierManagement() {
     }
   }, [checkSessionExpiry, tierToDelete, toast, refreshTiers, onDeleteClose]);
 
+  const handleStatusClick = useCallback(
+    (tier: Tier) => {
+      if (!getTierStatusAction(tier.status)) return;
+      setStatusTier(tier);
+      onStatusOpen();
+    },
+    [onStatusOpen],
+  );
+
+  const handleStatusClose = useCallback(() => {
+    setStatusTier(null);
+    onStatusClose();
+  }, [onStatusClose]);
+
+  const handleStatusConfirm = useCallback(async () => {
+    if (!checkSessionExpiry()) return;
+    const action = getTierStatusAction(statusTier?.status);
+    if (!statusTier?.id || !action) return;
+    setUpdatingStatusId(statusTier.id);
+    try {
+      await updateTierStatus(statusTier.id, action.target);
+      toast({
+        title: action.successTitle,
+        description: `"${statusTier.name}" — ${action.successDescription}`,
+        status: "success",
+        duration: 4000,
+        isClosable: true,
+      });
+      refreshTiers();
+    } catch (error: any) {
+      const {
+        title: errTitle,
+        message: errMsg,
+        showOnlyMessage,
+      } = extractErrorInfo(error);
+      toast({
+        title: showOnlyMessage ? undefined : errTitle,
+        description: errMsg,
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setUpdatingStatusId(null);
+      setStatusTier(null);
+      onStatusClose();
+    }
+  }, [checkSessionExpiry, statusTier, toast, refreshTiers, onStatusClose]);
+
   const handleOpenCreate = useCallback(() => {
     setFormData(defaultFormData());
     setShowQuotaErrors(false);
@@ -342,7 +457,8 @@ export function useTierManagement() {
       });
       toast({
         title: "Tier created",
-        description: `"${formData.name.trim()}" has been created.`,
+        description:
+          "Publish it to make it available for service mapping and tenant assignment.",
         status: "success",
         duration: 4000,
         isClosable: true,
@@ -525,16 +641,16 @@ export function useTierManagement() {
   const handleScheduleConfirm = useCallback(async () => {
     if (!checkSessionExpiry()) return;
     if (!scheduleTarget || !editingTier) return;
-    const newLimit = Number(scheduleLimit);
-    if (!scheduleLimit || !Number.isFinite(newLimit) || newLimit <= 0) {
+    if (scheduleLimitError) {
       toast({
-        title: "Enter a valid quota limit",
+        title: scheduleLimitError,
         status: "warning",
         duration: 3000,
         isClosable: true,
       });
       return;
     }
+    const newLimit = Number(scheduleLimit);
     setIsScheduling(true);
     try {
       await updateTier(editingTier.id, {
@@ -574,6 +690,7 @@ export function useTierManagement() {
     scheduleTarget,
     editingTier,
     scheduleLimit,
+    scheduleLimitError,
     formData,
     toast,
     handleScheduleClose,
@@ -652,6 +769,14 @@ export function useTierManagement() {
     onDeleteClose,
     handleDeleteClick,
     handleDeleteConfirm,
+    // Lifecycle status
+    statusTier,
+    statusAction: getTierStatusAction(statusTier?.status),
+    updatingStatusId,
+    isStatusOpen,
+    handleStatusClick,
+    handleStatusClose,
+    handleStatusConfirm,
     // Create
     isCreateOpen,
     onCreateOpen,
@@ -670,6 +795,7 @@ export function useTierManagement() {
     scheduleTarget,
     scheduleLimit,
     setScheduleLimit,
+    scheduleLimitError,
     isScheduleOpen,
     isScheduling,
     handleOpenSchedule,

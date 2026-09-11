@@ -38,7 +38,7 @@ import {
   SmallCloseIcon,
   ViewIcon,
 } from "@chakra-ui/icons";
-import { FiCalendar } from "react-icons/fi";
+import { FiArrowUp, FiCalendar, FiPlay, FiSquare } from "react-icons/fi";
 import DataTable, {
   createActionsColumn,
   type DataTableColumn,
@@ -46,14 +46,18 @@ import DataTable, {
 import ConfirmDialog from "../common/ConfirmDialog";
 import FormFieldsRow, { FORM_LABEL_TO_INPUT_PT } from "../common/FormFieldsRow";
 import StandardModal from "../common/StandardModal";
-import { useTierManagement } from "../../hooks/useTierManagement";
-import type { Tier } from "../../services/tierManagementService";
+import {
+  getTierStatusAction,
+  useTierManagement,
+} from "../../hooks/useTierManagement";
+import type { Tier, TierStatus } from "../../services/tierManagementService";
 import type { TierFormData, TierFormQuota } from "../../types/tierManagement";
 import { INSTITUTIONS, formatModelTaskTypeLabel } from "../../config/constants";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import FieldHint from "../common/FieldHint";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { generateUUID } from "../../utils/uuid";
+import { QUOTA_LIMIT_MAX, validateQuotaLimit } from "./tierFormValidation";
 import { useDeferredColumnSort } from "../../utils/tableSort";
 
 function getTaskTypeBadgeColor(taskType: string): string {
@@ -115,6 +119,45 @@ const TIER_NAME_COLUMN: DataTableColumn<Tier> = {
   ),
 };
 
+const TIER_STATUS_BADGE: Record<
+  TierStatus,
+  { label: string; colorScheme: string }
+> = {
+  INACTIVE: { label: "Inactive", colorScheme: "gray" },
+  ACTIVE: { label: "Active", colorScheme: "green" },
+  DEACTIVATED: { label: "Deactivated", colorScheme: "orange" },
+  DELETED: { label: "Deleted", colorScheme: "red" },
+};
+
+const TIER_STATUS_COLUMN: DataTableColumn<Tier> = {
+  id: "status",
+  header: "Status",
+  thProps: { w: "140px" },
+  cell: (tier) => {
+    const badge = tier.status
+      ? TIER_STATUS_BADGE[tier.status]
+      : TIER_STATUS_BADGE.INACTIVE;
+    return (
+      <Badge
+        colorScheme={badge.colorScheme}
+        fontSize="xs"
+        px={2}
+        py={0.5}
+        borderRadius="md"
+      >
+        {badge.label}
+      </Badge>
+    );
+  },
+};
+
+/** Icon for the single lifecycle action a tier offers in its current status. */
+const TIER_STATUS_ACTION_ICON: Record<string, React.ReactElement> = {
+  Publish: <FiArrowUp />,
+  Deactivate: <FiSquare />,
+  Reactivate: <FiPlay />,
+};
+
 const TIER_TASK_TYPES_VISIBLE_COUNT = 4;
 
 const TIER_TASK_TYPES_COLUMN: DataTableColumn<Tier> = {
@@ -151,37 +194,62 @@ const TIER_TASK_TYPES_COLUMN: DataTableColumn<Tier> = {
 
 function makeTierActionsColumn(
   deletingId: string | null,
+  updatingStatusId: string | null,
   onView: (tier: Tier) => void,
   onEdit: (tier: Tier) => void,
   onDelete: (tier: Tier) => void,
+  onStatusChange: (tier: Tier) => void,
 ): DataTableColumn<Tier> {
   return createActionsColumn<Tier>({
     align: "center",
-    getActions: (tier) => [
-      {
-        id: "view",
-        label: "View",
-        icon: <ViewIcon />,
-        onClick: () => onView(tier),
-        "aria-label": "View tier",
-      },
-      {
-        id: "edit",
-        label: "Edit",
-        icon: <EditIcon />,
-        onClick: () => onEdit(tier),
-        "aria-label": "Edit tier",
-      },
-      {
-        id: "delete",
-        label: "Delete",
-        icon: <DeleteIcon />,
-        onClick: () => onDelete(tier),
-        disabled: deletingId !== null,
-        isLoading: deletingId === tier.id,
-        "aria-label": "Delete tier",
-      },
-    ],
+    getActions: (tier) => {
+      const statusAction = getTierStatusAction(tier.status);
+      const canDelete = tier.status === "DEACTIVATED";
+      const busy = deletingId !== null || updatingStatusId !== null;
+      return [
+        {
+          id: "view",
+          label: "View",
+          icon: <ViewIcon />,
+          onClick: () => onView(tier),
+          "aria-label": "View tier",
+        },
+        {
+          id: "edit",
+          label: "Edit",
+          icon: <EditIcon />,
+          onClick: () => onEdit(tier),
+          "aria-label": "Edit tier",
+        },
+        {
+          id: "status",
+          label: statusAction?.label ?? "Update status",
+          icon: TIER_STATUS_ACTION_ICON[statusAction?.label ?? ""] ?? (
+            <FiArrowUp />
+          ),
+          onClick: () => onStatusChange(tier),
+          visible: statusAction !== null,
+          disabled: busy,
+          isLoading: updatingStatusId === tier.id,
+          color: `${statusAction?.colorScheme ?? "blue"}.500`,
+          hoverColor: `${statusAction?.colorScheme ?? "blue"}.600`,
+          hoverBg: `${statusAction?.colorScheme ?? "blue"}.50`,
+          "aria-label": `${statusAction?.label ?? "Update status"} tier`,
+        },
+        {
+          id: "delete",
+          label: "Delete",
+          tooltip: canDelete
+            ? "Delete"
+            : "Deactivate this tier before deleting it",
+          icon: <DeleteIcon />,
+          onClick: () => onDelete(tier),
+          disabled: !canDelete || busy,
+          isLoading: deletingId === tier.id,
+          "aria-label": "Delete tier",
+        },
+      ];
+    },
   });
 }
 
@@ -203,11 +271,12 @@ function isUnitInvalid(quota: TierFormQuota): boolean {
   return !quota.unit.trim();
 }
 
-function isLimitInvalid(quota: TierFormQuota): boolean {
-  const limitNum = Number(quota.limit);
-  return (
-    quota.limit.trim() === "" || !Number.isFinite(limitNum) || limitNum <= 0
-  );
+/**
+ * Inline verdict for a quota row's limit. Delegates to the shared rule so the
+ * form and `validateQuotas` (which gates submit) cannot drift apart.
+ */
+function limitError(quota: TierFormQuota): string | null {
+  return validateQuotaLimit(quota.limit);
 }
 
 function QuotaEditor({
@@ -360,7 +429,7 @@ function QuotaEditor({
 
                   <FormControl
                     isRequired
-                    isInvalid={showErrors && isLimitInvalid(quota)}
+                    isInvalid={showErrors && !!limitError(quota)}
                     isDisabled={isEditMode}
                     minW={0}
                   >
@@ -370,6 +439,11 @@ function QuotaEditor({
                     <NumberInput
                       size="sm"
                       min={0}
+                      max={QUOTA_LIMIT_MAX}
+                      step={1}
+                      // An out-of-range value must survive blur so the inline
+                      // error can name it; clamping would silently rewrite it.
+                      clampValueOnBlur={false}
                       value={quota.limit}
                       onChange={(v) => handleQuotaChange(idx, "limit", v)}
                     >
@@ -378,9 +452,9 @@ function QuotaEditor({
                       />
                     </NumberInput>
                     <FormErrorMessage fontSize="xs">
-                      Limit must be greater than 0.
+                      {limitError(quota)}
                     </FormErrorMessage>
-                    <FieldHint show={!(showErrors && isLimitInvalid(quota))}>
+                    <FieldHint show={!(showErrors && !!limitError(quota))}>
                       {FIELD_HINTS.tier.quotaLimit.helper}
                     </FieldHint>
                   </FormControl>
@@ -666,6 +740,13 @@ const TierManagement: React.FC = () => {
     onDeleteClose,
     handleDeleteClick,
     handleDeleteConfirm,
+    statusTier,
+    statusAction,
+    updatingStatusId,
+    isStatusOpen,
+    handleStatusClick,
+    handleStatusClose,
+    handleStatusConfirm,
     isCreateOpen,
     onCreateClose,
     handleOpenCreate,
@@ -680,6 +761,7 @@ const TierManagement: React.FC = () => {
     scheduleTarget,
     scheduleLimit,
     setScheduleLimit,
+    scheduleLimitError,
     isScheduleOpen,
     isScheduling,
     handleScheduleClose,
@@ -702,6 +784,12 @@ const TierManagement: React.FC = () => {
     cancelRef,
   } = useTierManagement();
 
+  /**
+   * An untouched New Quota Limit is empty rather than wrong, so the hint stays
+   * until the admin has actually typed something the backend would reject.
+   */
+  const showScheduleLimitError = !!scheduleLimit.trim() && !!scheduleLimitError;
+
   const tierSortAccessors = useMemo(
     () => ({
       name: (tier: Tier) => tier.name ?? "",
@@ -717,15 +805,25 @@ const TierManagement: React.FC = () => {
   const columns = useMemo(
     () => [
       TIER_NAME_COLUMN,
+      TIER_STATUS_COLUMN,
       TIER_TASK_TYPES_COLUMN,
       makeTierActionsColumn(
         deletingId,
+        updatingStatusId,
         handleViewClick,
         handleOpenEdit,
         handleDeleteClick,
+        handleStatusClick,
       ),
     ],
-    [deletingId, handleDeleteClick, handleOpenEdit, handleViewClick],
+    [
+      deletingId,
+      updatingStatusId,
+      handleDeleteClick,
+      handleOpenEdit,
+      handleViewClick,
+      handleStatusClick,
+    ],
   );
 
   const tierFormFooter = (
@@ -800,6 +898,21 @@ const TierManagement: React.FC = () => {
         ]}
       />
 
+      {/* Lifecycle status confirmation (publish / deactivate / reactivate) */}
+      <ConfirmDialog
+        isOpen={isStatusOpen}
+        onClose={handleStatusClose}
+        onConfirm={handleStatusConfirm}
+        title={statusAction?.title ?? "Update Tier Status"}
+        body={statusAction?.body ?? ""}
+        confirmLabel={statusAction?.confirmLabel ?? "Confirm"}
+        cancelLabel="Cancel"
+        confirmColorScheme={statusAction?.colorScheme ?? "blue"}
+        isConfirmLoading={updatingStatusId === statusTier?.id}
+        confirmLoadingText={statusAction?.loadingText}
+        leastDestructiveRef={cancelRef}
+      />
+
       {/* Delete confirmation */}
       <ConfirmDialog
         isOpen={isDeleteOpen}
@@ -809,8 +922,9 @@ const TierManagement: React.FC = () => {
         body={
           <>
             Are you sure you want to delete the tier{" "}
-            <strong>{tierToDelete?.name}</strong>? This action cannot be undone
-            and may affect tenants currently assigned to this tier.
+            <strong>{tierToDelete?.name}</strong>? This action cannot be undone.
+            Deletion is refused while the tier is still assigned to a tenant or
+            mapped to a service.
           </>
         }
         confirmLabel="Delete"
@@ -899,6 +1013,7 @@ const TierManagement: React.FC = () => {
               colorScheme="blue"
               isLoading={isScheduling}
               loadingText="Scheduling..."
+              isDisabled={!!scheduleLimitError}
               onClick={handleScheduleConfirm}
             >
               Confirm Schedule
@@ -920,18 +1035,28 @@ const TierManagement: React.FC = () => {
               </Text>
             </HStack>
 
-            <FormControl isRequired>
+            <FormControl isRequired isInvalid={showScheduleLimitError}>
               <FormLabel fontSize="sm">
                 New Quota Limit ({scheduleTarget.unit})
               </FormLabel>
               <NumberInput
                 size="sm"
                 min={0}
+                max={QUOTA_LIMIT_MAX}
+                step={1}
+                clampValueOnBlur={false}
                 value={scheduleLimit}
                 onChange={setScheduleLimit}
               >
                 <NumberInputField placeholder="e.g. 10" />
               </NumberInput>
+              {showScheduleLimitError ? (
+                <FormErrorMessage fontSize="xs">
+                  {scheduleLimitError}
+                </FormErrorMessage>
+              ) : (
+                <FieldHint>{FIELD_HINTS.tier.quotaLimit.helper}</FieldHint>
+              )}
             </FormControl>
 
             <Text fontSize="xs" color="gray.500">

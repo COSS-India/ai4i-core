@@ -2,7 +2,7 @@
 
 Seeds the 2 ALERT-type rows from the "Define Alerts" ticket into
 configs_notification_alert: QUOTA_THRESHOLD and BUDGET_THRESHOLD. Both ship
-with the ticket's threshold bands (70%, 80%, 90%) present as keys in
+with the ticket's threshold bands (50%, 75%, 90%) present as keys in
 config.thresholds but unchecked (false) — the bands exist so an Adopter
 Admin can toggle them on, not because any fire by default. Both ship with
 no recipient_roles either — same as all 7 rows 1d3f8e77bac4 seeded, since no
@@ -30,7 +30,7 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
-_DEFAULT_THRESHOLDS = {"thresholds": {"70": False, "80": False, "90": False}}
+_DEFAULT_THRESHOLDS = {"thresholds": {"50": False, "75": False, "90": False}}
 
 # (name, type, module, config)
 _ROWS = [

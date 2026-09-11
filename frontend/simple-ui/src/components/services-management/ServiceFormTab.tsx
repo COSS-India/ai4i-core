@@ -1,6 +1,7 @@
 // Create/Edit Service tab: single form shared between create and edit modes
 // Field order & LLM vs non-LLM Service ID behavior
 import {
+  Badge,
   Box,
   Button,
   Card,
@@ -37,6 +38,7 @@ import type { Tier } from "../../types/tierManagement";
 import {
   INFRA_DESCRIPTION_MAX_LEN,
   INFRA_DESCRIPTION_MIN_LEN,
+  PRICE_PER_UNIT_MAX,
   SERVICE_DESCRIPTION_MAX_LEN,
   SERVICE_DESCRIPTION_MIN_LEN,
   SERVICE_ID_MAX_LEN,
@@ -63,6 +65,7 @@ interface ServiceFormTabProps {
   filteredModelsForDropdown: ModelDetails[];
   unitType: string;
   pricePerUnit: string;
+  pricePerUnitError?: string | null;
   onPricePerUnitChange: (value: string) => void;
   unitSize: string;
   onUnitSizeChange: (value: string) => void;
@@ -109,6 +112,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
   filteredModelsForDropdown,
   unitType,
   pricePerUnit,
+  pricePerUnitError,
   onPricePerUnitChange,
   unitSize,
   onUnitSizeChange,
@@ -146,10 +150,57 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
   const nameError = afterBlur("name", serviceNameError);
   const descriptionError = afterBlur("serviceDescription", serviceDescriptionError);
   const infraError = afterBlur("hardwareDescription", hardwareDescriptionError);
+  
+  const priceError = pricePerUnit.trim()
+    ? (pricePerUnitError ?? null)
+    : afterBlur("pricePerUnit", pricePerUnitError);
   // Duplicate clash wins and shows immediately; length waits for blur.
   const idError = serviceIdError ?? afterBlur("serviceId", serviceIdLengthError);
 
   const [tierSearch, setTierSearch] = useState("");
+
+  /**
+   * Names for the service's own tier ids, which `availableTiers` need not
+   * contain — it is narrowed by status and by task type, so a mapped tier can
+   * be missing from it without being invalid. `tierIds` and `tierNames` come
+   * back positionally aligned.
+   */
+  const mappedTierNameById = useMemo(() => {
+    const byId = new Map<string, string>();
+    const ids = editingService?.tierIds ?? [];
+    const names = editingService?.tierNames ?? [];
+    ids.forEach((id, i) => {
+      if (id) byId.set(id, names[i] || id);
+    });
+    return byId;
+  }, [editingService]);
+
+  const resolveTierName = (id: string) =>
+    availableTiers.find((t) => t.id === id)?.name ??
+    mappedTierNameById.get(id) ??
+    id;
+
+  const selectedTierNames = useMemo(
+    () => selectedTiers.map(resolveTierName),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedTiers, availableTiers, mappedTierNameById],
+  );
+
+  /**
+   * Selected tiers the picker does not list. Shown and kept selected rather
+   * than dropped: re-submitting the unchanged set preserves the mapping and
+   * skips server-side revalidation, so editing an unrelated field does not
+   * rewrite it.
+   */
+  const unlistedSelectedTiers = useMemo(
+    () =>
+      selectedTiers
+        .filter((id) => !availableTiers.some((t) => t.id === id))
+        .map((id) => ({ id, name: resolveTierName(id) })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedTiers, availableTiers, mappedTierNameById],
+  );
+
   const filteredTiers = useMemo(() => {
     const q = tierSearch.trim().toLowerCase();
     if (!q) return availableTiers;
@@ -453,17 +504,23 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 Price per unit size &amp; Currency
               </Text>
               <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                <FormControl isRequired>
+                <FormControl isRequired isInvalid={!!priceError}>
                   <FormLabel fontWeight="semibold">Price per unit size</FormLabel>
                   <Input
                     value={pricePerUnit}
                     onChange={(e) => onPricePerUnitChange(e.target.value)}
+                    onBlur={() => markBlurred("pricePerUnit")}
                     placeholder={FIELD_HINTS.service.price.placeholder}
                     type="number"
                     min={0}
+                    max={PRICE_PER_UNIT_MAX}
                     bg="white"
                   />
-                  <FieldHint>{FIELD_HINTS.service.price.helper}</FieldHint>
+                  {priceError ? (
+                    <FormErrorMessage>{priceError}</FormErrorMessage>
+                  ) : (
+                    <FieldHint>{FIELD_HINTS.service.price.helper}</FieldHint>
+                  )}
                 </FormControl>
 
                 <FormControl isRequired>
@@ -514,14 +571,8 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   justifyContent="space-between"
                 >
                   <Text as="span" isTruncated display="block" minW={0}>
-                    {selectedTiers.length > 0
-                      ? selectedTiers
-                          .map(
-                            (id) =>
-                              availableTiers.find((t) => t.id === id)?.name ??
-                              id,
-                          )
-                          .join(", ")
+                    {selectedTierNames.length > 0
+                      ? selectedTierNames.join(", ")
                       : FIELD_HINTS.service.tier.placeholder}
                   </Text>
                 </MenuButton>
@@ -548,7 +599,8 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                       </InputGroup>
                     </Box>
                     <Box maxH="240px" overflowY="auto" py={1}>
-                      {filteredTiers.length === 0 ? (
+                      {filteredTiers.length === 0 &&
+                      unlistedSelectedTiers.length === 0 ? (
                         <Text
                           px={3}
                           py={2}
@@ -560,21 +612,43 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                             : "No tiers match your search"}
                         </Text>
                       ) : (
-                        filteredTiers.map((tier) => (
-                          <MenuItem
-                            key={tier.id}
-                            onClick={() => onToggleTier(tier.id)}
-                            closeOnSelect={false}
-                          >
-                            <Checkbox
-                              isChecked={selectedTiers.includes(tier.id)}
-                              onChange={() => onToggleTier(tier.id)}
-                              onClick={(e) => e.stopPropagation()}
-                              mr={2}
-                            />
-                            {tier.name}
-                          </MenuItem>
-                        ))
+                        <>
+                          {filteredTiers.map((tier) => (
+                            <MenuItem
+                              key={tier.id}
+                              onClick={() => onToggleTier(tier.id)}
+                              closeOnSelect={false}
+                            >
+                              <Checkbox
+                                isChecked={selectedTiers.includes(tier.id)}
+                                onChange={() => onToggleTier(tier.id)}
+                                onClick={(e) => e.stopPropagation()}
+                                mr={2}
+                              />
+                              {tier.name}
+                            </MenuItem>
+                          ))}
+                          {unlistedSelectedTiers.map((tier) => (
+                            <MenuItem
+                              key={tier.id}
+                              onClick={() => onToggleTier(tier.id)}
+                              closeOnSelect={false}
+                            >
+                              <Checkbox
+                                isChecked
+                                onChange={() => onToggleTier(tier.id)}
+                                onClick={(e) => e.stopPropagation()}
+                                mr={2}
+                              />
+                              <Text as="span" mr={2}>
+                                {tier.name}
+                              </Text>
+                              <Badge colorScheme="orange" fontSize="xs">
+                                Not listed
+                              </Badge>
+                            </MenuItem>
+                          ))}
+                        </>
                       )}
                     </Box>
                   </MenuList>

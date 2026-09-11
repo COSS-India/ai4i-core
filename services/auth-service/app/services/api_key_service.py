@@ -42,6 +42,7 @@ from app.models.tenant import Tenant, TenantStatus
 from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.application_repository import ApplicationRepository
 from app.repositories.tenant_repository import TenantRepository
+from app.utils.budget_window import is_budget_window_expired
 from app.services import budget_usage
 from app.services.cache_service import CacheService
 
@@ -56,6 +57,26 @@ _TENANT_CASCADE_PAGE_SIZE = 500
 # FastAPI's own Depends(get_db) uses; borrows a connection from the app's one
 # already-initialized engine, not a separate pool.
 _open_db_session = asynccontextmanager(get_db)
+
+
+# Cache fields a full-payload rebuild (_preserved_billing_fields /
+# _refresh_redis_cache's own preserved_from_redis) must carry forward rather
+# than silently drop — enforcement state computed from something OTHER than
+# the api_key row itself (budget_usage, PPU quota), so it isn't reconstructed
+# by rebuilding the payload from that row. budget_effective_to is
+# deliberately NOT here: unlike these, it's cheap to re-derive on every
+# rebuild (it's just tenant.budget_effective_to, and every rebuild site
+# already has the tenant loaded) — see _build_cache_payload's callers, which
+# pass it in fresh each time instead of preserving a possibly-stale copy.
+# quota-<name> is a prefix, not a fixed set — kept as a startswith check
+# rather than enumerated via _quota_field_names, since the latter can miss a
+# type deleted from the catalogue (see that function's own KNOWN GAP) and a
+# preserve-list must never drop a field just because the catalogue moved on.
+_PRESERVED_BILLING_FIELD_NAMES = frozenset({"budget-exhausted"})
+
+
+def _is_preserved_billing_field(field: str) -> bool:
+    return field in _PRESERVED_BILLING_FIELD_NAMES or field.startswith("quota-")
 
 
 async def _quota_field_names() -> list[str]:
@@ -177,10 +198,22 @@ class APIKeyService:
 
     @staticmethod
     def _build_cache_payload(
-        db_key: APIKey, tenant_id: Optional[str], extra_fields: Optional[dict] = None
+        db_key: APIKey,
+        tenant_id: Optional[str],
+        budget_effective_to: Optional[datetime],
+        extra_fields: Optional[dict] = None,
     ) -> dict:
         """The canonical Redis-hash shape for an API key — defined once so
-        every writer (create, refresh, DB-fallback rehydrate) stays in sync."""
+        every writer (create, refresh, DB-fallback rehydrate) stays in sync.
+
+        ``budget_effective_to`` is a required, explicit param (not folded
+        into extra_fields) so no caller can forget it — it's what
+        /auth/validate compares directly against "now" to enforce a lapsed
+        budget window (see validation.py's _validate_api_key), replacing a
+        separately pushed budget-expired boolean. Serialized as ISO-8601
+        (empty string when the tenant has no window) since Redis hash
+        values are strings; parsed back via
+        app.utils.budget_window.is_budget_window_expired's caller."""
         return {
             "id": db_key.id,
             "api_key": db_key.api_key,
@@ -188,20 +221,21 @@ class APIKeyService:
             "application_id": str(db_key.application_id),
             "tenant_id": tenant_id,
             "user_id": str(db_key.created_by) if db_key.created_by else None,
+            "budget_effective_to": budget_effective_to.isoformat() if budget_effective_to else "",
             **(extra_fields or {}),
         }
 
     @staticmethod
     def _preserved_billing_fields(db_key: APIKey) -> dict:
-        """budget-exhausted/quota-* already in cached_data, carried forward so a
-        refresh never erases billing state the PPU write-through path
+        """budget-exhausted/quota-* already in cached_data, carried forward
+        so a refresh never erases billing state the PPU write-through path
         (patch_cached_data_field_for_tenant et al.) wrote directly into
         cached_data — mirrors how _refresh_redis_cache's own ``preserved``
         carries the same fields forward from the live Redis hash."""
         return {
             k: v
             for k, v in (db_key.cached_data or {}).items()
-            if k == "budget-exhausted" or k.startswith("quota-")
+            if _is_preserved_billing_field(k)
         }
 
     async def _persist_cache_snapshot(self, db_key: APIKey, payload: dict) -> None:
@@ -225,7 +259,10 @@ class APIKeyService:
         return {}
 
     async def _refresh_redis_cache(
-        self, db_key: APIKey, tenant_id: Optional[str]
+        self,
+        db_key: APIKey,
+        tenant_id: Optional[str],
+        budget_effective_to: Optional[datetime] = None,
     ) -> None:
         ttl = self._compute_cache_ttl(db_key)
         if ttl <= 0:
@@ -237,20 +274,23 @@ class APIKeyService:
         preserved_from_redis = {
             k: v
             for k, v in (existing or {}).items()
-            if k == "budget-exhausted" or k.startswith("quota-")
+            if _is_preserved_billing_field(k)
         }
         # cached_data's own billing state is the base (covers a cold/evicted Redis
         # hash with nothing to preserve); Redis's live state, if any, overrides it —
         # keeps both stores converging on the same values instead of just one.
         preserved = {**self._preserved_billing_fields(db_key), **preserved_from_redis}
         payload = self._build_cache_payload(
-            db_key, tenant_id, {**self._preserved_tier_id(db_key), **preserved}
+            db_key, tenant_id, budget_effective_to, {**self._preserved_tier_id(db_key), **preserved}
         )
         await self._cache.set_api_key_cache(db_key.api_key, ttl, payload)
         await self._persist_cache_snapshot(db_key, payload)
 
     async def _persist_current_state_to_cached_data(
-        self, db_key: APIKey, tenant_id: Optional[str]
+        self,
+        db_key: APIKey,
+        tenant_id: Optional[str],
+        budget_effective_to: Optional[datetime] = None,
     ) -> None:
         """Write-through even while the key isn't currently eligible to be
         served (revoked, or application/tenant temporarily inactive):
@@ -259,7 +299,9 @@ class APIKeyService:
         stale permissions/expiry. Redis is deliberately left alone here —
         only the DB snapshot updates, since the key must not become servable
         again just because its details changed."""
-        payload = self._build_cache_payload(db_key, tenant_id, self._preserved_tier_id(db_key))
+        payload = self._build_cache_payload(
+            db_key, tenant_id, budget_effective_to, self._preserved_tier_id(db_key)
+        )
         await self._persist_cache_snapshot(db_key, payload)
 
     async def evict_keys_for_application(self, application_id: int) -> None:
@@ -337,9 +379,10 @@ class APIKeyService:
             await self.evict_keys_for_application(application.id)
             return
         tenant_id_str = str(application.tenant_id)
+        budget_effective_to = tenant.budget_effective_to if tenant else None
         for key in await self._repo.list_by_application(application.id):
             if key.is_active and not key.is_expired():
-                await self._refresh_redis_cache(key, tenant_id_str)
+                await self._refresh_redis_cache(key, tenant_id_str, budget_effective_to)
 
     async def refresh_keys_cache_for_tenant(self, tenant_id: int) -> None:
         """Repopulate Redis for all eligible keys in the tenant."""
@@ -405,6 +448,30 @@ class APIKeyService:
         await self._patch_all_tenant_key_caches(
             tenant_id, "budget-exhausted", "1" if exhausted else "0"
         )
+
+    async def set_budget_effective_to_for_tenant(
+        self, tenant_id: int, budget_effective_to: Optional[datetime]
+    ) -> None:
+        """Force-write budget_effective_to onto every cached API key hash
+        for the tenant — the same tenant-wide fan-out shape as
+        set_tier_id_for_tenant, for the same reason: this value is only
+        ever correctly computed by re-reading the Tenant row, and every OTHER
+        cache writer (a key rename, a tier reassignment) merely re-derives
+        it from whatever tenant it already has loaded rather than
+        recomputing/force-pushing it — see _refresh_redis_cache's callers.
+        The one case that needs an explicit tenant-wide push is exactly this
+        one: TenantService.revise_tenant_budget changes tenants.
+        budget_effective_to directly, without touching any api_key row, so
+        nothing would otherwise notice the change for an already-cached key
+        until something unrelated happens to rebuild its cache.
+
+        /auth/validate compares this value directly against "now" (see
+        app.utils.budget_window.is_budget_window_expired) — there is no
+        separately computed boolean flag any more; this IS the enforcement
+        signal, not an input to one.
+        """
+        value = budget_effective_to.isoformat() if budget_effective_to else ""
+        await self._patch_all_tenant_key_caches(tenant_id, "budget_effective_to", value)
 
     async def set_budget_exhausted_for_key(self, key_id: int, exhausted: bool) -> None:
         """Flip budget-exhausted on exactly ONE cached API key — the
@@ -642,6 +709,21 @@ class APIKeyService:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={"code": "APPLICATION_NOT_FOUND", "message": "Application not found."},
+            )
+
+        # Checked before tier assignment — a lapsed budget window is a more
+        # fundamental block than a missing tier, and cheaper to check (no
+        # further lookups needed). Same is_budget_window_expired helper
+        # _validate_api_key (validation.py) uses against the CACHED
+        # budget_effective_to — kept in one place so "expired" means the
+        # same UTC-instant comparison everywhere. This reads
+        # tenants.budget_effective_to directly rather than the cache, since
+        # a key doesn't have a cache entry yet at creation time; a key must
+        # never be issued against a window that's already over.
+        if is_budget_window_expired(tenant.budget_effective_to):
+            raise ValidationError(
+                message="API key cannot be created: this tenant's budget effective window has ended.",
+                code="BUDGET_EXPIRED",
             )
 
         # Checked via tenants.tier_id directly (no cross-DB PPU lookup needed
@@ -900,6 +982,7 @@ class APIKeyService:
             payload = self._build_cache_payload(
                 api_key,
                 str(tenant.id),
+                tenant.budget_effective_to,
                 {
                     "tier_id": str(tenant.tier_id),
                     **({"budget-exhausted": "1"} if exhausted else {}),
@@ -1094,15 +1177,16 @@ class APIKeyService:
         if application is not None and self._tenants is not None:
             tenant = await self._tenants.get_by_id(application.tenant_id)
             tenant_id_str = str(application.tenant_id)
+        budget_effective_to = tenant.budget_effective_to if tenant else None
         if application is not None and self.effective_is_active(db_key, application, tenant):
-            await self._refresh_redis_cache(db_key, tenant_id_str)
+            await self._refresh_redis_cache(db_key, tenant_id_str, budget_effective_to)
         else:
             # Not currently eligible (revoked, or application/tenant inactive) — Redis
             # must stay evicted, but cached_data still has to mirror the edit
             # just committed, or a later reactivation/DB-fallback rehydrate
             # would serve stale permissions/expiry.
             await self._cache.delete_api_key_cache(db_key.api_key)
-            await self._persist_current_state_to_cached_data(db_key, tenant_id_str)
+            await self._persist_current_state_to_cached_data(db_key, tenant_id_str, budget_effective_to)
 
         await self._repo.refresh(db_key)
         logger.info(

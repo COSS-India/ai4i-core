@@ -15,14 +15,23 @@ publish_event() deliberately does NOT call flush() — unlike the exporter it's
 modeled on, which calls flush() from OTel's own background BatchSpanProcessor
 thread, publish_event() is called directly from request-handling / message-
 handling async code. flush() blocks its caller until the broker acks (up to
-its timeout), which would stall the event loop on every publish. send() alone
-is non-blocking: it queues onto the producer's internal buffer and a
-background sender thread (started by KafkaProducer itself) delivers it.
-Delivery failures are caught via the returned future's errback, not via
-flush(); the producer is only flushed at shutdown (close_kafka_producer),
-to drain whatever is still buffered before the process exits.
+its timeout), which would stall the event loop on every publish. Delivery
+failures are caught via the returned future's errback, not via flush(); the
+producer is only flushed at shutdown (close_kafka_producer), to drain
+whatever is still buffered before the process exits.
+
+send() itself is not purely non-blocking, though: kafka-python's send() can
+block synchronously — in _wait_on_metadata and on buffer allocation — for up
+to max_block_ms (5s here) whenever the broker is unreachable or metadata
+isn't cached yet. Calling it straight from an async request handler would
+stall that handler's whole event loop for up to 5s on a Kafka outage, not
+just the one request. publish_event() offloads the actual send() call to
+the default executor (run_in_executor) so it runs on a worker thread instead
+of the loop thread; publish_event() itself returns immediately once the
+work is scheduled, same fire-and-forget contract as before for the caller.
 """
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -71,11 +80,15 @@ def publish_event(
     topic: Optional[str] = None,
     occurred_at: Optional[str] = None,
 ) -> None:
-    """Build the standard notification envelope and send it. Non-blocking —
-    send() only queues the message; delivery happens on the producer's own
-    background thread. Never raises: a synchronous failure (not initialized,
-    serialization error) is caught here, an asynchronous delivery failure
-    (broker unreachable, etc.) is caught via the errback and only logged.
+    """Build the standard notification envelope and send it. Returns
+    immediately from the caller's point of view — the actual send() call
+    (which can block synchronously for up to max_block_ms on an unreachable
+    broker) runs on a worker thread via run_in_executor, not the event loop
+    thread; delivery itself then continues on the producer's own background
+    sender thread as usual. Never raises: a synchronous failure (not
+    initialized, serialization error) is caught here, an asynchronous
+    delivery failure (broker unreachable, etc.) is caught via the errback
+    and only logged.
 
     occurred_at: pass explicitly when the caller already computed it (e.g.
     to pass the identical timestamp into the ledger_notification_alert
@@ -83,16 +96,32 @@ def publish_event(
     omitted."""
     if _producer is None:
         return
+    envelope = {
+        "event_name": event_name,
+        "tenant_id": tenant_id,
+        "occurred_at": occurred_at or datetime.now(timezone.utc).isoformat(),
+        "actor_id": actor_id,
+        "subject": subject,
+        "details": details,
+    }
+    target_topic = topic or _default_topic
     try:
-        envelope = {
-            "event_name": event_name,
-            "tenant_id": tenant_id,
-            "occurred_at": occurred_at or datetime.now(timezone.utc).isoformat(),
-            "actor_id": actor_id,
-            "subject": subject,
-            "details": details,
-        }
-        future = _producer.send(topic or _default_topic, value=envelope)
+        loop = asyncio.get_running_loop()
+        loop.run_in_executor(None, _send, target_topic, envelope, event_name)
+    except RuntimeError:
+        # No running loop (e.g. called from sync code, or at shutdown) —
+        # fall back to sending inline; still bounded by max_block_ms, just
+        # not offloaded off whatever thread called this.
+        _send(target_topic, envelope, event_name)
+
+
+def _send(topic: Optional[str], envelope: dict, event_name: str) -> None:
+    """The actual blocking-capable send() call — always run off the event
+    loop thread by publish_event() above. Never raises."""
+    if _producer is None:
+        return
+    try:
+        future = _producer.send(topic, value=envelope)
         future.add_errback(lambda exc: logger.warning("Failed to deliver event %s: %s", event_name, exc))
     except Exception as exc:
         logger.warning("Failed to publish event %s: %s", event_name, exc)
