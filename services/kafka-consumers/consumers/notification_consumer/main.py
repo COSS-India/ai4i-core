@@ -1,15 +1,17 @@
 """notification_consumer — Kafka Consumer Notification.
 
 Implements skills/notification-kafka-design/notification-kafka-design.md:
-reads notification/alert events off TOPIC_NOTIFICATION, decides whether each
-one needs an email per the notification's saved settings and per-tenant
-history, and sends it directly (no auth-service call). See catalog_cache.py,
-patterns.py, ledger.py, recipients.py, emailer.py, delivery.py and
-handler.py for the pieces; this file is just the consume loop wiring, plus
-opening the second (auth) database connection recipients.py depends on.
+reads notification/alert events off TOPIC_NOTIFICATION, resolves recipients
+and sends the email directly (no auth-service call). The producer already
+decided "is this new" and claimed the ledger row (libs/ai4i_core/ai4i_core/
+kafka/ledger.py) before publishing — this consumer only claims and settles
+the delivery half. See catalog_cache.py, ledger.py, recipients.py,
+emailer.py, delivery.py and handler.py for the pieces; this file is just
+the consume loop wiring, plus opening the second (auth) database connection
+recipients.py depends on.
 
-Consumer-side only — the producers (5 admin-change endpoints, and
-payperuse_consumer's producer half) are separate work, not built here.
+Consumer-side only — the producers (auth-service's admin-change endpoints,
+and payperuse_consumer's producer half) are separate work, not built here.
 
 Built on bootstrap/ (ManagedConsumer + lifecycle), the shipped shape new
 consumers should copy — unlike payperuse_consumer, which predates bootstrap/
@@ -22,13 +24,14 @@ GROUP_ID is a brand-new group: KAFKA_AUTO_OFFSET_RESET must be set to
 """
 from __future__ import annotations
 
+from ai4i_core.bootstrap import get_redis_client
 from ai4i_core.logging import get_logger
 from confluent_kafka import KafkaError, KafkaException, Message
 
 from bootstrap.config import get_db_settings
 from bootstrap.consumers import CommitMode, ManagedConsumer
 from bootstrap.lifecycle import add_database, infra, shutdown_event
-from consumers.notification_consumer import config as cfg, pii_crypto
+from consumers.notification_consumer import catalog_cache, config as cfg, pii_crypto
 from consumers.notification_consumer.handler import handle_notification_event
 
 logger = get_logger(__name__)
@@ -88,6 +91,10 @@ async def run() -> None:
         # every named connection alongside the default one.
         await add_database("auth", db_name=settings.AUTH_SERVICE_DB)
 
+        # Live cache invalidation — see catalog_cache.py's module docstring.
+        # Redis is already up at this point (infra() opened it above).
+        catalog_cache.start_listener(get_redis_client())
+
         consumer = ManagedConsumer.build_bulk_message_consumer(
             group_id=GROUP_ID,
             topic=settings.TOPIC_NOTIFICATION,
@@ -131,3 +138,4 @@ async def run() -> None:
                     await consumer.record_processed(msg)
         finally:
             consumer.shutdown()
+            await catalog_cache.stop_listener()

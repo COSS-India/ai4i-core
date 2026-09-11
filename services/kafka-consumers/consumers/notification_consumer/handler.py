@@ -1,16 +1,23 @@
-"""Message handler for notification_consumer — design doc §8's step-by-step,
-implemented.
+"""Message handler for notification_consumer.
 
-Consumer-side only: this reads whatever envelope (design doc §4) a producer
-publishes and acts on it. Nothing here publishes to Kafka — the 5 admin-
-change endpoints and payperuse_consumer's producer side are separate work.
+The producer (auth-service / platform-core-service / payperuse_consumer)
+already decided whether this occurrence is new and claimed the ledger row
+before ever publishing — see libs/ai4i_core/ai4i_core/kafka/ledger.py. By
+the time a message reaches here, ledger_notification_alert already has a
+row for (notification_id, tenant_id, subject, channel) with
+{"value": ..., "delivery": "in_progress"}. This handler does not decide a
+new value; it claims the SEND (ledger.claim_send), delivers, and settles
+`delivery` to "sent"/"failed".
+
+Consumer-side only: this reads whatever envelope a producer publishes and
+acts on it. Nothing here publishes to Kafka.
 
 Retry behaviour on a handler failure is a design doc open question (§12),
 not decided here — a per-message exception is logged and the message is
 treated as handled (committed), not redelivered. That matches this
 consumer's own send-side retries already being bounded (emailer.py's
-EmailClient.send_safe) rather than adding a second, undecided retry ladder
-on top.
+EmailClient.send_safe / the deadline around it) rather than adding a
+second, undecided retry ladder on top.
 
 Two database connections are in play: the default one (ai4iplatform_core —
 settings, ledger) and a second, named one opened once at startup (main.py)
@@ -26,16 +33,21 @@ from ai4i_core.logging import get_logger
 from confluent_kafka import Message
 
 from bootstrap.lifecycle import session_scope
-from consumers.notification_consumer import delivery, ledger, patterns
+from consumers.notification_consumer import delivery, ledger
 from consumers.notification_consumer.catalog_cache import NotificationConfig, get_config
 
 logger = get_logger(__name__)
 
+# Terminal delivery states — a row already settled here needs nothing more
+# from a redelivered/duplicate message.
+_TERMINAL_DELIVERIES = {"sent", "failed", "skipped"}
+
 
 def _parse_envelope(msg: Message) -> Optional[Dict[str, Any]]:
-    """design doc §4's 5 fields, plus the optional actor_id §5 assumes.
-    Malformed input is a permanent skip, not a retry — there is no version
-    of this message that will parse differently later."""
+    """The 5-field envelope publish_event() (ai4i_core.kafka.producer)
+    sends, plus actor_id. Malformed input is a permanent skip, not a
+    retry — there is no version of this message that will parse
+    differently later."""
     try:
         data = json.loads(msg.value())
     except (TypeError, ValueError) as exc:
@@ -75,14 +87,15 @@ async def handle_notification_event(msg: Message) -> None:
                 )
                 return
 
-            # design doc §8, step 3's gate — no separate is_enabled column
-            # exists on this table; "off" is exactly "no role toggled on".
+            # The producer already checked this before publishing
+            # (is_notification_enabled) — re-checking here is cheap
+            # insurance against a stale/racing config read, not the
+            # primary gate.
             enabled_roles = [role for role, on in cfg.recipient_roles.items() if on]
             if not enabled_roles:
                 logger.info(
-                    "Gated — no recipient_roles enabled for event_name=%s tenant_id=%s "
-                    "(PATCH /api/v1/notification-alerts/catalog/%s to enable it)",
-                    envelope["event_name"], envelope["tenant_id"], envelope["event_name"],
+                    "Gated — no recipient_roles enabled for event_name=%s tenant_id=%s",
+                    envelope["event_name"], envelope["tenant_id"],
                 )
                 return
 
@@ -98,46 +111,43 @@ async def handle_notification_event(msg: Message) -> None:
 async def _process_channel(
     db, cfg: NotificationConfig, envelope: Dict[str, Any], channel: str, enabled_roles: List[str]
 ) -> None:
-    current_status = await ledger.fetch_current_status(
+    row = await ledger.fetch_row(
         db,
         notification_id=cfg.id,
         tenant_id=envelope["tenant_id"],
         subject=envelope["subject"],
         channel=channel,
     )
-    decision = patterns.decide(
-        event_name=envelope["event_name"],
-        current_status=current_status,
-        occurred_at=envelope["occurred_at"],
-        details=envelope["details"],
-        thresholds=cfg.thresholds,
-    )
-    if decision.new_status is None:
-        return  # nothing changed — design doc §6/§8
+    if row is None:
+        logger.warning(
+            "No ledger row yet for event_name=%s tenant_id=%s channel=%s — "
+            "producer hasn't committed its claim, or this channel wasn't "
+            "configured when it published. Nothing to do.",
+            envelope["event_name"], envelope["tenant_id"], channel,
+        )
+        return
 
-    row_id = await ledger.claim(
-        db,
-        notification_id=cfg.id,
-        tenant_id=envelope["tenant_id"],
-        subject=envelope["subject"],
-        channel=channel,
-        new_status=decision.new_status,
-        guard=decision.guard,
-        actor_id=envelope.get("actor_id"),
-    )
-    if row_id is None:
-        return  # lost the race, or the guard correctly rejected a stale write — design doc §7
+    row_id, status = row
+    current_delivery = status.get("delivery")
+    if current_delivery in _TERMINAL_DELIVERIES:
+        return  # already handled — a genuine redelivery of this exact occurrence
 
-    if not decision.should_send:
-        return  # a reset to {} — nothing to deliver
+    if current_delivery != "in_progress":
+        logger.warning(
+            "Unexpected delivery state %r on ledger row %s — leaving it alone",
+            current_delivery, row_id,
+        )
+        return
 
     if channel != "EMAIL":
         # Slack/WhatsApp sending isn't built yet — design doc §8's "Templates
-        # folder" note and §12's open questions. The claim above still stands
-        # (this band/occurrence is recorded), so switching the channel on
-        # later won't be suppressed by an email row that already fired.
+        # folder" note and §12's open questions.
         await ledger.mark_delivery(db, row_id=row_id, delivery="skipped")
         return
+
+    won = await ledger.claim_send(db, row_id=row_id)
+    if not won:
+        return  # a concurrent redelivery/replica already claimed this send
 
     async with session_scope(name="auth") as auth_db:
         outcome = await delivery.deliver(
