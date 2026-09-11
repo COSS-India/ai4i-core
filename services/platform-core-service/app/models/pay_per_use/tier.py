@@ -1,9 +1,9 @@
 import uuid
 
-from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Column, DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, text
 
 from app.core.constants import TierStatus
 from app.models import Base
@@ -12,7 +12,7 @@ from app.models import Base
 class Tier(Base):
     __tablename__ = "tiers"
     __table_args__ = (
-        UniqueConstraint("name", name="uq_tiers_name"),
+        Index("uq_tiers_name_active", "name", unique=True, postgresql_where=text("status != 'DELETED'")),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -73,8 +73,8 @@ class TierQuota(Base):
         nullable=False,
         index=True,
     )
-    monthly_quota = Column(Numeric(15, 4), nullable=False)
-    pending_monthly_quota = Column(Numeric(15, 4), nullable=True)
+    monthly_quota = Column(Numeric(16, 4), nullable=False)
+    pending_monthly_quota = Column(Numeric(16, 4), nullable=True)
     created_by = Column(String(255), nullable=True)
     updated_by = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
