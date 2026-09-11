@@ -15,7 +15,7 @@ from app.core.exceptions import ValidationError
 from ai4i_core.kafka import (
     publish_admin_event as publish_notification_event,
     is_notification_enabled,
-    check_and_record_action,
+    check_and_record_actions_bulk,
 )
 from app.models.pay_per_use.tier import Tier, TierQuota
 from app.repositories.pay_per_use.usage_repository import update_tier_cache
@@ -345,26 +345,35 @@ async def _publish_quota_limit_updated(
 
     ledger_notification_alert (design doc §5-7) lives in this service's own
     DB (``session``, not ``auth_db`` — that one is only for reading
-    tenants.tier_id) and is the atomic dedup guard, checked/updated per
-    (tenant_id, inference_name) with one shared occurred_at for the whole
-    fan-out (they're all the same admin action)."""
+    tenants.tier_id) and is the atomic dedup guard, checked/updated once
+    for the whole (tenant_id, inference_name) fan-out via
+    check_and_record_actions_bulk — a single round trip and a single
+    commit, not one per pair (a tier with 200 tenants and 3 changed quotas
+    would otherwise be 600 commits before this PATCH can respond). All
+    pairs share the identical occurred_at, since they're all the same
+    admin action; publishing happens only after that one commit succeeds."""
     if not await is_notification_enabled(session, "QUOTA_LIMIT_UPDATED"):
         return
     try:
         tenant_ids = await _fetch_tenant_ids_for_tier(tier.id, auth_db)
         occurred_at = datetime.now(timezone.utc).isoformat()
+        tenant_subjects = [
+            (str(tenant_id), {"model_task_type": change["inference_name"]})
+            for tenant_id in tenant_ids
+            for change in quota_changes
+        ]
+        fired_pairs = await check_and_record_actions_bulk(
+            session, "QUOTA_LIMIT_UPDATED", tenant_subjects, occurred_at, str(updated_by or "")
+        )
+        fired_set = {(tenant_id, subject["model_task_type"]) for tenant_id, subject in fired_pairs}
         for tenant_id in tenant_ids:
             for change in quota_changes:
-                subject = {"model_task_type": change["inference_name"]}
-                fired = await check_and_record_action(
-                    session, "QUOTA_LIMIT_UPDATED", str(tenant_id), subject, occurred_at, str(updated_by or "")
-                )
-                if not fired:
+                if (str(tenant_id), change["inference_name"]) not in fired_set:
                     continue
                 publish_notification_event(
                     event_name="QUOTA_LIMIT_UPDATED",
                     tenant_id=str(tenant_id),
-                    subject=subject,
+                    subject={"model_task_type": change["inference_name"]},
                     details={
                         "inference_name": change["inference_name"],
                         "previous": change["previous"],

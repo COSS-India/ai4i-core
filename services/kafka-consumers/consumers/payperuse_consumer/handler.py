@@ -253,16 +253,24 @@ async def _publish_usage_crossing_events(
         post_pct = percent(write.api_key_budget_used, write.api_key_budget_snap)
         pre_pct = percent(write.api_key_budget_used - cost, write.api_key_budget_snap)
         if post_pct is not None and pre_pct is not None:
+            # api_key_id in subject: budget_usage (and therefore this
+            # percent) is tracked per API key, not pooled across the
+            # tenant — two keys under the same tenant crossing the same
+            # band independently must be two separate ledger rows, not
+            # one that dedupes the second key's genuine crossing away.
+            budget_subject = {"api_key_id": ctx.api_key_id}
             if await is_notification_enabled(db, "BUDGET_THRESHOLD"):
                 bands = await get_threshold_bands(db, "BUDGET_THRESHOLD")
                 for band in crossed_bands(pre_pct, post_pct, bands):
-                    fired = await check_and_record_threshold(db, "BUDGET_THRESHOLD", str(ctx.tenant_id), {}, band)
+                    fired = await check_and_record_threshold(
+                        db, "BUDGET_THRESHOLD", str(ctx.tenant_id), budget_subject, band
+                    )
                     if not fired:
                         continue
                     publish_notification_event(
                         event_name="BUDGET_THRESHOLD",
                         tenant_id=str(ctx.tenant_id),
-                        subject={},
+                        subject=budget_subject,
                         details={
                             "observed": write.api_key_budget_used,
                             "limit": write.api_key_budget_snap,
@@ -270,12 +278,22 @@ async def _publish_usage_crossing_events(
                         },
                     )
             if crossed_exhaustion(pre_pct, post_pct) and await is_notification_enabled(db, "BUDGET_EXHAUSTED"):
-                fired = await check_and_record_exhaustion(db, "BUDGET_EXHAUSTED", str(ctx.tenant_id), {})
+                # budget_snap (the ceiling) in the exhaustion subject too:
+                # it only moves on a revision (design doc §6.4's epoch
+                # semantics for budget rows), so a top-up that raises the
+                # ceiling gets its own row instead of colliding with the
+                # already-recorded True from before the top-up — without
+                # this, re-exhausting after a top-up would never re-fire,
+                # since the same {value: True} would already be stored.
+                budget_exhaustion_subject = {**budget_subject, "budget_snap": str(write.api_key_budget_snap)}
+                fired = await check_and_record_exhaustion(
+                    db, "BUDGET_EXHAUSTED", str(ctx.tenant_id), budget_exhaustion_subject
+                )
                 if fired:
                     publish_notification_event(
                         event_name="BUDGET_EXHAUSTED",
                         tenant_id=str(ctx.tenant_id),
-                        subject={},
+                        subject=budget_exhaustion_subject,
                         details={},
                     )
 
@@ -302,12 +320,21 @@ async def _publish_usage_crossing_events(
                         },
                     )
             if crossed_exhaustion(pre_pct, post_pct) and await is_notification_enabled(db, "QUOTA_EXHAUSTED"):
-                fired = await check_and_record_exhaustion(db, "QUOTA_EXHAUSTED", str(ctx.tenant_id), subject)
+                # billing_month in the exhaustion subject: quota resets at
+                # the start of each month (design doc §6.4's epoch
+                # semantics for quota rows), so October's exhaustion must
+                # not collide with the {value: True} September already
+                # recorded — otherwise re-exhausting next month would
+                # never re-fire.
+                quota_exhaustion_subject = {**subject, "billing_month": ctx.billing_month}
+                fired = await check_and_record_exhaustion(
+                    db, "QUOTA_EXHAUSTED", str(ctx.tenant_id), quota_exhaustion_subject
+                )
                 if fired:
                     publish_notification_event(
                         event_name="QUOTA_EXHAUSTED",
                         tenant_id=str(ctx.tenant_id),
-                        subject=subject,
+                        subject=quota_exhaustion_subject,
                         details={"inference_name": inference_name},
                     )
 

@@ -62,7 +62,7 @@ bookkeeping later).
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import text
 
@@ -171,3 +171,85 @@ async def check_and_record_action(
     return await _record(
         db, name, tenant_id, subject, {"value": occurred_at, "delivery": "in_progress"}, actor
     )
+
+
+async def check_and_record_actions_bulk(
+    db,
+    name: str,
+    tenant_subjects: List[Tuple[str, Dict[str, Any]]],
+    value: Any,
+    actor: str = "",
+) -> List[Tuple[str, Dict[str, Any]]]:
+    """Bulk variant of check_and_record_action for a fan-out where many
+    (tenant_id, subject) pairs share the identical action and the identical
+    `value` — e.g. one QUOTA_LIMIT_UPDATED admin action reaching every
+    tenant on a tier, once per changed quota. One round trip and one commit
+    for the whole batch instead of one per pair (a tier with 200 tenants and
+    3 changed quotas would otherwise be 600 commits before the caller's
+    request can respond).
+
+    Returns the subset of `tenant_subjects` that actually fired (go ahead
+    and publish for those) — same semantics as check_and_record_action
+    returning True/False per pair, just batched. Does not use ledger_cache
+    (that pre-check is a minor optimization for the common single-pair
+    call path; skipping it here only ever costs this batch one full DB
+    round trip either way, never a correctness issue)."""
+    if not tenant_subjects:
+        return []
+    notification_id = await get_notification_id(db, name)
+    channels: List[str] = await get_channels(db, name)
+    if notification_id is None or not channels:
+        logger.warning(
+            "Bulk ledger check skipped for %s: notification_id/channels not in cache", name
+        )
+        return []
+
+    status_json = json.dumps({"value": value, "delivery": "in_progress"})
+    subject_jsons = [json.dumps(subject, sort_keys=True) for _, subject in tenant_subjects]
+
+    rows_sql: List[str] = []
+    params: Dict[str, Any] = {
+        "notification_id": notification_id,
+        "status": status_json,
+        "actor": actor or None,
+    }
+    for i, ((tenant_id, _subject), subject_json) in enumerate(zip(tenant_subjects, subject_jsons)):
+        for j, channel in enumerate(channels):
+            key = f"{i}_{j}"
+            rows_sql.append(
+                f"(:notification_id, :tenant_id_{key}, CAST(:subject_{key} AS JSONB), "
+                f":channel_{key}, CAST(:status AS JSONB), :actor, :actor)"
+            )
+            params[f"tenant_id_{key}"] = tenant_id
+            params[f"subject_{key}"] = subject_json
+            params[f"channel_{key}"] = channel
+
+    sql = text(
+        "INSERT INTO ledger_notification_alert "
+        "(notification_id, tenant_id, subject, channel, status, created_by, updated_by) "
+        "VALUES " + ",".join(rows_sql) + " "
+        "ON CONFLICT (notification_id, tenant_id, subject, channel) "
+        "DO UPDATE SET status = EXCLUDED.status, updated_by = EXCLUDED.updated_by, updated_at = now() "
+        "WHERE ledger_notification_alert.status->'value' IS DISTINCT FROM EXCLUDED.status->'value' "
+        "RETURNING tenant_id, subject"
+    )
+
+    try:
+        result = await db.execute(sql, params)
+        fired_keys = {
+            (row.tenant_id, json.dumps(row.subject, sort_keys=True)) for row in result.all()
+        }
+        await db.commit()
+    except Exception as exc:
+        logger.warning("Bulk ledger upsert failed for %s: %s", name, exc)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        return []
+
+    return [
+        (tenant_id, subject)
+        for (tenant_id, subject), subject_json in zip(tenant_subjects, subject_jsons)
+        if (tenant_id, subject_json) in fired_keys
+    ]
