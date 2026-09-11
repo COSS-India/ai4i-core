@@ -77,11 +77,10 @@ def publish_event(
     serialization error) is caught here, an asynchronous delivery failure
     (broker unreachable, etc.) is caught via the errback and only logged.
 
-    occurred_at: pass explicitly when the caller also needs the identical
-    timestamp inside details (e.g. Group A's details.effective_date, which
-    for an instant admin action equals occurred_at) — otherwise two separate
-    datetime.now() calls would produce two slightly different strings.
-    Defaults to now() when omitted."""
+    occurred_at: pass explicitly when the caller already computed it (e.g.
+    to pass the identical timestamp into the ledger_notification_alert
+    dedup check before deciding to publish at all). Defaults to now() when
+    omitted."""
     if _producer is None:
         return
     try:
@@ -105,27 +104,20 @@ def publish_admin_event(
     subject: dict,
     details: dict,
     actor_id: str,
-    effective_date: Optional[str] = None,
     topic: Optional[str] = None,
     occurred_at: Optional[str] = None,
 ) -> None:
     """Convenience wrapper over publish_event for the 5 "admin changed
-    something" events (design doc §2.1/§9): every one of them carries an
-    effective_date inside details, defaulting to occurred_at (the change is
-    immediate) unless the caller passes a deferred one — QUOTA_LIMIT_UPDATED
-    is the one exception, whose effective_date is the 1st of next month, not
-    now. Computing occurred_at once here (unless the caller already
-    precomputed it — e.g. to pass the identical timestamp into the
+    something" events (design doc §2.1/§9). occurred_at is the only
+    timestamp in the envelope — pass it explicitly when the caller already
+    precomputed it (e.g. to pass the identical timestamp into the
     ledger_notification_alert dedup check before deciding to publish at
-    all) and threading it into both the envelope and details.effective_date
-    keeps the two fields byte-identical, rather than two independent now()
-    calls producing slightly different strings."""
-    occurred_at = occurred_at or datetime.now(timezone.utc).isoformat()
+    all), otherwise it defaults to now()."""
     publish_event(
         event_name=event_name,
         tenant_id=tenant_id,
         subject=subject,
-        details={**details, "effective_date": effective_date or occurred_at},
+        details=details,
         actor_id=actor_id,
         topic=topic,
         occurred_at=occurred_at,

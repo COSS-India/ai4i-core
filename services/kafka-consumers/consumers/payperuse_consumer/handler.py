@@ -12,6 +12,7 @@ from confluent_kafka.cimpl import Message
 from bootstrap.lifecycle import session_scope
 from consumers.payperuse_consumer import config as cfg
 from consumers.payperuse_consumer._billing import (
+    BillingWriteResult,
     ServicePricing,
     calculate_cost,
     deduct_balance_and_update_quota,
@@ -19,6 +20,18 @@ from consumers.payperuse_consumer._billing import (
     get_service_pricing,
     _get_billing_data,
     _get_billed_key, _update_billing_on_cache,
+)
+from ai4i_core.kafka import (
+    publish_event as publish_notification_event,
+    is_notification_enabled,
+    get_threshold_bands,
+    check_and_record_threshold,
+    check_and_record_exhaustion,
+)
+from consumers.payperuse_consumer._thresholds import (
+    crossed_bands,
+    crossed_exhaustion,
+    percent,
 )
 
 logger = get_logger(__name__)
@@ -219,6 +232,86 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
     )
 
 
+async def _publish_usage_crossing_events(
+    db, ctx: BillingContext, write: BillingWriteResult, cost: Decimal, billed_units: Decimal, inference_name: str
+) -> None:
+    """QUOTA_THRESHOLD/BUDGET_THRESHOLD/QUOTA_EXHAUSTED/BUDGET_EXHAUSTED —
+    fired post-commit, per-message. Deductions are incremental and this
+    consumer processes one message at a time per partition, so
+    pre = post - this_debit is exact without a second query. Best-effort:
+    every failure is caught inside publish(); this function itself is not
+    wrapped so a bug here surfaces in logs rather than being silently eaten,
+    but it must never be allowed to affect billing correctness (called only
+    after the commit above).
+
+    ledger_notification_alert (design doc §5-7) is checked/updated with
+    check_and_record_threshold/check_and_record_exhaustion before each
+    publish — the atomic DB-level dedup guard (highest band reached /
+    on-off exhausted flag), not just the in-memory is_notification_enabled
+    pre-check."""
+    if write.api_key_budget_snap is not None:
+        post_pct = percent(write.api_key_budget_used, write.api_key_budget_snap)
+        pre_pct = percent(write.api_key_budget_used - cost, write.api_key_budget_snap)
+        if post_pct is not None and pre_pct is not None:
+            if await is_notification_enabled(db, "BUDGET_THRESHOLD"):
+                bands = await get_threshold_bands(db, "BUDGET_THRESHOLD")
+                for band in crossed_bands(pre_pct, post_pct, bands):
+                    fired = await check_and_record_threshold(db, "BUDGET_THRESHOLD", str(ctx.tenant_id), {}, band)
+                    if not fired:
+                        continue
+                    publish_notification_event(
+                        event_name="BUDGET_THRESHOLD",
+                        tenant_id=str(ctx.tenant_id),
+                        subject={},
+                        details={
+                            "observed": write.api_key_budget_used,
+                            "limit": write.api_key_budget_snap,
+                            "percent": band,
+                        },
+                    )
+            if crossed_exhaustion(pre_pct, post_pct) and await is_notification_enabled(db, "BUDGET_EXHAUSTED"):
+                fired = await check_and_record_exhaustion(db, "BUDGET_EXHAUSTED", str(ctx.tenant_id), {})
+                if fired:
+                    publish_notification_event(
+                        event_name="BUDGET_EXHAUSTED",
+                        tenant_id=str(ctx.tenant_id),
+                        subject={},
+                        details={},
+                    )
+
+    if write.quota_recorded and write.quota_used is not None and write.quota_snap is not None:
+        post_pct = percent(write.quota_used, write.quota_snap)
+        pre_pct = percent(write.quota_used - billed_units, write.quota_snap)
+        if post_pct is not None and pre_pct is not None:
+            subject = {"model_task_type": inference_name}
+            if await is_notification_enabled(db, "QUOTA_THRESHOLD"):
+                bands = await get_threshold_bands(db, "QUOTA_THRESHOLD")
+                for band in crossed_bands(pre_pct, post_pct, bands):
+                    fired = await check_and_record_threshold(db, "QUOTA_THRESHOLD", str(ctx.tenant_id), subject, band)
+                    if not fired:
+                        continue
+                    publish_notification_event(
+                        event_name="QUOTA_THRESHOLD",
+                        tenant_id=str(ctx.tenant_id),
+                        subject=subject,
+                        details={
+                            "observed": write.quota_used,
+                            "limit": write.quota_snap,
+                            "percent": band,
+                            "inference_name": inference_name,
+                        },
+                    )
+            if crossed_exhaustion(pre_pct, post_pct) and await is_notification_enabled(db, "QUOTA_EXHAUSTED"):
+                fired = await check_and_record_exhaustion(db, "QUOTA_EXHAUSTED", str(ctx.tenant_id), subject)
+                if fired:
+                    publish_notification_event(
+                        event_name="QUOTA_EXHAUSTED",
+                        tenant_id=str(ctx.tenant_id),
+                        subject=subject,
+                        details={"inference_name": inference_name},
+                    )
+
+
 async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
     pricing: ServicePricing | None = await get_service_pricing(db, ctx.service_id)
     if pricing is None:
@@ -336,6 +429,8 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
     # when write.tier_id was None above.
     await db.commit()
     logger.debug("DB commit successful | tenant=%s offset=%d", ctx.tenant_id, ctx.offset)
+
+    await _publish_usage_crossing_events(db, ctx, write, cost, billed_units, pricing.task_type)
 
     return BillingOutcome(
         pricing=pricing,
