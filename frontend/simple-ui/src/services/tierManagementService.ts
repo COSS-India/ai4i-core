@@ -112,11 +112,17 @@ export interface AdjustTenantBudgetPayload {
   tenant_id: string;
   action: "top-up" | "top-down";
   amount: number;
+  /** ISO 8601, UTC. */
+  budget_effective_from?: string;
+  /** ISO 8601, UTC. The LAST day the window is usable, inclusive. */
+  budget_effective_to?: string;
 }
 
 export interface AdjustTenantBudgetResponse {
   tenant_id: string;
   allocated_budget: number | string;
+  budget_effective_from?: string | null;
+  budget_effective_to?: string | null;
   applications_recomputed?: number;
   keys_recomputed?: number;
   updated_at: string;
@@ -130,6 +136,12 @@ export async function adjustTenantBudget(
     {
       action: payload.action,
       amount: payload.amount,
+      ...(payload.budget_effective_from
+        ? { budget_effective_from: payload.budget_effective_from }
+        : {}),
+      ...(payload.budget_effective_to
+        ? { budget_effective_to: payload.budget_effective_to }
+        : {}),
     },
   );
 
