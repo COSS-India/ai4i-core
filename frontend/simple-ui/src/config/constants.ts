@@ -948,6 +948,7 @@ export const TABS = {
   usageDashboard: "usage-dashboard",
   traces: "traces",
   alertsManagement: "alerts-management",
+  notificationsAlerts: "notifications-alerts",
   piiManagement: "pii-management",
   tierManagement: "tier-management",
   policyManagement: "policy-management",

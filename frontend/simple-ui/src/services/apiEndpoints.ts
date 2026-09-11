@@ -97,6 +97,13 @@ export const apiEndpoints = {
     },
   },
 
+  /** System-seeded notification/alert catalog (AI4IDS-3022). */
+  notificationAlerts: {
+    catalog: `${API_V1}/notification-alerts/catalog`,
+    catalogByName: (name: string) =>
+      `${API_V1}/notification-alerts/catalog/${encodeURIComponent(name)}`,
+  },
+
   platform: {
     models: {
       /** Platform model catalogue (OpenAI-compatible list owns GET /models). */
