@@ -188,7 +188,7 @@ export const METERING = {
       REMAINING_COL:
         "This Application's Allocated Budget minus its Spend, as % of its own allocation and ₹.",
       API_KEY_ALLOCATED:
-        "% of the Institution's total Budget assigned to this Key. Sums to this Application's own allocated %.",
+        "% of the Application's total Budget assigned to this Key.",
       API_KEY_SPEND: "% of this Key's own Allocated amount consumed.",
       API_KEY_REMAINING:
         "This Key's Allocated amount minus its Spend, as % of its own allocation.",

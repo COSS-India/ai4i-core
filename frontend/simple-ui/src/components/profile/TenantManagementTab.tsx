@@ -263,9 +263,10 @@ export default function TenantManagementTab({
   } = useDisclosure();
 
   // Adopter-only: tier drawer + onboard form need tier catalog (ADMIN-only).
+
   const tiersQuery = useQuery({
-    queryKey: ["tiers"],
-    queryFn: () => fetchTiers(),
+    queryKey: ["tiers", "ACTIVE"],
+    queryFn: () => fetchTiers(undefined, "ACTIVE"),
     staleTime: 5 * 60_000,
     enabled: isAdmin,
   });
