@@ -1,0 +1,3 @@
+Hi {{ recipient_name }},
+
+Your plan changed from {{ previous }} to {{ current }}.

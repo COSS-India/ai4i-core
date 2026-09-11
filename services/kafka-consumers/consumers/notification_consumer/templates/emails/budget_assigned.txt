@@ -1,0 +1,3 @@
+Hi {{ recipient_name }},
+
+A budget of {{ current }} has been set for your account.
