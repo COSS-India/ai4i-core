@@ -14,7 +14,7 @@ import {
 } from "../components/service-page";
 import { getServicePageDefaults } from "../config/servicePageConfig";
 import { useTTS } from "../hooks/useTTS";
-import { listVoices, listTTSServices } from "../services/ttsService";
+import { listTTSServices } from "../services/ttsService";
 
 const pageDefaults = getServicePageDefaults("tts");
 const indoAryanLanguages = ["hi", "mr", "as", "bn", "gu", "or", "pa"];
@@ -47,14 +47,6 @@ const TTSPage: React.FC = () => {
     queryKey: ["tts-services"],
     queryFn: listTTSServices,
     staleTime: 10 * 60 * 1000,
-  });
-
-  const { data: voicesData, isLoading: voicesLoading } = useQuery({
-    queryKey: ["tts-voices", language, gender],
-    queryFn: () => listVoices({ language, gender: gender as "male" | "female" }),
-    staleTime: 5 * 60 * 1000,
-    retry: false,
-    enabled: !!language?.trim() && (gender === "male" || gender === "female"),
   });
 
   const serviceOptions = useMemo(
@@ -117,8 +109,6 @@ const TTSPage: React.FC = () => {
               onFormatChange={setAudioFormat}
               onSampleRateChange={setSamplingRate}
               availableLanguages={serviceId ? indoAryanLanguages : []}
-              availableVoices={voicesData?.voices ?? []}
-              loading={voicesLoading}
               disabled={fetching || !serviceId}
             />
           </Box>

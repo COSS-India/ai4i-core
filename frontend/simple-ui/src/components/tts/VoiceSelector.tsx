@@ -4,7 +4,6 @@ import {
   FormControl,
   FormLabel,
   Select,
-  Spinner,
   Stack,
   Text,
   useMediaQuery,
@@ -21,14 +20,10 @@ const VoiceSelector: React.FC<VoiceSelectorProps> = ({
   language,
   gender,
   audioFormat,
-  samplingRate,
   onLanguageChange,
   onGenderChange,
   onFormatChange,
-  onSampleRateChange,
   availableLanguages,
-  availableVoices,
-  loading = false,
   disabled = false,
 }) => {
   const [isMobile] = useMediaQuery("(max-width: 768px)");
@@ -46,17 +41,6 @@ const VoiceSelector: React.FC<VoiceSelectorProps> = ({
   const handleFormatChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
     onFormatChange(event.target.value as any);
   };
-
-  // Sampling rate selection removed from UI
-
-  if (loading) {
-    return (
-      <Stack spacing={4} align="center" py={8}>
-        <Spinner size="lg" color="orange.500" />
-        <Text color="gray.600">Loading voice options...</Text>
-      </Stack>
-    );
-  }
 
   // Sort options alphabetically by display label
   const sortedLanguages = [...availableLanguages].sort((a, b) =>
