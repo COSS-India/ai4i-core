@@ -57,6 +57,7 @@ import { FIELD_HINTS } from "../../config/fieldHints";
 import FieldHint from "../common/FieldHint";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { generateUUID } from "../../utils/uuid";
+import { QUOTA_LIMIT_MAX, validateQuotaLimit } from "./tierFormValidation";
 import { useDeferredColumnSort } from "../../utils/tableSort";
 
 function getTaskTypeBadgeColor(taskType: string): string {
@@ -270,11 +271,12 @@ function isUnitInvalid(quota: TierFormQuota): boolean {
   return !quota.unit.trim();
 }
 
-function isLimitInvalid(quota: TierFormQuota): boolean {
-  const limitNum = Number(quota.limit);
-  return (
-    quota.limit.trim() === "" || !Number.isFinite(limitNum) || limitNum <= 0
-  );
+/**
+ * Inline verdict for a quota row's limit. Delegates to the shared rule so the
+ * form and `validateQuotas` (which gates submit) cannot drift apart.
+ */
+function limitError(quota: TierFormQuota): string | null {
+  return validateQuotaLimit(quota.limit);
 }
 
 function QuotaEditor({
@@ -427,7 +429,7 @@ function QuotaEditor({
 
                   <FormControl
                     isRequired
-                    isInvalid={showErrors && isLimitInvalid(quota)}
+                    isInvalid={showErrors && !!limitError(quota)}
                     isDisabled={isEditMode}
                     minW={0}
                   >
@@ -437,6 +439,11 @@ function QuotaEditor({
                     <NumberInput
                       size="sm"
                       min={0}
+                      max={QUOTA_LIMIT_MAX}
+                      step={1}
+                      // An out-of-range value must survive blur so the inline
+                      // error can name it; clamping would silently rewrite it.
+                      clampValueOnBlur={false}
                       value={quota.limit}
                       onChange={(v) => handleQuotaChange(idx, "limit", v)}
                     >
@@ -445,9 +452,9 @@ function QuotaEditor({
                       />
                     </NumberInput>
                     <FormErrorMessage fontSize="xs">
-                      Limit must be greater than 0.
+                      {limitError(quota)}
                     </FormErrorMessage>
-                    <FieldHint show={!(showErrors && isLimitInvalid(quota))}>
+                    <FieldHint show={!(showErrors && !!limitError(quota))}>
                       {FIELD_HINTS.tier.quotaLimit.helper}
                     </FieldHint>
                   </FormControl>
@@ -754,6 +761,7 @@ const TierManagement: React.FC = () => {
     scheduleTarget,
     scheduleLimit,
     setScheduleLimit,
+    scheduleLimitError,
     isScheduleOpen,
     isScheduling,
     handleScheduleClose,
@@ -775,6 +783,12 @@ const TierManagement: React.FC = () => {
     showQuotaErrors,
     cancelRef,
   } = useTierManagement();
+
+  /**
+   * An untouched New Quota Limit is empty rather than wrong, so the hint stays
+   * until the admin has actually typed something the backend would reject.
+   */
+  const showScheduleLimitError = !!scheduleLimit.trim() && !!scheduleLimitError;
 
   const tierSortAccessors = useMemo(
     () => ({
@@ -999,6 +1013,7 @@ const TierManagement: React.FC = () => {
               colorScheme="blue"
               isLoading={isScheduling}
               loadingText="Scheduling..."
+              isDisabled={!!scheduleLimitError}
               onClick={handleScheduleConfirm}
             >
               Confirm Schedule
@@ -1020,18 +1035,28 @@ const TierManagement: React.FC = () => {
               </Text>
             </HStack>
 
-            <FormControl isRequired>
+            <FormControl isRequired isInvalid={showScheduleLimitError}>
               <FormLabel fontSize="sm">
                 New Quota Limit ({scheduleTarget.unit})
               </FormLabel>
               <NumberInput
                 size="sm"
                 min={0}
+                max={QUOTA_LIMIT_MAX}
+                step={1}
+                clampValueOnBlur={false}
                 value={scheduleLimit}
                 onChange={setScheduleLimit}
               >
                 <NumberInputField placeholder="e.g. 10" />
               </NumberInput>
+              {showScheduleLimitError ? (
+                <FormErrorMessage fontSize="xs">
+                  {scheduleLimitError}
+                </FormErrorMessage>
+              ) : (
+                <FieldHint>{FIELD_HINTS.tier.quotaLimit.helper}</FieldHint>
+              )}
             </FormControl>
 
             <Text fontSize="xs" color="gray.500">

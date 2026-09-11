@@ -94,6 +94,7 @@ const ServicesManagement: React.FC = () => {
     unitType,
     pricePerUnit,
     setPricePerUnit,
+    pricePerUnitError,
     unitSize,
     setUnitSize,
     currency,
@@ -426,6 +427,7 @@ const ServicesManagement: React.FC = () => {
                       unitType={unitType}
                       pricePerUnit={pricePerUnit}
                       onPricePerUnitChange={setPricePerUnit}
+                      pricePerUnitError={pricePerUnitError}
                       unitSize={unitSize}
                       onUnitSizeChange={setUnitSize}
                       currency={currency}

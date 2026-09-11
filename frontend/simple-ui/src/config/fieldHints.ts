@@ -1,5 +1,7 @@
 import { INSTITUTION } from "./constants";
 import { EMAIL_AVAILABLE_MSG } from "../utils/tenantEmailValidation";
+import { PRICE_PER_UNIT_MAX_LABEL } from "../components/services-management/serviceFormValidation";
+import { QUOTA_LIMIT_MAX_LABEL } from "../components/tier-management/tierFormValidation";
 
 const org = INSTITUTION.toLowerCase();
 
@@ -110,7 +112,10 @@ export const FIELD_HINTS = {
     },
     unitType: { helper: "Auto-set based on the task type", needTaskType: "Select a task type first" },
     unitSize: { placeholder: "Select unit size", helper: "Defines the unit size for pricing" },
-    price: { placeholder: "Enter price", helper: "e.g., 600. Must be 0 or greater" },
+    price: {
+      placeholder: "Enter price",
+      helper: `e.g., 600. Must be between 0 and ${PRICE_PER_UNIT_MAX_LABEL}`,
+    },
     tier: { placeholder: "Select applicable tier(s)", helper: "Select at least one" },
     tierSearch: { placeholder: "Search tiers..." },
   },
@@ -148,7 +153,10 @@ export const FIELD_HINTS = {
       helper: "e.g. Enterprise tier for high usage.",
     },
     quotaUnit: { helper: "Auto-filled based on Model Task Type (e.g., tokens for LLM)" },
-    quotaLimit: { placeholder: "Enter quota limit", helper: "e.g. 10000. Must be greater than 0" },
+    quotaLimit: {
+      placeholder: "Enter quota limit",
+      helper: `e.g. 10000. Whole number between 1 and ${QUOTA_LIMIT_MAX_LABEL}`,
+    },
   },
   apiKey: {
     keyName: {
