@@ -568,7 +568,7 @@ export default function TenantManagementTab({
       manageEffectiveTo < budgetWindowToMinDate(windowFrom, todayDateInputValue())
     ) {
       setWindowError(
-        "Budget Effective To must be at least a day after Budget Effective From.",
+        "Budget Effective To must be later than today, and at least a day after Budget Effective From.",
       );
       return;
     }

@@ -59,7 +59,7 @@ export const FIELD_HINTS = {
       placeholder: "Enter budget amount",
       helper: "Total budget for this window; must be greater than 0",
     },
-    effectiveFrom: { helper: "Today or later; cannot be backdated" },
+    effectiveFrom: { helper: "Defaults to today; cannot be backdated" },
     effectiveTo: {
       helper:
         "Must be at least one day after Effective From",

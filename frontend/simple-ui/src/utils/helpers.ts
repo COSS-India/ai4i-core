@@ -209,19 +209,32 @@ export const todayDateInputValue = (now: Date = new Date()): string =>
   now.toISOString().slice(0, 10);
 
 /**
- * Earliest selectable budget_effective_to: always the day AFTER
- * budget_effective_from, falling back to tomorrow when no From is chosen yet.
+ * Earliest selectable budget_effective_to: the LATER of one day after
+ * budget_effective_from and one day after today.
  *
- * Satisfies both of auth-service's rules at once — the window is at least one
- * calendar day long (_validate_effective_to_after_from), and since From can
- * never precede today, To always lands later than today. Shared by the Assign
- * Tier modal and the Manage Tier drawer so the two cannot drift apart from
- * each other or from the server.
+ * Both bounds are load-bearing and neither implies the other:
+ *  - from + 1 keeps the window at least one calendar day long, which is all
+ *    auth-service's _validate_effective_to_after_from actually enforces.
+ *  - today + 1 stops a To being set in the past. The server permits that, but
+ *    is_budget_window_expired then reads the window as already lapsed, and
+ *    every API key under the institution starts failing the window gate
+ *    immediately. Reachable whenever From is in the past, which is the normal
+ *    case when extending a window that opened a while ago — there From is the
+ *    stored value and from + 1 alone resolves to a past date.
+ *
+ * Shared by the Assign Tier modal and the Manage Tier drawer so the two
+ * cannot drift apart from each other or from the server.
  */
 export const budgetWindowToMinDate = (
   effectiveFrom: string,
   today: string,
-): string => addDaysToDateInputValue(effectiveFrom || today, 1);
+): string => {
+  const tomorrow = addDaysToDateInputValue(today, 1);
+  if (!effectiveFrom) return tomorrow;
+  const dayAfterFrom = addDaysToDateInputValue(effectiveFrom, 1);
+  // Fixed-width zero-padded YYYY-MM-DD, so lexical order is chronological.
+  return dayAfterFrom > tomorrow ? dayAfterFrom : tomorrow;
+};
 
 /**
  * Convert an `<input type="date">` value (YYYY-MM-DD) to an ISO timestamp

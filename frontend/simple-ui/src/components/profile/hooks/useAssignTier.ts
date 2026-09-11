@@ -46,10 +46,10 @@ type FormValues = {
 };
 type FieldErrors = Partial<Record<FieldKey, string>>;
 
-const emptyForm = (): FormValues => ({
+const initialForm = (today: string): FormValues => ({
   tierId: "",
   budget: "",
-  effectiveFrom: "",
+  effectiveFrom: today,
   effectiveTo: "",
 });
 
@@ -96,6 +96,7 @@ type ValidationContext = {
   tierIdsWithServices: Set<string>;
   noServicesMessage: string;
   currentBudget: number | null | undefined;
+  budgetSettled: boolean;
 };
 
 /** True once `tierId` is known to have no services mapped to it. */
@@ -120,12 +121,16 @@ function validateTier(tierId: string, ctx: ValidationContext) {
   return undefined;
 }
 
-function validateBudget(budget: string, currentBudget: number | null | undefined) {
+function validateBudget(
+  budget: string,
+  currentBudget: number | null | undefined,
+  budgetSettled: boolean,
+) {
   if (!budget.trim()) return MESSAGES.budgetRequired;
   const value = Number(budget);
   if (!Number.isFinite(value) || value <= 0) return MESSAGES.budgetNotPositive;
   if (value > MAX_BUDGET) return MESSAGES.budgetTooLarge;
-  if (budgetRevisionFor(value, currentBudget) === null)
+  if (!budgetSettled && budgetRevisionFor(value, currentBudget) === null)
     return MESSAGES.budgetUnchanged;
   return undefined;
 }
@@ -163,7 +168,11 @@ function validateForm(values: FormValues, ctx: ValidationContext): FieldErrors {
   const errors: FieldErrors = {};
   const tier = validateTier(values.tierId, ctx);
   if (tier) errors.tier = tier;
-  const budget = validateBudget(values.budget, ctx.currentBudget);
+  const budget = validateBudget(
+    values.budget,
+    ctx.currentBudget,
+    ctx.budgetSettled,
+  );
   if (budget) errors.budget = budget;
   const from = validateEffectiveFrom(values.effectiveFrom, ctx.today);
   if (from) errors.effectiveFrom = from;
@@ -197,21 +206,6 @@ export function useAssignTier({
 }: UseAssignTierOptions) {
   const toast = useToast();
 
-  const [values, setValues] = useState<FormValues>(emptyForm);
-  const [errors, setErrors] = useState<FieldErrors>({});
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [isAssigning, setIsAssigning] = useState(false);
-
-  // Always a blank form on open. The expired-window case still carries a
-  // tier_id, and prefilling it would guarantee a 409 TENANT_ALREADY_ON_TIER
-  // the moment an admin renews the window without also switching tier.
-  useEffect(() => {
-    if (!isOpen) return;
-    setValues(emptyForm());
-    setErrors({});
-    setSubmitError(null);
-  }, [isOpen]);
-
   // Pinned for the lifetime of one open modal so a session left open across
   // midnight cannot have the floor shift under a date already chosen.
   const today = useMemo(
@@ -220,7 +214,22 @@ export function useAssignTier({
     [isOpen],
   );
 
-  const currentBudget = tenant?.allocated_budget ?? null;
+  const [values, setValues] = useState<FormValues>(() => initialForm(today));
+  const [errors, setErrors] = useState<FieldErrors>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [isAssigning, setIsAssigning] = useState(false);
+  const [committedBudget, setCommittedBudget] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setValues(initialForm(today));
+    setErrors({});
+    setSubmitError(null);
+    setCommittedBudget(null);
+  }, [isOpen, today]);
+
+  const currentBudget = committedBudget ?? tenant?.allocated_budget ?? null;
+  const budgetSettled = committedBudget !== null;
 
   const validationContext = useMemo(
     () => ({
@@ -229,6 +238,7 @@ export function useAssignTier({
       tierIdsWithServices,
       noServicesMessage,
       currentBudget,
+      budgetSettled,
     }),
     [
       today,
@@ -236,6 +246,7 @@ export function useAssignTier({
       tierIdsWithServices,
       noServicesMessage,
       currentBudget,
+      budgetSettled,
     ],
   );
 
@@ -282,18 +293,22 @@ export function useAssignTier({
     if (Object.keys(found).length > 0) return;
 
     const tenantId = String(tenant.tenant_id);
-    const revision = budgetRevisionFor(Number(values.budget), currentBudget);
-    if (!revision) return; // validateBudget already rejected the no-op
+    const enteredBudget = Number(values.budget);
+    const revision = budgetRevisionFor(enteredBudget, currentBudget);
 
     setIsAssigning(true);
     try {
-      await adjustTenantBudget({
-        tenant_id: tenantId,
-        action: revision.action,
-        amount: revision.amount,
-        budget_effective_from: dateInputToStartOfDayIso(values.effectiveFrom),
-        budget_effective_to: dateInputToEndOfDayIso(values.effectiveTo),
-      });
+      if (revision) {
+        const res = await adjustTenantBudget({
+          tenant_id: tenantId,
+          action: revision.action,
+          amount: revision.amount,
+          budget_effective_from: dateInputToStartOfDayIso(values.effectiveFrom),
+          budget_effective_to: dateInputToEndOfDayIso(values.effectiveTo),
+        });
+        const committed = Number(res.allocated_budget);
+        setCommittedBudget(Number.isFinite(committed) ? committed : enteredBudget);
+      }
 
       if (String(tenant.tier_id ?? "") !== values.tierId) {
         await changeTenantTier(tenantId, values.tierId);
