@@ -158,8 +158,8 @@ async def stop_listener() -> None:
 
 async def _listen(redis_client) -> None:
     while True:
+        pubsub = redis_client.pubsub()
         try:
-            pubsub = redis_client.pubsub()
             await pubsub.subscribe(CHANNEL)
             logger.info("Notification settings cache listening on Redis channel '%s'", CHANNEL)
             async for message in pubsub.listen():
@@ -170,3 +170,14 @@ async def _listen(redis_client) -> None:
         except Exception as exc:
             logger.warning("Notification settings cache listener error (reconnecting in 5s): %s", exc)
             await asyncio.sleep(5)
+        finally:
+            # Without this, a dropped/failed connection is never returned to
+            # the client's pool — each retry then leaks one more pubsub
+            # connection, eventually exhausting it ("Too many connections")
+            # and permanently breaking this listener until the process is
+            # restarted. Closing here (success, failure, or cancellation)
+            # is what makes the retry loop actually safe to run indefinitely.
+            try:
+                await pubsub.aclose()
+            except Exception:
+                pass

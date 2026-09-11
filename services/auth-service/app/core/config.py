@@ -70,7 +70,7 @@ class AuthSettings(BaseSettings):
     # ── Kafka (notification producer) ──
     kafka_enabled: bool = False
     kafka_server: str = "localhost:9093"
-    topic_notification: str = "notification-events"
+    topic_notification: str = "notification.events"
 
     # ── RS256 JWT ──
     rs256_key_directory: str = "keys"
