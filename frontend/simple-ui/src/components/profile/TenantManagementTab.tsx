@@ -93,7 +93,8 @@ import DataTable, {
 } from "../common/table";
 import TenantUserRoleBadges from "../common/TenantUserRoleBadges";
 import TierSelect from "./TierSelect";
-import { TENANT_USER_ROLE_OPTIONS } from "./types";
+import AssignTierModal from "./AssignTierModal";
+import { TENANT_USER_ROLE_OPTIONS, type ServiceMappingsStatus } from "./types";
 import {
   INSTITUTION,
   INSTITUTIONS,
@@ -121,6 +122,13 @@ import {
   isDefaultTenant,
 } from "../../utils/defaultTenant";
 import { dash, fmtDate } from "../../utils/valueFormatters";
+import {
+  budgetWindowToMinDate,
+  dateInputToEndOfDayIso,
+  dateInputToStartOfDayIso,
+  isoToDateInputValue,
+  todayDateInputValue,
+} from "../../utils/helpers";
 import type { TenantUserView, TenantView } from "../../types/tenant";
 
 /** Shown when assigning/reassigning a tier that has no mapped services. */
@@ -262,6 +270,13 @@ export default function TenantManagementTab({
     onClose: onViewTierClose,
   } = useDisclosure();
 
+  // Assign Tier modal — the no-live-assignment half of the same entry point.
+  const {
+    isOpen: isAssignTierOpen,
+    onOpen: onAssignTierOpen,
+    onClose: onAssignTierClose,
+  } = useDisclosure();
+
   // Adopter-only: tier drawer + onboard form need tier catalog (ADMIN-only).
 
   const tiersQuery = useQuery({
@@ -278,7 +293,7 @@ export default function TenantManagementTab({
     queryFn: () =>
       fetchAllServicesMatchingFilters({ taskTypes: enabledTaskTypesParam }),
     staleTime: 60_000,
-    enabled: isAdmin && isViewTierOpen,
+    enabled: isAdmin && (isViewTierOpen || isAssignTierOpen),
   });
   const tierIdsWithServices = useMemo(() => {
     const ids = new Set<string>();
@@ -290,6 +305,11 @@ export default function TenantManagementTab({
     return ids;
   }, [servicesForTiersQuery.data]);
   const serviceMappingsReady = servicesForTiersQuery.isSuccess;
+  const serviceMappingsStatus: ServiceMappingsStatus = serviceMappingsReady
+    ? "ready"
+    : servicesForTiersQuery.isError
+      ? "error"
+      : "loading";
 
   const tenantTiersQuery = useQuery({
     queryKey: ["tenant-tiers"],
@@ -302,6 +322,9 @@ export default function TenantManagementTab({
   const [viewTierTenant, setViewTierTenant] =
     useState<TenantTierAssignment | null>(null);
   const [manageTenant, setManageTenant] = useState<TenantView | null>(null);
+  const [assignTierTenant, setAssignTierTenant] = useState<TenantView | null>(
+    null,
+  );
   const [manageTierId, setManageTierId] = useState("");
   const [originalTierId, setOriginalTierId] = useState("");
   const [manageBudget, setManageBudget] = useState(0);
@@ -311,6 +334,10 @@ export default function TenantManagementTab({
   );
   const [isEditingTier, setIsEditingTier] = useState(false);
   const [budgetAmount, setBudgetAmount] = useState("");
+  const [manageEffectiveFrom, setManageEffectiveFrom] = useState("");
+  const [manageEffectiveTo, setManageEffectiveTo] = useState("");
+  const [originalEffectiveTo, setOriginalEffectiveTo] = useState("");
+  const [windowError, setWindowError] = useState<string | null>(null);
   const [managePlanError, setManagePlanError] = useState<string | null>(null);
 
   const userFormRoleOptions = useMemo(() => {
@@ -380,7 +407,23 @@ export default function TenantManagementTab({
     }
   };
 
-  const openManagePlan = (tenant: TenantView) => {
+  const handleTierAssigned = async (tenantId: string) => {
+    await queryClient.refetchQueries({ queryKey: ["tenant-tiers"] });
+    await syncTenantAfterPlanChange(tenantId);
+  };
+
+  const closeAssignTier = () => {
+    onAssignTierClose();
+    setAssignTierTenant(null);
+  };
+
+  const openTenantPlan = (tenant: TenantView) => {
+    if (!hasActiveTierAssignment(tenant)) {
+      setAssignTierTenant(tenant);
+      onAssignTierOpen();
+      return;
+    }
+
     const assignment = resolveTenantTierAssignment(
       tenant,
       tenantTierAssignments,
@@ -396,6 +439,10 @@ export default function TenantManagementTab({
     setManageBudget(tenantBudgetNumber(tenant) ?? 0);
     setBudgetAmount("");
     setBudgetAction("topup");
+    setManageEffectiveFrom(isoToDateInputValue(tenant.budget_effective_from));
+    setManageEffectiveTo(isoToDateInputValue(tenant.budget_effective_to));
+    setOriginalEffectiveTo(isoToDateInputValue(tenant.budget_effective_to));
+    setWindowError(null);
     setManagePlanError(null);
     onViewTierOpen();
   };
@@ -412,6 +459,10 @@ export default function TenantManagementTab({
 
     setBudgetAmount("");
     setBudgetAction("topup");
+    setManageEffectiveFrom("");
+    setManageEffectiveTo("");
+    setOriginalEffectiveTo("");
+    setWindowError(null);
     setManagePlanError(null);
   };
 
@@ -489,14 +540,63 @@ export default function TenantManagementTab({
   const handleApplyBudget = async () => {
     if (!manageTenant) return;
 
+    setWindowError(null);
     const amount = Number(budgetAmount);
-    if (amount <= 0) return;
+
+    // A live window locks budget_effective_from server-side; with no window
+    // on file the call is a fresh assignment and needs BOTH dates.
+    const storedFrom = isoToDateInputValue(manageTenant.budget_effective_from);
+    const windowActive = Boolean(manageTenant.budget_effective_to);
+    const toChanged = manageEffectiveTo !== originalEffectiveTo;
+
+    if (!windowActive) {
+      if (!manageEffectiveFrom || !manageEffectiveTo) {
+        setWindowError(
+          "This institution has no budget window yet — set both Budget Effective From and Budget Effective To.",
+        );
+        return;
+      }
+      if (manageEffectiveFrom < todayDateInputValue()) {
+        setWindowError("Budget Effective From cannot be in the past.");
+        return;
+      }
+    }
+    const windowFrom = windowActive ? storedFrom : manageEffectiveFrom;
+    if (
+      (toChanged || !windowActive) &&
+      windowFrom &&
+      manageEffectiveTo < budgetWindowToMinDate(windowFrom, todayDateInputValue())
+    ) {
+      setWindowError(
+        "Budget Effective To must be at least a day after Budget Effective From.",
+      );
+      return;
+    }
+
+    if (!(amount > 0)) {
+      setWindowError(
+        toChanged || !windowActive
+          ? "Enter a top-up or top-down amount — the budget window can only be updated alongside a budget change."
+          : null,
+      );
+      return;
+    }
 
     try {
       const res = await adjustTenantBudget({
         tenant_id: String(manageTenant.tenant_id),
         action: budgetAction === "topup" ? "top-up" : "top-down",
         amount,
+        ...(windowActive
+          ? {}
+          : {
+              budget_effective_from: dateInputToStartOfDayIso(
+                manageEffectiveFrom,
+              ),
+            }),
+        ...(toChanged || !windowActive
+          ? { budget_effective_to: dateInputToEndOfDayIso(manageEffectiveTo) }
+          : {}),
       });
 
       const nextBudget = Number(res.allocated_budget);
@@ -507,6 +607,13 @@ export default function TenantManagementTab({
         });
       }
       setBudgetAmount("");
+      const committedFrom = isoToDateInputValue(res.budget_effective_from);
+      const committedTo = isoToDateInputValue(res.budget_effective_to);
+      if (committedFrom) setManageEffectiveFrom(committedFrom);
+      if (committedTo) {
+        setManageEffectiveTo(committedTo);
+        setOriginalEffectiveTo(committedTo);
+      }
 
       // A tenant budget revision never moves any Application's own ₹ (or,
       // therefore, any Key's — keys_recomputed is always literally 0 now
@@ -783,6 +890,16 @@ export default function TenantManagementTab({
       {renderStatusConfirmDialog()}
       {renderDeleteUserDialog()}
       {renderViewTierModal()}
+      <AssignTierModal
+        isOpen={isAssignTierOpen}
+        onClose={closeAssignTier}
+        tenant={assignTierTenant}
+        tierOptions={tierOptions}
+        tierIdsWithServices={tierIdsWithServices}
+        serviceMappingsStatus={serviceMappingsStatus}
+        noServicesMessage={TIER_NO_SERVICES_MSG}
+        onAssigned={handleTierAssigned}
+      />
     </Box>
   );
 
@@ -1262,7 +1379,7 @@ export default function TenantManagementTab({
     const stopRowClick = (e: React.MouseEvent) => e.stopPropagation();
     const isProtectedDefaultOrg = isDefaultTenant(t);
     const hasTier = hasActiveTierAssignment(t);
-    const planActionLabel = hasTier ? "Manage Plan" : "Assign Tier";
+    const planActionLabel = hasTier ? "Manage Tier" : "Assign Tier";
 
     const items: RowActionMenuItem[] = (() => {
       if (isTenantStatus(t.status, TENANT.STATUS.PENDING)) {
@@ -1404,7 +1521,7 @@ export default function TenantManagementTab({
             _hover={{ bg: "gray.100" }}
             onClick={(e) => {
               stopRowClick(e);
-              openManagePlan(t);
+              openTenantPlan(t);
             }}
           />
         </Tooltip>
@@ -2232,12 +2349,12 @@ export default function TenantManagementTab({
       tierOptions.find((t) => t.id === manageTierId)?.name ?? "";
     const planDrawerTitle =
       manageTenant && hasActiveTierAssignment(manageTenant)
-        ? "Manage Plan"
+        ? "Manage Tier"
         : "Assign Tier";
-    const budgetWindowLabel =
-      manageTenant?.budget_effective_from || manageTenant?.budget_effective_to
-        ? `${fmtDate(manageTenant.budget_effective_from)} — ${fmtDate(manageTenant.budget_effective_to)}`
-        : null;
+    const windowFromLocked = Boolean(manageTenant?.budget_effective_to);
+    const windowFrom = windowFromLocked
+      ? isoToDateInputValue(manageTenant?.budget_effective_from)
+      : manageEffectiveFrom;
 
     return (
       <Drawer
@@ -2322,25 +2439,6 @@ export default function TenantManagementTab({
                   )}
                 </FormControl>
 
-                {budgetWindowLabel && (
-                  <FormControl>
-                    <FormLabel fontWeight="semibold" fontSize="sm">
-                      Budget window
-                    </FormLabel>
-                    <Input
-                      size="sm"
-                      value={budgetWindowLabel}
-                      isReadOnly
-                      bg="gray.50"
-                      cursor="default"
-                    />
-                    <FieldHint>
-                      Budget window is set with the institution plan; not
-                      editable when changing tier.
-                    </FieldHint>
-                  </FormControl>
-                )}
-
                 <FormControl>
                   <FormLabel fontWeight="semibold" fontSize="sm">
                     Current budget (₹)
@@ -2353,6 +2451,58 @@ export default function TenantManagementTab({
                     cursor="default"
                   />
                 </FormControl>
+
+                <HStack spacing={4} align="flex-start">
+                  <FormControl>
+                    <FormLabel fontWeight="semibold" fontSize="sm">
+                      Budget Effective From
+                    </FormLabel>
+                    <Input
+                      type="date"
+                      size="sm"
+                      value={manageEffectiveFrom}
+                      min={todayDateInputValue()}
+                      onChange={(e) => {
+                        setManageEffectiveFrom(e.target.value);
+                        setWindowError(null);
+                      }}
+                      isDisabled={windowFromLocked}
+                      bg={windowFromLocked ? "gray.50" : undefined}
+                    />
+                  </FormControl>
+
+                  <FormControl>
+                    <FormLabel fontWeight="semibold" fontSize="sm">
+                      Budget Effective To
+                    </FormLabel>
+                    <Input
+                      type="date"
+                      size="sm"
+                      value={manageEffectiveTo}
+                      min={
+                        windowFrom
+                          ? budgetWindowToMinDate(
+                              windowFrom,
+                              todayDateInputValue(),
+                            )
+                          : undefined
+                      }
+                      onChange={(e) => {
+                        setManageEffectiveTo(e.target.value);
+                        setWindowError(null);
+                      }}
+                    />
+                  </FormControl>
+                </HStack>
+
+                {windowError && (
+                  <Alert status="error" borderRadius="md">
+                    <AlertIcon />
+                    <AlertDescription fontSize="sm">
+                      {windowError}
+                    </AlertDescription>
+                  </Alert>
+                )}
                 <FormControl>
                   <Box
                     borderWidth="1px"
@@ -2404,7 +2554,10 @@ export default function TenantManagementTab({
                       <Button
                         colorScheme="blue"
                         onClick={handleApplyBudget}
-                        isDisabled={!budgetAmount}
+                        isDisabled={
+                          !budgetAmount &&
+                          manageEffectiveTo === originalEffectiveTo
+                        }
                       >
                         Apply
                       </Button>
@@ -2417,7 +2570,7 @@ export default function TenantManagementTab({
                 </FormControl>
               </VStack>
             ) : (
-              <Text>Select an institution to manage plan.</Text>
+              <Text>Select an institution to manage its tier.</Text>
             )}
           </DrawerBody>
           <DrawerFooter

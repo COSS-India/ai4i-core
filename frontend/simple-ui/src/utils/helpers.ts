@@ -200,6 +200,30 @@ export const addDaysToDateInputValue = (dateStr: string, days: number): string =
 };
 
 /**
+ * Today as an `<input type="date">` value on the UTC day boundary — the same
+ * anchor dateInputToStartOfDayIso uses when building a payload, so the bound
+ * a picker enforces and the timestamp actually sent can never disagree about
+ * which day "today" is. `now` is injectable to keep callers deterministic.
+ */
+export const todayDateInputValue = (now: Date = new Date()): string =>
+  now.toISOString().slice(0, 10);
+
+/**
+ * Earliest selectable budget_effective_to: always the day AFTER
+ * budget_effective_from, falling back to tomorrow when no From is chosen yet.
+ *
+ * Satisfies both of auth-service's rules at once — the window is at least one
+ * calendar day long (_validate_effective_to_after_from), and since From can
+ * never precede today, To always lands later than today. Shared by the Assign
+ * Tier modal and the Manage Tier drawer so the two cannot drift apart from
+ * each other or from the server.
+ */
+export const budgetWindowToMinDate = (
+  effectiveFrom: string,
+  today: string,
+): string => addDaysToDateInputValue(effectiveFrom || today, 1);
+
+/**
  * Convert an `<input type="date">` value (YYYY-MM-DD) to an ISO timestamp
  * anchored at UTC midnight, matching the backend's UTC-day "not in the past"
  * check (local midnight would shift the day boundary in any UTC+ timezone).
@@ -207,6 +231,19 @@ export const addDaysToDateInputValue = (dateStr: string, days: number): string =
 export const dateInputToStartOfDayIso = (dateStr: string): string => {
   const [y, m, d] = dateStr.split('-').map(Number);
   return new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0)).toISOString();
+};
+
+/**
+ * Inverse of dateInputToStartOfDayIso: an ISO timestamp back to the UTC
+ * calendar day as an `<input type="date">` value. UTC, not local, so a
+ * window stored at 23:59:59.999Z reads back as the same day the backend
+ * compares against (see auth-service app/utils/budget_window.as_utc_date).
+ * Returns '' for null/undefined/unparseable so it can feed an input directly.
+ */
+export const isoToDateInputValue = (iso?: string | null): string => {
+  if (!iso) return '';
+  const parsed = new Date(iso);
+  return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString().slice(0, 10);
 };
 
 /**

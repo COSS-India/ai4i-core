@@ -49,6 +49,9 @@ export type TenantUserFormRole =
   /** No longer assignable; retained so existing guests survive a profile-only edit. */
   | "GUEST";
 
+/** Whether the service->tier mapping catalog can be trusted yet. */
+export type ServiceMappingsStatus = "loading" | "error" | "ready";
+
 export interface TenantFormState {
   organisation: string;
   contact_name: string;

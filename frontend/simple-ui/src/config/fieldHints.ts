@@ -55,9 +55,15 @@ export const FIELD_HINTS = {
       "You are the only Admin in the default organisation and cannot change your role.",
   },
   assignTier: {
-    budget: { placeholder: "Enter budget amount", helper: "Must be greater than 0" },
-    effectiveFrom: { helper: "Defaults to today; cannot be backdated" },
-    effectiveTo: { helper: "Must be at least one day after Effective From" },
+    budget: {
+      placeholder: "Enter budget amount",
+      helper: "Total budget for this window; must be greater than 0",
+    },
+    effectiveFrom: { helper: "Today or later; cannot be backdated" },
+    effectiveTo: {
+      helper:
+        "Must be at least one day after Effective From",
+    },
   },
   model: {
     jsonUpload: {
