@@ -7,6 +7,7 @@ from uuid import UUID
 import httpx
 from fastapi import HTTPException, status
 from sqlalchemy import select, text, update
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -204,7 +205,16 @@ async def create_tier(body: TierCreate, session: AsyncSession, created_by: Optio
         session.add(quota)
         quotas.append(quota)
 
-    await session.commit()
+    try:
+        await session.commit()
+    except DBAPIError as exc:
+        await session.rollback()
+        if "NumericValueOutOfRange" in str(exc.orig) or "numeric field overflow" in str(exc).lower():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Quota limit must be between 0 and 100,000,000,000 (100 billion)",
+            )
+        raise
     await session.refresh(tier)
     update_tier_cache(tier.id, tier.name)
     names = await inference_type_cache.get_name_by_id(session)
@@ -338,7 +348,16 @@ async def update_tier(
     if body.cancel_pending_quota:
         await _cancel_pending_quotas(session, tier, body.cancel_pending_quota, updated_by)
 
-    await session.commit()
+    try:
+        await session.commit()
+    except DBAPIError as exc:
+        await session.rollback()
+        if "NumericValueOutOfRange" in str(exc.orig) or "numeric field overflow" in str(exc).lower():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Quota limit must be between 0 and 100,000,000,000 (100 billion)",
+            )
+        raise
     await session.refresh(tier)
     update_tier_cache(tier.id, tier.name)
 

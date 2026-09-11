@@ -12,6 +12,7 @@ integrations use the ULCA-conformant shape.
 """
 
 import re
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
@@ -425,8 +426,8 @@ class ServiceCreateRequest(BaseSchema):
     sslVerify: bool = True
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
-    costPerUnit: float = Field(..., ge=0)
-    unitSize: int
+    costPerUnit: Decimal = Field(..., ge=0, le=10_000_000)
+    unitSize: int = Field(..., ge=1, le=10_000_000)
     tierIds: List[str] = Field(..., min_length=1)
     expectedResponseSchema: Optional[Dict[str, Any]] = Field(
         None, description=_EXPECTED_RESPONSE_SCHEMA_DESCRIPTION
@@ -642,8 +643,8 @@ class ServiceUpdateRequest(BaseSchema):
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = None
     isTryItDefault: Optional[bool] = None
-    costPerUnit: Optional[float] = Field(None, ge=0)
-    unitSize: Optional[int] = None
+    costPerUnit: Optional[Decimal] = Field(None, ge=0, le=10_000_000)
+    unitSize: Optional[int] = Field(None, ge=1, le=10_000_000)
     tierIds: Optional[List[str]] = None
     expectedResponseSchema: Optional[Dict[str, Any]] = Field(
         None,

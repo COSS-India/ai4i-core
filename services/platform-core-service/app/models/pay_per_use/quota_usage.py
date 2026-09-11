@@ -48,8 +48,8 @@ class QuotaUsage(Base):
         index=True,
     )
     billing_month = Column(String(7), nullable=False)
-    monthly_quota_snap = Column(Numeric(15, 4), nullable=True)
-    monthly_quota_used = Column(Numeric(15, 4), nullable=False, default=0, server_default="0")
+    monthly_quota_snap = Column(Numeric(16, 4), nullable=True)
+    monthly_quota_used = Column(Numeric(16, 4), nullable=False, default=0, server_default="0")
     tier_id = Column(
         UUID(as_uuid=True),
         ForeignKey("tiers.id", ondelete="SET NULL"),

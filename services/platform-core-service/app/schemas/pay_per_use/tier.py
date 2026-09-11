@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -8,10 +9,7 @@ from app.core.constants import TierStatus
 
 class TierQuotaIn(BaseModel):
     modelTaskType: str = Field(..., min_length=1)
-    # Ceiling is the largest integer TierQuota.monthly_quota's Numeric(15, 4)
-    # column can store exactly (11 integer digits), so an out-of-range limit is
-    # rejected here instead of persisting and breaking on read-back.
-    limit: int = Field(..., ge=0, le=99_999_999_999)
+    limit: Decimal = Field(..., ge=0, le=100_000_000_000)
 
     @field_validator("modelTaskType", mode="before")
     @classmethod
@@ -35,8 +33,8 @@ class TierQuotaIn(BaseModel):
 
 class TierQuotaOut(BaseModel):
     modelTaskType: str
-    limit: int
-    pendingLimit: Optional[int] = None
+    limit: Decimal
+    pendingLimit: Optional[Decimal] = None
 
     model_config = {"from_attributes": True}
 

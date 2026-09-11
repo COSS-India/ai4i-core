@@ -30,7 +30,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from app.core.config import settings
 from app.core.exceptions import (
@@ -347,6 +347,14 @@ class ServiceService:
                 )
             logger.exception("DB integrity error creating service")
             raise
+        except DBAPIError as exc:
+            await self._services.rollback()
+            if "NumericValueOutOfRange" in str(exc.orig) or "numeric field overflow" in str(exc).lower():
+                raise ValidationError(
+                    message="Cost per unit must be between 0 and 10,000,000 (10 million)",
+                    code="INVALID_COST_PER_UNIT",
+                )
+            raise
         except Exception:
             await self._services.rollback()
             logger.exception("DB error creating service")
@@ -555,6 +563,14 @@ class ServiceService:
         try:
             await self._services.apply_updates(instance, update_data)
             await self._services.commit()
+        except DBAPIError as exc:
+            await self._services.rollback()
+            if "NumericValueOutOfRange" in str(exc.orig) or "numeric field overflow" in str(exc).lower():
+                raise ValidationError(
+                    message="Cost per unit must be between 0 and 10,000,000 (10 million)",
+                    code="INVALID_COST_PER_UNIT",
+                )
+            raise
         except Exception:
             await self._services.rollback()
             logger.exception("DB error updating service")
