@@ -18,6 +18,12 @@ value itself in the key's payload (see APIKeyService._build_cache_payload)
 and _validate_api_key compares it directly against "now" on every request —
 deterministic on the first request, and independent of whether the tenant
 has ever generated a billed message.
+
+budget_effective_to is the LAST usable day (inclusive calendar-day
+comparison), not the instant access stops — see
+app.utils.budget_window.is_budget_window_expired and its own test file for
+the exact day-boundary coverage; the tests here only confirm the wiring
+reaches that same comparison.
 """
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
@@ -142,23 +148,22 @@ class TestValidateBudgetExpired:
 
         assert result.valid is True
 
-    async def test_exact_instant_counts_as_expired(self) -> None:
-        """"Reached" is inclusive — a budget_effective_to equal to (not
-        just before) "now" must already read as expired."""
+    async def test_same_day_as_now_is_still_valid_not_expired(self) -> None:
+        """budget_effective_to is the LAST usable day, not the instant it
+        starts being unusable — a value equal to (or any time within) the
+        current calendar day (UTC) must NOT be treated as expired yet. The
+        exact instant boundary itself is covered precisely (not just "a bit
+        later") by test_budget_window.py's own frozen-clock tests; this
+        only confirms the wiring reaches that same day-inclusive comparison."""
         api_key_svc = AsyncMock()
 
-        async def _validate_at_exact_instant(_token):
+        async def _validate_right_now(_token):
             now = datetime.now(timezone.utc)
             return _result(budget_effective_to=now.isoformat())
 
-        api_key_svc.validate_api_key = _validate_at_exact_instant
+        api_key_svc.validate_api_key = _validate_right_now
         response = Response()
 
         result = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc)
 
-        # By the time _cached_budget_window_is_expired runs, real time has
-        # moved past "now" captured above, so this is >= by construction —
-        # covered precisely (not just "a bit later") in test_budget_window.py's
-        # own frozen-clock test; this only confirms the wiring reaches that
-        # same inclusive comparison.
-        assert result.status_code == 403
+        assert result.valid is True

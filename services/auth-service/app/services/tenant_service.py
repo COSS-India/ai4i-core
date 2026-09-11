@@ -30,7 +30,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
-from app.utils.budget_window import is_budget_window_expired
+from app.utils.budget_window import as_utc_date, is_budget_window_expired
 from app.utils.common import role_name_to_str
 from app.models.tenant import Tenant, TenantStatus
 from app.models.tenant_plan import TenantPlan
@@ -91,21 +91,12 @@ MAX_TENANT_BUDGET = Decimal(10) ** (
 ) - Decimal(1).scaleb(-_allocated_budget_type.scale)
 
 
-def _as_utc_date(value: datetime):
-    """Calendar date in UTC, not the wall-clock instant — a naive (no
-    tzinfo) datetime is treated as already being UTC, matching every
-    budget-window field's documented contract ("(UTC)" — see
-    TenantBudgetRequest.budget_effective_from/_to), rather than silently
-    reinterpreting it as local time."""
-    return (value.astimezone(timezone.utc) if value.tzinfo else value).date()
-
-
 def _validate_new_effective_from(budget_effective_from: datetime) -> None:
     """Only applies to a From being set for the first time (no active
     window exists yet) — an already-stored From is never re-validated
     against "today", since today has moved on since it was first set and
     that's expected (see revise_tenant_budget's locking rule)."""
-    from_date = _as_utc_date(budget_effective_from)
+    from_date = as_utc_date(budget_effective_from)
     today_utc = datetime.now(timezone.utc).date()
     if from_date < today_utc:
         raise HTTPException(
@@ -126,8 +117,8 @@ def _validate_effective_to_after_from(budget_effective_from: datetime, budget_ef
     active window) — against the proposed To. Calendar dates in UTC, so a
     same-day pair is rejected consistently regardless of either side's time
     portion."""
-    from_date = _as_utc_date(budget_effective_from)
-    to_date = _as_utc_date(budget_effective_to)
+    from_date = as_utc_date(budget_effective_from)
+    to_date = as_utc_date(budget_effective_to)
     if to_date < from_date + timedelta(days=1):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
