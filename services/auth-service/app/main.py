@@ -32,6 +32,13 @@ from app.core.exceptions import register_exception_handlers
 from app.core.redis import close_redis, get_redis_client, init_redis
 from app.core.security import key_manager
 from app.dependencies.auth import init_jwt_verifier
+from ai4i_core.kafka import (
+    init_kafka_producer,
+    close_kafka_producer,
+    refresh_notification_settings_cache,
+    start_notification_settings_listener,
+    stop_notification_settings_listener,
+)
 from app.routes import api_router, versioning
 from app.services.role_permission_cache import role_permission_cache
 from app.services.tenant_name_cache import tenant_name_cache
@@ -61,6 +68,26 @@ async def _configure_catalogue():
         logger.info("Inference type catalogue warmed: %d types.", len(types))
     except Exception as exc:
         logger.warning("Inference type catalogue warm-up skipped: %s", exc)
+
+
+async def _configure_notification_settings_cache():
+    # is_notification_enabled()/get_threshold_bands() back the "should this
+    # even be published" check before TIER_ASSIGNED/TIER_CHANGED/
+    # BUDGET_ASSIGNED/BUDGET_UPDATED — read from configs_notification_alert
+    # (platform-core's DB), same cross-service dependency _configure_catalogue
+    # already has. Best-effort, same reasoning: an unreachable cache must not
+    # stop auth-service booting, it degrades to treating every notification
+    # as disabled (safe default — never publish when we can't tell).
+    session_factory = get_platform_core_session_factory()
+    if session_factory is None:
+        logger.warning("Notification settings cache skipped: platform-core DB not configured.")
+        return
+    try:
+        async with session_factory() as db:
+            await refresh_notification_settings_cache(db)
+        start_notification_settings_listener(get_redis_client())
+    except Exception as exc:
+        logger.warning("Notification settings cache warm-up skipped: %s", exc)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -93,9 +120,17 @@ async def lifespan(app: FastAPI):
     await tenant_name_cache.start()
 
     await tier_status_cache.start()
+    init_kafka_producer(
+        bootstrap_servers=settings.kafka_server,
+        topic=settings.topic_notification,
+        enabled=settings.kafka_enabled,
+    )
+    await _configure_notification_settings_cache()
 
     yield
 
+    await stop_notification_settings_listener()
+    close_kafka_producer()
     await tier_status_cache.stop()
     await tenant_name_cache.stop()
     await role_permission_cache.stop()

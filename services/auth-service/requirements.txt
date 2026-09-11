@@ -16,6 +16,9 @@ alembic>=1.13.0
 # ── Redis ──
 redis>=5.0.0
 
+# ── Kafka (notification producer) ──
+kafka-python==2.3.2
+
 # ── JWT & Security ──
 PyJWT[cryptography]>=2.8.0
 cryptography>=41.0.0
