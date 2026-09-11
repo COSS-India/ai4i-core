@@ -349,11 +349,10 @@ export function useServicesManagement() {
     fetchModels();
   }, []);
 
-  // Fetch tiers for the Create Service form dropdown
   useEffect(() => {
     if (isLoadingTaskTypes) return;
     setTiersLoaded(false);
-    fetchTiers(enabledTaskTypesParam)
+    fetchTiers(enabledTaskTypesParam, "ACTIVE")
       .then((res) => {
         setAvailableTiers(res.data ?? []);
         setTiersLoaded(true);

@@ -247,6 +247,8 @@ export const apiEndpoints = {
     list: `${API_V1}/pay-per-use/tiers`,
     create: `${API_V1}/pay-per-use/tier`,
     update: `${API_V1}/pay-per-use/tier`,
+    status: (tierId: string) =>
+      `${API_V1}/pay-per-use/tier/${tierId}/status`,
   },
 
   usage: {
