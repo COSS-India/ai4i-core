@@ -58,8 +58,7 @@ const TIER_STATUS_ACTIONS = {
     colorScheme: "green",
     loadingText: "Reactivating...",
     successTitle: "Tier reactivated",
-    successDescription:
-      "Monthly quota has been reset and quota-exhausted blocks cleared.",
+    successDescription: "Monthly quota has been reset.",
   },
 } as const;
 
