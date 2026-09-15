@@ -39,6 +39,24 @@ logger = logging.getLogger(__name__)
 NOTIFICATION_ALERT_UPDATES_CHANNEL = "notification_alert_updates"
 
 
+def _parse_thresholds(raw) -> List[ThresholdBand]:
+    """Accepts either shape config.thresholds has ever been stored in:
+    the current list of {percentage, active} bands, or the pre-migration
+    dict keyed by percent-as-string ({"70": false, ...}). ai4iplatform_core
+    has multiple outstanding Alembic heads on release-2.7 at the time this
+    was written, so `alembic upgrade head` cannot be relied on to have run
+    a3f5c7e9b1d3 — a row still holding the old shape must degrade to a
+    correct read, not 500."""
+    if raw is None:
+        return []
+    if isinstance(raw, dict):
+        return [
+            ThresholdBand(percentage=int(percent), active=bool(active))
+            for percent, active in raw.items()
+        ]
+    return [ThresholdBand(**band) for band in raw]
+
+
 def _to_catalog_item(row: ConfigNotificationAlert) -> CatalogItem:
     meta = NOTIFICATION_METADATA.get(row.name)
     is_alert = row.type == NotificationType.ALERT.value
@@ -54,7 +72,7 @@ def _to_catalog_item(row: ConfigNotificationAlert) -> CatalogItem:
         # None (dropped from the response) on a NOTIFICATION row — that key
         # only ever exists in config for ALERT-type rows.
         thresholds=(
-            [ThresholdBand(**band) for band in (row.config or {}).get("thresholds", [])]
+            _parse_thresholds((row.config or {}).get("thresholds"))
             if is_alert
             else None
         ),

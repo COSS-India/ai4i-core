@@ -127,6 +127,19 @@ class TestToCatalogItem:
         item = svc._to_catalog_item(_row(type="ALERT", config={}))
         assert item.thresholds == []
 
+    def test_thresholds_tolerates_the_pre_migration_dict_shape(self):
+        # A row that hasn't gone through a3f5c7e9b1d3 yet (ai4iplatform_core
+        # has multiple outstanding Alembic heads on release-2.7, so
+        # `alembic upgrade head` isn't guaranteed to have run it) must still
+        # read correctly rather than 500 on `ThresholdBand(**"70")`.
+        item = svc._to_catalog_item(
+            _row(
+                name="QUOTA_THRESHOLD", type="ALERT", module="QUOTA",
+                config={"thresholds": {"70": False, "80": True, "90": False}},
+            )
+        )
+        assert item.thresholds == _bands((70, False), (80, True), (90, False))
+
     def test_recipient_roles_reads_the_column_not_config(self):
         item = svc._to_catalog_item(
             _row(
