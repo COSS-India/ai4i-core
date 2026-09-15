@@ -399,16 +399,26 @@ async def _publish_quota_limit_updated(
             for change in quota_changes:
                 if (str(tenant_id), change["inference_name"]) not in fired_set:
                     continue
+                # Positional array per design doc §9.5, not the old
+                # {"inference_name", "previous", "current"} dict — emailer.py
+                # now indexes into it. changes is an array (one line per
+                # Model Task Type) even though this fan-out publishes one
+                # message per (tenant, task type): §9.5's own example
+                # (BUDGET_EXHAUSTED... TIER_CHANGED etc) shows a single-item
+                # array here, matching this event's model_task_type-scoped
+                # subject.
                 publish_notification_event(
                     event_name="QUOTA_LIMIT_UPDATED",
                     tenant_id=str(tenant_id),
                     subject={"model_task_type": change["inference_name"]},
-                    details={
-                        "inference_name": change["inference_name"],
-                        "previous": change["previous"],
-                        "current": change["current"],
-                        "effective_date": effective_date,
-                    },
+                    details=[
+                        tier.name,
+                        [
+                            f"{change['inference_name'].upper()}: changed from "
+                            f"{change['previous']:,.0f} to {change['current']:,.0f}"
+                        ],
+                        effective_date,
+                    ],
                     actor_id=str(updated_by or ""),
                     occurred_at=occurred_at,
                 )

@@ -1270,7 +1270,11 @@ class TestTierBudgetNotificationPublishing:
         svc._tenants.save_and_refresh = AsyncMock()
         tier_row = MagicMock(id=new_tier_id)
         tier_row.name = "Gold"
-        db = _core_db(tier_row=[tier_row])
+        description_row = MagicMock(description="High-volume tier")
+        quota_row = MagicMock(inference_name="asr", monthly_quota=10000)
+        # 1) the tier lookup, 2) _fetch_tier_email_fields' description query,
+        # 3) its tier_quotas query (fetched via .all()).
+        db = _core_db(tier_row=[tier_row, description_row, [quota_row]])
         actor = _admin_user()
 
         with patch(
@@ -1287,7 +1291,7 @@ class TestTierBudgetNotificationPublishing:
             event_name="TIER_ASSIGNED",
             tenant_id="1",
             subject={},
-            details={"tier_name": "Gold"},
+            details=["Gold", "High-volume tier", ["ASR: 10,000 req/mo"]],
             actor_id=str(actor.id),
             occurred_at=ANY,
         )
@@ -1353,9 +1357,13 @@ class TestTierBudgetNotificationPublishing:
         new_tier_row.name = "Platinum"
         old_tier_row = MagicMock(id=old_tier_id)
         old_tier_row.name = "Silver"
+        description_row = MagicMock(description="High-volume tier")
+        quota_row = MagicMock(inference_name="asr", monthly_quota=10000)
         # 1) the new-tier existence lookup, 2) _publish_tier_event's own
-        # old-tier-name lookup — two separate platform_core_db.execute calls.
-        db = _core_db(tier_row=[new_tier_row, old_tier_row])
+        # old-tier-name lookup, 3-4) _fetch_tier_email_fields' description
+        # and tier_quotas queries — four separate platform_core_db.execute
+        # calls in that order.
+        db = _core_db(tier_row=[new_tier_row, old_tier_row, description_row, [quota_row]])
 
         with patch(
             "app.services.tenant_service.is_notification_enabled", AsyncMock(return_value=True)
@@ -1370,7 +1378,7 @@ class TestTierBudgetNotificationPublishing:
             event_name="TIER_CHANGED",
             tenant_id="1",
             subject={},
-            details={"previous": "Silver", "current": "Platinum"},
+            details=["Silver", "Platinum", "High-volume tier", ["ASR: 10,000 req/mo"]],
             actor_id=ANY,
             occurred_at=ANY,
         )
@@ -1409,7 +1417,10 @@ class TestTierBudgetNotificationPublishing:
             event_name="TIER_CHANGED",
             tenant_id="1",
             subject={},
-            details={"previous": str(old_tier_id), "current": "Platinum"},
+            # _fetch_tier_email_fields also best-effort degrades to
+            # ""/[] here — its own two queries exhaust this mock's
+            # side_effect list right after the old-tier-name lookup fails.
+            details=[str(old_tier_id), "Platinum", "", []],
             actor_id=ANY,
             occurred_at=ANY,
         )
@@ -1432,14 +1443,17 @@ class TestTierBudgetNotificationPublishing:
         ) as mock_ledger, patch(
             "app.services.tenant_service.publish_notification_event"
         ) as mock_publish:
-            await svc.revise_tenant_budget(actor, 1, "top-up", Decimal("500"), db)
+            await svc.revise_tenant_budget(
+                actor, 1, "top-up", Decimal("500"),
+                _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db,
+            )
 
         mock_ledger.assert_awaited_once_with(db, "BUDGET_ASSIGNED", "1", {}, ANY, str(actor.id))
         mock_publish.assert_called_once_with(
             event_name="BUDGET_ASSIGNED",
             tenant_id="1",
             subject={},
-            details={"current": "500"},
+            details=["INR", "500"],
             actor_id=str(actor.id),
             occurred_at=ANY,
         )
@@ -1461,13 +1475,16 @@ class TestTierBudgetNotificationPublishing:
         ), patch(
             "app.services.tenant_service.publish_notification_event"
         ) as mock_publish:
-            await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), db)
+            await svc.revise_tenant_budget(
+                _admin_user(), 1, "top-up", Decimal("500"),
+                _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db,
+            )
 
         mock_publish.assert_called_once_with(
             event_name="BUDGET_UPDATED",
             tenant_id="1",
             subject={},
-            details={"previous": "1000", "current": "1500"},
+            details=["INR", "1000", "1500", _VALID_EFFECTIVE_FROM.date().isoformat()],
             actor_id=ANY,
             occurred_at=ANY,
         )
@@ -1489,7 +1506,10 @@ class TestTierBudgetNotificationPublishing:
         ) as mock_ledger, patch(
             "app.services.tenant_service.publish_notification_event"
         ) as mock_publish:
-            await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), db)
+            await svc.revise_tenant_budget(
+                _admin_user(), 1, "top-up", Decimal("500"),
+                _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db,
+            )
 
         mock_ledger.assert_not_awaited()
         mock_publish.assert_not_called()
@@ -1511,7 +1531,10 @@ class TestTierBudgetNotificationPublishing:
         ), patch(
             "app.services.tenant_service.publish_notification_event"
         ) as mock_publish:
-            await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), db)
+            await svc.revise_tenant_budget(
+                _admin_user(), 1, "top-up", Decimal("500"),
+                _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db,
+            )
 
         mock_publish.assert_not_called()
 
@@ -1531,7 +1554,10 @@ class TestTierBudgetNotificationPublishing:
         ) as mock_enabled, patch(
             "app.services.tenant_service.publish_notification_event"
         ) as mock_publish:
-            await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), None)
+            await svc.revise_tenant_budget(
+                _admin_user(), 1, "top-up", Decimal("500"),
+                _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, None,
+            )
 
         mock_enabled.assert_not_called()
         mock_publish.assert_not_called()
