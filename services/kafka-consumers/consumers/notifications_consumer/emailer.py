@@ -47,7 +47,18 @@ logger = get_logger(__name__)
 # other Kafka message behind it, and eventually costs the group its
 # partition (KAFKA_MAX_POLL_INTERVAL_MS). A hard deadline here means a
 # send that can't complete becomes "failed", not "wedged forever".
-_SEND_DEADLINE_S = 20.0
+#
+# MUST stay >= EmailSettings.smtp_timeout (the timeout aiosmtplib.send()
+# itself is given) plus headroom for DNS/TCP-connect, which happen before
+# the SMTP protocol exchange smtp_timeout actually bounds. A flat constant
+# shorter than smtp_timeout used to cut sends off before aiosmtplib's own,
+# more generous timeout would have — confirmed in practice: with
+# smtp_timeout=30 (the ai4i_core.email default) and this at a hardcoded 20,
+# a real SES send that took ~21-25s was logged as "timed out — treating as
+# failed" and the ledger settled to failed, even though the message had
+# already been accepted by SES and the recipient received it. See
+# _send_deadline_s().
+_DEADLINE_HEADROOM_S = 10.0
 
 _MISSING = "—"
 
@@ -56,6 +67,11 @@ _MISSING = "—"
 def _client() -> EmailClient:
     settings = EmailSettings()
     return EmailClient(build_provider(settings))
+
+
+@lru_cache(maxsize=1)
+def _send_deadline_s() -> float:
+    return EmailSettings().smtp_timeout + _DEADLINE_HEADROOM_S
 
 
 # Design doc §9.5's array length per event_name — kept next to _at() so a
@@ -191,19 +207,20 @@ async def send_one(
     *, recipient: Recipient, institution_name: str, event_name: str, details: List[Any],
 ) -> bool:
     """True on a confirmed send. Never raises and never blocks past
-    _SEND_DEADLINE_S — provider failures are logged and reported as False
+    _send_deadline_s() — provider failures are logged and reported as False
     (EmailClient.send_safe), and a hang past the deadline is treated the
     same way, so one bad or unreachable recipient can't take the others
     (or the whole consumer) down with it."""
+    deadline = _send_deadline_s()
     try:
         message = _build_message(
             recipient=recipient, institution_name=institution_name, event_name=event_name, details=details,
         )
-        return await asyncio.wait_for(_client().send_safe(message), timeout=_SEND_DEADLINE_S)
+        return await asyncio.wait_for(_client().send_safe(message), timeout=deadline)
     except asyncio.TimeoutError:
         logger.error(
             "Email send timed out after %.0fs — treating as failed | to=%s event_name=%s",
-            _SEND_DEADLINE_S, recipient.email, event_name,
+            deadline, recipient.email, event_name,
         )
         return False
     except Exception:
