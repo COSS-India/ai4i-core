@@ -97,22 +97,23 @@ def get_metering_service(
     fully cut over to `opensearch` and never configures Prometheus at all.
     Called directly instead, only on the branches that still need it.
 
-    Note: "opensearch" mode still constructs a PrometheusClient too —
-    service_breakdown/model_breakdown (Service/Model Consumption) aren't
-    migrated yet and stay Prometheus-backed even in this mode (see
-    OpenSearchMeteringService's docstring); native-unit metrics
-    (characters/tokens/audio-minutes) stay on Prometheus permanently either
-    way. "dual" isn't a distinct code path yet — it behaves like
-    "prometheus" until the dual-run comparison wrapper is built.
+    Note: both "opensearch" and "dual" modes still construct a
+    PrometheusClient — service_breakdown/model_breakdown (Service/Model
+    Consumption) aren't migrated yet and stay Prometheus-backed regardless of
+    this setting (see OpenSearchMeteringService's docstring); native-unit
+    metrics (characters/tokens/audio-minutes) stay on Prometheus permanently
+    either way. "dual" additionally requires Prometheus (it's the side that
+    gets served), unlike "opensearch" mode where it's optional.
     """
     from app.services.metering_service import MeteringService
+    from app.services.metering_service_dual import DualMeteringService
     from app.services.metering_service_opensearch import OpenSearchMeteringService
     from app.utils.opensearch_log_client import OpenSearchLogClient
 
     service_repo = ServiceRepository(db)
     model_repo = ModelRepository(db)
 
-    if settings.metering_data_source == "opensearch":
+    if settings.metering_data_source in ("opensearch", "dual"):
         if not settings.opensearch_url:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -124,6 +125,9 @@ def get_metering_service(
             password=settings.opensearch_password or "",
             index=settings.opensearch_logs_index,
         )
+        if settings.metering_data_source == "dual":
+            prom_client = get_prometheus_client(request)
+            return DualMeteringService(os_client, prom_client, auth_db, service_repo, model_repo)
         prom_client = get_prometheus_client(request) if settings.prometheus_url else None
         return OpenSearchMeteringService(os_client, prom_client, auth_db, service_repo, model_repo)
 
