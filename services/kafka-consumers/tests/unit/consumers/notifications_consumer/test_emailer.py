@@ -25,14 +25,25 @@ def _recipient() -> Recipient:
 
 class TestAt:
     def test_in_range_returns_value(self):
-        assert emailer._at(["a", "b"], 0) == "a"
-        assert emailer._at(["a", "b"], 1) == "b"
+        assert emailer._at(["a", "b"], 0, "BUDGET_ASSIGNED") == "a"
+        assert emailer._at(["a", "b"], 1, "BUDGET_ASSIGNED") == "b"
 
     def test_out_of_range_returns_missing_marker(self):
-        assert emailer._at(["a"], 1) == emailer._MISSING
+        assert emailer._at(["a"], 1, "BUDGET_ASSIGNED") == emailer._MISSING
 
     def test_out_of_range_uses_custom_default(self):
-        assert emailer._at([], 0, default=[]) == []
+        assert emailer._at([], 0, "QUOTA_LIMIT_UPDATED", default=[]) == []
+
+    def test_out_of_range_logs_a_warning_naming_event_and_expected_count(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            emailer._at(["INR"], 1, "BUDGET_ASSIGNED")  # BUDGET_ASSIGNED needs 2 (design doc §9.5)
+
+        messages = [r.getMessage() for r in caplog.records]
+        assert any(
+            "BUDGET_ASSIGNED" in m and "2" in m for m in messages
+        ), f"warning must name the event_name and the expected count (design doc §9.5); got {messages!r}"
 
 
 class TestBuildMessageDispatch:
@@ -108,21 +119,24 @@ class TestBuildMessageDispatch:
         assert "INR 500000" in msg.html_body
 
     def test_quota_threshold(self):
+        # current_value is "the actual % of Quota consumed" (email_templates.py
+        # / AI4IDS-3027's Alert Details table) — a percentage, not the raw
+        # observed/limit count.
         msg = emailer._build_message(
             recipient=_recipient(), institution_name="Acme Bank", event_name="QUOTA_THRESHOLD",
-            details=["80", "2026-09-10 14:30 IST", "8,240 of 10,000 (NMT)"],
+            details=["80", "2026-09-10 14:30 IST", "82.4"],
         )
         assert msg.subject == "Quota Threshold at 80% — Acme Bank"
         assert "2026-09-10 14:30 IST" in msg.html_body
-        assert "8,240 of 10,000 (NMT)" in msg.html_body
+        assert "82.4" in msg.html_body
 
     def test_budget_threshold(self):
         msg = emailer._build_message(
             recipient=_recipient(), institution_name="Acme Bank", event_name="BUDGET_THRESHOLD",
-            details=["80", "2026-09-10 14:30 IST", "80,000 of 100,000"],
+            details=["80", "2026-09-10 14:30 IST", "82.4"],
         )
         assert msg.subject == "Budget Threshold at 80% — Acme Bank"
-        assert "80,000 of 100,000" in msg.html_body
+        assert "82.4" in msg.html_body
 
     def test_unknown_event_name_raises(self):
         with pytest.raises(ValueError):

@@ -58,12 +58,42 @@ def _client() -> EmailClient:
     return EmailClient(build_provider(settings))
 
 
-def _at(details: List[Any], index: int, default: Any = _MISSING) -> Any:
+# Design doc §9.5's array length per event_name — kept next to _at() so a
+# short array's warning can name what the producer should have sent, not
+# just what index came up empty.
+_EXPECTED_DETAIL_COUNTS = {
+    "TIER_ASSIGNED": 6,
+    "TIER_CHANGED": 7,
+    "BUDGET_ASSIGNED": 2,
+    "BUDGET_UPDATED": 4,
+    "QUOTA_LIMIT_UPDATED": 3,
+    "QUOTA_EXHAUSTED": 2,
+    "BUDGET_EXHAUSTED": 2,
+    "QUOTA_THRESHOLD": 3,
+    "BUDGET_THRESHOLD": 3,
+}
+
+
+def _at(details: List[Any], index: int, event_name: str, default: Any = _MISSING) -> Any:
     """details[index], or `default` if the producer sent a short array (a
     trailing optional value it chose not to fill) — degrade to a visibly
     blank placeholder rather than raising IndexError and losing the whole
-    send over one missing value."""
-    return details[index] if index < len(details) else default
+    send over one missing value.
+
+    A short array is still a producer bug worth knowing about (a Rate
+    Limit/Effective From/Effective To silently blank in a delivered email
+    is otherwise invisible anywhere but the inbox) — logged here rather
+    than only in the rendered output, naming both the event and how many
+    values it actually needs per design doc §9.5."""
+    if index < len(details):
+        return details[index]
+    expected = _EXPECTED_DETAIL_COUNTS.get(event_name, "?")
+    logger.warning(
+        "details too short for event_name=%s — got %d value(s), position %d needs %s total "
+        "(design doc §9.5) — rendering %r for this position",
+        event_name, len(details), index, expected, default,
+    )
+    return default
 
 
 def _build_message(
@@ -76,64 +106,66 @@ def _build_message(
     if event_name == "TIER_ASSIGNED":
         return email_templates.render_tier_assigned_email(
             **common,
-            tier_name=_at(details, 0),
-            tier_description=_at(details, 1),
-            quota_lines=_at(details, 2, default=[]),
-            rate_limit_value=_at(details, 3),
-            effective_from=_at(details, 4),
-            effective_to=_at(details, 5),
+            tier_name=_at(details, 0, event_name),
+            tier_description=_at(details, 1, event_name),
+            quota_lines=_at(details, 2, event_name, default=[]),
+            rate_limit_value=_at(details, 3, event_name),
+            effective_from=_at(details, 4, event_name),
+            effective_to=_at(details, 5, event_name),
         )
     if event_name == "TIER_CHANGED":
         return email_templates.render_tier_reassigned_email(
             **common,
-            current_tier_name=_at(details, 0),
-            new_tier_name=_at(details, 1),
-            new_tier_description=_at(details, 2),
-            quota_lines=_at(details, 3, default=[]),
-            new_rate_limit_value=_at(details, 4),
-            effective_from=_at(details, 5),
-            effective_to=_at(details, 6),
+            current_tier_name=_at(details, 0, event_name),
+            new_tier_name=_at(details, 1, event_name),
+            new_tier_description=_at(details, 2, event_name),
+            quota_lines=_at(details, 3, event_name, default=[]),
+            new_rate_limit_value=_at(details, 4, event_name),
+            effective_from=_at(details, 5, event_name),
+            effective_to=_at(details, 6, event_name),
         )
     if event_name == "BUDGET_ASSIGNED":
         return email_templates.render_budget_assigned_email(
-            **common, currency=_at(details, 0), budget_amount=_at(details, 1),
+            **common, currency=_at(details, 0, event_name), budget_amount=_at(details, 1, event_name),
         )
     if event_name == "BUDGET_UPDATED":
         return email_templates.render_budget_revised_email(
             **common,
-            currency=_at(details, 0),
-            previous_value=_at(details, 1),
-            new_value=_at(details, 2),
-            effective_date=_at(details, 3),
+            currency=_at(details, 0, event_name),
+            previous_value=_at(details, 1, event_name),
+            new_value=_at(details, 2, event_name),
+            effective_date=_at(details, 3, event_name),
         )
     if event_name == "QUOTA_LIMIT_UPDATED":
         return email_templates.render_quota_limit_updated_email(
             **common,
-            tier_name=_at(details, 0),
-            changes=_at(details, 1, default=[]),
-            effective_date=_at(details, 2),
+            tier_name=_at(details, 0, event_name),
+            changes=_at(details, 1, event_name, default=[]),
+            effective_date=_at(details, 2, event_name),
         )
     if event_name == "QUOTA_EXHAUSTED":
         return email_templates.render_quota_exhausted_email(
-            **common, tier_name=_at(details, 0), exhausted_lines=_at(details, 1, default=[]),
+            **common,
+            tier_name=_at(details, 0, event_name),
+            exhausted_lines=_at(details, 1, event_name, default=[]),
         )
     if event_name == "BUDGET_EXHAUSTED":
         return email_templates.render_budget_exhausted_email(
-            **common, currency=_at(details, 0), budget_amount=_at(details, 1),
+            **common, currency=_at(details, 0, event_name), budget_amount=_at(details, 1, event_name),
         )
     if event_name == "QUOTA_THRESHOLD":
         return email_templates.render_quota_threshold_alert_email(
             **common,
-            threshold=_at(details, 0),
-            alert_datetime=_at(details, 1),
-            current_value=_at(details, 2),
+            threshold=_at(details, 0, event_name),
+            alert_datetime=_at(details, 1, event_name),
+            current_value=_at(details, 2, event_name),
         )
     if event_name == "BUDGET_THRESHOLD":
         return email_templates.render_budget_threshold_alert_email(
             **common,
-            threshold=_at(details, 0),
-            alert_datetime=_at(details, 1),
-            current_value=_at(details, 2),
+            threshold=_at(details, 0, event_name),
+            alert_datetime=_at(details, 1, event_name),
+            current_value=_at(details, 2, event_name),
         )
     raise ValueError(f"No email template mapping for event_name={event_name!r}")
 
