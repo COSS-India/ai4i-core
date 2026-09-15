@@ -45,6 +45,34 @@ class TestAt:
             "BUDGET_ASSIGNED" in m and "2" in m for m in messages
         ), f"warning must name the event_name and the expected count (design doc §9.5); got {messages!r}"
 
+    def test_known_optional_trailing_positions_do_not_warn(self, caplog):
+        """auth-service's real producer sends only 3 of TIER_ASSIGNED's 6
+        values and 4 of TIER_CHANGED's 7 — tiers has no rate-limit or
+        expiry column to source the rest from (tenant_service.py). That is
+        normal, expected operation on every tier assign/change, not a
+        producer bug, and must not log a warning."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            for i in range(3, 6):
+                emailer._at(["Gold", "desc", ["line"]], i, "TIER_ASSIGNED")
+            for i in range(4, 7):
+                emailer._at(["Silver", "Gold", "desc", ["line"]], i, "TIER_CHANGED")
+
+        assert caplog.records == []
+
+    def test_positions_before_the_known_optional_floor_still_warn(self, caplog):
+        """The floor only covers the known-omitted trailing values — a
+        short array missing something before that point is still a real
+        mismatch and must still be logged."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            emailer._at(["Gold"], 1, "TIER_ASSIGNED")  # tier_description missing — not optional
+
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("TIER_ASSIGNED" in m for m in messages), f"expected a warning; got {messages!r}"
+
 
 class TestBuildMessageDispatch:
     """One case per event_name this consumer handles — asserts the right

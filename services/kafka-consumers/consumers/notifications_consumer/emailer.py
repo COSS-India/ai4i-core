@@ -73,6 +73,19 @@ _EXPECTED_DETAIL_COUNTS = {
     "BUDGET_THRESHOLD": 3,
 }
 
+# Positions from here on are known to be routinely omitted, not a producer
+# bug — auth-service's _fetch_tier_email_fields (tenant_service.py) never
+# sends TIER_ASSIGNED's rate_limit_value/effective_from/effective_to (index
+# 3-5) or TIER_CHANGED's equivalents (index 4-6): tiers has no rate-limit or
+# expiry column to source them from, so every tier assign/change would
+# otherwise log 3 warnings as normal operation, burying a genuine mismatch
+# under noise that means nothing. Only events listed here get this floor —
+# everything else still warns on any short position, per _EXPECTED_DETAIL_COUNTS.
+_KNOWN_OPTIONAL_FROM = {
+    "TIER_ASSIGNED": 3,
+    "TIER_CHANGED": 4,
+}
+
 
 def _at(details: List[Any], index: int, event_name: str, default: Any = _MISSING) -> Any:
     """details[index], or `default` if the producer sent a short array (a
@@ -81,14 +94,16 @@ def _at(details: List[Any], index: int, event_name: str, default: Any = _MISSING
     send over one missing value.
 
     A short array is either a genuine producer/consumer contract mismatch
-    (design doc §9.5 changed on one side and not the other) or an
-    intentionally-omitted trailing optional value (e.g. TIER_ASSIGNED's
-    rate limit/effective dates, which have no data source yet) — either
-    way it should show up in logs, naming both the event and how many
-    values it actually needs per §9.5, instead of only as a silent "—" in
-    the delivered email."""
+    (design doc §9.5 changed on one side and not the other) or a known,
+    intentionally-omitted trailing value (_KNOWN_OPTIONAL_FROM) — only the
+    former is worth a warning; naming the event and how many values it
+    actually needs per §9.5 for a position no producer is ever expected to
+    send would just be noise on every single send."""
     if index < len(details):
         return details[index]
+    optional_from = _KNOWN_OPTIONAL_FROM.get(event_name)
+    if optional_from is not None and index >= optional_from:
+        return default
     expected = _EXPECTED_DETAIL_COUNTS.get(event_name, "?")
     logger.warning(
         "details too short for event_name=%s — got %d value(s), position %d needs %s total "

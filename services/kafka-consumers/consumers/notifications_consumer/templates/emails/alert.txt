@@ -14,5 +14,6 @@ Log in to the AI4I-Orchestrate Portal to view full details: {{ portal_url }}
 Log in to the AI4I-Orchestrate Portal to view full details.
 {%- endif %}
 
+
 Regards,
 AI4I-Orchestrate Team
