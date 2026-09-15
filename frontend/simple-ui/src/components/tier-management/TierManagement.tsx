@@ -57,7 +57,11 @@ import { FIELD_HINTS } from "../../config/fieldHints";
 import FieldHint from "../common/FieldHint";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { generateUUID } from "../../utils/uuid";
-import { QUOTA_LIMIT_MAX, validateQuotaLimit } from "./tierFormValidation";
+import {
+  acceptQuotaLimitEntry,
+  QUOTA_LIMIT_MAX,
+  validateQuotaLimit,
+} from "./tierFormValidation";
 import { useDeferredColumnSort } from "../../utils/tableSort";
 
 function getTaskTypeBadgeColor(taskType: string): string {
@@ -303,6 +307,9 @@ function QuotaEditor({
           modelTaskType: value,
           unit: unitByTaskType[value] ?? "",
         };
+      }
+      if (field === "limit") {
+        return { ...q, limit: acceptQuotaLimitEntry(value, q.limit) };
       }
       return { ...q, [field]: value };
     });
@@ -1046,7 +1053,9 @@ const TierManagement: React.FC = () => {
                 step={1}
                 clampValueOnBlur={false}
                 value={scheduleLimit}
-                onChange={setScheduleLimit}
+                onChange={(v) =>
+                  setScheduleLimit((prev) => acceptQuotaLimitEntry(v, prev))
+                }
               >
                 <NumberInputField placeholder="e.g. 10" />
               </NumberInput>
