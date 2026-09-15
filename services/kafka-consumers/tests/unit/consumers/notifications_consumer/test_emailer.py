@@ -120,23 +120,25 @@ class TestBuildMessageDispatch:
 
     def test_quota_threshold(self):
         # current_value is "the actual % of Quota consumed" (email_templates.py
-        # / AI4IDS-3027's Alert Details table) — a percentage, not the raw
-        # observed/limit count.
+        # / AI4IDS-3027's Alert Details table), not an absolute "X of Y"
+        # count — and QUOTA_THRESHOLD is per-task-type, so the producer folds
+        # the task type into current_value too (the alert template has no
+        # dedicated slot for it).
         msg = emailer._build_message(
             recipient=_recipient(), institution_name="Acme Bank", event_name="QUOTA_THRESHOLD",
-            details=["80", "2026-09-10 14:30 IST", "82.4"],
+            details=["80", "2026-09-10 14:30 IST", "82% (NMT)"],
         )
         assert msg.subject == "Quota Threshold at 80% — Acme Bank"
         assert "2026-09-10 14:30 IST" in msg.html_body
-        assert "82.4" in msg.html_body
+        assert "82% (NMT)" in msg.html_body
 
     def test_budget_threshold(self):
         msg = emailer._build_message(
             recipient=_recipient(), institution_name="Acme Bank", event_name="BUDGET_THRESHOLD",
-            details=["80", "2026-09-10 14:30 IST", "82.4"],
+            details=["80", "2026-09-10 14:30 IST", "82%"],
         )
         assert msg.subject == "Budget Threshold at 80% — Acme Bank"
-        assert "82.4" in msg.html_body
+        assert "82%" in msg.html_body
 
     def test_unknown_event_name_raises(self):
         with pytest.raises(ValueError):

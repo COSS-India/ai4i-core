@@ -80,11 +80,13 @@ def _at(details: List[Any], index: int, event_name: str, default: Any = _MISSING
     blank placeholder rather than raising IndexError and losing the whole
     send over one missing value.
 
-    A short array is still a producer bug worth knowing about (a Rate
-    Limit/Effective From/Effective To silently blank in a delivered email
-    is otherwise invisible anywhere but the inbox) — logged here rather
-    than only in the rendered output, naming both the event and how many
-    values it actually needs per design doc §9.5."""
+    A short array is either a genuine producer/consumer contract mismatch
+    (design doc §9.5 changed on one side and not the other) or an
+    intentionally-omitted trailing optional value (e.g. TIER_ASSIGNED's
+    rate limit/effective dates, which have no data source yet) — either
+    way it should show up in logs, naming both the event and how many
+    values it actually needs per §9.5, instead of only as a silent "—" in
+    the delivered email."""
     if index < len(details):
         return details[index]
     expected = _EXPECTED_DETAIL_COUNTS.get(event_name, "?")
