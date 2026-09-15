@@ -467,3 +467,33 @@ class TestUpdateServicePricingCacheInvalidation:
         await svc.update_service(payload, updated_by="user-1")
 
         assert order == ["commit", "invalidate_pricing"]
+
+    @pytest.mark.asyncio
+    async def test_pricing_cache_still_invalidated_when_post_commit_cache_rebuild_fails(
+        self,
+    ) -> None:
+        """PR review (ordering comment): invalidate_pricing must run before
+        the model/tier lookups in the eager service-detail-cache rebuild,
+        not after. Those lookups are DB calls that can raise even though
+        the price write already committed — if invalidate_pricing were
+        still positioned after them, a failure here would leave the
+        payperuse pricing cache stale for the rest of the hour despite
+        mm_services already holding the new price. This reproduces exactly
+        that failure and asserts the pricing cache was busted anyway."""
+        svc = _make_svc("svc-abc")
+        svc._models.get_by_id_version = AsyncMock(
+            side_effect=ConnectionError("db connection reset")
+        )
+
+        payload = ServiceUpdateRequest(
+            serviceId="svc-abc", costPerUnit=3.0, unitSize=1, taskType="asr", tierIds=["tier-1"]
+        )
+
+        with pytest.raises(ConnectionError):
+            await svc.update_service(payload, updated_by="user-1")
+
+        # The DB write already committed (apply_updates/commit ran) before
+        # get_by_id_version blew up — the pricing cache bust must have
+        # happened too, not been skipped by the later failure.
+        svc._services.commit.assert_awaited_once()
+        svc._cache.invalidate_pricing.assert_awaited_once_with("svc-abc")

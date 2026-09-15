@@ -578,6 +578,20 @@ class ServiceService:
 
         # Refresh cache (eager rebuild)
         self._cache.invalidate_service(instance.service_id)
+
+        # A pricing field changed: bust payperuse_consumer's cached rate so
+        # billing picks up the new price on the next event instead of
+        # waiting out its 1-hour TTL (see CacheService.invalidate_pricing).
+        # Deliberately placed here, right after the commit and before the
+        # model/tier lookups below: those are DB calls that can still raise
+        # even though the price write already committed, and if they did
+        # with this block after them, the pricing cache would stay stale
+        # for the rest of the hour despite the DB already having the new
+        # price — the exact bug this block exists to prevent, just via a
+        # different failure path.
+        if {"cost_per_unit", "unit_size", "unit_rate", "task_type"} & update_data.keys():
+            await self._cache.invalidate_pricing(instance.service_id)
+
         model = await self._models.get_by_id_version(
             instance.model_id, instance.model_version
         )
@@ -587,12 +601,6 @@ class ServiceService:
             self._cache.set_service(
                 instance.service_id, service_detail_dict(instance, model, tier_names=tier_names)
             )
-
-        # A pricing field changed: bust payperuse_consumer's cached rate so
-        # billing picks up the new price on the next event instead of
-        # waiting out its 1-hour TTL (see CacheService.invalidate_pricing).
-        if {"cost_per_unit", "unit_size", "unit_rate", "task_type"} & update_data.keys():
-            await self._cache.invalidate_pricing(instance.service_id)
 
     async def _load_endpoint_update_target(
         self, item: ServiceEndpointUpdateItem
