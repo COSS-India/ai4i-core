@@ -324,7 +324,7 @@ async def _publish_usage_crossing_events(
                         details=[
                             str(band),
                             _alert_datetime_ist(alert_at),
-                            f"{write.api_key_budget_used:,.0f} of {write.api_key_budget_snap:,.0f}",
+                            f"{post_pct:.0f}%",
                         ],
                         occurred_at=alert_at.isoformat(),
                     )
@@ -367,7 +367,7 @@ async def _publish_usage_crossing_events(
                         details=[
                             str(band),
                             _alert_datetime_ist(alert_at),
-                            f"{write.quota_used:,.0f} of {write.quota_snap:,.0f} ({inference_name.upper()})",
+                            f"{post_pct:.0f}% ({inference_name.upper()})",
                         ],
                         occurred_at=alert_at.isoformat(),
                     )
