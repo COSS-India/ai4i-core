@@ -1,11 +1,17 @@
-"""notification_consumer — DUMMY SCAFFOLD (AI4IDS-3026).
+"""notification_consumer — Kafka Consumer Notification.
 
-No real logic yet. This exists purely so `kafka-consumers` can be built and
-deployed as a `--consumer notification_consumer` process ahead of the
-Notifications-and-Alerts design landing (see the updated diagram: an
-End-point/Inference event reaches a Kafka consumer that checks the saved
-notification config and fans out to Send Email / Slack). handler.py is a
-no-op; replace it once that design is final.
+Implements skills/notification-kafka-design/notification-kafka-design.md:
+reads notification/alert events off TOPIC_NOTIFICATION, resolves recipients
+and sends the email directly (no auth-service call). The producer already
+decided "is this new" and claimed the ledger row (libs/ai4i_core/ai4i_core/
+kafka/ledger.py) before publishing — this consumer only claims and settles
+the delivery half. See catalog_cache.py, ledger.py, recipients.py,
+emailer.py, delivery.py and handler.py for the pieces; this file is just
+the consume loop wiring, plus opening the second (auth) database connection
+recipients.py depends on.
+
+Consumer-side only — the producers (auth-service's admin-change endpoints,
+and payperuse_consumer's producer half) are separate work, not built here.
 
 Built on bootstrap/ (ManagedConsumer + lifecycle), the shipped shape new
 consumers should copy — unlike payperuse_consumer, which predates bootstrap/
@@ -19,12 +25,12 @@ GROUP_ID is a brand-new group: KAFKA_AUTO_OFFSET_RESET must be set to
 from __future__ import annotations
 
 from ai4i_core.logging import get_logger
-from confluent_kafka import KafkaException
+from confluent_kafka import KafkaError, KafkaException, Message
 
 from bootstrap.config import get_db_settings
 from bootstrap.consumers import CommitMode, ManagedConsumer
-from bootstrap.lifecycle import infra, shutdown_event
-from consumers.notification_consumer import config as cfg
+from bootstrap.lifecycle import add_database, infra, shutdown_event
+from consumers.notification_consumer import catalog_cache, config as cfg, pii_crypto
 from consumers.notification_consumer.handler import handle_notification_event
 
 logger = get_logger(__name__)
@@ -35,11 +41,61 @@ logger = get_logger(__name__)
 GROUP_ID = "notification-service"
 
 
+def _usable(msg: Message) -> bool:
+    """Error classification, mirroring payperuse_consumer's own _usable()
+    (ARCHITECTURE.md §6.3) — only a fatal error, or _AUTO_OFFSET_RESET
+    specifically, may take the process down.
+
+    _AUTO_OFFSET_RESET means KAFKA_AUTO_OFFSET_RESET=error fired: this group
+    has no valid committed offset and cannot proceed on its own. Left as a
+    plain ERROR log (the old behaviour here) it repeats on every poll
+    forever without ever processing a real message — logging loudly is not
+    the same as failing loudly. Raising crashes the process so the
+    orchestrator restarts it and an on-call engineer actually gets paged,
+    instead of a consumer that looks alive while doing nothing.
+    """
+    err = msg.error()
+    if err is None:
+        return True
+
+    if err.code() == KafkaError._PARTITION_EOF:
+        return False  # informational, not a failure
+
+    if err.code() == KafkaError._AUTO_OFFSET_RESET or err.fatal():
+        logger.critical(
+            "Fatal Kafka error — exiting for restart | code=%s: %s", err.name(), err.str()
+        )
+        raise KafkaException(err)
+
+    logger.error("Kafka error entry | code=%s: %s", err.name(), err.str())
+    return False
+
+
 async def run() -> None:
     db = get_db_settings()
     settings = cfg.get_settings()
 
+    # Hand the key to pii_crypto explicitly — pydantic-settings loads .env
+    # into `settings`, not into os.environ, so a bare os.getenv() inside
+    # pii_crypto would never see it. Mirrors auth-service's own
+    # config.py -> pii_crypto.configure_key() handoff exactly.
+    pii_crypto.configure_key(
+        settings.PII_ENCRYPTION_KEY.get_secret_value() if settings.PII_ENCRYPTION_KEY else None
+    )
+
     async with infra(db_name=db.PLATFORM_CORE_DB):
+        # Second connection, named "auth" — recipients.py resolves who holds
+        # which role for a tenant by reading ai4iplatform_auth directly.
+        # Opened once here, not per-message; infra()'s own teardown closes
+        # every named connection alongside the default one.
+        await add_database("auth", db_name=settings.AUTH_SERVICE_DB)
+
+        # Live cache invalidation — see catalog_cache.py's module docstring.
+        # Opens its own dedicated Redis connection (not the shared one from
+        # infra() — that one's socket_timeout is wrong for a blocking
+        # pub/sub read).
+        catalog_cache.start_listener()
+
         consumer = ManagedConsumer.build_bulk_message_consumer(
             group_id=GROUP_ID,
             topic=settings.TOPIC_NOTIFICATION,
@@ -76,11 +132,11 @@ async def run() -> None:
                         )
                         continue
 
-                    if msg.error() is not None:
-                        logger.error("Kafka error entry | %s", msg.error().str())
+                    if not _usable(msg):
                         continue
 
                     await handle_notification_event(msg)
                     await consumer.record_processed(msg)
         finally:
             consumer.shutdown()
+            await catalog_cache.stop_listener()

@@ -1,0 +1,3 @@
+Hi {{ recipient_name }},
+
+Your budget is fully depleted. New requests are blocked until it is revised by your Adopter Admin.

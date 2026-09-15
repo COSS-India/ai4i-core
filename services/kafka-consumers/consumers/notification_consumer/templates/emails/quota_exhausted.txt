@@ -1,0 +1,3 @@
+Hi {{ recipient_name }},
+
+Your {{ inference_name }} quota is fully consumed. New requests of this type are blocked until it resets or is revised.
