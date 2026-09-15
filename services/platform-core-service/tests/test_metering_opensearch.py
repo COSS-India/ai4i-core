@@ -116,12 +116,26 @@ class TestOpenSearchLogClientCompositeAll:
 # ── OpenSearchMeteringService ────────────────────────────────────────────────
 
 
-def _make_os_service(aggregate_return=None, count_return=0, composite_return=None, auth_db=None):
+def _make_os_service(
+    aggregate_return=None, count_return=0, composite_return=None, auth_db=None,
+    prom_client=None,
+):
     os_client = MagicMock()
     os_client.aggregate = AsyncMock(return_value=aggregate_return if aggregate_return is not None else {})
     os_client.count = AsyncMock(return_value=count_return)
     os_client.composite_all = AsyncMock(return_value=composite_return or [])
-    return OpenSearchMeteringService(os_client=os_client, auth_db=auth_db), os_client
+    return (
+        OpenSearchMeteringService(os_client=os_client, client=prom_client, auth_db=auth_db),
+        os_client,
+    )
+
+
+def _mock_prom_client(scalar_return=0.0):
+    client = MagicMock()
+    client.scalar = AsyncMock(return_value=scalar_return)
+    client.query = AsyncMock(return_value=[])
+    client.query_range = AsyncMock(return_value=[])
+    return client
 
 
 class TestTaskTypePaths:
@@ -330,6 +344,123 @@ class TestUsageByTenantService:
         sources = os_client.composite_all.call_args.kwargs["sources"]
         assert sources[0]["tenant_id"]["terms"]["field"] == "tenant_id"
         assert sources[1]["path"]["terms"]["field"] == "path"
+
+
+@pytest.mark.asyncio
+class TestServiceBreakdown:
+    async def test_request_counts_come_from_opensearch_terms_agg(self):
+        prom_client = _mock_prom_client(scalar_return=0.0)
+        svc, os_client = _make_os_service(
+            prom_client=prom_client,
+            aggregate_return={"by_path": {"buckets": [
+                {
+                    "key": "/api/v1/nmt/inference", "doc_count": 10,
+                    "by_status": {"buckets": {"success": {"doc_count": 8}, "failed": {"doc_count": 2}}},
+                },
+                {
+                    "key": "/api/v1/chat", "doc_count": 4,
+                    "by_status": {"buckets": {"success": {"doc_count": 4}, "failed": {"doc_count": 0}}},
+                },
+            ]}},
+        )
+        result = await svc.service_breakdown(tenant=None, time_range="24h")
+        by_service = {s["service"]: s for s in result["services"]}
+        assert by_service["NMT"]["requests"] == 10
+        assert by_service["NMT"]["success_pct"] == 80.0
+        assert by_service["LLM"]["requests"] == 4
+        assert by_service["LLM"]["success_pct"] == 100.0
+
+    async def test_native_units_still_come_from_prometheus(self):
+        prom_client = _mock_prom_client(scalar_return=42.0)
+        svc, os_client = _make_os_service(
+            prom_client=prom_client,
+            aggregate_return={"by_path": {"buckets": [
+                {
+                    "key": "/api/v1/nmt/inference", "doc_count": 5,
+                    "by_status": {"buckets": {"success": {"doc_count": 5}, "failed": {"doc_count": 0}}},
+                },
+            ]}},
+        )
+        result = await svc.service_breakdown(tenant=None, time_range="24h", service_filter=["nmt"])
+        nmt = next(s for s in result["services"] if s["service"] == "NMT")
+        assert nmt["native_units"] == 42
+        # Native units are a Prometheus scalar() call, not an OpenSearch one.
+        assert prom_client.scalar.called
+
+    async def test_service_filter_limits_native_unit_queries(self):
+        prom_client = _mock_prom_client(scalar_return=1.0)
+        svc, _ = _make_os_service(prom_client=prom_client, aggregate_return={"by_path": {"buckets": []}})
+        await svc.service_breakdown(tenant=None, time_range="24h", service_filter=["nmt"])
+        # Only one native-unit metric (nmt) queried, not all of SERVICE_BREAKDOWN_CONFIG.
+        assert prom_client.scalar.call_count == 1
+
+
+@pytest.mark.asyncio
+class TestModelBreakdown:
+    def _bucket(self, service_id, model_id, path, total, success):
+        return {
+            "key": {"service_id": service_id, "model_id": model_id, "path": path},
+            "doc_count": total,
+            "by_status": {"buckets": {"success": {"doc_count": success}, "failed": {"doc_count": total - success}}},
+        }
+
+    async def test_groups_by_service_and_model_composite_buckets(self):
+        prom_client = _mock_prom_client(scalar_return=0.0)
+        svc, os_client = _make_os_service(
+            prom_client=prom_client,
+            composite_return=[
+                self._bucket("MH-gemma-32b", "hash-gemma-v1", "/api/v1/chat", 100, 90),
+            ],
+        )
+        svc._service_repo = MagicMock()
+        svc._service_repo.get_names_and_models_by_service_ids = AsyncMock(
+            return_value={"MH-gemma-32b": ("Mahavistaar Gemma 32B", "hash-gemma-v1", "gemma-3-27b-it")}
+        )
+        svc._model_repo = MagicMock()
+        svc._model_repo.get_model_names = AsyncMock(return_value={"hash-gemma-v1": "gemma-3-27b-it"})
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        row = next(s for s in result["services"] if s["service_id"] == "MH-gemma-32b")
+        assert row["requests"] == 100
+        assert row["success_pct"] == 90.0
+        assert row["model_id"] == "hash-gemma-v1"
+        model_row = next(m for m in result["model_totals"] if m["model_id"] == "hash-gemma-v1")
+        assert model_row["requests"] == 100
+
+        # composite_all must request missing_bucket on model_id (see docstring).
+        sources = os_client.composite_all.call_args.kwargs["sources"]
+        model_source = next(s for s in sources if "model_id" in s)
+        assert model_source["model_id"]["terms"]["missing_bucket"] is True
+
+        # sub_aggs must be a NAMED aggs mapping ({"by_status": {...}}), not a
+        # bare _status_filters_agg() definition — OpenSearch rejects the
+        # unnamed form with a parsing_exception at query time (caught only by
+        # a live-cluster check, not by mocked unit tests, so pin the shape
+        # here explicitly).
+        sub_aggs = os_client.composite_all.call_args.kwargs["sub_aggs"]
+        assert set(sub_aggs.keys()) == {"by_status"}
+        assert "filters" in sub_aggs["by_status"]
+
+    async def test_missing_model_id_bucket_still_counts_toward_service_total(self):
+        """A composite bucket with model_id=None (missing_bucket) — service_id
+        resolved but model_id didn't — must still count toward that
+        service's per-service total, not be dropped."""
+        prom_client = _mock_prom_client(scalar_return=0.0)
+        svc, _ = _make_os_service(
+            prom_client=prom_client,
+            composite_return=[
+                self._bucket("svc-1", None, "/api/v1/nmt/inference", 5, 5),
+            ],
+        )
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        row = next(s for s in result["services"] if s["service_id"] == "svc-1")
+        assert row["requests"] == 5
+
+    async def test_native_units_still_queried_via_prometheus(self):
+        prom_client = _mock_prom_client(scalar_return=0.0)
+        svc, _ = _make_os_service(prom_client=prom_client, composite_return=[])
+        await svc.model_breakdown(tenant=None, time_range="24h")
+        assert prom_client.query.called
 
 
 @pytest.mark.asyncio

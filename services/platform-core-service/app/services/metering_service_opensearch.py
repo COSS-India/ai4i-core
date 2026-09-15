@@ -15,22 +15,28 @@ into the same `{"metric": {...}, "value": [_, count]}` row shape Prometheus's
 own query results use, specifically so those inherited helpers can consume
 them without modification.
 
-Currently overridden (this round's scope — Overview + Tenant Consumption,
-the two tabs the architecture doc recommends cutting over first, §10 step 3):
+Currently overridden — every request-count KPI across all four tabs
+(Overview, Tenant Consumption, Service Consumption, Model Consumption):
   request_total, request_volume_chart, active_tenants,
   active_tenants_count_previous, avg_per_active_tenant_previous,
   usage_concentration, tenant_ranking, usage_by_tenant_service,
-  model_usage_growth_pct.
+  model_usage_growth_pct, service_breakdown, model_breakdown.
+service_breakdown/model_breakdown are genuine hybrids, not full OpenSearch
+swaps: their native-unit values (characters/tokens/audio-minutes) still come
+from the inherited Prometheus-backed `_native_unit_queries`/
+`_model_native_unit_queries`, since those metrics stay on Prometheus
+permanently (doc §9). model_breakdown also reuses
+`MeteringService._shape_model_breakdown` — the ghost-filtering/per-service/
+per-model rollup logic, extracted verbatim from the Prometheus version
+specifically so this override doesn't duplicate its several ROLLOUT-NOTE-
+documented subtleties; only the composite-aggregation row-fetching differs
+(§7.9).
 
-Deliberately NOT overridden yet (inherited from MeteringService, still
-Prometheus-backed via the `client` passed to `__init__`):
-  service_breakdown, model_breakdown — Service/Model Consumption's request
-  counts are a follow-up; both also mix in native-unit metrics
-  (characters/tokens/audio-minutes), which stay on Prometheus permanently
-  (doc §9) regardless of when the request-count side migrates. Passing a
-  real PrometheusClient into `__init__` keeps these two working unchanged in
-  the meantime — this class is additive, not a full replacement, until that
-  follow-up lands.
+Passing a real PrometheusClient into `__init__` is still required — not just
+for native units, but because `tenant_count`, `registry_model_count`,
+`model_consumption_ranking`, and `model_consumption_kpis` (inherited,
+pure-Postgres/pure-Python, unchanged) and the native-unit queries above all
+still run through it.
 """
 import asyncio
 import logging
@@ -45,6 +51,7 @@ from app.services.metering_service import (
     _Unset,
     _WINDOW_SECONDS,
 )
+from app.services.pay_per_use import inference_type_cache
 from app.utils.metering_promql_builder import (
     API_KEY_AUTH_TYPE,
     ENDPOINT_TO_TASK,
@@ -686,3 +693,141 @@ class OpenSearchMeteringService(MeteringService):
         if prev_total <= 0:
             return None
         return round((cur_total - prev_total) / prev_total * 100, 1)
+
+    async def service_breakdown(
+        self, tenant: Optional[str], time_range: Optional[str],
+        service_filter: Optional[list[str]] = None,
+        tenant_id: Optional[str] = None,
+    ) -> dict:
+        """Per-service stats: requests/success % from OpenSearch (exact
+        counts), native units still from Prometheus via the inherited
+        `_native_unit_queries`/`_unpack_native_units` — those metrics aren't
+        part of this migration (doc §9) and `self._client` here is a real
+        PrometheusClient for exactly this reason (see class docstring).
+
+        Note: `tenant` (org name) has no OpenSearch equivalent filter — only
+        `tenant_id` is used; see `_base_filters`. The native-unit queries
+        below still take `tenant` directly since they're unchanged
+        Prometheus calls.
+        """
+        unit_map = await inference_type_cache.get_unit_map_standalone()
+
+        window = TIME_RANGES.get(time_range or "all")
+        base_filters = self._base_filters(
+            tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE,
+            task_types=service_filter, inference_only=True,
+        )
+        query = self._windowed_query(window, base_filters)
+        aggregations = await self._os_client.aggregate(query, {
+            "by_path": {
+                "terms": {"field": "path", "size": 1000},
+                "aggs": {"by_status": self._status_filters_agg()},
+            }
+        })
+        buckets = aggregations.get("by_path", {}).get("buckets", [])
+
+        # Reshaped into the same `{"metric": {endpoint_label: path}, "value":
+        # [_, count]}` row shape Prometheus's `sum by(endpoint)` result uses,
+        # so _endpoint_dict (inherited, unchanged) can resolve path -> task
+        # key exactly as it already does for the Prometheus path.
+        total_rows = [
+            {"metric": {PROMETHEUS_API_PATH_LABEL: b["key"]}, "value": [0, b["doc_count"]]}
+            for b in buckets
+        ]
+        success_rows = [
+            {
+                "metric": {PROMETHEUS_API_PATH_LABEL: b["key"]},
+                "value": [0, b.get("by_status", {}).get("buckets", {}).get("success", {}).get("doc_count", 0)],
+            }
+            for b in buckets
+        ]
+        totals = self._endpoint_dict(total_rows)
+        successes = self._endpoint_dict(success_rows)
+
+        native_tasks, native_coros = self._native_unit_queries(
+            tenant, time_range, service_filter, tenant_id=tenant_id,
+        )
+        native_raw = await asyncio.gather(*native_coros, return_exceptions=True)
+        natives = self._unpack_native_units(native_tasks, native_raw, native_offset=0)
+
+        return {
+            "services": self._service_breakdown_rows(
+                totals, successes, natives, unit_map, service_filter
+            ),
+            "filters": {"tenant": tenant, "time_range": time_range or "all"},
+        }
+
+    async def model_breakdown(
+        self, tenant: Optional[str], time_range: Optional[str],
+        tenant_id: Optional[str] = None,
+        task_types: Optional[list[str]] = None,
+    ) -> dict:
+        """Per-service AND per-model requests/success % from OpenSearch (exact
+        counts, via a `composite` aggregation over `service_id`/`model_id`/
+        `path` — doc §7.9), native units still from Prometheus. All the
+        ghost-filtering/rollup logic (registry validation, the independent
+        per-service vs. per-model views) is unchanged — see
+        `MeteringService._shape_model_breakdown`, extracted specifically so
+        this override can reuse it without touching a single line of that
+        logic.
+
+        `missing_bucket: true` on the `model_id` composite source matters:
+        RequestMiddleware only logs a field when it's truthy (see
+        ai4i_core's ctx-enrichment loop), so a request whose service_id
+        resolved but whose model_id didn't (or wasn't set) has NO `model_id`
+        field on its log line at all — unlike Prometheus, where the label
+        always exists on the series, just possibly as `""`. Without
+        `missing_bucket`, OpenSearch's composite aggregation would silently
+        exclude those documents entirely, undercounting that service's
+        request total; with it, they get their own bucket (model_id=None),
+        preserving the per-service total exactly the way `_effective_model_id`
+        already expects (empty/`None` model_id is `""`, filtered out of the
+        model-level view but NOT the service-level one).
+        """
+        unit_map = await inference_type_cache.get_unit_map_standalone()
+        window = TIME_RANGES.get(time_range or "all")
+        base_filters = self._base_filters(
+            tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE,
+            task_types=task_types, inference_only=True,
+        )
+        query = self._windowed_query(window, base_filters)
+
+        buckets = await self._os_client.composite_all(
+            query,
+            sources=[
+                {"service_id": {"terms": {"field": "service_id"}}},
+                {"model_id": {"terms": {"field": "model_id", "missing_bucket": True}}},
+                {"path": {"terms": {"field": "path"}}},
+            ],
+            sub_aggs={"by_status": self._status_filters_agg()},
+        )
+
+        # Reshaped into Prometheus's own `sum by(service_id, model_id,
+        # endpoint)` row shape so _shape_model_breakdown (inherited,
+        # unchanged) can consume it exactly as it does the Prometheus result
+        # vector — see this method's own docstring above.
+        total_rows: list[dict] = []
+        success_rows: list[dict] = []
+        for b in buckets:
+            key = b["key"]
+            metric = {
+                "service_id": key.get("service_id") or "",
+                "model_id": key.get("model_id") or "",
+                PROMETHEUS_API_PATH_LABEL: key.get("path") or "",
+            }
+            total_rows.append({"metric": metric, "value": [0, b["doc_count"]]})
+            success_count = b.get("by_status", {}).get("buckets", {}).get("success", {}).get("doc_count", 0)
+            success_rows.append({"metric": metric, "value": [0, success_count]})
+
+        native_tasks, native_coros = self._model_native_unit_queries(
+            tenant, tenant_id, time_range, task_types,
+        )
+        native_raw = await asyncio.gather(*native_coros, return_exceptions=True)
+        native_by_task: dict[str, dict[str, float]] = {
+            task: self._native_units_by_service(native_raw[i] if not isinstance(native_raw[i], Exception) else [])
+            for i, task in enumerate(native_tasks)
+        }
+
+        return await self._shape_model_breakdown(
+            total_rows, success_rows, native_by_task, unit_map, tenant, time_range, task_types,
+        )

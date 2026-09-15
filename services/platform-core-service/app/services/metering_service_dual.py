@@ -18,11 +18,11 @@ which carries both a real Prometheus client (`self._client`) and a real
 OpenSearch client (`self._os_client`), exactly like OpenSearchMeteringService
 already requires.
 
-Methods NOT overridden here (service_breakdown, model_breakdown,
-tenant_count, registry_model_count, model_consumption_ranking,
-model_consumption_kpis, overview_tenant_data) are inherited from
-MeteringService via OpenSearchMeteringService and run Prometheus-only, same
-as in plain "opensearch" mode — there's nothing to dual-run for them yet.
+Methods NOT overridden here (tenant_count, registry_model_count,
+model_consumption_ranking, model_consumption_kpis, overview_tenant_data) are
+inherited from MeteringService via OpenSearchMeteringService and run
+Prometheus-only, same as in plain "opensearch" mode — they're pure
+Postgres/Python with nothing OpenSearch-sourced to compare.
 `overview_tenant_data` needs no override of its own: it calls
 `self.active_tenants(...)` internally, which resolves polymorphically to
 this class's dual-run override.
@@ -66,6 +66,16 @@ _COMPARABLE: dict = {
     "tenant_ranking": lambda r: {"grand_total": r["grand_total"], "tenant_count": r["total_tenant_count"]},
     "usage_by_tenant_service": lambda r: {"grand_total": r["grand_total"], "tenant_count": r["total_tenant_count"]},
     "model_usage_growth_pct": lambda r: {"pct": r},
+    "service_breakdown": lambda r: {
+        "service_count": len(r["services"]),
+        "total_requests": sum(s["requests"] for s in r["services"]),
+    },
+    "model_breakdown": lambda r: {
+        "service_count": len(r["services"]),
+        "model_count": len(r["model_totals"]),
+        "service_requests": sum(s["requests"] for s in r["services"]),
+        "model_requests": sum(m["requests"] for m in r["model_totals"]),
+    },
 }
 
 
@@ -196,4 +206,24 @@ class DualMeteringService(OpenSearchMeteringService):
             "model_usage_growth_pct",
             MeteringService.model_usage_growth_pct(self),
             OpenSearchMeteringService.model_usage_growth_pct(self),
+        )
+
+    async def service_breakdown(
+        self, tenant: Optional[str], time_range: Optional[str],
+        service_filter: Optional[list[str]] = None, tenant_id: Optional[str] = None,
+    ) -> dict:
+        return await self._dual_call(
+            "service_breakdown",
+            MeteringService.service_breakdown(self, tenant, time_range, service_filter, tenant_id),
+            OpenSearchMeteringService.service_breakdown(self, tenant, time_range, service_filter, tenant_id),
+        )
+
+    async def model_breakdown(
+        self, tenant: Optional[str], time_range: Optional[str],
+        tenant_id: Optional[str] = None, task_types: Optional[list[str]] = None,
+    ) -> dict:
+        return await self._dual_call(
+            "model_breakdown",
+            MeteringService.model_breakdown(self, tenant, time_range, tenant_id, task_types),
+            OpenSearchMeteringService.model_breakdown(self, tenant, time_range, tenant_id, task_types),
         )

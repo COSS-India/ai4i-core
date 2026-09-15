@@ -109,6 +109,15 @@ class OpenSearchLogClient:
         (app/routes/telemetry.py), the same pattern already proven against
         the traces-* index, applied here to logs-*.
 
+        ``sub_aggs``, if given, must already be a full NAMED aggs mapping
+        (e.g. ``{"by_status": {...}}``), not a bare aggregation definition —
+        it's spliced directly into the composite agg's own ``"aggs"``, which
+        OpenSearch requires to be ``{name: definition, ...}``. Passing an
+        unnamed definition (e.g. a bare ``_status_filters_agg()`` result)
+        produces a malformed query that OpenSearch rejects with a
+        `parsing_exception` at query time — this has no client-side
+        validation, so get it right at the call site.
+
         Each returned bucket is the raw OpenSearch bucket dict: ``{"key":
         {...}, "doc_count": N, <sub_agg_name>: {...}}``. Stops when a page
         comes back with no ``after_key`` (all buckets collected) or

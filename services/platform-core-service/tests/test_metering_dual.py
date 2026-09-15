@@ -142,6 +142,47 @@ class TestRequestTotalDualRun:
 
 
 @pytest.mark.asyncio
+class TestServiceBreakdownDualRun:
+    async def test_calls_both_backends_and_serves_prometheus_shape(self):
+        svc = _make_dual_service()
+        svc._client.query = AsyncMock(return_value=[
+            {"metric": {"exported_endpoint": "/api/v1/nmt/inference"}, "value": [0, "5"]},
+        ])
+        svc._os_client.aggregate = AsyncMock(return_value={"by_path": {"buckets": [
+            {"key": "/api/v1/nmt/inference", "doc_count": 999,
+             "by_status": {"buckets": {"success": {"doc_count": 999}, "failed": {"doc_count": 0}}}},
+        ]}})
+        result = await svc.service_breakdown(tenant=None, time_range="24h")
+        # Served value (5) comes from Prometheus's mocked query(), not the
+        # OpenSearch side's 999 — confirms Prometheus is still authoritative.
+        nmt = next(s for s in result["services"] if s["service"] == "NMT")
+        assert nmt["requests"] == 5
+        svc._os_client.aggregate.assert_called_once()
+
+
+@pytest.mark.asyncio
+class TestModelBreakdownDualRun:
+    async def test_calls_both_backends_and_serves_prometheus_shape(self):
+        svc = _make_dual_service()
+        svc._client.query = AsyncMock(return_value=[
+            {"metric": {"service_id": "svc-1", "model_id": "m-1", "exported_endpoint": "/api/v1/chat"}, "value": [0, "5"]},
+        ])
+        svc._os_client.composite_all = AsyncMock(return_value=[
+            {
+                "key": {"service_id": "svc-1", "model_id": "m-1", "path": "/api/v1/chat"},
+                "doc_count": 999,
+                "by_status": {"buckets": {"success": {"doc_count": 999}, "failed": {"doc_count": 0}}},
+            },
+        ])
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        row = next(s for s in result["services"] if s["service_id"] == "svc-1")
+        # Served value (5) comes from Prometheus's mocked query(), not the
+        # OpenSearch side's 999.
+        assert row["requests"] == 5
+        svc._os_client.composite_all.assert_called_once()
+
+
+@pytest.mark.asyncio
 class TestOverviewTenantDataUsesDualActiveTenants:
     async def test_overview_tenant_data_dispatches_through_dual_active_tenants(self):
         """overview_tenant_data (inherited, unmodified) calls self.active_tenants

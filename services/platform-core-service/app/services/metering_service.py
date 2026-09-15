@@ -993,6 +993,34 @@ class MeteringService:
             for i, task in enumerate(native_tasks)
         }
 
+        return await self._shape_model_breakdown(
+            total_rows, success_rows, native_by_task, unit_map, tenant, time_range, task_types,
+        )
+
+    async def _shape_model_breakdown(
+        self,
+        total_rows: list,
+        success_rows: list,
+        native_by_task: dict[str, dict[str, float]],
+        unit_map: dict[str, str],
+        tenant: Optional[str],
+        time_range: Optional[str],
+        task_types: Optional[list[str]],
+    ) -> dict:
+        """Everything model_breakdown() does AFTER fetching its rows — ghost-
+        filtering against the Registry, the per-service view, and the
+        independently-collapsed per-model view (see model_breakdown's own
+        ROLLOUT NOTEs for the full reasoning this preserves unchanged).
+
+        Row-shape-agnostic by design: `total_rows`/`success_rows` only need
+        to be `{"metric": {"service_id":..., "model_id":...,
+        PROMETHEUS_API_PATH_LABEL:...}, "value": [_, count]}` dicts — the
+        exact shape Prometheus's own `query()` returns, and also what
+        OpenSearchMeteringService.model_breakdown() reshapes its composite
+        aggregation buckets into, specifically so this method needs no
+        changes at all to serve either backend. Split out from
+        model_breakdown() for exactly that reuse — not a behavior change.
+        """
         # ── Per-service view (collapses across model_id — see class docstring
         # on why a service_id can transiently carry more than one model_id
         # label value; the per-service TOTAL must not fragment because of it).
