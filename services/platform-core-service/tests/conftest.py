@@ -196,6 +196,7 @@ _deps_stub.get_metering_service = MagicMock()
 # module pulls in ai4i_core.bootstrap.redis, which isn't stubbed here.
 _redis_stub = _conftest_stub("app.core.redis")
 _redis_stub.get_redis = MagicMock()
+_redis_stub.get_redis_client = MagicMock()
 
 # ── the inference-type catalogue, as tests see it ───────────────────────────
 #

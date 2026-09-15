@@ -26,7 +26,10 @@ function fromApiItem(item: ApiCatalogItem): NotificationAlertCatalogItem {
     module: item.module,
     channels: [...item.channels],
     recipient_roles,
-    thresholds: item.thresholds == null ? undefined : { ...item.thresholds },
+    thresholds:
+      item.thresholds == null
+        ? undefined
+        : item.thresholds.map((band) => ({ ...band })),
     enabled: isCatalogItemEnabled(item.recipient_roles),
     // Catalog is system-seeded only in v1 (no custom create API).
     origin: "seeded",
@@ -54,7 +57,11 @@ async function updateCatalogApi(
   if (payload.recipient_roles) {
     body.recipient_roles = { ...payload.recipient_roles };
   }
-  if (payload.thresholds) body.thresholds = { ...payload.thresholds };
+  // Wholesale replacement — the BE has no per-band merge (percentage itself
+  // is editable, so a band has no stable key to merge against).
+  if (payload.thresholds) {
+    body.thresholds = payload.thresholds.map((band) => ({ ...band }));
+  }
 
   const response = await apiClient.patch(
     apiEndpoints.notificationAlerts.catalogByName(name),
