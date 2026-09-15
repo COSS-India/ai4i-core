@@ -64,12 +64,16 @@ async def refresh_all(db) -> None:
         )
         new_rows: Dict[str, Dict[str, Any]] = {}
         for row in result.all():
-            thresholds = (row.config or {}).get("thresholds", {})
+            # thresholds is a list of {"percentage": int, "active": bool}
+            # bands (see catalog_service.py) — only active ones count.
+            thresholds = (row.config or {}).get("thresholds", [])
             new_rows[row.name] = {
                 "id": row.id,
                 "recipient_roles": row.recipient_roles or {},
                 "channels": list(row.channels or []),
-                "threshold_bands": sorted(int(pct) for pct, enabled in thresholds.items() if enabled),
+                "threshold_bands": sorted(
+                    band["percentage"] for band in thresholds if band.get("active")
+                ),
             }
         _rows = new_rows
         _loaded_at = time.monotonic()
