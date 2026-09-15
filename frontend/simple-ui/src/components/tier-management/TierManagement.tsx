@@ -279,6 +279,10 @@ function limitError(quota: TierFormQuota): string | null {
   return validateQuotaLimit(quota.limit);
 }
 
+function showLimitError(quota: TierFormQuota, showErrors?: boolean): boolean {
+  return (showErrors || !!quota.limit.trim()) && !!limitError(quota);
+}
+
 function QuotaEditor({
   quotas,
   onChange,
@@ -429,7 +433,7 @@ function QuotaEditor({
 
                   <FormControl
                     isRequired
-                    isInvalid={showErrors && !!limitError(quota)}
+                    isInvalid={showLimitError(quota, showErrors)}
                     isDisabled={isEditMode}
                     minW={0}
                   >
@@ -454,7 +458,7 @@ function QuotaEditor({
                     <FormErrorMessage fontSize="xs">
                       {limitError(quota)}
                     </FormErrorMessage>
-                    <FieldHint show={!(showErrors && !!limitError(quota))}>
+                    <FieldHint show={!showLimitError(quota, showErrors)}>
                       {FIELD_HINTS.tier.quotaLimit.helper}
                     </FieldHint>
                   </FormControl>
