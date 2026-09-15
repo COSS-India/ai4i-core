@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import redis.asyncio as aioredis
 from ai4i_core.kafka import NOTIFICATION_SETTINGS_CHANNEL
@@ -34,6 +34,24 @@ from bootstrap.config import get_redis_settings
 from consumers.notification_consumer.config import Constants
 
 logger = get_logger(__name__)
+
+
+def _parse_thresholds(raw) -> List[Dict[str, Any]]:
+    """Accepts either shape config.thresholds has ever been stored in: the
+    current list of {"percentage": int, "active": bool} bands
+    (platform-core-service's catalog_service.py), or the pre-migration dict
+    keyed by percent-as-string ({"70": false, ...}). Unused by this consumer
+    today (see handler.py), but a row still holding the old shape must not
+    raise here either — normalise it now so a future reader gets the real
+    shape, not a stale one."""
+    if not raw:
+        return []
+    if isinstance(raw, dict):
+        return [
+            {"percentage": int(percent), "active": bool(active)}
+            for percent, active in raw.items()
+        ]
+    return list(raw)
 
 
 @dataclass(frozen=True)
@@ -49,7 +67,11 @@ class NotificationConfig:
     module: str
     channels: list
     recipient_roles: Dict[str, bool] = field(default_factory=dict)
-    thresholds: Dict[str, bool] = field(default_factory=dict)
+    # config.thresholds is a list of {"percentage": int, "active": bool}
+    # bands (platform-core-service's catalog_service.py) — not a dict keyed
+    # by percent. Unused by this consumer today (see handler.py), carried
+    # here only so a future reader gets the real shape, not a stale one.
+    thresholds: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class _Cache:
@@ -109,7 +131,7 @@ class _Cache:
                 module=row["module"],
                 channels=list(row["channels"] or []),
                 recipient_roles=recipient_roles,
-                thresholds=config.get("thresholds", {}) or {},
+                thresholds=_parse_thresholds(config.get("thresholds")),
             )
         self._by_name = by_name
         self._loaded_at = time.monotonic()

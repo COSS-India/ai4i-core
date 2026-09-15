@@ -27,8 +27,13 @@ import pytest
 
 from app.core.exceptions import EntityNotFoundError, ValidationError
 from app.schemas.enums.notification_management import NotificationType
-from app.schemas.notification_management.catalog import CatalogUpdate
+from app.schemas.notification_management.catalog import CatalogUpdate, ThresholdBand
 from app.services.notification_management import catalog_service as svc
+
+
+def _bands(*pairs):
+    """[(percentage, active), ...] -> [ThresholdBand, ...] for CatalogUpdate payloads."""
+    return [ThresholdBand(percentage=p, active=a) for p, a in pairs]
 
 
 # ── fakes ────────────────────────────────────────────────────────────────────
@@ -101,7 +106,7 @@ class TestToCatalogItem:
         # Defensive: a NOTIFICATION row must never expose thresholds, even if
         # stray data ended up in its config.
         item = svc._to_catalog_item(
-            _row(type="NOTIFICATION", config={"thresholds": {"50": True}})
+            _row(type="NOTIFICATION", config={"thresholds": [{"percentage": 50, "active": True}]})
         )
         assert item.thresholds is None
 
@@ -109,14 +114,31 @@ class TestToCatalogItem:
         item = svc._to_catalog_item(
             _row(
                 name="QUOTA_THRESHOLD", type="ALERT", module="QUOTA",
-                config={"thresholds": {"50": False, "75": False, "90": False}},
+                config={"thresholds": [
+                    {"percentage": 70, "active": False},
+                    {"percentage": 80, "active": False},
+                    {"percentage": 90, "active": False},
+                ]},
             )
         )
-        assert item.thresholds == {"50": False, "75": False, "90": False}
+        assert item.thresholds == _bands((70, False), (80, False), (90, False))
 
-    def test_thresholds_defaults_to_empty_dict_for_an_alert_row_with_no_config(self):
+    def test_thresholds_defaults_to_empty_list_for_an_alert_row_with_no_config(self):
         item = svc._to_catalog_item(_row(type="ALERT", config={}))
-        assert item.thresholds == {}
+        assert item.thresholds == []
+
+    def test_thresholds_tolerates_the_pre_migration_dict_shape(self):
+        # A row that hasn't gone through a3f5c7e9b1d3 yet (ai4iplatform_core
+        # has multiple outstanding Alembic heads on release-2.7, so
+        # `alembic upgrade head` isn't guaranteed to have run it) must still
+        # read correctly rather than 500 on `ThresholdBand(**"70")`.
+        item = svc._to_catalog_item(
+            _row(
+                name="QUOTA_THRESHOLD", type="ALERT", module="QUOTA",
+                config={"thresholds": {"70": False, "80": True, "90": False}},
+            )
+        )
+        assert item.thresholds == _bands((70, False), (80, True), (90, False))
 
     def test_recipient_roles_reads_the_column_not_config(self):
         item = svc._to_catalog_item(
@@ -150,9 +172,12 @@ class TestListCatalog:
         assert items == []
 
     async def test_alert_type_rows_carry_thresholds(self):
-        rows = [_row(name="QUOTA_THRESHOLD", type="ALERT", config={"thresholds": {"50": True}})]
+        rows = [_row(
+            name="QUOTA_THRESHOLD", type="ALERT",
+            config={"thresholds": [{"percentage": 50, "active": True}]},
+        )]
         items = await svc.list_catalog(_Session(rows=rows), NotificationType.ALERT)
-        assert items[0].thresholds == {"50": True}
+        assert items[0].thresholds == _bands((50, True))
 
 
 # ── update_catalog ───────────────────────────────────────────────────────────
@@ -174,7 +199,7 @@ class TestUpdateCatalog:
         row = _row(id=1, name="TIER_ASSIGNED", type="NOTIFICATION")
         with pytest.raises(ValidationError):
             await svc.update_catalog(
-                _Session(found=row), row.name, CatalogUpdate(thresholds={"50": True})
+                _Session(found=row), row.name, CatalogUpdate(thresholds=_bands((50, True)))
             )
 
     async def test_legal_recipient_role_allowed_for_a_notification_row(self):
@@ -197,13 +222,18 @@ class TestUpdateCatalog:
             )
 
     async def test_recipient_roles_write_to_the_column_not_config(self):
-        row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT", config={"thresholds": {"50": False}})
+        row = _row(
+            id=2, name="QUOTA_THRESHOLD", type="ALERT",
+            config={"thresholds": [{"percentage": 50, "active": False}]},
+        )
         session = _Session(found=row)
         await svc.update_catalog(
             session, row.name, CatalogUpdate(recipient_roles={"TENANT ADMIN": True})
         )
         assert row.recipient_roles == {"TENANT ADMIN": True}
-        assert row.config == {"thresholds": {"50": False}}, "thresholds must survive untouched"
+        assert row.config == {
+            "thresholds": [{"percentage": 50, "active": False}]
+        }, "thresholds must survive untouched"
 
     async def test_illegal_recipient_role_is_rejected(self):
         # Per LEGAL_RECIPIENT_ROLES, only TENANT ADMIN / ADMIN are legal
@@ -217,13 +247,22 @@ class TestUpdateCatalog:
     async def test_thresholds_write_into_config_without_touching_recipient_roles(self):
         row = _row(
             id=3, name="BUDGET_THRESHOLD", type="ALERT",
-            recipient_roles={"ADMIN": True}, config={"thresholds": {"50": False}},
+            recipient_roles={"ADMIN": True},
+            config={"thresholds": [
+                {"percentage": 70, "active": False},
+                {"percentage": 80, "active": False},
+                {"percentage": 90, "active": False},
+            ]},
         )
         session = _Session(found=row)
         await svc.update_catalog(
-            session, row.name, CatalogUpdate(thresholds={"50": True, "75": True})
+            session, row.name, CatalogUpdate(thresholds=_bands((70, True), (80, True), (90, False)))
         )
-        assert row.config == {"thresholds": {"50": True, "75": True}}
+        assert row.config == {"thresholds": [
+            {"percentage": 70, "active": True},
+            {"percentage": 80, "active": True},
+            {"percentage": 90, "active": False},
+        ]}
         assert row.recipient_roles == {"ADMIN": True}, "recipient_roles must survive untouched"
 
     async def test_partial_recipient_roles_update_keeps_other_keys_at_their_current_value(self):
@@ -240,35 +279,50 @@ class TestUpdateCatalog:
         )
         assert row.recipient_roles == {"TENANT ADMIN": True, "ADMIN": False}
 
-    async def test_partial_thresholds_update_keeps_other_keys_at_their_current_value(self):
+    async def test_thresholds_is_a_wholesale_replacement_not_a_merge(self):
+        # No stable key to merge a partial update against once percentage
+        # itself is editable — a PATCH always sends and stores exactly the
+        # 3 bands it names, in full.
         row = _row(
             id=2, name="QUOTA_THRESHOLD", type="ALERT",
-            config={"thresholds": {"50": True, "75": True, "90": True}},
+            config={"thresholds": [
+                {"percentage": 50, "active": True},
+                {"percentage": 75, "active": True},
+                {"percentage": 90, "active": True},
+            ]},
         )
         session = _Session(found=row)
-        await svc.update_catalog(session, row.name, CatalogUpdate(thresholds={"90": False}))
-        assert row.config == {"thresholds": {"50": True, "75": True, "90": False}}
+        await svc.update_catalog(
+            session, row.name, CatalogUpdate(thresholds=_bands((60, True), (85, False), (95, True)))
+        )
+        assert row.config == {"thresholds": [
+            {"percentage": 60, "active": True},
+            {"percentage": 85, "active": False},
+            {"percentage": 95, "active": True},
+        ]}
 
-    async def test_too_many_threshold_keys_is_rejected(self):
+    async def test_wrong_number_of_bands_is_rejected(self):
         row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT")
-        thresholds = {str(n): True for n in (10, 20, 30, 40, 50, 60)}  # 6 > MAX_THRESHOLD_KEYS
         with pytest.raises(ValidationError):
             await svc.update_catalog(
-                _Session(found=row), row.name, CatalogUpdate(thresholds=thresholds)
+                _Session(found=row), row.name,
+                CatalogUpdate(thresholds=_bands((10, True), (20, True))),  # 2, not THRESHOLD_BAND_COUNT
             )
 
-    async def test_threshold_key_out_of_range_is_rejected(self):
+    async def test_duplicate_band_percentages_are_rejected(self):
         row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT")
         with pytest.raises(ValidationError):
             await svc.update_catalog(
-                _Session(found=row), row.name, CatalogUpdate(thresholds={"100": True})
+                _Session(found=row), row.name,
+                CatalogUpdate(thresholds=_bands((70, True), (70, False), (90, True))),
             )
 
-    async def test_non_digit_threshold_key_is_rejected(self):
+    async def test_band_percentage_out_of_range_is_rejected(self):
         row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT")
         with pytest.raises(ValidationError):
             await svc.update_catalog(
-                _Session(found=row), row.name, CatalogUpdate(thresholds={"fifty": True})
+                _Session(found=row), row.name,
+                CatalogUpdate(thresholds=_bands((70, True), (80, True), (100, True))),
             )
 
     async def test_channels_are_replaced(self):
@@ -280,12 +334,13 @@ class TestUpdateCatalog:
     async def test_omitted_fields_are_left_alone(self):
         row = _row(
             id=2, name="QUOTA_THRESHOLD", type="ALERT",
-            recipient_roles={"ADMIN": True}, config={"thresholds": {"50": True}},
+            recipient_roles={"ADMIN": True},
+            config={"thresholds": [{"percentage": 50, "active": True}]},
         )
         session = _Session(found=row)
         await svc.update_catalog(session, row.name, CatalogUpdate())
         assert row.recipient_roles == {"ADMIN": True}
-        assert row.config == {"thresholds": {"50": True}}
+        assert row.config == {"thresholds": [{"percentage": 50, "active": True}]}
 
     async def test_commits_and_refreshes_on_success(self):
         row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT")
@@ -310,11 +365,14 @@ class TestUpdateCatalog:
         assert row.updated_by == "someone-else"
 
     async def test_returns_the_updated_item(self):
-        row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT", config={"thresholds": {"50": True}})
+        row = _row(
+            id=2, name="QUOTA_THRESHOLD", type="ALERT",
+            config={"thresholds": [{"percentage": 50, "active": True}]},
+        )
         session = _Session(found=row)
         item = await svc.update_catalog(
             session, row.name, CatalogUpdate(recipient_roles={"ADMIN": True})
         )
         assert item.recipient_roles == {"ADMIN": True}
-        assert item.thresholds == {"50": True}
+        assert item.thresholds == _bands((50, True))
         assert item.id == 2

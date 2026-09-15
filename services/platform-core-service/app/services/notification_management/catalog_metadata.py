@@ -118,9 +118,11 @@ LEGAL_RECIPIENT_ROLES: dict[NotificationName, frozenset[str]] = {
     name: _ADMIN_AND_TENANT_ADMIN for name in NotificationName
 }
 
-#: ``thresholds`` keys: whole percents 1-99, at most 5 keys. Not expressible
-#: as a column CHECK (a count across JSONB keys is not one) — service-enforced,
-#: per the design.
+#: ``thresholds`` bands: whole percents 1-99, exactly 3 bands (no more, no
+#: fewer) — e.g. a "low"/"warning"/"critical" style set an Adopter Admin
+#: names and sets a percentage/active flag for, without the band itself
+#: carrying a name. Not expressible as a column CHECK (a count across a
+#: JSONB array is not one) — service-enforced, per the design.
 MIN_THRESHOLD_PERCENT = 1
 MAX_THRESHOLD_PERCENT = 99
-MAX_THRESHOLD_KEYS = 5
+THRESHOLD_BAND_COUNT = 3
