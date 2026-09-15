@@ -442,6 +442,7 @@ class TestNewFieldsPersistence:
         cache = MagicMock()
         cache.invalidate_service = AsyncMock()
         cache.set_service = AsyncMock()
+        cache.invalidate_pricing = AsyncMock()
 
         svc = ServiceService(service_repo=service_repo, model_repo=model_repo, cache=cache)
 
@@ -916,6 +917,7 @@ class TestDescriptionLengthOnUpdate:
         model_repo.get_by_id_version = AsyncMock(return_value=None)
         cache = MagicMock()
         cache.invalidate_service = MagicMock()
+        cache.invalidate_pricing = AsyncMock()
         svc = ServiceService(service_repo=service_repo, model_repo=model_repo, cache=cache)
 
         payload = ServiceUpdateRequest(
