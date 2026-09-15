@@ -34,7 +34,7 @@ def _cfg(**overrides) -> NotificationConfig:
         module="PAY_PER_USE",
         channels=["EMAIL"],
         recipient_roles={"TENANT ADMIN": True},
-        thresholds={},
+        thresholds=[],
     )
     base.update(overrides)
     return NotificationConfig(**base)

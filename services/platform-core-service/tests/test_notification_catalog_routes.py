@@ -32,7 +32,7 @@ import pytest
 
 from app.core.exceptions import EntityNotFoundError
 from app.schemas.enums.notification_management import NotificationType
-from app.schemas.notification_management.catalog import CatalogItem, CatalogUpdate
+from app.schemas.notification_management.catalog import CatalogItem, CatalogUpdate, ThresholdBand
 
 _notification_spec = importlib.util.spec_from_file_location(
     "app.routes.notification", "app/routes/notification.py"
@@ -115,13 +115,13 @@ class TestListCatalogRoute:
             _notification_routes.catalog_service, "list_catalog",
             AsyncMock(return_value=[
                 _item(name="QUOTA_THRESHOLD", type=NotificationType.ALERT,
-                      thresholds={"50": False})
+                      thresholds=[ThresholdBand(percentage=50, active=False)])
             ]),
         )
         resp = await _notification_routes.list_catalog(
             catalog_type=NotificationType.ALERT, session=_SESSION
         )
-        assert resp.data.items[0].thresholds == {"50": False}
+        assert resp.data.items[0].thresholds == [ThresholdBand(percentage=50, active=False)]
 
 
 class TestListCatalogRouteShape:

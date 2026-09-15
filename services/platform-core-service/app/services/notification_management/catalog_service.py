@@ -21,13 +21,13 @@ from app.models.notification_management.config_notification_alert import (
     ConfigNotificationAlert,
 )
 from app.schemas.enums.notification_management import NotificationName, NotificationType
-from app.schemas.notification_management.catalog import CatalogItem, CatalogUpdate
+from app.schemas.notification_management.catalog import CatalogItem, CatalogUpdate, ThresholdBand
 from app.services.notification_management.catalog_metadata import (
     LEGAL_RECIPIENT_ROLES,
-    MAX_THRESHOLD_KEYS,
     MAX_THRESHOLD_PERCENT,
     MIN_THRESHOLD_PERCENT,
     NOTIFICATION_METADATA,
+    THRESHOLD_BAND_COUNT,
 )
 
 logger = logging.getLogger(__name__)
@@ -53,7 +53,11 @@ def _to_catalog_item(row: ConfigNotificationAlert) -> CatalogItem:
         recipient_roles=row.recipient_roles or {},
         # None (dropped from the response) on a NOTIFICATION row — that key
         # only ever exists in config for ALERT-type rows.
-        thresholds=(row.config or {}).get("thresholds", {}) if is_alert else None,
+        thresholds=(
+            [ThresholdBand(**band) for band in (row.config or {}).get("thresholds", [])]
+            if is_alert
+            else None
+        ),
     )
 
 
@@ -68,11 +72,11 @@ async def list_catalog(session: AsyncSession, catalog_type: NotificationType) ->
 
 
 def _merged_bool_dict(existing: Dict[str, bool], incoming: Dict[str, bool]) -> Dict[str, bool]:
-    """PATCH semantics for recipient_roles/thresholds: the payload only
-    needs to carry the key(s) that changed. Every key already on the row
-    keeps its current value unless the payload names it, in which case it's
-    set to exactly what the payload says — no key is ever dropped or reset
-    to False just for being omitted."""
+    """PATCH semantics for recipient_roles: the payload only needs to carry
+    the key(s) that changed. Every key already on the row keeps its current
+    value unless the payload names it, in which case it's set to exactly
+    what the payload says — no key is ever dropped or reset to False just
+    for being omitted. (thresholds does not use this — see update_catalog.)"""
     return {**existing, **incoming}
 
 
@@ -91,18 +95,27 @@ def _validate_recipient_roles(name: str, recipient_roles: Dict[str, bool]) -> No
         )
 
 
-def _validate_thresholds(name: str, thresholds: Dict[str, bool]) -> None:
-    if len(thresholds) > MAX_THRESHOLD_KEYS:
+def _validate_thresholds(name: str, thresholds: List[ThresholdBand]) -> None:
+    if len(thresholds) != THRESHOLD_BAND_COUNT:
         raise ValidationError(
-            message=f"At most {MAX_THRESHOLD_KEYS} threshold(s) allowed for '{name}'.",
+            message=(
+                f"Exactly {THRESHOLD_BAND_COUNT} threshold band(s) are required for '{name}' "
+                f"(got {len(thresholds)})."
+            ),
             code="INVALID_THRESHOLDS",
         )
-    for key in thresholds:
-        if not key.isdigit() or not (MIN_THRESHOLD_PERCENT <= int(key) <= MAX_THRESHOLD_PERCENT):
+    percentages = [band.percentage for band in thresholds]
+    if len(set(percentages)) != len(percentages):
+        raise ValidationError(
+            message=f"Threshold percentages for '{name}' must be unique.",
+            code="INVALID_THRESHOLDS",
+        )
+    for band in thresholds:
+        if not (MIN_THRESHOLD_PERCENT <= band.percentage <= MAX_THRESHOLD_PERCENT):
             raise ValidationError(
                 message=(
-                    f"Threshold key '{key}' for '{name}' must be a whole percent between "
-                    f"{MIN_THRESHOLD_PERCENT} and {MAX_THRESHOLD_PERCENT}."
+                    f"Threshold percentage {band.percentage} for '{name}' must be a whole percent "
+                    f"between {MIN_THRESHOLD_PERCENT} and {MAX_THRESHOLD_PERCENT}."
                 ),
                 code="INVALID_THRESHOLDS",
             )
@@ -122,10 +135,13 @@ async def update_catalog(
     ALERT-type rows); sending it for a NOTIFICATION row is a validation
     error. channels/recipient_roles are accepted for both types.
 
-    recipient_roles/thresholds are partial-update dicts, not wholesale
-    replacements: every key already stored on the row keeps its current
-    value unless the payload names it, in which case it's set to exactly
-    what the payload says."""
+    recipient_roles is a partial-update dict, not a wholesale replacement:
+    every key already stored on the row keeps its current value unless the
+    payload names it, in which case it's set to exactly what the payload
+    says. ``thresholds`` is different — it's a wholesale replacement of the
+    whole THRESHOLD_BAND_COUNT-length list, since a band's ``percentage`` is
+    itself editable and bands have no other stable key to merge a partial
+    update against."""
     # Validate against the enum in Python before it ever reaches the query:
     # `name` is arbitrary path-param text, and comparing a non-member string
     # to a Postgres ENUM column raises an invalid-input-value DB error (a
@@ -154,11 +170,9 @@ async def update_catalog(
         row.recipient_roles = merged
 
     if payload.thresholds is not None:
-        existing_thresholds = (row.config or {}).get("thresholds", {})
-        merged = _merged_bool_dict(existing_thresholds, payload.thresholds)
-        _validate_thresholds(row.name, merged)
+        _validate_thresholds(row.name, payload.thresholds)
         config = dict(row.config or {})
-        config["thresholds"] = merged
+        config["thresholds"] = [band.model_dump() for band in payload.thresholds]
         row.config = config
 
     if payload.channels is not None:
