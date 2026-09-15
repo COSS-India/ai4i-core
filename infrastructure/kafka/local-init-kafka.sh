@@ -92,16 +92,16 @@ kafka-topics --create \
     --config cleanup.policy=delete \
     --if-not-exists || echo "Topic usage already exists"
 
-echo "Creating topic: notification_alerts.events"
+echo "Creating topic: notification.events"
 kafka-topics --create \
     --bootstrap-server $KAFKA_BOOTSTRAP_SERVERS \
-    --topic notification_alerts.events \
+    --topic notification.events \
     --partitions 3 \
     --replication-factor $REPLICATION_FACTOR \
     --config retention.ms=604800000 \
     --config compression.type=gzip \
     --config cleanup.policy=delete \
-    --if-not-exists || echo "Topic notification_alerts.events already exists"
+    --if-not-exists || echo "Topic notification.events already exists"
 
 echo "Creating consumer groups..."
 

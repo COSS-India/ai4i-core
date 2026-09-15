@@ -1,4 +1,4 @@
-"""Settings specific to notifications_consumer. Nothing here belongs in
+"""Settings specific to notification_consumer. Nothing here belongs in
 bootstrap/config.py — topics, service URLs and domain constants are
 per-consumer (ARCHITECTURE.md §3.1/§5).
 
@@ -41,12 +41,6 @@ class Settings(BaseSettings):
         "startup (main.py); reading it here rather than via bare os.getenv is "
         "what makes it actually load from this consumer's .env — pydantic-settings "
         "loads .env into this Settings object, not into os.environ.",
-    )
-    PORTAL_URL: Optional[str] = Field(
-        default=None,
-        description="Same setting as platform-core-service's settings.portal_url — "
-        "the '_portal_line.html' include (email_templates.py) links here when set, "
-        "and falls back to unlinked plain text in every rendered email when it isn't.",
     )
 
     class Config:

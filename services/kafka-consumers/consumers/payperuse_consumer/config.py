@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     TOPIC_NOTIFICATION: str = Field(
         "notification.events",
         description="Kafka topic this consumer PUBLISHES QUOTA_THRESHOLD/BUDGET_THRESHOLD/"
-        "QUOTA_EXHAUSTED/BUDGET_EXHAUSTED events to (same topic notifications_consumer reads).",
+        "QUOTA_EXHAUSTED/BUDGET_EXHAUSTED events to (same topic notification_consumer reads).",
     )
     NOTIFICATION_PRODUCER_ENABLED: bool = Field(
         False, description="Feature flag for the notification-event producer side-channel."

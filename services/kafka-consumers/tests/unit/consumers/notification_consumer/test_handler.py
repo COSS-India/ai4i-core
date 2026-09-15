@@ -1,4 +1,4 @@
-"""consumers/notifications_consumer/handler.py — _process_channel's delivery
+"""consumers/notification_consumer/handler.py — _process_channel's delivery
 state machine.
 
 _process_channel is the one place deciding, per channel, whether to touch a
@@ -22,8 +22,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from consumers.notifications_consumer.catalog_cache import NotificationConfig
-from consumers.notifications_consumer.handler import _process_channel
+from consumers.notification_consumer.catalog_cache import NotificationConfig
+from consumers.notification_consumer.handler import _process_channel
 
 
 def _cfg(**overrides) -> NotificationConfig:
@@ -46,7 +46,7 @@ def _envelope(**overrides) -> dict:
         tenant_id="2",
         occurred_at="2026-09-11T00:00:00+00:00",
         subject={},
-        details=["A", "B", "Some tier", ["NMT: 10,000 req/mo"], "1000", "2026-09-10", "2027-09-09"],
+        details={"previous": "A", "current": "B"},
         actor_id=None,
     )
     base.update(overrides)
@@ -64,14 +64,14 @@ class TestProcessChannelStateMachine:
     async def test_no_ledger_row_does_nothing(self):
         db = object()
         with patch(
-            "consumers.notifications_consumer.handler.ledger.fetch_row",
+            "consumers.notification_consumer.handler.ledger.fetch_row",
             AsyncMock(return_value=None),
         ), patch(
-            "consumers.notifications_consumer.handler.ledger.claim_send", AsyncMock()
+            "consumers.notification_consumer.handler.ledger.claim_send", AsyncMock()
         ) as claim, patch(
-            "consumers.notifications_consumer.handler.delivery.deliver", AsyncMock()
+            "consumers.notification_consumer.handler.delivery.deliver", AsyncMock()
         ) as deliver, patch(
-            "consumers.notifications_consumer.handler.ledger.mark_delivery", AsyncMock()
+            "consumers.notification_consumer.handler.ledger.mark_delivery", AsyncMock()
         ) as mark:
             await _process_channel(db, _cfg(), _envelope(), "EMAIL", ["TENANT ADMIN"])
 
@@ -85,12 +85,12 @@ class TestProcessChannelStateMachine:
         row = (1, {"value": "x", "delivery": terminal})
         db = object()
         with patch(
-            "consumers.notifications_consumer.handler.ledger.fetch_row",
+            "consumers.notification_consumer.handler.ledger.fetch_row",
             AsyncMock(return_value=row),
         ), patch(
-            "consumers.notifications_consumer.handler.ledger.claim_send", AsyncMock()
+            "consumers.notification_consumer.handler.ledger.claim_send", AsyncMock()
         ) as claim, patch(
-            "consumers.notifications_consumer.handler.delivery.deliver", AsyncMock()
+            "consumers.notification_consumer.handler.delivery.deliver", AsyncMock()
         ) as deliver:
             await _process_channel(db, _cfg(), _envelope(), "EMAIL", ["TENANT ADMIN"])
 
@@ -104,12 +104,12 @@ class TestProcessChannelStateMachine:
         row = (1, {"value": "x", "delivery": "sending"})
         db = object()
         with patch(
-            "consumers.notifications_consumer.handler.ledger.fetch_row",
+            "consumers.notification_consumer.handler.ledger.fetch_row",
             AsyncMock(return_value=row),
         ), patch(
-            "consumers.notifications_consumer.handler.ledger.claim_send", AsyncMock()
+            "consumers.notification_consumer.handler.ledger.claim_send", AsyncMock()
         ) as claim, patch(
-            "consumers.notifications_consumer.handler.delivery.deliver", AsyncMock()
+            "consumers.notification_consumer.handler.delivery.deliver", AsyncMock()
         ) as deliver:
             await _process_channel(db, _cfg(), _envelope(), "EMAIL", ["TENANT ADMIN"])
 
@@ -120,12 +120,12 @@ class TestProcessChannelStateMachine:
         row = (1, {"value": "x", "delivery": "in_progress"})
         db = object()
         with patch(
-            "consumers.notifications_consumer.handler.ledger.fetch_row",
+            "consumers.notification_consumer.handler.ledger.fetch_row",
             AsyncMock(return_value=row),
         ), patch(
-            "consumers.notifications_consumer.handler.ledger.claim_send", AsyncMock()
+            "consumers.notification_consumer.handler.ledger.claim_send", AsyncMock()
         ) as claim, patch(
-            "consumers.notifications_consumer.handler.ledger.mark_delivery", AsyncMock()
+            "consumers.notification_consumer.handler.ledger.mark_delivery", AsyncMock()
         ) as mark:
             await _process_channel(
                 db, _cfg(channels=["SLACK"]), _envelope(), "SLACK", ["TENANT ADMIN"]
@@ -138,15 +138,15 @@ class TestProcessChannelStateMachine:
         row = (1, {"value": "x", "delivery": "in_progress"})
         db = object()
         with patch(
-            "consumers.notifications_consumer.handler.ledger.fetch_row",
+            "consumers.notification_consumer.handler.ledger.fetch_row",
             AsyncMock(return_value=row),
         ), patch(
-            "consumers.notifications_consumer.handler.ledger.claim_send",
+            "consumers.notification_consumer.handler.ledger.claim_send",
             AsyncMock(return_value=False),
         ), patch(
-            "consumers.notifications_consumer.handler.delivery.deliver", AsyncMock()
+            "consumers.notification_consumer.handler.delivery.deliver", AsyncMock()
         ) as deliver, patch(
-            "consumers.notifications_consumer.handler.ledger.mark_delivery", AsyncMock()
+            "consumers.notification_consumer.handler.ledger.mark_delivery", AsyncMock()
         ) as mark:
             await _process_channel(db, _cfg(), _envelope(), "EMAIL", ["TENANT ADMIN"])
 
@@ -158,19 +158,19 @@ class TestProcessChannelStateMachine:
         db = object()
         auth_db = object()
         with patch(
-            "consumers.notifications_consumer.handler.ledger.fetch_row",
+            "consumers.notification_consumer.handler.ledger.fetch_row",
             AsyncMock(return_value=row),
         ), patch(
-            "consumers.notifications_consumer.handler.ledger.claim_send",
+            "consumers.notification_consumer.handler.ledger.claim_send",
             AsyncMock(return_value=True),
         ), patch(
-            "consumers.notifications_consumer.handler.session_scope",
+            "consumers.notification_consumer.handler.session_scope",
             _auth_session_scope_stub(auth_db),
         ), patch(
-            "consumers.notifications_consumer.handler.delivery.deliver",
+            "consumers.notification_consumer.handler.delivery.deliver",
             AsyncMock(return_value="sent"),
         ), patch(
-            "consumers.notifications_consumer.handler.ledger.mark_delivery", AsyncMock()
+            "consumers.notification_consumer.handler.ledger.mark_delivery", AsyncMock()
         ) as mark:
             await _process_channel(db, _cfg(), _envelope(), "EMAIL", ["TENANT ADMIN"])
 
@@ -182,19 +182,19 @@ class TestProcessChannelStateMachine:
         db = object()
         auth_db = object()
         with patch(
-            "consumers.notifications_consumer.handler.ledger.fetch_row",
+            "consumers.notification_consumer.handler.ledger.fetch_row",
             AsyncMock(return_value=row),
         ), patch(
-            "consumers.notifications_consumer.handler.ledger.claim_send",
+            "consumers.notification_consumer.handler.ledger.claim_send",
             AsyncMock(return_value=True),
         ), patch(
-            "consumers.notifications_consumer.handler.session_scope",
+            "consumers.notification_consumer.handler.session_scope",
             _auth_session_scope_stub(auth_db),
         ), patch(
-            "consumers.notifications_consumer.handler.delivery.deliver",
+            "consumers.notification_consumer.handler.delivery.deliver",
             AsyncMock(return_value=outcome),
         ), patch(
-            "consumers.notifications_consumer.handler.ledger.mark_delivery", AsyncMock()
+            "consumers.notification_consumer.handler.ledger.mark_delivery", AsyncMock()
         ) as mark:
             await _process_channel(db, _cfg(), _envelope(), "EMAIL", ["TENANT ADMIN"])
 
@@ -212,19 +212,19 @@ class TestProcessChannelStateMachine:
         db = object()
         auth_db = object()
         with patch(
-            "consumers.notifications_consumer.handler.ledger.fetch_row",
+            "consumers.notification_consumer.handler.ledger.fetch_row",
             AsyncMock(return_value=row),
         ), patch(
-            "consumers.notifications_consumer.handler.ledger.claim_send",
+            "consumers.notification_consumer.handler.ledger.claim_send",
             AsyncMock(return_value=True),
         ), patch(
-            "consumers.notifications_consumer.handler.session_scope",
+            "consumers.notification_consumer.handler.session_scope",
             _auth_session_scope_stub(auth_db),
         ), patch(
-            "consumers.notifications_consumer.handler.delivery.deliver",
+            "consumers.notification_consumer.handler.delivery.deliver",
             AsyncMock(side_effect=RuntimeError("boom")),
         ), patch(
-            "consumers.notifications_consumer.handler.ledger.mark_delivery", AsyncMock()
+            "consumers.notification_consumer.handler.ledger.mark_delivery", AsyncMock()
         ) as mark:
             # Must not raise — handler.py settles the row itself rather than
             # letting the exception propagate.

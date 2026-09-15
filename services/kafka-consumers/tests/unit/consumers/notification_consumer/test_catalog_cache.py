@@ -1,4 +1,4 @@
-"""consumers/notifications_consumer/catalog_cache._parse_thresholds
+"""consumers/notification_consumer/catalog_cache._parse_thresholds
 
 config.thresholds has been stored in two shapes: the pre-migration dict
 keyed by percent-as-string ({"70": false, ...}), and the current list of
@@ -8,7 +8,7 @@ row — that would take out the whole cache refresh, not just this field.
 """
 from __future__ import annotations
 
-from consumers.notifications_consumer.catalog_cache import _parse_thresholds
+from consumers.notification_consumer.catalog_cache import _parse_thresholds
 
 
 class TestParseThresholds:
