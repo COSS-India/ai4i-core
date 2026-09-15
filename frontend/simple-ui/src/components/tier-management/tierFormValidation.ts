@@ -44,27 +44,3 @@ export const validateQuotaLimit = (value: string): string | null => {
   }
   return null;
 };
-
-/**
- * Gate for a keystroke (or paste) into a quota limit field: returns the value
- * to keep. Anything over the cap is refused outright, so an over-cap limit can
- * never be typed in the first place — the inline error is left to cover the
- * problems a user can still create (empty, zero, fractional).
- *
- * Entries that aren't yet a number ("", "1e") pass through untouched;
- * `validateQuotaLimit` owns their verdict.
- */
-export const acceptQuotaLimitEntry = (
-  next: string,
-  previous: string,
-): string => {
-  const trimmed = next.trim();
-  if (!trimmed) {
-    return next;
-  }
-  const nextNum = Number(trimmed);
-  if (!Number.isFinite(nextNum)) {
-    return next;
-  }
-  return nextNum > QUOTA_LIMIT_MAX ? previous : next;
-};

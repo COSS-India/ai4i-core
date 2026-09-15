@@ -57,11 +57,7 @@ import { FIELD_HINTS } from "../../config/fieldHints";
 import FieldHint from "../common/FieldHint";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { generateUUID } from "../../utils/uuid";
-import {
-  acceptQuotaLimitEntry,
-  QUOTA_LIMIT_MAX,
-  validateQuotaLimit,
-} from "./tierFormValidation";
+import { QUOTA_LIMIT_MAX, validateQuotaLimit } from "./tierFormValidation";
 import { useDeferredColumnSort } from "../../utils/tableSort";
 
 function getTaskTypeBadgeColor(taskType: string): string {
@@ -283,6 +279,10 @@ function limitError(quota: TierFormQuota): string | null {
   return validateQuotaLimit(quota.limit);
 }
 
+function showLimitError(quota: TierFormQuota, showErrors?: boolean): boolean {
+  return (showErrors || !!quota.limit.trim()) && !!limitError(quota);
+}
+
 function QuotaEditor({
   quotas,
   onChange,
@@ -307,9 +307,6 @@ function QuotaEditor({
           modelTaskType: value,
           unit: unitByTaskType[value] ?? "",
         };
-      }
-      if (field === "limit") {
-        return { ...q, limit: acceptQuotaLimitEntry(value, q.limit) };
       }
       return { ...q, [field]: value };
     });
@@ -436,7 +433,7 @@ function QuotaEditor({
 
                   <FormControl
                     isRequired
-                    isInvalid={showErrors && !!limitError(quota)}
+                    isInvalid={showLimitError(quota, showErrors)}
                     isDisabled={isEditMode}
                     minW={0}
                   >
@@ -461,7 +458,7 @@ function QuotaEditor({
                     <FormErrorMessage fontSize="xs">
                       {limitError(quota)}
                     </FormErrorMessage>
-                    <FieldHint show={!(showErrors && !!limitError(quota))}>
+                    <FieldHint show={!showLimitError(quota, showErrors)}>
                       {FIELD_HINTS.tier.quotaLimit.helper}
                     </FieldHint>
                   </FormControl>
@@ -1053,9 +1050,7 @@ const TierManagement: React.FC = () => {
                 step={1}
                 clampValueOnBlur={false}
                 value={scheduleLimit}
-                onChange={(v) =>
-                  setScheduleLimit((prev) => acceptQuotaLimitEntry(v, prev))
-                }
+                onChange={setScheduleLimit}
               >
                 <NumberInputField placeholder="e.g. 10" />
               </NumberInput>
