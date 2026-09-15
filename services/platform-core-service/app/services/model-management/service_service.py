@@ -588,6 +588,12 @@ class ServiceService:
                 instance.service_id, service_detail_dict(instance, model, tier_names=tier_names)
             )
 
+        # A pricing field changed: bust payperuse_consumer's cached rate so
+        # billing picks up the new price on the next event instead of
+        # waiting out its 1-hour TTL (see CacheService.invalidate_pricing).
+        if {"cost_per_unit", "unit_size", "unit_rate", "task_type"} & update_data.keys():
+            await self._cache.invalidate_pricing(instance.service_id)
+
     async def _load_endpoint_update_target(
         self, item: ServiceEndpointUpdateItem
     ) -> Tuple[Service, Any]:

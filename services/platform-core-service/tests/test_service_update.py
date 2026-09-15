@@ -70,6 +70,12 @@ def _make_service_orm(
     # isn't specifically exercising it.
     instance.inference_schema = inference_schema
     instance.tier_ids = ["tier-1"]
+    # Realistic existing pricing on file — several update paths recompute
+    # unit_rate from whichever of cost_per_unit/unit_size wasn't in this
+    # request's update_data, falling back to what's already on the row.
+    # An unconfigured MagicMock there would blow up float()/int() calls.
+    instance.cost_per_unit = 1.0
+    instance.unit_size = 1
     return instance
 
 
@@ -88,6 +94,7 @@ def _make_svc(service_id: str = "svc-abc") -> ServiceService:
     cache = MagicMock()
     cache.invalidate_service = AsyncMock()
     cache.set_service = AsyncMock()
+    cache.invalidate_pricing = AsyncMock()
 
     return ServiceService(
         service_repo=service_repo,
@@ -358,3 +365,105 @@ class TestUpdateServiceEndpointRevalidation:
         await svc.update_service(payload, updated_by="user-1")
 
         assert captured["expected_response_schema"] == {"output": [{"source": "stored"}]}
+
+
+class TestUpdateServicePricingCacheInvalidation:
+    """AI4IDS pricing-cache-staleness fix.
+
+    payperuse_consumer._billing.get_service_pricing caches mm_services'
+    pricing columns (task_type, unit_rate, cost_per_unit, unit_size) under
+    ``ppu:svc:{service_id}`` for up to PRICING_CACHE_TTL (1 hour) and has no
+    invalidation hook of its own. Before this fix, editing a service's price
+    here updated the DB and platform-core's own `core:service:*` cache
+    (so the admin API looked instantly correct) but left the payperuse
+    cache untouched — billing kept charging the old rate for up to an hour.
+
+    These tests pin that update_service() now calls
+    CacheService.invalidate_pricing whenever a pricing-relevant field is
+    actually touched, and leaves it alone on updates that can't touch one.
+
+    Note: ServiceUpdateRequest's own validator
+    (_require_billing_fields_on_substantive_edit) requires taskType,
+    costPerUnit, unitSize and tierIds together on every substantive edit —
+    only the publish/unpublish/isTryItDefault-only toggle is exempt. So in
+    practice almost every real update touches pricing; the "does not
+    invalidate" case below uses that toggle, the one substantive request
+    shape that legitimately never sets cost_per_unit/unit_size/task_type.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cost_per_unit_change_invalidates_pricing_cache(self) -> None:
+        svc = _make_svc("svc-abc")
+        payload = ServiceUpdateRequest(
+            serviceId="svc-abc", costPerUnit=5.0, taskType="asr", unitSize=1, tierIds=["tier-1"]
+        )
+
+        await svc.update_service(payload, updated_by="user-1")
+
+        svc._cache.invalidate_pricing.assert_awaited_once_with("svc-abc")
+
+    @pytest.mark.asyncio
+    async def test_unit_size_change_invalidates_pricing_cache(self) -> None:
+        svc = _make_svc("svc-abc")
+        payload = ServiceUpdateRequest(
+            serviceId="svc-abc", unitSize=1000, costPerUnit=1.0, taskType="asr", tierIds=["tier-1"]
+        )
+
+        await svc.update_service(payload, updated_by="user-1")
+
+        svc._cache.invalidate_pricing.assert_awaited_once_with("svc-abc")
+
+    @pytest.mark.asyncio
+    async def test_task_type_change_invalidates_pricing_cache(self) -> None:
+        svc = _make_svc("svc-abc")
+        payload = ServiceUpdateRequest(
+            serviceId="svc-abc", taskType="nmt", costPerUnit=1.0, unitSize=1, tierIds=["tier-1"]
+        )
+
+        await svc.update_service(payload, updated_by="user-1")
+
+        svc._cache.invalidate_pricing.assert_awaited_once_with("svc-abc")
+
+    @pytest.mark.asyncio
+    async def test_publish_toggle_alone_does_not_invalidate_pricing_cache(self) -> None:
+        """isPublished-only is the one substantive-looking request the
+        schema lets through without taskType/costPerUnit/unitSize/tierIds
+        (see _PUBLISH_ONLY_FIELDS) — nothing pricing-related changed, so
+        the payperuse cache must be left untouched."""
+        svc = _make_svc("svc-abc")
+        payload = ServiceUpdateRequest(serviceId="svc-abc", isPublished=True)
+
+        await svc.update_service(payload, updated_by="user-1")
+
+        svc._cache.invalidate_pricing.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_pricing_cache_invalidated_for_the_correct_service_id(self) -> None:
+        """Regression guard: the invalidated key must be keyed off the
+        service being updated, not some other identifier (e.g. model_id)."""
+        svc = _make_svc("svc-xyz")
+        payload = ServiceUpdateRequest(
+            serviceId="svc-xyz", costPerUnit=2.5, unitSize=1, taskType="asr", tierIds=["tier-1"]
+        )
+
+        await svc.update_service(payload, updated_by="user-1")
+
+        svc._cache.invalidate_pricing.assert_awaited_once_with("svc-xyz")
+
+    @pytest.mark.asyncio
+    async def test_pricing_cache_invalidation_happens_after_commit(self) -> None:
+        """The invalidation must not race a rolled-back write: it should
+        only ever be observed after commit() has been awaited."""
+        svc = _make_svc("svc-abc")
+        order: list[str] = []
+        svc._services.commit.side_effect = lambda: order.append("commit")
+        svc._cache.invalidate_pricing.side_effect = (
+            lambda *_args, **_kwargs: order.append("invalidate_pricing")
+        )
+
+        payload = ServiceUpdateRequest(
+            serviceId="svc-abc", costPerUnit=3.0, unitSize=1, taskType="asr", tierIds=["tier-1"]
+        )
+        await svc.update_service(payload, updated_by="user-1")
+
+        assert order == ["commit", "invalidate_pricing"]
