@@ -35,7 +35,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ def publish_event(
     event_name: str,
     tenant_id: str,
     subject: dict,
-    details: dict,
+    details: List[Any],
     actor_id: str = "",
     topic: Optional[str] = None,
     occurred_at: Optional[str] = None,
@@ -131,7 +131,7 @@ def publish_admin_event(
     event_name: str,
     tenant_id: str,
     subject: dict,
-    details: dict,
+    details: List[Any],
     actor_id: str,
     topic: Optional[str] = None,
     occurred_at: Optional[str] = None,

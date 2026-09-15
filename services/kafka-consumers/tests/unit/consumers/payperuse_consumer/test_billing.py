@@ -38,8 +38,10 @@ import pytest
 
 from consumers.payperuse_consumer import _billing
 from consumers.payperuse_consumer._billing import (
+    ServicePricing,
     deduct_balance_and_update_quota,
     get_inference_type_id,
+    get_service_pricing,
 )
 from consumers.payperuse_consumer.config import Constants
 
@@ -430,6 +432,181 @@ class TestUpsertResultUnaffected:
         assert result.quota_exhausted is True
 
 
+# ── get_service_pricing / the pricing-cache-staleness bug ───────────────────
+#
+# get_service_pricing caches mm_services' pricing columns under
+# ``ppu:svc:{service_id}`` for PRICING_CACHE_TTL (1 hour) with no invalidation
+# hook of its own — platform-core's CacheService.invalidate_pricing deletes
+# that key from the *other* side after a pricing edit commits (see
+# platform-core-service/tests/test_cache_service_pricing.py and
+# test_service_update.py for that half of the contract). What is pinned here
+# is this consumer's half: a cache hit must skip the DB entirely (so the
+# scenario below is actually possible), and deleting the key must be
+# sufficient — on its own, with no code change on this side — to make the
+# very next call observe the new price.
+
+
+class _FakePricingRedis:
+    """Enough of the redis-py hash/pipeline surface for get_service_pricing:
+    HGETALL for the read, a HSET+EXPIRE pipeline for the write-on-miss, and
+    a plain DELETE — standing in for what
+    platform-core's CacheService.invalidate_pricing does on the real shared
+    Redis after a price edit commits.
+    """
+
+    def __init__(self, seed: dict | None = None):
+        # key -> {field: value}, mirroring a real Redis hash.
+        self.hashes: dict[str, dict[str, str]] = dict(seed or {})
+        self.hgetall_calls: list[str] = []
+        self.deletes: list[str] = []
+
+    async def hgetall(self, key):
+        self.hgetall_calls.append(key)
+        return dict(self.hashes.get(key, {}))
+
+    def pipeline(self):
+        return _FakePipeline(self)
+
+    async def delete(self, *keys):
+        for key in keys:
+            self.deletes.append(key)
+            self.hashes.pop(key, None)
+        return len(keys)
+
+
+class _FakePipeline:
+    def __init__(self, redis: _FakePricingRedis):
+        self._redis = redis
+        self._key: str | None = None
+
+    async def hset(self, key, mapping):
+        self._key = key
+        self._redis.hashes[key] = dict(mapping)
+
+    async def expire(self, key, ttl):
+        # TTL expiry isn't modeled — these tests only assert presence/absence
+        # of the key, which invalidate_pricing's DELETE controls directly.
+        pass
+
+    async def execute(self):
+        return None
+
+
+def _pricing_row(task_type="asr", unit_rate=None, cost_per_unit=None, unit_size=None):
+    return _FakeRow(
+        task_type=task_type,
+        unit_rate=unit_rate,
+        cost_per_unit=cost_per_unit,
+        unit_size=unit_size,
+    )
+
+
+class TestGetServicePricingCacheHit:
+    async def test_cache_hit_returns_cached_values_without_touching_db(self, monkeypatch):
+        redis = _FakePricingRedis(
+            seed={
+                "ppu:svc:svc-1": {
+                    "task_type": "asr",
+                    "unit_rate": "2.00",
+                    "cost_per_unit": "",
+                    "unit_size": "",
+                }
+            }
+        )
+        _use_redis(monkeypatch, redis)
+        db = _RecordingSession()
+
+        pricing = await get_service_pricing(db, "svc-1")
+
+        assert pricing == ServicePricing(
+            task_type="asr", unit_rate=Decimal("2.00"), cost_per_unit=None, unit_size=None
+        )
+        assert db.calls == []  # the whole point of the cache
+
+
+class TestGetServicePricingCacheMiss:
+    async def test_cache_miss_reads_db_and_warms_cache_with_ttl(self, monkeypatch):
+        redis = _FakePricingRedis()
+        _use_redis(monkeypatch, redis)
+        db = _RecordingSession(rows=[_pricing_row(unit_rate=Decimal("1.50"))])
+
+        pricing = await get_service_pricing(db, "svc-1")
+
+        assert pricing.unit_rate == Decimal("1.50")
+        assert len(db.calls) == 1
+        assert redis.hashes["ppu:svc:svc-1"]["unit_rate"] == "1.50"
+
+    async def test_empty_task_type_is_not_cached(self, monkeypatch):
+        """Documented in _billing.py: caching an empty task_type would block
+        billing for up to an hour after an admin first sets pricing on a
+        service that had none configured yet."""
+        redis = _FakePricingRedis()
+        _use_redis(monkeypatch, redis)
+        db = _RecordingSession(rows=[_pricing_row(task_type="")])
+
+        await get_service_pricing(db, "svc-1")
+
+        assert redis.hashes == {}
+
+    async def test_unknown_service_returns_none(self, monkeypatch):
+        redis = _FakePricingRedis()
+        _use_redis(monkeypatch, redis)
+        db = _RecordingSession(rows=[None])
+
+        assert await get_service_pricing(db, "svc-missing") is None
+        assert redis.hashes == {}
+
+
+class TestPricingCacheStalenessBugScenario:
+    """The exact scenario this fix addresses.
+
+    1. A service is priced at unit_rate=1.00 and billed once — that warms
+       the cache.
+    2. An admin changes the price to unit_rate=2.00 in mm_services (the DB
+       row changes; nothing here does that, it stands in for
+       ServiceService.update_service's commit).
+    3. A consumption request comes in immediately after.
+
+    Without invalidation, step 3 must return the *stale* 1.00 — proving the
+    bug is real, not hypothetical. Once the same key is deleted (exactly
+    what CacheService.invalidate_pricing does), the very next call must
+    return the *new* 2.00 with no other change and no TTL wait.
+    """
+
+    async def test_stale_price_is_served_until_the_cache_key_is_invalidated(
+        self, monkeypatch
+    ):
+        redis = _FakePricingRedis()
+        _use_redis(monkeypatch, redis)
+        service_id = "svc-1"
+
+        # 1. First billing event: DB has the old price, warms the cache.
+        db_old = _RecordingSession(rows=[_pricing_row(unit_rate=Decimal("1.00"))])
+        first = await get_service_pricing(db_old, service_id)
+        assert first.unit_rate == Decimal("1.00")
+        assert redis.hashes[f"ppu:svc:{service_id}"]["unit_rate"] == "1.00"
+
+        # 2. Admin revises the price. The DB row is now 2.00 — but nothing
+        # has told Redis, so the hash still holds the pre-edit value.
+        db_new = _RecordingSession(rows=[_pricing_row(unit_rate=Decimal("2.00"))])
+
+        # 3a. THE BUG: a consumption request right after the edit still
+        # gets billed at the old rate, and never even reaches the DB row
+        # that already has the correct price.
+        stale = await get_service_pricing(db_new, service_id)
+        assert stale.unit_rate == Decimal("1.00")
+        assert db_new.calls == []  # confirms it was the cache serving this, not db_new
+
+        # 3b. THE FIX: platform-core's CacheService.invalidate_pricing does
+        # exactly this DELETE right after the price-edit commit.
+        await redis.delete(f"ppu:svc:{service_id}")
+
+        # 4. The very next request — no TTL wait, no restart — gets the new price.
+        fixed = await get_service_pricing(db_new, service_id)
+        assert fixed.unit_rate == Decimal("2.00")
+        assert len(db_new.calls) == 1  # this time it actually fell through to the DB
+
+
 # ── Cross-service cache-key contract ────────────────────────────────────────
 
 
@@ -444,6 +621,14 @@ class TestCacheKeyContract:
         # Deliberately "core:" and not "ppu:" — the key is owned by
         # platform-core, this consumer is only a reader.
         assert not Constants.INFERENCE_TYPE_CACHE_PREFIX.startswith("ppu:")
+
+    def test_pricing_prefix_matches_platform_cores_invalidator(self):
+        # platform-core's CacheService.invalidate_pricing deletes
+        # f"ppu:svc:{service_id}" — hardcoded there (cross-service, so no
+        # shared import). Renaming this prefix silently stops that DELETE
+        # from ever hitting the key this consumer actually reads, and a
+        # price edit goes back to waiting out the full TTL with no error.
+        assert Constants.PRICING_CACHE_PREFIX == "ppu:svc:"
 
     def test_memo_ttl_is_shorter_than_the_pricing_cache_ttl(self):
         # The memo has no invalidation hook, so it must expire quickly enough

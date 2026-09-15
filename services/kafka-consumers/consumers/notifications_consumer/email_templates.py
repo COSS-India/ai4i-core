@@ -26,11 +26,11 @@ having to hand-format that text (or remember a magic string like
 
 emailer.py calls the one wrapper that matches each event_name, plugging in
 every keyword argument positionally from the Kafka envelope's ``details``
-array — design doc §9 gives the exact position -> keyword order per
+array — design doc §9.5 gives the exact position -> keyword order per
 event_name, matching each wrapper's parameter order below. ``details`` is a
 plain array now, not a dict with named keys, specifically so the producer
 and this consumer never have to agree on field *names* — only on order and
-count, which §9 fixes per event_name.
+count, which §9.5 fixes per event_name.
 
 Templates live alongside this module under templates/emails/.
 """
