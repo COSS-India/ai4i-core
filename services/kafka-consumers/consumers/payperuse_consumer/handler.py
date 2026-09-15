@@ -3,11 +3,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 import httpx
 from ai4i_core.bootstrap import get_redis_client
 from ai4i_core.logging import get_logger
 from confluent_kafka.cimpl import Message
+from sqlalchemy import text
 
 from bootstrap.lifecycle import session_scope
 from consumers.payperuse_consumer import config as cfg
@@ -157,6 +159,41 @@ def _resolve_billing_month(end_time_ns) -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m")
 
 
+_IST = ZoneInfo("Asia/Kolkata")
+
+
+def _alert_datetime_ist(dt: datetime) -> str:
+    """QUOTA_THRESHOLD/BUDGET_THRESHOLD's "when the alert fired" value
+    (design doc §9.5), already formatted for display — e.g.
+    "2026-09-10 16:52 IST" — so the consumer never has to parse or convert
+    occurred_at itself."""
+    return dt.astimezone(_IST).strftime("%Y-%m-%d %H:%M") + " IST"
+
+
+def _first_of_next_month(billing_month: str) -> str:
+    """QUOTA_EXHAUSTED's "Resets on" date (design doc §9.5): quota resets at
+    the start of the month after the one it exhausted in, mirroring
+    platform-core-service's tier_service._first_of_next_month for the same
+    concept on the QUOTA_LIMIT_UPDATED side."""
+    year, month = (int(part) for part in billing_month.split("-"))
+    if month == 12:
+        return f"{year + 1}-01-01"
+    return f"{year}-{month + 1:02d}-01"
+
+
+async def _fetch_tier_name(db, tier_id: Optional[str]) -> str:
+    """Best-effort tier name for QUOTA_EXHAUSTED's details[0] — falls back to
+    the raw id (still meaningful to an operator, just not as pretty) rather
+    than failing the whole publish over a lookup miss."""
+    if tier_id is None:
+        return ""
+    try:
+        row = (await db.execute(text("SELECT name FROM tiers WHERE id = CAST(:tid AS uuid)"), {"tid": tier_id})).first()
+        return row.name if row is not None else tier_id
+    except Exception:
+        return tier_id
+
+
 async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
     data: dict | None = _get_billing_data(msg)
     if not data:
@@ -279,15 +316,17 @@ async def _publish_usage_crossing_events(
                     )
                     if not fired:
                         continue
+                    alert_at = datetime.now(timezone.utc)
                     publish_notification_event(
                         event_name="BUDGET_THRESHOLD",
                         tenant_id=str(ctx.tenant_id),
                         subject=budget_subject,
-                        details={
-                            "observed": write.api_key_budget_used,
-                            "limit": write.api_key_budget_snap,
-                            "percent": band,
-                        },
+                        details=[
+                            str(band),
+                            _alert_datetime_ist(alert_at),
+                            f"{write.api_key_budget_used:,.0f} of {write.api_key_budget_snap:,.0f}",
+                        ],
+                        occurred_at=alert_at.isoformat(),
                     )
             if crossed_exhaustion(pre_pct, post_pct) and await is_notification_enabled(db, "BUDGET_EXHAUSTED"):
                 # budget_snap (the ceiling) in the exhaustion subject too:
@@ -306,7 +345,7 @@ async def _publish_usage_crossing_events(
                         event_name="BUDGET_EXHAUSTED",
                         tenant_id=str(ctx.tenant_id),
                         subject=budget_exhaustion_subject,
-                        details={},
+                        details=["INR", str(write.api_key_budget_snap)],
                     )
 
     if write.quota_recorded and write.quota_used is not None and write.quota_snap is not None:
@@ -320,16 +359,17 @@ async def _publish_usage_crossing_events(
                     fired = await check_and_record_threshold(db, "QUOTA_THRESHOLD", str(ctx.tenant_id), subject, band)
                     if not fired:
                         continue
+                    alert_at = datetime.now(timezone.utc)
                     publish_notification_event(
                         event_name="QUOTA_THRESHOLD",
                         tenant_id=str(ctx.tenant_id),
                         subject=subject,
-                        details={
-                            "observed": write.quota_used,
-                            "limit": write.quota_snap,
-                            "percent": band,
-                            "inference_name": inference_name,
-                        },
+                        details=[
+                            str(band),
+                            _alert_datetime_ist(alert_at),
+                            f"{write.quota_used:,.0f} of {write.quota_snap:,.0f} ({inference_name.upper()})",
+                        ],
+                        occurred_at=alert_at.isoformat(),
                     )
             if crossed_exhaustion(pre_pct, post_pct) and await is_notification_enabled(db, "QUOTA_EXHAUSTED"):
                 # billing_month in the exhaustion subject: quota resets at
@@ -343,11 +383,16 @@ async def _publish_usage_crossing_events(
                     db, "QUOTA_EXHAUSTED", str(ctx.tenant_id), quota_exhaustion_subject
                 )
                 if fired:
+                    tier_name = await _fetch_tier_name(db, write.tier_id)
+                    reset_date = _first_of_next_month(ctx.billing_month)
                     publish_notification_event(
                         event_name="QUOTA_EXHAUSTED",
                         tenant_id=str(ctx.tenant_id),
                         subject=quota_exhaustion_subject,
-                        details={"inference_name": inference_name},
+                        details=[
+                            tier_name,
+                            [f"{inference_name.upper()}: Quota Limit {write.quota_snap:,.0f}, Resets on {reset_date}"],
+                        ],
                     )
 
 
