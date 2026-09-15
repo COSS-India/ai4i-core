@@ -19,7 +19,7 @@ from ai4i_core.logging import get_logger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from consumers.notification_consumer import pii_crypto
+from consumers.notifications_consumer import pii_crypto
 
 logger = get_logger(__name__)
 
@@ -72,3 +72,25 @@ async def resolve(db: AsyncSession, *, tenant_id: str, roles: List[str]) -> List
             Recipient(user_id=str(user_id), email=email, display_name=full_name or "there")
         )
     return recipients
+
+
+async def fetch_institution_name(db: AsyncSession, *, tenant_id: str) -> str:
+    """tenants.organisation — the "[Institution Name]" every email_templates.py
+    subject line and body needs (memory: "tenant label value is now
+    organisation name, not id" — same field, same reasoning here: it's the
+    tenant's actual display identity, not tenants.name, which is an internal
+    contact/reference name). Falls back to the bare tenant_id string on a
+    miss (deleted tenant, non-numeric id) rather than failing the whole
+    send — a slightly ugly subject line beats no email at all."""
+    if not tenant_id.isdigit():
+        logger.error("fetch_institution_name(): non-numeric tenant_id=%r", tenant_id)
+        return tenant_id
+    result = await db.execute(
+        text("SELECT organisation FROM tenants WHERE id = :tenant_id"),
+        {"tenant_id": int(tenant_id)},
+    )
+    row = result.first()
+    if row is None or not row[0]:
+        logger.warning("No organisation name for tenant_id=%s — using raw id", tenant_id)
+        return tenant_id
+    return row[0]

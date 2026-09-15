@@ -1,0 +1,15 @@
+{# Shared "log in to the portal" line, included by every notification/alert
+   template that has one (Tier Deactivated and Budget Exhausted deliberately
+   omit it per spec — no portal CTA when access/requests are already blocked).
+
+   Set `portal_link_text` before including to customize the phrase after
+   "to" (defaults to "view full details"), e.g.:
+     {% set portal_link_text = "view full Tier details" %}
+     {% include "_portal_line.html" %}
+#}
+{% set _link_text = portal_link_text | default("view full details") %}
+{% if portal_url %}
+<p style="margin:0 0 20px 0;">Log in to the <a href="{{ portal_url }}" style="color:#0b66ff; text-decoration:none;">AI4I-Orchestrate Portal</a> to {{ _link_text }}.</p>
+{% else %}
+<p style="margin:0 0 20px 0;">Log in to the AI4I-Orchestrate Portal to {{ _link_text }}.</p>
+{% endif %}

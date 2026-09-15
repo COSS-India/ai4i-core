@@ -1,3 +1,0 @@
-Hi {{ recipient_name }},
-
-Your {{ inference_name }} quota changed from {{ previous }} to {{ current }}, effective {{ effective_date }}.
