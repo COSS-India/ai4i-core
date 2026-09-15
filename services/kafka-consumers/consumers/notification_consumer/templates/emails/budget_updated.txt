@@ -1,3 +1,0 @@
-Hi {{ recipient_name }},
-
-Your budget changed from {{ previous }} to {{ current }}.
