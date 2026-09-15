@@ -1,3 +1,0 @@
-Hi {{ recipient_name }},
-
-Your plan has been set to {{ tier_name }}.

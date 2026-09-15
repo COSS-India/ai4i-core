@@ -1,3 +1,0 @@
-Hi {{ recipient_name }},
-
-Your {{ inference_name }} quota has reached {{ percent }}% ({{ observed }} of {{ limit }}).

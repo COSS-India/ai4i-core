@@ -1,4 +1,4 @@
-"""notification_consumer — Kafka Consumer Notification.
+"""notifications_consumer — Kafka Consumer Notification.
 
 Implements skills/notification-kafka-design/notification-kafka-design.md:
 reads notification/alert events off TOPIC_NOTIFICATION, resolves recipients
@@ -30,8 +30,8 @@ from confluent_kafka import KafkaError, KafkaException, Message
 from bootstrap.config import get_db_settings
 from bootstrap.consumers import CommitMode, ManagedConsumer
 from bootstrap.lifecycle import add_database, infra, shutdown_event
-from consumers.notification_consumer import catalog_cache, config as cfg, pii_crypto
-from consumers.notification_consumer.handler import handle_notification_event
+from consumers.notifications_consumer import catalog_cache, config as cfg, pii_crypto
+from consumers.notifications_consumer.handler import handle_notification_event
 
 logger = get_logger(__name__)
 
