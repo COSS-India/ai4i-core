@@ -49,16 +49,22 @@ logger = get_logger(__name__)
 # send that can't complete becomes "failed", not "wedged forever".
 #
 # MUST stay >= EmailSettings.smtp_timeout (the timeout aiosmtplib.send()
-# itself is given) plus headroom for DNS/TCP-connect, which happen before
-# the SMTP protocol exchange smtp_timeout actually bounds. A flat constant
-# shorter than smtp_timeout used to cut sends off before aiosmtplib's own,
-# more generous timeout would have — confirmed in practice: with
-# smtp_timeout=30 (the ai4i_core.email default) and this at a hardcoded 20,
-# a real SES send that took ~21-25s was logged as "timed out — treating as
-# failed" and the ledger settled to failed, even though the message had
-# already been accepted by SES and the recipient received it. See
-# _send_deadline_s().
-_DEADLINE_HEADROOM_S = 10.0
+# itself is given) — a flat constant shorter than smtp_timeout used to cut
+# sends off before aiosmtplib's own, more generous timeout would have,
+# confirmed in practice: with smtp_timeout=30 (the ai4i_core.email default)
+# and this at a hardcoded 20, a real SES send that took ~21-25s was logged
+# as "timed out — treating as failed" and the ledger settled to failed,
+# even though the message had already been accepted by SES and the
+# recipient received it. See _send_deadline_s().
+#
+# Headroom is 0 by design right now — SMTP_TIMEOUT is set to 60s in
+# env.template, and this deadline is meant to match it exactly (both "1
+# minute"), not add slack on top for DNS/TCP-connect (which happen before
+# the SMTP protocol exchange smtp_timeout bounds, and so aren't covered by
+# either number). If DNS/connect-phase hangs show up in practice, that
+# headroom is the first thing to bring back — bump this above 0 rather
+# than shortening SMTP_TIMEOUT.
+_DEADLINE_HEADROOM_S = 0.0
 
 _MISSING = "—"
 
