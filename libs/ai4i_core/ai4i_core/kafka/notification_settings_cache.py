@@ -53,6 +53,19 @@ _refresh_lock = asyncio.Lock()
 _listener_task: Optional[asyncio.Task] = None
 
 
+def _active_threshold_percentages(thresholds) -> List[int]:
+    """Accepts either shape config.thresholds has ever been stored in: the
+    current list of {"percentage": int, "active": bool} bands
+    (catalog_service.py), or the pre-migration dict keyed by percent-as-
+    string ({"70": false, ...}). A row still holding the old shape must not
+    blow up refresh_all — that would leave _rows empty and silently disable
+    every notification (not just thresholds), since is_notification_enabled
+    reads from this same cache for all 9 rows."""
+    if isinstance(thresholds, dict):
+        return sorted(int(pct) for pct, enabled in thresholds.items() if enabled)
+    return sorted(band["percentage"] for band in thresholds if band.get("active"))
+
+
 async def refresh_all(db) -> None:
     """Reload every row from configs_notification_alert. Called lazily by
     _ensure_fresh() (cache miss or TTL expiry), and explicitly once at
@@ -64,16 +77,12 @@ async def refresh_all(db) -> None:
         )
         new_rows: Dict[str, Dict[str, Any]] = {}
         for row in result.all():
-            # thresholds is a list of {"percentage": int, "active": bool}
-            # bands (see catalog_service.py) — only active ones count.
             thresholds = (row.config or {}).get("thresholds", [])
             new_rows[row.name] = {
                 "id": row.id,
                 "recipient_roles": row.recipient_roles or {},
                 "channels": list(row.channels or []),
-                "threshold_bands": sorted(
-                    band["percentage"] for band in thresholds if band.get("active")
-                ),
+                "threshold_bands": _active_threshold_percentages(thresholds),
             }
         _rows = new_rows
         _loaded_at = time.monotonic()

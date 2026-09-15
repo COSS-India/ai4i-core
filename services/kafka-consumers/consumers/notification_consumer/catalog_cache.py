@@ -36,6 +36,24 @@ from consumers.notification_consumer.config import Constants
 logger = get_logger(__name__)
 
 
+def _parse_thresholds(raw) -> List[Dict[str, Any]]:
+    """Accepts either shape config.thresholds has ever been stored in: the
+    current list of {"percentage": int, "active": bool} bands
+    (platform-core-service's catalog_service.py), or the pre-migration dict
+    keyed by percent-as-string ({"70": false, ...}). Unused by this consumer
+    today (see handler.py), but a row still holding the old shape must not
+    raise here either — normalise it now so a future reader gets the real
+    shape, not a stale one."""
+    if not raw:
+        return []
+    if isinstance(raw, dict):
+        return [
+            {"percentage": int(percent), "active": bool(active)}
+            for percent, active in raw.items()
+        ]
+    return list(raw)
+
+
 @dataclass(frozen=True)
 class NotificationConfig:
     """One row of configs_notification_alert, as this consumer needs it.
@@ -113,7 +131,7 @@ class _Cache:
                 module=row["module"],
                 channels=list(row["channels"] or []),
                 recipient_roles=recipient_roles,
-                thresholds=config.get("thresholds", []) or [],
+                thresholds=_parse_thresholds(config.get("thresholds")),
             )
         self._by_name = by_name
         self._loaded_at = time.monotonic()
