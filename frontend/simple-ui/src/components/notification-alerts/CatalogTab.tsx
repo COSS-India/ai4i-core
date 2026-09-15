@@ -20,7 +20,7 @@ import React from "react";
 import { useToastWithDeduplication } from "../../utils/toast";
 import { useNotificationCatalog } from "../../hooks/useNotificationCatalog";
 import {
-  thresholdKeysForItem,
+  bandsForItem,
   type NotificationAlertType,
 } from "../../types/notificationAlerts";
 import CatalogToolbar, { RecipientRoleCheckboxes } from "./CatalogToolbar";
@@ -209,25 +209,21 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
                     {showThresholds ? (
                       <Td verticalAlign="top" pt={3}>
                         <VStack align="start" spacing={1}>
-                          {thresholdKeysForItem(draft.thresholds).map(
-                            (threshold) => (
-                              <Checkbox
-                                key={threshold}
-                                isChecked={Boolean(
-                                  draft.thresholds?.[threshold],
-                                )}
-                                onChange={(e) =>
-                                  setThreshold(
-                                    item.name,
-                                    threshold,
-                                    e.target.checked,
-                                  )
-                                }
-                              >
-                                <Text fontSize="sm">{threshold}%</Text>
-                              </Checkbox>
-                            ),
-                          )}
+                          {bandsForItem(draft.thresholds).map((band) => (
+                            <Checkbox
+                              key={band.percentage}
+                              isChecked={band.active}
+                              onChange={(e) =>
+                                setThreshold(
+                                  item.name,
+                                  band.percentage,
+                                  e.target.checked,
+                                )
+                              }
+                            >
+                              <Text fontSize="sm">{band.percentage}%</Text>
+                            </Checkbox>
+                          ))}
                         </VStack>
                       </Td>
                     ) : null}

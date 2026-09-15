@@ -6,15 +6,19 @@ import type {
   NotificationAlertCatalogItem,
   NotificationAlertType,
   RecipientRoleKey,
+  ThresholdBand,
 } from "../types/notificationAlerts";
 import {
+  bandsEqual,
+  bandsForItem,
   DEFAULT_ENABLE_ROLE,
   isCatalogItemEnabled,
 } from "../types/notificationAlerts";
 
 export interface CatalogDraft {
   recipient_roles: Record<RecipientRoleKey, boolean>;
-  thresholds?: Record<string, boolean>;
+  /** ALERT rows only. Always the complete band set once present. */
+  thresholds?: ThresholdBand[];
 }
 
 export interface CatalogSubmitResult {
@@ -25,7 +29,9 @@ export interface CatalogSubmitResult {
 function toDraft(item: NotificationAlertCatalogItem): CatalogDraft {
   return {
     recipient_roles: { ...item.recipient_roles },
-    thresholds: item.thresholds ? { ...item.thresholds } : undefined,
+    thresholds: item.thresholds
+      ? item.thresholds.map((band) => ({ ...band }))
+      : undefined,
   };
 }
 
@@ -38,12 +44,9 @@ function draftsEqual(a: CatalogDraft, b: CatalogDraft): boolean {
     return false;
   }
   if (a.recipient_roles.ADMIN !== b.recipient_roles.ADMIN) return false;
-  const aKeys = Object.keys(a.thresholds ?? {});
-  const bKeys = Object.keys(b.thresholds ?? {});
-  if (aKeys.length !== bKeys.length) return false;
-  return aKeys.every(
-    (key) => (a.thresholds?.[key] ?? false) === (b.thresholds?.[key] ?? false),
-  );
+  // Neither side has bands at all — nothing to compare (NOTIFICATION rows).
+  if (!a.thresholds && !b.thresholds) return true;
+  return bandsEqual(a.thresholds, b.thresholds);
 }
 
 function catalogErrorMessage(error: unknown, fallback: string): string {
@@ -146,7 +149,7 @@ export function useNotificationCatalog(type: NotificationAlertType) {
       name: string,
       patch: {
         recipient_roles?: Partial<Record<RecipientRoleKey, boolean>>;
-        thresholds?: Record<string, boolean>;
+        thresholds?: ThresholdBand[];
       },
     ) => {
       setDrafts((prev) => {
@@ -160,7 +163,7 @@ export function useNotificationCatalog(type: NotificationAlertType) {
               ? { ...current.recipient_roles, ...patch.recipient_roles }
               : current.recipient_roles,
             thresholds: patch.thresholds
-              ? { ...patch.thresholds }
+              ? patch.thresholds.map((band) => ({ ...band }))
               : current.thresholds,
           },
         };
@@ -242,12 +245,19 @@ export function useNotificationCatalog(type: NotificationAlertType) {
     [updateDraft],
   );
 
+  /**
+   * Flips one band's `active`. The draft carries the whole band set (BE
+   * requires exactly 3 on PATCH), so this rebuilds the full list rather
+   * than patching a single key the way recipient_roles does.
+   */
   const setThreshold = useCallback(
-    (name: string, threshold: string, checked: boolean) => {
+    (name: string, percentage: number, checked: boolean) => {
       const item = items.find((row) => row.name === name);
-      const current = drafts[name]?.thresholds ?? item?.thresholds ?? {};
+      const current = bandsForItem(drafts[name]?.thresholds ?? item?.thresholds);
       updateDraft(name, {
-        thresholds: { ...current, [threshold]: checked },
+        thresholds: current.map((band) =>
+          band.percentage === percentage ? { ...band, active: checked } : band,
+        ),
       });
     },
     [drafts, items, updateDraft],
@@ -277,8 +287,15 @@ export function useNotificationCatalog(type: NotificationAlertType) {
         const payload: CatalogUpdatePayload = {
           recipient_roles: draft.recipient_roles,
         };
-        if (item.type === "ALERT" && draft.thresholds) {
-          payload.thresholds = draft.thresholds;
+        // Only sent when a band actually changed — an unrelated role edit
+        // must not write the 70/80/90 default into a row the user never
+        // touched. When sent it is the full replacement list (bandsForItem
+        // guarantees the 3 bands the BE validates against).
+        if (
+          item.type === "ALERT" &&
+          !bandsEqual(draft.thresholds, item.thresholds)
+        ) {
+          payload.thresholds = bandsForItem(draft.thresholds);
         }
 
         try {
