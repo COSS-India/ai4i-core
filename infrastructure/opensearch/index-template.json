@@ -311,6 +311,15 @@
         "service_id": {
           "type": "keyword"
         },
+        "model_id": {
+          "type": "keyword"
+        },
+        "application_id": {
+          "type": "keyword"
+        },
+        "auth_type": {
+          "type": "keyword"
+        },
         "source_language": {
           "type": "keyword"
         },
