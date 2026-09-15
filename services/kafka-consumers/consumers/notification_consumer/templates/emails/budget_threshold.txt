@@ -1,0 +1,3 @@
+Hi {{ recipient_name }},
+
+Your budget has reached {{ percent }}% ({{ observed }} of {{ limit }}).

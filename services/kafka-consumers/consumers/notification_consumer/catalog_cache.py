@@ -31,7 +31,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bootstrap.config import get_redis_settings
-from consumers.notifications_consumer.config import Constants
+from consumers.notification_consumer.config import Constants
 
 logger = get_logger(__name__)
 

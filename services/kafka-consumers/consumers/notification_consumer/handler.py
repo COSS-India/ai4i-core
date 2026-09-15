@@ -1,4 +1,4 @@
-"""Message handler for notifications_consumer.
+"""Message handler for notification_consumer.
 
 The producer (auth-service / platform-core-service / payperuse_consumer)
 already decided whether this occurrence is new and claimed the ledger row
@@ -33,8 +33,8 @@ from ai4i_core.logging import get_logger
 from confluent_kafka import Message
 
 from bootstrap.lifecycle import session_scope
-from consumers.notifications_consumer import delivery, ledger
-from consumers.notifications_consumer.catalog_cache import NotificationConfig, get_config
+from consumers.notification_consumer import delivery, ledger
+from consumers.notification_consumer.catalog_cache import NotificationConfig, get_config
 
 logger = get_logger(__name__)
 
@@ -68,10 +68,7 @@ def _parse_envelope(msg: Message) -> Optional[Dict[str, Any]]:
         "tenant_id": str(tenant_id),
         "occurred_at": data.get("occurred_at") or "",
         "subject": data.get("subject") or {},
-        # A plain positional array now, not a dict — design doc §9. Each
-        # event_name has its own fixed value order, matching whatever
-        # email_templates.py renderer emailer.py calls for it.
-        "details": data.get("details") or [],
+        "details": data.get("details") or {},
         "actor_id": data.get("actor_id"),
     }
 

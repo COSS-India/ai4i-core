@@ -1,4 +1,4 @@
-"""consumers/notifications_consumer/pii_crypto.py — decrypt-only mirror of
+"""consumers/notification_consumer/pii_crypto.py — decrypt-only mirror of
 auth-service's app/core/pii_crypto.py.
 
 This module never encrypts (recipients.py only ever reads what auth-service
@@ -15,7 +15,7 @@ import base64
 import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESSIV
 
-from consumers.notifications_consumer import pii_crypto
+from consumers.notification_consumer import pii_crypto
 
 # 64 bytes -> AES-256-SIV, mirroring auth-service's own test key
 # (services/auth-service/tests/test_pii_crypto_masking.py).
