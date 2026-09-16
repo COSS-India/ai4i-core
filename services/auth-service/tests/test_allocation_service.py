@@ -660,6 +660,30 @@ class TestTenantBudgetCascade:
 
 class TestApplicationScope:
     @pytest.mark.asyncio
+    async def test_tenant_admin_of_different_tenant_masked_404(self) -> None:
+        """Adversarial cross-tenant case (code review #5): a Tenant Admin
+        of tenant 999 passes application_id=1, which actually belongs to
+        tenant 101. The tenant used for the scope check must come from the
+        Application row itself (application.tenant_id), never from
+        anything the caller supplies — otherwise a Tenant Admin could
+        reallocate another Institution's Application budget. Masked as 404
+        (not 403), matching TestTenantScopeAuthAndShape's own
+        test_tenant_admin_of_different_tenant_masked_404 one level up, so
+        the caller can't distinguish "wrong tenant" from "doesn't exist"."""
+        svc = _svc(roles=["TENANT ADMIN"])
+        app = _application(1, allocated_budget=Decimal("50000"), allocated_percentage=Decimal("50"), tenant_id=101)
+        svc._applications.get_by_id = AsyncMock(return_value=app)
+        body = ApplicationBudgetAllocationRequest(application_id=1, allocation=_pct("50"))
+
+        with pytest.raises(HTTPException) as exc:
+            await svc.update_application_key_allocations(1, body, _user(tenant_id=999), None)
+
+        assert exc.value.status_code == 404
+        # Rejected before the row is ever locked or any Key is touched.
+        svc._applications.get_by_id_for_update.assert_not_called()
+        svc._api_keys.update.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_application_id_mismatch(self) -> None:
         svc = _svc()
         body = ApplicationBudgetAllocationRequest(application_id=2, allocation=_pct("50"))
@@ -849,6 +873,30 @@ class TestApplicationScope:
 
 
 class TestSingleApiKeyScope:
+    @pytest.mark.asyncio
+    async def test_tenant_admin_of_different_tenant_masked_404(self) -> None:
+        """Adversarial cross-tenant case (code review #5): a Tenant Admin
+        of tenant 999 targets api_key_id=11, whose owning Application
+        actually belongs to tenant 101. The scope check derives the tenant
+        from key -> application.tenant_id — the caller never supplies a
+        tenant_id anywhere in this request, so there's no field to spoof;
+        the guard is entirely about not trusting the ROUTE (application_id
+        isn't even part of this endpoint's path) and always re-deriving
+        ownership from the DB rows themselves."""
+        svc = _svc(roles=["TENANT ADMIN"])
+        key1 = _key(11, 1, allocated_budget=Decimal("30000"), allocated_percentage=Decimal("60"))
+        app = _application(1, allocated_budget=Decimal("50000"), allocated_percentage=Decimal("50"), tenant_id=101)
+        svc._api_keys.get_by_id = AsyncMock(return_value=key1)
+        svc._applications.get_by_id = AsyncMock(return_value=app)
+        body = APIKeyBudgetAllocationRequest(api_key_id=11, allocation=_pct("70"))
+
+        with pytest.raises(HTTPException) as exc:
+            await svc.update_single_api_key_allocation(11, body, _user(tenant_id=999), None)
+
+        assert exc.value.status_code == 404
+        svc._applications.get_by_id_for_update.assert_not_called()
+        svc._api_keys.update.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_key_id_mismatch(self) -> None:
         svc = _svc()
