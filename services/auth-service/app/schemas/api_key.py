@@ -63,8 +63,11 @@ class CreateAPIKeyRequest(BaseSchema):
             "allocated_percentage-created key goes through (rejected if it rounds to 0.00%), "
             "but stores this exact requested amount as allocated_budget, not the rounded "
             "derivative. Give at most one of allocated_percentage / budget — omit both for an "
-            "intentionally uncapped key (no per-key ceiling; spend is tracked only if the "
-            "owning Application/Tenant has a Budget of its own)."
+            "intentionally uncapped key: no per-key ceiling is set, no budget_usage row is "
+            "ever created for it, and its spend is NEVER tracked or capped at the key or "
+            "Application level, regardless of whether the owning Application or Tenant has "
+            "a Budget of its own. The owning Tenant's tier monthly quota is the only limit "
+            "left on such a key."
         ),
     )
 

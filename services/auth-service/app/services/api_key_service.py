@@ -749,14 +749,20 @@ class APIKeyService:
         # budget_usage row is ever written for the Key, and per-key
         # budget_usage is the ONLY spend enforcement in this system —
         # deduct_balance_and_update_quota silently skips its UPDATE when no
-        # row exists (0 rows matched), so an uncapped Key's spend is never
-        # tracked or capped anywhere, by design, for as long as the owning
-        # Tenant itself has a Budget set (see the exhausted computation
-        # below for the one case that's still blocked outright: a Tenant
-        # with NO Budget at all). Re-enabled by explicit product decision —
-        # this is the same "intentionally uncapped" state pre-existing
-        # NULL-allocation keys already had (grandfathered); this just lets
-        # new keys enter it too instead of only inheriting it.
+        # row exists (0 rows matched). Two separate things, not one
+        # conditional guarantee: (a) TRACKED — never, unconditionally, no
+        # matter what the owning Application/Tenant's own Budget looks
+        # like; no budget_usage row for this Key means its real spend is
+        # recorded nowhere. (b) CAPPED — also never, EXCEPT the one case
+        # the exhausted computation below still blocks outright: a Tenant
+        # with NO Budget configured at all gets this Key seeded
+        # budget-exhausted=True immediately (nothing to spend from), which
+        # is a hard block, not tracking. Everywhere else, the Tenant's tier
+        # monthly quota is the only limit left on this Key. Re-enabled by
+        # explicit product decision — this is the same "intentionally
+        # uncapped" state pre-existing NULL-allocation keys already had
+        # (grandfathered); this just lets new keys enter it too instead of
+        # only inheriting it.
         if allocated_percentage is not None and allocated_percentage == 0:
             # Explicit 0 is a DIFFERENT state from omitting the field
             # entirely (None) — None means "no ceiling at all, uncapped";
