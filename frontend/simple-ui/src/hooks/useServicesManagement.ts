@@ -20,6 +20,7 @@ import { fetchTiers } from "../services/tierManagementService";
 import type { Tier } from "../types/tierManagement";
 import {
   SERVICE_NAME_MAX_LEN,
+  sanitizeServiceId,
   validateHardwareDescription,
   validatePricePerUnit,
   validateServiceDescription,
@@ -587,17 +588,15 @@ export function useServicesManagement() {
         setFormData((prev) => {
           const task_type = resolvedModelTaskType || prev.task_type || "";
           const taskIsLlm = task_type.trim().toLowerCase() === "llm";
-          // LLM Service ID pre-filled with "{modelName}/"
-          // Sanitize to BE service-name charset (no underscore) since name=serviceId.
-          const sanitizeLlmId = (s: string) =>
-            s.replaceAll(/[^a-zA-Z0-9/-]/g, "");
-          const llmPrefix = modelName
-            ? `${sanitizeLlmId(modelName)}/`
-            : "";
+          // Every task type pre-fills "{modelName}/"; the admin adds the suffix
+          // ("[model-name]/[GPU]"), so two services on one model cannot clash.
+          // LLM sanitizes tighter — its Service ID is sent as the name too.
+          const sanitizeId = (s: string) => sanitizeServiceId(s, taskIsLlm);
+          const modelPrefix = modelName ? `${sanitizeId(modelName)}/` : "";
           let nextServiceId = prev.serviceId || "";
-          if (taskIsLlm && !editingService) {
+          if (!editingService) {
             const prevPrefix = prev.modelName
-              ? `${sanitizeLlmId(prev.modelName)}/`
+              ? `${sanitizeId(prev.modelName)}/`
               : "";
             if (
               !nextServiceId ||
@@ -609,7 +608,7 @@ export function useServicesManagement() {
                 prevPrefix && nextServiceId.startsWith(prevPrefix)
                   ? nextServiceId.slice(prevPrefix.length)
                   : "";
-              nextServiceId = `${llmPrefix}${sanitizeLlmId(suffix)}`;
+              nextServiceId = `${modelPrefix}${sanitizeId(suffix)}`;
             }
             // else: user hand-edited away from the previous model prefix — preserve
           }
@@ -620,9 +619,7 @@ export function useServicesManagement() {
             modelSubmissionDate: modelSubmissionDate,
             modelVersion: modelVersion,
             task_type,
-            ...(taskIsLlm && !editingService
-              ? { serviceId: nextServiceId }
-              : {}),
+            ...(editingService ? {} : { serviceId: nextServiceId }),
           };
         });
       } catch (error: any) {

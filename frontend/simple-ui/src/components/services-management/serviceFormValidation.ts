@@ -25,6 +25,20 @@ const SERVICE_NAME_PATTERN = /^[a-zA-Z0-9/-]+$/;
 export const sanitizeServiceName = (value: string): string =>
   value.replaceAll(/[^a-zA-Z0-9/-]/g, "");
 
+/**
+ * Strips what the Service ID charset rejects. LLM is the stricter case: its
+ * Service ID is submitted as the Service Name too, so it inherits the name
+ * charset (no `_`). Every other task type has its own Service Name field and
+ * may keep underscores.
+ *
+ * Shared by the Service ID input and the model-name prefill so the two can
+ * never disagree about which characters survive.
+ */
+export const sanitizeServiceId = (value: string, isLlm: boolean): string =>
+  isLlm
+    ? sanitizeServiceName(value)
+    : value.replaceAll(/[^a-zA-Z0-9/_-]/g, "");
+
 /** `inferenceEndPoint.infraDescription` — 5-100 chars (alias: `hardwareDescription`). */
 export const INFRA_DESCRIPTION_MIN_LEN = 5;
 export const INFRA_DESCRIPTION_MAX_LEN = 100;

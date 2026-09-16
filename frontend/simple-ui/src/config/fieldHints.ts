@@ -90,7 +90,7 @@ export const FIELD_HINTS = {
     serviceId: {
       placeholder: "Enter service ID",
       helper:
-        "5–255 characters. Letters, numbers, hyphens, underscores, and slashes only. e.g: [model-name]/[GPU]",
+        "Pre-filled with the model prefix. Letters, numbers, hyphens, underscores, and slashes only. 5–255 characters. e.g: [model-name]/[GPU]",
       llmHelper:
         "Pre-filled with the model prefix. Letters, numbers, hyphens, and slashes only. 5–255 characters. e.g: [model-name]/[GPU]",
     },

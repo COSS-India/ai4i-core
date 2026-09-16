@@ -106,13 +106,13 @@ function formatQuotaAmount(
 const TIER_NAME_COLUMN: DataTableColumn<Tier> = {
   id: "name",
   header: "Tier Name",
-  thProps: { w: "420px", maxW: "420px" },
-  tdProps: { maxW: "420px" },
+  thProps: { w: "500px", maxW: "500px" },
+  tdProps: { maxW: "500px" },
   sortable: true,
   sortAccessor: (tier) => tier.name ?? "",
   cell: (tier) => (
     <Tooltip label={tier.name} placement="top" hasArrow openDelay={300}>
-      <Text fontSize="sm" fontWeight="medium" isTruncated maxW="430px">
+      <Text fontSize="sm" fontWeight="medium" isTruncated maxW="510px">
         {tier.name}
       </Text>
     </Tooltip>
@@ -132,7 +132,7 @@ const TIER_STATUS_BADGE: Record<
 const TIER_STATUS_COLUMN: DataTableColumn<Tier> = {
   id: "status",
   header: "Status",
-  thProps: { w: "140px" },
+  thProps: { w: "240px" },
   cell: (tier) => {
     const badge = tier.status
       ? TIER_STATUS_BADGE[tier.status]
@@ -163,10 +163,8 @@ const TIER_TASK_TYPES_VISIBLE_COUNT = 4;
 const TIER_TASK_TYPES_COLUMN: DataTableColumn<Tier> = {
   id: "taskTypes",
   header: "Model Task Types",
-  thProps: { textAlign: "center" },
-  tdProps: { textAlign: "center" },
   cell: (tier) => (
-    <HStack spacing={1} flexWrap="wrap" justify="center">
+    <HStack spacing={1} flexWrap="wrap">
       {(tier.quotas ?? []).slice(0, TIER_TASK_TYPES_VISIBLE_COUNT).map((q) => (
         <Badge
           key={q.modelTaskType}

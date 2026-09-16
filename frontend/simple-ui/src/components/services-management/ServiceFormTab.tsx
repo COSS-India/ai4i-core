@@ -43,6 +43,7 @@ import {
   SERVICE_DESCRIPTION_MIN_LEN,
   SERVICE_ID_MAX_LEN,
   SERVICE_NAME_MAX_LEN,
+  sanitizeServiceId,
   sanitizeServiceName,
 } from "./serviceFormValidation";
 
@@ -154,8 +155,13 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
   const priceError = pricePerUnit.trim()
     ? (pricePerUnitError ?? null)
     : afterBlur("pricePerUnit", pricePerUnitError);
-  // Duplicate clash wins and shows immediately; length waits for blur.
-  const idError = serviceIdError ?? afterBlur("serviceId", serviceIdLengthError);
+  // Duplicate clash wins. Length shows once the field holds anything — the
+  // prefill fills it without a blur — but an empty field still waits for one.
+  const idError =
+    serviceIdError ??
+    (formData.serviceId?.trim()
+      ? (serviceIdLengthError ?? null)
+      : afterBlur("serviceId", serviceIdLengthError));
 
   const [tierSearch, setTierSearch] = useState("");
 
@@ -353,17 +359,15 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
               <FormLabel fontWeight="semibold">Service ID</FormLabel>
               <Input
                 value={formData.serviceId || ""}
-                onChange={(e) => {
-                  // LLM Service ID is also sent as Service Name; BE name rules
-                  // allow only alphanumeric, /, and - (no underscore).
-                  const allowed = isLlmTaskType
-                    ? /[^a-zA-Z0-9/-]/g
-                    : /[^a-zA-Z0-9/_-]/g;
-                  onInputChange("serviceId", e.target.value.replaceAll(allowed, ""));
-                }}
+                onChange={(e) =>
+                  onInputChange(
+                    "serviceId",
+                    sanitizeServiceId(e.target.value, isLlmTaskType),
+                  )
+                }
                 onBlur={() => markBlurred("serviceId")}
                 placeholder={
-                  isLlmTaskType && formData.modelName
+                  formData.modelName
                     ? `${formData.modelName}/…`
                     : FIELD_HINTS.service.serviceId.placeholder
                 }
