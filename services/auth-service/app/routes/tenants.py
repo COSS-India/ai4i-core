@@ -254,16 +254,32 @@ async def revise_tenant_budget(
     no longer exists. Response is unwrapped (no success/data envelope),
     matching the endpoint it replaces.
 
+    ``action``/``amount`` are also both optional now — a pure window edit
+    (e.g. extending ``budget_effective_to`` to reactivate a lapsed window)
+    sends neither; the two are otherwise only ever accepted together (422
+    on a schema validation error if only one is given), and at least one of
+    action+amount or budget_effective_from/budget_effective_to must be
+    present.
+
     ``budget_effective_from``/``budget_effective_to`` are both optional —
     both omitted is a plain amount top-up/top-down that leaves an existing
     window untouched. Whether either is actually required depends on
-    whether this tenant currently has a LIVE window: if so,
-    ``budget_effective_from`` is locked (422 ``effective_from_locked`` if
-    given) and ``budget_effective_to`` may only extend it; if the tenant has
-    no window yet, or the old one has lapsed, this call IS the assignment
-    and both become required (422 ``effective_window_required`` if either
-    is missing). See TenantService.revise_tenant_budget for the full
-    matrix and the remaining 422s (``budget_effective_from_invalid`` /
+    whether this tenant currently has a LIVE window:
+      * Active: ``budget_effective_from`` is locked (422
+        ``effective_from_locked`` if given) and ``budget_effective_to`` may
+        only extend it.
+      * Lapsed, but a window was assigned before: omitting
+        ``budget_effective_from`` reuses the stored one as-is and just
+        extends ``budget_effective_to`` — reactivating the SAME window
+        (remaining balance carries over, since allocated_budget/spend are
+        never window-scoped) rather than forcing a brand-new one. Giving
+        ``budget_effective_from`` explicitly re-founds it instead, moving
+        the start date too.
+      * No window on file at all: this call IS the assignment and both
+        become required (422 ``effective_window_required`` if either is
+        missing).
+    See TenantService.revise_tenant_budget for the full matrix and the
+    remaining 422s (``budget_effective_from_invalid`` /
     ``budget_effective_to_invalid``).
 
     No Application's own ₹ ever moves as a result of this revision — only

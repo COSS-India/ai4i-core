@@ -27,9 +27,12 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
+from pydantic import ValidationError as PydanticValidationError
+
 from app.core.exceptions import ValidationError
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User
+from app.schemas.tenant import TenantBudgetRequest
 from app.services.tenant_service import TenantService
 
 # A valid budget window for tests that aren't specifically exercising the
@@ -904,6 +907,91 @@ class TestReviseTenantBudgetEffectiveWindow:
         assert written["allocated_budget"] == Decimal("600")
 
     @pytest.mark.asyncio
+    async def test_extending_effective_to_on_lapsed_window_reuses_stored_from(self) -> None:
+        """The actual reactivation case: a tenant's Sep 1-16 window lapsed
+        with 700 of its 1000 unspent. The admin edits ONLY
+        budget_effective_to (to Sep 20) the day after expiry, omitting
+        budget_effective_from and action/amount entirely — the stored From
+        must be reused as-is (not required/re-validated against "today"),
+        and allocated_budget must be left untouched (no reset to a fresh
+        amount, no forced re-founding)."""
+        stored_from = _VALID_EFFECTIVE_FROM - timedelta(days=60)
+        expired_tenant = _tenant(allocated_budget=Decimal("1000"))
+        expired_tenant.budget_effective_from = stored_from
+        expired_tenant.budget_effective_to = _VALID_EFFECTIVE_FROM - timedelta(days=1)
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=expired_tenant)
+        svc._tenants.update = AsyncMock()
+        new_to = _VALID_EFFECTIVE_FROM + timedelta(days=4)
+
+        await svc.revise_tenant_budget(_admin_user(), 1, None, None, None, new_to)
+
+        written = svc._tenants.update.await_args.args[1]
+        assert written["budget_effective_from"] == stored_from
+        assert written["budget_effective_to"] == new_to
+        assert written["allocated_budget"] == Decimal("1000")
+
+    @pytest.mark.asyncio
+    async def test_extending_lapsed_window_can_combine_with_top_up(self) -> None:
+        """The same reactivation, but the admin also tops up at the same
+        time — both the window AND the amount change in one call."""
+        stored_from = _VALID_EFFECTIVE_FROM - timedelta(days=60)
+        expired_tenant = _tenant(allocated_budget=Decimal("300"))
+        expired_tenant.budget_effective_from = stored_from
+        expired_tenant.budget_effective_to = _VALID_EFFECTIVE_FROM - timedelta(days=1)
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=expired_tenant)
+        svc._tenants.update = AsyncMock()
+        new_to = _VALID_EFFECTIVE_FROM + timedelta(days=4)
+
+        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("200"), None, new_to)
+
+        written = svc._tenants.update.await_args.args[1]
+        assert written["budget_effective_from"] == stored_from
+        assert written["budget_effective_to"] == new_to
+        assert written["allocated_budget"] == Decimal("500")
+
+    @pytest.mark.asyncio
+    async def test_extending_lapsed_window_to_a_still_past_date_rejected(self) -> None:
+        """Reactivating must actually reopen the window — a To that's
+        still before today would "extend" it right back into being
+        expired."""
+        expired_tenant = _tenant(allocated_budget=Decimal("100"))
+        expired_tenant.budget_effective_from = _VALID_EFFECTIVE_FROM - timedelta(days=60)
+        expired_tenant.budget_effective_to = _VALID_EFFECTIVE_FROM - timedelta(days=10)
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=expired_tenant)
+        still_past_to = _VALID_EFFECTIVE_FROM - timedelta(days=1)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.revise_tenant_budget(_admin_user(), 1, None, None, None, still_past_to)
+
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["error"] == "budget_effective_to_invalid"
+        svc._tenants.update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_amount_only_change_on_lapsed_window_leaves_it_lapsed(self) -> None:
+        """A top-up/top-down with no budget_effective_to given at all, on a
+        lapsed window, must not silently reactivate it — only the ₹
+        changes; the window stays exactly as expired as it was."""
+        stored_from = _VALID_EFFECTIVE_FROM - timedelta(days=60)
+        stored_to = _VALID_EFFECTIVE_FROM - timedelta(days=1)
+        expired_tenant = _tenant(allocated_budget=Decimal("300"))
+        expired_tenant.budget_effective_from = stored_from
+        expired_tenant.budget_effective_to = stored_to
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=expired_tenant)
+        svc._tenants.update = AsyncMock()
+
+        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("200"))
+
+        written = svc._tenants.update.await_args.args[1]
+        assert written["budget_effective_from"] == stored_from
+        assert written["budget_effective_to"] == stored_to
+        assert written["allocated_budget"] == Decimal("500")
+
+    @pytest.mark.asyncio
     async def test_naive_datetime_treated_as_utc_not_local(self) -> None:
         """A naive (no tzinfo) From/To — e.g. a client that stripped the
         offset — must be compared as UTC, matching the field's documented
@@ -1561,3 +1649,32 @@ class TestTierBudgetNotificationPublishing:
 
         mock_enabled.assert_not_called()
         mock_publish.assert_not_called()
+
+
+class TestTenantBudgetRequestSchema:
+    """action/amount became optional (a pure budget_effective_to extension
+    sends neither) — these pin the resulting pairing rule directly on the
+    schema, independent of TenantService.revise_tenant_budget's own tests
+    above."""
+
+    def test_window_only_request_is_valid(self) -> None:
+        req = TenantBudgetRequest(budget_effective_to=_VALID_EFFECTIVE_TO)
+        assert req.action is None
+        assert req.amount is None
+
+    def test_action_without_amount_rejected(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            TenantBudgetRequest(action="top-up")
+
+    def test_amount_without_action_rejected(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            TenantBudgetRequest(amount=Decimal("100"))
+
+    def test_everything_omitted_rejected(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            TenantBudgetRequest()
+
+    def test_action_and_amount_together_is_valid(self) -> None:
+        req = TenantBudgetRequest(action="top-up", amount=Decimal("100"))
+        assert req.budget_effective_from is None
+        assert req.budget_effective_to is None
