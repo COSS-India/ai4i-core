@@ -50,6 +50,7 @@ from app.services.metering_service import (
     _UNSET,
     _Unset,
     _WINDOW_SECONDS,
+    _step_seconds,
 )
 from app.services.pay_per_use import inference_type_cache
 from app.utils.metering_promql_builder import (
@@ -335,18 +336,31 @@ class OpenSearchMeteringService(MeteringService):
             return None
 
         step = WINDOW_STEP[window]
+        # Same bucket-count alignment MeteringService.request_volume_chart()
+        # (the Prometheus version) uses: when the window doesn't divide
+        # evenly by the bucket width — only 30d/7d today, ceil(30/7)=5
+        # buckets = 35 days — both backends must query the SAME total span
+        # and bucket count, not the literal window, or a dual-run comparison
+        # on that window disagrees permanently even with zero real drift
+        # (caught in PR review — the literal-window query here undercounted
+        # by up to one bucket width relative to Prometheus's aligned span).
+        step_secs = _step_seconds(step)
+        w_secs = _WINDOW_SECONDS[window]
+        n_buckets = max(1, -(-w_secs // step_secs)) if step_secs else 1
+        range_secs = n_buckets * step_secs
+
         base_filters = self._base_filters(
             tenant_id=tenant_id, auth_type=auth_type, task_types=task_types, inference_only=True,
         )
         query = {"bool": {"filter": [
-            {"range": {"@timestamp": {"gte": f"now-{window}", "lte": "now"}}}, *base_filters,
+            {"range": {"@timestamp": {"gte": f"now-{range_secs}s", "lte": "now"}}}, *base_filters,
         ]}}
         aggs = {
             "over_time": {
                 "date_histogram": {
                     "field": "@timestamp",
                     "fixed_interval": step,
-                    "extended_bounds": {"min": f"now-{window}", "max": "now"},
+                    "extended_bounds": {"min": f"now-{range_secs}s", "max": "now"},
                 },
                 "aggs": {"by_status": self._status_filters_agg()},
             }

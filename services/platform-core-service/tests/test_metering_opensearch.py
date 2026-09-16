@@ -266,6 +266,30 @@ class TestRequestVolumeChart:
         assert by_key["successful"].points[0].ts == 1_700_000_000
         assert by_key["failed"].points[0].value == 1
 
+    async def test_30d_window_queries_bucket_aligned_35_day_span_not_literal_30d(self):
+        """30d doesn't divide evenly by its 7d bucket width — Prometheus's
+        request_volume_chart() snaps to ceil(30/7)=5 whole buckets (35 days)
+        so the last bucket isn't cut short of `now`. The OpenSearch side must
+        query that SAME aligned span, not the literal window, or a dual-run
+        comparison on 30d disagrees permanently even with zero real drift
+        (PR review finding)."""
+        svc, os_client = _make_os_service(aggregate_return={"over_time": {"buckets": []}})
+        await svc.request_volume_chart("30d", tenant=None)
+
+        query = os_client.aggregate.call_args.args[0]
+        aggs = os_client.aggregate.call_args.args[1]
+        assert query["bool"]["filter"][0]["range"]["@timestamp"]["gte"] == "now-3024000s"
+        assert aggs["over_time"]["date_histogram"]["extended_bounds"]["min"] == "now-3024000s"
+
+    async def test_24h_window_queries_equivalent_evenly_dividing_span(self):
+        """24h/4h divides evenly (6 buckets) — the aligned span must equal
+        the literal window exactly, just expressed in seconds."""
+        svc, os_client = _make_os_service(aggregate_return={"over_time": {"buckets": []}})
+        await svc.request_volume_chart("24h", tenant=None)
+
+        query = os_client.aggregate.call_args.args[0]
+        assert query["bool"]["filter"][0]["range"]["@timestamp"]["gte"] == "now-86400s"
+
 
 @pytest.mark.asyncio
 class TestActiveTenants:
