@@ -170,6 +170,18 @@ def _alert_datetime_ist(dt: datetime) -> str:
     return dt.astimezone(_IST).strftime("%Y-%m-%d %H:%M") + " IST"
 
 
+def _display_pct(pct: Decimal) -> Decimal:
+    """Clamp a usage percentage to 100 for DISPLAY only (design doc §9.5's
+    QUOTA_THRESHOLD/BUDGET_THRESHOLD current_value). A single debit can push
+    used past snap (e.g. concurrent requests racing past the ceiling before
+    either sees the other's write), so the raw percent(post) can read well
+    over 100 — "2900%" in an alert email reads as a bug, not "you're very
+    over budget". crossed_bands/crossed_exhaustion in _thresholds.py must
+    keep using the raw, uncapped pre_pct/post_pct (this is display-only,
+    called after band-crossing/exhaustion are already decided)."""
+    return min(pct, Decimal(100))
+
+
 def _first_of_next_month(billing_month: str) -> str:
     """QUOTA_EXHAUSTED's "Resets on" date (design doc §9.5): quota resets at
     the start of the month after the one it exhausted in, mirroring
@@ -324,7 +336,7 @@ async def _publish_usage_crossing_events(
                         details=[
                             str(band),
                             _alert_datetime_ist(alert_at),
-                            f"{post_pct:.0f}%",
+                            f"{_display_pct(post_pct):.0f}%",
                         ],
                         occurred_at=alert_at.isoformat(),
                     )
@@ -367,7 +379,7 @@ async def _publish_usage_crossing_events(
                         details=[
                             str(band),
                             _alert_datetime_ist(alert_at),
-                            f"{post_pct:.0f}% ({inference_name.upper()})",
+                            f"{_display_pct(post_pct):.0f}% ({inference_name.upper()})",
                         ],
                         occurred_at=alert_at.isoformat(),
                     )

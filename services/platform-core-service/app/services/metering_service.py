@@ -1,6 +1,9 @@
 """Metering business logic — PromQL construction, Prometheus calls, result shaping."""
 import asyncio
 import logging
+import math
+import re
+import time as _time
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Union
 
@@ -11,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.repositories.model_management.model_repository import ModelRepository
 from app.repositories.model_management.service_repository import ServiceRepository
+from app.schemas.metering import Graph, GraphPoint, GraphSeries
 from app.utils.prometheus_client import PrometheusClient
 from app.services.pay_per_use import inference_type_cache
 from app.utils.metering_promql_builder import (
@@ -21,6 +25,7 @@ from app.utils.metering_promql_builder import (
     ENDPOINT_TO_TASK,
     PROMETHEUS_API_PATH_LABEL,
     API_KEY_AUTH_TYPE,
+    WINDOW_STEP,
     api_key_auth_type_selector,
     build_base_selectors,
     build_task_type_selector,
@@ -32,6 +37,40 @@ from app.utils.metering_promql_builder import (
 logger = logging.getLogger(__name__)
 
 _METRIC = "telemetry_obsv_requests_total"
+
+# request_volume_chart's bucket-width bookkeeping — moved here (from
+# routes/metering.py) alongside the method itself so an OpenSearch-backed
+# MeteringService implementation can override just the method and reuse
+# these unchanged.
+_WINDOW_SECONDS: dict = {
+    "1h":  3_600,
+    "24h": 86_400,
+    "7d":  604_800,
+    "30d": 2_592_000,
+}
+_STEP_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def _step_seconds(step: str) -> int:
+    """Parse a duration step (e.g. '10m', '4h', '1d') to seconds."""
+    m = re.fullmatch(r"(\d+)([smhd])", step.strip())
+    return int(m.group(1)) * _STEP_UNIT_SECONDS[m.group(2)] if m else 0
+
+
+def _series_points(res, ndigits: int) -> list[GraphPoint]:
+    """Build GraphPoints from a Prometheus query_range result, skipping NaN/Inf samples."""
+    if isinstance(res, Exception) or not res:
+        return []
+    out: list[GraphPoint] = []
+    for ts, val in res[0].get("values", []):
+        try:
+            f = float(val)
+        except (TypeError, ValueError):
+            continue
+        if math.isnan(f) or math.isinf(f):  # NaN / ±Inf
+            continue
+        out.append(GraphPoint(ts=int(ts), value=round(f, ndigits)))
+    return out
 
 # SERVICE_BREAKDOWN_CONFIG's task keys (underscore-separated, matching the
 # metering module's own PromQL/endpoint conventions — see ENDPOINT_TO_TASK)
@@ -313,6 +352,78 @@ class MeteringService:
                 "time_range": time_range or "all",
             },
         }
+
+    async def request_volume_chart(
+        self,
+        window: str,
+        tenant: Optional[str],
+        task_types: Optional[list[str]] = None,
+        tenant_id: Optional[str] = None,
+        auth_type: Optional[str] = None,
+    ) -> Optional[Graph]:
+        """OVERVIEW "Request Volume" chart — successful vs failed request COUNTS per bucket:
+          - "successful" : 2xx request count per bucket
+          - "failed"     : 4xx/5xx request count per bucket
+
+        Moved here (from routes/metering.py's module-level `_request_volume_chart`)
+        so an OpenSearch-backed MeteringService implementation can override it —
+        the route layer only calls `svc.request_volume_chart(...)` now, same as
+        every other tab query.
+        """
+        if window not in WINDOW_STEP:
+            return None
+
+        task_sel = build_task_type_selector(task_types)
+        success_extra = [task_sel, 'status_code=~"2.."'] if task_sel else ['status_code=~"2.."']
+        failed_extra = [task_sel, 'status_code=~"[45].."'] if task_sel else ['status_code=~"[45].."']
+        success_sel = build_base_selectors(
+            inference_only=True, tenant=tenant, extra=success_extra, tenant_id=tenant_id, auth_type=auth_type
+        )
+        failed_sel = build_base_selectors(
+            inference_only=True, tenant=tenant, extra=failed_extra, tenant_id=tenant_id, auth_type=auth_type
+        )
+        success_metric = f"{_METRIC}{success_sel}"
+        failed_metric = f"{_METRIC}{failed_sel}"
+        step = WINDOW_STEP[window]
+        step_secs = _step_seconds(step)
+        w_secs = _WINDOW_SECONDS[window]
+        now = _time.time()
+        # Align the range so the LAST bucket ends at `now`. query_range places eval
+        # points at start + i*step, so an unaligned start (e.g. a 30d window with a 7d
+        # step — 30 isn't divisible by 7) leaves the final point short of now and the
+        # most recent bucket (today's requests) is never evaluated. Snap start to a
+        # whole number of buckets ending at now.
+        n_buckets = max(1, -(-w_secs // step_secs)) if step_secs else 1
+        start = now - n_buckets * step_secs
+
+        # `or vector(0)` fills idle buckets with 0 so the timeline is continuous.
+        # Without it increase() emits no sample for a zero-traffic bucket, the chart
+        # drops it, and the axis shows gaps (missing days / jumping intervals).
+        success_q = f"{sum_over_window(success_metric, step)} or vector(0)"
+        failed_q  = f"{sum_over_window(failed_metric,  step)} or vector(0)"
+
+        succ_res, fail_res = await asyncio.gather(
+            self._client.query_range(success_q, start=start, end=now, step=step),
+            self._client.query_range(failed_q, start=start, end=now, step=step),
+            return_exceptions=True,
+        )
+
+        succ_points = _series_points(succ_res, 0)        # counts (zero-filled)
+        fail_points = _series_points(fail_res, 0)        # counts (zero-filled)
+
+        # Series are now dense, so emptiness can't be inferred from point count —
+        # only suppress the chart when there's no real activity anywhere in the window.
+        has_data = any(p.value > 0 for p in succ_points) or any(p.value > 0 for p in fail_points)
+        if not has_data:
+            return None
+
+        return Graph(
+            step=step,
+            series=[
+                GraphSeries(key="successful", label="Successful", points=succ_points),
+                GraphSeries(key="failed", label="Failed", points=fail_points),
+            ],
+        )
 
     async def active_tenants(
         self, time_range: Optional[str], valid_names: Union[set, None, _Unset] = _UNSET
@@ -882,6 +993,34 @@ class MeteringService:
             for i, task in enumerate(native_tasks)
         }
 
+        return await self._shape_model_breakdown(
+            total_rows, success_rows, native_by_task, unit_map, tenant, time_range, task_types,
+        )
+
+    async def _shape_model_breakdown(
+        self,
+        total_rows: list,
+        success_rows: list,
+        native_by_task: dict[str, dict[str, float]],
+        unit_map: dict[str, str],
+        tenant: Optional[str],
+        time_range: Optional[str],
+        task_types: Optional[list[str]],
+    ) -> dict:
+        """Everything model_breakdown() does AFTER fetching its rows — ghost-
+        filtering against the Registry, the per-service view, and the
+        independently-collapsed per-model view (see model_breakdown's own
+        ROLLOUT NOTEs for the full reasoning this preserves unchanged).
+
+        Row-shape-agnostic by design: `total_rows`/`success_rows` only need
+        to be `{"metric": {"service_id":..., "model_id":...,
+        PROMETHEUS_API_PATH_LABEL:...}, "value": [_, count]}` dicts — the
+        exact shape Prometheus's own `query()` returns, and also what
+        OpenSearchMeteringService.model_breakdown() reshapes its composite
+        aggregation buckets into, specifically so this method needs no
+        changes at all to serve either backend. Split out from
+        model_breakdown() for exactly that reuse — not a behavior change.
+        """
         # ── Per-service view (collapses across model_id — see class docstring
         # on why a service_id can transiently carry more than one model_id
         # label value; the per-service TOTAL must not fragment because of it).

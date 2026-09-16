@@ -221,3 +221,19 @@ class TestCatalogUpdateValidation:
 
     def test_omitted_channels_is_fine(self):
         assert CatalogUpdate().channels is None
+
+    def test_recipient_roles_string_true_is_rejected_not_coerced(self):
+        # pydantic's default lax bool mode would otherwise silently coerce
+        # "true"/"false" into a real bool instead of 422ing — StrictBool on
+        # this field closes that gap (a loosely-typed caller's bug must
+        # fail fast, not get masked).
+        with pytest.raises(Exception):
+            CatalogUpdate(recipient_roles={"ADMIN": "true"})
+
+    def test_thresholds_string_true_is_rejected_not_coerced(self):
+        with pytest.raises(Exception):
+            CatalogUpdate(thresholds=[{"percentage": 50, "active": "true"}])
+
+    def test_recipient_roles_real_bool_still_accepted(self):
+        payload = CatalogUpdate(recipient_roles={"ADMIN": True})
+        assert payload.recipient_roles == {"ADMIN": True}

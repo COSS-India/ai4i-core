@@ -40,8 +40,7 @@ class RequestMiddleware(BaseHTTPMiddleware):
     one structured JSON line per request after the response is ready.
 
     Skips health checks, metrics scrapes, and OPTIONS pre-flights by default
-    (controlled via EXCLUDE_* env vars). Skips 4xx responses — the API gateway
-    logs those.
+    (controlled via EXCLUDE_* env vars).
     """
 
     def __init__(self, app, header_name: str = "X-Correlation-ID"):
@@ -85,6 +84,8 @@ class RequestMiddleware(BaseHTTPMiddleware):
         if auth_type:
             set_auth_type(auth_type)
 
+        application_id = (request.headers.get("X-Application-ID") or "").strip()
+
         api_key_id = (request.headers.get("X-API-Key-ID") or "").strip()
         if api_key_id:
             set_api_key_id(api_key_id)
@@ -105,10 +106,6 @@ class RequestMiddleware(BaseHTTPMiddleware):
         if self._should_skip(request.method, request.url.path):
             return response
 
-        # 4xx are logged at the gateway level — skip them here to avoid duplicates.
-        if 400 <= status < 500:
-            return response
-
         ctx = {
             "method": request.method,
             "path": request.url.path,
@@ -118,10 +115,15 @@ class RequestMiddleware(BaseHTTPMiddleware):
         }
 
         # Enrich with identity fields set by upstream auth/identity middleware.
-        for field in ("user_id", "tenant_id", "organization"):
+        for field in ("user_id", "tenant_id", "organization", "service_id", "model_id"):
             value = getattr(request.state, field, None)
             if value:
                 ctx[field] = value
+
+        if auth_type:
+            ctx["auth_type"] = auth_type
+        if application_id:
+            ctx["application_id"] = application_id
 
         msg = f"{request.method} {request.url.path} {status}"
         if status >= 500:

@@ -84,12 +84,55 @@ def get_prometheus_client(request: Request) -> PrometheusClient:
 
 
 def get_metering_service(
-    client: PrometheusClient = Depends(get_prometheus_client),
+    request: Request,
     auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
     db: AsyncSession = Depends(get_db),
 ) -> "MeteringService":
+    """Prometheus- or OpenSearch-backed MeteringService, selected by
+    `settings.metering_data_source` (env METERING_DATA_SOURCE).
+
+    `client` isn't a plain `Depends(get_prometheus_client)` param here
+    because that dependency raises 503 whenever PROMETHEUS_URL is unset —
+    fine when Prometheus is actually needed, wrong when a deployment has
+    fully cut over to `opensearch` and never configures Prometheus at all.
+    Called directly instead, only on the branches that still need it.
+
+    Note: both "opensearch" and "dual" modes still construct a
+    PrometheusClient — service_breakdown/model_breakdown (Service/Model
+    Consumption) aren't migrated yet and stay Prometheus-backed regardless of
+    this setting (see OpenSearchMeteringService's docstring); native-unit
+    metrics (characters/tokens/audio-minutes) stay on Prometheus permanently
+    either way. "dual" additionally requires Prometheus (it's the side that
+    gets served), unlike "opensearch" mode where it's optional.
+    """
     from app.services.metering_service import MeteringService
-    return MeteringService(client, auth_db, ServiceRepository(db), ModelRepository(db))
+    from app.services.metering_service_dual import DualMeteringService
+    from app.services.metering_service_opensearch import OpenSearchMeteringService
+    from app.utils.opensearch_log_client import OpenSearchLogClient
+
+    service_repo = ServiceRepository(db)
+    model_repo = ModelRepository(db)
+
+    if settings.metering_data_source in ("opensearch", "dual"):
+        if not settings.opensearch_url:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="OpenSearch is not configured (OPENSEARCH_URL is unset).",
+            )
+        os_client = OpenSearchLogClient(
+            url=settings.opensearch_url,
+            username=settings.opensearch_username or "",
+            password=settings.opensearch_password or "",
+            index=settings.opensearch_logs_index,
+        )
+        if settings.metering_data_source == "dual":
+            prom_client = get_prometheus_client(request)
+            return DualMeteringService(os_client, prom_client, auth_db, service_repo, model_repo)
+        prom_client = get_prometheus_client(request) if settings.prometheus_url else None
+        return OpenSearchMeteringService(os_client, prom_client, auth_db, service_repo, model_repo)
+
+    client = get_prometheus_client(request)
+    return MeteringService(client, auth_db, service_repo, model_repo)
 
 
 def get_sync_service() -> "SyncService":

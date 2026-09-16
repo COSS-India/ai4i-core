@@ -1,6 +1,6 @@
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, StrictBool, field_validator
 
 from app.schemas.common import MessageMeta, SuccessResponse, SuccessResponseWithMeta
 from app.schemas.enums.notification_management import (
@@ -20,7 +20,10 @@ class ThresholdBand(BaseModel):
     editable."""
 
     percentage: int
-    active: bool
+    # Strict: pydantic's default lax bool coercion would otherwise accept
+    # "true"/"false" (string) and silently coerce them instead of 422ing —
+    # see CatalogUpdate.recipient_roles for the same fix on that field.
+    active: StrictBool
 
 
 class CatalogItem(BaseModel):
@@ -59,7 +62,11 @@ class CatalogUpdate(BaseModel):
     whole list back."""
 
     channels: Optional[List[NotificationChannel]] = None
-    recipient_roles: Optional[Dict[str, bool]] = None
+    # Strict: a plain `bool` here would let pydantic's default lax mode
+    # coerce a string like "true"/"false" (or "1"/"yes"/"on"/...) into a
+    # real bool instead of 422ing — silently masking a loosely-typed
+    # caller's bug instead of failing fast (per this endpoint's spec).
+    recipient_roles: Optional[Dict[str, StrictBool]] = None
     thresholds: Optional[List[ThresholdBand]] = None
 
     @field_validator("channels")

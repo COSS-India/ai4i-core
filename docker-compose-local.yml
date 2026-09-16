@@ -285,9 +285,11 @@ services:
     volumes:
       - ./infrastructure/opensearch/init-opensearch.sh:/init-opensearch.sh:ro
       - ./infrastructure/opensearch/index-template.json:/index-template.json:ro
+      - ./infrastructure/opensearch/ism-policy-logs.json:/ism-policy-logs.json:ro
     environment:
       - OPENSEARCH_URL=http://opensearch:9200
       - TEMPLATE_FILE=/index-template.json
+      - ISM_POLICY_FILE=/ism-policy-logs.json
     command: ["sh", "/init-opensearch.sh"]
     restart: "no"
 

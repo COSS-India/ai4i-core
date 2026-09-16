@@ -4,9 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import math
 import re
-import time as _time
 from datetime import datetime, timezone
 from typing import Literal, Optional, Union
 
@@ -20,9 +18,6 @@ from app.core.redis import get_redis
 from app.dependencies.services import get_metering_service
 from app.schemas.metering import (
     Cell,
-    Graph,
-    GraphPoint,
-    GraphSeries,
     HighestFailureModel,
     HighestFailureService,
     ModelConsumptionResponse,
@@ -42,7 +37,7 @@ from app.schemas.metering import (
     UsageConcentration,
 )
 from app.services.metering_service import MeteringService
-from app.utils.metering_promql_builder import API_KEY_AUTH_TYPE, SERVICE_BREAKDOWN_CONFIG, WINDOW_STEP
+from app.utils.metering_promql_builder import API_KEY_AUTH_TYPE, SERVICE_BREAKDOWN_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -53,13 +48,6 @@ _ROLE_MODERATOR = 2
 _ROLE_TENANT_ADMIN = 5
 
 _CACHE_TTL = settings.metering_cache_ttl_seconds
-
-_WINDOW_SECONDS: dict = {
-    "1h":  3_600,
-    "24h": 86_400,
-    "7d":  604_800,
-    "30d": 2_592_000,
-}
 
 
 # ── Auth helpers ─────────────────────────────────────────────────────────────
@@ -255,22 +243,6 @@ async def _resolve_tenant_scope(
     return scope_tenant, scope_tenant_name
 
 
-def _series_points(res, ndigits: int) -> list[GraphPoint]:
-    """Build GraphPoints from a query_range result, skipping NaN/Inf samples."""
-    if isinstance(res, Exception) or not res:
-        return []
-    out: list[GraphPoint] = []
-    for ts, val in res[0].get("values", []):
-        try:
-            f = float(val)
-        except (TypeError, ValueError):
-            continue
-        if math.isnan(f) or math.isinf(f):  # NaN / ±Inf
-            continue
-        out.append(GraphPoint(ts=int(ts), value=round(f, ndigits)))
-    return out
-
-
 def _avg_requests_per_tenant_cell(
     ranking: Optional[dict], prev_avg: Optional[float]
 ) -> Optional[Cell]:
@@ -447,86 +419,6 @@ def _model_consumption_summary(
     )
 
 
-_STEP_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
-
-
-def _step_seconds(step: str) -> int:
-    """Parse a Prometheus duration step (e.g. '10m', '4h', '1d') to seconds."""
-    m = re.fullmatch(r"(\d+)([smhd])", step.strip())
-    return int(m.group(1)) * _STEP_UNIT_SECONDS[m.group(2)] if m else 0
-
-
-async def _request_volume_chart(
-    svc: MeteringService,
-    window: str,
-    tenant: Optional[str],
-    task_types: Optional[list[str]] = None,
-    tenant_id: Optional[str] = None,
-    auth_type: Optional[str] = None,
-) -> Optional[Graph]:
-    """OVERVIEW "Request Volume" chart — successful vs failed request COUNTS per bucket:
-      - "successful" : 2xx request count per bucket
-      - "failed"     : 4xx/5xx request count per bucket
-    """
-    if window not in WINDOW_STEP:
-        return None
-    from app.utils.metering_promql_builder import (
-        build_base_selectors, build_task_type_selector, sum_over_window,
-    )
-
-    task_sel = build_task_type_selector(task_types)
-    success_extra = [task_sel, 'status_code=~"2.."'] if task_sel else ['status_code=~"2.."']
-    failed_extra = [task_sel, 'status_code=~"[45].."'] if task_sel else ['status_code=~"[45].."']
-    success_sel = build_base_selectors(
-        inference_only=True, tenant=tenant, extra=success_extra, tenant_id=tenant_id, auth_type=auth_type
-    )
-    failed_sel = build_base_selectors(
-        inference_only=True, tenant=tenant, extra=failed_extra, tenant_id=tenant_id, auth_type=auth_type
-    )
-    success_metric = f"telemetry_obsv_requests_total{success_sel}"
-    failed_metric = f"telemetry_obsv_requests_total{failed_sel}"
-    step = WINDOW_STEP[window]
-    step_secs = _step_seconds(step)
-    w_secs = _WINDOW_SECONDS[window]
-    now = _time.time()
-    # Align the range so the LAST bucket ends at `now`. query_range places eval
-    # points at start + i*step, so an unaligned start (e.g. a 30d window with a 7d
-    # step — 30 isn't divisible by 7) leaves the final point short of now and the
-    # most recent bucket (today's requests) is never evaluated. Snap start to a
-    # whole number of buckets ending at now.
-    n_buckets = max(1, -(-w_secs // step_secs)) if step_secs else 1
-    start = now - n_buckets * step_secs
-
-    # `or vector(0)` fills idle buckets with 0 so the timeline is continuous.
-    # Without it increase() emits no sample for a zero-traffic bucket, the chart
-    # drops it, and the axis shows gaps (missing days / jumping intervals).
-    success_q = f"{sum_over_window(success_metric, step)} or vector(0)"
-    failed_q  = f"{sum_over_window(failed_metric,  step)} or vector(0)"
-
-    succ_res, fail_res = await asyncio.gather(
-        svc._client.query_range(success_q, start=start, end=now, step=step),
-        svc._client.query_range(failed_q, start=start, end=now, step=step),
-        return_exceptions=True,
-    )
-
-    succ_points = _series_points(succ_res, 0)        # counts (zero-filled)
-    fail_points = _series_points(fail_res, 0)        # counts (zero-filled)
-
-    # Series are now dense, so emptiness can't be inferred from point count —
-    # only suppress the chart when there's no real activity anywhere in the window.
-    has_data = any(p.value > 0 for p in succ_points) or any(p.value > 0 for p in fail_points)
-    if not has_data:
-        return None
-
-    return Graph(
-        step=step,
-        series=[
-            GraphSeries(key="successful", label="Successful", points=succ_points),
-            GraphSeries(key="failed", label="Failed", points=fail_points),
-        ],
-    )
-
-
 # Allowed time windows, typed as a Literal so FastAPI validates the query param
 # itself and returns the standard 422 for unsupported values (e.g. "15d") — matching
 # the documented OpenAPI contract — instead of a hand-rolled 400. ("all" is internal
@@ -584,8 +476,8 @@ async def get_overview(
             inference_only=True, tenant=scope_tenant_name, service_id=None, time_range=window,
             task_types=task_type_filter, tenant_id=scope_tenant, auth_type=auth_type_filter,
         ),
-        _request_volume_chart(
-            svc, window, scope_tenant_name, task_type_filter,
+        svc.request_volume_chart(
+            window, scope_tenant_name, task_type_filter,
             tenant_id=scope_tenant, auth_type=auth_type_filter,
         ),
         # Usage Concentration is platform-wide; hide it when a tenant filter is applied.
