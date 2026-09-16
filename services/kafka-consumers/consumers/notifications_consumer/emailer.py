@@ -84,8 +84,8 @@ def _send_deadline_s() -> float:
 # short array's warning can name what the producer should have sent, not
 # just what index came up empty.
 _EXPECTED_DETAIL_COUNTS = {
-    "TIER_ASSIGNED": 6,
-    "TIER_CHANGED": 7,
+    "TIER_ASSIGNED": 3,
+    "TIER_CHANGED": 4,
     "BUDGET_ASSIGNED": 2,
     "BUDGET_UPDATED": 4,
     "QUOTA_LIMIT_UPDATED": 3,
@@ -95,37 +95,17 @@ _EXPECTED_DETAIL_COUNTS = {
     "BUDGET_THRESHOLD": 3,
 }
 
-# Positions from here on are known to be routinely omitted, not a producer
-# bug — auth-service's _fetch_tier_email_fields (tenant_service.py) never
-# sends TIER_ASSIGNED's rate_limit_value/effective_from/effective_to (index
-# 3-5) or TIER_CHANGED's equivalents (index 4-6): tiers has no rate-limit or
-# expiry column to source them from, so every tier assign/change would
-# otherwise log 3 warnings as normal operation, burying a genuine mismatch
-# under noise that means nothing. Only events listed here get this floor —
-# everything else still warns on any short position, per _EXPECTED_DETAIL_COUNTS.
-_KNOWN_OPTIONAL_FROM = {
-    "TIER_ASSIGNED": 3,
-    "TIER_CHANGED": 4,
-}
-
 
 def _at(details: List[Any], index: int, event_name: str, default: Any = _MISSING) -> Any:
-    """details[index], or `default` if the producer sent a short array (a
-    trailing optional value it chose not to fill) — degrade to a visibly
-    blank placeholder rather than raising IndexError and losing the whole
-    send over one missing value.
-
-    A short array is either a genuine producer/consumer contract mismatch
-    (design doc §9.5 changed on one side and not the other) or a known,
-    intentionally-omitted trailing value (_KNOWN_OPTIONAL_FROM) — only the
-    former is worth a warning; naming the event and how many values it
-    actually needs per §9.5 for a position no producer is ever expected to
-    send would just be noise on every single send."""
+    """details[index], or `default` (and a warning) if the producer sent a
+    short array — degrade to a visibly blank placeholder rather than raising
+    IndexError and losing the whole send over one missing value. A short
+    array is always a genuine producer/consumer contract mismatch (design
+    doc §9.5 changed on one side and not the other) — every event's array is
+    now exactly _EXPECTED_DETAIL_COUNTS long, no trailing optional
+    positions."""
     if index < len(details):
         return details[index]
-    optional_from = _KNOWN_OPTIONAL_FROM.get(event_name)
-    if optional_from is not None and index >= optional_from:
-        return default
     expected = _EXPECTED_DETAIL_COUNTS.get(event_name, "?")
     logger.warning(
         "details too short for event_name=%s — got %d value(s), position %d needs %s total "
@@ -148,9 +128,6 @@ def _build_message(
             tier_name=_at(details, 0, event_name),
             tier_description=_at(details, 1, event_name),
             quota_lines=_at(details, 2, event_name, default=[]),
-            rate_limit_value=_at(details, 3, event_name),
-            effective_from=_at(details, 4, event_name),
-            effective_to=_at(details, 5, event_name),
         )
     if event_name == "TIER_CHANGED":
         return email_templates.render_tier_reassigned_email(
@@ -159,9 +136,6 @@ def _build_message(
             new_tier_name=_at(details, 1, event_name),
             new_tier_description=_at(details, 2, event_name),
             quota_lines=_at(details, 3, event_name, default=[]),
-            new_rate_limit_value=_at(details, 4, event_name),
-            effective_from=_at(details, 5, event_name),
-            effective_to=_at(details, 6, event_name),
         )
     if event_name == "BUDGET_ASSIGNED":
         return email_templates.render_budget_assigned_email(
