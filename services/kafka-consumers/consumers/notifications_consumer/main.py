@@ -126,8 +126,16 @@ async def run() -> None:
                     # A rebalance can revoke a partition while its messages are
                     # still in this chunk.
                     if not consumer.owns(msg):
+                        # %s, not %d: this fence runs before _usable() below,
+                        # so an error/EOF sentinel message (msg.offset() is
+                        # None for those — confirmed in staging) can reach
+                        # here too, not just real data messages. %d on a
+                        # None crashed the format call itself (TypeError
+                        # inside logger.warning, caught and printed by
+                        # logging's own handleError — non-fatal to this
+                        # loop, but the intended log line was lost).
                         logger.warning(
-                            "Skipping message from revoked partition | %s[%d]@%d",
+                            "Skipping message from revoked partition | %s[%s]@%s",
                             msg.topic(), msg.partition(), msg.offset(),
                         )
                         continue
