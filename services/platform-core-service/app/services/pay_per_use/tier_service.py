@@ -14,7 +14,7 @@ from sqlalchemy.orm import selectinload
 from app.core.constants import TierStatus
 from app.core.exceptions import ValidationError
 from ai4i_core.kafka import (
-    publish_admin_event as publish_notification_event,
+    publish_event as publish_notification_event,
     is_notification_enabled,
     check_and_record_actions_bulk,
 )
@@ -419,7 +419,6 @@ async def _publish_quota_limit_updated(
                         ],
                         effective_date,
                     ],
-                    actor_id=str(updated_by or ""),
                     occurred_at=occurred_at,
                 )
     except Exception as exc:

@@ -44,10 +44,9 @@ _TERMINAL_DELIVERIES = {"sent", "failed", "skipped"}
 
 
 def _parse_envelope(msg: Message) -> Optional[Dict[str, Any]]:
-    """The 5-field envelope publish_event() (ai4i_core.kafka.producer)
-    sends, plus actor_id. Malformed input is a permanent skip, not a
-    retry — there is no version of this message that will parse
-    differently later."""
+    """The envelope publish_event() (ai4i_core.kafka.producer) sends.
+    Malformed input is a permanent skip, not a retry — there is no
+    version of this message that will parse differently later."""
     try:
         data = json.loads(msg.value())
     except (TypeError, ValueError) as exc:
@@ -72,7 +71,6 @@ def _parse_envelope(msg: Message) -> Optional[Dict[str, Any]]:
         # event_name has its own fixed value order, matching whatever
         # email_templates.py renderer emailer.py calls for it.
         "details": data.get("details") or [],
-        "actor_id": data.get("actor_id"),
     }
 
 

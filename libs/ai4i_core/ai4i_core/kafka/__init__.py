@@ -9,7 +9,6 @@ from .producer import (
     init_kafka_producer,
     close_kafka_producer,
     publish_event,
-    publish_admin_event,
     get_kafka_producer_client,
 )
 from .notification_settings_cache import (
@@ -34,7 +33,6 @@ __all__ = [
     "init_kafka_producer",
     "close_kafka_producer",
     "publish_event",
-    "publish_admin_event",
     "get_kafka_producer_client",
     "refresh_notification_settings_cache",
     "invalidate_notification_settings_cache",

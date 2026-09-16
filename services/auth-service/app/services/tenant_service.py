@@ -43,7 +43,7 @@ from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationRepository
 from app.core.responses import to_response
 from ai4i_core.kafka import (
-    publish_admin_event as publish_notification_event,
+    publish_event as publish_notification_event,
     is_notification_enabled,
     check_and_record_action,
 )
@@ -1042,7 +1042,6 @@ class TenantService:
                         tenant_id=str(tenant_id),
                         subject={},
                         details=[new_tier_name, description, quota_lines],
-                        actor_id=str(actor_id),
                         occurred_at=occurred_at,
                     )
             return
@@ -1069,7 +1068,6 @@ class TenantService:
                 tenant_id=str(tenant_id),
                 subject={},
                 details=[str(old_tier_name), new_tier_name, description, quota_lines],
-                actor_id=str(actor_id),
                 occurred_at=occurred_at,
             )
 
@@ -1569,7 +1567,6 @@ class TenantService:
                     tenant_id=str(tenant_id),
                     subject={},
                     details=details,
-                    actor_id=str(current_user.id),
                     occurred_at=occurred_at,
                 )
 

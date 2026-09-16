@@ -76,7 +76,6 @@ def publish_event(
     tenant_id: str,
     subject: dict,
     details: List[Any],
-    actor_id: str = "",
     topic: Optional[str] = None,
     occurred_at: Optional[str] = None,
 ) -> None:
@@ -100,7 +99,6 @@ def publish_event(
         "event_name": event_name,
         "tenant_id": tenant_id,
         "occurred_at": occurred_at or datetime.now(timezone.utc).isoformat(),
-        "actor_id": actor_id,
         "subject": subject,
         "details": details,
     }
@@ -125,32 +123,6 @@ def _send(topic: Optional[str], envelope: dict, event_name: str) -> None:
         future.add_errback(lambda exc: logger.warning("Failed to deliver event %s: %s", event_name, exc))
     except Exception as exc:
         logger.warning("Failed to publish event %s: %s", event_name, exc)
-
-
-def publish_admin_event(
-    event_name: str,
-    tenant_id: str,
-    subject: dict,
-    details: List[Any],
-    actor_id: str,
-    topic: Optional[str] = None,
-    occurred_at: Optional[str] = None,
-) -> None:
-    """Convenience wrapper over publish_event for the 5 "admin changed
-    something" events (design doc §2.1/§9). occurred_at is the only
-    timestamp in the envelope — pass it explicitly when the caller already
-    precomputed it (e.g. to pass the identical timestamp into the
-    ledger_notification_alert dedup check before deciding to publish at
-    all), otherwise it defaults to now()."""
-    publish_event(
-        event_name=event_name,
-        tenant_id=tenant_id,
-        subject=subject,
-        details=details,
-        actor_id=actor_id,
-        topic=topic,
-        occurred_at=occurred_at,
-    )
 
 
 def close_kafka_producer() -> None:
