@@ -141,7 +141,9 @@ def _validate_effective_to_after_from(budget_effective_from: datetime, budget_ef
         )
 
 
-async def _assign_plan_to_tenant(tenant_id: int, plan_id: UUID, db: AsyncSession) -> None:
+async def _assign_plan_to_tenant(
+    tenant_id: int, plan_id: UUID, db: AsyncSession, created_by: Optional[UUID] = None
+) -> None:
     base = (settings.platform_core_url or "").rstrip("/")
     if not base:
         logger.warning("platform_core_url not set; skipping plan assignment for tenant %s", tenant_id)
@@ -170,6 +172,7 @@ async def _assign_plan_to_tenant(tenant_id: int, plan_id: UUID, db: AsyncSession
             quota_config=plan_data.get("quota_config") or {},
             rate_limit_config=plan_data.get("rate_limit_config") or {},
             allowed_services=allowed_services if isinstance(allowed_services, list) else [],
+            created_by=created_by,
         )
         db.add(row)
         await db.commit()
@@ -657,7 +660,9 @@ class TenantService:
 
         if body.plan_id:
             try:
-                await _assign_plan_to_tenant(tenant.id, body.plan_id, self._tenants._db)
+                await _assign_plan_to_tenant(
+                    tenant.id, body.plan_id, self._tenants._db, created_by=current_user.id
+                )
             except Exception as e:
                 logger.exception("Plan assignment after tenant creation failed (tenant was created): %s", e)
 

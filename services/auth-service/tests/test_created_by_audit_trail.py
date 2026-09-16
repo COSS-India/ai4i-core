@@ -408,3 +408,96 @@ class TestRefreshTokenUpsertSetsCreatedBy:
                         text("DELETE FROM tenants WHERE id = :id"), {"id": tenant_id}
                     )
             await engine.dispose()
+
+
+# ── TenantPlan via _assign_plan_to_tenant: the one insert item #2 couldn't
+# cover, since tenant_plans had no created_by column at all until the
+# 569df8229653 migration added it. ──
+
+class TestAssignPlanToTenantSetsCreatedBy:
+    @pytest.mark.asyncio
+    async def test_assign_plan_to_tenant_sets_created_by_on_the_row(self, monkeypatch) -> None:
+        from app.services.tenant_service import _assign_plan_to_tenant
+
+        monkeypatch.setattr(
+            "app.services.tenant_service.settings.platform_core_url",
+            "http://platform-core.invalid",
+        )
+
+        class _FakeResponse:
+            def __init__(self, status_code: int, payload) -> None:
+                self.status_code = status_code
+                self._payload = payload
+
+            def json(self):
+                return self._payload
+
+        class _FakeAsyncClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def get(self, url: str):
+                if url.endswith("/services"):
+                    return _FakeResponse(200, ["nmt.inference"])
+                return _FakeResponse(
+                    200,
+                    {"plan_name": "Gold", "tier": "gold", "cost": "100.00", "quota_config": {}},
+                )
+
+        monkeypatch.setattr(
+            "app.services.tenant_service.httpx.AsyncClient", lambda timeout=30.0: _FakeAsyncClient()
+        )
+
+        db = AsyncMock()
+        admin_id = uuid4()
+
+        await _assign_plan_to_tenant(1, uuid4(), db, created_by=admin_id)
+
+        db.add.assert_called_once()
+        row = db.add.call_args.args[0]
+        assert row.created_by == admin_id
+        db.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_create_tenant_passes_admin_id_to_assign_plan_to_tenant(self, monkeypatch) -> None:
+        from app.services.tenant_service import TenantService
+
+        tenant_repo = AsyncMock()
+        tenant_repo.get_by_email = AsyncMock(return_value=None)
+        tenant_repo.get_by_organisation = AsyncMock(return_value=None)
+        tenant_repo.create = AsyncMock()
+        tenant_repo.refresh = AsyncMock()
+        svc = TenantService(
+            tenant_repo=tenant_repo,
+            user_repo=AsyncMock(),
+            role_service=AsyncMock(),
+            verification_repo=AsyncMock(),
+            credentials_repo=AsyncMock(),
+            token_service=AsyncMock(),
+            email_client=AsyncMock(),
+        )
+        svc.provision_user = AsyncMock()
+        svc._allocate_unique_username = AsyncMock(return_value="jane.doe")
+        admin = User(id=uuid4(), email="admin@example.invalid", username="admin")
+
+        assign_plan_mock = AsyncMock()
+        monkeypatch.setattr("app.services.tenant_service._assign_plan_to_tenant", assign_plan_mock)
+
+        body = MagicMock()
+        body.email = "contact@example.invalid"
+        body.organisation = "Acme Corp"
+        body.contact_name = "Jane Doe"
+        body.phone_number = "+919876543210"
+        body.plan_id = uuid4()
+        body.tier_id = None
+        body.allocated_budget = None
+        body.budget_effective_from = None
+        body.budget_effective_to = None
+
+        await svc.create_tenant(body, admin, MagicMock())
+
+        assign_plan_mock.assert_awaited_once()
+        assert assign_plan_mock.await_args.kwargs["created_by"] == admin.id
