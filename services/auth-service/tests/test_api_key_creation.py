@@ -749,6 +749,159 @@ class TestNewKeyExhaustionFlagSeeding:
         assert "budget-exhausted" not in payload
 
 
+class TestUncappedKeySeededFromApplicationsRemainingBudget:
+    """Code-review finding (mohapatras): an uncapped Key under an Application
+    that DOES have its own ₹ Budget used to contribute 0 to committed_total
+    as both a ceiling AND a usage figure (no budget_usage row for it — see
+    create_api_key's own comment on this), so a LATER Key could be allocated
+    the Application's entire remaining share while the uncapped one kept
+    spending on top of the Budget, with only the Tenant's tier monthly quota
+    to ever stop it. Fixed by seeding the uncapped Key with the Application's
+    remaining (unallocated) ₹ instead of leaving it None."""
+
+    @pytest.mark.asyncio
+    async def test_uncapped_key_seeded_with_remaining_budget_when_room_exists(self) -> None:
+        """50000 Application budget, one existing active Key already at 30%
+        (15000). The new uncapped Key must be seeded with exactly what's
+        left: 35000 (70%) — not the Application's full 50000, which would
+        itself overcommit against the existing Key's own 30%."""
+        application = _application(allocated_budget=Decimal("50000"))
+        tenant = _tenant(allocated_budget=Decimal("100000"))
+        existing_key = MagicMock(
+            id=501, is_active=True, allocated_budget=Decimal("15000"),
+            allocated_percentage=Decimal("30"),
+        )
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        applications.get_by_id_for_update = AsyncMock(return_value=application)
+        applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("30"))
+        tenants = AsyncMock()
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+        repo.list_by_application = AsyncMock(return_value=[existing_key])
+
+        with patch(
+            "app.services.api_key_service.budget_usage.fetch_budget_usage",
+            new=AsyncMock(return_value={501: (Decimal("15000"), Decimal("15000"))}),
+        ), patch(
+            "app.services.budget_usage.write_budget_snapshot", AsyncMock()
+        ) as write_snap:
+            _raw_key, api_key = await svc.create_api_key(
+                actor_user_id=uuid4(),
+                key_name="test",
+                permissions=["nmt.inference"],
+                application_id=1,
+                caller_tenant_id=1,
+            )
+
+        assert api_key.allocated_budget == Decimal("35000.00")
+        assert api_key.allocated_percentage == Decimal("70.00")
+        write_snap.assert_awaited_once_with({api_key.id: Decimal("35000.00")}, None)
+        payload = svc._cache.set_api_key_cache.call_args.args[2]
+        assert "budget-exhausted" not in payload
+
+    @pytest.mark.asyncio
+    async def test_uncapped_key_seeded_zero_when_application_already_fully_committed(self) -> None:
+        """50000 Application budget, one existing active Key already at
+        100% (50000) — nothing left. The uncapped-Key request must still
+        SUCCEED (never rejected — it asks for "whatever's available," not a
+        specific amount) but come out with a real, trackable ₹0 ceiling,
+        flagged budget-exhausted immediately — not a silent, untracked
+        None that would recreate the exact bug this fix closes."""
+        application = _application(allocated_budget=Decimal("50000"))
+        tenant = _tenant(allocated_budget=Decimal("100000"))
+        existing_key = MagicMock(
+            id=502, is_active=True, allocated_budget=Decimal("50000"),
+            allocated_percentage=Decimal("100"),
+        )
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        applications.get_by_id_for_update = AsyncMock(return_value=application)
+        applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("100"))
+        tenants = AsyncMock()
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+        repo.list_by_application = AsyncMock(return_value=[existing_key])
+
+        with patch(
+            "app.services.api_key_service.budget_usage.fetch_budget_usage",
+            new=AsyncMock(return_value={502: (Decimal("50000"), Decimal("50000"))}),
+        ), patch(
+            "app.services.budget_usage.write_budget_snapshot", AsyncMock()
+        ) as write_snap:
+            _raw_key, api_key = await svc.create_api_key(
+                actor_user_id=uuid4(),
+                key_name="test",
+                permissions=["nmt.inference"],
+                application_id=1,
+                caller_tenant_id=1,
+            )
+
+        assert api_key.allocated_budget == Decimal("0")
+        assert api_key.allocated_percentage == Decimal("0")
+        write_snap.assert_awaited_once_with({api_key.id: Decimal("0")}, None)
+        payload = svc._cache.set_api_key_cache.call_args.args[2]
+        assert payload["budget-exhausted"] == "1"
+
+    @pytest.mark.asyncio
+    async def test_exact_bug_scenario_uncapped_key_blocks_a_later_key_from_overcommitting(
+        self,
+    ) -> None:
+        """The exact scenario mohapatras described: create an uncapped Key
+        first (it takes the Application's entire remaining 50000/100%,
+        since nothing else exists yet), THEN try to create a second Key
+        requesting even a small extra share — it must be rejected, proving
+        the first (originally 'uncapped') Key's footprint is no longer
+        invisible to the second Key's own ALLOCATION_TOTAL_EXCEEDED check."""
+        application = _application(allocated_budget=Decimal("50000"))
+        tenant = _tenant(allocated_budget=Decimal("100000"))
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        applications.get_by_id_for_update = AsyncMock(return_value=application)
+        applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("0"))
+        tenants = AsyncMock()
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+        repo.list_by_application = AsyncMock(return_value=[])
+
+        with patch(
+            "app.services.api_key_service.budget_usage.fetch_budget_usage",
+            new=AsyncMock(return_value={}),
+        ), patch(
+            "app.services.budget_usage.write_budget_snapshot", AsyncMock()
+        ):
+            _raw_key, uncapped_key = await svc.create_api_key(
+                actor_user_id=uuid4(),
+                key_name="uncapped-first",
+                permissions=["nmt.inference"],
+                application_id=1,
+                caller_tenant_id=1,
+            )
+
+        assert uncapped_key.allocated_percentage == Decimal("100.00")
+
+        # Second Key request: the first Key's own 100% is now visible to
+        # sum_api_key_allocated_percentage, exactly as any other Key's
+        # would be — this must reject, not silently succeed on top of it.
+        applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("100.00"))
+
+        with pytest.raises(ValidationError) as exc:
+            await svc.create_api_key(
+                actor_user_id=uuid4(),
+                key_name="second-key",
+                permissions=["nmt.inference"],
+                application_id=1,
+                allocated_percentage=Decimal("10"),
+                caller_tenant_id=1,
+            )
+
+        assert exc.value.code == "ALLOCATION_TOTAL_EXCEEDED"
+        repo.create.assert_awaited_once()  # only the first Key was ever persisted
+
+
 class TestBudgetParam:
     """budget (a raw ₹ ceiling, alternative to allocated_percentage) used to
     bypass ALLOCATION_TOTAL_EXCEEDED entirely and never populate
