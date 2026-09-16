@@ -155,10 +155,10 @@ class AllocationService:
         # ones — the feasibility check needs a consistent, race-free
         # snapshot of every sibling's current ₹, whether or not this call
         # ends up writing them. One batched SELECT ... FOR UPDATE
-        # (list_by_tenant_for_update), not one round trip per Application —
+        # (lock_tenant_applications), not one round trip per Application —
         # the result is already the locked, up-to-date rows, so no
         # separate unlocked list_by_tenant call is needed first.
-        locked_applications = await self._applications.list_by_tenant_for_update(tenant_id)
+        locked_applications = await self._applications.lock_tenant_applications(tenant_id)
         applications = self._active_applications(locked_applications)
         if not applications:
             raise EntityNotFoundError(f"Applications for tenant {tenant_id}")
@@ -543,12 +543,12 @@ class AllocationService:
         """
         # One batched SELECT ... FOR UPDATE, not one round trip per
         # Application — see update_tenant_application_allocations's own
-        # comment on list_by_tenant_for_update for why. Filtered to ACTIVE
+        # comment on lock_tenant_applications for why. Filtered to ACTIVE
         # only, same reasoning as that method's own filter: an INACTIVE
         # Application's allocated_budget must not permanently block room
         # a top-down needs to free (see _active_applications).
         applications = self._active_applications(
-            await self._applications.list_by_tenant_for_update(tenant_id)
+            await self._applications.lock_tenant_applications(tenant_id)
         )
         if not applications:
             return 0, 0, {}

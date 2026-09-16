@@ -227,3 +227,105 @@ class TestApplicationLockedReadRefreshesIdentityMap:
                     )
             await engine.dispose()
             await writer_engine.dispose()
+
+
+class TestLockTenantApplicationsRename:
+    """Regression for the code-review rename of
+    ApplicationRepository.list_by_tenant_for_update ->
+    lock_tenant_applications (no behavior change intended — the old name
+    didn't say it takes a row lock, which is exactly what made it easy to
+    reach for as a plain "list" call).
+
+    Two things a pure rename can silently break that a mocked unit test
+    (test_allocation_service.py's AsyncMock stand-ins) can't catch, since a
+    mock has no real locking/refresh semantics to lose in the first place:
+      1. A typo/edit slip drops ``.with_for_update()`` or
+         ``populate_existing=True`` off the renamed method.
+      2. The old name quietly comes back (e.g. re-added as an alias by a
+         merge), so the confusing name this rename removes reappears.
+    """
+
+    def test_old_name_is_gone_new_name_is_present(self) -> None:
+        assert not hasattr(ApplicationRepository, "list_by_tenant_for_update"), (
+            "list_by_tenant_for_update should no longer exist — it was renamed "
+            "to lock_tenant_applications so the name itself says it locks rows"
+        )
+        assert hasattr(ApplicationRepository, "lock_tenant_applications")
+
+    @pytest.mark.asyncio
+    async def test_lock_tenant_applications_sees_a_concurrent_commit(self, db_url) -> None:
+        """Same identity-map-refresh property as get_by_id_for_update above,
+        checked against the renamed batched method: a row already in the
+        session's identity map from an earlier unlocked read must come back
+        with the just-committed value once locked, not the stale one."""
+        engine = create_async_engine(db_url)
+        writer_engine = create_async_engine(db_url)
+        tenant_id = None
+        application_id = None
+        try:
+            async with AsyncSession(engine, expire_on_commit=False) as setup_session:
+                tenant = Tenant(
+                    name="Lock-Tenant-Apps Test Contact",
+                    organisation="Lock-Tenant-Apps Test Org",
+                    email="lock-tenant-apps-test@example.invalid",
+                    status=TenantStatus.ACTIVE,
+                    allocated_budget=None,
+                )
+                setup_session.add(tenant)
+                await setup_session.flush()
+
+                application = Application(
+                    tenant_id=tenant.id,
+                    name="Lock-Tenant-Apps Test App",
+                    status=ApplicationStatus.ACTIVE,
+                    allocated_budget=None,
+                )
+                setup_session.add(application)
+                await setup_session.commit()
+                tenant_id = tenant.id
+                application_id = application.id
+
+            async with AsyncSession(engine) as session:
+                async with session.begin():
+                    repo = ApplicationRepository(session)
+
+                    # Unlocked read populates the identity map, same as
+                    # AllocationService's own unlocked reads before it calls
+                    # lock_tenant_applications.
+                    unlocked = await repo.get_by_id(application_id)
+                    assert unlocked.allocated_budget is None
+
+                    async with writer_engine.begin() as writer_conn:
+                        await writer_conn.execute(
+                            text(
+                                "UPDATE applications SET allocated_budget = :budget "
+                                "WHERE id = :id"
+                            ),
+                            {"budget": "500.00", "id": application_id},
+                        )
+
+                    locked = await repo.lock_tenant_applications(tenant_id)
+
+                    assert len(locked) == 1
+                    assert locked[0] is unlocked, (
+                        "test invalid if this isn't the same identity-mapped "
+                        "object as the earlier unlocked read"
+                    )
+                    assert str(locked[0].allocated_budget) == "500.00", (
+                        "lock_tenant_applications returned a lock without "
+                        "refreshing attributes from the just-locked row — the "
+                        "rename must not have dropped populate_existing=True"
+                    )
+        finally:
+            async with writer_engine.begin() as cleanup_conn:
+                if application_id is not None:
+                    await cleanup_conn.execute(
+                        text("DELETE FROM applications WHERE id = :id"),
+                        {"id": application_id},
+                    )
+                if tenant_id is not None:
+                    await cleanup_conn.execute(
+                        text("DELETE FROM tenants WHERE id = :id"), {"id": tenant_id}
+                    )
+            await engine.dispose()
+            await writer_engine.dispose()
