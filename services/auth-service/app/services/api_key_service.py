@@ -374,7 +374,7 @@ class APIKeyService:
         if self._repo is None:
             return
         if tenant is None and self._tenants is not None:
-            tenant = await self._tenants.get_by_id(application.tenant_id)
+            tenant = await self._tenants.get_operational_fields(application.tenant_id)
         if not self.application_may_use_api_keys(application, tenant):
             await self.evict_keys_for_application(application.id)
             return
@@ -392,7 +392,7 @@ class APIKeyService:
                 tenant_id,
             )
             return
-        tenant = await self._tenants.get_by_id(tenant_id)
+        tenant = await self._tenants.get_operational_fields(tenant_id)
         if not tenant:
             return
         for application in await self._applications.list_by_tenant(tenant_id):
@@ -704,7 +704,7 @@ class APIKeyService:
                 detail={"code": "APPLICATION_NOT_FOUND", "message": "Application not found."},
             )
 
-        tenant = await self._tenants.get_by_id(application.tenant_id)
+        tenant = await self._tenants.get_operational_fields(application.tenant_id)
         if tenant is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1175,7 +1175,7 @@ class APIKeyService:
         if self._applications is not None:
             application = await self._applications.get_by_id(db_key.application_id)
         if application is not None and self._tenants is not None:
-            tenant = await self._tenants.get_by_id(application.tenant_id)
+            tenant = await self._tenants.get_operational_fields(application.tenant_id)
             tenant_id_str = str(application.tenant_id)
         budget_effective_to = tenant.budget_effective_to if tenant else None
         if application is not None and self.effective_is_active(db_key, application, tenant):

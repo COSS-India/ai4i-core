@@ -27,6 +27,7 @@ commit to accidentally expire-and-refresh attributes for us.
 
 import asyncio
 import os
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -47,6 +48,8 @@ if dotenv_values is not None and _ENV_PATH.exists():
 
 from sqlalchemy import text  # noqa: E402
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession  # noqa: E402
+
+from sqlalchemy.exc import MissingGreenlet  # noqa: E402
 
 from app.models.application import Application, ApplicationStatus  # noqa: E402
 from app.models.tenant import Tenant, TenantStatus  # noqa: E402
@@ -329,3 +332,91 @@ class TestLockTenantApplicationsRename:
                     )
             await engine.dispose()
             await writer_engine.dispose()
+
+
+class TestGetOperationalFieldsSkipsPii:
+    """Regression for the code-review finding that TenantRepository.get_by_id
+    (used at APIKeyService.create_api_key and 3 sibling call sites) fetches
+    every Tenant column — including the AES-encrypted email/phone_number —
+    to read a handful of operational fields (status, tier_id,
+    allocated_budget, budget_effective_to). get_operational_fields uses
+    ``load_only`` to skip the rest.
+
+    A mocked unit test can't reproduce whether the encrypted columns are
+    genuinely NOT loaded — a mock just returns whatever object the test
+    built, fully populated regardless of what production code asked to
+    load. Only a real AsyncSession against a real row can show the
+    difference: with load_only, an attribute outside the loaded set is a
+    genuinely deferred column, and touching it outside the session's own
+    async call chain raises MissingGreenlet — proving the column was never
+    fetched, not just proving the returned object happens to expose fewer
+    fields.
+    """
+
+    @pytest.mark.asyncio
+    async def test_returns_correct_values_for_loaded_columns(self, db_url) -> None:
+        engine = create_async_engine(db_url)
+        tenant_id = None
+        try:
+            async with AsyncSession(engine, expire_on_commit=False) as setup_session:
+                tenant = Tenant(
+                    name="Operational-Fields Test Contact",
+                    organisation="Operational-Fields Test Org",
+                    email="operational-fields-test@example.invalid",
+                    status=TenantStatus.ACTIVE,
+                    allocated_budget=Decimal("250.00"),
+                )
+                setup_session.add(tenant)
+                await setup_session.commit()
+                tenant_id = tenant.id
+
+            async with AsyncSession(engine) as session:
+                repo = TenantRepository(session)
+                loaded = await repo.get_operational_fields(tenant_id)
+
+                assert loaded is not None
+                assert loaded.status == TenantStatus.ACTIVE
+                assert str(loaded.allocated_budget) == "250.00"
+                assert loaded.tier_id is None
+                assert loaded.budget_effective_to is None
+        finally:
+            if tenant_id is not None:
+                async with engine.begin() as cleanup_conn:
+                    await cleanup_conn.execute(
+                        text("DELETE FROM tenants WHERE id = :id"), {"id": tenant_id}
+                    )
+            await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_email_column_is_not_loaded(self, db_url) -> None:
+        """The exact bug scenario: touching an unloaded column outside the
+        session's own async call chain raises MissingGreenlet — the concrete
+        proof that email (and its AES decrypt) was never fetched, not merely
+        that this test's assertions don't happen to read it."""
+        engine = create_async_engine(db_url)
+        tenant_id = None
+        try:
+            async with AsyncSession(engine, expire_on_commit=False) as setup_session:
+                tenant = Tenant(
+                    name="Operational-Fields PII Test Contact",
+                    organisation="Operational-Fields PII Test Org",
+                    email="operational-fields-pii-test@example.invalid",
+                    status=TenantStatus.ACTIVE,
+                )
+                setup_session.add(tenant)
+                await setup_session.commit()
+                tenant_id = tenant.id
+
+            async with AsyncSession(engine) as session:
+                repo = TenantRepository(session)
+                loaded = await repo.get_operational_fields(tenant_id)
+
+                with pytest.raises(MissingGreenlet):
+                    _ = loaded.email
+        finally:
+            if tenant_id is not None:
+                async with engine.begin() as cleanup_conn:
+                    await cleanup_conn.execute(
+                        text("DELETE FROM tenants WHERE id = :id"), {"id": tenant_id}
+                    )
+            await engine.dispose()

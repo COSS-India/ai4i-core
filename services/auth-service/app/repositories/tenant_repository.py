@@ -3,6 +3,7 @@ from uuid import UUID
 
 from sqlalchemy import Text, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 
 from app.models.tenant import Tenant, TenantStatus
 from app.repositories.base import BaseRepository
@@ -15,6 +16,46 @@ class TenantRepository(BaseRepository):
     async def get_by_id(self, tenant_id: int) -> Optional[Tenant]:
         result = await self._db.execute(
             select(Tenant).where(Tenant.id == tenant_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_operational_fields(self, tenant_id: int) -> Optional[Tenant]:
+        """Same row as ``get_by_id``, but ``load_only``-restricted to the
+        columns APIKeyService's access/budget checks actually read: id,
+        status, tier_id, allocated_budget, budget_effective_to. Every other
+        caller of ``get_by_id`` (email_helpers, auth_service's login flow,
+        TenantService, RoleService) genuinely needs name/organisation/email/
+        phone_number too, so this is a second, narrower method rather than a
+        change to ``get_by_id`` itself.
+
+        The real cost this skips isn't the extra columns' bytes, it's the
+        AES decrypt ``EncryptedEmail``/``EncryptedPhone`` run in their result
+        processor on every row — paid on every one of these calls (created
+        on create_api_key's hot path) even though none of them ever read
+        tenant.email/phone_number.
+
+        Still returns a full ``Tenant`` ORM instance (not a Row/tuple), so
+        every existing ``tenant.status`` / ``tenant.allocated_budget`` call
+        site keeps working unchanged. The columns NOT listed below are
+        deferred, not omitted: touching one later would trigger a lazy
+        load — which raises under AsyncSession (lazy I/O is disabled outside
+        an explicit await) rather than silently running an extra query. Only
+        reach for this where every attribute the caller touches is one of
+        the five loaded here; add to the list rather than falling back to
+        ``get_by_id`` if a caller ever needs one more.
+        """
+        result = await self._db.execute(
+            select(Tenant)
+            .options(
+                load_only(
+                    Tenant.id,
+                    Tenant.status,
+                    Tenant.tier_id,
+                    Tenant.allocated_budget,
+                    Tenant.budget_effective_to,
+                )
+            )
+            .where(Tenant.id == tenant_id)
         )
         return result.scalar_one_or_none()
 

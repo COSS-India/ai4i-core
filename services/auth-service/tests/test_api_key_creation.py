@@ -59,7 +59,7 @@ class TestAllocationCapLockOrdering:
         applications.get_by_id_for_update = AsyncMock(return_value=application)
         applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("10"))
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
@@ -95,7 +95,7 @@ class TestAllocationCapLockOrdering:
         applications = AsyncMock()
         applications.get_by_id_for_tenant = AsyncMock(return_value=application)
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
@@ -121,7 +121,7 @@ class TestAllocationCapLockOrdering:
         applications.get_by_id_for_update = AsyncMock(return_value=application)
         applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("90"))
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
@@ -160,7 +160,7 @@ class TestBudgetExpiredBlocksKeyCreation:
         applications = AsyncMock()
         applications.get_by_id_for_tenant = AsyncMock(return_value=application)
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
 
         with pytest.raises(ValidationError) as exc_info:
@@ -187,7 +187,7 @@ class TestBudgetExpiredBlocksKeyCreation:
         applications.get_by_id_for_update = AsyncMock(return_value=application)
         applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("0"))
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
@@ -214,7 +214,7 @@ class TestBudgetExpiredBlocksKeyCreation:
         applications.get_by_id_for_update = AsyncMock(return_value=application)
         applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("0"))
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
@@ -237,7 +237,7 @@ class TestBudgetExpiredBlocksKeyCreation:
         applications = AsyncMock()
         applications.get_by_id_for_tenant = AsyncMock(return_value=application)
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
 
         with pytest.raises(ValidationError) as exc_info:
@@ -267,7 +267,7 @@ class TestExplicitZeroAllocationRejected:
         applications = AsyncMock()
         applications.get_by_id_for_tenant = AsyncMock(return_value=application)
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
@@ -335,7 +335,7 @@ class TestCommittedTotalCountsActiveCeilingsAndRevokedSpend:
         applications.get_by_id_for_update = AsyncMock(return_value=application)
         applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("3.33"))
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
         repo.list_by_application = AsyncMock(return_value=[active_key])
@@ -378,7 +378,7 @@ class TestCommittedTotalCountsActiveCeilingsAndRevokedSpend:
         applications.get_by_id_for_update = AsyncMock(return_value=application)
         applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("50"))
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
         repo.list_by_application = AsyncMock(return_value=[revoked_key, active_key])
@@ -423,7 +423,7 @@ class TestCommittedTotalCountsActiveCeilingsAndRevokedSpend:
         applications.get_by_id_for_update = AsyncMock(return_value=application)
         applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("30"))
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
         repo.list_by_application = AsyncMock(return_value=[over_exhausted_key])
@@ -456,7 +456,7 @@ class TestCommittedTotalCountsActiveCeilingsAndRevokedSpend:
         applications.get_by_id_for_update = AsyncMock(return_value=application)
         applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("0"))
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
         repo.list_by_application = AsyncMock(return_value=[revoked_key])
@@ -488,7 +488,7 @@ class TestCommittedTotalCountsActiveCeilingsAndRevokedSpend:
         applications.get_by_id_for_update = AsyncMock(return_value=application)
         applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("0"))
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
         repo.list_by_application = AsyncMock(return_value=[revoked_key])
@@ -520,7 +520,7 @@ class TestCommittedTotalCountsActiveCeilingsAndRevokedSpend:
         applications.get_by_id_for_update = AsyncMock(return_value=application)
         applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("0"))
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
         repo.list_by_application = AsyncMock()
@@ -561,7 +561,7 @@ class TestBudgetDerivedFromLockedApplicationNotStaleRead:
         applications.get_by_id_for_update = AsyncMock(return_value=fresh_application)
         applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("0"))
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
@@ -598,7 +598,7 @@ class TestNewKeyExhaustionFlagSeeding:
         applications.get_by_id_for_update = AsyncMock(return_value=application)
         applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("0"))
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
@@ -625,7 +625,7 @@ class TestNewKeyExhaustionFlagSeeding:
         applications.get_by_id_for_update = AsyncMock(return_value=application)
         applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("0"))
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
@@ -659,7 +659,7 @@ class TestNewKeyExhaustionFlagSeeding:
         applications.get_by_id_for_update = AsyncMock(return_value=application)
         applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("0"))
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
@@ -692,7 +692,7 @@ class TestNewKeyExhaustionFlagSeeding:
         applications.get_by_id_for_update = AsyncMock(return_value=application)
         applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("0"))
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
@@ -725,7 +725,7 @@ class TestBudgetParam:
         applications = AsyncMock()
         applications.get_by_id_for_tenant = AsyncMock(return_value=application)
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
@@ -750,7 +750,7 @@ class TestBudgetParam:
         applications = AsyncMock()
         applications.get_by_id_for_tenant = AsyncMock(return_value=application)
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
@@ -779,7 +779,7 @@ class TestBudgetParam:
         applications.get_by_id_for_update = AsyncMock(return_value=application)
         applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("80"))
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
@@ -805,7 +805,7 @@ class TestBudgetParam:
         applications.get_by_id_for_update = AsyncMock(return_value=application)
         applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("0"))
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
@@ -840,7 +840,7 @@ class TestBudgetParam:
         applications.get_by_id_for_update = AsyncMock(return_value=application)
         applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("0"))
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
@@ -873,7 +873,7 @@ class TestBudgetParam:
         applications = AsyncMock()
         applications.get_by_id_for_tenant = AsyncMock(return_value=application)
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
@@ -898,7 +898,7 @@ class TestBudgetParam:
         applications = AsyncMock()
         applications.get_by_id_for_tenant = AsyncMock(return_value=application)
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
@@ -933,7 +933,7 @@ class TestInferenceOnlyPermissionRestriction:
         applications = AsyncMock()
         applications.get_by_id_for_tenant = AsyncMock(return_value=application)
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         # The real repository query filters action == 'inference' in SQL —
         # an admin permission like service.create simply never comes back,
@@ -964,7 +964,7 @@ class TestInferenceOnlyPermissionRestriction:
         applications.get_by_id_for_update = AsyncMock(return_value=application)
         applications.sum_api_key_allocated_percentage = AsyncMock(return_value=Decimal("0"))
         tenants = AsyncMock()
-        tenants.get_by_id = AsyncMock(return_value=tenant)
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 12})
 
