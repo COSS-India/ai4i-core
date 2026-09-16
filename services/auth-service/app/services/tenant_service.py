@@ -346,10 +346,15 @@ class TenantService:
             )
 
     async def _set_tenant_user_role(
-        self, user_id: UUID, role: TenantUserRole | RoleName | str, *, commit: bool = True
+        self,
+        user_id: UUID,
+        role: TenantUserRole | RoleName | str,
+        *,
+        commit: bool = True,
+        created_by: Optional[UUID] = None,
     ) -> None:
         target = role.value if isinstance(role, TenantUserRole) else role_name_to_str(role)
-        await self._roles.assign_role(user_id, target, commit=commit)
+        await self._roles.assign_role(user_id, target, commit=commit, created_by=created_by)
 
     async def build_tenant_user_response(
         self, user: User, *, unmask_phone: bool = False
@@ -404,6 +409,7 @@ class TenantService:
         role_name: str = RoleName.USER,
         background_tasks: Optional[BackgroundTasks] = None,
         email_kind: Literal["setup", "verify", "none"] = "setup",
+        created_by: Optional[UUID] = None,
     ) -> tuple[str, str]:
         """Create an inactive user without credentials.
 
@@ -413,6 +419,11 @@ class TenantService:
         - ``setup``: welcome + set-password link (new tenant admins and invited users)
         - ``verify``: verify-email link (/auth/register self-signup only)
         - ``none``: no email
+
+        ``created_by`` is the acting admin's id — both current callers
+        (create_tenant's own first-admin provisioning, create_tenant_user)
+        are admin-triggered and always have one; left None only for a
+        hypothetical future self-service caller with no admin actor.
         """
         if await self._users.email_exists(email):
             raise DuplicateEntityError("User", "email")
@@ -433,11 +444,12 @@ class TenantService:
             tenant_id=parsed_tenant_id,
             is_active=False,
             creation_type=creation,
+            created_by=created_by,
         )
         await self._users.create(user)
 
         try:
-            await self._roles.assign_role(user.id, role_name)
+            await self._roles.assign_role(user.id, role_name, created_by=created_by)
         except EntityNotFoundError:
             logger.warning("Role %r not found, skipping role assignment.", role_name)
 
@@ -636,6 +648,7 @@ class TenantService:
             role_name=RoleName.TENANT_ADMIN,
             background_tasks=background_tasks,
             email_kind="setup",
+            created_by=current_user.id,
         )
 
         # provision_user committed; refresh to surface server-side defaults.
@@ -1743,6 +1756,7 @@ class TenantService:
             creation_type="tenant",
             role_name=body.role.value,
             background_tasks=background_tasks,
+            created_by=current_user.id,
         )
 
     async def update_tenant_user(
@@ -1767,7 +1781,9 @@ class TenantService:
         await self._users.update(target, payload)
         if role_update is not None:
             # Single commit via save_and_refresh — role repo shares this session.
-            await self._set_tenant_user_role(target.id, role_update, commit=False)
+            await self._set_tenant_user_role(
+                target.id, role_update, commit=False, created_by=current_user.id
+            )
         await self._users.save_and_refresh(target)
         return target
 
