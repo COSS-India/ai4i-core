@@ -1,5 +1,4 @@
 import {
-  Badge,
   Box,
   Button,
   Center,
@@ -47,23 +46,17 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
     filteredItems,
     search,
     setSearch,
-    statusFilter,
-    setStatusFilter,
     isLoading,
     isSubmitting,
     error,
     getDraft,
-    draftEnabled,
-    setEnabled,
-    setAllEnabled,
     setRecipientRole,
     setThreshold,
-    allFilteredEnabled,
     dirtyCount,
     submit,
   } = useNotificationCatalog(type);
 
-  const colSpan = showThresholds ? 5 : 4;
+  const colSpan = showThresholds ? 4 : 3;
 
   const handleSubmit = async () => {
     const result = await submit();
@@ -109,8 +102,6 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
       <CatalogToolbar
         search={search}
         onSearchChange={setSearch}
-        statusFilter={statusFilter}
-        onStatusFilterChange={setStatusFilter}
         hint={hint}
       />
 
@@ -129,17 +120,6 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
         <Table size="md" variant="simple">
           <Thead bg="gray.50">
             <Tr>
-              <Th w="48px">
-                <Checkbox
-                  isChecked={allFilteredEnabled}
-                  isIndeterminate={
-                    !allFilteredEnabled &&
-                    filteredItems.some((item) => draftEnabled(getDraft(item)))
-                  }
-                  onChange={(e) => setAllEnabled(e.target.checked)}
-                  aria-label={`Enable or disable all visible ${entityLabel}s`}
-                />
-              </Th>
               <Th>{nameColumnHeader}</Th>
               <Th>Recipient Role</Th>
               <Th>Delivery Channel</Th>
@@ -158,25 +138,12 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
             ) : (
               filteredItems.map((item) => {
                 const draft = getDraft(item);
-                const enabled = draftEnabled(draft);
                 return (
                   <Tr key={item.name}>
-                    <Td verticalAlign="top" pt={4}>
-                      <Checkbox
-                        isChecked={enabled}
-                        onChange={(e) => setEnabled(item.name, e.target.checked)}
-                        aria-label={`Enable ${item.display_name}`}
-                      />
-                    </Td>
                     <Td verticalAlign="top">
                       <VStack align="start" spacing={1}>
                         <Flex align="center" gap={2} flexWrap="wrap">
                           <Text fontWeight="semibold">{item.display_name}</Text>
-                          {item.origin === "seeded" ? (
-                            <Badge colorScheme="gray" fontWeight="normal">
-                              System-seeded
-                            </Badge>
-                          ) : null}
                         </Flex>
                         <Text fontSize="sm" color="gray.600" noOfLines={2}>
                           {item.description}

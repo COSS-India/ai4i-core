@@ -230,7 +230,7 @@ const topNavItems: NavItem[] = [
   // },
   {
     id: TABS.notificationsAlerts,
-    label: "Notifications & Alerts",
+    label: "Platform Settings",
     path: `/${TABS.notificationsAlerts}`,
     icon: IoNotificationsOutline,
     iconSize: 10,

@@ -38,7 +38,7 @@ import {
   SmallCloseIcon,
   ViewIcon,
 } from "@chakra-ui/icons";
-import { FiArrowUp, FiCalendar, FiPlay, FiSquare } from "react-icons/fi";
+import { FiArrowUp, FiCalendar, FiPause, FiPlay } from "react-icons/fi";
 import DataTable, {
   createActionsColumn,
   type DataTableColumn,
@@ -154,7 +154,7 @@ const TIER_STATUS_COLUMN: DataTableColumn<Tier> = {
 /** Icon for the single lifecycle action a tier offers in its current status. */
 const TIER_STATUS_ACTION_ICON: Record<string, React.ReactElement> = {
   Publish: <FiArrowUp />,
-  Deactivate: <FiSquare />,
+  Deactivate: <FiPause />,
   Reactivate: <FiPlay />,
 };
 
