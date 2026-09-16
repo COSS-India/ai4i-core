@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.services.metering_service_dual import DualMeteringService
+from app.utils.metering_promql_builder import PROMETHEUS_API_PATH_LABEL
 
 
 def _make_dual_service():
@@ -146,7 +147,7 @@ class TestServiceBreakdownDualRun:
     async def test_calls_both_backends_and_serves_prometheus_shape(self):
         svc = _make_dual_service()
         svc._client.query = AsyncMock(return_value=[
-            {"metric": {"exported_endpoint": "/api/v1/nmt/inference"}, "value": [0, "5"]},
+            {"metric": {PROMETHEUS_API_PATH_LABEL: "/api/v1/nmt/inference"}, "value": [0, "5"]},
         ])
         svc._os_client.aggregate = AsyncMock(return_value={"by_path": {"buckets": [
             {"key": "/api/v1/nmt/inference", "doc_count": 999,
@@ -165,7 +166,7 @@ class TestModelBreakdownDualRun:
     async def test_calls_both_backends_and_serves_prometheus_shape(self):
         svc = _make_dual_service()
         svc._client.query = AsyncMock(return_value=[
-            {"metric": {"service_id": "svc-1", "model_id": "m-1", "exported_endpoint": "/api/v1/chat"}, "value": [0, "5"]},
+            {"metric": {"service_id": "svc-1", "model_id": "m-1", PROMETHEUS_API_PATH_LABEL: "/api/v1/chat"}, "value": [0, "5"]},
         ])
         svc._os_client.composite_all = AsyncMock(return_value=[
             {
