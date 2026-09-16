@@ -195,6 +195,20 @@ class CoreSettings(BaseSettings):
     opensearch_index: str = Field(
         default="traces-*", description="OpenSearch traces index pattern"
     )
+    # Same cluster/credentials as opensearch_url/username/password above, a
+    # different index pattern — request-completion log lines (RequestMiddleware),
+    # not OTel trace spans.
+    opensearch_logs_index: str = Field(
+        default="logs-*", description="OpenSearch request-log index pattern"
+    )
+
+    # Which store serves metering request-count KPIs. "dual" computes from
+    # both stores and still serves Prometheus's numbers, for pre-cutover
+    # comparison; "opensearch" serves OpenSearch's numbers.
+    metering_data_source: str = Field(
+        default="prometheus",
+        description='Metering request-count KPI source: "prometheus" | "dual" | "opensearch"',
+    )
 
     # ── Derived helpers ──
 

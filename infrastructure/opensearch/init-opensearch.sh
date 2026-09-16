@@ -9,6 +9,8 @@ set -e
 OPENSEARCH_URL="${OPENSEARCH_URL:-http://localhost:9200}"
 TEMPLATE_NAME="logs-template"
 TEMPLATE_FILE="${TEMPLATE_FILE:-/index-template.json}"
+ISM_POLICY_ID="logs-retention-90d"
+ISM_POLICY_FILE="${ISM_POLICY_FILE:-/ism-policy-logs.json}"
 MAX_RETRIES=30
 RETRY_DELAY=2
 
@@ -75,6 +77,51 @@ else
     echo "❌ ERROR: Failed to apply template. HTTP $HTTP_CODE"
     echo "$RESPONSE_BODY"
     exit 1
+fi
+
+echo ""
+
+# Apply the ISM retention policy (governs how long logs-* indices are kept).
+# ism_template inside the policy body auto-attaches it to future logs-*
+# indices, so this doesn't require touching the index template itself.
+if [ -f "$ISM_POLICY_FILE" ]; then
+    echo "Applying ISM policy '$ISM_POLICY_ID'..."
+    ISM_RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT "$OPENSEARCH_URL/_plugins/_ism/policies/$ISM_POLICY_ID" \
+        -H "Content-Type: application/json" \
+        -d @"$ISM_POLICY_FILE")
+    ISM_HTTP_CODE=$(echo "$ISM_RESPONSE" | tail -n1)
+    ISM_BODY=$(echo "$ISM_RESPONSE" | sed '$d')
+
+    if [ "$ISM_HTTP_CODE" -eq 200 ] || [ "$ISM_HTTP_CODE" -eq 201 ]; then
+        echo "✅ ISM policy '$ISM_POLICY_ID' applied successfully!"
+    else
+        # Policy already exists — ISM requires the current seq_no/primary_term
+        # to update in place (unlike the index template PUT above).
+        echo "⚠️  Policy may already exist, fetching current seq_no/primary_term to update..."
+        CURRENT=$(curl -s "$OPENSEARCH_URL/_plugins/_ism/policies/$ISM_POLICY_ID")
+        SEQ_NO=$(echo "$CURRENT" | grep -o '"_seq_no":[0-9]*' | grep -o '[0-9]*$')
+        PRIMARY_TERM=$(echo "$CURRENT" | grep -o '"_primary_term":[0-9]*' | grep -o '[0-9]*$')
+        if [ -n "$SEQ_NO" ] && [ -n "$PRIMARY_TERM" ]; then
+            UPDATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
+                "$OPENSEARCH_URL/_plugins/_ism/policies/$ISM_POLICY_ID?if_seq_no=$SEQ_NO&if_primary_term=$PRIMARY_TERM" \
+                -H "Content-Type: application/json" \
+                -d @"$ISM_POLICY_FILE")
+            UPDATE_CODE=$(echo "$UPDATE_RESPONSE" | tail -n1)
+            if [ "$UPDATE_CODE" -eq 200 ]; then
+                echo "✅ ISM policy '$ISM_POLICY_ID' updated successfully!"
+            else
+                echo "❌ ERROR: Failed to update ISM policy. HTTP $UPDATE_CODE"
+                echo "$UPDATE_RESPONSE" | sed '$d'
+                exit 1
+            fi
+        else
+            echo "❌ ERROR: Failed to apply ISM policy. HTTP $ISM_HTTP_CODE"
+            echo "$ISM_BODY"
+            exit 1
+        fi
+    fi
+else
+    echo "⚠️  Warning: ISM policy file not found at $ISM_POLICY_FILE, skipping retention policy setup"
 fi
 
 echo ""
