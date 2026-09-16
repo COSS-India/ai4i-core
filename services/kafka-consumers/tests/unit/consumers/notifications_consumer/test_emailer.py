@@ -45,30 +45,18 @@ class TestAt:
             "BUDGET_ASSIGNED" in m and "2" in m for m in messages
         ), f"warning must name the event_name and the expected count (design doc §9.5); got {messages!r}"
 
-    def test_known_optional_trailing_positions_do_not_warn(self, caplog):
-        """auth-service's real producer sends only 3 of TIER_ASSIGNED's 6
-        values and 4 of TIER_CHANGED's 7 — tiers has no rate-limit or
-        expiry column to source the rest from (tenant_service.py). That is
-        normal, expected operation on every tier assign/change, not a
-        producer bug, and must not log a warning."""
+    def test_short_array_always_warns(self, caplog):
+        """TIER_ASSIGNED/TIER_CHANGED used to carry known-optional trailing
+        positions (rate_limit/effective_from/effective_to), suppressed from
+        this warning via _KNOWN_OPTIONAL_FROM — those fields were removed
+        from the contract entirely (design doc §9.5), not just made
+        optional, so every event's array is now exactly
+        _EXPECTED_DETAIL_COUNTS long and any short array is a real
+        mismatch worth logging, with no exceptions."""
         import logging
 
         with caplog.at_level(logging.WARNING):
-            for i in range(3, 6):
-                emailer._at(["Gold", "desc", ["line"]], i, "TIER_ASSIGNED")
-            for i in range(4, 7):
-                emailer._at(["Silver", "Gold", "desc", ["line"]], i, "TIER_CHANGED")
-
-        assert caplog.records == []
-
-    def test_positions_before_the_known_optional_floor_still_warn(self, caplog):
-        """The floor only covers the known-omitted trailing values — a
-        short array missing something before that point is still a real
-        mismatch and must still be logged."""
-        import logging
-
-        with caplog.at_level(logging.WARNING):
-            emailer._at(["Gold"], 1, "TIER_ASSIGNED")  # tier_description missing — not optional
+            emailer._at(["Gold"], 1, "TIER_ASSIGNED")  # tier_description missing
 
         messages = [r.getMessage() for r in caplog.records]
         assert any("TIER_ASSIGNED" in m for m in messages), f"expected a warning; got {messages!r}"
@@ -82,25 +70,28 @@ class TestBuildMessageDispatch:
     def test_tier_assigned(self):
         msg = emailer._build_message(
             recipient=_recipient(), institution_name="Acme Bank", event_name="TIER_ASSIGNED",
-            details=["Gold", "High-volume tier", ["ASR: 10,000 req/mo"], "1000", "2026-09-10", "2027-09-09"],
+            details=["Gold", "High-volume tier", ["ASR: 10,000 req/mo"]],
         )
         assert msg.subject == "Tier Assigned — Acme Bank"
         assert "Gold" in msg.html_body
         assert "High-volume tier" in msg.html_body
         assert "ASR: 10,000 req/mo" in msg.html_body
-        assert "1000" in msg.html_body
-        assert "2026-09-10" in msg.html_body
-        assert "2027-09-09" in msg.html_body
+        # Rate Limit / Effective From / Effective To are gone entirely —
+        # a Tier has no rate-limit column and no expiry (design doc §9.5).
+        assert "Rate Limit" not in msg.html_body
+        assert "Effective" not in msg.html_body
 
     def test_tier_changed(self):
         msg = emailer._build_message(
             recipient=_recipient(), institution_name="Acme Bank", event_name="TIER_CHANGED",
-            details=["Silver", "Gold", "Premium tier", ["NMT: 20,000 req/mo"], "2000", "2026-09-10", "2027-09-09"],
+            details=["Silver", "Gold", "Premium tier", ["NMT: 20,000 req/mo"]],
         )
         assert msg.subject == "Tier Reassignment — Acme Bank"
         assert "Silver" in msg.html_body and "Gold" in msg.html_body
         assert "Premium tier" in msg.html_body
         assert "NMT: 20,000 req/mo" in msg.html_body
+        assert "Rate Limit" not in msg.html_body
+        assert "Effective" not in msg.html_body
 
     def test_budget_assigned(self):
         msg = emailer._build_message(

@@ -89,7 +89,7 @@ def render_notification_email(
 
     ``notification_headline`` is one pre-formatted sentence (e.g. "A Tier has
     been assigned to Acme Bank."). ``notification_details`` is a list of
-    pre-formatted lines (e.g. ["Tier: Gold", "Rate Limit: 1000", ...]) — a
+    pre-formatted lines (e.g. ["Tier: Gold", "Description: ...", ...]) — a
     list rather than one string because several notification types repeat a
     line per Model Task Type. The caller owns all formatting; this function
     only fills the fixed template shape.
@@ -151,19 +151,16 @@ def render_tier_assigned_email(
     tier_name: str,
     tier_description: str,
     quota_lines: List[str],
-    rate_limit_value: str,
-    effective_from: str,
-    effective_to: str,
 ) -> EmailMessage:
-    """``quota_lines`` are pre-formatted "Task Type: Quota Limit" strings, one per line."""
+    """``quota_lines`` are pre-formatted "Task Type: Quota Limit" strings, one
+    per line. No Rate Limit / Effective From / Effective To — a Tier has no
+    rate-limit column and no expiry (it applies until reassigned), so there
+    is nothing real to show for either (design doc §9.5)."""
     details = [
         f"Tier: {tier_name}",
         f"Description: {tier_description}",
         "Quota Limits:",
         *[f" {line}" for line in quota_lines],
-        f"Rate Limit: {rate_limit_value}",
-        f"Effective From: {effective_from}",
-        f"Effective To: {effective_to}",
     ]
     return render_notification_email(
         to=to,
@@ -202,19 +199,15 @@ def render_tier_reassigned_email(
     new_tier_name: str,
     new_tier_description: str,
     quota_lines: List[str],
-    new_rate_limit_value: str,
-    effective_from: str,
-    effective_to: str,
 ) -> EmailMessage:
-    """``quota_lines`` are the NEW Tier's pre-formatted "Task Type: Quota Limit" strings."""
+    """``quota_lines`` are the NEW Tier's pre-formatted "Task Type: Quota
+    Limit" strings. No Rate Limit / Effective From / Effective To — same
+    reasoning as render_tier_assigned_email above."""
     details = [
         f"Current Tier: {current_tier_name} → New Tier: {new_tier_name}",
         f"New Tier Description: {new_tier_description}",
         "New Tier Quota Limits:",
         *[f" {line}" for line in quota_lines],
-        f"New Tier Rate Limit: {new_rate_limit_value}",
-        f"Effective From: {effective_from}",
-        f"Effective To: {effective_to}",
     ]
     return render_notification_email(
         to=to,

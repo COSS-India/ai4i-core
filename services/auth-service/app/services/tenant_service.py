@@ -974,11 +974,11 @@ class TenantService:
     ) -> tuple[str, list[str]]:
         """(description, quota_lines) for TIER_ASSIGNED/TIER_CHANGED's details
         array (design doc §9.5) — quota_lines is one "NAME: N req/mo" string
-        per Model Task Type on this tier. Rate limit and effective-to/from
-        aren't tracked anywhere yet (tiers has no rate_limit or expiry
-        column) — omitted from the array entirely rather than invented, so
-        the consumer's own default-to-"—" degrade (emailer.py's _at())
-        renders them as a placeholder instead of a fabricated value."""
+        per Model Task Type on this tier. Rate limit and Effective From/To
+        are deliberately not part of this email at all (not merely omitted
+        here) — a Tier has no rate-limit column and no expiry (it applies
+        until reassigned), so there's nothing real to show for either; see
+        design doc §9.5."""
         description = ""
         quota_lines: list[str] = []
         try:

@@ -18,12 +18,36 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from decimal import Decimal
+
 from consumers.payperuse_consumer.handler import (
+    _display_pct,
     _get_otel_attributes,
     _post_billing,
     _to_float,
     _to_int,
 )
+
+
+class TestDisplayPct:
+    """QUOTA_THRESHOLD/BUDGET_THRESHOLD's current_value (design doc §9.5)
+    must never show more than 100% — a debit can push used past snap (e.g.
+    concurrent requests racing past the ceiling), and "2900%" in an alert
+    email reads as a bug, not "very over budget". Display-only: the raw,
+    uncapped pre_pct/post_pct still drive crossed_bands/crossed_exhaustion
+    in _thresholds.py, which this helper must not affect."""
+
+    def test_under_100_is_unchanged(self):
+        assert _display_pct(Decimal("82")) == Decimal("82")
+
+    def test_exactly_100_is_unchanged(self):
+        assert _display_pct(Decimal("100")) == Decimal("100")
+
+    def test_over_100_is_capped_to_100(self):
+        assert _display_pct(Decimal("2900")) == Decimal("100")
+
+    def test_just_over_100_is_capped_to_100(self):
+        assert _display_pct(Decimal("100.5")) == Decimal("100")
 
 
 class TestToFloat:
