@@ -741,32 +741,30 @@ class APIKeyService:
                 message="Give exactly one of allocated_percentage or budget, not both.",
                 code="PERCENTAGE_AMOUNT_MISMATCH",
             )
-        if allocated_percentage is None and budget is None:
-            # A key with neither has no budget_usage snap at all —
-            # deduct_balance_and_update_quota treats a NULL snap as
-            # "unlimited" by design (an intentionally-uncapped key is a
-            # valid state), but an unallocated key created going forward
-            # would have NOTHING capping it: previously it was still
-            # incidentally capped whenever a sibling under the same tenant
-            # crossed its own ceiling (the tenant-wide fan-out
-            # set_budget_exhausted_for_key's per-key rescope replaced) —
-            # that incidental cap is gone now, and per-key budget_usage is
-            # the only money enforcement left. Existing
-            # NULL-allocation keys are left alone (grandfathered); this only
-            # closes the gap for keys created from here on.
-            raise ValidationError(
-                message="Give one of allocated_percentage or budget — an API key must have an "
-                "allocation to be created.",
-                code="ALLOCATION_REQUIRED",
-            )
+        # allocated_percentage and budget are both optional — a caller may
+        # omit both to create a deliberately uncapped Key (see
+        # allocated_budget=None handling below and _build_cache_payload's
+        # exhausted computation). This was previously blocked
+        # (ALLOCATION_REQUIRED) precisely because omitting both means no
+        # budget_usage row is ever written for the Key, and per-key
+        # budget_usage is the ONLY spend enforcement in this system —
+        # deduct_balance_and_update_quota silently skips its UPDATE when no
+        # row exists (0 rows matched), so an uncapped Key's spend is never
+        # tracked or capped anywhere, by design, for as long as the owning
+        # Tenant itself has a Budget set (see the exhausted computation
+        # below for the one case that's still blocked outright: a Tenant
+        # with NO Budget at all). Re-enabled by explicit product decision —
+        # this is the same "intentionally uncapped" state pre-existing
+        # NULL-allocation keys already had (grandfathered); this just lets
+        # new keys enter it too instead of only inheriting it.
         if allocated_percentage is not None and allocated_percentage == 0:
-            # ALLOCATION_REQUIRED above only catches the omitted-entirely case
-            # (None is not 0) — a caller can route around it by passing an
-            # explicit 0 instead. Reject that too, for the same reason
-            # BUDGET_TOO_SMALL below rejects a `budget` that rounds to 0.00%:
-            # a 0% allocation is a ₹0 ceiling, a Key that can never spend
-            # anything and is indistinguishable from key sprawl in the UI
-            # (shows as an "Active" key with nothing behind it).
+            # Explicit 0 is a DIFFERENT state from omitting the field
+            # entirely (None) — None means "no ceiling at all, uncapped";
+            # 0 means "a ceiling of exactly zero," a Key that can never
+            # spend anything and is indistinguishable from key sprawl in
+            # the UI (shows as an "Active" key with nothing behind it).
+            # Rejected for the same reason BUDGET_TOO_SMALL below rejects a
+            # `budget` that rounds to 0.00%.
             raise ValidationError(
                 message="allocated_percentage must be greater than 0 — a 0% allocation gives "
                 "this Key a ₹0 ceiling, which can never be used. Omit both allocated_percentage "
