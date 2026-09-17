@@ -458,6 +458,89 @@ class TestUnlistedWithZeroOldTotal:
         assert by_id["C"].amount == Decimal("0.00")
 
 
+class TestUnlistedFallsBackToStoredPercentageWhenNothingToScaleFrom:
+    """The fallback this fix adds: when a parent that never had ANY ₹
+    (allocated_amount=0 for the whole unlisted group, same trigger as
+    TestUnlistedWithZeroOldTotal above) is funded for the first time, a
+    child that already has a stored allocated_percentage — from being
+    created/edited under that still-unfunded parent — is no longer left at
+    0 by default. Its stored percentage is used instead, since the
+    ALLOCATION_TOTAL_EXCEEDED gate every create/edit path already enforces
+    guarantees the group's stored percentages sum to <=100% regardless of
+    the parent's own funding state."""
+
+    def test_single_unlisted_child_gets_its_stored_percentage_of_new_funding(self) -> None:
+        # Application (id="App") had 0; Key "A" was created under it earlier
+        # with a stored 50% (its own ₹ ceiling stayed 0 until now). The
+        # Application is funded for the first time here.
+        children = [_row("A", "0", "50")]
+        result = resolve_level(
+            Decimal("30000"), children, [], parent_old_amount=Decimal("0")
+        )
+        by_id = {r.id: r for r in result}
+        assert by_id["A"].amount == Decimal("15000.00")
+        assert by_id["A"].percentage == Decimal("50.00")
+        assert by_id["A"].changed is True
+
+    def test_multiple_unlisted_children_split_by_their_own_stored_percentages(self) -> None:
+        children = [_row("A", "0", "50"), _row("B", "0", "40")]
+        result = resolve_level(
+            Decimal("100000"), children, [], parent_old_amount=Decimal("0")
+        )
+        by_id = {r.id: r for r in result}
+        assert by_id["A"].amount == Decimal("50000.00")
+        assert by_id["B"].amount == Decimal("40000.00")
+
+    def test_clamped_to_room_remaining_when_an_explicit_row_shares_the_same_call(self) -> None:
+        # Application funded for the first time (0 -> 100000) AND, in the
+        # same call, Key "A" is explicitly given a brand-new 60000 ceiling.
+        # Unlisted Key "B" stored 50% (of the Application, not of whatever's
+        # left) — naively applying that against the full 100000 would ask
+        # for 50000, but only 40000 of room remains after A's explicit
+        # 60000. Clamped to that 40000 rather than overcommitting.
+        children = [_row("A", "0", "0"), _row("B", "0", "50")]
+        explicit = [ExplicitInput(id="A", amount=Decimal("60000"))]
+        result = resolve_level(
+            Decimal("100000"), children, explicit, parent_old_amount=Decimal("0")
+        )
+        by_id = {r.id: r for r in result}
+        assert by_id["A"].amount == Decimal("60000.00")
+        assert by_id["B"].amount == Decimal("40000.00")
+
+    def test_zero_percentage_child_still_gets_nothing(self) -> None:
+        children = [_row("A", "0", "50"), _row("B", "0", "0")]
+        result = resolve_level(
+            Decimal("30000"), children, [], parent_old_amount=Decimal("0")
+        )
+        by_id = {r.id: r for r in result}
+        assert by_id["A"].amount == Decimal("15000.00")
+        assert by_id["B"].amount == Decimal("0.00")
+
+    def test_no_stored_percentage_at_all_still_leaves_room_unallocated(self) -> None:
+        # Same as TestUnlistedWithZeroOldTotal — nothing to weight a split
+        # by (no ₹ history AND no stored percentage) — must not regress to
+        # guessing an even split.
+        children = [_row("A", "0", "0"), _row("B", "0", "0")]
+        result = resolve_level(
+            Decimal("30000"), children, [], parent_old_amount=Decimal("0")
+        )
+        by_id = {r.id: r for r in result}
+        assert by_id["A"].amount == Decimal("0.00")
+        assert by_id["B"].amount == Decimal("0.00")
+
+    def test_going_back_to_zero_still_uses_the_amount_basis_not_the_percentage_one(self) -> None:
+        # Once a child actually holds real ₹ (from a prior fund), a later
+        # DEFUND must scale it back down via the normal amount-based path —
+        # not fall into the new percentage fallback, which only triggers
+        # when the group's ₹ history is genuinely empty.
+        children = [_row("A", "50000", "50")]
+        result = resolve_level(
+            Decimal("0"), children, [], parent_old_amount=Decimal("100000")
+        )
+        by_id = {r.id: r for r in result}
+        assert by_id["A"].amount == Decimal("0.00")
+
+
 class TestSlackSurvivesAResize:
     """The bug: normalizing an unlisted group to fill 100% of whatever room
     is left inflates an under-allocated child instead of preserving the
