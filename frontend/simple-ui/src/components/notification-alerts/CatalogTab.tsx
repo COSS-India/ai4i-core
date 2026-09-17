@@ -22,6 +22,7 @@ import {
   bandsForItem,
   type NotificationAlertType,
 } from "../../types/notificationAlerts";
+import { replaceTenantCopy } from "../../utils/replaceTenantCopy";
 import CatalogToolbar, { RecipientRoleCheckboxes } from "./CatalogToolbar";
 
 interface CatalogTabProps {
@@ -70,8 +71,10 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
             : `Failed to save ${entityLabel}s`,
         description:
           saved > 0
-            ? `Saved: ${result.succeeded.join(", ")}. Failed on '${result.failed.name}': ${result.failed.message}`
-            : result.failed.message,
+            ? replaceTenantCopy(
+                `Saved: ${result.succeeded.join(", ")}. Failed on '${result.failed.name}': ${result.failed.message}`,
+              )
+            : replaceTenantCopy(result.failed.message),
         status: saved > 0 ? "warning" : "error",
         duration: 6000,
         isClosable: true,
@@ -107,7 +110,7 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
 
       {error ? (
         <Text color="red.500" fontSize="sm" mb={3}>
-          {error}
+          {replaceTenantCopy(error)}
         </Text>
       ) : null}
 
@@ -143,10 +146,12 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
                     <Td verticalAlign="top">
                       <VStack align="start" spacing={1}>
                         <Flex align="center" gap={2} flexWrap="wrap">
-                          <Text fontWeight="semibold">{item.display_name}</Text>
+                          <Text fontWeight="semibold">
+                            {replaceTenantCopy(item.display_name)}
+                          </Text>
                         </Flex>
                         <Text fontSize="sm" color="gray.600" noOfLines={2}>
-                          {item.description}
+                          {replaceTenantCopy(item.description)}
                         </Text>
                       </VStack>
                     </Td>

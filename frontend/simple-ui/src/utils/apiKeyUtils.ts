@@ -9,6 +9,11 @@ type ApiKeyLike = {
   key_name?: string | null;
 };
 
+/** Strip ".INFERENCE" from catalog labels (e.g. ASR.INFERENCE → ASR). Values stay unchanged. */
+export function formatPermissionLabel(label: string): string {
+  return label.replace(/\.inference$/i, "");
+}
+
 export function normalizeApiKeyRecord<T extends ApiKeyLike>(key: T): T & APIKeyResponse {
   const raw = key as ApiKeyLike;
   const apiKey = raw.api_key ?? raw.apiKey;

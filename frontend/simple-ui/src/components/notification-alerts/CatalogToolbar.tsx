@@ -8,6 +8,7 @@ import {
 } from "@chakra-ui/react";
 import React from "react";
 import { RECIPIENT_ROLE_LABELS } from "../../types/notificationAlerts";
+import { replaceTenantCopy } from "../../utils/replaceTenantCopy";
 
 interface CatalogToolbarProps {
   search: string;
@@ -34,7 +35,7 @@ const CatalogToolbar: React.FC<CatalogToolbarProps> = ({
         </FormControl>
       </HStack>
       <Text fontSize="sm" color="gray.600">
-        {hint}
+        {replaceTenantCopy(hint)}
       </Text>
     </Box>
   );

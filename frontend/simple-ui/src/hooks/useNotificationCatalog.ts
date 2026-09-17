@@ -13,6 +13,7 @@ import {
   DEFAULT_ENABLE_ROLE,
   isCatalogItemEnabled,
 } from "../types/notificationAlerts";
+import { replaceTenantCopy } from "../utils/replaceTenantCopy";
 
 export interface CatalogDraft {
   recipient_roles: Record<RecipientRoleKey, boolean>;
@@ -49,28 +50,34 @@ function draftsEqual(a: CatalogDraft, b: CatalogDraft): boolean {
 }
 
 function catalogErrorMessage(error: unknown, fallback: string): string {
+  let message = fallback;
   if (!error || typeof error !== "object") {
-    return error instanceof Error ? error.message : fallback;
-  }
-  const maybeAxios = error as {
-    message?: string;
-    response?: {
-      data?: {
-        detail?: string | { message?: string };
-        error?: { message?: string };
-        message?: string;
+    message = error instanceof Error ? error.message : fallback;
+  } else {
+    const maybeAxios = error as {
+      message?: string;
+      response?: {
+        data?: {
+          detail?: string | { message?: string };
+          error?: { message?: string };
+          message?: string;
+        };
       };
     };
-  };
-  const detail = maybeAxios.response?.data?.detail;
-  if (typeof detail === "string" && detail.trim()) return detail;
-  if (detail && typeof detail === "object" && detail.message) return detail.message;
-  if (maybeAxios.response?.data?.error?.message) {
-    return maybeAxios.response.data.error.message;
+    const detail = maybeAxios.response?.data?.detail;
+    if (typeof detail === "string" && detail.trim()) {
+      message = detail;
+    } else if (detail && typeof detail === "object" && detail.message) {
+      message = detail.message;
+    } else if (maybeAxios.response?.data?.error?.message) {
+      message = maybeAxios.response.data.error.message;
+    } else if (maybeAxios.response?.data?.message) {
+      message = maybeAxios.response.data.message;
+    } else if (maybeAxios.message) {
+      message = maybeAxios.message;
+    }
   }
-  if (maybeAxios.response?.data?.message) return maybeAxios.response.data.message;
-  if (maybeAxios.message) return maybeAxios.message;
-  return fallback;
+  return replaceTenantCopy(message);
 }
 
 export function useNotificationCatalog(type: NotificationAlertType) {

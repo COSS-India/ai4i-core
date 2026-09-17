@@ -14,14 +14,15 @@ import {
   isCatalogItemEnabled,
   normalizeRecipientRoles,
 } from "../types/notificationAlerts";
+import { replaceTenantCopy } from "../utils/replaceTenantCopy";
 
 function fromApiItem(item: ApiCatalogItem): NotificationAlertCatalogItem {
   const recipient_roles = normalizeRecipientRoles(item.recipient_roles);
   return {
     id: item.id,
     name: item.name,
-    display_name: item.display_name,
-    description: item.description,
+    display_name: replaceTenantCopy(item.display_name),
+    description: replaceTenantCopy(item.description),
     type: item.type,
     module: item.module,
     channels: [...item.channels],

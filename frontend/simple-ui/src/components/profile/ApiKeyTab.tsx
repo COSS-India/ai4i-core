@@ -30,6 +30,7 @@ import {
   isApiKeyExpired,
   resolveApiKeyDisplayStatus,
 } from "../../config/constants";
+import { formatPermissionLabel } from "../../utils/apiKeyUtils";
 
 export interface ApiKeyTabProps {
   apiKeys: APIKeyResponse[];
@@ -163,7 +164,7 @@ export default function ApiKeyTab({
                                 <Text fontSize="xs" color="gray.500">Permissions:</Text>
                                 {key.permissions.map((permName) => (
                                   <Badge key={permName} colorScheme="blue" fontSize="xs">
-                                    {permName}
+                                    {formatPermissionLabel(permName)}
                                   </Badge>
                                 ))}
                               </HStack>

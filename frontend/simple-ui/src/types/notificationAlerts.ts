@@ -1,3 +1,5 @@
+import { INSTITUTION } from "../config/constants";
+
 /** Catalog type discriminator — matches platform-core `NotificationType`. */
 export type NotificationAlertType = "NOTIFICATION" | "ALERT";
 
@@ -51,7 +53,7 @@ export interface CatalogUpdatePayload {
 export type CatalogStatusFilter = "all" | "enabled" | "disabled";
 
 export const RECIPIENT_ROLE_LABELS: Record<RecipientRoleKey, string> = {
-  "TENANT ADMIN": "Institution Admin",
+  "TENANT ADMIN": `${INSTITUTION} Admin`,
   ADMIN: "Adopter Admin",
 };
 
