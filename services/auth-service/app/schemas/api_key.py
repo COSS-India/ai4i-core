@@ -62,12 +62,15 @@ class CreateAPIKeyRequest(BaseSchema):
             "immediately to run the same ALLOCATION_TOTAL_EXCEEDED cap check every "
             "allocated_percentage-created key goes through (rejected if it rounds to 0.00%), "
             "but stores this exact requested amount as allocated_budget, not the rounded "
-            "derivative. Give at most one of allocated_percentage / budget — omit both for an "
-            "intentionally uncapped key: no per-key ceiling is set, no budget_usage row is "
-            "ever created for it, and its spend is NEVER tracked or capped at the key or "
-            "Application level, regardless of whether the owning Application or Tenant has "
-            "a Budget of its own. The owning Tenant's tier monthly quota is the only limit "
-            "left on such a key."
+            "derivative. Give at most one of allocated_percentage / budget — omitting both asks "
+            "for an uncapped key, but what that actually means depends on the Application: if "
+            "the owning Application has its own ₹ Budget, the server derives a ceiling from "
+            "whatever remains unallocated of it, writes a budget_usage row, and the key's spend "
+            "IS tracked and capped just like an explicit allocated_percentage/budget key (that "
+            "ceiling can be ₹0 if the Application is already fully committed). Only when the "
+            "owning Application has no Budget of its own does the key stay genuinely untracked "
+            "and uncapped at the key/Application level, leaving the owning Tenant's tier "
+            "monthly quota as the only limit on it."
         ),
     )
 
