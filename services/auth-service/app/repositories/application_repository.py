@@ -95,7 +95,7 @@ class ApplicationRepository(BaseRepository):
         )
         return list(result.scalars().all())
 
-    async def list_by_tenant_for_update(self, tenant_id: int) -> list[Application]:
+    async def lock_tenant_applications(self, tenant_id: int) -> list[Application]:
         """Same as ``list_by_tenant``, but locks every row in ONE round trip
         (``SELECT ... FOR UPDATE``) instead of the caller looping
         ``get_by_id_for_update`` once per Application — used by the two

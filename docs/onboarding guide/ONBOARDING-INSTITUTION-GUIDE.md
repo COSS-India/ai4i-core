@@ -60,7 +60,7 @@ The following terms are used throughout this guide.
 Sign in, give your applications access to LLMs, and onboard your institution's users.
 
 
-## 1. Institution Creation
+## 4. Institution Creation
 
 Before you can sign in and begin onboarding, your institution must share the following with your Adopter Admin. Your Adopter Admin uses it to create your institution on AI4I Orchestrate and assign it a Tier and Budget:
 
@@ -72,7 +72,7 @@ Before you can sign in and begin onboarding, your institution must share the fol
 - The Tier your institution wants to operate on.
 - The Budget within which your institution wants to operate.
 
-## 2. Signing In
+## 5. Signing In
 
 - Your institution account has been activated.
 - Your Adopter Admin has shared your sign-in credentials.
@@ -83,7 +83,7 @@ Before you can sign in and begin onboarding, your institution must share the fol
 ![Image](images/onboarding-institution/image_2.png)
 
 
-## 3. Create an API Key (Application Access)
+## 6. Create an API Key (Application Access)
 
 - Your institution has been assigned a tier and budget.
 - You know the application's name, the permissions it needs, and when the key should expire.
@@ -100,7 +100,7 @@ Before you can sign in and begin onboarding, your institution must share the fol
 ![Image](images/onboarding-institution/image_6.jpg)
 
 
-## 4. Onboard Institution Users
+## 7. Onboard Institution Users
 
 
 ![Image](images/onboarding-institution/image_7.jpg)
@@ -117,7 +117,7 @@ Before you can sign in and begin onboarding, your institution must share the fol
 Track your institution's budget and usage against its assigned tier.
 
 
-## 1. Metering Dashboard
+## 8. Metering Dashboard
 
 
 ![Image](images/onboarding-institution/image_11.jpg)
@@ -137,7 +137,7 @@ Track your institution's budget and usage against its assigned tier.
 Day-to-day account, access, and testing tasks you'll return to after initial setup.
 
 
-## 1. Manage API Keys
+## 9. Manage API Keys
 
 
 ![Image](images/onboarding-institution/image_16.jpg)
@@ -155,7 +155,7 @@ Day-to-day account, access, and testing tasks you'll return to after initial set
 ![Image](images/onboarding-institution/image_20.jpg)
 
 
-## 2. Manage Institution Users
+## 10. Manage Institution Users
 
 
 ![Image](images/onboarding-institution/image_21.jpg)
@@ -185,7 +185,7 @@ Day-to-day account, access, and testing tasks you'll return to after initial set
 ![Image](images/onboarding-institution/image_29.jpg)
 
 
-## 3. Try It Now
+## 11. Try It Now
 
 
 ![Image](images/onboarding-institution/image_30.jpg)
@@ -197,7 +197,7 @@ Day-to-day account, access, and testing tasks you'll return to after initial set
 ![Image](images/onboarding-institution/image_32.jpg)
 
 
-## 4. View Available Models
+## 12. View Available Models
 
 
 ![Image](images/onboarding-institution/image_33.jpg)
@@ -206,7 +206,7 @@ Day-to-day account, access, and testing tasks you'll return to after initial set
 ![Image](images/onboarding-institution/image_34.jpg)
 
 
-## 5. Logs Dashboard
+## 13. Logs Dashboard
 
 
 ![Image](images/onboarding-institution/image_35.jpg)
@@ -218,7 +218,7 @@ Day-to-day account, access, and testing tasks you'll return to after initial set
 ![Image](images/onboarding-institution/image_37.png)
 
 
-## 6. Manage Your Profile
+## 14. Manage Your Profile
 
 
 ![Image](images/onboarding-institution/image_38.jpg)

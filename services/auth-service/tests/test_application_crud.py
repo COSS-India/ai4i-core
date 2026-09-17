@@ -399,6 +399,24 @@ class TestGetApplication:
 
         assert app.id == 12
 
+    @pytest.mark.asyncio
+    async def test_moderator_is_rejected(self) -> None:
+        """Same scope check as create/update/list — the code-review removal
+        of the ApplicationService._authorize wrapper inlined the call to
+        authorize_institution_scope directly into all 4 methods; this closes
+        the one gap where get_application had no test of its own exercising
+        that inlined call, so a future edit that drops it from just this
+        one call site (unlike the other three) would be caught here."""
+        svc = _make_service(roles=("MODERATOR",))
+        svc._applications.get_by_id = AsyncMock(return_value=_application(12))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.get_application(101, 12, _user(tenant_id=101))
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.code == "INSUFFICIENT_PERMISSIONS"
+        svc._applications.get_by_id.assert_not_awaited()
+
 
 class TestUpdateApplication:
     @pytest.mark.asyncio

@@ -62,7 +62,15 @@ class CreateAPIKeyRequest(BaseSchema):
             "immediately to run the same ALLOCATION_TOTAL_EXCEEDED cap check every "
             "allocated_percentage-created key goes through (rejected if it rounds to 0.00%), "
             "but stores this exact requested amount as allocated_budget, not the rounded "
-            "derivative. One of allocated_percentage / budget is required; give at most one."
+            "derivative. Give at most one of allocated_percentage / budget — omitting both asks "
+            "for an uncapped key, but what that actually means depends on the Application: if "
+            "the owning Application has its own ₹ Budget, the server derives a ceiling from "
+            "whatever remains unallocated of it, writes a budget_usage row, and the key's spend "
+            "IS tracked and capped just like an explicit allocated_percentage/budget key (that "
+            "ceiling can be ₹0 if the Application is already fully committed). Only when the "
+            "owning Application has no Budget of its own does the key stay genuinely untracked "
+            "and uncapped at the key/Application level, leaving the owning Tenant's tier "
+            "monthly quota as the only limit on it."
         ),
     )
 
@@ -111,6 +119,16 @@ class CreateAPIKeyData(BaseSchema):
         description=(
             "The requested ₹ ceiling verbatim (rounded to cents) when this key was created via "
             "`budget`; otherwise derived as application.allocated_budget * allocated_percentage / 100."
+        ),
+    )
+    budget_exhausted: bool = Field(
+        False,
+        description=(
+            "True when this key was created with nothing left to spend — e.g. an uncapped-key "
+            "request (both allocated_percentage and budget omitted) seeded from an Application "
+            "that was already fully committed, or a Tenant with no allocated_budget at all. The "
+            "key is still created (a 0-remaining request is not an error), but it will 429 on its "
+            "very first billed request until the Application/Tenant's budget is topped up."
         ),
     )
 

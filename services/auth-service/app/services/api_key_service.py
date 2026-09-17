@@ -24,7 +24,7 @@ import re
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from typing import Optional
 from uuid import UUID
 
@@ -35,7 +35,13 @@ from ai4i_core.ppu import get_catalogue
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.exceptions import AuthorizationError, EntityNotFoundError, InvalidAPIKeyError, ValidationError
+from app.core.exceptions import (
+    AuthorizationError,
+    EntityNotFoundError,
+    InvalidAPIKeyError,
+    ServiceUnavailableError,
+    ValidationError,
+)
 from app.models.api_key import APIKey
 from app.models.application import Application, ApplicationStatus
 from app.models.tenant import Tenant, TenantStatus
@@ -374,7 +380,7 @@ class APIKeyService:
         if self._repo is None:
             return
         if tenant is None and self._tenants is not None:
-            tenant = await self._tenants.get_by_id(application.tenant_id)
+            tenant = await self._tenants.get_operational_fields(application.tenant_id)
         if not self.application_may_use_api_keys(application, tenant):
             await self.evict_keys_for_application(application.id)
             return
@@ -392,7 +398,7 @@ class APIKeyService:
                 tenant_id,
             )
             return
-        tenant = await self._tenants.get_by_id(tenant_id)
+        tenant = await self._tenants.get_operational_fields(tenant_id)
         if not tenant:
             return
         for application in await self._applications.list_by_tenant(tenant_id):
@@ -651,6 +657,81 @@ class APIKeyService:
         await self._repo.remove_cached_data_fields_for_tenant(tenant_id, inference_fields)
         await self._repo.commit()
 
+    async def _committed_total_for_application(
+        self,
+        application_id: int,
+        application_allocated_budget: Decimal,
+        platform_core_db: Optional[AsyncSession],
+        *,
+        raise_on_error: bool = False,
+    ) -> Decimal:
+        """Sum of every Key's own committed ₹ under an Application: each
+        ACTIVE Key charged the greater of its own reservation (see below)
+        or what it's actually spent, each REVOKED Key charged only its
+        consumed spend (its ceiling is no longer reserved, but the spend
+        itself is real and permanent) — see create_api_key's own
+        BUDGET_OVERCOMMITTED check for the full rationale this mirrors.
+
+        An ACTIVE Key's own reservation is its percentage-derived ceiling
+        WHENEVER it has an allocated_percentage at all (even 0) —
+        deliberately not its allocated_budget, which can disagree with its
+        own stored percentage by rounding (see create_api_key's currency-
+        path comment) and must stay on the same percent basis as
+        ALLOCATION_TOTAL_EXCEEDED. Only a Key with NO allocated_percentage
+        (an uncapped-Key request seeded straight from the Application's own
+        remaining ₹ — see create_api_key's uncapped_seeded_budget) falls
+        back to its own allocated_budget instead — it has no percentage to
+        derive a ceiling from at all, and without this its real reservation
+        would read as 0 until it actually accrues spend, silently reopening
+        the exact committed_total blind spot this whole mechanism exists to
+        close.
+
+        Shared by that check and by create_api_key's uncapped-Key
+        remaining-budget derivation, so the two can never independently
+        drift out of sync with each other.
+
+        Best-effort usage read (fetch_budget_usage) by default, same
+        posture as every other call to it in this codebase — a
+        platform-core outage must not block Key creation. ``raise_on_error``
+        opts out of that for the uncapped-Key derivation caller, where the
+        result is persisted rather than just gating one accept/reject
+        check — see that caller's own comment.
+        """
+        all_keys = await self._repo.list_by_application(application_id)
+        usage_map = await budget_usage.fetch_budget_usage(
+            [k.id for k in all_keys], platform_core_db, raise_on_error=raise_on_error
+        )
+        return sum(
+            (
+                (
+                    max(
+                        (
+                            (k.allocated_percentage / Decimal("100")) * application_allocated_budget
+                            if k.allocated_percentage is not None
+                            # No allocated_percentage at all (an
+                            # uncapped-Key seeded straight from the
+                            # Application's remaining ₹) — nothing to
+                            # derive a percentage-basis ceiling from, so
+                            # its own allocated_budget IS the reservation.
+                            # Never applied when allocated_percentage is
+                            # set (even 0), which keeps the deliberate
+                            # rounding-drift behavior below unchanged: a
+                            # percentage-created key is charged its
+                            # percentage-derived ceiling, NOT its exact
+                            # allocated_budget, so this check stays on the
+                            # same percent basis as ALLOCATION_TOTAL_EXCEEDED.
+                            else k.allocated_budget or Decimal("0")
+                        ),
+                        usage_map.get(k.id, (Decimal("0"), None))[0],
+                    )
+                    if k.is_active
+                    else usage_map.get(k.id, (Decimal("0"), None))[0]
+                )
+                for k in all_keys
+            ),
+            Decimal("0"),
+        )
+
     async def create_api_key(
         self,
         actor_user_id: UUID,
@@ -663,10 +744,16 @@ class APIKeyService:
         *,
         caller_tenant_id: Optional[int] = None,
         platform_core_db: Optional[AsyncSession] = None,
-    ) -> tuple[str, APIKey]:
+    ) -> tuple[str, APIKey, bool]:
         """
         Generate a hex API key, persist to DB, cache in Redis.
-        Returns (raw_hex_key, api_key_record). Raw key is shown once and never stored again.
+        Returns (raw_hex_key, api_key_record, budget_exhausted). Raw key is
+        shown once and never stored again. ``budget_exhausted`` is True when
+        the key was created with nothing left to spend (e.g. seeded from an
+        already fully-committed Application's remaining budget) — same
+        terminal state an explicit allocated_percentage=0 is rejected for,
+        but this one is a deliberate "whatever's left, even if nothing"
+        request rather than an error, so it succeeds and reports it instead.
 
         ``caller_tenant_id`` is None for a system admin (unscoped — any
         tenant's application may be targeted); otherwise the application must
@@ -704,7 +791,7 @@ class APIKeyService:
                 detail={"code": "APPLICATION_NOT_FOUND", "message": "Application not found."},
             )
 
-        tenant = await self._tenants.get_by_id(application.tenant_id)
+        tenant = await self._tenants.get_operational_fields(application.tenant_id)
         if tenant is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -741,32 +828,118 @@ class APIKeyService:
                 message="Give exactly one of allocated_percentage or budget, not both.",
                 code="PERCENTAGE_AMOUNT_MISMATCH",
             )
-        if allocated_percentage is None and budget is None:
-            # A key with neither has no budget_usage snap at all —
-            # deduct_balance_and_update_quota treats a NULL snap as
-            # "unlimited" by design (an intentionally-uncapped key is a
-            # valid state), but an unallocated key created going forward
-            # would have NOTHING capping it: previously it was still
-            # incidentally capped whenever a sibling under the same tenant
-            # crossed its own ceiling (the tenant-wide fan-out
-            # set_budget_exhausted_for_key's per-key rescope replaced) —
-            # that incidental cap is gone now, and per-key budget_usage is
-            # the only money enforcement left. Existing
-            # NULL-allocation keys are left alone (grandfathered); this only
-            # closes the gap for keys created from here on.
-            raise ValidationError(
-                message="Give one of allocated_percentage or budget — an API key must have an "
-                "allocation to be created.",
-                code="ALLOCATION_REQUIRED",
-            )
+        # allocated_percentage and budget are both optional — a caller may
+        # omit both to create a deliberately uncapped Key. This was
+        # previously blocked entirely (ALLOCATION_REQUIRED); re-enabled by
+        # explicit product decision, the same "intentionally uncapped"
+        # state pre-existing NULL-allocation keys already had
+        # (grandfathered) — this just lets new keys enter it too instead of
+        # only inheriting it.
+        #
+        # An omitted allocation is NOT left as a true, invisible "no ceiling
+        # anywhere" any more when the owning Application has its own ₹
+        # Budget: a reviewer found that state made the Key's real spend
+        # invisible to every sibling Key's own BUDGET_OVERCOMMITTED check
+        # below (an uncapped Key contributes 0 to committed_total as both a
+        # ceiling AND a usage figure — no budget_usage row for it means
+        # deduct_balance_and_update_quota's UPDATE always matches 0 rows,
+        # so its real spend is recorded nowhere) — a later Key could then
+        # be allocated the Application's entire remaining share while this
+        # one kept spending on top of the Application's Budget, with only
+        # the Tenant's tier monthly quota to ever stop it.
+        #
+        # Fixed by seeding this Key with the Application's own remaining
+        # (unallocated) ₹ as an effective `budget` — routed through the
+        # EXACT SAME code path as an explicit budget request just below,
+        # rather than a parallel one that could drift out of sync with it.
+        # Still genuinely, permanently uncapped in the one case with no ₹
+        # figure to derive a "remaining" from at all: an Application with
+        # no ₹ Budget of its own (application.allocated_budget is None) —
+        # the pre-existing, intentional "uncapped Application" state,
+        # untouched by this fix (see the exhausted computation far below).
+        seed_zero_ceiling = False
+        # Set (instead of `budget`) when an uncapped-Key request is seeded
+        # from the Application's own remaining ₹ below — kept OUT of
+        # `budget`/`allocated_percentage` on purpose: routing it through
+        # the "if budget is not None" percentage-derivation block further
+        # down would reserve 100% of what's left as this Key's own
+        # allocated_percentage, which (a) permanently pins
+        # sum_api_key_allocated_percentage at 100% for this Application —
+        # blocking every future percentage-based Key even after the
+        # Application's own Budget is later topped up and real ₹ room
+        # reopens, since that sum is never automatically recomputed — and
+        # (b) makes the frontend's formatBudgetPct render this Key as
+        # percentage-capped instead of "No ceiling" (it checks
+        # allocated_percentage is null). allocated_budget is still set
+        # from it below, so the ₹ ceiling itself stays tracked and
+        # reserved via _committed_total_for_application's allocated_budget
+        # term (see its own docstring) — only the PERCENTAGE reservation
+        # is skipped.
+        uncapped_seeded_budget: Optional[Decimal] = None
+        if allocated_percentage is None and budget is None and application.allocated_budget is not None:
+            # Unlike the BUDGET_OVERCOMMITTED gate's own best-effort call to
+            # this same helper further below (which only relaxes one
+            # accept/reject check for one request and self-heals on the
+            # next), this figure is quantized and PERSISTED as the new
+            # Key's allocated_budget/allocated_percentage — there is no
+            # later recompute to correct it. A platform-core outage here
+            # must not let a wrong (understated) committed_so_far silently
+            # over-credit this Key with ₹ that's actually already spent by
+            # a revoked key or an over-exhausted active one — raise_on_error
+            # so the create fails loudly instead of persisting bad data.
+            try:
+                committed_so_far = await self._committed_total_for_application(
+                    application_id, application.allocated_budget, platform_core_db,
+                    raise_on_error=True,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to read committed budget for application_id=%s while seeding "
+                    "an uncapped Key's remaining-budget ceiling; refusing to derive one "
+                    "from an unverified figure: %s",
+                    application_id, exc,
+                )
+                raise ServiceUnavailableError(
+                    message="Cannot verify this Application's current committed budget right "
+                    "now — refusing to create an uncapped Key from an unverified remaining "
+                    "amount. Retry once platform-core is reachable again, or supply an "
+                    "explicit allocated_percentage/budget instead.",
+                    service_name="platform-core",
+                    error_code="BUDGET_USAGE_UNAVAILABLE",
+                ) from exc
+            remaining = application.allocated_budget - committed_so_far
+            if remaining > 0:
+                # ROUND_DOWN, not the usual ROUND_HALF_UP — the derived
+                # request must never round UP past what's genuinely left;
+                # this Key must not itself become the thing that pushes the
+                # Application over its own Budget, the exact class of bug
+                # this whole block exists to close.
+                uncapped_seeded_budget = remaining.quantize(Decimal("0.01"), rounding=ROUND_DOWN)
+            else:
+                # remaining <= 0: the Application is already fully
+                # committed. Routing a literal budget=0 through the normal
+                # derivation below would incorrectly REJECT creation
+                # (BUDGET_TOO_SMALL, same as the explicit-0 check further
+                # down) — wrong here: an uncapped-Key request asks for
+                # "whatever's available," not a specific amount, so it must
+                # still succeed even when that turns out to be nothing,
+                # exactly like a Tenant with no Budget never rejects either.
+                # `seed_zero_ceiling` forces a real, trackable ₹0 ceiling in
+                # directly at the very end (bypassing every intermediate
+                # ==0 rejection) instead of leaving allocated_budget None —
+                # None here would silently recreate the exact bug this
+                # block exists to close: no budget_usage row, no tracking,
+                # genuinely unlimited spend, for a Key that in reality has
+                # nothing left to spend.
+                seed_zero_ceiling = True
         if allocated_percentage is not None and allocated_percentage == 0:
-            # ALLOCATION_REQUIRED above only catches the omitted-entirely case
-            # (None is not 0) — a caller can route around it by passing an
-            # explicit 0 instead. Reject that too, for the same reason
-            # BUDGET_TOO_SMALL below rejects a `budget` that rounds to 0.00%:
-            # a 0% allocation is a ₹0 ceiling, a Key that can never spend
-            # anything and is indistinguishable from key sprawl in the UI
-            # (shows as an "Active" key with nothing behind it).
+            # Explicit 0 is a DIFFERENT state from omitting the field
+            # entirely (None) — None means "no ceiling at all, uncapped";
+            # 0 means "a ceiling of exactly zero," a Key that can never
+            # spend anything and is indistinguishable from key sprawl in
+            # the UI (shows as an "Active" key with nothing behind it).
+            # Rejected for the same reason BUDGET_TOO_SMALL below rejects a
+            # `budget` that rounds to 0.00%.
             raise ValidationError(
                 message="allocated_percentage must be greater than 0 — a 0% allocation gives "
                 "this Key a ₹0 ceiling, which can never be used. Omit both allocated_percentage "
@@ -807,26 +980,36 @@ class APIKeyService:
                     code="BUDGET_TOO_SMALL",
                 )
 
-        if allocated_percentage is not None:
+        if allocated_percentage is not None or uncapped_seeded_budget is not None:
             # Lock the application row for the rest of this transaction so a
             # concurrent create_api_key call under the same application can't
-            # read the same existing_total before either commits — without
-            # this, two concurrent 60% requests both pass the check and the
-            # application ends up over-allocated. Held until this
-            # transaction commits below (self._repo.commit()).
+            # read the same existing_total/committed_total before either
+            # commits — without this, two concurrent 60% requests (or two
+            # concurrent uncapped requests reading the same "remaining")
+            # both pass their check and the application ends up
+            # over-allocated. Held until this transaction commits below
+            # (self._repo.commit()).
             locked_application = await self._applications.get_by_id_for_update(application_id)
             if locked_application is not None:
                 application = locked_application
-            existing_total = await self._applications.sum_api_key_allocated_percentage(application_id)
-            if existing_total + allocated_percentage > Decimal("100"):
-                raise ValidationError(
-                    message=(
-                        f"Allocating {allocated_percentage}% would bring this application's "
-                        f"total API key allocation to {existing_total + allocated_percentage}%, "
-                        "which exceeds 100%."
-                    ),
-                    code="ALLOCATION_TOTAL_EXCEEDED",
-                )
+
+            if allocated_percentage is not None:
+                existing_total = await self._applications.sum_api_key_allocated_percentage(application_id)
+                if existing_total + allocated_percentage > Decimal("100"):
+                    raise ValidationError(
+                        message=(
+                            f"Allocating {allocated_percentage}% would bring this application's "
+                            f"total API key allocation to {existing_total + allocated_percentage}%, "
+                            "which exceeds 100%."
+                        ),
+                        code="ALLOCATION_TOTAL_EXCEEDED",
+                    )
+            # uncapped_seeded_budget deliberately does NOT go through the
+            # check above — it carries no allocated_percentage (see its own
+            # comment), so it must never compete for the PERCENTAGE pool.
+            # The ₹-based check just below is what actually protects the
+            # Application's real Budget for this Key; this one's job is
+            # purely to cap the percentage pool for percentage-based Keys.
 
             if application.allocated_budget:
                 # The check above only weighs ACTIVE keys' allocated_percentage
@@ -864,30 +1047,17 @@ class APIKeyService:
                 # every other fetch_budget_usage call in this codebase (a
                 # platform-core outage must not block key creation; it
                 # self-heals once platform-core answers again on the next
-                # create/edit).
-                all_keys = await self._repo.list_by_application(application_id)
-                usage_map = await budget_usage.fetch_budget_usage(
-                    [k.id for k in all_keys], platform_core_db
-                )
-                committed_total = sum(
-                    (
-                        (
-                            max(
-                                (k.allocated_percentage or Decimal("0"))
-                                / Decimal("100")
-                                * application.allocated_budget,
-                                usage_map.get(k.id, (Decimal("0"), None))[0],
-                            )
-                            if k.is_active
-                            else usage_map.get(k.id, (Decimal("0"), None))[0]
-                        )
-                        for k in all_keys
-                    ),
-                    Decimal("0"),
+                # create/edit). Shared with the uncapped-Key remaining-budget
+                # derivation above — see _committed_total_for_application's
+                # own docstring for why that sharing matters.
+                committed_total = await self._committed_total_for_application(
+                    application_id, application.allocated_budget, platform_core_db
                 )
                 new_key_ceiling = (
                     budget.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                     if budget is not None
+                    else uncapped_seeded_budget
+                    if uncapped_seeded_budget is not None
                     else (application.allocated_budget * allocated_percentage) / Decimal("100")
                 )
                 if committed_total + new_key_ceiling > application.allocated_budget:
@@ -916,6 +1086,18 @@ class APIKeyService:
             allocated_budget = budget.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         elif allocated_percentage is not None and application.allocated_budget is not None:
             allocated_budget = (application.allocated_budget * allocated_percentage) / Decimal("100")
+        elif uncapped_seeded_budget is not None:
+            # allocated_percentage stays None — see uncapped_seeded_budget's
+            # own comment on why it must never be reserved as a percentage.
+            allocated_budget = uncapped_seeded_budget
+        elif seed_zero_ceiling:
+            # The Application had its own ₹ Budget but nothing left when
+            # this uncapped-Key request was made — a real, trackable ₹0
+            # ceiling (allocated_percentage=0 too, so it's visible to a
+            # future sum_api_key_allocated_percentage the same as any other
+            # Key), not an untracked, silently-unlimited None.
+            allocated_percentage = Decimal("0")
+            allocated_budget = Decimal("0")
 
         raw_key = self.generate_api_key()
         days = expires_days or settings.api_key_expire_days
@@ -945,40 +1127,47 @@ class APIKeyService:
         if allocated_budget is not None:
             await budget_usage.write_budget_snapshot({api_key.id: allocated_budget}, platform_core_db)
 
+        # A key created with a ceiling that's already <= 0 (e.g. under
+        # an Application/Tenant with no budget left) has nothing to
+        # spend against from its very first request — seed
+        # "budget-exhausted" into the initial cache write instead of
+        # leaving the flag absent (falsy, i.e. NOT exhausted) until some
+        # future billed request happens to set it via the Kafka
+        # consumer. Without this, a brand-new key under an
+        # already-zeroed-out parent serves every request that arrives
+        # before that eventually happens.
+        #
+        # allocated_budget is None for two DIFFERENT reasons, and only
+        # one of them should block: (a) the owning Tenant has no
+        # allocated_budget configured at all — _derive_budget-style
+        # cascade means the Application (if given only a percentage)
+        # and this Key both end up None with nothing real behind them,
+        # which must mean "nothing to spend," not "unlimited"; (b) an
+        # Application was deliberately created with no percentage under
+        # a Tenant that DOES have a real budget — the established,
+        # intentional "uncapped Application" state, unrelated to this
+        # fix and left exactly as it already behaved. tenant.
+        # allocated_budget is None is what tells the two apart. No
+        # budget_usage row is written for this case (write_budget_snapshot
+        # above already skipped it, same as any None ceiling) — leaving
+        # the snap itself unset, not 0, is deliberate: it lets the
+        # Tenant's own future top-up sync (TenantService.
+        # _sync_ppu_wallet_and_exhaustion) clear this flag the normal
+        # way once real money exists, rather than this Key being stuck
+        # at a hard 0 ceiling that only an explicit Budget Allocation
+        # edit could ever move (the exact lockout class fixed elsewhere
+        # in resolve_level's floor check).
+        #
+        # Computed unconditionally (not just inside the cache-write branch
+        # below) so the caller's 201 response can always report it — a key
+        # seeded budget-exhausted via seed_zero_ceiling above must not look
+        # identical to a healthy one in the response, the same terminal
+        # state an explicit allocated_percentage=0 is rejected for.
+        exhausted = (allocated_budget is not None and allocated_budget <= Decimal("0")) or (
+            allocated_budget is None and tenant.allocated_budget is None
+        )
+
         if self.application_may_use_api_keys(application, tenant):
-            # A key created with a ceiling that's already <= 0 (e.g. under
-            # an Application/Tenant with no budget left) has nothing to
-            # spend against from its very first request — seed
-            # "budget-exhausted" into this initial cache write instead of
-            # leaving the flag absent (falsy, i.e. NOT exhausted) until some
-            # future billed request happens to set it via the Kafka
-            # consumer. Without this, a brand-new key under an
-            # already-zeroed-out parent serves every request that arrives
-            # before that eventually happens.
-            #
-            # allocated_budget is None for two DIFFERENT reasons, and only
-            # one of them should block: (a) the owning Tenant has no
-            # allocated_budget configured at all — _derive_budget-style
-            # cascade means the Application (if given only a percentage)
-            # and this Key both end up None with nothing real behind them,
-            # which must mean "nothing to spend," not "unlimited"; (b) an
-            # Application was deliberately created with no percentage under
-            # a Tenant that DOES have a real budget — the established,
-            # intentional "uncapped Application" state, unrelated to this
-            # fix and left exactly as it already behaved. tenant.
-            # allocated_budget is None is what tells the two apart. No
-            # budget_usage row is written for this case (write_budget_snapshot
-            # above already skipped it, same as any None ceiling) — leaving
-            # the snap itself unset, not 0, is deliberate: it lets the
-            # Tenant's own future top-up sync (TenantService.
-            # _sync_ppu_wallet_and_exhaustion) clear this flag the normal
-            # way once real money exists, rather than this Key being stuck
-            # at a hard 0 ceiling that only an explicit Budget Allocation
-            # edit could ever move (the exact lockout class fixed elsewhere
-            # in resolve_level's floor check).
-            exhausted = (allocated_budget is not None and allocated_budget <= Decimal("0")) or (
-                allocated_budget is None and tenant.allocated_budget is None
-            )
             payload = self._build_cache_payload(
                 api_key,
                 str(tenant.id),
@@ -995,7 +1184,7 @@ class APIKeyService:
             "API key created: name=%s application=%s permissions=%s",
             key_name, application_id, permission_ids,
         )
-        return raw_key, api_key
+        return raw_key, api_key, exhausted
 
     @staticmethod
     def _is_cache_entry_invalid(cached: dict) -> bool:
@@ -1175,7 +1364,7 @@ class APIKeyService:
         if self._applications is not None:
             application = await self._applications.get_by_id(db_key.application_id)
         if application is not None and self._tenants is not None:
-            tenant = await self._tenants.get_by_id(application.tenant_id)
+            tenant = await self._tenants.get_operational_fields(application.tenant_id)
             tenant_id_str = str(application.tenant_id)
         budget_effective_to = tenant.budget_effective_to if tenant else None
         if application is not None and self.effective_is_active(db_key, application, tenant):
