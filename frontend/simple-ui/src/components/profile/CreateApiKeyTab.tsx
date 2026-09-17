@@ -228,8 +228,11 @@ export default function CreateApiKeyTab({
               />
               <FieldHint show={!budgetError}>
                 {FIELD_HINTS.apiKey.budget.helper}
-                {create.apiKeyForm.application_id
-                  ? ` Up to ${create.formatAvailablePct()}% available within this Application.`
+                {create.apiKeyForm.application_id &&
+                create.selectedApplication?.allocated_budget != null
+                  ? create.uncappedHoldsRemainder
+                    ? " An existing key without a percentage allocation is holding this Application's remaining Budget."
+                    : ` Up to ${create.formatAvailablePct()}% available within this Application.`
                   : ""}
               </FieldHint>
               {create.budgetPreview && (

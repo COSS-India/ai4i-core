@@ -38,6 +38,7 @@ function normalizeKey(raw: unknown): ApiKeyRecord {
     application_id: asString(row.application_id),
     allocated_percentage: asNumber(row.allocated_percentage),
     allocated_budget: asNumber(row.allocated_budget),
+    budget_exhausted: row.budget_exhausted === true,
     permissions: Array.isArray(row.permissions)
       ? row.permissions.map((p) => asString(p))
       : [],

@@ -151,6 +151,7 @@ export interface APIKeyResponse {
   application_name?: string;
   allocated_percentage?: number | null;
   allocated_budget?: number | null;
+  budget_exhausted?: boolean;
   created_by?: string;
 }
 
