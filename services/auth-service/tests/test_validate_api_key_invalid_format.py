@@ -37,8 +37,12 @@ class TestValidateApiKeyInvalidFormat:
         result = await _validate_api_key("not-a-hex-key", _mock_request(), response, api_key_svc)
 
         assert result.status_code == 401
-        assert b"INVALID_API_KEY_FORMAT" in result.body
-        assert b"Invalid API key format." in result.body
+        # Generic body by design (see validation.py's _unauthenticated) — the
+        # specific reason ("Invalid API key format.") is never disclosed to
+        # the caller, only logged server-side.
+        assert b"UNAUTHENTICATED" in result.body
+        assert b"INVALID_API_KEY_FORMAT" not in result.body
+        assert b"Invalid API key format." not in result.body
         assert "X-User-ID" not in response.headers
 
     async def test_valid_key_still_returns_valid_true(self):
