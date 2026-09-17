@@ -25,6 +25,84 @@ class ServicePricing:
 
 
 @dataclass
+class TenantBudgetStatus:
+    """Tenant-level budget position — SUM of every API key's own
+    budget_usage.api_key_budget_used under this tenant (across every
+    Application it has), against the tenant's own tenants.allocated_budget.
+    ``used`` is always a real Decimal (0 when the tenant has no keys yet);
+    ``snap`` mirrors BillingWriteResult.api_key_budget_snap's "None = no
+    ceiling configured, don't enforce" convention."""
+    used: Decimal
+    snap: Optional[Decimal]
+
+
+async def fetch_tenant_budget_status(
+    auth_db: AsyncSession, core_db: AsyncSession, tenant_id: str,
+) -> Optional[TenantBudgetStatus]:
+    """Tenant-level budget used/ceiling for BUDGET_THRESHOLD/BUDGET_EXHAUSTED
+    (design change: exhaustion and threshold-crossing are tenant-level
+    events now — the tenant's ENTIRE pooled budget must be used up, not one
+    individual API key's/Application's own allocation — see handler.py's
+    _publish_usage_crossing_events). Computed fresh on every call, no cache:
+    this runs once per billed message, right after that message's own
+    budget_usage row already committed, so the SUM below always reflects
+    this debit.
+
+    Mirrors platform-core-service's own get_tenant_budgets
+    (usage_repository.py) and auth-service's _sync_ppu_wallet_and_exhaustion
+    (tenant_service.py) — same reconstruction, same two-database split:
+    tenants.allocated_budget and the tenant's api_key ids live in
+    ai4iplatform_auth (``auth_db`` — this consumer's second, named "auth"
+    connection, see main.py); the actual spend lives locally in this
+    consumer's own DB, in budget_usage (``core_db``), keyed by api_key_id.
+
+    Revoked keys are deliberately NOT filtered out here — same reasoning as
+    _sync_ppu_wallet_and_exhaustion: a revoked key's past spend still counts
+    against the tenant's allocated_budget; it just can't accumulate any
+    more (nothing bills against a revoked key going forward).
+
+    Returns None when the tenant has no allocated_budget configured
+    (nullable — never had one set), or isn't found at all — same "no
+    ceiling, don't enforce" semantics BillingWriteResult.api_key_budget_snap
+    already had for a NULL per-key snap.
+    """
+    rows = (
+        await auth_db.execute(
+            text(
+                "SELECT t.allocated_budget AS allocated_budget, ak.id AS api_key_id"
+                "  FROM tenants t"
+                "  LEFT JOIN applications a ON a.tenant_id = t.id"
+                "  LEFT JOIN api_key ak ON ak.application_id = a.id"
+                " WHERE t.id = :tenant_id"
+            ),
+            {"tenant_id": int(tenant_id)},
+        )
+    ).all()
+    if not rows:
+        return None
+
+    allocated_budget = rows[0].allocated_budget
+    if allocated_budget is None:
+        return None
+
+    key_ids = [row.api_key_id for row in rows if row.api_key_id is not None]
+    if not key_ids:
+        return TenantBudgetStatus(used=Decimal("0"), snap=allocated_budget)
+
+    used_row = (
+        await core_db.execute(
+            text(
+                "SELECT COALESCE(SUM(api_key_budget_used), 0) AS total"
+                "  FROM budget_usage WHERE api_key_id = ANY(:key_ids)"
+            ),
+            {"key_ids": key_ids},
+        )
+    ).first()
+    used = used_row.total if used_row is not None else Decimal("0")
+    return TenantBudgetStatus(used=used, snap=allocated_budget)
+
+
+@dataclass
 class BillingWriteResult:
     """Result of the fused budget-deduction + quota-upsert write.
 

@@ -18,6 +18,7 @@ from consumers.payperuse_consumer._billing import (
     ServicePricing,
     calculate_cost,
     deduct_balance_and_update_quota,
+    fetch_tenant_budget_status,
     get_inference_type_id,
     get_service_pricing,
     _get_billing_data,
@@ -103,6 +104,19 @@ async def _post_billing(
     X-API-Key-ID): there's no key to flag. quota_exhausted stays tenant-wide
     — a tier's monthly quota is a tenant-level entitlement, not a per-key
     ceiling, so it's correct for it to affect every key under the tenant.
+
+    This per-key flag is enforcement (blocks further requests on THIS key
+    once ITS OWN allocation runs out) — a deliberately different, unrelated
+    concept from the BUDGET_THRESHOLD/BUDGET_EXHAUSTED notification EVENTS
+    (_publish_usage_crossing_events, fired earlier in _bill_usage), which
+    are tenant-level: an individual key running out never fires those on
+    its own, only the tenant's entire pooled budget being crossed/exhausted
+    does. Do not "fix" this per-key push into a tenant-wide one to match —
+    that would let one exhausted key silently block every sibling key's
+    requests too, which is exactly what api_key_id-scoping this exists to
+    prevent.
+
+
 
     No longer notifies about the tenant's budget effective window at all —
     /auth/validate now compares budget_effective_to directly from the
@@ -294,7 +308,8 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
 
 
 async def _publish_usage_crossing_events(
-    db, ctx: BillingContext, write: BillingWriteResult, cost: Decimal, billed_units: Decimal, inference_name: str
+    db, auth_db, ctx: BillingContext, write: BillingWriteResult, cost: Decimal, billed_units: Decimal,
+    inference_name: str,
 ) -> None:
     """QUOTA_THRESHOLD/BUDGET_THRESHOLD/QUOTA_EXHAUSTED/BUDGET_EXHAUSTED —
     fired post-commit, per-message. Deductions are incremental and this
@@ -309,17 +324,28 @@ async def _publish_usage_crossing_events(
     check_and_record_threshold/check_and_record_exhaustion before each
     publish — the atomic DB-level dedup guard (highest band reached /
     on-off exhausted flag), not just the in-memory is_notification_enabled
-    pre-check."""
-    if write.api_key_budget_snap is not None:
-        post_pct = percent(write.api_key_budget_used, write.api_key_budget_snap)
-        pre_pct = percent(write.api_key_budget_used - cost, write.api_key_budget_snap)
+    pre-check.
+
+    Both BUDGET and QUOTA crossings are tenant-level events, never a single
+    API key's/Application's own allocation running out on its own (design
+    change — see fetch_tenant_budget_status's docstring for BUDGET; QUOTA
+    was already tenant-level, since quota_usage is keyed by tenant_id, not
+    api_key_id, and every key under a tenant shares that tenant's one
+    active tier). This is distinct from — and does not change — the
+    per-key budget-exhausted ENFORCEMENT flag _post_billing pushes to
+    auth-service, which still blocks that one key's own requests once its
+    own individual allocation runs out; that is an access-control decision,
+    not a notification one."""
+    tenant_budget = await fetch_tenant_budget_status(auth_db, db, str(ctx.tenant_id))
+    if tenant_budget is not None and tenant_budget.snap is not None:
+        post_pct = percent(tenant_budget.used, tenant_budget.snap)
+        pre_pct = percent(tenant_budget.used - cost, tenant_budget.snap)
         if post_pct is not None and pre_pct is not None:
-            # api_key_id in subject: budget_usage (and therefore this
-            # percent) is tracked per API key, not pooled across the
-            # tenant — two keys under the same tenant crossing the same
-            # band independently must be two separate ledger rows, not
-            # one that dedupes the second key's genuine crossing away.
-            budget_subject = {"api_key_id": ctx.api_key_id}
+            # No api_key_id (or anything else) in subject — there is exactly
+            # one budget crossing per tenant now, not one per key, so the
+            # dedup ledger needs nothing more specific than event_name +
+            # tenant_id to identify "this" crossing.
+            budget_subject = {}
             if await is_notification_enabled(db, "BUDGET_THRESHOLD"):
                 bands = await get_threshold_bands(db, "BUDGET_THRESHOLD")
                 for band in crossed_bands(pre_pct, post_pct, bands):
@@ -342,13 +368,14 @@ async def _publish_usage_crossing_events(
                     )
             if crossed_exhaustion(pre_pct, post_pct) and await is_notification_enabled(db, "BUDGET_EXHAUSTED"):
                 # budget_snap (the ceiling) in the exhaustion subject too:
-                # it only moves on a revision (design doc §6.4's epoch
-                # semantics for budget rows), so a top-up that raises the
-                # ceiling gets its own row instead of colliding with the
+                # it only moves on a tenant budget revision (design doc
+                # §6.4's epoch semantics for budget rows, same reasoning as
+                # before — just the tenant's own ceiling now, not a key's),
+                # so a top-up gets its own row instead of colliding with the
                 # already-recorded True from before the top-up — without
                 # this, re-exhausting after a top-up would never re-fire,
                 # since the same {value: True} would already be stored.
-                budget_exhaustion_subject = {**budget_subject, "budget_snap": str(write.api_key_budget_snap)}
+                budget_exhaustion_subject = {"budget_snap": str(tenant_budget.snap)}
                 fired = await check_and_record_exhaustion(
                     db, "BUDGET_EXHAUSTED", str(ctx.tenant_id), budget_exhaustion_subject
                 )
@@ -357,7 +384,7 @@ async def _publish_usage_crossing_events(
                         event_name="BUDGET_EXHAUSTED",
                         tenant_id=str(ctx.tenant_id),
                         subject=budget_exhaustion_subject,
-                        details=["INR", str(write.api_key_budget_snap)],
+                        details=["INR", str(tenant_budget.snap)],
                     )
 
     if write.quota_recorded and write.quota_used is not None and write.quota_snap is not None:
@@ -526,7 +553,11 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
     await db.commit()
     logger.debug("DB commit successful | tenant=%s offset=%d", ctx.tenant_id, ctx.offset)
 
-    await _publish_usage_crossing_events(db, ctx, write, cost, billed_units, pricing.task_type)
+    # Second, named connection — only needed here (fetch_tenant_budget_status
+    # reads tenants.allocated_budget and this tenant's api_key ids from
+    # ai4iplatform_auth), not for the billing write above.
+    async with session_scope(name="auth") as auth_db:
+        await _publish_usage_crossing_events(db, auth_db, ctx, write, cost, billed_units, pricing.task_type)
 
     return BillingOutcome(
         pricing=pricing,
