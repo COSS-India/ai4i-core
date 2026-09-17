@@ -49,6 +49,7 @@ import StandardModal from "../common/StandardModal";
 import {
   getTierStatusAction,
   useTierManagement,
+  type TierStatusActionKey,
 } from "../../hooks/useTierManagement";
 import type { Tier, TierStatus } from "../../services/tierManagementService";
 import type { TierFormData, TierFormQuota } from "../../types/tierManagement";
@@ -151,12 +152,17 @@ const TIER_STATUS_COLUMN: DataTableColumn<Tier> = {
   },
 };
 
-/** Icon for the single lifecycle action a tier offers in its current status. */
-const TIER_STATUS_ACTION_ICON: Record<string, React.ReactElement> = {
-  Publish: <FiArrowUp />,
-  Deactivate: <FiPause />,
-  Reactivate: <FiPlay />,
-};
+/**
+ * Icon for the single lifecycle action a tier offers in its current status.
+ * Keyed by status, not by label: INACTIVE and DEACTIVATED both offer an
+ * "Activate" action (each transitions to ACTIVE), so labels are not unique.
+ */
+const TIER_STATUS_ACTION_ICON: Record<TierStatusActionKey, React.ReactElement> =
+  {
+    INACTIVE: <FiArrowUp />,
+    ACTIVE: <FiPause />,
+    DEACTIVATED: <FiPlay />,
+  };
 
 const TIER_TASK_TYPES_VISIBLE_COUNT = 4;
 
@@ -222,9 +228,9 @@ function makeTierActionsColumn(
         {
           id: "status",
           label: statusAction?.label ?? "Update status",
-          icon: TIER_STATUS_ACTION_ICON[statusAction?.label ?? ""] ?? (
-            <FiArrowUp />
-          ),
+          icon: TIER_STATUS_ACTION_ICON[
+            tier.status as TierStatusActionKey
+          ] ?? <FiArrowUp />,
           onClick: () => onStatusChange(tier),
           visible: statusAction !== null,
           disabled: busy,
@@ -900,7 +906,7 @@ const TierManagement: React.FC = () => {
         ]}
       />
 
-      {/* Lifecycle status confirmation (publish / deactivate / reactivate) */}
+      {/* Lifecycle status confirmation (activate / deactivate) */}
       <ConfirmDialog
         isOpen={isStatusOpen}
         onClose={handleStatusClose}

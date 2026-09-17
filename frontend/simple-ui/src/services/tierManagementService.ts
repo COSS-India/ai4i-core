@@ -49,9 +49,9 @@ export async function updateTier(
  * lifecycle transition. The backend enforces the allowed edges and answers 400
  * with a `detail` naming the reachable targets when one is not allowed:
  *
- *   INACTIVE    → ACTIVE       (Publish)
+ *   INACTIVE    → ACTIVE       (Activate)
  *   ACTIVE      → DEACTIVATED  (Deactivate)
- *   DEACTIVATED → ACTIVE       (Reactivate)
+ *   DEACTIVATED → ACTIVE       (Activate)
  *   DEACTIVATED → DELETED      (Delete)
  *
  * Returns the full updated tier, so callers can seed the cache from the
