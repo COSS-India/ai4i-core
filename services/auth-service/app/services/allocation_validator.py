@@ -248,15 +248,45 @@ def resolve_level(
         # inflating an under-allocated child to fill whatever's left.
         old_room_for_unlisted = parent_old_amount - explicit_old_total
 
+        use_percentage_basis = False
+        unlisted_basis_total = unlisted_old_total
         if old_room_for_unlisted > 0 and unlisted_old_total > 0:
             unlisted_target_total = _quantize(
                 unlisted_old_total * (room_remaining / old_room_for_unlisted), _AMT_QUANT
             )
         else:
-            # Either nothing was historically available to this group, or every
-            # member of it currently holds 0 — nothing to scale from either way;
-            # the room stays unallocated rather than guessing a split.
-            unlisted_target_total = Decimal("0")
+            # No ₹ history to scale from — either nothing was historically
+            # available to this group, or every member of it currently holds
+            # 0. Rather than leave the room unallocated (silently
+            # re-creating the exact "no ceiling, no budget_usage row"
+            # lockout this whole re-fit exists to avoid, for a child whose
+            # PARENT simply never had money before), fall back to each
+            # child's own stored allocated_percentage — already guaranteed,
+            # by the same ALLOCATION_TOTAL_EXCEEDED gate every create/edit
+            # path through this Application/Tenant enforces regardless of
+            # its own funding state, to sum to <=100% of the parent. Clamped
+            # to room_remaining (not just parent_new_amount) so a percentage
+            # total that would otherwise overshoot — an explicit row also
+            # resolved in this same call already having consumed some of
+            # that room — can never push the group over what's actually
+            # left; the sibling-sum check below still catches anything that
+            # slips past this regardless.
+            unlisted_percentage_total = sum(
+                (c.allocated_percentage for c in unlisted), Decimal("0")
+            )
+            if unlisted_percentage_total > 0 and room_remaining > 0:
+                ideal_from_percentage = _quantize(
+                    parent_new_amount * (unlisted_percentage_total / Decimal("100")),
+                    _AMT_QUANT,
+                )
+                unlisted_target_total = min(ideal_from_percentage, room_remaining)
+                unlisted_basis_total = unlisted_percentage_total
+                use_percentage_basis = True
+            else:
+                # No child in the group has ever been given a percentage
+                # either — genuinely nothing to split by; the room stays
+                # unallocated rather than guessing.
+                unlisted_target_total = Decimal("0")
 
         running_total = Decimal("0")
         for index, child in enumerate(unlisted):
@@ -277,7 +307,11 @@ def resolve_level(
                 # rounding is what makes "the last child's residual is never
                 # negative" a guarantee rather than a fix bolted on after the
                 # fact.
-                share = child.allocated_amount / unlisted_old_total
+                share = (
+                    child.allocated_percentage / unlisted_basis_total
+                    if use_percentage_basis
+                    else child.allocated_amount / unlisted_old_total
+                )
                 amount = _quantize(unlisted_target_total * share, _AMT_QUANT, rounding=ROUND_DOWN)
             running_total += amount
             percentage = _quantize(

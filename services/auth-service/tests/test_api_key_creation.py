@@ -83,17 +83,18 @@ class TestAllocationCapLockOrdering:
         assert call_order == ["lock", "sum"]
 
     @pytest.mark.asyncio
-    async def test_neither_allocation_given_creates_uncapped_key_when_tenant_has_budget(
+    async def test_neither_allocation_given_is_exhausted_when_application_has_no_budget(
         self,
     ) -> None:
         """Omitting both allocated_percentage and budget is allowed (product
         decision, 2026: the prior ALLOCATION_REQUIRED block is removed) — a
         caller may deliberately create an uncapped Key. No allocation means
         no lock is ever needed (this Key never contends for a share of the
-        Application's 100%), and — since the owning Tenant DOES have a real
-        Budget here — the Key is NOT seeded budget-exhausted: it's genuinely
-        unlimited, tracked by nothing, exactly the state pre-existing
-        NULL-allocation keys already had."""
+        Application's 100%) — but an unfunded owning Application (no ₹
+        Budget of its own) still means this Key has nothing real to spend
+        against, even though its Tenant DOES have a Budget: flagged
+        budget-exhausted immediately rather than left genuinely unlimited
+        and untracked, the same requirement as any other unfunded chain."""
         application = _application()
         tenant = _tenant(allocated_budget=Decimal("100000.00"))
         applications = AsyncMock()
@@ -116,7 +117,7 @@ class TestAllocationCapLockOrdering:
         applications.get_by_id_for_update.assert_not_called()
         repo.create.assert_awaited_once()
         payload = svc._cache.set_api_key_cache.call_args.args[2]
-        assert "budget-exhausted" not in payload
+        assert payload["budget-exhausted"] == "1"
 
     @pytest.mark.asyncio
     async def test_neither_allocation_given_is_exhausted_when_tenant_has_no_budget(
@@ -716,14 +717,19 @@ class TestNewKeyExhaustionFlagSeeding:
         assert payload["budget-exhausted"] == "1"
 
     @pytest.mark.asyncio
-    async def test_key_under_a_deliberately_uncapped_application_with_a_funded_tenant_is_not_flagged(
+    async def test_key_under_an_unfunded_application_with_a_funded_tenant_is_flagged_exhausted(
         self,
     ) -> None:
-        """A DIFFERENT reason for a None ceiling: the Application itself was
-        created with no percentage at all, under a Tenant that DOES have a
-        real Budget. That's the established, intentional "uncapped
-        Application" state — unrelated to this fix, and must keep behaving
-        exactly as it already did (not flagged)."""
+        """A DIFFERENT reason for a None ceiling than the tenant-unfunded
+        case above: the Application itself was given no ₹ Budget at all,
+        even though its Tenant DOES have a real Budget. Previously
+        "intentionally uncapped" and left unblocked — that let every Key
+        under such an Application spend untracked against the Tenant's
+        pool with no per-Key/per-Application ceiling and no budget_usage
+        row at all. Now requires an explicit allocation the same as any
+        other unfunded chain: flagged exhausted just like the tenant-unfunded
+        case, and self-heals the moment the Application (or this Key) is
+        actually given a real ₹ share via a Budget Allocation edit."""
         application = _application(allocated_budget=None)
         tenant = _tenant(allocated_budget=Decimal("50000"))
         applications = AsyncMock()
@@ -746,7 +752,7 @@ class TestNewKeyExhaustionFlagSeeding:
 
         assert api_key.allocated_budget is None
         payload = svc._cache.set_api_key_cache.call_args.args[2]
-        assert "budget-exhausted" not in payload
+        assert payload["budget-exhausted"] == "1"
 
 
 class TestUncappedKeySeededFromApplicationsRemainingBudget:

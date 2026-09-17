@@ -1137,35 +1137,32 @@ class APIKeyService:
         # already-zeroed-out parent serves every request that arrives
         # before that eventually happens.
         #
-        # allocated_budget is None for two DIFFERENT reasons, and only
-        # one of them should block: (a) the owning Tenant has no
-        # allocated_budget configured at all — _derive_budget-style
-        # cascade means the Application (if given only a percentage)
-        # and this Key both end up None with nothing real behind them,
-        # which must mean "nothing to spend," not "unlimited"; (b) an
-        # Application was deliberately created with no percentage under
-        # a Tenant that DOES have a real budget — the established,
-        # intentional "uncapped Application" state, unrelated to this
-        # fix and left exactly as it already behaved. tenant.
-        # allocated_budget is None is what tells the two apart. No
-        # budget_usage row is written for this case (write_budget_snapshot
-        # above already skipped it, same as any None ceiling) — leaving
-        # the snap itself unset, not 0, is deliberate: it lets the
-        # Tenant's own future top-up sync (TenantService.
-        # _sync_ppu_wallet_and_exhaustion) clear this flag the normal
-        # way once real money exists, rather than this Key being stuck
-        # at a hard 0 ceiling that only an explicit Budget Allocation
-        # edit could ever move (the exact lockout class fixed elsewhere
-        # in resolve_level's floor check).
+        # allocated_budget is None whenever NOTHING in the chain gave this
+        # Key a real ₹ figure to spend against — whether that's because the
+        # Tenant itself was never funded, or because the owning Application
+        # was: an Application deliberately left with no ₹ Budget of its own
+        # cannot seed a Key with a real ceiling regardless of how much its
+        # Tenant has, since nothing has ever given that Application its own
+        # share of it. Previously only the Tenant-unfunded half of this was
+        # treated as blocking — an Application left at no ₹ Budget under a
+        # funded Tenant was "intentionally uncapped" and let every Key
+        # under it spend untracked against the Tenant's pool with no
+        # per-Key/per-Application ceiling and no budget_usage row at all.
+        # Now both halves block the same way. No budget_usage row is
+        # written for this case (write_budget_snapshot above already
+        # skipped it, same as any None ceiling) — leaving the snap itself
+        # unset, not 0, is deliberate: it self-heals via the normal
+        # allocation-edit path (AllocationService._sync_key_exhaustion_flags)
+        # the moment the Application (or this Key directly) is actually
+        # given a real ₹ share, rather than being stuck at a hard 0 ceiling
+        # that only an explicit Budget Allocation edit could ever move.
         #
         # Computed unconditionally (not just inside the cache-write branch
         # below) so the caller's 201 response can always report it — a key
         # seeded budget-exhausted via seed_zero_ceiling above must not look
         # identical to a healthy one in the response, the same terminal
         # state an explicit allocated_percentage=0 is rejected for.
-        exhausted = (allocated_budget is not None and allocated_budget <= Decimal("0")) or (
-            allocated_budget is None and tenant.allocated_budget is None
-        )
+        exhausted = allocated_budget is None or allocated_budget <= Decimal("0")
 
         if self.application_may_use_api_keys(application, tenant):
             payload = self._build_cache_payload(
