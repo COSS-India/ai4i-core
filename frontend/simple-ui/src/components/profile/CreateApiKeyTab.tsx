@@ -34,6 +34,7 @@ import { FIELD_HINTS } from "../../config/fieldHints";
 import { percentageBoundMessage } from "../../config/budgetMessages";
 import FieldHint from "../common/FieldHint";
 import PercentageStepper from "../common/PercentageStepper";
+import { formatPermissionLabel } from "../../utils/apiKeyUtils";
 
 export interface CreateApiKeyTabProps {
   tenantId?: string | null;
@@ -198,7 +199,7 @@ export default function CreateApiKeyTab({
                   <SimpleGrid columns={2} spacing={3}>
                     {create.permissions.map((p) => (
                       <Checkbox key={p.name} value={p.name} colorScheme="blue">
-                        <Text fontSize="sm">{p.label}</Text>
+                        <Text fontSize="sm">{formatPermissionLabel(p.label)}</Text>
                       </Checkbox>
                     ))}
                   </SimpleGrid>

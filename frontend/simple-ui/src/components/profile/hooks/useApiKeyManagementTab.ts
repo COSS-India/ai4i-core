@@ -25,7 +25,7 @@ import {
   isApiKeyExpired,
   resolveApiKeyDisplayStatus,
 } from "../../../config/constants";
-import { normalizeApiKeyRecord } from "../../../utils/apiKeyUtils";
+import { formatPermissionLabel, normalizeApiKeyRecord } from "../../../utils/apiKeyUtils";
 import { useInferenceTypes } from "../../../hooks/useInferenceTypes";
 import type { InferenceTypeItem } from "../../../services/inferenceTypesService";
 
@@ -420,7 +420,9 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
   );
 
   const formatPermission = (permissionName: string) =>
-    permissions.find((p) => p.name === permissionName)?.label ?? permissionName;
+    formatPermissionLabel(
+      permissions.find((p) => p.name === permissionName)?.label ?? permissionName,
+    );
 
   const visiblePermissionsForKey = useCallback(
     (key: { permissions?: string[] | null }) =>

@@ -383,7 +383,7 @@ export default function ApiKeyManagementTab({
                 options: [
                   { label: "All Permissions", value: "all" },
                   ...mgmt.permissionFilterOptions.map((perm) => ({
-                    label: perm.label,
+                    label: mgmt.formatPermission(perm.name),
                     value: perm.name,
                   })),
                 ],
@@ -611,7 +611,7 @@ export default function ApiKeyManagementTab({
                       <SimpleGrid columns={2} spacing={3}>
                         {mgmt.permissionFilterOptions.map((perm) => (
                           <Checkbox key={perm.name} value={perm.name} colorScheme="blue">
-                            <Text fontSize="sm">{perm.label}</Text>
+                            <Text fontSize="sm">{mgmt.formatPermission(perm.name)}</Text>
                           </Checkbox>
                         ))}
                       </SimpleGrid>
