@@ -35,7 +35,13 @@ from ai4i_core.ppu import get_catalogue
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.exceptions import AuthorizationError, EntityNotFoundError, InvalidAPIKeyError, ValidationError
+from app.core.exceptions import (
+    AuthorizationError,
+    EntityNotFoundError,
+    InvalidAPIKeyError,
+    ServiceUnavailableError,
+    ValidationError,
+)
 from app.models.api_key import APIKey
 from app.models.application import Application, ApplicationStatus
 from app.models.tenant import Tenant, TenantStatus
@@ -656,6 +662,8 @@ class APIKeyService:
         application_id: int,
         application_allocated_budget: Decimal,
         platform_core_db: Optional[AsyncSession],
+        *,
+        raise_on_error: bool = False,
     ) -> Decimal:
         """Sum of every Key's own committed ₹ under an Application: each
         ACTIVE Key charged the greater of its own percentage-derived
@@ -668,13 +676,16 @@ class APIKeyService:
         remaining-budget derivation, so the two can never independently
         drift out of sync with each other.
 
-        Best-effort usage read (fetch_budget_usage), same posture as every
-        other call to it in this codebase — a platform-core outage must
-        not block Key creation.
+        Best-effort usage read (fetch_budget_usage) by default, same
+        posture as every other call to it in this codebase — a
+        platform-core outage must not block Key creation. ``raise_on_error``
+        opts out of that for the uncapped-Key derivation caller, where the
+        result is persisted rather than just gating one accept/reject
+        check — see that caller's own comment.
         """
         all_keys = await self._repo.list_by_application(application_id)
         usage_map = await budget_usage.fetch_budget_usage(
-            [k.id for k in all_keys], platform_core_db
+            [k.id for k in all_keys], platform_core_db, raise_on_error=raise_on_error
         )
         return sum(
             (
@@ -820,9 +831,36 @@ class APIKeyService:
         # untouched by this fix (see the exhausted computation far below).
         seed_zero_ceiling = False
         if allocated_percentage is None and budget is None and application.allocated_budget is not None:
-            committed_so_far = await self._committed_total_for_application(
-                application_id, application.allocated_budget, platform_core_db
-            )
+            # Unlike the BUDGET_OVERCOMMITTED gate's own best-effort call to
+            # this same helper further below (which only relaxes one
+            # accept/reject check for one request and self-heals on the
+            # next), this figure is quantized and PERSISTED as the new
+            # Key's allocated_budget/allocated_percentage — there is no
+            # later recompute to correct it. A platform-core outage here
+            # must not let a wrong (understated) committed_so_far silently
+            # over-credit this Key with ₹ that's actually already spent by
+            # a revoked key or an over-exhausted active one — raise_on_error
+            # so the create fails loudly instead of persisting bad data.
+            try:
+                committed_so_far = await self._committed_total_for_application(
+                    application_id, application.allocated_budget, platform_core_db,
+                    raise_on_error=True,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to read committed budget for application_id=%s while seeding "
+                    "an uncapped Key's remaining-budget ceiling; refusing to derive one "
+                    "from an unverified figure: %s",
+                    application_id, exc,
+                )
+                raise ServiceUnavailableError(
+                    message="Cannot verify this Application's current committed budget right "
+                    "now — refusing to create an uncapped Key from an unverified remaining "
+                    "amount. Retry once platform-core is reachable again, or supply an "
+                    "explicit allocated_percentage/budget instead.",
+                    service_name="platform-core",
+                    error_code="BUDGET_USAGE_UNAVAILABLE",
+                ) from exc
             remaining = application.allocated_budget - committed_so_far
             if remaining > 0:
                 # ROUND_DOWN, not the usual ROUND_HALF_UP — the derived

@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.core.exceptions import ValidationError
+from app.core.exceptions import ServiceUnavailableError, ValidationError
 from app.models.application import Application, ApplicationStatus
 from app.models.tenant import Tenant, TenantStatus
 from app.services.api_key_service import APIKeyService
@@ -850,6 +850,55 @@ class TestUncappedKeySeededFromApplicationsRemainingBudget:
         # 0/0 state an explicit allocated_percentage=0 is rejected for must
         # not come back from create_api_key looking like a healthy key.
         assert exhausted is True
+
+    @pytest.mark.asyncio
+    async def test_uncapped_key_creation_fails_when_usage_read_fails(self) -> None:
+        """Code-review finding (mohapatras): fetch_budget_usage is
+        best-effort by default (returns {} on a platform-core outage), which
+        would make committed_so_far silently undercount every revoked key's
+        spend and every over-exhausted active key's overspend. For the
+        BUDGET_OVERCOMMITTED gate that's tolerable (best-effort, self-heals
+        next call) — but here the resulting `remaining` is quantized and
+        PERSISTED as this Key's allocated_budget/allocated_percentage, so an
+        undercount would silently over-credit it and leave the Application
+        overcommitted with nothing left to ever recompute it. The read must
+        fail loudly (raise_on_error=True) and abort the create instead."""
+        application = _application(allocated_budget=Decimal("50000"))
+        tenant = _tenant(allocated_budget=Decimal("100000"))
+        existing_key = MagicMock(
+            id=503, is_active=False, allocated_budget=Decimal("20000"),
+            allocated_percentage=Decimal("40"),
+        )
+        applications = AsyncMock()
+        applications.get_by_id_for_tenant = AsyncMock(return_value=application)
+        tenants = AsyncMock()
+        tenants.get_operational_fields = AsyncMock(return_value=tenant)
+        svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+        repo.list_by_application = AsyncMock(return_value=[existing_key])
+
+        with patch(
+            "app.services.api_key_service.budget_usage.fetch_budget_usage",
+            new=AsyncMock(side_effect=RuntimeError("platform-core unreachable")),
+        ) as fetch_usage, patch(
+            "app.services.budget_usage.write_budget_snapshot", AsyncMock()
+        ) as write_snap:
+            with pytest.raises(ServiceUnavailableError) as exc:
+                await svc.create_api_key(
+                    actor_user_id=uuid4(),
+                    key_name="uncapped-during-outage",
+                    permissions=["nmt.inference"],
+                    application_id=1,
+                    caller_tenant_id=1,
+                )
+
+        assert exc.value.code == "BUDGET_USAGE_UNAVAILABLE"
+        # raise_on_error=True must actually have been requested — otherwise
+        # this would have silently returned {} instead of raising.
+        fetch_usage.assert_awaited_once()
+        assert fetch_usage.await_args.kwargs.get("raise_on_error") is True
+        write_snap.assert_not_awaited()
+        repo.create.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_exact_bug_scenario_uncapped_key_blocks_a_later_key_from_overcommitting(
