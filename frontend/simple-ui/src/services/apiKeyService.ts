@@ -38,6 +38,7 @@ function normalizeKey(raw: unknown): ApiKeyRecord {
     application_id: asString(row.application_id),
     allocated_percentage: asNumber(row.allocated_percentage),
     allocated_budget: asNumber(row.allocated_budget),
+    budget_exhausted: row.budget_exhausted === true,
     permissions: Array.isArray(row.permissions)
       ? row.permissions.map((p) => asString(p))
       : [],
@@ -116,8 +117,10 @@ export async function createScopedApiKey(
     permissions: payload.permissions,
     expires_days: payload.expires_days,
     application_id: String(applicationId),
-    allocated_percentage: payload.allocated_percentage,
   };
+  if (payload.allocated_percentage != null) {
+    body.allocated_percentage = payload.allocated_percentage;
+  }
   const created = await authService.createApiKey(body);
   return normalizeKey(created);
 }
