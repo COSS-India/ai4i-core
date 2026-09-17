@@ -138,7 +138,8 @@ export function useNotificationCatalog(type: NotificationAlertType) {
       (item) =>
         !q ||
         item.display_name.toLowerCase().includes(q) ||
-        item.name.toLowerCase().includes(q),
+        item.name.toLowerCase().includes(q) ||
+        item.description.toLowerCase().includes(q),
     );
   }, [items, search]);
 

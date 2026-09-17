@@ -11,7 +11,7 @@ type ApiKeyLike = {
 
 /** Strip ".INFERENCE" from catalog labels (e.g. ASR.INFERENCE → ASR). Values stay unchanged. */
 export function formatPermissionLabel(label: string): string {
-  return label.replace(/\.inference$/i, "");
+  return label.replace(/\.inference$/i, "").toUpperCase();
 }
 
 export function normalizeApiKeyRecord<T extends ApiKeyLike>(key: T): T & APIKeyResponse {
