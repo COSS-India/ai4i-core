@@ -78,23 +78,30 @@ def _env_host_port(host_var: str, port_var: str, default_port: int) -> tuple[str
     the same as the var prefix (e.g. a "redis" Service makes Kubernetes
     inject REDIS_PORT=tcp://10.100.206.16:6379 into every pod in the
     namespace, clobbering a plain-integer REDIS_PORT the deployment itself
-    never set) - "tcp://host:port" in either var is parsed for its real
-    host/port instead of failing int() outright."""
+    never set).
+
+    The host always comes from host_var when it's set - REDIS_PORT's
+    tcp://<pod-ip>:<port> is Kubernetes' own Service address, NOT the
+    deployment's intended Redis host, so it must never override an
+    explicitly-configured REDIS_HOST (an earlier version of this parsed
+    "://" out of whichever var had it and let REDIS_PORT's host win,
+    which pointed the client at the wrong instance whenever both vars
+    were present - the exact case this fix targets). Only when host_var
+    is unset at all do we fall back to whatever host REDIS_PORT's URL
+    carries, so a Redis client still gets stood up rather than defaulting
+    to "localhost" and silently missing the real instance."""
     from urllib.parse import urlparse
 
-    raw_host = os.getenv(host_var, "localhost")
+    raw_host = os.getenv(host_var)
     raw_port = os.getenv(port_var, str(default_port))
-    host, port = raw_host, default_port
-    if "://" in raw_host:
-        parsed = urlparse(raw_host)
-        host = parsed.hostname or host
-        port = parsed.port or port
+
     if "://" in raw_port:
         parsed = urlparse(raw_port)
-        host = parsed.hostname or host
-        port = parsed.port or port
+        port = parsed.port or default_port
+        host = raw_host if raw_host else (parsed.hostname or "localhost")
     else:
         port = int(raw_port)
+        host = raw_host or "localhost"
     return host, port
 
 
@@ -177,8 +184,19 @@ def upgrade() -> None:
             if redis_client.exists(key):
                 redis_client.hset(key, _BUDGET_EXHAUSTED_FIELD, "1")
                 patched += 1
+    except Exception as exc:  # noqa: BLE001 - same reasoning as _redis_client: a Redis
+        # hiccup mid-loop (e.g. connection dropped after the initial ping succeeded)
+        # must never propagate out of upgrade() and roll back the DB write above.
+        logger.warning(
+            "f3a9b1c7d2e6: Redis push interrupted after %d key(s) (%s) - DB backfill "
+            "already committed; the rest self-heal on their own TTL/next refresh.",
+            patched, exc,
+        )
     finally:
-        redis_client.close()
+        try:
+            redis_client.close()
+        except Exception:  # noqa: BLE001 - closing a dead connection must not raise either
+            pass
     logger.info(
         "f3a9b1c7d2e6: pushed budget-exhausted onto %d already-cached Redis key(s).",
         patched,
