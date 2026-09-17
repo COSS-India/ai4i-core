@@ -395,8 +395,13 @@ _TENANT_BUDGET_REQUEST_EXAMPLE = {
 class TenantBudgetRequest(BaseSchema):
     model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_BUDGET_REQUEST_EXAMPLE]})
 
-    action: Literal["top-up", "top-down"]
-    amount: Decimal = Field(..., gt=0, max_digits=15, decimal_places=2)
+    # Both optional — a pure window edit (e.g. extending budget_effective_to
+    # on a lapsed window to reactivate it without touching the ₹ amount)
+    # sends neither. When one is given, the other becomes required (see
+    # _validate_action_amount_pair below), since a top-up/top-down without
+    # a direction or size is meaningless.
+    action: Optional[Literal["top-up", "top-down"]] = None
+    amount: Optional[Decimal] = Field(None, gt=0, max_digits=15, decimal_places=2)
     # Both optional here — whether either is actually required depends on
     # tenant state TenantService.revise_tenant_budget alone can see (does
     # this tenant already have a LIVE window?), not something this schema
@@ -411,14 +416,29 @@ class TenantBudgetRequest(BaseSchema):
     budget_effective_from: Optional[datetime] = Field(
         None,
         description="Start of the budget's effective window (UTC). Omit unless "
-        "assigning a window for the first time, or after the previous one has "
-        "lapsed — it's locked while a window is active.",
+        "assigning a window for the first time, or founding a new one where "
+        "none is on file yet — it's locked otherwise, whether the existing "
+        "window is still active or has lapsed.",
     )
     budget_effective_to: Optional[datetime] = Field(
         None,
         description="End of the budget's effective window (UTC). Omit to leave an "
-        "active window unchanged; give a later date to extend it.",
+        "active window unchanged; give a later date to extend it — including "
+        "reactivating a lapsed window without moving its budget_effective_from "
+        "or resetting its remaining balance.",
     )
+
+    @model_validator(mode="after")
+    def _validate_action_amount_pair(self) -> "TenantBudgetRequest":
+        if (self.action is None) != (self.amount is None):
+            raise ValueError("action and amount must be given together, or both omitted")
+        if self.action is None and self.amount is None and self.budget_effective_from is None and (
+            self.budget_effective_to is None
+        ):
+            raise ValueError(
+                "at least one of action+amount or budget_effective_from/budget_effective_to must be given"
+            )
+        return self
 
 
 class TenantBudgetData(BaseSchema):
