@@ -72,32 +72,61 @@ _REDIS_API_KEY_PREFIX = "auth:apikey:"
 _BUDGET_EXHAUSTED_FIELD = "budget-exhausted"
 
 
+def _env_host_port(host_var: str, port_var: str, default_port: int) -> tuple[str, int]:
+    """Read a host/port pair from two env vars, tolerating Kubernetes'
+    auto-injected Docker-links-style value for a Service literally named
+    the same as the var prefix (e.g. a "redis" Service makes Kubernetes
+    inject REDIS_PORT=tcp://10.100.206.16:6379 into every pod in the
+    namespace, clobbering a plain-integer REDIS_PORT the deployment itself
+    never set) - "tcp://host:port" in either var is parsed for its real
+    host/port instead of failing int() outright."""
+    from urllib.parse import urlparse
+
+    raw_host = os.getenv(host_var, "localhost")
+    raw_port = os.getenv(port_var, str(default_port))
+    host, port = raw_host, default_port
+    if "://" in raw_host:
+        parsed = urlparse(raw_host)
+        host = parsed.hostname or host
+        port = parsed.port or port
+    if "://" in raw_port:
+        parsed = urlparse(raw_port)
+        host = parsed.hostname or host
+        port = parsed.port or port
+    else:
+        port = int(raw_port)
+    return host, port
+
+
 def _redis_client() -> "redis.Redis | None":
     """Best-effort sync Redis client from the same env vars app.core.config
     reads (REDIS_HOST/PORT/DB/PASSWORD) - read directly rather than
     importing app.core.config, so this migration doesn't depend on the
     full app settings module (JWT keys, PII crypto, ...) initializing
     cleanly in whatever environment runs migrations. Returns None (logged,
-    not raised) if Redis isn't reachable: the DB half of this backfill must
-    still land even when Redis is unavailable at migration time - the
-    Redis half is a best-effort acceleration of the self-heal, not the
-    correctness-bearing half (the DB write, and the entry's own TTL, get
-    there eventually either way)."""
-    host = os.getenv("REDIS_HOST", "localhost")
-    port = int(os.getenv("REDIS_PORT", "6379"))
-    db = int(os.getenv("REDIS_DB", "0"))
-    password = os.getenv("REDIS_PASSWORD") or None
+    not raised) whenever this can't stand up a working client for ANY
+    reason - unreachable Redis, or an env var in an unexpected shape (see
+    _env_host_port) - since the DB half of this backfill must still land
+    even when Redis is unavailable at migration time: the Redis half is a
+    best-effort acceleration of the self-heal, not the correctness-bearing
+    half (the DB write, and the entry's own TTL, get there eventually
+    either way). Deliberately catches broadly (not just redis.RedisError)
+    - a crash here must never take the whole migration transaction down
+    with it, rolling back the DB backfill that had already succeeded."""
     try:
+        host, port = _env_host_port("REDIS_HOST", "REDIS_PORT", 6379)
+        db = int(os.getenv("REDIS_DB", "0"))
+        password = os.getenv("REDIS_PASSWORD") or None
         client = redis.Redis(
             host=host, port=port, db=db, password=password,
             decode_responses=True, socket_timeout=5, socket_connect_timeout=5,
         )
         client.ping()
         return client
-    except redis.RedisError as exc:
+    except Exception as exc:  # noqa: BLE001 - see docstring: must never crash the migration
         logger.warning(
-            "f3a9b1c7d2e6: Redis unreachable (%s) - DB backfill will still run; "
-            "already-cached keys self-heal on their own TTL/next refresh instead.",
+            "f3a9b1c7d2e6: could not set up a Redis client (%s) - DB backfill will still "
+            "run; already-cached keys self-heal on their own TTL/next refresh instead.",
             exc,
         )
         return None
