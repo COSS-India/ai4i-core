@@ -1089,6 +1089,36 @@ class TestSyncKeyExhaustionFlags:
 
         api_key_service.set_budget_exhausted_for_keys.assert_awaited_once_with([11], False)
 
+    @pytest.mark.asyncio
+    async def test_funding_a_never_funded_application_alone_clears_its_keys_too(self) -> None:
+        """Same self-heal, reached the other way — an admin funds the
+        Application itself for the FIRST time (never touching the Key
+        directly), via the tenant-level endpoint. Before the
+        allocation_validator.py percentage fallback, this path left every
+        unlisted Key at 0 (nothing to scale from — the Application had no
+        ₹ history either), so the natural admin response of "just fund the
+        Application" cleared none of its pre-existing keys, only an
+        explicit per-key allocation (test above) did. Pins that funding the
+        Application alone is now enough."""
+        api_key_service = AsyncMock()
+        svc = _svc(api_key_service=api_key_service)
+        app = _application(1, allocated_budget=None, allocated_percentage=Decimal("0"))
+        key1 = _key(11, 1, allocated_budget=None, allocated_percentage=Decimal("50"))
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant())
+        svc._applications.lock_tenant_applications = AsyncMock(return_value=[app])
+        svc._api_keys.list_by_applications = AsyncMock(return_value=[key1])
+
+        body = TenantBudgetAllocationRequest(
+            applications=[ApplicationAllocationRow(application_id=1, allocation=_fixed("30000"))]
+        )
+        with patch(
+            "app.services.budget_usage.fetch_budget_usage",
+            AsyncMock(return_value={}),
+        ), patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()):
+            await svc.update_tenant_application_allocations(101, body, _user(), None)
+
+        api_key_service.set_budget_exhausted_for_keys.assert_awaited_once_with([11], False)
+
 
 class TestExhaustionFlagSyncWiredIntoEachEndpoint:
     """One test per Budget Allocation endpoint, confirming
