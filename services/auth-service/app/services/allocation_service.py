@@ -31,7 +31,7 @@ docstring for which rule applies where.
 """
 
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
-from typing import Any, Optional
+from typing import Optional, Union
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -209,6 +209,9 @@ class AllocationService:
         resolved_ids = {resolved.id for resolved in resolved_apps}
 
         for resolved in resolved_apps:
+            # refit_unlisted=False in _resolve_and_persist_applications means
+            # resolve_level only returns explicitly listed rows, so every
+            # resolved.id is guaranteed to be in request_row_by_id.
             nested_api_keys = request_row_by_id[resolved.id].api_keys
             key_allocations_out: Optional[list[APIKeyAllocationResponseItem]] = None
             if resolved.changed or nested_api_keys:
@@ -302,7 +305,7 @@ class AllocationService:
         )
 
         snapshot_writes: dict[int, Decimal] = {}
-        resolved_keys, fixed_ids = await self._resolve_and_persist_keys(
+        resolved_keys, fixed_ids, refit_unlisted = await self._resolve_and_persist_keys(
             parent_amount=application.allocated_budget,
             nested_explicit=body.api_keys,
             existing_keys=existing_keys,
@@ -312,7 +315,7 @@ class AllocationService:
             refit_unlisted=False,
             owning_application_id=application_id,
         )
-        key_allocations_out = self._build_key_response(resolved_keys, existing_keys, fixed_ids, False)
+        key_allocations_out = self._build_key_response(resolved_keys, existing_keys, fixed_ids, refit_unlisted)
 
         await self._finalize(snapshot_writes, usage_map, platform_core_db)
 
@@ -373,7 +376,7 @@ class AllocationService:
         )
 
         snapshot_writes: dict[int, Decimal] = {}
-        resolved_keys, fixed_ids = await self._resolve_and_persist_keys(
+        resolved_keys, fixed_ids, refit_unlisted = await self._resolve_and_persist_keys(
             parent_amount=application.allocated_budget,
             nested_explicit=[APIKeyAllocationRow(api_key_id=key_id, allocation=body.allocation)],
             existing_keys=existing_keys,
@@ -383,7 +386,7 @@ class AllocationService:
             refit_unlisted=False,
             owning_application_id=application.id,
         )
-        key_allocations_out = self._build_key_response(resolved_keys, existing_keys, fixed_ids, False)
+        key_allocations_out = self._build_key_response(resolved_keys, existing_keys, fixed_ids, refit_unlisted)
 
         await self._finalize(snapshot_writes, usage_map, platform_core_db)
 
@@ -749,8 +752,8 @@ class AllocationService:
         parent_amount: Decimal,
         children: list[AllocationRow],
         explicit: list[ExplicitInput],
-        entity_map: dict[int, Any],
-        repo: Any,
+        entity_map: dict[int, Union[Application, APIKey]],
+        repo: Union[ApplicationRepository, APIKeyRepository],
         current_user: User,
         refit_unlisted: bool = False,
         parent_old_amount: Optional[Decimal] = None,
@@ -813,6 +816,10 @@ class AllocationService:
             )
             for app in applications
         ]
+        # Must be captured before _resolve_and_persist_level mutates these
+        # identity-mapped objects — app.allocated_budget stops being the old
+        # amount the instant it's persisted, and _cascade_into_keys needs the
+        # true delta to scale each Application's Keys correctly.
         old_amounts_by_id = {app.id: (app.allocated_budget or _ZERO) for app in applications}
         explicit = [_explicit_input(row.application_id, row.allocation) for row in request_rows]
         fixed_ids = {row.application_id for row in request_rows if row.allocation.type == "FIXED"}
@@ -865,7 +872,7 @@ class AllocationService:
         merge-back-in step is needed here for that path; the False path's
         merge-back happens inside _build_key_response, same as the
         direct endpoints."""
-        resolved_keys, fixed_ids = await self._resolve_and_persist_keys(
+        resolved_keys, fixed_ids, refit_unlisted = await self._resolve_and_persist_keys(
             parent_amount=new_application_amount,
             parent_old_amount=old_application_amount,
             nested_explicit=nested_explicit,
@@ -876,7 +883,7 @@ class AllocationService:
             refit_unlisted=application_amount_changed,
             owning_application_id=application_id,
         )
-        return self._build_key_response(resolved_keys, existing_keys, fixed_ids, application_amount_changed)
+        return self._build_key_response(resolved_keys, existing_keys, fixed_ids, refit_unlisted)
 
     async def _resolve_and_persist_keys(
         self,
@@ -890,7 +897,7 @@ class AllocationService:
         refit_unlisted: bool,
         owning_application_id: Optional[int] = None,
         parent_old_amount: Optional[Decimal] = None,
-    ) -> tuple[list[ResolvedRow], set[int]]:
+    ) -> tuple[list[ResolvedRow], set[int], bool]:
         """The one place every Key-resolution call site (the Application-scope
         cascade, the direct Application-level endpoint, and the single-Key
         endpoint) actually resolves + persists Keys — same
@@ -904,9 +911,10 @@ class AllocationService:
         update_single_api_key_allocation) always pass False — resizing one
         Key never moves another.
 
-        Returns (resolved_keys, fixed_ids). Response building and the
-        merge-back of unlisted Keys are handled by _build_key_response,
-        called by every caller of this method.
+        Returns (resolved_keys, fixed_ids, refit_unlisted). Returning
+        refit_unlisted alongside the other values ensures _build_key_response
+        always uses the same flag that governed the resolve step — callers
+        cannot accidentally pass a different value to each.
         """
         known_key_ids = {k.id for k in existing_keys}
         if owning_application_id is not None:
@@ -960,4 +968,4 @@ class AllocationService:
             snapshot_writes=snapshot_writes,
         )
 
-        return resolved_keys, fixed_ids
+        return resolved_keys, fixed_ids, refit_unlisted
