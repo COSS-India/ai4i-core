@@ -118,6 +118,16 @@ class CreateAPIKeyData(BaseSchema):
             "`budget`; otherwise derived as application.allocated_budget * allocated_percentage / 100."
         ),
     )
+    budget_exhausted: bool = Field(
+        False,
+        description=(
+            "True when this key was created with nothing left to spend — e.g. an uncapped-key "
+            "request (both allocated_percentage and budget omitted) seeded from an Application "
+            "that was already fully committed, or a Tenant with no allocated_budget at all. The "
+            "key is still created (a 0-remaining request is not an error), but it will 429 on its "
+            "very first billed request until the Application/Tenant's budget is topped up."
+        ),
+    )
 
 
 class APIKeyItem(BaseSchema):

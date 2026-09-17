@@ -103,7 +103,7 @@ class TestAllocationCapLockOrdering:
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
-        _raw_key, api_key = await svc.create_api_key(
+        _raw_key, api_key, _exhausted = await svc.create_api_key(
             actor_user_id=uuid4(),
             key_name="test",
             permissions=["nmt.inference"],
@@ -137,7 +137,7 @@ class TestAllocationCapLockOrdering:
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
-        _raw_key, api_key = await svc.create_api_key(
+        _raw_key, api_key, _exhausted = await svc.create_api_key(
             actor_user_id=uuid4(),
             key_name="test",
             permissions=["nmt.inference"],
@@ -383,7 +383,7 @@ class TestCommittedTotalCountsActiveCeilingsAndRevokedSpend:
             "app.services.api_key_service.budget_usage.fetch_budget_usage",
             new=AsyncMock(return_value={902: (Decimal("0"), Decimal("1000"))}),
         ):
-            _raw_key, api_key = await svc.create_api_key(
+            _raw_key, api_key, _exhausted = await svc.create_api_key(
                 actor_user_id=uuid4(),
                 key_name="test",
                 permissions=["nmt.inference"],
@@ -536,7 +536,7 @@ class TestCommittedTotalCountsActiveCeilingsAndRevokedSpend:
             "app.services.api_key_service.budget_usage.fetch_budget_usage",
             new=AsyncMock(return_value={901: (Decimal("2000"), Decimal("2000"))}),
         ):
-            _raw_key, api_key = await svc.create_api_key(
+            _raw_key, api_key, _exhausted = await svc.create_api_key(
                 actor_user_id=uuid4(),
                 key_name="test",
                 permissions=["nmt.inference"],
@@ -604,7 +604,7 @@ class TestBudgetDerivedFromLockedApplicationNotStaleRead:
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
-        _, api_key = await svc.create_api_key(
+        _, api_key, _exhausted = await svc.create_api_key(
             actor_user_id=uuid4(),
             key_name="test",
             permissions=["nmt.inference"],
@@ -641,7 +641,7 @@ class TestNewKeyExhaustionFlagSeeding:
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
-        _raw_key, api_key = await svc.create_api_key(
+        _raw_key, api_key, _exhausted = await svc.create_api_key(
             actor_user_id=uuid4(),
             key_name="test",
             permissions=["nmt.inference"],
@@ -702,7 +702,7 @@ class TestNewKeyExhaustionFlagSeeding:
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
-        _raw_key, api_key = await svc.create_api_key(
+        _raw_key, api_key, _exhausted = await svc.create_api_key(
             actor_user_id=uuid4(),
             key_name="test",
             permissions=["nmt.inference"],
@@ -735,7 +735,7 @@ class TestNewKeyExhaustionFlagSeeding:
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
 
-        _raw_key, api_key = await svc.create_api_key(
+        _raw_key, api_key, _exhausted = await svc.create_api_key(
             actor_user_id=uuid4(),
             key_name="test",
             permissions=["nmt.inference"],
@@ -787,7 +787,7 @@ class TestUncappedKeySeededFromApplicationsRemainingBudget:
         ), patch(
             "app.services.budget_usage.write_budget_snapshot", AsyncMock()
         ) as write_snap:
-            _raw_key, api_key = await svc.create_api_key(
+            _raw_key, api_key, exhausted = await svc.create_api_key(
                 actor_user_id=uuid4(),
                 key_name="test",
                 permissions=["nmt.inference"],
@@ -800,6 +800,7 @@ class TestUncappedKeySeededFromApplicationsRemainingBudget:
         write_snap.assert_awaited_once_with({api_key.id: Decimal("35000.00")}, None)
         payload = svc._cache.set_api_key_cache.call_args.args[2]
         assert "budget-exhausted" not in payload
+        assert exhausted is False
 
     @pytest.mark.asyncio
     async def test_uncapped_key_seeded_zero_when_application_already_fully_committed(self) -> None:
@@ -831,7 +832,7 @@ class TestUncappedKeySeededFromApplicationsRemainingBudget:
         ), patch(
             "app.services.budget_usage.write_budget_snapshot", AsyncMock()
         ) as write_snap:
-            _raw_key, api_key = await svc.create_api_key(
+            _raw_key, api_key, exhausted = await svc.create_api_key(
                 actor_user_id=uuid4(),
                 key_name="test",
                 permissions=["nmt.inference"],
@@ -844,6 +845,11 @@ class TestUncappedKeySeededFromApplicationsRemainingBudget:
         write_snap.assert_awaited_once_with({api_key.id: Decimal("0")}, None)
         payload = svc._cache.set_api_key_cache.call_args.args[2]
         assert payload["budget-exhausted"] == "1"
+        # Code-review finding (mohapatras): the internal cache flag alone
+        # isn't visible to the caller of POST /auth/api-keys — the same
+        # 0/0 state an explicit allocated_percentage=0 is rejected for must
+        # not come back from create_api_key looking like a healthy key.
+        assert exhausted is True
 
     @pytest.mark.asyncio
     async def test_exact_bug_scenario_uncapped_key_blocks_a_later_key_from_overcommitting(
@@ -873,7 +879,7 @@ class TestUncappedKeySeededFromApplicationsRemainingBudget:
         ), patch(
             "app.services.budget_usage.write_budget_snapshot", AsyncMock()
         ):
-            _raw_key, uncapped_key = await svc.create_api_key(
+            _raw_key, uncapped_key, _exhausted = await svc.create_api_key(
                 actor_user_id=uuid4(),
                 key_name="uncapped-first",
                 permissions=["nmt.inference"],
@@ -1004,7 +1010,7 @@ class TestBudgetParam:
         with patch(
             "app.services.budget_usage.write_budget_snapshot", AsyncMock()
         ) as write_snap:
-            _, api_key = await svc.create_api_key(
+            _, api_key, _exhausted = await svc.create_api_key(
                 actor_user_id=uuid4(),
                 key_name="test",
                 permissions=["nmt.inference"],
@@ -1039,7 +1045,7 @@ class TestBudgetParam:
         with patch(
             "app.services.budget_usage.write_budget_snapshot", AsyncMock()
         ) as write_snap:
-            _, api_key = await svc.create_api_key(
+            _, api_key, _exhausted = await svc.create_api_key(
                 actor_user_id=uuid4(),
                 key_name="test",
                 permissions=["nmt.inference"],
@@ -1144,7 +1150,7 @@ class TestInferenceOnlyPermissionRestriction:
         svc, repo, applications, tenants = _service(applications=applications, tenants=tenants)
         repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 12})
 
-        _raw_key, api_key = await svc.create_api_key(
+        _raw_key, api_key, _exhausted = await svc.create_api_key(
             actor_user_id=uuid4(),
             key_name="test",
             permissions=["nmt.inference"],

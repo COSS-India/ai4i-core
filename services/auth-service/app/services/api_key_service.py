@@ -705,10 +705,16 @@ class APIKeyService:
         *,
         caller_tenant_id: Optional[int] = None,
         platform_core_db: Optional[AsyncSession] = None,
-    ) -> tuple[str, APIKey]:
+    ) -> tuple[str, APIKey, bool]:
         """
         Generate a hex API key, persist to DB, cache in Redis.
-        Returns (raw_hex_key, api_key_record). Raw key is shown once and never stored again.
+        Returns (raw_hex_key, api_key_record, budget_exhausted). Raw key is
+        shown once and never stored again. ``budget_exhausted`` is True when
+        the key was created with nothing left to spend (e.g. seeded from an
+        already fully-committed Application's remaining budget) — same
+        terminal state an explicit allocated_percentage=0 is rejected for,
+        but this one is a deliberate "whatever's left, even if nothing"
+        request rather than an error, so it succeeds and reports it instead.
 
         ``caller_tenant_id`` is None for a system admin (unscoped — any
         tenant's application may be targeted); otherwise the application must
@@ -1021,40 +1027,47 @@ class APIKeyService:
         if allocated_budget is not None:
             await budget_usage.write_budget_snapshot({api_key.id: allocated_budget}, platform_core_db)
 
+        # A key created with a ceiling that's already <= 0 (e.g. under
+        # an Application/Tenant with no budget left) has nothing to
+        # spend against from its very first request — seed
+        # "budget-exhausted" into the initial cache write instead of
+        # leaving the flag absent (falsy, i.e. NOT exhausted) until some
+        # future billed request happens to set it via the Kafka
+        # consumer. Without this, a brand-new key under an
+        # already-zeroed-out parent serves every request that arrives
+        # before that eventually happens.
+        #
+        # allocated_budget is None for two DIFFERENT reasons, and only
+        # one of them should block: (a) the owning Tenant has no
+        # allocated_budget configured at all — _derive_budget-style
+        # cascade means the Application (if given only a percentage)
+        # and this Key both end up None with nothing real behind them,
+        # which must mean "nothing to spend," not "unlimited"; (b) an
+        # Application was deliberately created with no percentage under
+        # a Tenant that DOES have a real budget — the established,
+        # intentional "uncapped Application" state, unrelated to this
+        # fix and left exactly as it already behaved. tenant.
+        # allocated_budget is None is what tells the two apart. No
+        # budget_usage row is written for this case (write_budget_snapshot
+        # above already skipped it, same as any None ceiling) — leaving
+        # the snap itself unset, not 0, is deliberate: it lets the
+        # Tenant's own future top-up sync (TenantService.
+        # _sync_ppu_wallet_and_exhaustion) clear this flag the normal
+        # way once real money exists, rather than this Key being stuck
+        # at a hard 0 ceiling that only an explicit Budget Allocation
+        # edit could ever move (the exact lockout class fixed elsewhere
+        # in resolve_level's floor check).
+        #
+        # Computed unconditionally (not just inside the cache-write branch
+        # below) so the caller's 201 response can always report it — a key
+        # seeded budget-exhausted via seed_zero_ceiling above must not look
+        # identical to a healthy one in the response, the same terminal
+        # state an explicit allocated_percentage=0 is rejected for.
+        exhausted = (allocated_budget is not None and allocated_budget <= Decimal("0")) or (
+            allocated_budget is None and tenant.allocated_budget is None
+        )
+
         if self.application_may_use_api_keys(application, tenant):
-            # A key created with a ceiling that's already <= 0 (e.g. under
-            # an Application/Tenant with no budget left) has nothing to
-            # spend against from its very first request — seed
-            # "budget-exhausted" into this initial cache write instead of
-            # leaving the flag absent (falsy, i.e. NOT exhausted) until some
-            # future billed request happens to set it via the Kafka
-            # consumer. Without this, a brand-new key under an
-            # already-zeroed-out parent serves every request that arrives
-            # before that eventually happens.
-            #
-            # allocated_budget is None for two DIFFERENT reasons, and only
-            # one of them should block: (a) the owning Tenant has no
-            # allocated_budget configured at all — _derive_budget-style
-            # cascade means the Application (if given only a percentage)
-            # and this Key both end up None with nothing real behind them,
-            # which must mean "nothing to spend," not "unlimited"; (b) an
-            # Application was deliberately created with no percentage under
-            # a Tenant that DOES have a real budget — the established,
-            # intentional "uncapped Application" state, unrelated to this
-            # fix and left exactly as it already behaved. tenant.
-            # allocated_budget is None is what tells the two apart. No
-            # budget_usage row is written for this case (write_budget_snapshot
-            # above already skipped it, same as any None ceiling) — leaving
-            # the snap itself unset, not 0, is deliberate: it lets the
-            # Tenant's own future top-up sync (TenantService.
-            # _sync_ppu_wallet_and_exhaustion) clear this flag the normal
-            # way once real money exists, rather than this Key being stuck
-            # at a hard 0 ceiling that only an explicit Budget Allocation
-            # edit could ever move (the exact lockout class fixed elsewhere
-            # in resolve_level's floor check).
-            exhausted = (allocated_budget is not None and allocated_budget <= Decimal("0")) or (
-                allocated_budget is None and tenant.allocated_budget is None
-            )
             payload = self._build_cache_payload(
                 api_key,
                 str(tenant.id),
@@ -1071,7 +1084,7 @@ class APIKeyService:
             "API key created: name=%s application=%s permissions=%s",
             key_name, application_id, permission_ids,
         )
-        return raw_key, api_key
+        return raw_key, api_key, exhausted
 
     @staticmethod
     def _is_cache_entry_invalid(cached: dict) -> bool:

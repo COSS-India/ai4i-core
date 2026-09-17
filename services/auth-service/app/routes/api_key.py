@@ -155,7 +155,7 @@ async def create_api_key(
     billed request.
     """
     caller_tenant_id = _resolve_caller_tenant_scope(request, current_user)
-    raw_key, api_key = await svc.create_api_key(
+    raw_key, api_key, budget_exhausted = await svc.create_api_key(
         actor_user_id=current_user.id,
         key_name=body.key_name,
         permissions=body.permissions,
@@ -179,6 +179,7 @@ async def create_api_key(
             application_id=api_key.application_id,
             allocated_percentage=api_key.allocated_percentage,
             allocated_budget=api_key.allocated_budget,
+            budget_exhausted=budget_exhausted,
         )
     )
 
