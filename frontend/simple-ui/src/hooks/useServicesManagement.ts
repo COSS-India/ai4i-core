@@ -37,6 +37,9 @@ import { refreshUntil } from "../utils/postMutationRefresh";
 import { useInferenceTypes } from "./useInferenceTypes";
 
 /** Query keys of per-task service lists that must refresh after registry mutations. */
+/** Tier filter value for services with no tier mapped. */
+export const TIER_FILTER_UNASSIGNED = "unassigned";
+
 const SERVICE_QUERY_KEYS = [
   "asr-services",
   "tts-services",
@@ -119,6 +122,8 @@ export function useServicesManagement() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<string>("");
   const [filterTaskType, setFilterTaskType] = useState<string>("");
+  /** Tier filter — client-side; GET /services takes no tier parameter. */
+  const [filterTier, setFilterTier] = useState<string>("");
   const {
     taskTypeNames,
     unitByTaskType,
@@ -169,20 +174,53 @@ export function useServicesManagement() {
   // Client-side name filter + multi-column sort over the full fetched registry list.
   const registryTableItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    const filtered = q
+    let filtered = q
       ? services.filter((s) => (s.name ?? "").toLowerCase().includes(q))
       : services;
+    if (filterTier) {
+      // Match on tier IDs, not names — a renamed tier keeps the same id.
+      filtered = filtered.filter((s) => {
+        const ids = s.tierIds ?? [];
+        if (filterTier !== TIER_FILTER_UNASSIGNED) {
+          return ids.some((id) => String(id) === filterTier);
+        }
+        return ids.length === 0 && (s.tierNames ?? s.tiers ?? []).length === 0;
+      });
+    }
     return registrySort.apply(filtered);
-  }, [services, searchQuery, registrySort]);
+  }, [services, searchQuery, filterTier, registrySort]);
+
+  // The ACTIVE tier catalogue, plus any tier already mapped to a listed
+  // service, so a service on a deactivated tier stays reachable from the filter.
+  const tierFilterOptions = useMemo(() => {
+    const options: { value: string; label: string }[] = [];
+    const seen = new Set<string>();
+    const add = (value: string, label: string) => {
+      if (!value || seen.has(value)) return;
+      seen.add(value);
+      options.push({ value, label });
+    };
+    for (const tier of availableTiers) add(String(tier.id), tier.name);
+    for (const s of services) {
+      const ids = s.tierIds ?? [];
+      const names = s.tierNames ?? [];
+      ids.forEach((id, i) => add(String(id), names[i]?.trim() || String(id)));
+    }
+    return options.sort((a, b) =>
+      a.label.localeCompare(b.label, undefined, { sensitivity: "base" }),
+    );
+  }, [availableTiers, services]);
 
   const showTaskTypeAllOption = taskTypeNames.length > 1;
   const hasActiveFilters =
     filterStatus !== "" ||
     (showTaskTypeAllOption && filterTaskType !== "") ||
+    filterTier !== "" ||
     searchQuery.trim() !== "";
   const clearAllFilters = () => {
     setSearchQuery("");
     setFilterStatus("");
+    setFilterTier("");
     setFilterTaskType(taskTypeNames.length === 1 ? taskTypeNames[0] : "");
   };
 
@@ -1264,13 +1302,16 @@ export function useServicesManagement() {
     registryTableItems,
     totalServicesCount: services.length,
     isLoading,
-    tableKey: `${filterStatus}-${filterTaskType}-${registryEpoch}`,
+    tableKey: `${filterStatus}-${filterTaskType}-${filterTier}-${registryEpoch}`,
     searchQuery,
     setSearchQuery,
     filterStatus,
     setFilterStatus,
     filterTaskType,
     setFilterTaskType,
+    filterTier,
+    setFilterTier,
+    tierFilterOptions,
     taskTypeNames,
     hasActiveFilters,
     clearAllFilters,

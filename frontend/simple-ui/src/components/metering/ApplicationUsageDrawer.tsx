@@ -59,6 +59,8 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
       {
         id: "keyName",
         header: cols.API_KEY,
+        width: "26%",
+        minWidth: "120px",
         sortable: true,
         sortAccessor: (key) => key.keyName ?? "",
         cell: (key) => (
@@ -82,6 +84,7 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
         id: "allocated",
         header: cols.ALLOCATED_SHORT,
         hint: tips.API_KEY_ALLOCATED,
+        width: "22%",
         sortable: true,
         sortAccessor: (key) => key.allocatedBudget.amount,
         cell: (key) => {
@@ -108,6 +111,7 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
         id: "spend",
         header: cols.SPEND_SHORT,
         hint: tips.API_KEY_SPEND,
+        width: "30%",
         sortable: true,
         sortAccessor: (key) => key.spendBudget.amount,
         cell: (key) => {
@@ -124,6 +128,7 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
               currency={currency}
               hasBudget={keyHasBudget}
               noBudgetLabel={cols.NO_BUDGET}
+              minWidth="140px"
             />
           );
         },
@@ -137,6 +142,7 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
         id: "remaining",
         header: cols.REMAINING_SHORT,
         hint: tips.API_KEY_REMAINING,
+        width: "22%",
         sortable: true,
         sortAccessor: (key) => key.remainingBudget.amount,
         cell: (key) => {
@@ -253,9 +259,9 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
   }
 
   return (
-    <Drawer isOpen={isOpen} placement="right" onClose={onClose} size="md">
+    <Drawer isOpen={isOpen} placement="right" onClose={onClose} size="lg">
       <DrawerOverlay bg="rgba(15,23,42,0.35)" />
-      <DrawerContent maxW="460px">
+      <DrawerContent maxW={{ base: "100%", sm: "560px", md: "760px" }}>
         <DrawerCloseButton top={4} right={4} />
         <DrawerHeader fontSize="19px" fontWeight="extrabold" pb={2} pt={6}>
           {copy.DRAWER_TITLE}

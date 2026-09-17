@@ -1,6 +1,6 @@
 // Tenant Management tab — backed by auth-service tenant endpoints.
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   AlertDescription,
@@ -121,7 +121,7 @@ import {
   formatPlatformRoleLabel,
   isDefaultTenant,
 } from "../../utils/defaultTenant";
-import { dash, fmtDate } from "../../utils/valueFormatters";
+import { EMPTY_VALUE, dash, fmtDate } from "../../utils/valueFormatters";
 import {
   budgetWindowToMinDate,
   dateInputToEndOfDayIso,
@@ -130,6 +130,9 @@ import {
   todayDateInputValue,
 } from "../../utils/helpers";
 import type { TenantUserView, TenantView } from "../../types/tenant";
+
+/** Tier filter value for institutions with no tier assigned. */
+const TIER_FILTER_UNASSIGNED = "unassigned";
 
 /** Shown when assigning/reassigning a tier that has no mapped services. */
 const TIER_NO_SERVICES_MSG =
@@ -297,7 +300,10 @@ export default function TenantManagementTab({
     staleTime: 5 * 60_000,
     enabled: isAdmin,
   });
-  const tierOptions = tiersQuery.data?.data ?? [];
+  const tierOptions = useMemo(
+    () => tiersQuery.data?.data ?? [],
+    [tiersQuery.data],
+  );
 
   // Shared with Tier Management so service↔tier mappings stay consistent
   const servicesForTiersQuery = useQuery({
@@ -329,7 +335,20 @@ export default function TenantManagementTab({
     staleTime: 2 * 60_000,
     enabled: isAdmin,
   });
-  const tenantTierAssignments = tenantTiersQuery.data?.data ?? [];
+  const tenantTierAssignments = useMemo(
+    () => tenantTiersQuery.data?.data ?? [],
+    [tenantTiersQuery.data],
+  );
+
+  // Row-level tier lookup for the institutions table. The /tier/list payload
+  // wins because it carries tier_name even for tiers that are no longer
+  // ACTIVE; the tenant's own tier_id resolved against the ACTIVE catalog is
+  // the fallback.
+  const resolveTenantTier = useCallback(
+    (t: TenantView) =>
+      resolveTenantTierAssignment(t, tenantTierAssignments, tierOptions),
+    [tenantTierAssignments, tierOptions],
+  );
 
   const [viewTierTenant, setViewTierTenant] =
     useState<TenantTierAssignment | null>(null);
@@ -692,20 +711,56 @@ export default function TenantManagementTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tm.tenantDetailView?.tenant_id]);
 
+  // Tier filter — client-side, like the status filter beside it. The tenant
+  // list endpoint takes no tier parameter, so both narrow the fetched page.
+  const [tenantFilterTier, setTenantFilterTier] = useState("all");
+
+  // Catalog tiers plus any tier already assigned to a listed institution, so a
+  // tenant parked on a deactivated tier stays reachable from the filter.
+  const tierFilterOptions = useMemo(() => {
+    const options: { value: string; label: string }[] = [];
+    const seen = new Set<string>();
+    const add = (value: string, label: string) => {
+      if (!value || seen.has(value)) return;
+      seen.add(value);
+      options.push({ value, label });
+    };
+    for (const tier of tierOptions) add(String(tier.id), tier.name);
+    for (const t of tm.tenants) {
+      const assigned = resolveTenantTier(t);
+      const tierId = assigned?.tier_id ? String(assigned.tier_id) : "";
+      add(tierId, assigned?.tier_name?.trim() || tierId);
+    }
+    return options.sort((a, b) =>
+      a.label.localeCompare(b.label, undefined, { sensitivity: "base" }),
+    );
+  }, [tierOptions, tm.tenants, resolveTenantTier]);
+
+  const tierFilteredTenants = useMemo(() => {
+    if (tenantFilterTier === "all") return tm.filteredTenants;
+    return tm.filteredTenants.filter((t) => {
+      const tierId = resolveTenantTier(t)?.tier_id;
+      return tenantFilterTier === TIER_FILTER_UNASSIGNED
+        ? !tierId
+        : String(tierId) === tenantFilterTier;
+    });
+  }, [tm.filteredTenants, tenantFilterTier, resolveTenantTier]);
+
   const tenantSortAccessors = useMemo(
     () => ({
       organisation: (t: TenantView) => t.organisation ?? "",
       contact: (t: TenantView) => t.contact_name ?? "",
       email: (t: TenantView) => t.email ?? "",
+      tier: (t: TenantView) => resolveTenantTier(t)?.tier_name ?? "",
       created: (t: TenantView) =>
         t.created_at ? new Date(t.created_at).getTime() : 0,
     }),
-    [],
+    [resolveTenantTier],
   );
   const tenantSort = useDeferredColumnSort("organisation", tenantSortAccessors);
   const sortedTenants = useMemo(
-    () => tenantSort.apply(tm.filteredTenants),
-    [tm.filteredTenants, tenantSort],
+    () => tenantSort.apply(tierFilteredTenants),
+    [tierFilteredTenants, tenantSort],
   );
 
   const userSortAccessors = useMemo(
@@ -804,11 +859,34 @@ export default function TenantManagementTab({
       {
         id: "status",
         header: "Status",
+        minWidth: "150px",
         cell: (t) => (
           <Badge colorScheme={getTenantStatusColorScheme(t.status)}>
             {formatTenantStatusLabel(t.status)}
           </Badge>
         ),
+      },
+      {
+        id: "tier",
+        header: "Tier",
+        minWidth: "150px",
+        sortable: true,
+        sortAccessor: (t) => resolveTenantTier(t)?.tier_name ?? "",
+        cell: (t) => {
+          const tierName = resolveTenantTier(t)?.tier_name?.trim();
+          if (!tierName) {
+            return (
+              <Text fontSize="sm" color="gray.400">
+                {EMPTY_VALUE}
+              </Text>
+            );
+          }
+          return (
+            <Badge colorScheme="gray" fontSize="xs" px={2} py={0.5}>
+              {tierName}
+            </Badge>
+          );
+        },
       },
       {
         id: "created",
@@ -826,7 +904,7 @@ export default function TenantManagementTab({
       },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tm]);
+  }, [tm, resolveTenantTier]);
 
   const userColumns = useMemo((): DataTableColumn<TenantUserView>[] => {
     return [
@@ -954,10 +1032,13 @@ export default function TenantManagementTab({
             noResultsMessage={`No ${INSTITUTIONS.toLowerCase()} match the current filters.`}
             unfilteredCount={tm.tenants.length}
             hasActiveFilters={
-              tm.tenantFilterStatus !== "all" || tm.tenantSearch.trim() !== ""
+              tm.tenantFilterStatus !== "all" ||
+              tenantFilterTier !== "all" ||
+              tm.tenantSearch.trim() !== ""
             }
             onClearFilters={() => {
               tm.setTenantFilterStatus("all");
+              setTenantFilterTier("all");
               tm.setTenantSearch("");
             }}
             search={{
@@ -981,6 +1062,19 @@ export default function TenantManagementTab({
                     label: formatTenantStatusLabel(s),
                     value: s,
                   })),
+                ],
+              },
+              {
+                id: "tier",
+                label: "Tier",
+                type: "select",
+                value: tenantFilterTier,
+                onChange: setTenantFilterTier,
+                width: { base: "full", sm: "200px" },
+                options: [
+                  { label: "All tiers", value: "all" },
+                  { label: "No tier assigned", value: TIER_FILTER_UNASSIGNED },
+                  ...tierFilterOptions,
                 ],
               },
             ]}

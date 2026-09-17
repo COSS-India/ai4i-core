@@ -40,6 +40,7 @@ import {
 } from "@chakra-ui/icons";
 import { FiArrowUp, FiCalendar, FiPause, FiPlay } from "react-icons/fi";
 import DataTable, {
+  DATA_TABLE_HEADER_SX,
   createActionsColumn,
   type DataTableColumn,
 } from "../common/table";
@@ -130,6 +131,13 @@ const TIER_STATUS_BADGE: Record<
   DELETED: { label: "Deleted", colorScheme: "red" },
 };
 
+/** Selectable statuses, in lifecycle order. DELETED never reaches the list. */
+const TIER_STATUS_FILTER_ORDER: TierStatus[] = [
+  "ACTIVE",
+  "INACTIVE",
+  "DEACTIVATED",
+];
+
 const TIER_STATUS_COLUMN: DataTableColumn<Tier> = {
   id: "status",
   header: "Status",
@@ -195,6 +203,55 @@ const TIER_TASK_TYPES_COLUMN: DataTableColumn<Tier> = {
     </HStack>
   ),
 };
+
+/** A per-tier tally column (Services, Institutions). */
+function makeTierCountColumn(
+  id: string,
+  header: string,
+  countByTierId: Map<string, number>,
+  isLoading: boolean,
+): DataTableColumn<Tier> {
+  return {
+    id,
+    header,
+    // `align: "center"` centres the cell text on its own. The header needs the
+    // sx below as well: a sortable header renders as a flex row (label + sort
+    // carets), which textAlign cannot move. Passing sx via thProps REPLACES
+    // DataTable's own header sx rather than merging, so the shared header
+    // styling is spread back in here.
+    thProps: {
+      w: "140px",
+      sx: {
+        ...DATA_TABLE_HEADER_SX,
+        textAlign: "center",
+        "& > *": { justifyContent: "center" },
+      },
+    },
+    align: "center",
+    sortable: true,
+    sortAccessor: (tier) => countByTierId.get(tier.id) ?? 0,
+    cell: (tier) => {
+      // A 0 while the source list is still in flight would read as fact.
+      if (isLoading) {
+        return (
+          <Text fontSize="sm" color="gray.400">
+            —
+          </Text>
+        );
+      }
+      const count = countByTierId.get(tier.id) ?? 0;
+      return (
+        <Text
+          fontSize="sm"
+          fontWeight="semibold"
+          color={count === 0 ? "gray.400" : "gray.800"}
+        >
+          {count}
+        </Text>
+      );
+    },
+  };
+}
 
 function makeTierActionsColumn(
   deletingId: string | null,
@@ -740,6 +797,12 @@ const TierManagement: React.FC = () => {
     hasActiveFilters,
     clearFilters,
     filteredTiers,
+    serviceCountByTierId,
+    isServiceCountLoading,
+    institutionCountByTierId,
+    isInstitutionCountLoading,
+    filterStatus,
+    setFilterStatus,
     tiers,
     isLoading,
     tierToDelete,
@@ -801,8 +864,11 @@ const TierManagement: React.FC = () => {
   const tierSortAccessors = useMemo(
     () => ({
       name: (tier: Tier) => tier.name ?? "",
+      services: (tier: Tier) => serviceCountByTierId.get(tier.id) ?? 0,
+      institutions: (tier: Tier) =>
+        institutionCountByTierId.get(tier.id) ?? 0,
     }),
-    [],
+    [serviceCountByTierId, institutionCountByTierId],
   );
   const tierSort = useDeferredColumnSort("name", tierSortAccessors);
   const sortedTiers = useMemo(
@@ -815,6 +881,18 @@ const TierManagement: React.FC = () => {
       TIER_NAME_COLUMN,
       TIER_STATUS_COLUMN,
       TIER_TASK_TYPES_COLUMN,
+      makeTierCountColumn(
+        "services",
+        "Services",
+        serviceCountByTierId,
+        isServiceCountLoading,
+      ),
+      makeTierCountColumn(
+        "institutions",
+        INSTITUTIONS,
+        institutionCountByTierId,
+        isInstitutionCountLoading,
+      ),
       makeTierActionsColumn(
         deletingId,
         updatingStatusId,
@@ -831,6 +909,10 @@ const TierManagement: React.FC = () => {
       handleOpenEdit,
       handleViewClick,
       handleStatusClick,
+      serviceCountByTierId,
+      isServiceCountLoading,
+      institutionCountByTierId,
+      isInstitutionCountLoading,
     ],
   );
 
@@ -900,6 +982,23 @@ const TierManagement: React.FC = () => {
               ...taskTypeNames.map((t) => ({
                 label: formatModelTaskTypeLabel(t),
                 value: t,
+              })),
+            ],
+          },
+          {
+            id: "status",
+            label: "Status",
+            type: "select",
+            value: filterStatus,
+            // DELETED is omitted: the list endpoint filters those rows out
+            // server-side, so the option could only ever return nothing.
+            onChange: (value) => setFilterStatus(value as TierStatus | ""),
+            width: { base: "full", sm: "180px" },
+            options: [
+              { label: "All", value: "" },
+              ...TIER_STATUS_FILTER_ORDER.map((status) => ({
+                label: TIER_STATUS_BADGE[status].label,
+                value: status,
               })),
             ],
           },

@@ -28,6 +28,7 @@ import ServiceRegistryTab from "./ServiceRegistryTab";
 import ServiceFormTab from "./ServiceFormTab";
 import ServiceDetailTab from "./ServiceDetailTab";
 import { resolveTaskType } from "../../utils/platformService";
+import OverflowBadgeList from "../common/OverflowBadgeList";
 
 function getTaskColor(taskType?: string) {
   if (!taskType) return "gray";
@@ -76,6 +77,9 @@ const ServicesManagement: React.FC = () => {
     setFilterStatus,
     filterTaskType,
     setFilterTaskType,
+    filterTier,
+    setFilterTier,
+    tierFilterOptions,
     taskTypeNames,
     hasActiveFilters,
     clearAllFilters,
@@ -168,34 +172,18 @@ const ServicesManagement: React.FC = () => {
       {
         id: "tiers",
         header: "Tiers",
+        // Fixed width: without it the column grows to fit the longest tier
+        // list on the page, which is what made it the widest column.
+        width: "320px",
+        thProps: { w: "320px", maxW: "320px" },
+        tdProps: { maxW: "320px" },
         sortable: true,
+        // Sorts on the full list, not just the badges that stayed visible.
         sortAccessor: (service) =>
           (service.tierNames ?? service.tiers ?? []).join(", ").toLowerCase(),
-        cell: (service) => {
-          const names = service.tierNames;
-          if (!names || names.length === 0) {
-            return (
-              <Text fontSize="sm" color="gray.400">
-                —
-              </Text>
-            );
-          }
-          return (
-            <HStack spacing={1} flexWrap="wrap">
-              {names.map((name) => (
-                <Badge
-                  key={name}
-                  colorScheme="gray"
-                  fontSize="xs"
-                  px={2}
-                  py={0.5}
-                >
-                  {name}
-                </Badge>
-              ))}
-            </HStack>
-          );
-        },
+        cell: (service) => (
+          <OverflowBadgeList items={service.tierNames ?? []} />
+        ),
       },
       {
         id: "status",
@@ -401,6 +389,9 @@ const ServicesManagement: React.FC = () => {
                     onFilterStatusChange={setFilterStatus}
                     filterTaskType={filterTaskType}
                     onFilterTaskTypeChange={setFilterTaskType}
+                    filterTier={filterTier}
+                    onFilterTierChange={setFilterTier}
+                    tierFilterOptions={tierFilterOptions}
                     taskTypeNames={taskTypeNames}
                     hasActiveFilters={hasActiveFilters}
                     onClearFilters={clearAllFilters}

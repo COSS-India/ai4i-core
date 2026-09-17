@@ -118,6 +118,13 @@ export function useTierManagement() {
   const cancelRef = useRef<HTMLButtonElement>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterTaskType, setFilterTaskType] = useState("");
+  /**
+   * Status filter — client-side. The task type filter is server-side because
+   * it matches on quotas, but status is a plain row field and the tiers
+   * endpoint returns the whole list unpaginated, so filtering here avoids a
+   * refetch per selection.
+   */
+  const [filterStatus, setFilterStatus] = useState<TierStatus | "">("");
   const didInitTaskTypeFilter = useRef(false);
   const [taskTypeFilterReady, setTaskTypeFilterReady] = useState(false);
   useEffect(() => {
@@ -203,7 +210,10 @@ export function useTierManagement() {
     enabled: taskTypeFilterReady,
   });
 
-  const tiers = tiersQuery.data?.data ?? [];
+  const tiers = useMemo(
+    () => tiersQuery.data?.data ?? [],
+    [tiersQuery.data],
+  );
 
   const viewTier = useMemo(
     () => tiers.find((t) => t.id === viewTierId) ?? null,
@@ -216,7 +226,6 @@ export function useTierManagement() {
     queryKey: ["tenant-tiers"],
     queryFn: () => fetchTenantTiers(),
     staleTime: 30 * 1000,
-    enabled: !!viewTierId,
   });
 
   // Tenant directory, used to resolve tenant_id → organisation name for display.
@@ -251,6 +260,18 @@ export function useTierManagement() {
       }));
   }, [viewTier, tenantTiersQuery.data, tenantsDirectoryQuery.data]);
 
+  const institutionCountByTierId = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const a of tenantTiersQuery.data?.data ?? []) {
+      const id = String(a.tier_id);
+      counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+    return counts;
+  }, [tenantTiersQuery.data]);
+
+  /** True until the counts are real — the column shows a dash, never a wrong 0. */
+  const isInstitutionCountLoading = tenantTiersQuery.isLoading;
+
   const isAssignedTenantsLoading =
     !!viewTierId &&
     (tenantTiersQuery.isLoading || tenantsDirectoryQuery.isLoading);
@@ -262,7 +283,6 @@ export function useTierManagement() {
     queryFn: () =>
       fetchAllServicesMatchingFilters({ taskTypes: enabledTaskTypesParam }),
     staleTime: 60 * 1000,
-    enabled: !!viewTierId,
   });
 
   const servicesForViewTier = useMemo(() => {
@@ -287,6 +307,31 @@ export function useTierManagement() {
 
   const isServicesForViewTierLoading = !!viewTierId && servicesQuery.isLoading;
 
+  /**
+   * Services mapped to each tier, for the list's Services column. Uses the same
+   * id-or-name match as `servicesForViewTier` above — the tierNames arm covers
+   * rows whose tier_ids is null — so the column and the detail panel can never
+   * report different numbers for the same tier.
+   */
+  const serviceCountByTierId = useMemo(() => {
+    const services = servicesQuery.data?.items ?? [];
+    const counts = new Map<string, number>();
+    for (const tier of tiers) {
+      counts.set(
+        tier.id,
+        services.filter(
+          (s) =>
+            (s.tierIds ?? []).includes(tier.id) ||
+            (s.tierNames ?? []).includes(tier.name),
+        ).length,
+      );
+    }
+    return counts;
+  }, [tiers, servicesQuery.data]);
+
+  /** True until the counts are real — the column shows a dash, never a wrong 0. */
+  const isServiceCountLoading = servicesQuery.isLoading;
+
   const filteredTiers = useMemo(() => {
     let result = tiers;
     if (filterTaskType) {
@@ -296,20 +341,25 @@ export function useTierManagement() {
         ),
       );
     }
+    if (filterStatus) {
+      result = result.filter((t) => (t.status ?? "INACTIVE") === filterStatus);
+    }
     const q = searchQuery.trim().toLowerCase();
     if (q) {
       result = result.filter((t) => t.name.toLowerCase().includes(q));
     }
     return result;
-  }, [tiers, searchQuery, filterTaskType]);
+  }, [tiers, searchQuery, filterTaskType, filterStatus]);
 
   const showTaskTypeAllOption = taskTypeNames.length > 1;
   const hasActiveFilters =
     searchQuery.trim() !== "" ||
+    filterStatus !== "" ||
     (showTaskTypeAllOption && filterTaskType !== "");
 
   const clearFilters = useCallback(() => {
     setSearchQuery("");
+    setFilterStatus("");
     setFilterTaskType(taskTypeNames.length === 1 ? taskTypeNames[0] : "");
   }, [taskTypeNames]);
 
@@ -756,11 +806,17 @@ export function useTierManagement() {
     setSearchQuery,
     filterTaskType,
     setFilterTaskType,
+    filterStatus,
+    setFilterStatus,
     hasActiveFilters,
     clearFilters,
     // Tiers data
     tiers,
     filteredTiers,
+    serviceCountByTierId,
+    isServiceCountLoading,
+    institutionCountByTierId,
+    isInstitutionCountLoading,
     isLoading: tiersQuery.isLoading,
     // Delete
     tierToDelete,

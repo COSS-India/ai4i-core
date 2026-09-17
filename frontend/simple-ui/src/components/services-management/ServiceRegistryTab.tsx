@@ -12,6 +12,7 @@ import DataTable, {
   type DataTableSortState,
 } from "../common/table";
 import { formatModelTaskTypeLabel } from "../../config/constants";
+import { TIER_FILTER_UNASSIGNED } from "../../hooks/useServicesManagement";
 import type { Service } from "../../services/servicesManagementService";
 
 interface ServiceRegistryTabProps {
@@ -31,6 +32,9 @@ interface ServiceRegistryTabProps {
   onFilterStatusChange: (value: string) => void;
   filterTaskType: string;
   onFilterTaskTypeChange: (value: string) => void;
+  filterTier: string;
+  onFilterTierChange: (value: string) => void;
+  tierFilterOptions: { value: string; label: string }[];
   taskTypeNames: string[];
   hasActiveFilters: boolean;
   onClearFilters: () => void;
@@ -53,6 +57,9 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
   onFilterStatusChange,
   filterTaskType,
   onFilterTaskTypeChange,
+  filterTier,
+  onFilterTierChange,
+  tierFilterOptions,
   taskTypeNames,
   hasActiveFilters,
   onClearFilters,
@@ -124,6 +131,19 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
                   label: formatModelTaskTypeLabel(t),
                   value: t,
                 })),
+              ],
+            },
+            {
+              id: "tier",
+              label: "Tier",
+              type: "select",
+              value: filterTier,
+              onChange: onFilterTierChange,
+              width: { base: "full", sm: "180px" },
+              options: [
+                { label: "All", value: "" },
+                { label: "No tier mapped", value: TIER_FILTER_UNASSIGNED },
+                ...tierFilterOptions,
               ],
             },
           ]}
