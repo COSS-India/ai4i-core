@@ -56,6 +56,17 @@ class Settings(BaseSettings):
     NOTIFICATION_PRODUCER_ENABLED: bool = Field(
         False, description="Feature flag for the notification-event producer side-channel."
     )
+    AUTH_SERVICE_DB: str = Field(
+        default="ai4iplatform_auth",
+        description="Database name for the second, named connection this consumer "
+        "opens (main.py, bootstrap.lifecycle.add_database) so _billing.py's "
+        "fetch_tenant_budget_status can read tenants.allocated_budget and enumerate "
+        "the api_key ids under a tenant — both live in auth-service's own database, "
+        "not this consumer's default (platform-core's ai4iplatform_core). Same "
+        "Postgres instance/credentials as the default connection — only the "
+        "database name differs. Mirrors notifications_consumer/config.py's own "
+        "AUTH_SERVICE_DB field exactly.",
+    )
 
     class Config:
         env_file = ".env"
