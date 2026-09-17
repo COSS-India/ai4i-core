@@ -28,10 +28,13 @@ class ServicePricing:
 class TenantBudgetStatus:
     """Tenant-level budget position — SUM of every API key's own
     budget_usage.api_key_budget_used under this tenant (across every
-    Application it has), against the tenant's own tenants.allocated_budget.
-    ``used`` is always a real Decimal (0 when the tenant has no keys yet);
-    ``snap`` mirrors BillingWriteResult.api_key_budget_snap's "None = no
-    ceiling configured, don't enforce" convention."""
+    Application it has), against the SUM of those same keys' own
+    api_key_budget_snap — the ceiling actually reachable via per-key
+    enforcement, not tenants.allocated_budget itself (see
+    fetch_tenant_budget_status). ``used`` is always a real Decimal (0 when
+    the tenant has no keys yet); ``snap`` mirrors
+    BillingWriteResult.api_key_budget_snap's "None = no ceiling configured,
+    don't enforce" convention."""
     used: Decimal
     snap: Optional[Decimal]
 
@@ -58,14 +61,31 @@ async def fetch_tenant_budget_status(
 
     Revoked keys are deliberately NOT filtered out here — same reasoning as
     _sync_ppu_wallet_and_exhaustion: a revoked key's past spend still counts
-    against the tenant's allocated_budget; it just can't accumulate any
-    more (nothing bills against a revoked key going forward).
+    against the tenant's pooled ceiling; it just can't accumulate any more
+    (nothing bills against a revoked key going forward).
 
-    Returns None when the tenant has no allocated_budget configured
-    (nullable — never had one set), or isn't found at all — same "no
-    ceiling, don't enforce" semantics BillingWriteResult.api_key_budget_snap
-    already had for a NULL per-key snap.
+    The ceiling compared against is the SUM of the tenant's keys' own
+    api_key_budget_snap, not tenants.allocated_budget directly.
+    Application allocations are only rejected when their percentages would
+    exceed 100% (application_service.py's ALLOCATION_TOTAL_EXCEEDED check),
+    never when they undershoot it, so a tenant can easily have less than
+    its full allocated_budget actually assigned to any key's budget_usage
+    row. Comparing against the raw allocated_budget would then make
+    BUDGET_THRESHOLD/BUDGET_EXHAUSTED unreachable — pooled usage could
+    never cross the configured bands, or 100%, even after every key the
+    tenant owns is itself fully spent and blocked by per-key enforcement.
+    SQL SUM ignores NULL snaps (uncapped keys), so it returns NULL — same
+    "no ceiling, don't enforce" convention as a NULL per-key snap — only
+    when none of the tenant's keys have one.
+
+    Returns None when the tenant has no allocated_budget configured at all
+    (nullable — never had one set), isn't found, or tenant_id isn't a
+    plain integer (this consumer never validates the OTel tenantId
+    attribute's shape upstream — see handler._get_otel_attributes).
     """
+    if not tenant_id.isdigit():
+        return None
+
     rows = (
         await auth_db.execute(
             text(
@@ -87,19 +107,21 @@ async def fetch_tenant_budget_status(
 
     key_ids = [row.api_key_id for row in rows if row.api_key_id is not None]
     if not key_ids:
-        return TenantBudgetStatus(used=Decimal("0"), snap=allocated_budget)
+        return TenantBudgetStatus(used=Decimal("0"), snap=None)
 
-    used_row = (
+    totals = (
         await core_db.execute(
             text(
-                "SELECT COALESCE(SUM(api_key_budget_used), 0) AS total"
+                "SELECT COALESCE(SUM(api_key_budget_used), 0) AS used_total,"
+                "       SUM(api_key_budget_snap) AS snap_total"
                 "  FROM budget_usage WHERE api_key_id = ANY(:key_ids)"
             ),
             {"key_ids": key_ids},
         )
     ).first()
-    used = used_row.total if used_row is not None else Decimal("0")
-    return TenantBudgetStatus(used=used, snap=allocated_budget)
+    used = totals.used_total if totals is not None else Decimal("0")
+    snap = totals.snap_total if totals is not None else None
+    return TenantBudgetStatus(used=used, snap=snap)
 
 
 @dataclass

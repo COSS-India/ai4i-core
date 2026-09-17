@@ -324,10 +324,19 @@ class TestBillUsageThreadsInferenceTypeId:
             # budget block is a no-op, same as this class's tests intend.
             return None
 
+        async def _disabled(db, event_name):
+            # Not under test here — _bill_usage now checks this (in-memory
+            # cache read) *before* deciding whether to open the "auth"
+            # session at all (see handler.py). False means it never does,
+            # so _FakeAuthSessionScope/fetch_tenant_budget_status below are
+            # only there in case a future test in this class needs them.
+            return False
+
         monkeypatch.setattr(h, "get_service_pricing", _pricing)
         monkeypatch.setattr(h, "get_inference_type_id", _resolve)
         monkeypatch.setattr(h, "deduct_balance_and_update_quota", _write)
         monkeypatch.setattr(h, "fetch_tenant_budget_status", _no_tenant_budget)
+        monkeypatch.setattr(h, "is_notification_enabled", _disabled)
         monkeypatch.setattr(
             h, "session_scope", lambda name=None: self._FakeAuthSessionScope()
         )
@@ -512,6 +521,7 @@ class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
         await _publish_usage_crossing_events(
             db=object(), auth_db=object(), ctx=self._ctx(), write=self._write(),
             cost=Decimal("60"), billed_units=Decimal("100"), inference_name="llm",
+            budget_threshold_enabled=True, budget_exhausted_enabled=True,
         )
 
         assert calls["threshold"], "expected at least one BUDGET_THRESHOLD band crossed"
@@ -539,6 +549,7 @@ class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
         await _publish_usage_crossing_events(
             db=object(), auth_db=object(), ctx=self._ctx(), write=write,
             cost=cost, billed_units=Decimal("100"), inference_name="llm",
+            budget_threshold_enabled=True, budget_exhausted_enabled=True,
         )
 
         bands_crossed = [band for _, _, _, band in calls["threshold"]]
@@ -557,6 +568,7 @@ class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
         await _publish_usage_crossing_events(
             db=object(), auth_db=object(), ctx=self._ctx(), write=write,
             cost=Decimal("50"), billed_units=Decimal("100"), inference_name="llm",
+            budget_threshold_enabled=True, budget_exhausted_enabled=True,
         )
 
         assert calls["threshold"] == []
@@ -574,6 +586,7 @@ class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
         await _publish_usage_crossing_events(
             db=object(), auth_db=object(), ctx=self._ctx(), write=write,
             cost=Decimal("1"), billed_units=Decimal("100"), inference_name="llm",
+            budget_threshold_enabled=True, budget_exhausted_enabled=True,
         )
 
         assert calls["exhaustion"] == [("BUDGET_EXHAUSTED", "1", {"budget_snap": "1000"})]
@@ -597,6 +610,7 @@ class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
         await _publish_usage_crossing_events(
             db=object(), auth_db=object(), ctx=self._ctx(), write=write,
             cost=Decimal("10"), billed_units=Decimal("10"), inference_name="nmt",
+            budget_threshold_enabled=True, budget_exhausted_enabled=True,
         )
 
         assert calls["threshold"] == [("QUOTA_THRESHOLD", "1", {"model_task_type": "nmt"}, 75)]
