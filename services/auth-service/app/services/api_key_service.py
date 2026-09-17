@@ -201,8 +201,8 @@ class APIKeyService:
         db_key: APIKey,
         tenant_id: Optional[str],
         budget_effective_to: Optional[datetime],
+        tenant_budget_unset: bool,
         extra_fields: Optional[dict] = None,
-        tenant_budget_unset: bool = False,
     ) -> dict:
         """The canonical Redis-hash shape for an API key — defined once so
         every writer (create, refresh, DB-fallback rehydrate) stays in sync.
@@ -216,17 +216,19 @@ class APIKeyService:
         values are strings; parsed back via
         app.utils.budget_window.is_budget_window_expired's caller.
 
-        ``tenant_budget_unset`` is the same kind of cheap-to-rederive,
-        always-fresh field: True when tenants.allocated_budget IS NULL,
-        which allocation_service.py's own TENANT_BUDGET_NOT_SET /
-        APPLICATION_BUDGET_NOT_SET checks guarantee also means no
-        Application or Key under this tenant can hold a real Budget share
-        either. /auth/validate reads it to block inference outright
-        instead of the "no allocation anywhere ⇒ unlimited, untracked
-        spend" gap this replaces. Every caller already has the tenant
-        loaded (same as budget_effective_to), so this is recomputed fresh
-        on every rebuild rather than preserved like the billing/quota
-        flags."""
+        ``tenant_budget_unset`` is likewise a required, explicit param, not
+        given a default that a caller could silently fall back on: True
+        when tenants.allocated_budget IS NULL, which allocation_service.py's
+        own TENANT_BUDGET_NOT_SET/APPLICATION_BUDGET_NOT_SET checks
+        guarantee also means no Application or Key under this tenant can
+        hold a real Budget share either. /auth/validate reads it to block
+        inference outright instead of the "no allocation anywhere ⇒
+        unlimited, untracked spend" gap this replaces. Every caller already
+        has the tenant loaded (same as budget_effective_to), so this is
+        recomputed fresh on every rebuild rather than preserved like the
+        billing/quota flags — a defaulted param here would let a future
+        caller forget it and silently write the non-blocking value for a
+        tenant that has no Budget."""
         return {
             "id": db_key.id,
             "api_key": db_key.api_key,
@@ -299,8 +301,8 @@ class APIKeyService:
             db_key,
             tenant_id,
             budget_effective_to,
-            {**self._preserved_tier_id(db_key), **preserved},
-            tenant_budget_unset=tenant_budget_unset,
+            tenant_budget_unset,
+            extra_fields={**self._preserved_tier_id(db_key), **preserved},
         )
         await self._cache.set_api_key_cache(db_key.api_key, ttl, payload)
         await self._persist_cache_snapshot(db_key, payload)
@@ -323,8 +325,8 @@ class APIKeyService:
             db_key,
             tenant_id,
             budget_effective_to,
-            self._preserved_tier_id(db_key),
-            tenant_budget_unset=tenant_budget_unset,
+            tenant_budget_unset,
+            extra_fields=self._preserved_tier_id(db_key),
         )
         await self._persist_cache_snapshot(db_key, payload)
 
@@ -1026,11 +1028,11 @@ class APIKeyService:
                 api_key,
                 str(tenant.id),
                 tenant.budget_effective_to,
-                {
+                tenant.allocated_budget is None,
+                extra_fields={
                     "tier_id": str(tenant.tier_id),
                     **({"budget-exhausted": "1"} if exhausted else {}),
                 },
-                tenant_budget_unset=tenant.allocated_budget is None,
             )
             await self._cache.set_api_key_cache(raw_key, ttl, payload)
             await self._persist_cache_snapshot(api_key, payload)

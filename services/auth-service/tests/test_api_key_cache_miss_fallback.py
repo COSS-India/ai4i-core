@@ -418,3 +418,28 @@ class TestRefreshAndCreatePersistCachedData:
         await svc._refresh_redis_cache(expired, "1")
         cache.set_api_key_cache.assert_not_awaited()
         repo.update.assert_not_awaited()
+
+
+class TestBuildCachePayloadRequiresTenantBudgetUnset:
+    """tenant_budget_unset has no default in _build_cache_payload — same
+    reasoning budget_effective_to's own docstring already gives for itself:
+    a defaulted param here would let a future caller (a cache writer added
+    later, forgetting the kwarg) silently write the non-blocking value for a
+    tenant that actually has no Budget, re-opening the exact gap
+    BUDGET_NOT_CONFIGURED closes. TypeError at the call site catches that
+    immediately instead of at runtime in production."""
+
+    def test_omitting_tenant_budget_unset_raises(self) -> None:
+        key = _api_key(cached_data={"api_key": _TOKEN, "tenant_id": "1"})
+        with pytest.raises(TypeError):
+            APIKeyService._build_cache_payload(key, "1", None)
+
+    def test_supplying_tenant_budget_unset_true_sets_the_field(self) -> None:
+        key = _api_key(cached_data={"api_key": _TOKEN, "tenant_id": "1"})
+        payload = APIKeyService._build_cache_payload(key, "1", None, True)
+        assert payload["tenant_budget_unset"] == "1"
+
+    def test_supplying_tenant_budget_unset_false_clears_the_field(self) -> None:
+        key = _api_key(cached_data={"api_key": _TOKEN, "tenant_id": "1"})
+        payload = APIKeyService._build_cache_payload(key, "1", None, False)
+        assert payload["tenant_budget_unset"] == ""
