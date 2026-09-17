@@ -37,6 +37,7 @@ export function ApplicationSpendCell({
   currency,
   hasBudget,
   noBudgetLabel,
+  minWidth = "200px",
 }: {
   spent: number;
   remaining: number;
@@ -44,6 +45,7 @@ export function ApplicationSpendCell({
   currency: string;
   hasBudget: boolean;
   noBudgetLabel: string;
+  minWidth?: string;
 }) {
   if (!hasBudget) {
     return (
@@ -57,7 +59,7 @@ export function ApplicationSpendCell({
   const visualFillPct = fillPct > 0 && fillPct < 2 ? 2 : fillPct;
 
   return (
-    <Box minW="200px">
+    <Box minW={minWidth}>
       <Flex justify="flex-end" fontSize="13px" fontWeight="bold" color="gray.800" mb="6px">
         {formatSpendMoney(spent, currency)}
       </Flex>
