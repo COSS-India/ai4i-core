@@ -1059,6 +1059,36 @@ class TestSyncKeyExhaustionFlags:
 
         api_key_service.set_budget_exhausted_for_keys.assert_awaited_once_with([11], True)
 
+    @pytest.mark.asyncio
+    async def test_explicitly_funding_a_never_configured_key_clears_it(self) -> None:
+        """The self-heal path for a Key created with allocated_budget=None
+        (flagged budget-exhausted at creation now that "intentionally
+        uncapped Application" is no longer a valid escape hatch, or seeded
+        under a Tenant that had no Budget at all): the moment an admin
+        explicitly gives this Key its own real ₹ share via a Budget
+        Allocation edit, it resolves to a genuine ceiling and lands in
+        snapshot_writes, clearing the flag through the exact same
+        _sync_key_exhaustion_flags path every other allocation edit uses —
+        no separate mechanism needed."""
+        api_key_service = AsyncMock()
+        svc = _svc(api_key_service=api_key_service)
+        app = _application(1, allocated_budget=Decimal("50000"), allocated_percentage=Decimal("50"))
+        key1 = _key(11, 1, allocated_budget=None, allocated_percentage=None)
+        svc._api_keys.get_by_id = AsyncMock(return_value=key1)
+        svc._applications.get_by_id = AsyncMock(return_value=app)
+        svc._applications.get_by_id_for_update = AsyncMock(return_value=app)
+        svc._api_keys.list_by_application = AsyncMock(return_value=[key1])
+        svc._api_keys.update = AsyncMock()
+
+        body = APIKeyBudgetAllocationRequest(api_key_id=11, allocation=_fixed("20000"))
+        with patch(
+            "app.services.budget_usage.fetch_budget_usage",
+            AsyncMock(return_value={}),
+        ), patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()):
+            await svc.update_single_api_key_allocation(11, body, _user(), None)
+
+        api_key_service.set_budget_exhausted_for_keys.assert_awaited_once_with([11], False)
+
 
 class TestExhaustionFlagSyncWiredIntoEachEndpoint:
     """One test per Budget Allocation endpoint, confirming
