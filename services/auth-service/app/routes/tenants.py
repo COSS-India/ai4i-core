@@ -268,16 +268,18 @@ async def revise_tenant_budget(
       * Active: ``budget_effective_from`` is locked (422
         ``effective_from_locked`` if given) and ``budget_effective_to`` may
         only extend it.
-      * Lapsed, but a window was assigned before: omitting
-        ``budget_effective_from`` reuses the stored one as-is and just
-        extends ``budget_effective_to`` — reactivating the SAME window
-        (remaining balance carries over, since allocated_budget/spend are
-        never window-scoped) rather than forcing a brand-new one. Giving
-        ``budget_effective_from`` explicitly re-founds it instead, moving
-        the start date too.
-      * No window on file at all: this call IS the assignment and both
-        become required (422 ``effective_window_required`` if either is
-        missing).
+      * Lapsed, but a window was assigned before: ``budget_effective_from``
+        is locked here too (422 ``effective_from_locked`` if given) —
+        AI4IDS-2995 locks it once a window is on file at all, active or
+        lapsed, not just while live. Omitting it reuses the stored one
+        as-is and just extends ``budget_effective_to`` — reactivating the
+        SAME window (remaining balance carries over, since
+        allocated_budget/spend are never window-scoped) rather than
+        forcing a brand-new one.
+      * No window on file at all: this is the ONLY case that can ever set
+        a new ``budget_effective_from`` — this call IS the assignment and
+        both fields become required (422 ``effective_window_required`` if
+        either is missing).
     See TenantService.revise_tenant_budget for the full matrix and the
     remaining 422s (``budget_effective_from_invalid`` /
     ``budget_effective_to_invalid``).
