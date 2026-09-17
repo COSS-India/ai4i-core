@@ -110,8 +110,13 @@ export async function fetchTenantTiers(): Promise<TenantTiersResponse> {
 
 export interface AdjustTenantBudgetPayload {
   tenant_id: string;
-  action: "top-up" | "top-down";
-  amount: number;
+  /**
+   * Both optional, and only ever accepted together (422 otherwise): omit the
+   * pair for a pure window edit — e.g. extending budget_effective_to without
+   * touching the ₹ amount.
+   */
+  action?: "top-up" | "top-down";
+  amount?: number;
   /** ISO 8601, UTC. */
   budget_effective_from?: string;
   /** ISO 8601, UTC. The LAST day the window is usable, inclusive. */
@@ -134,8 +139,11 @@ export async function adjustTenantBudget(
   const response = await apiClient.patch(
     apiEndpoints.tenants.tenantBudget(payload.tenant_id),
     {
-      action: payload.action,
-      amount: payload.amount,
+      // action/amount go out only as a pair — sending one alone is a 422, and
+      // sending neither is how a window-only revision is expressed.
+      ...(payload.action && payload.amount !== undefined
+        ? { action: payload.action, amount: payload.amount }
+        : {}),
       ...(payload.budget_effective_from
         ? { budget_effective_from: payload.budget_effective_from }
         : {}),
