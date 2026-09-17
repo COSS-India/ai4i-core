@@ -1,0 +1,77 @@
+{
+  "version": "v1",
+  "name": "aug-20-llm-2/Automation-ServiceID-v3",
+  "description": "A sample LLM model for demonstration purposes. Description must be at least 25 characters.",
+  "refUrl": "https://github.com/example/example-model",
+
+  "task": {
+    "type": "llm"
+  },
+
+  "languages": [
+    {
+      "sourceLanguage": "en",
+      "sourceLanguageName": "English",
+      "sourceScriptCode": "Latn",
+      "targetLanguage": "hi",
+      "targetLanguageName": "Hindi",
+      "targetScriptCode": "Deva"
+    }
+  ],
+  "isLangDetectionEnabled": false,
+  "isMultilingual": false,
+
+  "license": "mit",
+  "licenseUrl": "https://opensource.org/licenses/MIT",
+
+  "domain": ["general"],
+
+  "callbackUrl": "http://45.194.2.154:8080/v1/chat/completions",
+  "inferenceApiKey": {
+    "name": "Authorization",
+    "value": "<your-api-key>"
+  },
+  "isSyncApi": true,
+  "asyncApiDetails": null,
+
+  "adapterConfig": {
+    "model_name": "google/gemma-4-31B-it",
+    "inputs": [],
+    "outputs": []
+  },
+
+  "schema": {
+    "taskType": "llm",
+    "request": {
+      "model": "google/gemma-4-31B-it",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hello"
+        }
+      ]
+    },
+    "response": {
+      "choices": [
+        {
+          "message": {
+            "content": "Hi there! How can I help you today?"
+          }
+        }
+      ]
+    },
+    "model_name": "google/gemma-4-31B-it",
+    "modelProcessingType": null
+  },
+
+  "trainingDataset": {
+    "description": "Sample training dataset description for the example LLM model registration."
+  },
+
+  "benchmarks": [],
+
+  "submitter": {
+    "name": "Example Org",
+    "team": []
+  }
+}

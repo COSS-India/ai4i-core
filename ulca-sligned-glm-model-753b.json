@@ -1,0 +1,127 @@
+{
+  "version": "v1",
+  "name": "glm-753b",
+  "description": "GLM 753B LLM model for use",
+  // "refUrl": "https://github.com/example/example-model",
+
+  "task": {
+    "type": "llm"
+  },
+
+  "languages": [
+    {
+      "sourceLanguage": "en",
+      "sourceLanguageName": "English",
+      "sourceScriptCode": "Latn",
+      "targetLanguage": "hi",
+      "targetLanguageName": "Hindi",
+      "targetScriptCode": "Deva"
+    }
+  ],
+  "isLangDetectionEnabled": false,
+  "isMultilingual": false,
+
+  "license": "mit",
+  "licenseUrl": "https://opensource.org/licenses/MIT",
+
+  "domain": ["general"],
+
+  "callbackUrl": "http://10.185.33.138:31052/v1/chat/completions",
+  "inferenceApiKey": {
+    "name": "Authorization",
+    "value": "<your-api-key>"
+  },
+  "isSyncApi": true,
+  "asyncApiDetails": null,
+
+  "adapterConfig": {
+    "inputs": [
+      {
+        "dtype": "BYTES",
+        "shape": [
+          -1,
+          1
+        ],
+        "tensor": "INPUT_TEXT",
+        "value_path": "input.source"
+      }
+    ],
+    "outputs": [
+      {
+        "dtype": "BYTES",
+        "tensor": "OUTPUT_TEXT",
+        "maps_to": "target"
+      }
+    ],
+    "model_name": "glm-753b",
+    "version": "1.0"
+  },
+
+  "schema": {
+    "taskType": "llm",
+    "request": {
+      "model": "glm-753b",
+      "messages": [
+        {
+          "role": "user",
+          "content": "What is the capital of India?"
+        }
+      ],
+      "max_tokens": 512,
+      "temperature": 0.7,
+      "stream": false
+    },
+    "response": {
+      "id": "chatcmpl-9f4b3275a39503e3",
+      "object": "chat.completion",
+      "created": 1789646114,
+      "model": "glm-753b",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "The capital of India is New Delhi.",
+            "refusal": null,
+            "annotations": null,
+            "audio": null,
+            "function_call": null,
+            "reasoning": null
+          },
+          "logprobs": null,
+          "finish_reason": "stop",
+          "stop_reason": 154827,
+          "token_ids": null,
+          "routed_experts": null
+        }
+      ],
+      "service_tier": null,
+      "system_fingerprint": "vllm-0.27.1-tp8-c3d8734b",
+      "usage": {
+        "prompt_tokens": 19,
+        "total_tokens": 94,
+        "completion_tokens": 75,
+        "prompt_tokens_details": null
+      },
+      "prompt_logprobs": null,
+      "prompt_token_ids": null,
+      "prompt_text": null,
+      "kv_transfer_params": null,
+      "ec_transfer_params": null,
+      "metrics": null
+    },
+    "model_name": "glm-753b",
+    "modelProcessingType": null
+  },
+
+  "trainingDataset": {
+    "description": "Sample training dataset description for the GLM 753B model registration."
+  },
+
+  "benchmarks": [],
+
+  "submitter": {
+    "name": "AISwitch",
+    "team": []
+  }
+}

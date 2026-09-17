@@ -1,0 +1,124 @@
+{
+  "version": "v1",
+  "name": "nemotron-550b",
+  "description": "Nemotron 550B LLM model for chat",
+  "refUrl": "https://github.com/example/example-model",
+
+  "task": {
+    "type": "llm"
+  },
+
+  "languages": [
+    {
+      "sourceLanguage": "en",
+      "sourceLanguageName": "English",
+      "sourceScriptCode": "Latn",
+      "targetLanguage": "hi",
+      "targetLanguageName": "Hindi",
+      "targetScriptCode": "Deva"
+    }
+  ],
+  "isLangDetectionEnabled": false,
+  "isMultilingual": false,
+
+  "license": "mit",
+  "licenseUrl": "https://opensource.org/licenses/MIT",
+
+  "domain": ["general"],
+
+  "callbackUrl": "http://10.185.33.147:31055/v1/chat/completions",
+  "inferenceApiKey": {
+    "name": "Authorization",
+    "value": "<your-api-key>"
+  },
+  "isSyncApi": true,
+  "asyncApiDetails": null,
+
+  "adapterConfig": {
+    "inputs": [
+      {
+        "dtype": "BYTES",
+        "shape": [
+          -1,
+          1
+        ],
+        "tensor": "INPUT_TEXT",
+        "value_path": "input.source"
+      }
+    ],
+    "outputs": [
+      {
+        "dtype": "BYTES",
+        "tensor": "OUTPUT_TEXT",
+        "maps_to": "target"
+      }
+    ],
+    "model_name": "nemotron-550b",
+    "version": "1.0"
+  },
+
+  "schema": {
+    "taskType": "llm",
+    "request": {
+      "model": "nemotron-550b",
+      "messages": [
+        {
+          "role": "user",
+          "content": "What is the capital of India?"
+        }
+      ],
+      "max_tokens": 512,
+      "temperature": 0.7
+    },
+    "response": {
+      "id": "78772e07acc040aba860d09a16aab2fb",
+      "object": "chat.completion",
+      "created": 1789561372,
+      "model": "nemotron-550b",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "The capital of India is **New Delhi**.",
+            "reasoning_content": null,
+            "tool_calls": null
+          },
+          "logprobs": null,
+          "finish_reason": "stop",
+          "matched_stop": 11
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 23,
+        "total_tokens": 44,
+        "completion_tokens": 21,
+        "prompt_tokens_details": null,
+        "reasoning_tokens": 0
+      },
+      "metadata": {
+        "weight_version": "default",
+        "weight_versions": [
+          {
+            "version": "default",
+            "start": 0,
+            "end": 21
+          }
+        ]
+      }
+    },
+    "model_name": "nemotron-550b",
+    "modelProcessingType": null
+  },
+
+  "trainingDataset": {
+    "description": "Sample training dataset description for the Nemotron 550B model registration."
+  },
+
+  "benchmarks": [],
+
+  "submitter": {
+    "name": "AISwitch",
+    "team": []
+  }
+}
