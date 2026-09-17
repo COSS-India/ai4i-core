@@ -209,9 +209,3 @@ class ValidateAPIKeyResponse(BaseSchema):
     permission_ids: list[int] = []
     token_type: str = "api_key"
     user_id: Optional[str] = None
-
-
-class ValidateAPIKeyErrorResponse(BaseSchema):
-    valid: bool = False
-    error: str
-    message: str

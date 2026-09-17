@@ -63,15 +63,6 @@ export const getJwtToken = (): string | null => {
   return token && token.trim() !== "" ? token.trim() : null;
 };
 
-const TOKEN_EXPIRY_HINTS = [
-  "expired",
-  "token expired",
-  "invalid token",
-  "token invalid",
-  "jwt expired",
-  "access token expired",
-];
-
 type EndpointContext = {
   isAuthEndpoint: boolean;
   isAuthRefreshEndpoint: boolean;
@@ -137,11 +128,6 @@ const extractErrorMessage = (data: any, fallback: string): string => {
   }
   if (data?.message != null) return String(data.message);
   return fallback;
-};
-
-const isTokenExpiredFromMessage = (message: string): boolean => {
-  const value = message.toLowerCase();
-  return TOKEN_EXPIRY_HINTS.some((hint) => value.includes(hint));
 };
 
 const clearSessionAndRedirect = async (href: "/auth" | "/") => {
@@ -356,14 +342,21 @@ apiClient.interceptors.response.use(
                 "Authentication failed",
               );
 
-              // Check if error indicates token expiration or invalid credentials
+              // Check if error indicates invalid credentials specifically
+              // (skips straight to redirect below, without trying a refresh first).
               const errorMessageLower = errorMessage.toLowerCase();
               const isInvalidAuthCredentials = errorMessageLower.includes(
                 "invalid authentication credentials",
               );
-              const isTokenExpired =
-                isTokenExpiredFromMessage(errorMessage) ||
-                isInvalidAuthCredentials;
+              // A 401 here always means the session token is no good —
+              // auth-service's /auth/validate deliberately returns the same
+              // generic message for every reason (expired, invalid, revoked,
+              // malformed, or missing token), specifically so a caller can't
+              // tell which check failed. That used to be guessable from the
+              // message text (see git history's TOKEN_EXPIRY_HINTS), which
+              // broke the moment auth-service stopped disclosing it — key
+              // off the status code we're already switching on instead.
+              const isTokenExpired = true;
 
               // Log detailed error information
               const jwtToken = getJwtToken();
@@ -473,17 +466,11 @@ apiClient.interceptors.response.use(
               return Promise.reject(enhancedError);
             } else {
               // For auth endpoints and other non-service endpoints
-              // Check if token expired and redirect to sign-in if so
-
-              // Extract error message to check for expiration
-              const errorMessage = extractErrorMessage(data, "");
-
-              const errorMessageLower = errorMessage.toLowerCase();
-              const isTokenExpired =
-                isTokenExpiredFromMessage(errorMessage) ||
-                errorMessageLower.includes(
-                  "invalid authentication credentials",
-                );
+              // A 401 here always means the session token is no good — see
+              // the matching comment in the service/model-management branch
+              // above for why this is no longer (and shouldn't be) decided
+              // from the response message.
+              const isTokenExpired = true;
 
               if (!originalRequest._retry) {
                 originalRequest._retry = true;

@@ -168,13 +168,13 @@ class AuthService {
       }
 
       if (withAuth && endpoint !== authPath.changePassword) {
-        const errorMessageLower = errorMessage.toLowerCase();
-        const isInvalidAuth =
-          errorMessageLower.includes('invalid authentication credentials') ||
-          errorMessageLower.includes('token expired') ||
-          errorMessageLower.includes('token has expired') ||
-          errorMessageLower.includes('token is invalid') ||
-          errorMessageLower.includes('session expired');
+        // A 401 here always means the session token is no good —
+        // auth-service's /auth/validate deliberately returns the same
+        // generic message for every reason (expired, invalid, revoked,
+        // malformed, or missing token), so this can no longer be (and
+        // shouldn't be) decided from the response message. See the matching
+        // comment in api.ts's response interceptor.
+        const isInvalidAuth = status === 401;
 
         if (isInvalidAuth && typeof window !== 'undefined') {
           this.clearAuthTokens();
