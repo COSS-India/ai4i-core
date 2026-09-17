@@ -27,7 +27,7 @@ from app.core.permission_checker import endpoint_permission_map_loaded, permissi
 from app.core.redis import get_redis
 from app.core.exceptions import AuthenticationRequiredError, InvalidAPIKeyError
 from app.dependencies.auth import check_token_revocation, get_jwt_verifier
-from app.schemas.api_key import ValidateAPIKeyErrorResponse, ValidateAPIKeyResponse
+from app.schemas.api_key import ValidateAPIKeyResponse
 from app.schemas.token import (
     TokenValidationResponse,
     ValidateTokenErrorResponse,
@@ -174,6 +174,31 @@ def _extract_token(request: Request) -> str:
     return raw
 
 
+def _unauthenticated(reason: str) -> JSONResponse:
+    """The one 401 body for every "we could not identify this caller" case —
+    a malformed/garbage token, an expired or revoked JWT, or an unknown/
+    revoked API key. Per the agreed auth-response contract: 401 means we
+    couldn't identify the caller at all, and the client only ever sees that
+    much — never *why* (expired vs invalid vs revoked vs wrong format).
+    Disclosing which specific check failed would let a caller probe the
+    difference between "this token doesn't exist" and "this token exists
+    but is expired/revoked", which is exactly the kind of detail an
+    authentication boundary shouldn't leak.
+
+    `reason` is never sent to the client — it's logged here only, so the
+    real cause is still available in auth-service's own logs for debugging,
+    same as every other place in this codebase that fails safe/generic
+    towards the caller but loud towards operators."""
+    logger.info("Authentication failed | reason=%s", reason)
+    return JSONResponse(
+        status_code=401,
+        content=ValidateTokenErrorResponse(
+            error="UNAUTHENTICATED",
+            message="Authentication failed.",
+        ).model_dump(),
+    )
+
+
 # ── Per-token-type validators ─────────────────────────────────────────────
 
 
@@ -199,23 +224,14 @@ async def _validate_api_key(
     try:
         result = await api_key_svc.validate_api_key(token)
     except InvalidAPIKeyError:
-        return JSONResponse(
-            status_code=401,
-            content=ValidateAPIKeyErrorResponse(error="INVALID_API_KEY", message="API key not found or has been revoked.").model_dump(),
-        )
+        return _unauthenticated("INVALID_API_KEY")
 
     # validate_api_key() returns {"valid": False, ...} rather than raising
     # when the token isn't even hex-key shaped (wrong length/charset) — catch
     # that here so it doesn't fall through the rest of this function as if it
     # were a valid result (no user_id ⇒ X-User-ID silently never set).
     if result.get("valid") is False:
-        return JSONResponse(
-            status_code=401,
-            content=ValidateAPIKeyErrorResponse(
-                error="INVALID_API_KEY_FORMAT",
-                message=result.get("message") or "Invalid API key format.",
-            ).model_dump(),
-        )
+        return _unauthenticated(result.get("message") or "INVALID_API_KEY_FORMAT")
 
     permission_ids = result.get("permissions") or result.get("permission_ids") or []
     if not _check_endpoint_permission(request, permission_ids):
@@ -328,21 +344,9 @@ async def _validate_jwt(
     try:
         claims = await get_jwt_verifier().verify(token)
     except JWTExpiredError:
-        return JSONResponse(
-            status_code=401,
-            content=ValidateTokenErrorResponse(
-                error="TOKEN_EXPIRED",
-                message="Token has expired.",
-            ).model_dump(),
-        )
+        return _unauthenticated("TOKEN_EXPIRED")
     except JWTVerificationError:
-        return JSONResponse(
-            status_code=401,
-            content=ValidateTokenErrorResponse(
-                error="TOKEN_INVALID",
-                message="Token is invalid.",
-            ).model_dump(),
-        )
+        return _unauthenticated("TOKEN_INVALID")
 
     # Not gated on claims.token_id: access tokens carry `jti`, not `token_id`
     # (only api_key tokens set token_id) — the global-logout check below keys
@@ -354,13 +358,7 @@ async def _validate_jwt(
         user_id=str(claims.user_id) if claims.user_id else None,
         issued_at=claims.raw.get("iat"),
     ):
-        return JSONResponse(
-            status_code=401,
-            content=ValidateTokenErrorResponse(
-                error="TOKEN_REVOKED",
-                message="Token has been revoked.",
-            ).model_dump(),
-        )
+        return _unauthenticated("TOKEN_REVOKED")
 
     if not _check_endpoint_permission(request, claims.permission_ids):
         return JSONResponse(
@@ -402,14 +400,20 @@ async def _validate_jwt(
         401: {
             "model": ValidateTokenErrorResponse,
             "description": (
-                "Expired, invalid, or revoked JWT — body is "
-                "{valid, error, message} with a machine-readable `error` code. "
-                "Two other 401 cases exist on this endpoint but have a different "
-                "body: a missing token raises AuthenticationRequiredError, "
-                "rendered as the platform's {detail: {code, message, timestamp}} "
-                "envelope; an unknown/revoked API key returns the same "
-                "{valid, error, message} shape but with `error` set to a "
-                "human-readable sentence rather than a code."
+                "The caller could not be identified at all — no token, or a "
+                "token that's malformed, unreadable, expired, revoked, or "
+                "otherwise unrecognisable (this covers both JWTs and API "
+                "keys). Body is the generic {valid: false, error: "
+                "\"UNAUTHENTICATED\", message: \"Authentication failed.\"} — "
+                "deliberately the SAME body for every one of those cases: "
+                "the specific reason is intentionally not disclosed to the "
+                "caller (it would otherwise let someone probe, e.g., "
+                "'expired' vs 'revoked' vs 'wrong format'), and is only "
+                "logged server-side. The one exception is a request with no "
+                "token at all, which instead raises AuthenticationRequiredError "
+                "and renders as the platform's {detail: {code, message, "
+                "timestamp}} envelope — a different shape, but equally "
+                "generic content."
             ),
         },
         403: {

@@ -5,6 +5,7 @@ their permission_ids from the in-process role_permission_cache.
 """
 
 import logging
+from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import text
@@ -106,7 +107,12 @@ class RoleService:
             )
 
     async def assign_role(
-        self, user_id: UUID, role_name: str | RoleName, *, commit: bool = True
+        self,
+        user_id: UUID,
+        role_name: str | RoleName,
+        *,
+        commit: bool = True,
+        created_by: Optional[UUID] = None,
     ) -> None:
         """
         Assign a role to a user. Permissions are additive — existing roles are
@@ -114,6 +120,12 @@ class RoleService:
 
         When ``commit=False``, flush only — caller commits the shared session
         (e.g. tenant user PATCH batches role + profile in one transaction).
+
+        ``created_by`` is the acting admin's id for an admin-driven
+        assignment (e.g. provision_user, update_tenant_user's role change);
+        left None for a self-service default-role assignment (registration,
+        OAuth signup) where there is no admin actor — the user is assigning
+        their own default role, not being granted one by someone else.
         """
         key = role_name_to_str(role_name)
         role = await self._roles.get_role_by_name(key)
@@ -127,7 +139,7 @@ class RoleService:
         if existing:
             return
 
-        await self._roles.assign_role(user_id, role.id)
+        await self._roles.assign_role(user_id, role.id, created_by=created_by)
         if commit:
             await self._roles.commit()
             logger.info("Role '%s' assigned to user %s", key, user_id)
@@ -183,7 +195,9 @@ class RoleService:
             excluded_resources=self._expanded_excluded_resources_for_platform_inference(),
         )
 
-    async def assign_guest_inference_services(self, services: list[str]) -> list[str]:
+    async def assign_guest_inference_services(
+        self, services: list[str], *, created_by: Optional[UUID] = None
+    ) -> list[str]:
         managed = await self.list_inference_permissions()
         by_norm_resource: dict[str, Permission] = {}
         for perm in managed:
@@ -227,7 +241,9 @@ class RoleService:
             raise EntityNotFoundError(f"Role '{RoleName.GUEST.value}'")
 
         await self._roles.delete_role_permissions_for_permission_ids(guest.id, managed_ids)
-        await self._roles.insert_role_permissions(guest.id, [p.id for p in resolved])
+        await self._roles.insert_role_permissions(
+            guest.id, [p.id for p in resolved], created_by=created_by
+        )
         await self._roles.commit()
         logger.info("GUEST inference services set to: %s", [p.resource for p in resolved])
         return [p.resource for p in resolved]

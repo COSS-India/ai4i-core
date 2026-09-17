@@ -28,13 +28,13 @@ const TIER_QUERY_KEY = "tiers";
 const TIER_STATUS_ACTIONS = {
   INACTIVE: {
     target: "ACTIVE" as TierStatus,
-    label: "Publish",
-    title: "Publish Tier",
-    body: "Are you sure you want to publish this Tier?",
-    confirmLabel: "Publish",
+    label: "Activate",
+    title: "Activate Tier",
+    body: "Are you sure you want to activate this Tier?",
+    confirmLabel: "Activate",
     colorScheme: "blue",
-    loadingText: "Publishing...",
-    successTitle: "Tier published",
+    loadingText: "Activating...",
+    successTitle: "Tier activated",
     successDescription:
       "It is now available for service mapping and tenant assignment.",
   },
@@ -52,13 +52,13 @@ const TIER_STATUS_ACTIONS = {
   },
   DEACTIVATED: {
     target: "ACTIVE" as TierStatus,
-    label: "Reactivate",
-    title: "Reactivate Tier",
-    body: "Are you sure you want to reactivate this Tier?",
-    confirmLabel: "Reactivate",
+    label: "Activate",
+    title: "Activate Tier",
+    body: "Are you sure you want to activate this Tier?",
+    confirmLabel: "Activate",
     colorScheme: "green",
-    loadingText: "Reactivating...",
-    successTitle: "Tier reactivated",
+    loadingText: "Activating...",
+    successTitle: "Tier activated",
     successDescription: "Monthly quota has been reset.",
   },
 } as const;
@@ -131,7 +131,7 @@ export function useTierManagement() {
   const [tierToDelete, setTierToDelete] = useState<Tier | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  // Lifecycle status transitions (publish / deactivate / reactivate).
+  // Lifecycle status transitions (activate / deactivate).
   const [statusTier, setStatusTier] = useState<Tier | null>(null);
   const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
 

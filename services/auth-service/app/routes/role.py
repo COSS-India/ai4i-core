@@ -68,7 +68,7 @@ async def list_roles(
 async def assign_role(
     request: Request,
     body: RoleAssignRequest,
-    _admin: User = Depends(require_any_role(RoleName.ADMIN, RoleName.TENANT_ADMIN)),
+    admin: User = Depends(require_any_role(RoleName.ADMIN, RoleName.TENANT_ADMIN)),
     svc: RoleService = Depends(get_role_service),
     db: AsyncSession = Depends(get_db),
 ):
@@ -78,14 +78,14 @@ async def assign_role(
     or TENANT_ADMIN.
     """
     await enforce_target_user_same_tenant(
-        request, _admin, body.user_id, db, bypass_roles=(RoleName.ADMIN, RoleName.MODERATOR)
+        request, admin, body.user_id, db, bypass_roles=(RoleName.ADMIN, RoleName.MODERATOR)
     )
     if body.role_name == RoleName.TENANT_ADMIN:
         target = await UserRepository(db).get_by_id(body.user_id)
         if not target:
             raise EntityNotFoundError(f"User {body.user_id}")
         await assert_tenant_admin_assignable(TenantRepository(db), target.tenant_id)
-    await svc.assign_role(body.user_id, body.role_name)
+    await svc.assign_role(body.user_id, body.role_name, created_by=admin.id)
     return AssignRoleResponse(
         data=MessageData(
             message=f"Role '{body.role_name.value}' assigned to user {body.user_id}."
@@ -154,14 +154,14 @@ async def get_user_roles(
 )
 async def assign_guest_services(
     body: GuestServicesAssignRequest,
-    _admin: User = Depends(require_any_role(RoleName.ADMIN, RoleName.MODERATOR)),
+    admin: User = Depends(require_any_role(RoleName.ADMIN, RoleName.MODERATOR)),
     svc: RoleService = Depends(get_role_service),
 ):
     """Set which inference services the GUEST role may use.
 
     Replaces prior managed inference links. Requires ADMIN or MODERATOR.
     """
-    assigned = await svc.assign_guest_inference_services(body.services)
+    assigned = await svc.assign_guest_inference_services(body.services, created_by=admin.id)
     return AssignGuestServicesResponse(data=GuestServicesData(services=assigned))
 
 

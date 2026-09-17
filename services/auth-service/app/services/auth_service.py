@@ -227,6 +227,11 @@ class AuthService:
             user_id=user.id,
             password_hash=hash_result.hashed,
             password_salt=hash_result.salt,
+            # Self-registration — the user sets their own password, so this
+            # is self-created, matching persist_token_verification's own
+            # created_by=user_id convention for the same "who owns/created
+            # this record" question on a self-service row.
+            created_by=user.id,
         )
         await self._credentials.create(creds)
 
@@ -585,6 +590,10 @@ class AuthService:
             user_id=user.id,
             password_hash=hash_result.hashed,
             password_salt=hash_result.salt,
+            # Self-set: the user themselves consumes their own setup link
+            # and chooses this password — not an admin action, even though
+            # an admin may have provisioned the account itself earlier.
+            created_by=user.id,
         )
         await self._credentials.create(creds)
 

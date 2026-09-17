@@ -31,7 +31,7 @@ docstring for which rule applies where.
 """
 
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
-from typing import Optional
+from typing import Optional, Union
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -155,10 +155,10 @@ class AllocationService:
         # ones — the feasibility check needs a consistent, race-free
         # snapshot of every sibling's current ₹, whether or not this call
         # ends up writing them. One batched SELECT ... FOR UPDATE
-        # (list_by_tenant_for_update), not one round trip per Application —
+        # (lock_tenant_applications), not one round trip per Application —
         # the result is already the locked, up-to-date rows, so no
         # separate unlocked list_by_tenant call is needed first.
-        locked_applications = await self._applications.list_by_tenant_for_update(tenant_id)
+        locked_applications = await self._applications.lock_tenant_applications(tenant_id)
         applications = self._active_applications(locked_applications)
         if not applications:
             raise EntityNotFoundError(f"Applications for tenant {tenant_id}")
@@ -186,84 +186,39 @@ class AllocationService:
                 # else: unknown everywhere — resolve_level below raises
                 # EntityNotFoundError for it, same as any other unknown id.
 
-        applications_by_id = {app.id: app for app in applications}
-
         keys_by_app, usage_map = await self._load_keys_and_usage(
             [app.id for app in applications], platform_core_db
         )
 
-        children = [
-            AllocationRow(
-                id=app.id,
-                allocated_amount=app.allocated_budget or _ZERO,
-                allocated_percentage=app.allocated_percentage or _ZERO,
-                consumed_amount=self._consumed_total(keys_by_app.get(app.id, []), usage_map),
-                has_children=True,
-            )
-            for app in applications
-        ]
-        # Captured before any .update() call below mutates these same
-        # (identity-mapped) Application objects in place — resolve_level's
-        # unlisted-Key re-fit needs each cascaded Application's amount from
-        # BEFORE this call, and app_obj.allocated_budget stops being that
-        # the instant it's persisted.
-        old_amounts_by_id = {app.id: (app.allocated_budget or _ZERO) for app in applications}
-        explicit = [
-            _explicit_input(row.application_id, row.allocation) for row in body.applications
-        ]
-        fixed_ids = {row.application_id for row in body.applications if row.allocation.type == "FIXED"}
+        # Phase 1: resolve and persist application-level allocations
+        resolved_apps, old_amounts_by_id, fixed_ids = await self._resolve_and_persist_applications(
+            parent_amount=tenant.allocated_budget,
+            request_rows=body.applications,
+            applications=applications,
+            keys_by_app=keys_by_app,
+            usage_map=usage_map,
+            current_user=current_user,
+        )
 
-        # refit_unlisted=False: only explicitly-listed Applications come
-        # back resolved — an unlisted one is never touched, merged back
-        # in from its current DB values below instead.
-        resolved_apps = resolve_level(tenant.allocated_budget, children, explicit, refit_unlisted=False)
-
+        # Phase 2: cascade into keys and build response
         request_row_by_id: dict[int, ApplicationAllocationRow] = {
             row.application_id: row for row in body.applications
         }
         snapshot_writes: dict[int, Decimal] = {}
         response_rows: list[ApplicationAllocationResponseItem] = []
-        resolved_ids: set = set()
+        resolved_ids = {resolved.id for resolved in resolved_apps}
 
         for resolved in resolved_apps:
-            resolved_ids.add(resolved.id)
-            app_obj = applications_by_id[resolved.id]
-            old_amount = old_amounts_by_id[resolved.id]
-            if resolved.changed:
-                await self._applications.update(
-                    app_obj,
-                    {
-                        "allocated_budget": resolved.amount,
-                        "allocated_percentage": resolved.percentage,
-                        "updated_by": current_user.id,
-                    },
-                )
-
-            # Every row here was explicitly listed (refit_unlisted=False
-            # means only explicit rows are ever resolved), so a request
-            # row always exists.
+            # refit_unlisted=False in _resolve_and_persist_applications means
+            # resolve_level only returns explicitly listed rows, so every
+            # resolved.id is guaranteed to be in request_row_by_id.
             nested_api_keys = request_row_by_id[resolved.id].api_keys
-            # None (not []) when this Application's Keys aren't resolved
-            # this call — [] would be indistinguishable from "resolved,
-            # and this Application genuinely has zero Keys" (see
-            # ApplicationAllocationResponseItem.api_keys's own docstring).
-            # application_amount_changed=resolved.changed selects the rule
-            # one level down: when the Application's own ₹ actually moved,
-            # its Keys unconditionally re-fit to track that (parent/child).
-            # When it DIDN'T move — a caller submitting this Application at
-            # its current value just to nest Key edits under it — its
-            # un-listed Keys follow the SAME sibling rule this level itself
-            # follows: left exactly as they are, not swept into a re-fit
-            # that has nothing forcing it. Without this, a nested edit
-            # under an unchanged Application would silently reintroduce
-            # the sibling Key re-fit the direct Key endpoints deliberately
-            # removed.
             key_allocations_out: Optional[list[APIKeyAllocationResponseItem]] = None
             if resolved.changed or nested_api_keys:
                 key_allocations_out = await self._cascade_into_keys(
                     application_id=resolved.id,
                     new_application_amount=resolved.amount,
-                    old_application_amount=old_amount,
+                    old_application_amount=old_amounts_by_id[resolved.id],
                     nested_explicit=nested_api_keys,
                     existing_keys=self._active(keys_by_app.get(resolved.id, [])),
                     usage_map=usage_map,
@@ -283,8 +238,6 @@ class AllocationService:
                 )
             )
 
-        # Every Application NOT listed — merged back in from its current
-        # DB values, untouched; api_keys=None since it wasn't resolved.
         for app in applications:
             if app.id in resolved_ids:
                 continue
@@ -299,9 +252,7 @@ class AllocationService:
                 )
             )
 
-        await self._db.commit()
-        await budget_usage.write_budget_snapshot(snapshot_writes, platform_core_db)
-        await self._sync_key_exhaustion_flags(snapshot_writes, usage_map)
+        await self._finalize(snapshot_writes, usage_map, platform_core_db)
         return response_rows
 
     # ── Edge 2: Application -> API Keys ─────────────────────────────────
@@ -341,25 +292,7 @@ class AllocationService:
                 code="APPLICATION_ID_MISMATCH",
             )
 
-        application = await self._applications.get_by_id(application_id)
-        if application is None:
-            raise EntityNotFoundError(f"Application {application_id}")
-        await authorize_institution_scope(self._roles, current_user, application.tenant_id)
-
-        # get_by_id_for_update's populate_existing=True refreshes the same
-        # identity-mapped ``application`` object in place — but it CAN
-        # legitimately return None if the row was deleted between the
-        # unlocked lookup above and this lock attempt.
-        application = await self._applications.get_by_id_for_update(application_id)
-        if application is None:
-            raise EntityNotFoundError(f"Application {application_id}")
-        if application.allocated_budget is None:
-            raise ValidationError(
-                message="This Application has no Budget allocation yet — it must be given a "
-                "share of the Institution's Budget before its own Keys can be reallocated.",
-                code="APPLICATION_BUDGET_NOT_SET",
-            )
-
+        application = await self._load_and_lock_application(application_id, current_user)
         self._assert_matches_current_application_allocation(application, body.allocation)
 
         # Revoked Keys are terminal (no reissue) — excluded from this
@@ -372,7 +305,7 @@ class AllocationService:
         )
 
         snapshot_writes: dict[int, Decimal] = {}
-        key_allocations_out = await self._resolve_and_persist_keys(
+        resolved_keys, fixed_ids, refit_unlisted = await self._resolve_and_persist_keys(
             parent_amount=application.allocated_budget,
             nested_explicit=body.api_keys,
             existing_keys=existing_keys,
@@ -382,10 +315,9 @@ class AllocationService:
             refit_unlisted=False,
             owning_application_id=application_id,
         )
+        key_allocations_out = self._build_key_response(resolved_keys, existing_keys, fixed_ids, refit_unlisted)
 
-        await self._db.commit()
-        await budget_usage.write_budget_snapshot(snapshot_writes, platform_core_db)
-        await self._sync_key_exhaustion_flags(snapshot_writes, usage_map)
+        await self._finalize(snapshot_writes, usage_map, platform_core_db)
 
         return ApplicationAllocationResponseItem(
             application_id=application_id,
@@ -436,20 +368,7 @@ class AllocationService:
                 code="API_KEY_REVOKED",
             )
 
-        application = await self._applications.get_by_id(key.application_id)
-        if application is None:
-            raise EntityNotFoundError(f"Application {key.application_id}")
-        await authorize_institution_scope(self._roles, current_user, application.tenant_id)
-
-        application = await self._applications.get_by_id_for_update(key.application_id)
-        if application is None:
-            raise EntityNotFoundError(f"Application {key.application_id}")
-        if application.allocated_budget is None:
-            raise ValidationError(
-                message="This Application has no Budget allocation yet — it must be given a "
-                "share of the Institution's Budget before its own Keys can be reallocated.",
-                code="APPLICATION_BUDGET_NOT_SET",
-            )
+        application = await self._load_and_lock_application(key.application_id, current_user)
 
         existing_keys = self._active(await self._api_keys.list_by_application(application.id))
         usage_map = await budget_usage.fetch_budget_usage(
@@ -457,7 +376,7 @@ class AllocationService:
         )
 
         snapshot_writes: dict[int, Decimal] = {}
-        key_allocations_out = await self._resolve_and_persist_keys(
+        resolved_keys, fixed_ids, refit_unlisted = await self._resolve_and_persist_keys(
             parent_amount=application.allocated_budget,
             nested_explicit=[APIKeyAllocationRow(api_key_id=key_id, allocation=body.allocation)],
             existing_keys=existing_keys,
@@ -467,10 +386,9 @@ class AllocationService:
             refit_unlisted=False,
             owning_application_id=application.id,
         )
+        key_allocations_out = self._build_key_response(resolved_keys, existing_keys, fixed_ids, refit_unlisted)
 
-        await self._db.commit()
-        await budget_usage.write_budget_snapshot(snapshot_writes, platform_core_db)
-        await self._sync_key_exhaustion_flags(snapshot_writes, usage_map)
+        await self._finalize(snapshot_writes, usage_map, platform_core_db)
 
         return ApplicationAllocationResponseItem(
             application_id=application.id,
@@ -543,12 +461,12 @@ class AllocationService:
         """
         # One batched SELECT ... FOR UPDATE, not one round trip per
         # Application — see update_tenant_application_allocations's own
-        # comment on list_by_tenant_for_update for why. Filtered to ACTIVE
+        # comment on lock_tenant_applications for why. Filtered to ACTIVE
         # only, same reasoning as that method's own filter: an INACTIVE
         # Application's allocated_budget must not permanently block room
         # a top-down needs to free (see _active_applications).
         applications = self._active_applications(
-            await self._applications.list_by_tenant_for_update(tenant_id)
+            await self._applications.lock_tenant_applications(tenant_id)
         )
         if not applications:
             return 0, 0, {}
@@ -757,6 +675,167 @@ class AllocationService:
         if now_clear:
             await self._api_key_service.set_budget_exhausted_for_keys(now_clear, False)
 
+    async def _finalize(
+        self,
+        snapshot_writes: dict[int, Decimal],
+        usage_map: dict[int, tuple[Decimal, Decimal]],
+        platform_core_db: Optional[AsyncSession],
+    ) -> None:
+        """Commit the transaction, write resolved key ceilings to the budget_usage
+        snapshot, then recompute exhaustion flags for every key whose ceiling changed.
+        Called at the end of every public endpoint after all DB writes are staged."""
+        await self._db.commit()
+        await budget_usage.write_budget_snapshot(snapshot_writes, platform_core_db)
+        await self._sync_key_exhaustion_flags(snapshot_writes, usage_map)
+
+    @staticmethod
+    def _build_key_response(
+        resolved_keys: list[ResolvedRow],
+        existing_keys: list[APIKey],
+        fixed_ids: set[int],
+        refit_unlisted: bool,
+    ) -> list[APIKeyAllocationResponseItem]:
+        """Build the full per-key response for a parent Application.
+
+        When refit_unlisted=False, resolve_level only returns the explicitly
+        edited keys — every untouched sibling is merged back in here from its
+        current DB values, always reported as PERCENTAGE. When refit_unlisted=True,
+        resolve_level already returns every key (the parent amount changed, so all
+        children were re-fit), so no merge-back is needed."""
+        resolved_ids = {r.id for r in resolved_keys}
+        rows = [
+            APIKeyAllocationResponseItem(
+                api_key_id=r.id,
+                allocation=_response_allocation(r.id, r.amount, r.percentage, fixed_ids),
+                allocated_budget=r.amount,
+            )
+            for r in resolved_keys
+        ]
+        if not refit_unlisted:
+            for key in existing_keys:
+                if key.id not in resolved_ids:
+                    rows.append(
+                        APIKeyAllocationResponseItem(
+                            api_key_id=key.id,
+                            allocation=AllocationValue(
+                                type="PERCENTAGE", value=key.allocated_percentage or _ZERO
+                            ),
+                            allocated_budget=key.allocated_budget or _ZERO,
+                        )
+                    )
+        return rows
+
+    async def _load_and_lock_application(self, application_id: int, current_user: User) -> Application:
+        """Unlocked lookup (for tenant_id) → authorize → locked re-fetch → validate budget set.
+
+        The two-step get/get_for_update is intentional: get_by_id_for_update's
+        populate_existing=True can legitimately return None if the row is deleted
+        between the unlocked read and the lock attempt."""
+        application = await self._applications.get_by_id(application_id)
+        if application is None:
+            raise EntityNotFoundError(f"Application {application_id}")
+        await authorize_institution_scope(self._roles, current_user, application.tenant_id)
+        application = await self._applications.get_by_id_for_update(application_id)
+        if application is None:
+            raise EntityNotFoundError(f"Application {application_id}")
+        if application.allocated_budget is None:
+            raise ValidationError(
+                message="This Application has no Budget allocation yet — it must be given a "
+                "share of the Institution's Budget before its own Keys can be reallocated.",
+                code="APPLICATION_BUDGET_NOT_SET",
+            )
+        return application
+
+    async def _resolve_and_persist_level(
+        self,
+        *,
+        parent_amount: Decimal,
+        children: list[AllocationRow],
+        explicit: list[ExplicitInput],
+        entity_map: dict[int, Union[Application, APIKey]],
+        repo: Union[ApplicationRepository, APIKeyRepository],
+        current_user: User,
+        refit_unlisted: bool = False,
+        parent_old_amount: Optional[Decimal] = None,
+        snapshot_writes: Optional[dict[int, Decimal]] = None,
+    ) -> list[ResolvedRow]:
+        """Generic resolve-and-persist core shared by both levels (tenant→apps and app→keys).
+
+        Calls resolve_level with the supplied children, explicit inputs, and flags,
+        then persists every changed row via the given repo and entity_map. When
+        snapshot_writes is provided (key-level calls only), each changed key's new
+        ceiling is recorded there for the budget_usage write-through in _finalize."""
+        resolved = resolve_level(
+            parent_amount,
+            children,
+            explicit,
+            refit_unlisted=refit_unlisted,
+            parent_old_amount=parent_old_amount,
+        )
+        for r in resolved:
+            if r.changed:
+                await repo.update(
+                    entity_map[r.id],
+                    {
+                        "allocated_budget": r.amount,
+                        "allocated_percentage": r.percentage,
+                        "updated_by": current_user.id,
+                    },
+                )
+                if snapshot_writes is not None:
+                    snapshot_writes[r.id] = r.amount
+        return resolved
+
+    async def _resolve_and_persist_applications(
+        self,
+        *,
+        parent_amount: Decimal,
+        request_rows: list[ApplicationAllocationRow],
+        applications: list[Application],
+        keys_by_app: dict[int, list[APIKey]],
+        usage_map: dict[int, tuple[Decimal, Decimal]],
+        current_user: User,
+    ) -> tuple[list[ResolvedRow], dict[int, Decimal], set[int]]:
+        """Resolve and persist application-level allocations (tenant → apps).
+
+        Builds children from the active Application list, calls
+        _resolve_and_persist_level with refit_unlisted=False (an unlisted
+        Application is never moved), and returns the resolved rows plus
+        old_amounts_by_id (captured before any update so the cascade phase
+        can scale each Application's Keys by the actual change) and
+        fixed_ids (for response type reporting).
+        """
+        applications_by_id = {app.id: app for app in applications}
+        children = [
+            AllocationRow(
+                id=app.id,
+                allocated_amount=app.allocated_budget or _ZERO,
+                allocated_percentage=app.allocated_percentage or _ZERO,
+                consumed_amount=self._consumed_total(keys_by_app.get(app.id, []), usage_map),
+                has_children=True,
+            )
+            for app in applications
+        ]
+        # Must be captured before _resolve_and_persist_level mutates these
+        # identity-mapped objects — app.allocated_budget stops being the old
+        # amount the instant it's persisted, and _cascade_into_keys needs the
+        # true delta to scale each Application's Keys correctly.
+        old_amounts_by_id = {app.id: (app.allocated_budget or _ZERO) for app in applications}
+        explicit = [_explicit_input(row.application_id, row.allocation) for row in request_rows]
+        fixed_ids = {row.application_id for row in request_rows if row.allocation.type == "FIXED"}
+
+        resolved_rows = await self._resolve_and_persist_level(
+            parent_amount=parent_amount,
+            children=children,
+            explicit=explicit,
+            entity_map=applications_by_id,
+            repo=self._applications,
+            current_user=current_user,
+            refit_unlisted=False,
+        )
+
+        return resolved_rows, old_amounts_by_id, fixed_ids
+
     async def _cascade_into_keys(
         self,
         *,
@@ -791,9 +870,9 @@ class AllocationService:
         resize left (see resolve_level's docstring). resolve_level itself
         already returns every Key when refit_unlisted=True, so no
         merge-back-in step is needed here for that path; the False path's
-        merge-back happens inside _resolve_and_persist_keys, same as the
+        merge-back happens inside _build_key_response, same as the
         direct endpoints."""
-        return await self._resolve_and_persist_keys(
+        resolved_keys, fixed_ids, refit_unlisted = await self._resolve_and_persist_keys(
             parent_amount=new_application_amount,
             parent_old_amount=old_application_amount,
             nested_explicit=nested_explicit,
@@ -804,6 +883,7 @@ class AllocationService:
             refit_unlisted=application_amount_changed,
             owning_application_id=application_id,
         )
+        return self._build_key_response(resolved_keys, existing_keys, fixed_ids, refit_unlisted)
 
     async def _resolve_and_persist_keys(
         self,
@@ -817,27 +897,24 @@ class AllocationService:
         refit_unlisted: bool,
         owning_application_id: Optional[int] = None,
         parent_old_amount: Optional[Decimal] = None,
-    ) -> list[APIKeyAllocationResponseItem]:
+    ) -> tuple[list[ResolvedRow], set[int], bool]:
         """The one place every Key-resolution call site (the Application-scope
         cascade, the direct Application-level endpoint, and the single-Key
-        endpoint) actually resolves + persists Keys — same resolve_level
-        call, same persistence, same snapshot bookkeeping; only
-        ``refit_unlisted`` and the KEY_APPLICATION_MISMATCH check (only
-        meaningful when nested under a specific Application) differ per
-        call site. ``refit_unlisted=True`` is for _cascade_into_keys only
+        endpoint) actually resolves + persists Keys — same
+        _resolve_and_persist_level call, same persistence, same snapshot
+        bookkeeping; only ``refit_unlisted`` and the KEY_APPLICATION_MISMATCH
+        check (only meaningful when nested under a specific Application) differ
+        per call site. ``refit_unlisted=True`` is for _cascade_into_keys only
         (an Application's own total genuinely changing forces its Keys to
         react); the two direct-edit endpoints
         (update_application_key_allocations,
         update_single_api_key_allocation) always pass False — resizing one
         Key never moves another.
 
-        When refit_unlisted=False, resolve_level only returns the rows it
-        actually resolved (the explicit ones) — every OTHER existing Key is
-        merged back into the response here from its current DB values
-        (untouched, always reported as PERCENTAGE — see
-        _response_allocation), since the response contract for all three
-        endpoints is "every Key under the Application," not just the
-        edited ones.
+        Returns (resolved_keys, fixed_ids, refit_unlisted). Returning
+        refit_unlisted alongside the other values ensures _build_key_response
+        always uses the same flag that governed the resolve step — callers
+        cannot accidentally pass a different value to each.
         """
         known_key_ids = {k.id for k in existing_keys}
         if owning_application_id is not None:
@@ -866,6 +943,7 @@ class AllocationService:
                         # else: unknown everywhere — resolve_level below raises
                         # EntityNotFoundError for it, same as any other unknown id.
 
+        keys_by_id = {key.id: key for key in existing_keys}
         explicit = [_explicit_input(row.api_key_id, row.allocation) for row in nested_explicit]
         fixed_ids = {row.api_key_id for row in nested_explicit if row.allocation.type == "FIXED"}
         key_rows = [
@@ -878,52 +956,16 @@ class AllocationService:
             for key in existing_keys
         ]
 
-        resolved_keys: list[ResolvedRow] = resolve_level(
-            parent_amount,
-            key_rows,
-            explicit,
+        resolved_keys = await self._resolve_and_persist_level(
+            parent_amount=parent_amount,
+            children=key_rows,
+            explicit=explicit,
+            entity_map=keys_by_id,
+            repo=self._api_keys,
+            current_user=current_user,
             refit_unlisted=refit_unlisted,
             parent_old_amount=parent_old_amount,
+            snapshot_writes=snapshot_writes,
         )
 
-        keys_by_id = {key.id: key for key in existing_keys}
-        response_rows: list[APIKeyAllocationResponseItem] = []
-        resolved_ids: set = set()
-        for resolved in resolved_keys:
-            resolved_ids.add(resolved.id)
-            if resolved.changed:
-                key_obj = keys_by_id[resolved.id]
-                await self._api_keys.update(
-                    key_obj,
-                    {
-                        "allocated_budget": resolved.amount,
-                        "allocated_percentage": resolved.percentage,
-                        "updated_by": current_user.id,
-                    },
-                )
-                snapshot_writes[resolved.id] = resolved.amount
-            response_rows.append(
-                APIKeyAllocationResponseItem(
-                    api_key_id=resolved.id,
-                    allocation=_response_allocation(
-                        resolved.id, resolved.amount, resolved.percentage, fixed_ids
-                    ),
-                    allocated_budget=resolved.amount,
-                )
-            )
-
-        if not refit_unlisted:
-            for key in existing_keys:
-                if key.id in resolved_ids:
-                    continue
-                response_rows.append(
-                    APIKeyAllocationResponseItem(
-                        api_key_id=key.id,
-                        allocation=AllocationValue(
-                            type="PERCENTAGE", value=key.allocated_percentage or _ZERO
-                        ),
-                        allocated_budget=key.allocated_budget or _ZERO,
-                    )
-                )
-
-        return response_rows
+        return resolved_keys, fixed_ids, refit_unlisted

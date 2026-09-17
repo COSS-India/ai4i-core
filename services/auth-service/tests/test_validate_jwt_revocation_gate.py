@@ -53,7 +53,11 @@ class TestValidateJwtRevocationGate:
             result = await _validate_jwt("token", _mock_request(), Response(), cache_svc)
 
         assert result.status_code == 401
-        assert b"TOKEN_REVOKED" in result.body
+        # Generic body by design (see validation.py's _unauthenticated) — the
+        # specific reason (revoked, here) is never disclosed to the caller,
+        # only logged server-side.
+        assert b"UNAUTHENTICATED" in result.body
+        assert b"TOKEN_REVOKED" not in result.body
         # Must be called even though claims.token_id is None — this is the
         # exact case the old `if claims.token_id and ...` gate broke.
         mock_check.assert_awaited_once()

@@ -7,7 +7,7 @@ const NotificationsCatalogTab: React.FC = () => (
     entityLabel="notification"
     nameColumnHeader="Notification Name"
     emptyMessage="No notifications match your filters."
-    hint="Set the Recipient Role for any notification. Check the ones you want Enabled, uncheck the ones you want Disabled, then Submit. Enabling a row with no roles selected defaults to Tenant Admin."
+    hint="Set the Recipient Role for any notification. Check the roles that should receive it, uncheck the ones that should not, then Submit. A notification with no roles selected is disabled."
   />
 );
 

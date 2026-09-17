@@ -129,8 +129,10 @@ class RoleRepository(BaseRepository):
         )
         return result.scalar_one_or_none()
 
-    async def assign_role(self, user_id: UUID, role_id: int) -> UserRole:
-        user_role = UserRole(user_id=user_id, role_id=role_id)
+    async def assign_role(
+        self, user_id: UUID, role_id: int, *, created_by: Optional[UUID] = None
+    ) -> UserRole:
+        user_role = UserRole(user_id=user_id, role_id=role_id, created_by=created_by)
         self._db.add(user_role)
         await self._db.flush()
         return user_role
@@ -207,6 +209,13 @@ class RoleRepository(BaseRepository):
         )
         await self._db.flush()
 
-    async def insert_role_permissions(self, role_id: int, permission_ids: list[int]) -> None:
-        self._db.add_all([RolePermission(role_id=role_id, permission_id=pid) for pid in permission_ids])
+    async def insert_role_permissions(
+        self, role_id: int, permission_ids: list[int], *, created_by: Optional[UUID] = None
+    ) -> None:
+        self._db.add_all(
+            [
+                RolePermission(role_id=role_id, permission_id=pid, created_by=created_by)
+                for pid in permission_ids
+            ]
+        )
         await self._db.flush()

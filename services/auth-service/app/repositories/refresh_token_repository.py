@@ -27,7 +27,15 @@ class RefreshTokenRepository(BaseRepository):
         logins for the same user. This prevents race conditions where two concurrent
         requests both read "no existing row" and both attempt INSERT.
         """
-        stmt = pg_insert(RefreshToken).values(user_id=user_id, refresh_token=token)
+        # created_by=user_id: self-created (a login refreshing/issuing the
+        # user's own token), matching persist_token_verification's own
+        # created_by=user_id convention for a self-service auth record.
+        # Deliberately NOT in the DO UPDATE set_ — a later login overwrites
+        # the token value but must not rewrite who the row was originally
+        # created for/by.
+        stmt = pg_insert(RefreshToken).values(
+            user_id=user_id, refresh_token=token, created_by=user_id
+        )
         stmt = stmt.on_conflict_do_update(
             index_elements=["user_id"],
             set_={"refresh_token": stmt.excluded.refresh_token, "updated_at": func.now()},
