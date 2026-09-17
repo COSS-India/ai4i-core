@@ -207,7 +207,7 @@ export default function CreateApiKeyTab({
               </Box>
             </FormControl>
 
-            <FormControl isRequired isInvalid={Boolean(budgetError)}>
+            <FormControl isInvalid={Boolean(budgetError)}>
               <FormLabel fontWeight="semibold">
                 Budget Allocation{" "}
                 <Text as="span" fontWeight="normal" color="gray.500" fontSize="sm">

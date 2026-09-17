@@ -173,7 +173,8 @@ export const FIELD_HINTS = {
     },
     budget: {
       placeholder: "0",
-      helper: "Required. Percentage of the parent Application's Budget.",
+      helper:
+        "Optional. Percentage of the parent Application's Budget. Leave blank for no ceiling.",
     },
     search: {
       placeholder: "Search by key name",

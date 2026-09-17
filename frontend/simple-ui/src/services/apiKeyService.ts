@@ -116,8 +116,10 @@ export async function createScopedApiKey(
     permissions: payload.permissions,
     expires_days: payload.expires_days,
     application_id: String(applicationId),
-    allocated_percentage: payload.allocated_percentage,
   };
+  if (payload.allocated_percentage != null) {
+    body.allocated_percentage = payload.allocated_percentage;
+  }
   const created = await authService.createApiKey(body);
   return normalizeKey(created);
 }
