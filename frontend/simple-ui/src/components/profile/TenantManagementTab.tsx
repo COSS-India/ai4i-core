@@ -135,11 +135,21 @@ import type { TenantUserView, TenantView } from "../../types/tenant";
 const TIER_NO_SERVICES_MSG =
   `This Tier has no services mapped. Please map at least one service before assigning to ${INSTITUTION_ARTICLE} ${INSTITUTION.toLowerCase()}.`;
 
+/** UTC calendar day of an instant, as a sortable ordinal. */
+const utcDayOrdinal = (d: Date): number =>
+  Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+
+/**
+ * Must stay in step with auth-service's is_budget_window_expired
+ * (app/utils/budget_window.py): budget_effective_to is the last usable day,
+ * inclusive, so compare UTC calendar DAYS — comparing instants over-expires
+ * by up to 24h for any stored value not anchored at 23:59:59.999Z.
+ */
 function isBudgetAssignmentExpired(tenant: TenantView | null | undefined): boolean {
   if (!tenant?.budget_effective_to) return false;
-  const to = new Date(tenant.budget_effective_to).getTime();
-  if (Number.isNaN(to)) return false;
-  return Date.now() > to;
+  const to = new Date(tenant.budget_effective_to);
+  if (Number.isNaN(to.getTime())) return false;
+  return utcDayOrdinal(new Date()) > utcDayOrdinal(to);
 }
 
 // Independent of whether the budget window is live: a lapsed one is fixed in
@@ -434,21 +444,18 @@ export default function TenantManagementTab({
     setViewTierTenant(assignment);
     setManageTenant(tenant);
     const tierId = tenant.tier_id ?? assignment?.tier_id ?? "";
-    const expired = isBudgetAssignmentExpired(tenant);
     setManageTierId(tierId);
     setOriginalTierId(tierId);
     setIsEditingTier(!tierId);
     setManageBudget(tenantBudgetNumber(tenant) ?? 0);
     setBudgetAmount("");
     setBudgetAction("topup");
-    // From is read-only here, so whatever is seeded is what gets sent: the
-    // stored one while live, else today — the server rejects a past From.
-    const windowLive = Boolean(tenant.budget_effective_to) && !expired;
-    setManageEffectiveFrom(
-      windowLive
-        ? isoToDateInputValue(tenant.budget_effective_from)
-        : todayDateInputValue(),
-    );
+    // From is read-only here, so whatever is seeded is what gets sent.
+    // Manage Tier always shows the stored From, lapsed window included — a
+    // reassignment keeps its original start date. Only Assign Tier, which
+    // has no stored window, falls back to today.
+    const storedFrom = isoToDateInputValue(tenant.budget_effective_from);
+    setManageEffectiveFrom(storedFrom || todayDateInputValue());
     // To keeps the lapsed value so the admin can see what expired, and is
     // the one field they can move.
     setManageEffectiveTo(isoToDateInputValue(tenant.budget_effective_to));
@@ -562,7 +569,7 @@ export default function TenantManagementTab({
     const toChanged = manageEffectiveTo !== originalEffectiveTo;
 
     // From is never user-settable here — openTenantPlan seeds it to the
-    // stored value while the window is live, and to today otherwise — so
+    // stored window's From, or today when there is no stored window — so
     // only To needs checking.
     if (!windowActive && !manageEffectiveTo) {
       setWindowError(
