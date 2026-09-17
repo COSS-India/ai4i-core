@@ -559,13 +559,20 @@ export default function TenantManagementTab({
     if (!manageTenant) return;
 
     setWindowError(null);
+    const amountEntered = budgetAmount.trim() !== "";
     const amount = Number(budgetAmount);
 
     // Mirrors revise_tenant_budget's `window_active` (set AND not expired):
-    // a missing or lapsed window is a fresh assignment and needs BOTH dates.
+    // a missing or lapsed window is not live, so To has to be (re)set before
+    // the revision has a window to attach to.
     const windowActive =
       Boolean(manageTenant.budget_effective_to) &&
       !isBudgetAssignmentExpired(manageTenant);
+    // Mirrors the service's `has_existing_window`: AI4IDS-2995 locks From
+    // once one is on file at all, lapsed window included (422
+    // effective_from_locked if sent), so From only goes out when this call
+    // founds the tenant's very first window.
+    const hasStoredFrom = Boolean(manageTenant.budget_effective_from);
     const toChanged = manageEffectiveTo !== originalEffectiveTo;
 
     // From is never user-settable here — openTenantPlan seeds it to the
@@ -589,28 +596,32 @@ export default function TenantManagementTab({
       return;
     }
 
-    if (!(amount > 0)) {
-      setWindowError(
-        toChanged || !windowActive
-          ? "Enter a top-up or top-down amount — the budget window can only be updated alongside a budget change."
-          : null,
-      );
+    // A window edit stands on its own — the endpoint takes action/amount and
+    // the dates independently, so a date-only revision is a valid call.
+    const windowChanged = toChanged || !windowActive;
+    if (!amountEntered && !windowChanged) return;
+    if (amountEntered && !(amount > 0)) {
+      setWindowError("Enter a top-up or top-down amount greater than ₹0.");
       return;
     }
 
     try {
       const res = await adjustTenantBudget({
         tenant_id: String(manageTenant.tenant_id),
-        action: budgetAction === "topup" ? "top-up" : "top-down",
-        amount,
-        ...(windowActive
+        ...(amountEntered
+          ? {
+              action: budgetAction === "topup" ? "top-up" : "top-down",
+              amount,
+            }
+          : {}),
+        ...(hasStoredFrom
           ? {}
           : {
               budget_effective_from: dateInputToStartOfDayIso(
                 manageEffectiveFrom,
               ),
             }),
-        ...(toChanged || !windowActive
+        ...(windowChanged
           ? { budget_effective_to: dateInputToEndOfDayIso(manageEffectiveTo) }
           : {}),
       });
@@ -637,13 +648,15 @@ export default function TenantManagementTab({
       // share of the new total is recalculated; their ₹ allocations are
       // untouched.
       const apps = res.applications_recomputed;
-      let description = `Budget ${budgetAction === "topup" ? "increased" : "decreased"} by ${formatRupees(amount)}.`;
+      let description = amountEntered
+        ? `Budget ${budgetAction === "topup" ? "increased" : "decreased"} by ${formatRupees(amount)}.`
+        : "Budget window updated.";
       if (apps) {
         description += ` ${apps} Application(s)' Budget % ${apps === 1 ? "was" : "were"} recalculated to reflect the new total — their ₹ allocations were not changed.`;
       }
 
       toast({
-        title: "Budget updated",
+        title: amountEntered ? "Budget updated" : "Budget window updated",
         description,
         status: "success",
         duration: 5000,
@@ -657,7 +670,9 @@ export default function TenantManagementTab({
         ?.response?.data?.detail;
 
       toast({
-        title: "Failed to update budget",
+        title: amountEntered
+          ? "Failed to update budget"
+          : "Failed to update budget window",
         description:
           typeof detail === "object" && detail !== null && "message" in detail
             ? String((detail as { message?: string }).message)
