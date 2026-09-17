@@ -202,6 +202,7 @@ class APIKeyService:
         tenant_id: Optional[str],
         budget_effective_to: Optional[datetime],
         extra_fields: Optional[dict] = None,
+        tenant_budget_unset: bool = False,
     ) -> dict:
         """The canonical Redis-hash shape for an API key — defined once so
         every writer (create, refresh, DB-fallback rehydrate) stays in sync.
@@ -213,7 +214,19 @@ class APIKeyService:
         separately pushed budget-expired boolean. Serialized as ISO-8601
         (empty string when the tenant has no window) since Redis hash
         values are strings; parsed back via
-        app.utils.budget_window.is_budget_window_expired's caller."""
+        app.utils.budget_window.is_budget_window_expired's caller.
+
+        ``tenant_budget_unset`` is the same kind of cheap-to-rederive,
+        always-fresh field: True when tenants.allocated_budget IS NULL,
+        which allocation_service.py's own TENANT_BUDGET_NOT_SET /
+        APPLICATION_BUDGET_NOT_SET checks guarantee also means no
+        Application or Key under this tenant can hold a real Budget share
+        either. /auth/validate reads it to block inference outright
+        instead of the "no allocation anywhere ⇒ unlimited, untracked
+        spend" gap this replaces. Every caller already has the tenant
+        loaded (same as budget_effective_to), so this is recomputed fresh
+        on every rebuild rather than preserved like the billing/quota
+        flags."""
         return {
             "id": db_key.id,
             "api_key": db_key.api_key,
@@ -222,6 +235,7 @@ class APIKeyService:
             "tenant_id": tenant_id,
             "user_id": str(db_key.created_by) if db_key.created_by else None,
             "budget_effective_to": budget_effective_to.isoformat() if budget_effective_to else "",
+            "tenant_budget_unset": "1" if tenant_budget_unset else "",
             **(extra_fields or {}),
         }
 
@@ -263,6 +277,7 @@ class APIKeyService:
         db_key: APIKey,
         tenant_id: Optional[str],
         budget_effective_to: Optional[datetime] = None,
+        tenant_budget_unset: bool = False,
     ) -> None:
         ttl = self._compute_cache_ttl(db_key)
         if ttl <= 0:
@@ -281,7 +296,11 @@ class APIKeyService:
         # keeps both stores converging on the same values instead of just one.
         preserved = {**self._preserved_billing_fields(db_key), **preserved_from_redis}
         payload = self._build_cache_payload(
-            db_key, tenant_id, budget_effective_to, {**self._preserved_tier_id(db_key), **preserved}
+            db_key,
+            tenant_id,
+            budget_effective_to,
+            {**self._preserved_tier_id(db_key), **preserved},
+            tenant_budget_unset=tenant_budget_unset,
         )
         await self._cache.set_api_key_cache(db_key.api_key, ttl, payload)
         await self._persist_cache_snapshot(db_key, payload)
@@ -291,6 +310,7 @@ class APIKeyService:
         db_key: APIKey,
         tenant_id: Optional[str],
         budget_effective_to: Optional[datetime] = None,
+        tenant_budget_unset: bool = False,
     ) -> None:
         """Write-through even while the key isn't currently eligible to be
         served (revoked, or application/tenant temporarily inactive):
@@ -300,7 +320,11 @@ class APIKeyService:
         only the DB snapshot updates, since the key must not become servable
         again just because its details changed."""
         payload = self._build_cache_payload(
-            db_key, tenant_id, budget_effective_to, self._preserved_tier_id(db_key)
+            db_key,
+            tenant_id,
+            budget_effective_to,
+            self._preserved_tier_id(db_key),
+            tenant_budget_unset=tenant_budget_unset,
         )
         await self._persist_cache_snapshot(db_key, payload)
 
@@ -380,9 +404,12 @@ class APIKeyService:
             return
         tenant_id_str = str(application.tenant_id)
         budget_effective_to = tenant.budget_effective_to if tenant else None
+        tenant_budget_unset = tenant is None or tenant.allocated_budget is None
         for key in await self._repo.list_by_application(application.id):
             if key.is_active and not key.is_expired():
-                await self._refresh_redis_cache(key, tenant_id_str, budget_effective_to)
+                await self._refresh_redis_cache(
+                    key, tenant_id_str, budget_effective_to, tenant_budget_unset=tenant_budget_unset
+                )
 
     async def refresh_keys_cache_for_tenant(self, tenant_id: int) -> None:
         """Repopulate Redis for all eligible keys in the tenant."""
@@ -472,6 +499,22 @@ class APIKeyService:
         """
         value = budget_effective_to.isoformat() if budget_effective_to else ""
         await self._patch_all_tenant_key_caches(tenant_id, "budget_effective_to", value)
+
+    async def set_tenant_budget_unset_for_tenant(self, tenant_id: int, unset: bool) -> None:
+        """Force-write tenant_budget_unset onto every cached API key hash
+        for the tenant — the same tenant-wide fan-out shape as
+        set_budget_effective_to_for_tenant, for the same reason:
+        TenantService.revise_tenant_budget changes tenants.allocated_budget
+        directly and never touches any api_key row, so nothing would
+        otherwise notice the change for an already-cached key until
+        something unrelated happens to rebuild its cache.
+
+        /auth/validate reads this to block inference outright when no
+        Budget has ever been allocated anywhere in the tenant -> application
+        -> API-key chain — see _build_cache_payload's own docstring."""
+        await self._patch_all_tenant_key_caches(
+            tenant_id, "tenant_budget_unset", "1" if unset else ""
+        )
 
     async def set_budget_exhausted_for_key(self, key_id: int, exhausted: bool) -> None:
         """Flip budget-exhausted on exactly ONE cached API key — the
@@ -987,6 +1030,7 @@ class APIKeyService:
                     "tier_id": str(tenant.tier_id),
                     **({"budget-exhausted": "1"} if exhausted else {}),
                 },
+                tenant_budget_unset=tenant.allocated_budget is None,
             )
             await self._cache.set_api_key_cache(raw_key, ttl, payload)
             await self._persist_cache_snapshot(api_key, payload)
@@ -1178,15 +1222,20 @@ class APIKeyService:
             tenant = await self._tenants.get_by_id(application.tenant_id)
             tenant_id_str = str(application.tenant_id)
         budget_effective_to = tenant.budget_effective_to if tenant else None
+        tenant_budget_unset = tenant is None or tenant.allocated_budget is None
         if application is not None and self.effective_is_active(db_key, application, tenant):
-            await self._refresh_redis_cache(db_key, tenant_id_str, budget_effective_to)
+            await self._refresh_redis_cache(
+                db_key, tenant_id_str, budget_effective_to, tenant_budget_unset=tenant_budget_unset
+            )
         else:
             # Not currently eligible (revoked, or application/tenant inactive) — Redis
             # must stay evicted, but cached_data still has to mirror the edit
             # just committed, or a later reactivation/DB-fallback rehydrate
             # would serve stale permissions/expiry.
             await self._cache.delete_api_key_cache(db_key.api_key)
-            await self._persist_current_state_to_cached_data(db_key, tenant_id_str, budget_effective_to)
+            await self._persist_current_state_to_cached_data(
+                db_key, tenant_id_str, budget_effective_to, tenant_budget_unset=tenant_budget_unset
+            )
 
         await self._repo.refresh(db_key)
         logger.info(

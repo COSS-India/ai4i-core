@@ -1108,6 +1108,30 @@ class TestSyncBudgetEffectiveToCache:
         svc._api_keys.set_budget_effective_to_for_tenant.assert_awaited_once_with(1, _VALID_EFFECTIVE_TO)
 
     @pytest.mark.asyncio
+    async def test_also_pushes_tenant_budget_unset_false_once_allocated(self) -> None:
+        """Alongside budget_effective_to, this call must also force-push
+        tenant_budget_unset — /auth/validate's BUDGET_NOT_CONFIGURED gate
+        reads this from a tenant that just got a real allocated_budget, and
+        nothing else touches an already-cached key's copy of it."""
+        svc = _svc()
+        tenant = _tenant(allocated_budget=Decimal("500"))
+        svc._tenants.get_by_id = AsyncMock(return_value=tenant)
+
+        await svc.sync_budget_effective_to_cache(1)
+
+        svc._api_keys.set_tenant_budget_unset_for_tenant.assert_awaited_once_with(1, False)
+
+    @pytest.mark.asyncio
+    async def test_pushes_tenant_budget_unset_true_when_never_allocated(self) -> None:
+        svc = _svc()
+        tenant = _tenant(allocated_budget=None)
+        svc._tenants.get_by_id = AsyncMock(return_value=tenant)
+
+        await svc.sync_budget_effective_to_cache(1)
+
+        svc._api_keys.set_tenant_budget_unset_for_tenant.assert_awaited_once_with(1, True)
+
+    @pytest.mark.asyncio
     async def test_no_effective_to_pushes_none(self) -> None:
         svc = _svc()
         tenant = _tenant()

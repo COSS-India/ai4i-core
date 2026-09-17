@@ -1164,27 +1164,35 @@ class TenantService:
         return tenant
 
     async def sync_budget_effective_to_cache(self, tenant_id: int) -> Optional[datetime]:
-        """Force-push tenants.budget_effective_to onto every cached API key
-        for this tenant via APIKeyService.set_budget_effective_to_for_tenant
+        """Force-push tenants.budget_effective_to (and tenant_budget_unset)
+        onto every cached API key for this tenant via APIKeyService.
+        set_budget_effective_to_for_tenant / set_tenant_budget_unset_for_tenant
         — the raw date /auth/validate compares directly against "now"
         (app.utils.budget_window.is_budget_window_expired), not a
         separately computed boolean flag.
 
         Called by revise_tenant_budget right after persisting a revised
         window: revise_tenant_budget changes tenants.budget_effective_to
-        directly and never touches any api_key row, so nothing else would
-        notice the change for an already-cached key until something
-        unrelated (a rename, a tier reassignment) happened to rebuild its
-        cache — see APIKeyService._refresh_redis_cache's own callers, which
-        re-derive this value fresh from an already-loaded Tenant each time
-        rather than needing a preserve-on-refresh mechanism the way
-        budget-exhausted/quota-* do. This is the one path that genuinely
-        needs an explicit tenant-wide push, the same reasoning
-        set_tier_id_for_tenant already has for tier reassignment.
+        (and allocated_budget) directly and never touches any api_key row,
+        so nothing else would notice the change for an already-cached key
+        until something unrelated (a rename, a tier reassignment) happened
+        to rebuild its cache — see APIKeyService._refresh_redis_cache's own
+        callers, which re-derive both values fresh from an already-loaded
+        Tenant each time rather than needing a preserve-on-refresh
+        mechanism the way budget-exhausted/quota-* do. This is the one path
+        that genuinely needs an explicit tenant-wide push, the same
+        reasoning set_tier_id_for_tenant already has for tier reassignment.
 
-        Returns the value pushed (None if the tenant doesn't exist or
-        APIKeyService isn't wired), mainly for tests/observability — no
-        caller currently branches on it.
+        Bundled together (not a separate sync call) because they're always
+        read from the exact same just-refreshed Tenant row and always need
+        pushing at the exact same moment — a revision that updated one
+        without the other would leave /auth/validate's BUDGET_NOT_CONFIGURED
+        gate and its BUDGET_EXPIRED gate looking at cached state from two
+        different points in time.
+
+        Returns the budget_effective_to value pushed (None if the tenant
+        doesn't exist or APIKeyService isn't wired), mainly for
+        tests/observability — no caller currently branches on it.
         """
         if self._api_keys is None:
             return None
@@ -1192,6 +1200,9 @@ class TenantService:
         if tenant is None:
             return None
         await self._api_keys.set_budget_effective_to_for_tenant(tenant_id, tenant.budget_effective_to)
+        await self._api_keys.set_tenant_budget_unset_for_tenant(
+            tenant_id, tenant.allocated_budget is None
+        )
         return tenant.budget_effective_to
 
     async def _sync_ppu_wallet_and_exhaustion(

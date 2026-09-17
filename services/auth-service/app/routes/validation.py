@@ -65,6 +65,28 @@ def _cached_budget_window_is_expired(result: dict) -> bool:
     return is_budget_window_expired(budget_effective_to)
 
 
+def _cached_tenant_budget_unset(result: dict) -> bool:
+    """True when this key's cached tenant_budget_unset (see
+    APIKeyService._build_cache_payload) says the owning tenant has never
+    had ANY Budget allocated (tenants.allocated_budget IS NULL) — which
+    allocation_service.py's own TENANT_BUDGET_NOT_SET/APPLICATION_BUDGET_NOT_SET
+    checks guarantee also means no Application or Key under it can hold a
+    real Budget share either. Before this check existed, that state let
+    inference run indefinitely with zero cost tracking or enforcement —
+    "no allocation" was silently treated as "unlimited" rather than the
+    invalid state the allocation-management endpoints already consider it.
+
+    An absent/empty value falls through as "configured" (not blocking) —
+    same fail-open shape as _cached_budget_window_is_expired — since a
+    pre-fix key's cached_data predates this field entirely and hasn't
+    necessarily been rebuilt since; it self-heals the next time this key's
+    cache is naturally rebuilt (a rename, a tier change) or the moment its
+    tenant is next given a real Budget (see APIKeyService.
+    set_tenant_budget_unset_for_tenant).
+    """
+    return result.get("tenant_budget_unset") == "1"
+
+
 async def _resolve_service(uri: str) -> dict | None:
     """Map X-Original-URI to its inference type, or None.
 
@@ -258,6 +280,30 @@ async def _validate_api_key(
     )
     quota_header = {"X-Quota-Exhausted-Services": ",".join(exhausted_services)}
 
+    if _cached_tenant_budget_unset(result):
+        # Checked before both the window and the exhausted-flag checks
+        # below: those both presuppose a Budget was allocated at some
+        # point (a window, a ceiling) — this is the more fundamental "was
+        # anything ever allocated at all" gate. 403, not 429: there is
+        # nothing here that resolves on its own by waiting: an
+        # administrator must allocate a Budget to this Institution first
+        # (mirrors allocation_service.py's TENANT_BUDGET_NOT_SET /
+        # APPLICATION_BUDGET_NOT_SET, which already reject reallocating a
+        # share of a Budget that was never given in the first place — this
+        # is the same "no allocation" state, just reached by spending
+        # instead of by reallocating).
+        return JSONResponse(
+            status_code=403,
+            content=ValidateTokenErrorResponse(
+                error="BUDGET_NOT_CONFIGURED",
+                message=(
+                    "No Budget has been allocated to this Institution yet — an "
+                    "administrator must allocate a Budget before this API key can "
+                    "be used for inference."
+                ),
+            ).model_dump(),
+        )
+
     if _cached_budget_window_is_expired(result):
         # Checked before budget-exhausted: a lapsed effective window is a
         # harder stop than running out of budget within an otherwise-valid
@@ -414,7 +460,12 @@ async def _validate_jwt(
         },
         403: {
             "model": ValidateTokenErrorResponse,
-            "description": "Caller is authenticated but lacks permission for X-Original-Method/URI.",
+            "description": (
+                "Caller is authenticated but lacks permission for X-Original-Method/URI, "
+                "the tier is deactivated, the tenant's budget window has ended "
+                "(BUDGET_EXPIRED), or no Budget has ever been allocated anywhere in the "
+                "tenant -> application -> API-key chain (BUDGET_NOT_CONFIGURED)."
+            ),
         },
         429: {
             "model": ValidateTokenQuotaErrorResponse,
