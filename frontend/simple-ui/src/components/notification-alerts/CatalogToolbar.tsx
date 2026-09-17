@@ -4,25 +4,20 @@ import {
   FormControl,
   HStack,
   Input,
-  Select,
   Text,
 } from "@chakra-ui/react";
 import React from "react";
-import type { CatalogStatusFilter } from "../../types/notificationAlerts";
+import { RECIPIENT_ROLE_LABELS } from "../../types/notificationAlerts";
 
 interface CatalogToolbarProps {
   search: string;
   onSearchChange: (value: string) => void;
-  statusFilter: CatalogStatusFilter;
-  onStatusFilterChange: (value: CatalogStatusFilter) => void;
   hint: string;
 }
 
 const CatalogToolbar: React.FC<CatalogToolbarProps> = ({
   search,
   onSearchChange,
-  statusFilter,
-  onStatusFilterChange,
   hint,
 }) => {
   return (
@@ -36,20 +31,6 @@ const CatalogToolbar: React.FC<CatalogToolbarProps> = ({
             bg="white"
             size="md"
           />
-        </FormControl>
-        <FormControl maxW={{ base: "full", md: "180px" }}>
-          <Select
-            value={statusFilter}
-            onChange={(e) =>
-              onStatusFilterChange(e.target.value as CatalogStatusFilter)
-            }
-            bg="white"
-            size="md"
-          >
-            <option value="all">All statuses</option>
-            <option value="enabled">Enabled</option>
-            <option value="disabled">Disabled</option>
-          </Select>
         </FormControl>
       </HStack>
       <Text fontSize="sm" color="gray.600">
@@ -80,14 +61,14 @@ export const RecipientRoleCheckboxes: React.FC<RecipientRoleCheckboxesProps> = (
         mb={1}
         display="flex"
       >
-        <Text fontSize="sm">Tenant Admin</Text>
+        <Text fontSize="sm">{RECIPIENT_ROLE_LABELS["TENANT ADMIN"]}</Text>
       </Checkbox>
       <Checkbox
         isChecked={adopterChecked}
         onChange={(e) => onAdopterChange(e.target.checked)}
         display="flex"
       >
-        <Text fontSize="sm">Adopter Admin</Text>
+        <Text fontSize="sm">{RECIPIENT_ROLE_LABELS.ADMIN}</Text>
       </Checkbox>
     </Box>
   );

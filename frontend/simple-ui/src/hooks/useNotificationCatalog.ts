@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { notificationAlertsService } from "../services/notificationAlertsService";
 import type {
-  CatalogStatusFilter,
   CatalogUpdatePayload,
   NotificationAlertCatalogItem,
   NotificationAlertType,
@@ -78,7 +77,6 @@ export function useNotificationCatalog(type: NotificationAlertType) {
   const [items, setItems] = useState<NotificationAlertCatalogItem[]>([]);
   const [drafts, setDrafts] = useState<Record<string, CatalogDraft>>({});
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<CatalogStatusFilter>("all");
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -129,20 +127,13 @@ export function useNotificationCatalog(type: NotificationAlertType) {
 
   const filteredItems = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return items.filter((item) => {
-      const draft = getDraft(item);
-      const enabled = draftEnabled(draft);
-      const matchesName =
+    return items.filter(
+      (item) =>
         !q ||
         item.display_name.toLowerCase().includes(q) ||
-        item.name.toLowerCase().includes(q);
-      const matchesStatus =
-        statusFilter === "all" ||
-        (statusFilter === "enabled" && enabled) ||
-        (statusFilter === "disabled" && !enabled);
-      return matchesName && matchesStatus;
-    });
-  }, [items, getDraft, search, statusFilter]);
+        item.name.toLowerCase().includes(q),
+    );
+  }, [items, search]);
 
   const updateDraft = useCallback(
     (
@@ -335,8 +326,6 @@ export function useNotificationCatalog(type: NotificationAlertType) {
     filteredItems,
     search,
     setSearch,
-    statusFilter,
-    setStatusFilter,
     isLoading,
     isSubmitting,
     error,

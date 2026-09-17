@@ -51,7 +51,7 @@ export interface CatalogUpdatePayload {
 export type CatalogStatusFilter = "all" | "enabled" | "disabled";
 
 export const RECIPIENT_ROLE_LABELS: Record<RecipientRoleKey, string> = {
-  "TENANT ADMIN": "Tenant Admin",
+  "TENANT ADMIN": "Institution Admin",
   ADMIN: "Adopter Admin",
 };
 

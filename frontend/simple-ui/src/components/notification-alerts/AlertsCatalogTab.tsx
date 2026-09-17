@@ -8,7 +8,7 @@ const AlertsCatalogTab: React.FC = () => (
     nameColumnHeader="Alert Name"
     emptyMessage="No alerts match your filters."
     showThresholds
-    hint="Set the Recipient Role and Threshold values for any alert. Check the ones you want Enabled, uncheck the ones you want Disabled, then Submit. Enabling a row with no roles selected defaults to Tenant Admin."
+    hint="Set the Recipient Role and Threshold values for any alert. Check the roles that should receive it, uncheck the ones that should not, then Submit. An alert with no roles selected is disabled."
   />
 );
 

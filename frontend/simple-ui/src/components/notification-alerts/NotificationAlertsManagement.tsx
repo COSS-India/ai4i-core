@@ -21,7 +21,7 @@ const NotificationAlertsManagement: React.FC = () => {
           <TabPanel px={0} pt={5}>
             <Text color="gray.600" fontSize="sm" mb={4}>
               The standard, event-driven notification types available on the platform.
-              Set recipient roles and enablement, then Submit.
+              Set recipient roles, then Submit.
             </Text>
             <NotificationsCatalogTab />
           </TabPanel>

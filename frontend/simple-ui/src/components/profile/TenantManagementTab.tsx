@@ -135,15 +135,27 @@ import type { TenantUserView, TenantView } from "../../types/tenant";
 const TIER_NO_SERVICES_MSG =
   `This Tier has no services mapped. Please map at least one service before assigning to ${INSTITUTION_ARTICLE} ${INSTITUTION.toLowerCase()}.`;
 
+/** UTC calendar day of an instant, as a sortable ordinal. */
+const utcDayOrdinal = (d: Date): number =>
+  Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+
+/**
+ * Must stay in step with auth-service's is_budget_window_expired
+ * (app/utils/budget_window.py): budget_effective_to is the last usable day,
+ * inclusive, so compare UTC calendar DAYS — comparing instants over-expires
+ * by up to 24h for any stored value not anchored at 23:59:59.999Z.
+ */
 function isBudgetAssignmentExpired(tenant: TenantView | null | undefined): boolean {
   if (!tenant?.budget_effective_to) return false;
-  const to = new Date(tenant.budget_effective_to).getTime();
-  if (Number.isNaN(to)) return false;
-  return Date.now() > to;
+  const to = new Date(tenant.budget_effective_to);
+  if (Number.isNaN(to.getTime())) return false;
+  return utcDayOrdinal(new Date()) > utcDayOrdinal(to);
 }
 
-function hasActiveTierAssignment(tenant: TenantView): boolean {
-  return Boolean(tenant.tier_id) && !isBudgetAssignmentExpired(tenant);
+// Independent of whether the budget window is live: a lapsed one is fixed in
+// the Manage Tier drawer, and the server doesn't gate tier changes on it.
+function hasTierAssignment(tenant: TenantView | null | undefined): boolean {
+  return Boolean(tenant?.tier_id);
 }
 
 export interface TenantManagementTabProps {
@@ -418,7 +430,7 @@ export default function TenantManagementTab({
   };
 
   const openTenantPlan = (tenant: TenantView) => {
-    if (!hasActiveTierAssignment(tenant)) {
+    if (!hasTierAssignment(tenant)) {
       setAssignTierTenant(tenant);
       onAssignTierOpen();
       return;
@@ -432,14 +444,20 @@ export default function TenantManagementTab({
     setViewTierTenant(assignment);
     setManageTenant(tenant);
     const tierId = tenant.tier_id ?? assignment?.tier_id ?? "";
-    const expired = isBudgetAssignmentExpired(tenant);
     setManageTierId(tierId);
-    setOriginalTierId(expired ? "" : tierId);
-    setIsEditingTier(!tierId || expired);
+    setOriginalTierId(tierId);
+    setIsEditingTier(!tierId);
     setManageBudget(tenantBudgetNumber(tenant) ?? 0);
     setBudgetAmount("");
     setBudgetAction("topup");
-    setManageEffectiveFrom(isoToDateInputValue(tenant.budget_effective_from));
+    // From is read-only here, so whatever is seeded is what gets sent.
+    // Manage Tier always shows the stored From, lapsed window included — a
+    // reassignment keeps its original start date. Only Assign Tier, which
+    // has no stored window, falls back to today.
+    const storedFrom = isoToDateInputValue(tenant.budget_effective_from);
+    setManageEffectiveFrom(storedFrom || todayDateInputValue());
+    // To keeps the lapsed value so the admin can see what expired, and is
+    // the one field they can move.
     setManageEffectiveTo(isoToDateInputValue(tenant.budget_effective_to));
     setOriginalEffectiveTo(isoToDateInputValue(tenant.budget_effective_to));
     setWindowError(null);
@@ -543,29 +561,27 @@ export default function TenantManagementTab({
     setWindowError(null);
     const amount = Number(budgetAmount);
 
-    // A live window locks budget_effective_from server-side; with no window
-    // on file the call is a fresh assignment and needs BOTH dates.
-    const storedFrom = isoToDateInputValue(manageTenant.budget_effective_from);
-    const windowActive = Boolean(manageTenant.budget_effective_to);
+    // Mirrors revise_tenant_budget's `window_active` (set AND not expired):
+    // a missing or lapsed window is a fresh assignment and needs BOTH dates.
+    const windowActive =
+      Boolean(manageTenant.budget_effective_to) &&
+      !isBudgetAssignmentExpired(manageTenant);
     const toChanged = manageEffectiveTo !== originalEffectiveTo;
 
-    if (!windowActive) {
-      if (!manageEffectiveFrom || !manageEffectiveTo) {
-        setWindowError(
-          "This institution has no budget window yet — set both Budget Effective From and Budget Effective To.",
-        );
-        return;
-      }
-      if (manageEffectiveFrom < todayDateInputValue()) {
-        setWindowError("Budget Effective From cannot be in the past.");
-        return;
-      }
+    // From is never user-settable here — openTenantPlan seeds it to the
+    // stored window's From, or today when there is no stored window — so
+    // only To needs checking.
+    if (!windowActive && !manageEffectiveTo) {
+      setWindowError(
+        "Set a Budget Effective To date to open a new budget window.",
+      );
+      return;
     }
-    const windowFrom = windowActive ? storedFrom : manageEffectiveFrom;
     if (
       (toChanged || !windowActive) &&
-      windowFrom &&
-      manageEffectiveTo < budgetWindowToMinDate(windowFrom, todayDateInputValue())
+      manageEffectiveFrom &&
+      manageEffectiveTo <
+        budgetWindowToMinDate(manageEffectiveFrom, todayDateInputValue())
     ) {
       setWindowError(
         "Budget Effective To must be later than today, and at least a day after Budget Effective From.",
@@ -1378,7 +1394,7 @@ export default function TenantManagementTab({
   function renderTenantRowActions(t: TenantView) {
     const stopRowClick = (e: React.MouseEvent) => e.stopPropagation();
     const isProtectedDefaultOrg = isDefaultTenant(t);
-    const hasTier = hasActiveTierAssignment(t);
+    const hasTier = hasTierAssignment(t);
     const planActionLabel = hasTier ? "Manage Tier" : "Assign Tier";
 
     const items: RowActionMenuItem[] = (() => {
@@ -2347,14 +2363,22 @@ export default function TenantManagementTab({
 
     const selectedTierName =
       tierOptions.find((t) => t.id === manageTierId)?.name ?? "";
-    const planDrawerTitle =
-      manageTenant && hasActiveTierAssignment(manageTenant)
-        ? "Manage Tier"
-        : "Assign Tier";
-    const windowFromLocked = Boolean(manageTenant?.budget_effective_to);
-    const windowFrom = windowFromLocked
-      ? isoToDateInputValue(manageTenant?.budget_effective_from)
-      : manageEffectiveFrom;
+    const planDrawerTitle = hasTierAssignment(manageTenant)
+      ? "Manage Tier"
+      : "Assign Tier";
+    const planExpired = isBudgetAssignmentExpired(manageTenant);
+    // From is read-only throughout Manage Tier, so manageEffectiveFrom is
+    // always the From in effect and Effective To is the only lever.
+    const effectiveToMin = manageEffectiveFrom
+      ? budgetWindowToMinDate(manageEffectiveFrom, todayDateInputValue())
+      : undefined;
+    // Until To clears that floor the window is still lapsed, and a budget
+    // revision has no live window to attach to.
+    const windowNeedsExtension =
+      planExpired &&
+      (!manageEffectiveTo ||
+        !effectiveToMin ||
+        manageEffectiveTo < effectiveToMin);
 
     return (
       <Drawer
@@ -2366,13 +2390,17 @@ export default function TenantManagementTab({
         <DrawerOverlay />
         <DrawerContent>
           <DrawerCloseButton />
-          <DrawerHeader
-            fontSize="md"
-            fontWeight="semibold"
-            borderBottomWidth="1px"
-            borderColor="gray.200"
-          >
-            {`${planDrawerTitle}${manageTenant ? ` — ${manageTenant.organisation}` : ""}`}
+          <DrawerHeader borderBottomWidth="1px" borderColor="gray.200">
+            <VStack align="flex-start" spacing={1}>
+              <Text fontSize="md" fontWeight="semibold">
+                {`${planDrawerTitle}${manageTenant ? ` — ${manageTenant.organisation}` : ""}`}
+              </Text>
+              {planExpired && (
+                <Badge colorScheme="red" textTransform="none" fontSize="xs">
+                  Budget expired
+                </Badge>
+              )}
+            </VStack>
           </DrawerHeader>
           <DrawerBody py={6}>
             {manageTenant ? (
@@ -2382,16 +2410,6 @@ export default function TenantManagementTab({
                     <AlertIcon />
                     <AlertDescription fontSize="sm">
                       {managePlanError}
-                    </AlertDescription>
-                  </Alert>
-                )}
-                {isBudgetAssignmentExpired(manageTenant) && (
-                  <Alert status="warning" borderRadius="md">
-                    <AlertIcon />
-                    <AlertDescription fontSize="sm">
-                      Previous tier/budget assignment has expired. API key
-                      access may be blocked until a new budget window is
-                      available.
                     </AlertDescription>
                   </Alert>
                 )}
@@ -2461,13 +2479,14 @@ export default function TenantManagementTab({
                       type="date"
                       size="sm"
                       value={manageEffectiveFrom}
-                      min={todayDateInputValue()}
-                      onChange={(e) => {
-                        setManageEffectiveFrom(e.target.value);
-                        setWindowError(null);
+                      isReadOnly
+                      bg="gray.50"
+                      cursor="default"
+                      sx={{
+                        "&::-webkit-calendar-picker-indicator": {
+                          display: "none",
+                        },
                       }}
-                      isDisabled={windowFromLocked}
-                      bg={windowFromLocked ? "gray.50" : undefined}
                     />
                   </FormControl>
 
@@ -2479,14 +2498,7 @@ export default function TenantManagementTab({
                       type="date"
                       size="sm"
                       value={manageEffectiveTo}
-                      min={
-                        windowFrom
-                          ? budgetWindowToMinDate(
-                              windowFrom,
-                              todayDateInputValue(),
-                            )
-                          : undefined
-                      }
+                      min={effectiveToMin}
                       onChange={(e) => {
                         setManageEffectiveTo(e.target.value);
                         setWindowError(null);
@@ -2512,7 +2524,11 @@ export default function TenantManagementTab({
                     bg="gray.50"
                   >
                     <HStack justify="space-between" mb={3}>
-                      <Text fontSize="sm" fontWeight="medium">
+                      <Text
+                        fontSize="sm"
+                        fontWeight="medium"
+                        color={windowNeedsExtension ? "gray.400" : undefined}
+                      >
                         Adjust Budget
                       </Text>
 
@@ -2524,6 +2540,7 @@ export default function TenantManagementTab({
                           }
                           colorScheme="green"
                           borderRightRadius={0}
+                          isDisabled={windowNeedsExtension}
                           onClick={() => setBudgetAction("topup")}
                         >
                           + Top-up
@@ -2536,6 +2553,7 @@ export default function TenantManagementTab({
                           }
                           colorScheme="red"
                           borderLeftRadius={0}
+                          isDisabled={windowNeedsExtension}
                           onClick={() => setBudgetAction("topdown")}
                         >
                           - Top-down
@@ -2548,6 +2566,7 @@ export default function TenantManagementTab({
                         placeholder="Amount in ₹"
                         type="number"
                         value={budgetAmount}
+                        isDisabled={windowNeedsExtension}
                         onChange={(e) => setBudgetAmount(e.target.value)}
                       />
 
@@ -2555,8 +2574,9 @@ export default function TenantManagementTab({
                         colorScheme="blue"
                         onClick={handleApplyBudget}
                         isDisabled={
-                          !budgetAmount &&
-                          manageEffectiveTo === originalEffectiveTo
+                          windowNeedsExtension ||
+                          (!budgetAmount &&
+                            manageEffectiveTo === originalEffectiveTo)
                         }
                       >
                         Apply
