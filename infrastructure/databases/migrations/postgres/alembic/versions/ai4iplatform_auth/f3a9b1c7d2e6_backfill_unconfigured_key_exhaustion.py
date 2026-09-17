@@ -72,32 +72,68 @@ _REDIS_API_KEY_PREFIX = "auth:apikey:"
 _BUDGET_EXHAUSTED_FIELD = "budget-exhausted"
 
 
+def _env_host_port(host_var: str, port_var: str, default_port: int) -> tuple[str, int]:
+    """Read a host/port pair from two env vars, tolerating Kubernetes'
+    auto-injected Docker-links-style value for a Service literally named
+    the same as the var prefix (e.g. a "redis" Service makes Kubernetes
+    inject REDIS_PORT=tcp://10.100.206.16:6379 into every pod in the
+    namespace, clobbering a plain-integer REDIS_PORT the deployment itself
+    never set).
+
+    The host always comes from host_var when it's set - REDIS_PORT's
+    tcp://<pod-ip>:<port> is Kubernetes' own Service address, NOT the
+    deployment's intended Redis host, so it must never override an
+    explicitly-configured REDIS_HOST (an earlier version of this parsed
+    "://" out of whichever var had it and let REDIS_PORT's host win,
+    which pointed the client at the wrong instance whenever both vars
+    were present - the exact case this fix targets). Only when host_var
+    is unset at all do we fall back to whatever host REDIS_PORT's URL
+    carries, so a Redis client still gets stood up rather than defaulting
+    to "localhost" and silently missing the real instance."""
+    from urllib.parse import urlparse
+
+    raw_host = os.getenv(host_var)
+    raw_port = os.getenv(port_var, str(default_port))
+
+    if "://" in raw_port:
+        parsed = urlparse(raw_port)
+        port = parsed.port or default_port
+        host = raw_host if raw_host else (parsed.hostname or "localhost")
+    else:
+        port = int(raw_port)
+        host = raw_host or "localhost"
+    return host, port
+
+
 def _redis_client() -> "redis.Redis | None":
     """Best-effort sync Redis client from the same env vars app.core.config
     reads (REDIS_HOST/PORT/DB/PASSWORD) - read directly rather than
     importing app.core.config, so this migration doesn't depend on the
     full app settings module (JWT keys, PII crypto, ...) initializing
     cleanly in whatever environment runs migrations. Returns None (logged,
-    not raised) if Redis isn't reachable: the DB half of this backfill must
-    still land even when Redis is unavailable at migration time - the
-    Redis half is a best-effort acceleration of the self-heal, not the
-    correctness-bearing half (the DB write, and the entry's own TTL, get
-    there eventually either way)."""
-    host = os.getenv("REDIS_HOST", "localhost")
-    port = int(os.getenv("REDIS_PORT", "6379"))
-    db = int(os.getenv("REDIS_DB", "0"))
-    password = os.getenv("REDIS_PASSWORD") or None
+    not raised) whenever this can't stand up a working client for ANY
+    reason - unreachable Redis, or an env var in an unexpected shape (see
+    _env_host_port) - since the DB half of this backfill must still land
+    even when Redis is unavailable at migration time: the Redis half is a
+    best-effort acceleration of the self-heal, not the correctness-bearing
+    half (the DB write, and the entry's own TTL, get there eventually
+    either way). Deliberately catches broadly (not just redis.RedisError)
+    - a crash here must never take the whole migration transaction down
+    with it, rolling back the DB backfill that had already succeeded."""
     try:
+        host, port = _env_host_port("REDIS_HOST", "REDIS_PORT", 6379)
+        db = int(os.getenv("REDIS_DB", "0"))
+        password = os.getenv("REDIS_PASSWORD") or None
         client = redis.Redis(
             host=host, port=port, db=db, password=password,
             decode_responses=True, socket_timeout=5, socket_connect_timeout=5,
         )
         client.ping()
         return client
-    except redis.RedisError as exc:
+    except Exception as exc:  # noqa: BLE001 - see docstring: must never crash the migration
         logger.warning(
-            "f3a9b1c7d2e6: Redis unreachable (%s) - DB backfill will still run; "
-            "already-cached keys self-heal on their own TTL/next refresh instead.",
+            "f3a9b1c7d2e6: could not set up a Redis client (%s) - DB backfill will still "
+            "run; already-cached keys self-heal on their own TTL/next refresh instead.",
             exc,
         )
         return None
@@ -148,8 +184,19 @@ def upgrade() -> None:
             if redis_client.exists(key):
                 redis_client.hset(key, _BUDGET_EXHAUSTED_FIELD, "1")
                 patched += 1
+    except Exception as exc:  # noqa: BLE001 - same reasoning as _redis_client: a Redis
+        # hiccup mid-loop (e.g. connection dropped after the initial ping succeeded)
+        # must never propagate out of upgrade() and roll back the DB write above.
+        logger.warning(
+            "f3a9b1c7d2e6: Redis push interrupted after %d key(s) (%s) - DB backfill "
+            "already committed; the rest self-heal on their own TTL/next refresh.",
+            patched, exc,
+        )
     finally:
-        redis_client.close()
+        try:
+            redis_client.close()
+        except Exception:  # noqa: BLE001 - closing a dead connection must not raise either
+            pass
     logger.info(
         "f3a9b1c7d2e6: pushed budget-exhausted onto %d already-cached Redis key(s).",
         patched,

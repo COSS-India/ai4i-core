@@ -104,6 +104,47 @@ def _redis_or_skip(migration):
     return client
 
 
+class TestEnvHostPort:
+    """`_env_host_port` is a pure function - no DB/Redis needed. Covers the
+    exact regression flagged in review: REDIS_PORT's Kubernetes-injected
+    tcp://<ip>:<port> must never override an explicitly-set REDIS_HOST,
+    only ever supply a fallback host when REDIS_HOST is unset."""
+
+    def test_plain_int_port_is_unaffected(self, migration, monkeypatch) -> None:
+        monkeypatch.setenv("REDIS_HOST", "auth-redis-master")
+        monkeypatch.setenv("REDIS_PORT", "6380")
+        assert migration._env_host_port("REDIS_HOST", "REDIS_PORT", 6379) == (
+            "auth-redis-master",
+            6380,
+        )
+
+    def test_k8s_tcp_port_does_not_clobber_an_explicit_host(self, migration, monkeypatch) -> None:
+        monkeypatch.setenv("REDIS_HOST", "auth-redis-master")
+        monkeypatch.setenv("REDIS_PORT", "tcp://10.100.206.16:6379")
+        assert migration._env_host_port("REDIS_HOST", "REDIS_PORT", 6379) == (
+            "auth-redis-master",
+            6379,
+        )
+
+    def test_k8s_tcp_port_supplies_the_host_when_none_is_set(self, migration, monkeypatch) -> None:
+        monkeypatch.delenv("REDIS_HOST", raising=False)
+        monkeypatch.setenv("REDIS_PORT", "tcp://10.100.206.16:6379")
+        assert migration._env_host_port("REDIS_HOST", "REDIS_PORT", 6379) == (
+            "10.100.206.16",
+            6379,
+        )
+
+    def test_neither_var_set_falls_back_to_localhost_and_default_port(
+        self, migration, monkeypatch
+    ) -> None:
+        monkeypatch.delenv("REDIS_HOST", raising=False)
+        monkeypatch.delenv("REDIS_PORT", raising=False)
+        assert migration._env_host_port("REDIS_HOST", "REDIS_PORT", 6379) == (
+            "localhost",
+            6379,
+        )
+
+
 class TestBackfillEligibility:
     def test_null_cached_data_is_excluded_but_real_cached_data_is_backfilled(
         self, migration
