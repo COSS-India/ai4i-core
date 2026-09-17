@@ -671,28 +671,20 @@ class _FakeAuthDb:
 
 class _FakeCoreDb:
     """Records the one query fetch_tenant_budget_status sends to this
-    consumer's own DB (the SUM of api_key_budget_used over budget_usage)
-    and returns a pre-seeded total for it."""
+    consumer's own DB (the SUM over budget_usage, both used and snap) and
+    returns pre-seeded totals for it."""
 
-    def __init__(self, used_total):
+    def __init__(self, used_total, snap_total=None):
         self._used_total = used_total
+        self._snap_total = snap_total
         self.calls: list[tuple[str, dict | None]] = []
 
     async def execute(self, stmt, params=None):
         self.calls.append((str(stmt), params))
-        return _FakeResult(_FakeRow(total=self._used_total))
+        return _FakeResult(_FakeRow(used_total=self._used_total, snap_total=self._snap_total))
 
 
 class TestFetchTenantBudgetStatus:
-    """``snap`` must be tenants.allocated_budget itself — the SAME number
-    the usage dashboard reports (get_tenant_budgets: "budget_limit =
-    tenants.allocated_budget") — never a SUM of the tenant's keys' own
-    api_key_budget_snap. An earlier version of this function used that SUM
-    instead and was caught live: a tenant with allocated_budget=5000 and
-    one Key allocated 2500 (50%) produced a BUDGET_EXHAUSTED email
-    reporting "INR 2500" — the dashboard correctly showed 5000. See
-    fetch_tenant_budget_status's own docstring for the full story."""
-
     async def test_no_tenant_row_returns_none(self):
         """Unknown tenant_id — auth_db's query returns nothing at all."""
         auth_db = _FakeAuthDb(rows=[])
@@ -734,19 +726,18 @@ class TestFetchTenantBudgetStatus:
         assert auth_db.calls == []
         assert core_db.calls == []
 
-    async def test_tenant_with_no_keys_yet_is_zero_used_not_none(self):
+    async def test_tenant_with_no_keys_yet_is_zero_used_no_ceiling(self):
         """A tenant with a budget configured but zero Applications/Keys so
         far (LEFT JOIN yields one row with api_key_id NULL) is real, valid
-        tenant-level state — 0 used, snap is still tenants.allocated_budget
-        (not None): the ceiling is a property of the tenant, not of
-        whether it has any keys yet."""
+        tenant-level state — 0 used. snap is None (no ceiling yet), not
+        tenants.allocated_budget: with no keys, nothing is reachable."""
         auth_db = _FakeAuthDb(rows=[_FakeRow(allocated_budget=Decimal("100000"), api_key_id=None)])
         core_db = _FakeCoreDb(used_total=Decimal("0"))
 
         result = await fetch_tenant_budget_status(auth_db, core_db, "1")
 
         assert result.used == Decimal("0")
-        assert result.snap == Decimal("100000")
+        assert result.snap is None
         # Nothing to sum over — the core_db SUM query must never even fire.
         assert core_db.calls == []
 
@@ -760,44 +751,60 @@ class TestFetchTenantBudgetStatus:
                 _FakeRow(allocated_budget=Decimal("1000"), api_key_id=3),
             ]
         )
-        core_db = _FakeCoreDb(used_total=Decimal("750"))  # pre-summed by the fake DB's own SUM()
+        # pre-summed by the fake DB's own SUM() — snap_total is the SUM of
+        # the three keys' own api_key_budget_snap, not tenants.allocated_budget.
+        core_db = _FakeCoreDb(used_total=Decimal("750"), snap_total=Decimal("900"))
 
         result = await fetch_tenant_budget_status(auth_db, core_db, "1")
 
         assert result.used == Decimal("750")
-        assert result.snap == Decimal("1000")
+        assert result.snap == Decimal("900")
         # Every sibling key id reached the core_db query — this is what
         # actually pools their spend instead of reading just one key's row.
         assert core_db.calls[0][1]["key_ids"] == [1, 2, 3]
 
-    async def test_ceiling_is_the_tenants_full_budget_even_when_under_allocated(self):
-        """The exact bug this now guards against: only one Key exists,
-        allocated 50% (2500) of the tenant's 5000 allocated_budget.
-        Application/key allocations are only rejected when they'd exceed
-        100% (application_service.py's ALLOCATION_TOTAL_EXCEEDED), never
-        when they undershoot it, so this is the common case, not an edge
-        case. snap must still read 5000 — the tenant's real, dashboard-
-        matching budget — not 2500 (that key's own allocation)."""
-        auth_db = _FakeAuthDb(rows=[_FakeRow(allocated_budget=Decimal("5000"), api_key_id=1)])
-        core_db = _FakeCoreDb(used_total=Decimal("2500"))  # that one key, fully spent
+    async def test_ceiling_is_reachable_even_when_under_allocated(self):
+        """The bug this guards against: Application/key allocations are only
+        rejected when they'd exceed 100% (application_service.py's
+        ALLOCATION_TOTAL_EXCEEDED), never when they undershoot it. A tenant
+        allocated only 60% of its budget to keys must be able to actually
+        reach BUDGET_THRESHOLD/BUDGET_EXHAUSTED once those keys are fully
+        spent — comparing against the full tenants.allocated_budget instead
+        would make the bands permanently unreachable."""
+        auth_db = _FakeAuthDb(rows=[_FakeRow(allocated_budget=Decimal("100000"), api_key_id=1)])
+        # This key's own snap (600) is fully spent — 100% of the reachable
+        # ceiling — even though it's only 60% of the tenant's allocated_budget.
+        core_db = _FakeCoreDb(used_total=Decimal("600"), snap_total=Decimal("600"))
 
         result = await fetch_tenant_budget_status(auth_db, core_db, "1")
 
-        assert result.used == Decimal("2500")
-        assert result.snap == Decimal("5000")
+        assert result.used == Decimal("600")
+        assert result.snap == Decimal("600")
+
+    async def test_uncapped_keys_contribute_no_ceiling(self):
+        """SQL SUM ignores NULL rows — a tenant whose every key is uncapped
+        (no Application budget, see CreateAPIKeyRequest.budget's docstring)
+        must come back with snap=None (all-NULL sum), same "no ceiling,
+        don't enforce" convention as a single NULL per-key snap."""
+        auth_db = _FakeAuthDb(rows=[_FakeRow(allocated_budget=Decimal("100000"), api_key_id=1)])
+        core_db = _FakeCoreDb(used_total=Decimal("0"), snap_total=None)
+
+        result = await fetch_tenant_budget_status(auth_db, core_db, "1")
+
+        assert result.snap is None
 
     async def test_revoked_keys_are_not_excluded(self):
         """Same reasoning as auth-service's _sync_ppu_wallet_and_exhaustion:
-        a revoked key's past spend still counts against the tenant's
-        allocated_budget — this function has no is_active filter at all,
-        and must not gain one."""
+        a revoked key's past spend still counts against the tenant's pooled
+        ceiling — this function has no is_active filter at all, and must
+        not gain one."""
         auth_db = _FakeAuthDb(
             rows=[
                 _FakeRow(allocated_budget=Decimal("1000"), api_key_id=1),
                 _FakeRow(allocated_budget=Decimal("1000"), api_key_id=2),  # revoked, still counted
             ]
         )
-        core_db = _FakeCoreDb(used_total=Decimal("900"))
+        core_db = _FakeCoreDb(used_total=Decimal("900"), snap_total=Decimal("1000"))
 
         result = await fetch_tenant_budget_status(auth_db, core_db, "1")
 
