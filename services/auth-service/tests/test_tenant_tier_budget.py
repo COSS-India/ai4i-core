@@ -883,13 +883,15 @@ class TestReviseTenantBudgetEffectiveWindow:
         assert written["budget_effective_to"] == to_dt
 
     @pytest.mark.asyncio
-    async def test_renewing_an_already_expired_window_succeeds(self) -> None:
-        """End-to-end version of the real-world gap: a tenant whose budget
-        window already lapsed (budget_effective_to in the past) previously
-        had no endpoint that could ever move that date — revise_tenant_budget
-        only ever touched allocated_budget. An admin renewing the tenant now
-        does it in the same top-up call, and the new window replaces the
-        expired one."""
+    async def test_supplying_effective_from_on_a_lapsed_window_is_rejected(self) -> None:
+        """AI4IDS-2995 locks budget_effective_from once a window is on file
+        at all — active or lapsed — not just while live. A tenant whose
+        budget window already lapsed still has one on file, so supplying a
+        new budget_effective_from here (attempting to re-found the window
+        and move its start date) must 422, the same as it would on an
+        active window. Reactivating a lapsed window is done by supplying
+        only budget_effective_to (see
+        test_extending_effective_to_on_lapsed_window_reuses_stored_from)."""
         expired_tenant = _tenant(allocated_budget=Decimal("100"))
         expired_tenant.budget_effective_from = _VALID_EFFECTIVE_FROM - timedelta(days=60)
         expired_tenant.budget_effective_to = _VALID_EFFECTIVE_FROM - timedelta(days=1)
@@ -899,12 +901,12 @@ class TestReviseTenantBudgetEffectiveWindow:
         new_from = _VALID_EFFECTIVE_FROM
         new_to = _VALID_EFFECTIVE_TO
 
-        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), new_from, new_to)
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), new_from, new_to)
 
-        written = svc._tenants.update.await_args.args[1]
-        assert written["budget_effective_from"] == new_from
-        assert written["budget_effective_to"] == new_to
-        assert written["allocated_budget"] == Decimal("600")
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["error"] == "effective_from_locked"
+        svc._tenants.update.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_extending_effective_to_on_lapsed_window_reuses_stored_from(self) -> None:
@@ -1020,13 +1022,14 @@ def _tenant_with_active_window(*, allocated_budget=None) -> Tenant:
 
 class TestReviseTenantBudgetLocking:
     """The ACTIVE-window branch: budget_effective_from is locked once a
-    window is live (AI4IDS-2995: "Effective From is locked and cannot be
-    edited"), budget_effective_to is optional and extend-only, and — the
-    exact bug this closes — omitting both must still work as a plain
-    amount top-up/top-down, since that's literally what the shipped UI
-    (frontend/simple-ui's adjustTenantBudget) sends today: only
-    {action, amount}, never any date. Requiring both unconditionally would
-    422 every existing top-up/top-down the moment this deployed."""
+    window has ever been assigned — active or lapsed (AI4IDS-2995:
+    "Effective From is locked and cannot be edited"), budget_effective_to
+    is optional and extend-only, and — the exact bug this closes —
+    omitting both must still work as a plain amount top-up/top-down, since
+    that's literally what the shipped UI (frontend/simple-ui's
+    adjustTenantBudget) sends today: only {action, amount}, never any
+    date. Requiring both unconditionally would 422 every existing
+    top-up/top-down the moment this deployed."""
 
     @pytest.mark.asyncio
     async def test_supplying_effective_from_while_window_active_is_rejected(self) -> None:
@@ -1151,27 +1154,28 @@ class TestReviseTenantBudgetLocking:
         assert exc_info.value.detail["error"] == "effective_window_required"
 
     @pytest.mark.asyncio
-    async def test_renewing_after_expiry_is_treated_as_a_fresh_assignment_not_locked(self) -> None:
+    async def test_renewing_long_after_expiry_is_still_locked(self) -> None:
         """Ties back to TestReviseTenantBudgetEffectiveWindow's
-        test_renewing_an_already_expired_window_succeeds, from the locking
-        angle specifically: a LAPSED window (not merely "has some From/To
-        on file") does not count as "active", so From is open again here —
-        confirms the lock is tied to the window's liveness, not to whether
-        the fields have ever been set at all."""
+        test_supplying_effective_from_on_a_lapsed_window_is_rejected, from
+        the locking angle specifically: a LAPSED window (not merely "has
+        some From/To on file") still counts as a window being on file, so
+        From stays locked here too — confirms the lock is tied to whether
+        the fields have ever been set at all, not to the window's
+        liveness, no matter how long ago it lapsed."""
         expired_tenant = _tenant(allocated_budget=Decimal("100"))
         expired_tenant.budget_effective_from = _VALID_EFFECTIVE_FROM - timedelta(days=240)
         expired_tenant.budget_effective_to = _VALID_EFFECTIVE_FROM - timedelta(days=180)
         svc = _svc()
         svc._tenants.get_by_id_for_update = AsyncMock(return_value=expired_tenant)
-        svc._tenants.update = AsyncMock()
 
-        await svc.revise_tenant_budget(
-            _admin_user(), 1, "top-up", Decimal("1200"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO
-        )
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.revise_tenant_budget(
+                _admin_user(), 1, "top-up", Decimal("1200"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO
+            )
 
-        written = svc._tenants.update.await_args.args[1]
-        assert written["budget_effective_from"] == _VALID_EFFECTIVE_FROM
-        assert written["budget_effective_to"] == _VALID_EFFECTIVE_TO
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["error"] == "effective_from_locked"
+        svc._tenants.update.assert_not_awaited()
 
 
 class TestSyncBudgetEffectiveToCache:
