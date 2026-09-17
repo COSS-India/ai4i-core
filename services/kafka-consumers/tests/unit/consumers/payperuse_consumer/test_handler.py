@@ -531,6 +531,93 @@ class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
         for event_name, tenant_id, subject in calls["exhaustion"]:
             assert "api_key_id" not in subject
 
+    async def test_only_the_highest_crossed_band_fires_not_every_one(self, monkeypatch):
+        """A single debit that jumps straight past more than one configured
+        band (bands are 50/75/90 per _patch_kafka_helpers's _bands stub) must
+        fire exactly one BUDGET_THRESHOLD email — for the HIGHEST band
+        reached — not one email per band it happened to pass through.
+        check_and_record_threshold's ledger dedup only compares "does this
+        differ from what's stored"; it has no notion of "highest" on its
+        own, so this is enforced by only ever calling it once, with
+        max(crossed_bands(...))."""
+        from consumers.payperuse_consumer._billing import TenantBudgetStatus
+        from consumers.payperuse_consumer.handler import _publish_usage_crossing_events
+
+        # pre = (920-330)/1000 = 59.0%, post = 92.0% — crosses BOTH the 75%
+        # and 90% bands in this one debit.
+        tenant_budget = TenantBudgetStatus(used=Decimal("920"), snap=Decimal("1000"))
+        calls = self._patch_kafka_helpers(monkeypatch, tenant_budget=tenant_budget)
+
+        await _publish_usage_crossing_events(
+            db=object(), auth_db=object(), ctx=self._ctx(), write=self._write(),
+            cost=Decimal("330"), billed_units=Decimal("100"), inference_name="llm",
+            budget_threshold_enabled=True, budget_exhausted_enabled=False,
+        )
+
+        assert len(calls["threshold"]) == 1, (
+            f"expected exactly one BUDGET_THRESHOLD call, got {calls['threshold']!r}"
+        )
+        assert calls["threshold"][0][3] == 90, "must report the highest band crossed (90), not 75"
+        assert len(calls["published"]) == 1
+        assert calls["published"][0]["details"][0] == "90"
+
+    async def test_gradual_progression_across_separate_messages_fires_each_band(self, monkeypatch):
+        """The opposite scenario from the one above: usage crossing bands
+        one at a time across SEPARATE billing messages (not one debit
+        spanning several bands) must still fire once per band — 50, then
+        75, then 90 — not collapse to a single email. max(crossed_bands())
+        only picks the highest band within ONE call's own pre/post range;
+        it has no memory across calls, so a message whose own pre/post only
+        spans one band reports that one band regardless of what an earlier,
+        separate message already reported. Each call here gets its own
+        fresh pre/post, exactly as three real, separate billed messages
+        would (each recomputing tenant_budget.used from scratch)."""
+        from consumers.payperuse_consumer._billing import TenantBudgetStatus
+        from consumers.payperuse_consumer.handler import _publish_usage_crossing_events
+        from consumers.payperuse_consumer import handler as h
+
+        calls = self._patch_kafka_helpers(monkeypatch, tenant_budget=None)  # overridden per-call below
+
+        def _stub_tenant_budget_at(used: Decimal):
+            """A fresh async stub per message — real separate billed
+            messages each re-query fetch_tenant_budget_status from
+            scratch, so each call here must too, not share one canned
+            return value."""
+            async def _fetch(auth_db, core_db, tenant_id):
+                return TenantBudgetStatus(used=used, snap=Decimal("1000"))
+            return _fetch
+
+        # Message 1: 45% -> 55% (used 450 -> 550 of 1000) — crosses only 50.
+        monkeypatch.setattr(h, "fetch_tenant_budget_status", _stub_tenant_budget_at(Decimal("550")))
+        await _publish_usage_crossing_events(
+            db=object(), auth_db=object(), ctx=self._ctx(), write=self._write(),
+            cost=Decimal("100"), billed_units=Decimal("10"), inference_name="llm",
+            budget_threshold_enabled=True, budget_exhausted_enabled=False,
+        )
+
+        # Message 2: 55% -> 78% (used 550 -> 780) — crosses only 75 (50 is
+        # already behind pre, so it must not re-fire).
+        monkeypatch.setattr(h, "fetch_tenant_budget_status", _stub_tenant_budget_at(Decimal("780")))
+        await _publish_usage_crossing_events(
+            db=object(), auth_db=object(), ctx=self._ctx(), write=self._write(),
+            cost=Decimal("230"), billed_units=Decimal("10"), inference_name="llm",
+            budget_threshold_enabled=True, budget_exhausted_enabled=False,
+        )
+
+        # Message 3: 78% -> 93% (used 780 -> 930) — crosses only 90.
+        monkeypatch.setattr(h, "fetch_tenant_budget_status", _stub_tenant_budget_at(Decimal("930")))
+        await _publish_usage_crossing_events(
+            db=object(), auth_db=object(), ctx=self._ctx(), write=self._write(),
+            cost=Decimal("150"), billed_units=Decimal("10"), inference_name="llm",
+            budget_threshold_enabled=True, budget_exhausted_enabled=False,
+        )
+
+        bands_fired = [band for _, _, _, band in calls["threshold"]]
+        assert bands_fired == [50, 75, 90], (
+            f"gradual progression must fire once per newly-crossed band, in order; got {bands_fired!r}"
+        )
+        assert len(calls["published"]) == 3
+
     async def test_percentage_comes_from_tenant_totals_not_the_one_keys_row(self, monkeypatch):
         """write.api_key_budget_used/snap (this one key's own row) must be
         completely ignored for BUDGET_THRESHOLD/BUDGET_EXHAUSTED now — only
@@ -615,3 +702,29 @@ class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
 
         assert calls["threshold"] == [("QUOTA_THRESHOLD", "1", {"model_task_type": "nmt"}, 75)]
         assert "api_key_id" not in calls["threshold"][0][2]
+
+    async def test_quota_threshold_only_fires_for_the_highest_band_too(self, monkeypatch):
+        """Same "highest band only" fix as BUDGET_THRESHOLD, applied to
+        QUOTA_THRESHOLD too — it shares the identical loop-over-every-
+        crossed-band bug before this fix."""
+        from consumers.payperuse_consumer.handler import _publish_usage_crossing_events
+
+        # pre = (92-33)/100 = 59%, post = 92% — crosses both 75 and 90.
+        write = self._write(
+            api_key_budget_snap=None,
+            quota_recorded=True,
+            quota_used=Decimal("92"),
+            quota_snap=Decimal("100"),
+        )
+        calls = self._patch_kafka_helpers(monkeypatch, tenant_budget=None)
+
+        await _publish_usage_crossing_events(
+            db=object(), auth_db=object(), ctx=self._ctx(), write=write,
+            cost=Decimal("1"), billed_units=Decimal("33"), inference_name="nmt",
+            budget_threshold_enabled=True, budget_exhausted_enabled=True,
+        )
+
+        assert len(calls["threshold"]) == 1, (
+            f"expected exactly one QUOTA_THRESHOLD call, got {calls['threshold']!r}"
+        )
+        assert calls["threshold"][0][3] == 90, "must report the highest band crossed (90), not 75"
