@@ -1,23 +1,32 @@
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Column, DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, text
 
+from app.core.constants import TierStatus
 from app.models import Base
 
 
 class Tier(Base):
     __tablename__ = "tiers"
     __table_args__ = (
-        UniqueConstraint("name", name="uq_tiers_name"),
+        Index("uq_tiers_name_active", "name", unique=True, postgresql_where=text("status != 'DELETED'")),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
-    is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    status = Column(
+        Enum(
+            TierStatus,
+            name="tier_status_enum",
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
+        server_default=TierStatus.INACTIVE.value,
+    )
     created_by = Column(String(255), nullable=True)
     updated_by = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -37,8 +46,13 @@ class Tier(Base):
 
 class TierQuota(Base):
     __tablename__ = "tier_quotas"
+    # Both constraints are listed on purpose. The id-keyed one is what the
+    # consumer now conflicts on; the name-keyed one is still on the table until
+    # inference_name is dropped, and autogenerate would propose removing whichever
+    # it could not see here.
     __table_args__ = (
         UniqueConstraint("tier_id", "inference_name", name="uq_tier_quotas_tier_inference"),
+        UniqueConstraint("tier_id", "inference_type_id", name="uq_tier_quotas_tier_inference_type"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -49,8 +63,18 @@ class TierQuota(Base):
         index=True,
     )
     inference_name = Column(String(64), nullable=False)
-    monthly_quota = Column(Numeric(15, 4), nullable=False)
-    pending_monthly_quota = Column(Numeric(15, 4), nullable=True)
+    # NOT NULL from phase 2 on. UNIQUE (tier_id, inference_type_id) would be
+    # toothless against a nullable column, since NULL never equals NULL in a
+    # unique index. A NULL row would also be a dead quota — the consumer's join
+    # cannot match it, so the tier would silently grant nothing.
+    inference_type_id = Column(
+        Integer,
+        ForeignKey("inference_types.id"),
+        nullable=False,
+        index=True,
+    )
+    monthly_quota = Column(Numeric(16, 4), nullable=False)
+    pending_monthly_quota = Column(Numeric(16, 4), nullable=True)
     created_by = Column(String(255), nullable=True)
     updated_by = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

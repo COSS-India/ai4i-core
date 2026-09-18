@@ -147,10 +147,15 @@ async def create_api_key(
     (a mismatched or unknown `application_id` returns 404
     APPLICATION_NOT_FOUND, uniformly); ADMIN may target any tenant's
     application. The Application's tenant must have an active tier
-    (`tenants.tier_id`), or this returns 422 NO_ACTIVE_TIER.
+    (`tenants.tier_id`), or this returns 422 NO_ACTIVE_TIER. If the tenant's
+    budget effective window (`tenants.budget_effective_to`) has already
+    ended, this returns 422 BUDGET_EXPIRED instead — checked directly
+    against the tenant row (not the Redis flag `/auth/validate` reads), so
+    it can't lag behind an expiry that hasn't yet been picked up by a
+    billed request.
     """
     caller_tenant_id = _resolve_caller_tenant_scope(request, current_user)
-    raw_key, api_key = await svc.create_api_key(
+    raw_key, api_key, budget_exhausted = await svc.create_api_key(
         actor_user_id=current_user.id,
         key_name=body.key_name,
         permissions=body.permissions,
@@ -174,6 +179,7 @@ async def create_api_key(
             application_id=api_key.application_id,
             allocated_percentage=api_key.allocated_percentage,
             allocated_budget=api_key.allocated_budget,
+            budget_exhausted=budget_exhausted,
         )
     )
 

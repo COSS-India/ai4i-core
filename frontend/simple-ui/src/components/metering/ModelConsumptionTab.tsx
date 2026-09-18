@@ -9,12 +9,8 @@ import {
   MenuList,
   Portal,
   SimpleGrid,
-  Tbody,
-  Td,
   Text,
-  Thead,
   Tooltip,
-  Tr,
   VStack,
 } from "@chakra-ui/react";
 import { ChevronDownIcon } from "@chakra-ui/icons";
@@ -33,14 +29,12 @@ import {
   modelConsumptionTaskTypeColor,
 } from "../../utils/meteringFormatters";
 import { normalizeModelTaskType } from "../../utils/meteringTaskType";
-import { useMeteringTableSort } from "../../utils/meteringTableSort";
+import DataTable, { type DataTableColumn } from "../common/table";
 import MeteringAsyncState from "./MeteringAsyncState";
-import MeteringDataTable from "./MeteringDataTable";
 import MeteringDonutChart, { DonutRankedLayout } from "./MeteringDonutChart";
 import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
 import RankedShareList from "./RankedShareList";
 import SegmentedTabBar from "./SegmentedTabBar";
-import SortableTh from "./SortableTh";
 import { TaskTypeLabel } from "./UsageSpendCells";
 
 interface ModelConsumptionTabProps {
@@ -135,10 +129,104 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
     [],
   );
 
-  const { sortedRows, sortKey, sortDirection, toggleSort } = useMeteringTableSort(
-    filteredBreakdown,
-    "requests",
-    sortAccessors,
+  type BreakdownRow = (typeof filteredBreakdown)[number];
+
+  const breakdownColumns = useMemo<DataTableColumn<BreakdownRow>[]>(
+    () => [
+      {
+        id: "task_type",
+        header: section.TABLE_TASK_TYPE,
+        hint: section.TOOLTIPS.TASK_TYPE,
+        cell: (row, i) =>
+          row.task_type ? (
+            <TaskTypeLabel
+              taskType={row.task_type}
+              color={modelConsumptionTaskTypeColor(row.task_type, i)}
+            />
+          ) : (
+            METERING.GRAPH.EMPTY_VALUE
+          ),
+      },
+      {
+        id: "model_name",
+        header: section.TABLE_MODEL,
+        sortable: true,
+        sortAccessor: sortAccessors.model_name,
+        cell: (row) => (
+          <Text fontSize="sm" color="gray.800" fontWeight="medium">
+            {row.model_name?.trim() || METERING.GRAPH.EMPTY_VALUE}
+          </Text>
+        ),
+      },
+      {
+        id: "name",
+        header: section.TABLE_SERVICE,
+        sortable: true,
+        sortAccessor: sortAccessors.name,
+        cell: (row, i) => {
+          const rowColor = modelConsumptionTaskTypeColor(row.task_type, i);
+          return (
+            <HStack spacing={2}>
+              <Box w={1} h={5} borderRadius="sm" bg={rowColor} />
+              <Text fontWeight="medium" fontSize="sm">
+                {row.name}
+              </Text>
+            </HStack>
+          );
+        },
+      },
+      {
+        id: "requests",
+        header: section.TABLE_TOTAL_REQUESTS,
+        sortable: true,
+        sortAccessor: sortAccessors.requests,
+        hint: section.TOOLTIPS.TOTAL_REQUESTS,
+        isNumeric: true,
+        cell: (row) => (
+          <Text fontSize="sm">{formatCompactNumber(row.requests, "indian")}</Text>
+        ),
+      },
+      {
+        id: "native_units",
+        header: section.TABLE_NATIVE,
+        sortable: true,
+        sortAccessor: sortAccessors.native_units,
+        hint: section.TOOLTIPS.TOKEN_CONSUMPTION,
+        isNumeric: true,
+        cell: (row) => (
+          <Text fontSize="sm" color="gray.600">
+            {formatNativeConsumption(row.native_units, row.native_unit_suffix)}
+          </Text>
+        ),
+      },
+      {
+        id: "success_pct",
+        header: section.TABLE_SUCCESS,
+        sortable: true,
+        sortAccessor: sortAccessors.success_pct,
+        hint: section.TOOLTIPS.SUCCESS_RATE,
+        isNumeric: true,
+        cell: (row) => (
+          <Text fontSize="sm" color="green.600" fontWeight="medium">
+            {row.success_pct.toFixed(2)}
+          </Text>
+        ),
+      },
+      {
+        id: "failure_rate_pct",
+        header: section.TABLE_FAILURE,
+        sortable: true,
+        sortAccessor: sortAccessors.failure_rate_pct,
+        hint: section.TOOLTIPS.FAILURE_RATE,
+        isNumeric: true,
+        cell: (row) => (
+          <Text fontSize="sm" color="red.500" fontWeight="medium">
+            {row.failure_rate_pct.toFixed(2)}
+          </Text>
+        ),
+      },
+    ],
+    [section, sortAccessors],
   );
 
   const toggleTaskType = (taskType: string) => {
@@ -346,124 +434,16 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
               </Box>
             ) : null}
 
-            <MeteringDataTable>
-              <Thead bg="gray.50">
-                <Tr>
-                  <SortableTh
-                    sortKey="task_type"
-                    activeSortKey={sortKey}
-                    sortDirection={sortDirection}
-                    onSort={toggleSort}
-                    message={section.TOOLTIPS.TASK_TYPE}
-                  >
-                    {section.TABLE_TASK_TYPE}
-                  </SortableTh>
-                  <SortableTh
-                    sortKey="model_name"
-                    activeSortKey={sortKey}
-                    sortDirection={sortDirection}
-                    onSort={toggleSort}
-                  >
-                    {section.TABLE_MODEL}
-                  </SortableTh>
-                  <SortableTh
-                    sortKey="name"
-                    activeSortKey={sortKey}
-                    sortDirection={sortDirection}
-                    onSort={toggleSort}
-                  >
-                    {section.TABLE_SERVICE}
-                  </SortableTh>
-                  <SortableTh
-                    sortKey="requests"
-                    activeSortKey={sortKey}
-                    sortDirection={sortDirection}
-                    onSort={toggleSort}
-                    message={section.TOOLTIPS.TOTAL_REQUESTS}
-                    isNumeric
-                  >
-                    {section.TABLE_TOTAL_REQUESTS}
-                  </SortableTh>
-                  <SortableTh
-                    sortKey="native_units"
-                    activeSortKey={sortKey}
-                    sortDirection={sortDirection}
-                    onSort={toggleSort}
-                    message={section.TOOLTIPS.TOKEN_CONSUMPTION}
-                    isNumeric
-                  >
-                    {section.TABLE_NATIVE}
-                  </SortableTh>
-                  <SortableTh
-                    sortKey="success_pct"
-                    activeSortKey={sortKey}
-                    sortDirection={sortDirection}
-                    onSort={toggleSort}
-                    message={section.TOOLTIPS.SUCCESS_RATE}
-                    isNumeric
-                  >
-                    {section.TABLE_SUCCESS}
-                  </SortableTh>
-                  <SortableTh
-                    sortKey="failure_rate_pct"
-                    activeSortKey={sortKey}
-                    sortDirection={sortDirection}
-                    onSort={toggleSort}
-                    message={section.TOOLTIPS.FAILURE_RATE}
-                    isNumeric
-                  >
-                    {section.TABLE_FAILURE}
-                  </SortableTh>
-                </Tr>
-              </Thead>
-              <Tbody>
-                {sortedRows.map((row, i) => {
-                  const rowColor = modelConsumptionTaskTypeColor(row.task_type, i);
-                  return (
-                  <Tr key={`${row.service_id}-${row.model_name ?? i}`}>
-                    <Td fontSize="sm">
-                      {row.task_type ? (
-                        <TaskTypeLabel
-                          taskType={row.task_type}
-                          color={rowColor}
-                        />
-                      ) : (
-                        METERING.GRAPH.EMPTY_VALUE
-                      )}
-                    </Td>
-                    <Td fontSize="sm" color="gray.800" fontWeight="medium">
-                      {row.model_name?.trim() || METERING.GRAPH.EMPTY_VALUE}
-                    </Td>
-                    <Td>
-                      <HStack spacing={2}>
-                        <Box
-                          w={1}
-                          h={5}
-                          borderRadius="sm"
-                          bg={rowColor}
-                        />
-                        <Text fontWeight="medium" fontSize="sm">
-                          {row.name}
-                        </Text>
-                      </HStack>
-                    </Td>
-                    <Td isNumeric fontSize="sm">
-                      {formatCompactNumber(row.requests, "indian")}
-                    </Td>
-                    <Td isNumeric fontSize="sm" color="gray.600">
-                      {formatNativeConsumption(row.native_units, row.native_unit_suffix)}
-                    </Td>
-                    <Td isNumeric fontSize="sm" color="green.600" fontWeight="medium">
-                      {row.success_pct.toFixed(2)}
-                    </Td>
-                    <Td isNumeric fontSize="sm" color="red.500" fontWeight="medium">
-                      {row.failure_rate_pct.toFixed(2)}
-                    </Td>
-                  </Tr>
-                  );
-                })}
-              </Tbody>
-            </MeteringDataTable>
+            <DataTable
+              columns={breakdownColumns}
+              rows={filteredBreakdown}
+              rowKey={(row) => `${row.service_id}-${row.model_name ?? row.name}`}
+              defaultSortKey="requests"
+              defaultSortDirection="desc"
+              theadBg="gray.50"
+              containerMt={0}
+              showAsyncState={false}
+            />
           </MeteringSectionCard>
         </VStack>
       ) : null}

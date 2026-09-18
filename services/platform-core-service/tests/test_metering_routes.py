@@ -201,7 +201,7 @@ class TestParseTaskTypes:
         assert _parse_task_types("LLM") == ["llm"]
 
     def test_language_diarization_is_a_valid_task_type(self):
-        # AI4IDS-2716 review: language_diarization ships in inference_types.yaml
+        # AI4IDS-2716 review: language_diarization ships in the inference-type catalogue
         # (and is part of the frontend's enabled-task-type catalog) but was
         # missing from SERVICE_BREAKDOWN_CONFIG — that gap must not 422 a
         # request for an otherwise-real task type.

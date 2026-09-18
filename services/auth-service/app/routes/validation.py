@@ -13,10 +13,10 @@ import base64
 import binascii
 import json
 import logging
-from functools import lru_cache
+from datetime import datetime
 from urllib.parse import quote
 
-from ai4i_core.ppu import get_inference_types
+from ai4i_core.ppu import get_catalogue
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 
@@ -27,7 +27,7 @@ from app.core.permission_checker import endpoint_permission_map_loaded, permissi
 from app.core.redis import get_redis
 from app.core.exceptions import AuthenticationRequiredError, InvalidAPIKeyError
 from app.dependencies.auth import check_token_revocation, get_jwt_verifier
-from app.schemas.api_key import ValidateAPIKeyErrorResponse, ValidateAPIKeyResponse
+from app.schemas.api_key import ValidateAPIKeyResponse
 from app.schemas.token import (
     TokenValidationResponse,
     ValidateTokenErrorResponse,
@@ -36,28 +36,55 @@ from app.schemas.token import (
 from app.services.api_key_service import APIKeyService
 from app.services.cache_service import CacheService
 from app.services.tenant_name_cache import tenant_name_cache
+from app.services.tier_status_cache import tier_status_cache
+from app.utils.budget_window import is_budget_window_expired
 
 
-@lru_cache(maxsize=1)
-def _service_by_path() -> dict[str, dict]:
-    """Concrete request path → inference-type entry, built once from the yaml.
-
-    The gateway serves a fixed, known path set, so resolution is a single
-    exact lookup — no prefix scanning. Every path an entry serves comes from
-    the yaml itself: endpoint_pattern plus any endpoint_aliases. Unknown paths
-    (unified /api/v1/inference, try-it, audio passthrough) resolve to None.
+def _cached_budget_window_is_expired(result: dict) -> bool:
+    """True if this key's cached budget_effective_to (see
+    APIKeyService._build_cache_payload) has already been reached — computed
+    directly from the cached value, not a separately pushed boolean flag,
+    so the result is correct on the very first request after the window
+    lapses and for a tenant whose traffic never reaches Kafka billing at
+    all (an unpriced service, or one that always costs 0 — both early-
+    return in payperuse_consumer._bill_usage before ever notifying
+    auth-service). An absent/empty value means no window was ever cached
+    (a pre-fix key, or a tenant with no window) — never expired. A value
+    that fails to parse is logged and treated as not-expired (fail open —
+    a cache-corruption bug must not itself become an outage) rather than
+    blocking every request for it.
     """
-    table: dict[str, dict] = {}
-    for entry in get_inference_types():
-        table[entry["endpoint_pattern"]] = entry
-        for alias in entry.get("endpoint_aliases", []):
-            table[alias] = entry
-    return table
+    raw = result.get("budget_effective_to")
+    if not raw:
+        return False
+    try:
+        budget_effective_to = datetime.fromisoformat(raw)
+    except (TypeError, ValueError):
+        logger.warning("Unparseable cached budget_effective_to=%r — treating as not expired", raw)
+        return False
+    return is_budget_window_expired(budget_effective_to)
 
 
-def _resolve_service(uri: str) -> dict | None:
-    """Map X-Original-URI to its inference type — one dict lookup."""
-    return _service_by_path().get(uri.split("?", 1)[0].rstrip("/"))
+async def _resolve_service(uri: str) -> dict | None:
+    """Map X-Original-URI to its inference type, or None.
+
+    Reads the database-backed catalogue instead of the bundled yaml, so a type
+    an admin adds at runtime is enforceable without a release. The catalogue
+    keeps a process-local snapshot with a TTL, so the warm path is still a dict
+    lookup with no I/O — the same property the previous ``@lru_cache`` gave,
+    minus the "cached until restart" part.
+
+    Unknown paths (unified /api/v1/inference, try-it, audio passthrough)
+    resolve to None, as before.
+
+    None is also what a briefly-unreachable catalogue produces, and that
+    degrades safely: it means "no per-service quota check, proceed". The
+    budget-exhausted 429 above is unaffected (it reads the API-key hash, not the
+    catalogue), and so is the X-Quota-Exhausted-Services header. So an outage
+    here can under-enforce a per-service quota, but can never produce a spurious
+    429 or an outage of its own.
+    """
+    return await get_catalogue().get_by_path(uri)
 
 
 router = APIRouter(prefix="/auth", tags=["Validation"])
@@ -147,6 +174,31 @@ def _extract_token(request: Request) -> str:
     return raw
 
 
+def _unauthenticated(reason: str) -> JSONResponse:
+    """The one 401 body for every "we could not identify this caller" case —
+    a malformed/garbage token, an expired or revoked JWT, or an unknown/
+    revoked API key. Per the agreed auth-response contract: 401 means we
+    couldn't identify the caller at all, and the client only ever sees that
+    much — never *why* (expired vs invalid vs revoked vs wrong format).
+    Disclosing which specific check failed would let a caller probe the
+    difference between "this token doesn't exist" and "this token exists
+    but is expired/revoked", which is exactly the kind of detail an
+    authentication boundary shouldn't leak.
+
+    `reason` is never sent to the client — it's logged here only, so the
+    real cause is still available in auth-service's own logs for debugging,
+    same as every other place in this codebase that fails safe/generic
+    towards the caller but loud towards operators."""
+    logger.info("Authentication failed | reason=%s", reason)
+    return JSONResponse(
+        status_code=401,
+        content=ValidateTokenErrorResponse(
+            error="UNAUTHENTICATED",
+            message="Authentication failed.",
+        ).model_dump(),
+    )
+
+
 # ── Per-token-type validators ─────────────────────────────────────────────
 
 
@@ -172,23 +224,14 @@ async def _validate_api_key(
     try:
         result = await api_key_svc.validate_api_key(token)
     except InvalidAPIKeyError:
-        return JSONResponse(
-            status_code=401,
-            content=ValidateAPIKeyErrorResponse(error="INVALID_API_KEY", message="API key not found or has been revoked.").model_dump(),
-        )
+        return _unauthenticated("INVALID_API_KEY")
 
     # validate_api_key() returns {"valid": False, ...} rather than raising
     # when the token isn't even hex-key shaped (wrong length/charset) — catch
     # that here so it doesn't fall through the rest of this function as if it
     # were a valid result (no user_id ⇒ X-User-ID silently never set).
     if result.get("valid") is False:
-        return JSONResponse(
-            status_code=401,
-            content=ValidateAPIKeyErrorResponse(
-                error="INVALID_API_KEY_FORMAT",
-                message=result.get("message") or "Invalid API key format.",
-            ).model_dump(),
-        )
+        return _unauthenticated(result.get("message") or "INVALID_API_KEY_FORMAT")
 
     permission_ids = result.get("permissions") or result.get("permission_ids") or []
     if not _check_endpoint_permission(request, permission_ids):
@@ -204,6 +247,22 @@ async def _validate_api_key(
     api_key_id = result.get("id")
     tenant_id = result.get("tenant_id")
 
+    # ── Tier status check — runs before budget/quota ────────────────────────
+    # A paused tier outranks an exhausted quota: reporting "quota exceeded" for
+    # a suspended tenant sends them chasing the wrong thing. 403, not 429 —
+    # this is not a rate condition that clears on retry.
+    # API-key branch only; JWT emits an empty tier_id and skips this block.
+    # Fails open: an unknown tier (cache not yet loaded) is treated as ACTIVE.
+    _tier_id = result.get("tier_id")
+    if _tier_id and not tier_status_cache.is_active(_tier_id):
+        return JSONResponse(
+            status_code=403,
+            content=ValidateTokenErrorResponse(
+                error="TIER_DEACTIVATED",
+                message="Your tier has been deactivated. Please contact your administrator.",
+            ).model_dump(),
+        )
+
     # ── PPU enforcement — decided HERE, not in APISIX ──────────────────────
     # APISIX only forward-auths (and rate-limits); a 429 from this endpoint
     # flows through the gateway to the client unchanged. The exhaustion flags
@@ -215,6 +274,24 @@ async def _validate_api_key(
     )
     quota_header = {"X-Quota-Exhausted-Services": ",".join(exhausted_services)}
 
+    if _cached_budget_window_is_expired(result):
+        # Checked before budget-exhausted: a lapsed effective window is a
+        # harder stop than running out of budget within an otherwise-valid
+        # one — 403 (the request is outside what was ever authorized), not
+        # 429 (would imply "try again once the period resets", which isn't
+        # true here without an admin renewing the window via PATCH
+        # /auth/tenants/{id}/budget). Computed directly from budget_effective_to
+        # in the cached payload (see _cached_budget_window_is_expired) —
+        # deterministic on the very first request after the window lapses,
+        # unlike a flag someone else would have to have pushed first.
+        return JSONResponse(
+            status_code=403,
+            content=ValidateTokenErrorResponse(
+                error="BUDGET_EXPIRED",
+                message="Tenant's budget effective window has ended.",
+            ).model_dump(),
+        )
+
     if result.get("budget-exhausted") == "1":
         return JSONResponse(
             status_code=429,
@@ -225,7 +302,7 @@ async def _validate_api_key(
             headers=quota_header,
         )
 
-    service = _resolve_service(request.headers.get("X-Original-URI", ""))
+    service = await _resolve_service(request.headers.get("X-Original-URI", ""))
     if service and service["name"] in exhausted_services:
         return JSONResponse(
             status_code=429,
@@ -267,21 +344,9 @@ async def _validate_jwt(
     try:
         claims = await get_jwt_verifier().verify(token)
     except JWTExpiredError:
-        return JSONResponse(
-            status_code=401,
-            content=ValidateTokenErrorResponse(
-                error="TOKEN_EXPIRED",
-                message="Token has expired.",
-            ).model_dump(),
-        )
+        return _unauthenticated("TOKEN_EXPIRED")
     except JWTVerificationError:
-        return JSONResponse(
-            status_code=401,
-            content=ValidateTokenErrorResponse(
-                error="TOKEN_INVALID",
-                message="Token is invalid.",
-            ).model_dump(),
-        )
+        return _unauthenticated("TOKEN_INVALID")
 
     # Not gated on claims.token_id: access tokens carry `jti`, not `token_id`
     # (only api_key tokens set token_id) — the global-logout check below keys
@@ -293,13 +358,7 @@ async def _validate_jwt(
         user_id=str(claims.user_id) if claims.user_id else None,
         issued_at=claims.raw.get("iat"),
     ):
-        return JSONResponse(
-            status_code=401,
-            content=ValidateTokenErrorResponse(
-                error="TOKEN_REVOKED",
-                message="Token has been revoked.",
-            ).model_dump(),
-        )
+        return _unauthenticated("TOKEN_REVOKED")
 
     if not _check_endpoint_permission(request, claims.permission_ids):
         return JSONResponse(
@@ -341,14 +400,20 @@ async def _validate_jwt(
         401: {
             "model": ValidateTokenErrorResponse,
             "description": (
-                "Expired, invalid, or revoked JWT — body is "
-                "{valid, error, message} with a machine-readable `error` code. "
-                "Two other 401 cases exist on this endpoint but have a different "
-                "body: a missing token raises AuthenticationRequiredError, "
-                "rendered as the platform's {detail: {code, message, timestamp}} "
-                "envelope; an unknown/revoked API key returns the same "
-                "{valid, error, message} shape but with `error` set to a "
-                "human-readable sentence rather than a code."
+                "The caller could not be identified at all — no token, or a "
+                "token that's malformed, unreadable, expired, revoked, or "
+                "otherwise unrecognisable (this covers both JWTs and API "
+                "keys). Body is the generic {valid: false, error: "
+                "\"UNAUTHENTICATED\", message: \"Authentication failed.\"} — "
+                "deliberately the SAME body for every one of those cases: "
+                "the specific reason is intentionally not disclosed to the "
+                "caller (it would otherwise let someone probe, e.g., "
+                "'expired' vs 'revoked' vs 'wrong format'), and is only "
+                "logged server-side. The one exception is a request with no "
+                "token at all, which instead raises AuthenticationRequiredError "
+                "and renders as the platform's {detail: {code, message, "
+                "timestamp}} envelope — a different shape, but equally "
+                "generic content."
             ),
         },
         403: {

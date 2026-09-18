@@ -20,9 +20,55 @@ logger = logging.getLogger(__name__)
 _PUBLIC_PATHS = {"/", "/health", "/api/v1/inference/health", "/docs", "/redoc", "/openapi.json"}
 
 
+async def _configure_inference_type_catalogue() -> None:
+    """Point ai4i_core.ppu at the catalogue and warm it.
+
+    Redis first — platform-core writes core:inference_type:* and this service
+    only reads it — with platform-core's HTTP endpoint as the fallback, since
+    MODEL_MANAGEMENT_SERVICE_URL already points there and GET /inference-types
+    needs no auth.
+
+    Entirely best-effort. This service is stateless and must start whether or
+    not Redis is up; a cold catalogue makes get_unit_type return "unknown",
+    which zeroes a span's billed counts exactly as an unmapped task type
+    always has, and never fails an inference request.
+    """
+    from ai4i_core.ppu import configure_catalogue, get_catalogue
+
+    def _redis_factory():
+        try:
+            import redis.asyncio as aioredis
+
+            return aioredis.Redis(
+                host=settings.REDIS_HOST,
+                port=settings.REDIS_PORT,
+                password=settings.REDIS_PASSWORD,
+                db=settings.REDIS_DB,
+                socket_timeout=settings.REDIS_TIMEOUT,
+                decode_responses=True,
+            )
+        except Exception as exc:
+            logger.warning("Redis unavailable for the inference-type catalogue: %s", type(exc).__name__)
+            return None
+
+    configure_catalogue(
+        redis_factory=_redis_factory,
+        http_base_url=settings.MODEL_MANAGEMENT_SERVICE_URL,
+        http_timeout=settings.MODEL_MANAGEMENT_SERVICE_TIMEOUT,
+        ttl_seconds=settings.CACHE_TTL_SECONDS,
+    )
+    try:
+        types = await get_catalogue().refresh()
+        logger.info("Inference type catalogue warmed: %d types.", len(types))
+    except Exception as exc:
+        logger.warning("Inference type catalogue warm-up skipped: %s", type(exc).__name__)
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    """Startup/shutdown lifecycle: flush tracing spans on graceful shutdown."""
+    """Startup/shutdown lifecycle: warm the inference-type catalogue, then
+    flush tracing spans on graceful shutdown."""
+    await _configure_inference_type_catalogue()
     logger.info("✓ Inference service started")
     yield
     from opentelemetry import trace

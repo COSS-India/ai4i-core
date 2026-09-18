@@ -8,6 +8,8 @@ export interface ApiKeyRecord {
   application_name?: string;
   allocated_percentage: number | null;
   allocated_budget: number | null;
+  /** Present on create: true when the key was seeded with nothing left to spend. */
+  budget_exhausted?: boolean;
   permissions: string[];
   expires_at?: string;
   is_active?: boolean;
@@ -31,7 +33,7 @@ export interface CreateApiKeyPayload {
   permissions: string[];
   expires_days?: number;
   application_id: string;
-  allocated_percentage: number;
+  allocated_percentage?: number;
 }
 
 export interface ListApiKeysParams {

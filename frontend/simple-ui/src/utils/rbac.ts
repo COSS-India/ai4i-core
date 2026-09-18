@@ -41,14 +41,6 @@ export function canAccessServicesManagement(roles?: string[]): boolean {
 }
 
 /**
- * Sidebar "Model task type" service cards (and the section that holds them).
- * Hidden for the Usage-Dashboard-only role; every other role gets the section.
- */
-export function canSeeServiceCards(roles?: string[]): boolean {
-  return !isUsageDashboardOnlyUser(roles);
-}
-
-/**
  * Restricted roles whose entire nav surface is the Usage Dashboard (plus Profile).
  * Callers gate every other nav item off this.
  */
@@ -97,18 +89,19 @@ export function isTenantAdminOnlyUser(roles?: string[]): boolean {
 
 /**
  * Profile self-service account deletion — available to tenant-scoped USER,
- * TENANT ADMIN and USAGE VIEWER roles. Hidden for platform ADMIN, Adopter
- * Admin (MODERATOR), and GUEST.
+ * TENANT ADMIN, USAGE VIEWER and Adopter Admin (MODERATOR) roles. Hidden for
+ * platform ADMIN, GUEST, and MODERATOR paired with TENANT ADMIN.
  */
 export function canSelfDeleteAccount(roles?: string[]): boolean {
   if (!roles?.length) return false;
   if (isPlatformAdminUser(roles)) return false;
-  if (isAdopterAdminUser(roles)) return false;
+  if (userHasRole(roles, "MODERATOR") && isTenantAdminUser(roles)) return false;
   if (userHasRole(roles, "GUEST")) return false;
   return (
     userHasRole(roles, "USER") ||
     isTenantAdminUser(roles) ||
-    isUsageViewerUser(roles)
+    isUsageViewerUser(roles) ||
+    userHasRole(roles, "MODERATOR")
   );
 }
 

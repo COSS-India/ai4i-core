@@ -121,10 +121,13 @@ const Header: React.FC = () => {
       // case "/pii-management":
       //   setTitle("PII Guardrail");
       //   break;
-      // Alerts Management removed from UI — uncomment to restore
+      // Legacy Alerts Management removed — uncomment to restore
       // case "/alerts-management":
       //   setTitle("Alerts Management");
       //   break;
+      case "/notifications-alerts":
+        setTitle("Notifications & Alerts");
+        break;
       case "/logs":
         setTitle("Logs Dashboard");
         break;

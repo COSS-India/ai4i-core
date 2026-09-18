@@ -4,6 +4,33 @@
 
 import type { LanguageRecord, Service } from '../types/platform';
 
+/** Nested / legacy shapes used for model or service task type on list/detail payloads. */
+type TaskTypeSource = {
+  task?: { type?: string } | null;
+  task_type?: string | null;
+  taskType?: string | null;
+  model?: { task?: { type?: string } | null } | null;
+} | null | undefined;
+
+/**
+ * Resolve model/service task type from nested `task.type` or legacy flat fields.
+ * Always returns a string (empty when missing) — never throws on undefined task.
+ */
+export function resolveTaskType(entity: TaskTypeSource): string {
+  if (!entity) return '';
+  const nested =
+    entity.task && typeof entity.task === 'object'
+      ? entity.task.type
+      : undefined;
+  const raw =
+    entity.model?.task?.type ||
+    nested ||
+    entity.task_type ||
+    entity.taskType ||
+    '';
+  return typeof raw === 'string' ? raw.trim() : '';
+}
+
 export function resolveServiceId(service: Pick<Service, 'serviceId' | 'service_id'>): string {
   return service.serviceId || service.service_id || '';
 }

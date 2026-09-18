@@ -119,6 +119,7 @@ export const createApiKeyResponseSchema = z
     application_id: z.coerce.string().optional(),
     allocated_percentage: z.coerce.number().nullable().optional(),
     allocated_budget: z.coerce.number().nullable().optional(),
+    budget_exhausted: z.boolean().optional(),
   })
   .passthrough()
   .transform((d) => ({

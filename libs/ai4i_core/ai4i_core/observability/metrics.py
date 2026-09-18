@@ -106,7 +106,7 @@ class MetricsCollector:
         # OCR tracking (Histogram for percentile calculations). Renamed from
         # telemetry_obsv_ocr_characters_processed — this carries an image
         # COUNT, not a character count (billed_input's unit for OCR is images,
-        # per inference_types.yaml); the old name silently meant something
+        # per the inference-type catalogue); the old name silently meant something
         # different pre-rename, so any external dashboard/alert needs updating.
         self.enterprise_ocr_images_processed = Histogram(
             "telemetry_obsv_ocr_images_processed",

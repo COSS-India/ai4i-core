@@ -12,6 +12,7 @@ integrations use the ULCA-conformant shape.
 """
 
 import re
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
@@ -311,7 +312,10 @@ _EXPECTED_RESPONSE_SCHEMA_DESCRIPTION = (
 )
 
 _DESCRIPTION_MIN_LEN = 25
-_DESCRIPTION_MAX_LEN = 1000
+# Public (not `_`-prefixed): also imported by service_service.py, which
+# enforces this same cap on update against the stored value — see
+# ServiceService.update_service.
+DESCRIPTION_MAX_LEN = 1000
 
 
 def _resolve_and_check_description(
@@ -323,9 +327,9 @@ def _resolve_and_check_description(
             "description is required (25-1000 characters, ULCA alignment). "
             "`serviceDescription` is accepted as a deprecated alias."
         )
-    if not (_DESCRIPTION_MIN_LEN <= len(resolved) <= _DESCRIPTION_MAX_LEN):
+    if not (_DESCRIPTION_MIN_LEN <= len(resolved) <= DESCRIPTION_MAX_LEN):
         raise ValueError(
-            f"description must be {_DESCRIPTION_MIN_LEN}-{_DESCRIPTION_MAX_LEN} characters."
+            f"description must be {_DESCRIPTION_MIN_LEN}-{DESCRIPTION_MAX_LEN} characters."
         )
     return resolved
 
@@ -386,7 +390,7 @@ class ServiceCreateRequest(BaseSchema):
         None,
         description=(
             "Required (ULCA). Brief description of the service. "
-            f"{_DESCRIPTION_MIN_LEN}-{_DESCRIPTION_MAX_LEN} characters. "
+            f"{_DESCRIPTION_MIN_LEN}-{DESCRIPTION_MAX_LEN} characters. "
             "`serviceDescription` is accepted as a deprecated alias."
         ),
     )
@@ -422,8 +426,8 @@ class ServiceCreateRequest(BaseSchema):
     sslVerify: bool = True
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
-    costPerUnit: float = Field(..., ge=0)
-    unitSize: int
+    costPerUnit: Decimal = Field(..., ge=0, le=10_000_000)
+    unitSize: int = Field(..., ge=1, le=10_000_000)
     tierIds: List[str] = Field(..., min_length=1)
     expectedResponseSchema: Optional[Dict[str, Any]] = Field(
         None, description=_EXPECTED_RESPONSE_SCHEMA_DESCRIPTION
@@ -606,9 +610,12 @@ class ServiceUpdateRequest(BaseSchema):
         None,
         description=(
             "Use in place of the deprecated `serviceDescription`. Unlike "
-            "on create, the 25-1000 char length rule is NOT enforced here "
-            "— a pre-existing service with a shorter stored description "
-            "must be able to resend it on an unrelated edit without 422ing."
+            "on create, the 25-1000 char length rule is NOT enforced at "
+            "this layer — a pre-existing service with a stored description "
+            "outside that range must be able to resend it unchanged on an "
+            "unrelated edit without 422ing. ServiceService.update_service "
+            f"rejects a genuinely changed value over {DESCRIPTION_MAX_LEN} "
+            "characters instead, by comparing against what's on file."
         ),
     )
     serviceDescription: Optional[str] = Field(
@@ -636,8 +643,8 @@ class ServiceUpdateRequest(BaseSchema):
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = None
     isTryItDefault: Optional[bool] = None
-    costPerUnit: Optional[float] = Field(None, ge=0)
-    unitSize: Optional[int] = None
+    costPerUnit: Optional[Decimal] = Field(None, ge=0, le=10_000_000)
+    unitSize: Optional[int] = Field(None, ge=1, le=10_000_000)
     tierIds: Optional[List[str]] = None
     expectedResponseSchema: Optional[Dict[str, Any]] = Field(
         None,
@@ -706,8 +713,12 @@ class ServiceUpdateRequest(BaseSchema):
         admin edit form resends the stored description on every
         update (frontend/simple-ui/src/hooks/useServicesManagement.ts),
         so a service created before this rule existed, with a description
-        under 25 chars, would otherwise 422 on its first unrelated edit
-        (e.g. just changing the endpoint) after this ships.
+        outside 25-1000 chars, would otherwise 422 on its first unrelated
+        edit (e.g. just changing the endpoint) after this ships. The
+        upper bound is instead enforced in ServiceService.update_service,
+        which can compare the incoming value against what's actually
+        stored and reject only a genuine change past the cap — see that
+        method's docstring.
         """
         if self.description is None and self.serviceDescription is not None:
             self.description = self.serviceDescription

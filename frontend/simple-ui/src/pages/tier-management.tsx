@@ -8,7 +8,7 @@ import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import { INSTITUTION } from "../config/constants";
 import TierManagement from "../components/tier-management/TierManagement";
 import { useAuth } from "../hooks/useAuth";
-import { useAdminTableSurface } from "../components/common/TableControls";
+import { useAdminTableSurface } from "../components/common/table";
 import { getPlatformName } from "../config/runtimeConfig";
 
 const TierManagementPage: React.FC = () => {

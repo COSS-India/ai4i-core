@@ -6,10 +6,26 @@ Services: stored in process-local in-memory dict with 5-minute TTL. Cache misses
 are handled by the calling service which falls back to the DB and re-warms
 the cache.
 
-Keys:
-  core:model:{model_id}:{version}       — model details (Redis)
-  core:model:{model_id}                  — latest active version (Redis)
+Keys (note the encoding — mixing up GET and HGETALL is a WRONGTYPE error):
+  core:model:{model_id}:{version}       — model details (Redis STRING, use GET)
+  core:model:{model_id}                  — latest active version (Redis STRING, use GET)
   core:service:{service_id}             — service details (in-memory)
+
+Owned elsewhere, listed here so the namespace stays legible:
+  core:inference_type:{name}            — one catalogue row (Redis HASH, use HGETALL)
+  core:inference_type:all               — name -> row JSON (Redis HASH, use HGETALL/HGET)
+Written by app/services/pay_per_use/inference_type_cache.py, which is their only
+writer. Read by kafka-consumers' payperuse_consumer (HGET of the id field) and by
+ai4i_core.ppu.catalogue in auth-service and inference-service. Every reader has a
+database fallback — see inference_type_cache.py's docstring.
+
+  ppu:svc:{service_id}                  — pricing (task_type, unit_rate,
+                                           cost_per_unit, unit_size) (Redis HASH)
+Written and read by kafka-consumers' payperuse_consumer._billing.get_service_pricing,
+which populates it lazily on a cache miss with a 1-hour TTL. This module is not a
+writer, only an invalidator: invalidate_pricing() below deletes the key so the next
+billing event re-reads mm_services instead of a stale rate for up to an hour. Safe to
+delete blind — the consumer's read path always falls back to the DB and re-warms.
 """
 
 import json
@@ -136,3 +152,19 @@ class CacheService:
             CacheService._service_store.pop(self._service_key(service_id), None)
         except Exception as exc:
             logger.warning("Service cache invalidation failed for %s: %s", service_id, exc)
+
+    # ── Pricing cache (owned by payperuse_consumer; see module docstring) ──
+
+    _PRICING_KEY = "ppu:svc"
+
+    async def invalidate_pricing(self, service_id: str) -> None:
+        """Delete payperuse_consumer's cached pricing for service_id.
+
+        Call this whenever an update changes cost_per_unit, unit_size,
+        unit_rate, or task_type, so the price change takes effect on the
+        very next billing event instead of waiting out the 1-hour TTL.
+        """
+        try:
+            await self._redis.delete(f"{self._PRICING_KEY}:{service_id}")
+        except Exception as exc:
+            logger.warning("Pricing cache invalidation failed for %s: %s", service_id, exc)

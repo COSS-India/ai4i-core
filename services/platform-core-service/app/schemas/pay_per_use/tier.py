@@ -1,24 +1,32 @@
 from datetime import datetime
 from typing import Any, List, Optional
-from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.schemas.enums.model_management import resolve_task_type
+from app.core.constants import TierStatus
 
 
 class TierQuotaIn(BaseModel):
     modelTaskType: str = Field(..., min_length=1)
-    # Ceiling is the largest integer TierQuota.monthly_quota's Numeric(15, 4)
-    # column can store exactly (11 integer digits), so an out-of-range limit is
-    # rejected here instead of persisting and breaking on read-back.
-    limit: int = Field(..., ge=0, le=99_999_999_999)
+    limit: int = Field(..., ge=0, le=100_000_000_000)
 
     @field_validator("modelTaskType", mode="before")
     @classmethod
     def normalize_model_task_type(cls, v: Any) -> Any:
+        """Normalise only — membership is the catalogue's call, not an enum's.
+
+        This used to run ``resolve_task_type``, which validates against the
+        hardcoded ``TaskTypeEnum``. That rejected any admin-added type with a 422
+        before ``tier_service.create_tier`` could look it up, making the
+        catalogue check unreachable for anything but the 12 seeded names — so
+        adding a usable type still needed a code change, which is exactly what
+        the DB-backed catalogue was meant to remove.
+
+        ``create_tier`` raises 400 for a name absent from the catalogue, and is
+        now the only gate.
+        """
         if isinstance(v, str):
-            return resolve_task_type(v)
+            return v.strip().lower()
         return v
 
 
@@ -92,11 +100,16 @@ class TierOut(BaseModel):
     id: str
     name: str
     description: Optional[str] = None
+    status: TierStatus = TierStatus.INACTIVE
     quotas: List[TierQuotaOut] = []
     createdAt: Optional[datetime] = None
     updatedAt: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
+
+
+class TierStatusUpdate(BaseModel):
+    status: TierStatus = Field(..., description="Target status. Allowed transitions: INACTIVE→ACTIVE, ACTIVE→DEACTIVATED, DEACTIVATED→ACTIVE.")
 
 
 class ListTiersResponse(BaseModel):

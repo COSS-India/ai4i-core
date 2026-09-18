@@ -1,5 +1,6 @@
 """Billing helpers for the pay-per-use Kafka consumer."""
 import json
+import time
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Optional
@@ -24,6 +25,115 @@ class ServicePricing:
 
 
 @dataclass
+class TenantBudgetStatus:
+    """Tenant-level budget position — SUM of every API key's own
+    budget_usage.api_key_budget_used under this tenant (across every
+    Application it has), against tenants.allocated_budget itself — the
+    SAME ceiling the usage dashboard reports (platform-core-service's
+    get_tenant_budgets, usage_repository.py: "budget_limit =
+    tenants.allocated_budget"). ``used`` is always a real Decimal (0 when
+    the tenant has no keys yet); ``snap`` mirrors
+    BillingWriteResult.api_key_budget_snap's "None = no ceiling configured,
+    don't enforce" convention."""
+    used: Decimal
+    snap: Optional[Decimal]
+
+
+async def fetch_tenant_budget_status(
+    auth_db: AsyncSession, core_db: AsyncSession, tenant_id: str,
+) -> Optional[TenantBudgetStatus]:
+    """Tenant-level budget used/ceiling for BUDGET_THRESHOLD/BUDGET_EXHAUSTED
+    (design change: exhaustion and threshold-crossing are tenant-level
+    events now — the tenant's ENTIRE pooled budget must be used up, not one
+    individual API key's/Application's own allocation — see handler.py's
+    _publish_usage_crossing_events). Computed fresh on every call, no cache:
+    this runs once per billed message, right after that message's own
+    budget_usage row already committed, so the SUM below always reflects
+    this debit.
+
+    Mirrors platform-core-service's own get_tenant_budgets
+    (usage_repository.py) and auth-service's _sync_ppu_wallet_and_exhaustion
+    (tenant_service.py) — same reconstruction, same two-database split,
+    and (this is the part an earlier version of this function got wrong —
+    see below) the SAME formula for the ceiling: tenants.allocated_budget
+    and the tenant's api_key ids live in ai4iplatform_auth (``auth_db`` —
+    this consumer's second, named "auth" connection, see main.py); the
+    actual spend lives locally in this consumer's own DB, in budget_usage
+    (``core_db``), keyed by api_key_id.
+
+    Revoked keys are deliberately NOT filtered out of the ``used`` sum —
+    same reasoning as _sync_ppu_wallet_and_exhaustion: a revoked key's
+    past spend still counts against the tenant's allocated_budget; it
+    just can't accumulate any more (nothing bills against a revoked key
+    going forward).
+
+    ``snap`` is tenants.allocated_budget directly — NOT the SUM of the
+    tenant's keys' own api_key_budget_snap. An earlier version of this
+    function used that SUM instead, on the theory that Application
+    allocations are only rejected when their percentages would exceed
+    100% (never when they undershoot it), so a tenant can have less than
+    its full allocated_budget actually assigned to any key, and comparing
+    against the raw allocated_budget could then make BUDGET_EXHAUSTED
+    unreachable in that case. But that made this function disagree with
+    every other place that reports "the tenant's budget" — confirmed live:
+    a tenant with allocated_budget=5000 and exactly one Key allocated 50%
+    of it (2500) produced a BUDGET_EXHAUSTED email reporting "INR 2500" as
+    the tenant's budget, while the usage dashboard correctly showed 5000 —
+    the SUM-of-snaps version was silently reporting a partial, per-key-
+    shaped number as if it were the tenant's real ceiling, and would keep
+    doing so for any tenant whose full budget isn't 100% delegated to
+    Keys yet (the common case, not an edge case). Matching the dashboard's
+    number is worth more than closing that one theoretical gap; if "every
+    Key is individually maxed out but the tenant technically has
+    unallocated headroom" needs its own signal later, that should be a
+    separate, clearly-labelled thing — not a silent redefinition of what
+    "the tenant's budget" means here.
+
+    Returns None when the tenant has no allocated_budget configured at all
+    (nullable — never had one set), isn't found, or tenant_id isn't a
+    plain integer (this consumer never validates the OTel tenantId
+    attribute's shape upstream — see handler._get_otel_attributes).
+    """
+    if not tenant_id.isdigit():
+        return None
+
+    rows = (
+        await auth_db.execute(
+            text(
+                "SELECT t.allocated_budget AS allocated_budget, ak.id AS api_key_id"
+                "  FROM tenants t"
+                "  LEFT JOIN applications a ON a.tenant_id = t.id"
+                "  LEFT JOIN api_key ak ON ak.application_id = a.id"
+                " WHERE t.id = :tenant_id"
+            ),
+            {"tenant_id": int(tenant_id)},
+        )
+    ).all()
+    if not rows:
+        return None
+
+    allocated_budget = rows[0].allocated_budget
+    if allocated_budget is None:
+        return None
+
+    key_ids = [row.api_key_id for row in rows if row.api_key_id is not None]
+    if not key_ids:
+        return TenantBudgetStatus(used=Decimal("0"), snap=allocated_budget)
+
+    used_row = (
+        await core_db.execute(
+            text(
+                "SELECT COALESCE(SUM(api_key_budget_used), 0) AS total"
+                "  FROM budget_usage WHERE api_key_id = ANY(:key_ids)"
+            ),
+            {"key_ids": key_ids},
+        )
+    ).first()
+    used = used_row.total if used_row is not None else Decimal("0")
+    return TenantBudgetStatus(used=used, snap=allocated_budget)
+
+
+@dataclass
 class BillingWriteResult:
     """Result of the fused budget-deduction + quota-upsert write.
 
@@ -42,6 +152,8 @@ class BillingWriteResult:
     budget_exhausted: bool
     quota_recorded: bool
     quota_exhausted: bool
+    quota_used: Optional[Decimal] = None
+    quota_snap: Optional[Decimal] = None
 
 
 async def get_service_pricing(
@@ -102,6 +214,88 @@ async def get_service_pricing(
     return pricing
 
 
+# Process-local memo for the DB-fallback path, keyed by lowercased name.
+# Bounded by the size of the catalogue (~12 rows), so no eviction policy needed.
+_inference_type_ids: dict[str, tuple[Optional[int], float]] = {}
+
+
+async def get_inference_type_id(db: AsyncSession, inference_name: str) -> Optional[int]:
+    """Resolve inference_type_id for a task type; Redis, then memo, then DB.
+
+    Reads ``core:inference_type:<name>`` — written by platform-core's
+    ``inference_type_cache``, a cross-service contract (both services must
+    share a Redis host and logical DB). The DB fallback is mandatory, not
+    belt-and-braces: these keys live under allkeys-lru pressure, and a
+    cache-only path would silently stop resolving ids under memory pressure.
+
+    This function deliberately does **not** write back to Redis. Those keys hold
+    the whole catalogue row and platform-core reads them expecting that shape;
+    writing a partial ``{"id": n}`` from here would corrupt them. platform-core
+    stays the single writer (it warms on startup and rebuilds on every
+    mutation). The process-local memo below keeps a cold Redis from costing a
+    DB round-trip per message — one per task type per process instead.
+
+    Returns None when the name is empty or absent from the catalogue. From
+    phase 2 on, None means **quota cannot be enforced for this span**: the upsert
+    joins and conflicts on inference_type_id, so a NULL selects no rows. The
+    caller must skip the quota decision entirely and must NOT read the resulting
+    quota_recorded=False as exhaustion — that would 429 every tenant on an
+    otherwise-working tier. See handler._bill_usage.
+
+    A negative result is memoised far more briefly than a positive one: under
+    phase 1 a stale negative cost a NULL column value, but now it costs a window
+    of unenforced quota for a type an admin has just created.
+    """
+    if not inference_name:
+        return None
+    normalized = inference_name.lower()
+
+    try:
+        redis = get_redis_client()
+    except RuntimeError:
+        redis = None
+
+    cache_key = f"{Constants.INFERENCE_TYPE_CACHE_PREFIX}{normalized}"
+    if redis is not None:
+        try:
+            # The key is a hash written by platform-core; pull only the one
+            # field this needs. HGET returns None when either the key or the
+            # field is absent, which falls through to the memo/DB below.
+            cached_id = await redis.hget(cache_key, "id")
+            if cached_id:
+                return int(cached_id)
+        except Exception as exc:
+            logger.warning(
+                "Inference type cache read failed for %s: %s", normalized, exc
+            )
+
+    memo = _inference_type_ids.get(normalized)
+    if memo is not None and time.monotonic() < memo[1]:
+        return memo[0]
+
+    result = await db.execute(
+        text("SELECT id FROM inference_types WHERE name = :name LIMIT 1"),
+        {"name": normalized},
+    )
+    row = result.first()
+    type_id = int(row.id) if row is not None else None
+    if type_id is None:
+        logger.error(
+            "Inference type %r is not in the inference_types catalogue "
+            "(checked Redis, process memo and the database) — quota cannot be "
+            "enforced for it. Create it via POST /inference-types.",
+            normalized,
+            extra={"event": "ppu.inference_type.unresolved", "task_type": normalized},
+        )
+    ttl = (
+        Constants.INFERENCE_TYPE_MEMO_TTL
+        if type_id is not None
+        else Constants.INFERENCE_TYPE_NEGATIVE_MEMO_TTL
+    )
+    _inference_type_ids[normalized] = (type_id, time.monotonic() + ttl)
+    return type_id
+
+
 def calculate_cost(total_units: Decimal, pricing: ServicePricing) -> Decimal:
     """
     ₹ cost for total_units.
@@ -118,12 +312,12 @@ def calculate_cost(total_units: Decimal, pricing: ServicePricing) -> Decimal:
 async def deduct_balance_and_update_quota(
     db: AsyncSession,
     tenant_id: str,
-    inference_name: str,
     billing_month: str,
     units: Decimal,
     cost: Decimal,
     api_key_id: int = 0,
     tier_id: Optional[str] = None,
+    inference_type_id: Optional[int] = None,
 ) -> BillingWriteResult:
     """
     Single round-trip fusing budget deduction (budget_usage) + quota upsert
@@ -136,12 +330,30 @@ async def deduct_balance_and_update_quota(
     quota_upsert: looks up monthly_quota_snap from tier_quotas using tier_id
     passed directly from the OTel span (set by auth service, propagated via
     X-Tier-ID header → context → span attribute). Produces no row when
-    tier_id is None or tier_quotas has no matching (tier_id, inference_name)
-    row. CAST(:tier_id AS uuid) with a SQL NULL evaluates the WHERE condition
-    to UNKNOWN (never TRUE), so the INSERT selects no rows — safe no-op.
+    tier_id is None, inference_type_id is None, or tier_quotas has no matching
+    (tier_id, inference_type_id) row. CAST(:tier_id AS uuid) with a SQL NULL
+    evaluates the WHERE condition to UNKNOWN (never TRUE), so the INSERT selects
+    no rows — safe no-op, and the same is true of a NULL inference_type_id.
     Passing an empty string instead of None would raise
     "invalid input syntax for type uuid" in Postgres; callers must normalise
     "" to None before calling (handler._get_otel_attributes does this).
+
+    The join and the ON CONFLICT target are both keyed on inference_type_id
+    . Two details that look cosmetic and are not:
+
+      * inference_name is written from ``it.name``, not from a bound parameter.
+        The retained legacy column stops being a free-text write, which is what
+        keeps the old name-keyed unique constraint and the new id-keyed one
+        equivalent while both exist on the table.
+      * the inserted id is ``tq.inference_type_id``, not the bound parameter.
+        They are equal by the join predicate, but taking it from the joined row
+        makes it NOT NULL *by construction*. That is what replaces a NOT NULL
+        constraint on quota_usage.inference_type_id — do not "simplify" it back
+        to :inference_type_id.
+
+    A caller that cannot resolve inference_type_id must NOT read the resulting
+    quota_recorded=False as exhaustion — see handler._bill_usage, which fails
+    open on a catalogue gap rather than 429ing every tenant on the tier.
     """
     result = await db.execute(
         text(
@@ -154,14 +366,18 @@ async def deduct_balance_and_update_quota(
             "),"
             " quota_upsert AS ("
             "    INSERT INTO quota_usage"
-            "      (id, tenant_id, inference_name, billing_month, monthly_quota_snap,"
-            "       monthly_quota_used, tier_id)"
-            "    SELECT gen_random_uuid(), :tenant_id, CAST(:inference_name AS text), :billing_month,"
+            "      (id, tenant_id, inference_name, inference_type_id, billing_month,"
+            "       monthly_quota_snap, monthly_quota_used, tier_id)"
+            "    SELECT gen_random_uuid(), :tenant_id, it.name,"
+            "           tq.inference_type_id, :billing_month,"
             "           tq.monthly_quota, :units, :tier_id"
             "    FROM tier_quotas tq"
-            "    WHERE tq.tier_id = CAST(:tier_id AS uuid) AND tq.inference_name = CAST(:inference_name AS text)"
-            "    ON CONFLICT (tenant_id, inference_name, billing_month, tier_id)"
+            "    JOIN inference_types it ON it.id = tq.inference_type_id"
+            "    WHERE tq.tier_id = CAST(:tier_id AS uuid)"
+            "      AND tq.inference_type_id = CAST(:inference_type_id AS int)"
+            "    ON CONFLICT (tenant_id, inference_type_id, billing_month, tier_id)"
             "    DO UPDATE SET monthly_quota_used = quota_usage.monthly_quota_used + EXCLUDED.monthly_quota_used,"
+            "                  inference_name = EXCLUDED.inference_name,"
             "                  updated_at = now()"
             "    RETURNING monthly_quota_used, monthly_quota_snap, tier_id"
             " )"
@@ -175,7 +391,7 @@ async def deduct_balance_and_update_quota(
         {
             "api_key_id": api_key_id,
             "tenant_id": tenant_id,
-            "inference_name": inference_name,
+            "inference_type_id": inference_type_id,
             "billing_month": billing_month,
             "units": units,
             "cost": cost,
@@ -198,6 +414,8 @@ async def deduct_balance_and_update_quota(
 
     quota_recorded = row is not None and row.monthly_quota_used is not None
     quota_exhausted = (not quota_recorded) or (row.monthly_quota_used >= row.monthly_quota_snap)
+    quota_used = row.monthly_quota_used if quota_recorded else None
+    quota_snap = row.monthly_quota_snap if quota_recorded else None
 
     return BillingWriteResult(
         api_key_budget_used=budget_used,
@@ -206,6 +424,8 @@ async def deduct_balance_and_update_quota(
         budget_exhausted=budget_exhausted,
         quota_recorded=quota_recorded,
         quota_exhausted=quota_exhausted,
+        quota_used=quota_used,
+        quota_snap=quota_snap,
     )
 
 

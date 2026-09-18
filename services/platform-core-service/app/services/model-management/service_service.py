@@ -30,7 +30,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from app.core.config import settings
 from app.core.exceptions import (
@@ -42,6 +42,7 @@ from app.models.model_management.service import Service
 from app.repositories.model_management.model_repository import ModelRepository
 from app.repositories.model_management.service_repository import ServiceRepository
 from app.schemas.model_management.service import (
+    DESCRIPTION_MAX_LEN,
     ServiceCreateRequest,
     ServiceEndpointUpdateItem,
     ServiceUpdateRequest,
@@ -346,6 +347,14 @@ class ServiceService:
                 )
             logger.exception("DB integrity error creating service")
             raise
+        except DBAPIError as exc:
+            await self._services.rollback()
+            if getattr(exc.orig, "sqlstate", None) == "22003":
+                raise ValidationError(
+                    message="Cost per unit must be between 0 and 10,000,000 (10 million)",
+                    code="INVALID_COST_PER_UNIT",
+                )
+            raise
         except Exception:
             await self._services.rollback()
             logger.exception("DB error creating service")
@@ -387,6 +396,11 @@ class ServiceService:
             ),
             existing_task_type=instance.task_type,
             existing_schema=instance.inference_schema,
+        )
+
+        self._validate_description_length_on_update(
+            new_description=payload.description,
+            existing_description=instance.service_description,
         )
 
         # Re-validate against the model schema whenever the endpoint changes,
@@ -512,8 +526,10 @@ class ServiceService:
         if "unitSize" in request_dict:
             update_data["unit_size"] = request_dict["unitSize"]
         if "tierIds" in request_dict:
-            await self._validate_tier_ids_exist(request_dict["tierIds"])
-            update_data["tier_ids"] = request_dict["tierIds"]
+            new_tier_ids = request_dict["tierIds"]
+            if set(new_tier_ids or []) != set(instance.tier_ids or []):
+                await self._validate_tier_ids_exist(new_tier_ids)
+            update_data["tier_ids"] = new_tier_ids
 
         # Recompute unit_rate whenever either factor changes.
         if "cost_per_unit" in update_data or "unit_size" in update_data:
@@ -547,6 +563,14 @@ class ServiceService:
         try:
             await self._services.apply_updates(instance, update_data)
             await self._services.commit()
+        except DBAPIError as exc:
+            await self._services.rollback()
+            if getattr(exc.orig, "sqlstate", None) == "22003":
+                raise ValidationError(
+                    message="Cost per unit must be between 0 and 10,000,000 (10 million)",
+                    code="INVALID_COST_PER_UNIT",
+                )
+            raise
         except Exception:
             await self._services.rollback()
             logger.exception("DB error updating service")
@@ -554,6 +578,20 @@ class ServiceService:
 
         # Refresh cache (eager rebuild)
         self._cache.invalidate_service(instance.service_id)
+
+        # A pricing field changed: bust payperuse_consumer's cached rate so
+        # billing picks up the new price on the next event instead of
+        # waiting out its 1-hour TTL (see CacheService.invalidate_pricing).
+        # Deliberately placed here, right after the commit and before the
+        # model/tier lookups below: those are DB calls that can still raise
+        # even though the price write already committed, and if they did
+        # with this block after them, the pricing cache would stay stale
+        # for the rest of the hour despite the DB already having the new
+        # price — the exact bug this block exists to prevent, just via a
+        # different failure path.
+        if {"cost_per_unit", "unit_size", "unit_rate", "task_type"} & update_data.keys():
+            await self._cache.invalidate_pricing(instance.service_id)
+
         model = await self._models.get_by_id_version(
             instance.model_id, instance.model_version
         )
@@ -684,7 +722,7 @@ class ServiceService:
     # ── Internals ──
 
     async def _validate_tier_ids_exist(self, tier_ids: Optional[List[str]]) -> None:
-        """Raise if any of ``tier_ids`` doesn't reference a real PPU tier."""
+        """Raise if any of ``tier_ids`` doesn't reference an ACTIVE PPU tier."""
         if not tier_ids:
             return
         found = await self._services.get_tier_names_by_ids(tier_ids)
@@ -695,6 +733,16 @@ class ServiceService:
                     f"tierIds references nonexistent tier(s): {', '.join(missing)}."
                 ),
                 code="TIER_NOT_FOUND",
+            )
+        active_ids = await self._services.get_active_tier_ids(tier_ids)
+        inactive = [tid for tid in tier_ids if tid not in active_ids]
+        if inactive:
+            raise ValidationError(
+                message=(
+                    f"tierIds references tier(s) that are not ACTIVE: {', '.join(inactive)}. "
+                    "Only ACTIVE tiers can be mapped to a service."
+                ),
+                code="TIER_NOT_ACTIVE",
             )
 
     def _resolve_inference_schema(
@@ -808,6 +856,42 @@ class ServiceService:
                 ),
                 code="SCHEMA_TASK_TYPE_MISMATCH",
             )
+
+    def _validate_description_length_on_update(
+        self,
+        *,
+        new_description: Optional[str],
+        existing_description: Optional[str],
+    ) -> None:
+        """Enforces the create-time upper bound (DESCRIPTION_MAX_LEN) on
+        update too, but only against a genuinely changed value.
+
+        The create cap (1bb3c89, 10 Aug 2026) landed over a pre-existing
+        Text column with no DB-level length constraint, so a service
+        created before that date can already have a stored description
+        longer than DESCRIPTION_MAX_LEN. The edit form has no length rule
+        of its own on update (frontend's serviceFormValidation.ts is
+        create-only — see its own docstring) and resends the stored
+        description on every save (useServicesManagement.ts), so a flat
+        `len(new) > DESCRIPTION_MAX_LEN` check here — the same one
+        ServiceCreateRequest applies unconditionally — would 422 an
+        unrelated edit (e.g. just the endpoint) on any such legacy row
+        until the admin manually shortens a field they never touched.
+        Comparing against what's on file, the way
+        `_validate_schema_task_type_consistency_on_update` already does,
+        distinguishes "still too long because nothing changed" (allowed)
+        from "now too long because it just changed" (rejected).
+        """
+        if new_description is None:
+            return
+        if len(new_description) <= DESCRIPTION_MAX_LEN:
+            return
+        if new_description == existing_description:
+            return
+        raise ValidationError(
+            message=f"description must not exceed {DESCRIPTION_MAX_LEN} characters.",
+            code="DESCRIPTION_TOO_LONG",
+        )
 
     async def _validate_endpoint_for_model(
         self,

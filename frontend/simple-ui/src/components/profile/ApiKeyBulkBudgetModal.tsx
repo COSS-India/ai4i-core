@@ -5,21 +5,20 @@ import {
   Box,
   Button,
   FormControl,
+  FormErrorMessage,
   FormLabel,
   HStack,
   Input,
   Select,
-  Table,
-  Tbody,
-  Td,
   Text,
-  Th,
-  Thead,
-  Tr,
   VStack,
 } from "@chakra-ui/react";
 import StandardModal from "../common/StandardModal";
+import DataTable, { type DataTableColumn } from "../common/table";
 import InfoTip from "../common/InfoTip";
+import PercentageStepper, {
+  type PercentageBound,
+} from "../common/PercentageStepper";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import { editKeyBudgetTitle, totalApiKeysExceeds100 } from "../../config/budgetMessages";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
@@ -32,35 +31,9 @@ function formatPct(value: number | null | undefined): string {
   return `${rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(2)}%`;
 }
 
-function PercentageStepper({
-  value,
-  onChange,
-  min = 0,
-  max = 100,
-}: {
-  value: string;
-  onChange: (next: string) => void;
-  min?: number;
-  max?: number;
-}) {
-  return (
-    <HStack spacing={1} align="center">
-      <Input
-        type="number"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        min={min}
-        max={max}
-        step={0.01}
-        size="sm"
-        w="88px"
-        bg="white"
-      />
-      <Text color="gray.500" fontSize="sm" fontWeight="semibold">
-        %
-      </Text>
-    </HStack>
-  );
+function parseNumberInput(value: string): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : -1;
 }
 
 export default function ApiKeyBulkBudgetModal({
@@ -79,6 +52,7 @@ export default function ApiKeyBulkBudgetModal({
   liveTotalPct,
   rows,
   onPctChange,
+  onPctBoundHit,
   onAmountChange,
   onSave,
   canSave,
@@ -98,6 +72,7 @@ export default function ApiKeyBulkBudgetModal({
   liveTotalPct: number;
   rows: KeyBudgetDraft[];
   onPctChange: (apiKeyId: number, value: string) => void;
+  onPctBoundHit: (apiKeyId: number, bound: PercentageBound) => void;
   onAmountChange: (apiKeyId: number, value: string) => void;
   onSave: () => void;
   canSave: boolean;
@@ -105,96 +80,81 @@ export default function ApiKeyBulkBudgetModal({
   const totalOver = liveTotalPct > 100 + 1e-6;
   const currency = "INR";
 
-  const body = useMemo(() => {
-    if (!selectedApplicationId) {
-      return (
-        <Text color="gray.500" py={8} textAlign="center">
-          {FIELD_HINTS.apiKey.bulkBudgetEdit.selectApplicationPrompt}
-        </Text>
-      );
-    }
-    if (isLoading) {
-      return (
-        <Text color="gray.500" py={8} textAlign="center">
-          {FIELD_HINTS.apiKey.bulkBudgetEdit.loading}
-        </Text>
-      );
-    }
-    if (rows.length === 0) {
-      return (
-        <Text color="gray.500" py={8} textAlign="center">
-          {FIELD_HINTS.apiKey.bulkBudgetEdit.empty}
-        </Text>
-      );
-    }
-    return (
-      <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" overflow="hidden">
-        <Table size="sm">
-          <Thead bg="gray.50">
-            <Tr>
-              <Th>Key</Th>
-              <Th>Used</Th>
-              <Th>Budget %</Th>
-              <Th>Budget ({currency})</Th>
-            </Tr>
-          </Thead>
-          <Tbody>
-            {rows.map((row) => (
-              <Tr key={row.api_key_id} verticalAlign="top">
-                <Td>
-                  <Text fontWeight="600" fontSize="sm">
-                    {row.key_name}
-                  </Text>
-                  {row.rowError ? (
-                    <Text fontSize="xs" color="red.500" mt={1}>
-                      {row.rowError}
-                    </Text>
-                  ) : null}
-                </Td>
-                <Td>
-                  <Text fontSize="sm">{formatPct(row.consumed_percentage)}</Text>
-                  <Text fontSize="xs" color="gray.500">
-                    {formatSpendMoney(row.consumed_budget ?? 0, currency)}
-                  </Text>
-                </Td>
-                <Td>
-                  <PercentageStepper
-                    value={row.pctInput}
-                    onChange={(next) => onPctChange(row.api_key_id, next)}
-                    min={row.consumed_percentage ?? 0}
-                    max={100}
-                  />
-                </Td>
-                <Td>
-                  <Input
-                    type="number"
-                    size="sm"
-                    w="120px"
-                    bg="white"
-                    value={row.amountInput}
-                    onChange={(e) => onAmountChange(row.api_key_id, e.target.value)}
-                    min={row.consumed_budget ?? undefined}
-                    step={0.01}
-                    isDisabled={applicationBudgetUnset}
-                    placeholder={applicationBudgetUnset ? "—" : undefined}
-                  />
-                </Td>
-              </Tr>
-            ))}
-          </Tbody>
-        </Table>
-      </Box>
-    );
-  }, [
-    selectedApplicationId,
-    isLoading,
-    rows,
-    onPctChange,
-    onAmountChange,
-    applicationBudgetUnset,
-  ]);
+  const columns = useMemo<DataTableColumn<KeyBudgetDraft>[]>(
+    () => [
+      {
+        id: "key",
+        header: "Key",
+        sortable: true,
+        sortAccessor: (row) => row.key_name ?? "",
+        cell: (row) => (
+          <Text fontWeight="600" fontSize="sm">
+            {row.key_name}
+          </Text>
+        ),
+      },
+      {
+        id: "used",
+        header: "Used",
+        sortable: true,
+        sortAccessor: (row) => row.consumed_percentage ?? -1,
+        cell: (row) => (
+          <>
+            <Text fontSize="sm">{formatPct(row.consumed_percentage)}</Text>
+            <Text fontSize="xs" color="gray.500">
+              {formatSpendMoney(row.consumed_budget ?? 0, currency)}
+            </Text>
+          </>
+        ),
+      },
+      {
+        id: "budgetPct",
+        header: "Budget %",
+        sortable: true,
+        sortAccessor: (row) => parseNumberInput(row.pctInput),
+        cell: (row) => (
+          <FormControl isInvalid={Boolean(row.rowError)}>
+            <PercentageStepper
+              variant="inline"
+              value={row.pctInput}
+              onChange={(next) => onPctChange(row.api_key_id, next)}
+              onBoundHit={(bound) => onPctBoundHit(row.api_key_id, bound)}
+            />
+            {row.rowError ? (
+              <FormErrorMessage mt={1}>{row.rowError}</FormErrorMessage>
+            ) : null}
+          </FormControl>
+        ),
+      },
+      {
+        id: "budgetAmount",
+        header: `Budget (${currency})`,
+        sortable: true,
+        sortAccessor: (row) => parseNumberInput(row.amountInput),
+        cell: (row) => (
+          <Input
+            type="number"
+            size="sm"
+            w="120px"
+            bg="white"
+            value={row.amountInput}
+            onChange={(e) => onAmountChange(row.api_key_id, e.target.value)}
+            min={row.consumed_budget ?? undefined}
+            step={0.01}
+            isDisabled={applicationBudgetUnset}
+            placeholder={applicationBudgetUnset ? "—" : undefined}
+          />
+        ),
+      },
+    ],
+    [onPctChange, onPctBoundHit, onAmountChange, applicationBudgetUnset],
+  );
 
   const title = editKeyBudgetTitle(applicationName || undefined);
+
+  const emptyMessage = !selectedApplicationId
+    ? FIELD_HINTS.apiKey.bulkBudgetEdit.selectApplicationPrompt
+    : FIELD_HINTS.apiKey.bulkBudgetEdit.empty;
 
   return (
     <StandardModal
@@ -297,7 +257,27 @@ export default function ApiKeyBulkBudgetModal({
           </Alert>
         )}
 
-        {body}
+        {selectedApplicationId ? (
+          <DataTable
+            columns={columns}
+            rows={rows}
+            rowKey={(row) => String(row.api_key_id)}
+            defaultSortKey="key"
+            defaultSortDirection="asc"
+            isLoading={isLoading}
+            isEmpty={!isLoading && rows.length === 0}
+            emptyMessage={emptyMessage}
+            asyncStateHeight="160px"
+            borderRadius="md"
+            theadBg="gray.50"
+            cellPy={2}
+            containerMt={0}
+          />
+        ) : (
+          <Text color="gray.500" py={8} textAlign="center">
+            {FIELD_HINTS.apiKey.bulkBudgetEdit.selectApplicationPrompt}
+          </Text>
+        )}
       </VStack>
     </StandardModal>
   );

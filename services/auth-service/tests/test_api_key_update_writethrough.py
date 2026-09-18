@@ -68,7 +68,7 @@ class TestUpdateKeyByObjWriteThroughWhenIneligible:
         repo.refresh = AsyncMock()
         repo.get_permission_ids_by_names = AsyncMock(return_value={"new-perm": 99})
         applications.get_by_id = AsyncMock(return_value=_application())
-        tenants.get_by_id = AsyncMock(return_value=_tenant())
+        tenants.get_operational_fields = AsyncMock(return_value=_tenant())
 
         await svc.update_key_by_obj(key, {"permissions": ["new-perm"]}, updated_by=uuid4())
 
@@ -86,7 +86,7 @@ class TestUpdateKeyByObjWriteThroughWhenIneligible:
         repo.update = AsyncMock(return_value=key)
         repo.refresh = AsyncMock()
         applications.get_by_id = AsyncMock(return_value=_application(status=ApplicationStatus.INACTIVE))
-        tenants.get_by_id = AsyncMock(return_value=_tenant())
+        tenants.get_operational_fields = AsyncMock(return_value=_tenant())
 
         await svc.update_key_by_obj(key, {"key_name": "renamed"})
 
@@ -102,7 +102,7 @@ class TestUpdateKeyByObjWriteThroughWhenIneligible:
         repo.update = AsyncMock(return_value=key)
         repo.refresh = AsyncMock()
         applications.get_by_id = AsyncMock(return_value=_application())
-        tenants.get_by_id = AsyncMock(return_value=_tenant(status=TenantStatus.SUSPENDED))
+        tenants.get_operational_fields = AsyncMock(return_value=_tenant(status=TenantStatus.SUSPENDED))
 
         await svc.update_key_by_obj(key, {"key_name": "renamed"})
 
@@ -136,7 +136,7 @@ class TestUpdateKeyByObjWriteThroughWhenIneligible:
         repo.refresh = AsyncMock()
         cache.get_api_key_cache = AsyncMock(return_value=None)
         applications.get_by_id = AsyncMock(return_value=_application())
-        tenants.get_by_id = AsyncMock(return_value=_tenant())
+        tenants.get_operational_fields = AsyncMock(return_value=_tenant())
 
         await svc.update_key_by_obj(key, {"key_name": "renamed"})
 

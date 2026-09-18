@@ -4,6 +4,8 @@ import { useDisclosure } from "@chakra-ui/react";
 import { useRouter } from "next/router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredColumnSort } from "../utils/tableSort";
+import { resolveTaskType } from "../utils/platformService";
 import {
   fetchAllServicesMatchingFilters,
   fetchExistingServiceIds,
@@ -18,7 +20,9 @@ import { fetchTiers } from "../services/tierManagementService";
 import type { Tier } from "../types/tierManagement";
 import {
   SERVICE_NAME_MAX_LEN,
+  sanitizeServiceId,
   validateHardwareDescription,
+  validatePricePerUnit,
   validateServiceDescription,
   validateServiceIdLength,
   validateServiceName,
@@ -96,6 +100,8 @@ export function useServicesManagement() {
   const [currency, setCurrency] = useState<string>("INR");
   const [selectedTiers, setSelectedTiers] = useState<string[]>([]);
   const [availableTiers, setAvailableTiers] = useState<Tier[]>([]);
+  /** True after a successful tiers list fetch (used to gate Create Service). */
+  const [tiersLoaded, setTiersLoaded] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [createFormEpoch, setCreateFormEpoch] = useState(0);
@@ -127,10 +133,16 @@ export function useServicesManagement() {
     if (taskTypeNames.length === 1) setFilterTaskType(taskTypeNames[0]);
     setTaskTypeFilterReady(true);
   }, [isLoadingTaskTypes, taskTypeNames]);
-  const [sortBy, setSortBy] = useState<"time" | "name">("time");
-  const [nameSortDirection, setNameSortDirection] = useState<"asc" | "desc">(
-    "asc",
+  const registrySortAccessors = useMemo(
+    () => ({
+      name: (s: Service) => s.name ?? "",
+      tiers: (s: Service) => (s.tierNames ?? s.tiers ?? []).join(", ").toLowerCase(),
+      created: (s: Service) =>
+        s.createdAt ? new Date(s.createdAt).getTime() : 0,
+    }),
+    [],
   );
+  const registrySort = useDeferredColumnSort("name", registrySortAccessors);
   const [confirmPublishService, setConfirmPublishService] =
     useState<Service | null>(null);
   const [confirmUnpublishService, setConfirmUnpublishService] =
@@ -154,22 +166,14 @@ export function useServicesManagement() {
   const isRegistryReadOnly = isRegistryReadOnlyUser(user?.roles);
   const viewTabIndex = isRegistryReadOnly ? 1 : 2;
 
-  // Client-side name filter + sort over the full fetched registry list.
+  // Client-side name filter + multi-column sort over the full fetched registry list.
   const registryTableItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const filtered = q
       ? services.filter((s) => (s.name ?? "").toLowerCase().includes(q))
       : services;
-    if (sortBy === "time") return filtered;
-    return [...filtered].sort((a, b) => {
-      const nameCmp = (a.name ?? "").localeCompare(b.name ?? "", undefined, {
-        sensitivity: "base",
-      });
-      if (nameCmp !== 0)
-        return nameSortDirection === "asc" ? nameCmp : -nameCmp;
-      return 0;
-    });
-  }, [services, searchQuery, sortBy, nameSortDirection]);
+    return registrySort.apply(filtered);
+  }, [services, searchQuery, registrySort]);
 
   const showTaskTypeAllOption = taskTypeNames.length > 1;
   const hasActiveFilters =
@@ -347,17 +351,31 @@ export function useServicesManagement() {
     fetchModels();
   }, []);
 
-  // Fetch tiers for the Create Service form dropdown
   useEffect(() => {
     if (isLoadingTaskTypes) return;
-    fetchTiers(enabledTaskTypesParam)
-      .then((res) => setAvailableTiers(res.data))
-      .catch(() => {});
+    setTiersLoaded(false);
+    fetchTiers(enabledTaskTypesParam, "ACTIVE")
+      .then((res) => {
+        setAvailableTiers(res.data ?? []);
+        setTiersLoaded(true);
+      })
+      .catch(() => {
+        // Leave create tab enabled on fetch failure; form validation still requires tiers.
+        setAvailableTiers([]);
+        setTiersLoaded(false);
+      });
   }, [isLoadingTaskTypes, enabledTaskTypesParam]);
+
+  /** AI4IDS-2949: block Create Service when the platform has no tiers. Edit remains allowed. */
+  const isCreateServiceTabDisabled =
+    !editingService && tiersLoaded && availableTiers.length === 0;
 
   // Sync URL tab param to activeTab (e.g. when header back clears tab=2, show list)
   useEffect(() => {
     const t = router.query.tab;
+    const hasEditDeepLink =
+      typeof router.query.editServiceId === "string" &&
+      !!router.query.editServiceId;
     if (isRegistryReadOnly && (t === "1" || t === "create")) {
       setActiveTab(0);
       if (
@@ -377,10 +395,37 @@ export function useServicesManagement() {
       }
       return;
     }
+    // No tiers → keep users off the Create Service deep link (edit deep links still work).
+    if (
+      isCreateServiceTabDisabled &&
+      (t === "1" || t === "create") &&
+      !hasEditDeepLink
+    ) {
+      setActiveTab(0);
+      if (router.query.tab || router.query.modelId) {
+        const q = { ...router.query } as Record<string, string>;
+        delete q.tab;
+        delete q.modelId;
+        router.replace(
+          { pathname: "/services-management", query: q },
+          undefined,
+          { shallow: true },
+        );
+      }
+      return;
+    }
     if (t === "2") setActiveTab(viewTabIndex);
     else if (t === "1" || t === "create") setActiveTab(1);
     else if (t !== "1" && t !== "2") setActiveTab(0);
-  }, [router.query.tab, isRegistryReadOnly, router, viewTabIndex]);
+  }, [
+    router.query.tab,
+    router.query.editServiceId,
+    router.query.modelId,
+    isRegistryReadOnly,
+    isCreateServiceTabDisabled,
+    router,
+    viewTabIndex,
+  ]);
 
   // Handle query parameters for pre-selecting model from model-management page
   useEffect(() => {
@@ -389,9 +434,13 @@ export function useServicesManagement() {
     if (!modelId || typeof modelId !== "string") return;
 
     const runPreselect = async () => {
-      // Switch to Create Service tab if specified
+      // Switch to Create Service tab if specified (blocked when no tiers exist)
       if (tab === "create") {
-        setActiveTab(1);
+        if (isCreateServiceTabDisabled) {
+          setActiveTab(0);
+        } else {
+          setActiveTab(1);
+        }
       }
 
       const inActiveList = models.some(
@@ -445,7 +494,7 @@ export function useServicesManagement() {
       runPreselect();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router.query, models]);
+  }, [router.query, models, isCreateServiceTabDisabled]);
 
   // Handle ?editServiceId= deep link (e.g. page refresh while editing a service)
   useEffect(() => {
@@ -528,11 +577,7 @@ export function useServicesManagement() {
           modelDetails?.model_id ||
           "";
 
-        const rawModelTaskType =
-          modelDetails?.task?.type ||
-          modelDetails?.task_type ||
-          modelDetails?.taskType ||
-          "";
+        const rawModelTaskType = resolveTaskType(modelDetails);
         // Select options use catalog `taskTypeNames` exactly — resolve
         // case-insensitively and ignore values outside the enabled set.
         const resolvedModelTaskType =
@@ -543,17 +588,15 @@ export function useServicesManagement() {
         setFormData((prev) => {
           const task_type = resolvedModelTaskType || prev.task_type || "";
           const taskIsLlm = task_type.trim().toLowerCase() === "llm";
-          // LLM Service ID pre-filled with "{modelName}/"
-          // Sanitize to BE service-name charset (no underscore) since name=serviceId.
-          const sanitizeLlmId = (s: string) =>
-            s.replaceAll(/[^a-zA-Z0-9/-]/g, "");
-          const llmPrefix = modelName
-            ? `${sanitizeLlmId(modelName)}/`
-            : "";
+          // Every task type pre-fills "{modelName}/"; the admin adds the suffix
+          // ("[model-name]/[GPU]"), so two services on one model cannot clash.
+          // LLM sanitizes tighter — its Service ID is sent as the name too.
+          const sanitizeId = (s: string) => sanitizeServiceId(s, taskIsLlm);
+          const modelPrefix = modelName ? `${sanitizeId(modelName)}/` : "";
           let nextServiceId = prev.serviceId || "";
-          if (taskIsLlm && !editingService) {
+          if (!editingService) {
             const prevPrefix = prev.modelName
-              ? `${sanitizeLlmId(prev.modelName)}/`
+              ? `${sanitizeId(prev.modelName)}/`
               : "";
             if (
               !nextServiceId ||
@@ -565,7 +608,7 @@ export function useServicesManagement() {
                 prevPrefix && nextServiceId.startsWith(prevPrefix)
                   ? nextServiceId.slice(prevPrefix.length)
                   : "";
-              nextServiceId = `${llmPrefix}${sanitizeLlmId(suffix)}`;
+              nextServiceId = `${modelPrefix}${sanitizeId(suffix)}`;
             }
             // else: user hand-edited away from the previous model prefix — preserve
           }
@@ -576,9 +619,7 @@ export function useServicesManagement() {
             modelSubmissionDate: modelSubmissionDate,
             modelVersion: modelVersion,
             task_type,
-            ...(taskIsLlm && !editingService
-              ? { serviceId: nextServiceId }
-              : {}),
+            ...(editingService ? {} : { serviceId: nextServiceId }),
           };
         });
       } catch (error: any) {
@@ -782,11 +823,7 @@ export function useServicesManagement() {
   // Unit type is derived from task type (billing is server-driven via inference_types).
   const unitType = unitByTaskType[formData.task_type || ""] || "";
 
-  const viewServiceTaskType =
-    selectedService?.model?.task?.type ||
-    selectedService?.task?.type ||
-    selectedService?.task_type ||
-    "";
+  const viewServiceTaskType = resolveTaskType(selectedService);
   const viewServiceUnitType =
     unitByTaskType[viewServiceTaskType] ||
     selectedService?.billingUnitType ||
@@ -794,11 +831,7 @@ export function useServicesManagement() {
 
   const filteredModelsForDropdown = formData.task_type
     ? modelsForDropdown.filter((model) => {
-        const modelTaskType =
-          model?.task?.type ||
-          (model as any).task_type ||
-          (model as any).taskType ||
-          "";
+        const modelTaskType = resolveTaskType(model);
         return (
           modelTaskType.toLowerCase() === formData.task_type?.toLowerCase()
         );
@@ -806,6 +839,12 @@ export function useServicesManagement() {
     : modelsForDropdown;
 
   const isUnitSizeValid = /^\d+$/.test(unitSize.trim()) && Number(unitSize) > 0;
+
+  /**
+   * Price bounds hold on PATCH as well as POST, so this one is not gated on
+   * create mode the way the length rules below are.
+   */
+  const pricePerUnitError = validatePricePerUnit(pricePerUnit);
 
   // Duplicate serviceId check — only in create mode (serviceId is read-only when editing)
   const serviceIdExists =
@@ -874,7 +913,7 @@ export function useServicesManagement() {
     !!formData.modelId?.trim() &&
     !!formData.endpoint?.trim() &&
     !!formData.task_type?.trim() &&
-    !!pricePerUnit.trim() &&
+    !pricePerUnitError &&
     !!currency.trim() &&
     isUnitSizeValid &&
     selectedTiers.length > 0;
@@ -940,11 +979,7 @@ export function useServicesManagement() {
         modelId,
         modelName: service.model?.name || modelId,
         endpoint: service.endpoint || service.endpoint_url || "",
-        task_type:
-          service.model?.task?.type ||
-          service.task?.type ||
-          service.task_type ||
-          "",
+        task_type: resolveTaskType(service),
         modelSubmissionDate: "",
         modelVersion: service.modelVersion || service.model_version || "1.0",
       });
@@ -998,6 +1033,8 @@ export function useServicesManagement() {
 
   const handleTabChange = (index: number) => {
     if (isRegistryReadOnly && index === 1) return;
+    // AI4IDS-2949: Create Service is unavailable until at least one Tier exists
+    if (index === 1 && isCreateServiceTabDisabled) return;
     setActiveTab(index);
     if (index !== viewTabIndex) {
       setIsViewingService(false);
@@ -1216,15 +1253,6 @@ export function useServicesManagement() {
     }
   };
 
-  const handleSortNameAsc = () => {
-    setSortBy("name");
-    setNameSortDirection("asc");
-  };
-
-  const handleSortNameDesc = () => {
-    setSortBy("name");
-    setNameSortDirection("desc");
-  };
 
   return {
     isRegistryReadOnly,
@@ -1246,9 +1274,7 @@ export function useServicesManagement() {
     taskTypeNames,
     hasActiveFilters,
     clearAllFilters,
-    nameSortDirection,
-    handleSortNameAsc,
-    handleSortNameDesc,
+    registrySort,
     handleViewService,
     handleEditService,
     handleDeleteClick,
@@ -1265,6 +1291,7 @@ export function useServicesManagement() {
     unitType,
     pricePerUnit,
     setPricePerUnit,
+    pricePerUnitError,
     unitSize,
     setUnitSize,
     currency,
@@ -1272,6 +1299,7 @@ export function useServicesManagement() {
     selectedTiers,
     toggleTier,
     availableTiers,
+    isCreateServiceTabDisabled,
     isCreateFormModelSelected,
     canCreateService,
     isLlmTaskType,

@@ -97,11 +97,19 @@ export const apiEndpoints = {
     },
   },
 
+  /** System-seeded notification/alert catalog (AI4IDS-3022). */
+  notificationAlerts: {
+    catalog: `${API_V1}/notification-alerts/catalog`,
+    catalogByName: (name: string) =>
+      `${API_V1}/notification-alerts/catalog/${encodeURIComponent(name)}`,
+  },
+
   platform: {
     models: {
-      base: `${API_V1}/models`,
+      /** Platform model catalogue (OpenAI-compatible list owns GET /models). */
+      base: `${API_V1}/models/list`,
       byId: (modelId: string) =>
-        `${API_V1}/models/${encodeURIComponent(modelId)}`,
+        `${API_V1}/models/list/${encodeURIComponent(modelId)}`,
     },
     services: {
       base: `${API_V1}/services`,
@@ -246,6 +254,8 @@ export const apiEndpoints = {
     list: `${API_V1}/pay-per-use/tiers`,
     create: `${API_V1}/pay-per-use/tier`,
     update: `${API_V1}/pay-per-use/tier`,
+    status: (tierId: string) =>
+      `${API_V1}/pay-per-use/tier/${tierId}/status`,
   },
 
   usage: {

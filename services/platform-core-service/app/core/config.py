@@ -66,6 +66,11 @@ class CoreSettings(BaseSettings):
     auth_db_port: Optional[int] = None
     auth_db_name: Optional[str] = None
 
+    # ── Kafka (notification producer) ──
+    kafka_enabled: bool = False
+    kafka_server: str = "localhost:9093"
+    topic_notification: str = "notification.events"
+
     # ── Alert config sync (background reconciliation against Prometheus / Alertmanager) ──
     # All optional; alert_sync_enabled defaults to False so the merged service can run
     # without alerting wired up. Step 8 (lifespan) gates the background task on this flag.
@@ -168,6 +173,10 @@ class CoreSettings(BaseSettings):
     # ── External services ──
     auth_service_url: str = ""
     model_management_url: str = ""
+    # Adopter-facing portal URL, linked from notification/alert emails
+    # ("Log in to the AI4I-Orchestrate Portal ..."). None → link renders as
+    # plain text instead of an <a href>.
+    portal_url: Optional[str] = None
 
     # ── Logging / Observability ──
     log_level: str = "INFO"
@@ -185,6 +194,20 @@ class CoreSettings(BaseSettings):
     )
     opensearch_index: str = Field(
         default="traces-*", description="OpenSearch traces index pattern"
+    )
+    # Same cluster/credentials as opensearch_url/username/password above, a
+    # different index pattern — request-completion log lines (RequestMiddleware),
+    # not OTel trace spans.
+    opensearch_logs_index: str = Field(
+        default="logs-*", description="OpenSearch request-log index pattern"
+    )
+
+    # Which store serves metering request-count KPIs. "dual" computes from
+    # both stores and still serves Prometheus's numbers, for pre-cutover
+    # comparison; "opensearch" serves OpenSearch's numbers.
+    metering_data_source: str = Field(
+        default="prometheus",
+        description='Metering request-count KPI source: "prometheus" | "dual" | "opensearch"',
     )
 
     # ── Derived helpers ──

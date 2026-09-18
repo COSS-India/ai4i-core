@@ -11,6 +11,19 @@ from pydantic_settings import BaseSettings
 
 class Constants:
     PRICING_CACHE_PREFIX = "ppu:svc:"
+    # Written by platform-core (app/services/pay_per_use/inference_type_cache.py),
+    # read here — a cross-service contract, hence the "core:" namespace rather
+    # than this consumer's "ppu:". Both services must point at the same Redis
+    # host AND logical DB for this to resolve.
+    INFERENCE_TYPE_CACHE_PREFIX = "core:inference_type:"
+    # Process-local memo TTL for the DB-fallback path only (Redis is still
+    # checked first on every call). Short, so a rename or re-seed is picked
+    # up quickly even while Redis is cold.
+    INFERENCE_TYPE_MEMO_TTL = 300
+    # A miss is memoised far more briefly than a hit. Since the upsert joins and
+    # conflicts on inference_type_id, an unresolved name means quota goes
+    # unenforced for that task type until the memo expires.
+    INFERENCE_TYPE_NEGATIVE_MEMO_TTL = 300
     PRICING_CACHE_TTL = 3600
     BILLED_KEY_PREFIX = "ppu:billed:"
     # Only needs to outlive the redelivery window after a consumer crash/
@@ -35,6 +48,25 @@ class Constants:
 class Settings(BaseSettings):
     TOPIC_PAY_PER_USE: str = Field(description="Kafka topic carrying OTel spans")
     AUTH_SERVICE_URL: str = Field(description="Base URL of auth-service for internal PPU state updates")
+    TOPIC_NOTIFICATION: str = Field(
+        "notification.events",
+        description="Kafka topic this consumer PUBLISHES QUOTA_THRESHOLD/BUDGET_THRESHOLD/"
+        "QUOTA_EXHAUSTED/BUDGET_EXHAUSTED events to (same topic notifications_consumer reads).",
+    )
+    NOTIFICATION_PRODUCER_ENABLED: bool = Field(
+        False, description="Feature flag for the notification-event producer side-channel."
+    )
+    AUTH_SERVICE_DB: str = Field(
+        default="ai4iplatform_auth",
+        description="Database name for the second, named connection this consumer "
+        "opens (main.py, bootstrap.lifecycle.add_database) so _billing.py's "
+        "fetch_tenant_budget_status can read tenants.allocated_budget and enumerate "
+        "the api_key ids under a tenant — both live in auth-service's own database, "
+        "not this consumer's default (platform-core's ai4iplatform_core). Same "
+        "Postgres instance/credentials as the default connection — only the "
+        "database name differs. Mirrors notifications_consumer/config.py's own "
+        "AUTH_SERVICE_DB field exactly.",
+    )
 
     class Config:
         env_file = ".env"

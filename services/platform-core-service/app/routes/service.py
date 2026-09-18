@@ -7,11 +7,14 @@ import re
 from typing import Any, Dict, Optional, Union
 
 from fastapi import APIRouter, Depends, Query, Request, Response
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import get_db
 from app.core.exceptions import AppError, ValidationError
 from app.dependencies.services import ServiceService, get_service_service
 from app.schemas.common import MessageMeta, TotalMeta, error_responses
 from app.schemas.enums.model_management import TaskTypeEnum
+from app.services.pay_per_use import inference_type_cache
 from app.schemas.model_management.service import (
     CreateServiceData,
     CreateServiceResponse,
@@ -175,16 +178,21 @@ async def list_services(
         description="Maximum number of items to return. Omit to return all services.",
     ),
     svc: ServiceService = Depends(get_service_service),
+    db: AsyncSession = Depends(get_db),
 ) -> ListServicesResponse:
     """List services with optional filters and offset/limit pagination."""
     # ONE task-type filter param: a drill-down is just a one-element list, so a
     # separate single param would only recreate union/precedence ambiguity.
-    # Parsed leniently: names outside TaskTypeEnum (e.g. catalog entries with no
+    # Parsed leniently: names outside the catalogue (e.g. entries with no
     # registered models) are skipped rather than failing the whole request —
     # they can't match any row anyway.
+    #
+    # The allowlist is the live catalogue, not TaskTypeEnum. Only the validation
+    # source changed: mm_models/mm_services are still filtered by name, since
+    # their task type is a JSONB string, not a foreign key.
     _task_types = []
     if task_types:
-        valid = {m.value for m in TaskTypeEnum}
+        valid = {entry["name"] for entry in await inference_type_cache.get_all(db)}
         _task_types = [t.strip().lower() for t in task_types.split(",") if t.strip().lower() in valid]
     items, total = await svc.list_services(
         task_types=_task_types or None,

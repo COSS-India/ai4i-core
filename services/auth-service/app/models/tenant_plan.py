@@ -22,6 +22,7 @@ class TenantPlan(Base):
     allowed_services = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     assigned_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_by = Column(UUID(as_uuid=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     tenant = relationship("Tenant", back_populates="tenant_plans")

@@ -19,9 +19,11 @@ import {
   BUDGET_VALIDATION,
   mapAllocationError,
   mapBelowConsumedError,
+  percentageBoundMessage,
 } from "../../../config/budgetMessages";
 import { FIELD_HINTS } from "../../../config/fieldHints";
 import type { AllocationValue } from "../../../services/allocationService";
+import type { PercentageBound } from "../../common/PercentageStepper";
 
 export type KeyBudgetDraft = {
   api_key_id: number;
@@ -64,6 +66,7 @@ function evaluateKeyRowError(
   }
   if (row.resolvedPct == null) return null;
   if (row.resolvedPct < 0) return BUDGET_VALIDATION.budgetCannotBeNegative;
+  if (row.resolvedPct > 100) return BUDGET_VALIDATION.percentageMustBeBetween0And100;
   if (
     row.consumed_percentage != null &&
     row.resolvedPct < row.consumed_percentage - 1e-6
@@ -338,6 +341,16 @@ export function useApiKeyBudgetEdit({
     [applicationBudget],
   );
 
+  const onPctBoundHit = useCallback((apiKeyId: number, bound: PercentageBound) => {
+    setRows((prev) =>
+      prev.map((row) =>
+        row.api_key_id === apiKeyId
+          ? { ...row, rowError: percentageBoundMessage(bound) }
+          : row,
+      ),
+    );
+  }, []);
+
   const onAmountChange = useCallback(
     (apiKeyId: number, value: string) => {
       setRows((prev) =>
@@ -420,6 +433,7 @@ export function useApiKeyBudgetEdit({
     liveTotalPct,
     canSave,
     onPctChange,
+    onPctBoundHit,
     onAmountChange,
     save,
   };

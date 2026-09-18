@@ -337,6 +337,66 @@ class TestRefreshAndCreatePersistCachedData:
         assert persisted["budget-exhausted"] == "0"  # both stores converge on "0"
 
     @pytest.mark.asyncio
+    async def test_refresh_redis_cache_writes_the_budget_effective_to_it_is_given(self) -> None:
+        """budget_effective_to is passed in explicitly by the caller (who
+        already has the Tenant loaded — see update_key_by_obj/
+        refresh_keys_cache_for_application) and written into both stores
+        verbatim — this is what /auth/validate compares directly against
+        "now" (app.utils.budget_window.is_budget_window_expired), replacing
+        a separately pushed budget-expired boolean."""
+        svc, repo, cache = _service()
+        cache.get_api_key_cache = AsyncMock(return_value=None)
+        key = _api_key(cached_data={"api_key": _TOKEN, "tenant_id": "1"})
+        future = datetime.now(timezone.utc) + timedelta(days=30)
+
+        await svc._refresh_redis_cache(key, "1", future)
+
+        written = cache.set_api_key_cache.await_args.args[2]
+        persisted = repo.update.await_args.args[1]["cached_data"]
+        assert written["budget_effective_to"] == future.isoformat()
+        assert persisted["budget_effective_to"] == future.isoformat()
+
+    @pytest.mark.asyncio
+    async def test_refresh_redis_cache_never_preserves_a_stale_budget_effective_to(self) -> None:
+        """Unlike budget-exhausted/quota-*, budget_effective_to is NOT on
+        the preserve-on-refresh whitelist — it's always overwritten with
+        whatever the caller passes (fresh from the Tenant row), even when
+        an old value already sits in cached_data or live Redis. If a
+        tenant's window was extended, this is exactly what makes an
+        already-cached key pick up the new date on its very next refresh,
+        rather than a stale one winning a "preserve" merge."""
+        svc, repo, cache = _service()
+        cache.get_api_key_cache = AsyncMock(
+            return_value={"budget_effective_to": "2020-01-01T00:00:00+00:00"}
+        )
+        key = _api_key(
+            cached_data={
+                "api_key": _TOKEN,
+                "tenant_id": "1",
+                "budget_effective_to": "2021-01-01T00:00:00+00:00",
+            }
+        )
+        new_value = datetime(2030, 1, 1, tzinfo=timezone.utc)
+
+        await svc._refresh_redis_cache(key, "1", new_value)
+
+        written = cache.set_api_key_cache.await_args.args[2]
+        persisted = repo.update.await_args.args[1]["cached_data"]
+        assert written["budget_effective_to"] == new_value.isoformat()
+        assert persisted["budget_effective_to"] == new_value.isoformat()
+
+    @pytest.mark.asyncio
+    async def test_refresh_redis_cache_writes_empty_string_when_tenant_has_no_window(self) -> None:
+        svc, repo, cache = _service()
+        cache.get_api_key_cache = AsyncMock(return_value=None)
+        key = _api_key(cached_data={"api_key": _TOKEN, "tenant_id": "1"})
+
+        await svc._refresh_redis_cache(key, "1", None)
+
+        written = cache.set_api_key_cache.await_args.args[2]
+        assert written["budget_effective_to"] == ""
+
+    @pytest.mark.asyncio
     async def test_refresh_redis_cache_preserves_tier_id_from_existing_cached_data(self) -> None:
         """tier_id can only be correctly computed at create_api_key time (a read
         of tenants.tier_id) — a refresh must carry it forward from cached_data,

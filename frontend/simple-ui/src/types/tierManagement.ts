@@ -6,10 +6,13 @@ export interface TierQuota {
   pendingLimit?: number | null;
 }
 
+export type TierStatus = "INACTIVE" | "ACTIVE" | "DEACTIVATED" | "DELETED";
+
 export interface Tier {
   id: string;
   name: string;
   description?: string;
+  status?: TierStatus;
   quotas: TierQuota[];
   createdAt?: string;
   updatedAt?: string;
@@ -31,6 +34,10 @@ export interface UpdateTierPayload {
   description?: string;
   quotas?: { modelTaskType: string; limit: number }[];
   cancel_pending_quota?: string[];
+}
+
+export interface UpdateTierStatusPayload {
+  status: TierStatus;
 }
 
 export type TierFormQuota = {

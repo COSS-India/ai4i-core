@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="17.75 6.75 110.5 110.5" fill="none">
+  <!-- No tier assigned: dashed medal + add badge. Design's dark-palette
+       variant. Geometry, colours and stroke widths are theirs; two things
+       differ, both forced by the 24px render size:
+
+       1. stroke-dasharray 1 8 -> 9 9. At 24px a 1-unit dash is 0.22px on a
+          0.98px stroke, so it inks ~22% of a pixel and antialiases to about
+          #d7d7d7 (1.44:1) — the ring looked blank even though #4A4A4A is
+          8.86:1. 9 units gives a ~1.95px dash that renders at full strength.
+          This also matches the mock, whose ring reads as dashes, not dots.
+
+       2. The viewBox: design ships 0 0 140 128, but the art
+       occupies roughly x 17.75-128.25 / y 12.75-111.25, so that box
+       letterboxes the glyph inside a 32px button and — because
+       tier-assigned.svg has different dimensions — would make the icon jump
+       scale the moment a tier is assigned. Squaring both to the same 110.5
+       side, centred on their own content, keeps the two states identical in
+       size. No art is cropped. -->
+
+  <!-- Dashed medal -->
+  <circle
+    cx="48"
+    cy="43"
+    r="28"
+    stroke="#4A4A4A"
+    stroke-width="4.5"
+    stroke-dasharray="9 9"
+    stroke-linecap="round"
+  />
+
+  <!-- Ribbon tails -->
+  <path
+    d="M30.5 65 L25.5 96 L48 83 L70.5 96 L65.5 65"
+    stroke="#4A4A4A"
+    stroke-width="4.5"
+    stroke-dasharray="9 9"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <!-- Add circle -->
+  <circle
+    cx="105"
+    cy="88"
+    r="21"
+    fill="#3A3A3A"
+    stroke="#555555"
+    stroke-width="4.5"
+  />
+
+  <!-- Plus -->
+  <path
+    d="M105 78 V98 M95 88 H115"
+    stroke="#FFFFFF"
+    stroke-width="5"
+    stroke-linecap="round"
+  />
+</svg>

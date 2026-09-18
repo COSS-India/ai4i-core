@@ -172,6 +172,26 @@ def get_context_config_kwargs() -> dict:
         "include_object": include_object,
         "render_item": render_item,
         "process_revision_directives": process_revision_directives,
+        # One transaction PER REVISION, not one around the whole run.
+        #
+        # Without this, `upgrade head` across N pending revisions holds every
+        # lock any of them takes until the last one commits. A run that adds an
+        # index in the first revision and a UNIQUE constraint in the fifth would
+        # hold a SHARE lock and an ACCESS EXCLUSIVE lock on the same table for
+        # the entire chain — and anything queued behind an ACCESS EXCLUSIVE
+        # waiter blocks too, so live writers (payperuse_consumer bills into
+        # quota_usage on every span) stall for the duration of all five.
+        #
+        # It is also required for op.get_context().autocommit_block(), which
+        # CREATE INDEX CONCURRENTLY needs: that cannot run inside a transaction
+        # block, and the block can only be escaped cleanly when the revision
+        # owns its own transaction.
+        #
+        # Trade-off, stated plainly: a failure mid-chain now leaves earlier
+        # revisions committed instead of rolling the whole run back. alembic
+        # records each in alembic_version as it lands, so a re-run resumes from
+        # the failure point rather than repeating work.
+        "transaction_per_migration": True,
     }
     return kwargs
 

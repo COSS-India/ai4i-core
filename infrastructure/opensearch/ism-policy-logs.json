@@ -1,0 +1,33 @@
+{
+  "policy": {
+    "description": "Delete logs-* indices once they exceed 90 days old. Covers the metering dashboard's longest window (30d) plus month-over-month growth comparisons with margin, matching the existing PROMETHEUS_RETENTION_DAYS recommendation for this deployment.",
+    "default_state": "hot",
+    "states": [
+      {
+        "name": "hot",
+        "actions": [],
+        "transitions": [
+          {
+            "state_name": "delete",
+            "conditions": {
+              "min_index_age": "90d"
+            }
+          }
+        ]
+      },
+      {
+        "name": "delete",
+        "actions": [
+          {
+            "delete": {}
+          }
+        ],
+        "transitions": []
+      }
+    ],
+    "ism_template": {
+      "index_patterns": ["logs-*"],
+      "priority": 100
+    }
+  }
+}

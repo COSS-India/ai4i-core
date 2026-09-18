@@ -20,14 +20,29 @@ from app.core.permission_checker import set_global_endpoint_permission_map
 from app.core import pii_crypto
 from app.core.config import settings
 from app.core.constants import ENV_DEVELOPMENT
-from app.core.database import close_database, close_platform_core_database, init_database, init_platform_core_database
+from ai4i_core.ppu import configure_catalogue, get_catalogue
+from app.core.database import (
+    close_database,
+    close_platform_core_database,
+    get_platform_core_session_factory,
+    init_database,
+    init_platform_core_database,
+)
 from app.core.exceptions import register_exception_handlers
-from app.core.redis import close_redis, init_redis
+from app.core.redis import close_redis, get_redis_client, init_redis
 from app.core.security import key_manager
 from app.dependencies.auth import init_jwt_verifier
+from ai4i_core.kafka import (
+    init_kafka_producer,
+    close_kafka_producer,
+    refresh_notification_settings_cache,
+    start_notification_settings_listener,
+    stop_notification_settings_listener,
+)
 from app.routes import api_router, versioning
 from app.services.role_permission_cache import role_permission_cache
 from app.services.tenant_name_cache import tenant_name_cache
+from app.services.tier_status_cache import tier_status_cache
 
 from ai4i_core.logging import configure_logging, RequestMiddleware
 
@@ -35,6 +50,44 @@ logger = logging.getLogger(__name__)
 
 API_PERMISSIONS: dict[str, Any] = {}
 
+async def _configure_catalogue():
+    # The inference-type catalogue backs per-service quota enforcement in
+    # /auth/validate. Redis first (platform-core writes core:inference_type:*
+    # there — both services must share a host AND logical DB, both default to
+    # REDIS_DB=0), then the platform-core database when it is configured.
+    #
+    # Warming here is best-effort on purpose: an unreachable catalogue must not
+    # stop auth-service booting. It degrades to skipping per-service quota
+    # checks, never to a spurious 429.
+    configure_catalogue(
+        redis_factory=get_redis_client,
+        session_factory=get_platform_core_session_factory(),
+    )
+    try:
+        types = await get_catalogue().refresh()
+        logger.info("Inference type catalogue warmed: %d types.", len(types))
+    except Exception as exc:
+        logger.warning("Inference type catalogue warm-up skipped: %s", exc)
+
+
+async def _configure_notification_settings_cache():
+    # is_notification_enabled()/get_threshold_bands() back the "should this
+    # even be published" check before TIER_ASSIGNED/TIER_CHANGED/
+    # BUDGET_ASSIGNED/BUDGET_UPDATED — read from configs_notification_alert
+    # (platform-core's DB), same cross-service dependency _configure_catalogue
+    # already has. Best-effort, same reasoning: an unreachable cache must not
+    # stop auth-service booting, it degrades to treating every notification
+    # as disabled (safe default — never publish when we can't tell).
+    session_factory = get_platform_core_session_factory()
+    if session_factory is None:
+        logger.warning("Notification settings cache skipped: platform-core DB not configured.")
+        return
+    try:
+        async with session_factory() as db:
+            await refresh_notification_settings_cache(db)
+        start_notification_settings_listener(get_redis_client())
+    except Exception as exc:
+        logger.warning("Notification settings cache warm-up skipped: %s", exc)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -59,14 +112,26 @@ async def lifespan(app: FastAPI):
         redis_db=settings.redis_db,
     )
     init_platform_core_database()
+    await _configure_catalogue()
     key_manager.initialize()
     init_jwt_verifier()
     await _load_api_permissions_with_retry(app)
     await role_permission_cache.start()
     await tenant_name_cache.start()
 
+    await tier_status_cache.start()
+    init_kafka_producer(
+        bootstrap_servers=settings.kafka_server,
+        topic=settings.topic_notification,
+        enabled=settings.kafka_enabled,
+    )
+    await _configure_notification_settings_cache()
+
     yield
 
+    await stop_notification_settings_listener()
+    close_kafka_producer()
+    await tier_status_cache.stop()
     await tenant_name_cache.stop()
     await role_permission_cache.stop()
     await close_redis()

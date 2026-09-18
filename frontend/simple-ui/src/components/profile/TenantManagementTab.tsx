@@ -25,9 +25,8 @@ import {
   HStack,
   Heading,
   IconButton,
+  Image,
   Input,
-  InputGroup,
-  InputLeftAddon,
   Modal,
   ModalBody,
   ModalCloseButton,
@@ -67,10 +66,10 @@ import {
   FiArrowLeft,
   FiEdit2,
   FiMail,
+  FiMinusCircle,
   FiPauseCircle,
   FiPlus,
   FiPower,
-  FiSliders,
   FiUserPlus,
 } from "react-icons/fi";
 import {
@@ -89,14 +88,13 @@ import ConfirmDialog from "../common/ConfirmDialog";
 import ConsentCheckbox, {
   getConsentValidationError,
 } from "../common/ConsentCheckbox";
-import AdminDataTable, {
-  TableSearchField,
-  TableSelectField,
-  type AdminTableColumn,
-} from "../common/AdminDataTable";
+import DataTable, {
+  type DataTableColumn,
+} from "../common/table";
 import TenantUserRoleBadges from "../common/TenantUserRoleBadges";
 import TierSelect from "./TierSelect";
-import { TENANT_USER_ROLE_OPTIONS } from "./types";
+import AssignTierModal from "./AssignTierModal";
+import { TENANT_USER_ROLE_OPTIONS, type ServiceMappingsStatus } from "./types";
 import {
   INSTITUTION,
   INSTITUTIONS,
@@ -115,6 +113,7 @@ import {
   isAdopterInstitutionManager,
   isPlatformAdminUser,
 } from "../../utils/rbac";
+import { useDeferredColumnSort } from "../../utils/tableSort";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import FieldHint from "../common/FieldHint";
 import {
@@ -123,22 +122,40 @@ import {
   isDefaultTenant,
 } from "../../utils/defaultTenant";
 import { dash, fmtDate } from "../../utils/valueFormatters";
+import {
+  budgetWindowToMinDate,
+  dateInputToEndOfDayIso,
+  dateInputToStartOfDayIso,
+  isoToDateInputValue,
+  todayDateInputValue,
+} from "../../utils/helpers";
 import type { TenantUserView, TenantView } from "../../types/tenant";
-
-const BUDGET_MAX_INTEGER_DIGITS = 7;
 
 /** Shown when assigning/reassigning a tier that has no mapped services. */
 const TIER_NO_SERVICES_MSG =
   `This Tier has no services mapped. Please map at least one service before assigning to ${INSTITUTION_ARTICLE} ${INSTITUTION.toLowerCase()}.`;
 
-function clampBudgetInput(raw: string): string {
-  const dotIndex = raw.indexOf(".");
-  const intPart = (dotIndex === -1 ? raw : raw.slice(0, dotIndex)).slice(
-    0,
-    BUDGET_MAX_INTEGER_DIGITS,
-  );
-  const decimalPart = dotIndex === -1 ? "" : raw.slice(dotIndex);
-  return intPart + decimalPart;
+/** UTC calendar day of an instant, as a sortable ordinal. */
+const utcDayOrdinal = (d: Date): number =>
+  Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+
+/**
+ * Must stay in step with auth-service's is_budget_window_expired
+ * (app/utils/budget_window.py): budget_effective_to is the last usable day,
+ * inclusive, so compare UTC calendar DAYS — comparing instants over-expires
+ * by up to 24h for any stored value not anchored at 23:59:59.999Z.
+ */
+function isBudgetAssignmentExpired(tenant: TenantView | null | undefined): boolean {
+  if (!tenant?.budget_effective_to) return false;
+  const to = new Date(tenant.budget_effective_to);
+  if (Number.isNaN(to.getTime())) return false;
+  return utcDayOrdinal(new Date()) > utcDayOrdinal(to);
+}
+
+// Independent of whether the budget window is live: a lapsed one is fixed in
+// the Manage Tier drawer, and the server doesn't gate tier changes on it.
+function hasTierAssignment(tenant: TenantView | null | undefined): boolean {
+  return Boolean(tenant?.tier_id);
 }
 
 export interface TenantManagementTabProps {
@@ -265,10 +282,18 @@ export default function TenantManagementTab({
     onClose: onViewTierClose,
   } = useDisclosure();
 
+  // Assign Tier modal — the no-live-assignment half of the same entry point.
+  const {
+    isOpen: isAssignTierOpen,
+    onOpen: onAssignTierOpen,
+    onClose: onAssignTierClose,
+  } = useDisclosure();
+
   // Adopter-only: tier drawer + onboard form need tier catalog (ADMIN-only).
+
   const tiersQuery = useQuery({
-    queryKey: ["tiers"],
-    queryFn: () => fetchTiers(),
+    queryKey: ["tiers", "ACTIVE"],
+    queryFn: () => fetchTiers(undefined, "ACTIVE"),
     staleTime: 5 * 60_000,
     enabled: isAdmin,
   });
@@ -280,7 +305,7 @@ export default function TenantManagementTab({
     queryFn: () =>
       fetchAllServicesMatchingFilters({ taskTypes: enabledTaskTypesParam }),
     staleTime: 60_000,
-    enabled: isAdmin && (isViewTierOpen || tm.isTenantModalOpen),
+    enabled: isAdmin && (isViewTierOpen || isAssignTierOpen),
   });
   const tierIdsWithServices = useMemo(() => {
     const ids = new Set<string>();
@@ -292,6 +317,11 @@ export default function TenantManagementTab({
     return ids;
   }, [servicesForTiersQuery.data]);
   const serviceMappingsReady = servicesForTiersQuery.isSuccess;
+  const serviceMappingsStatus: ServiceMappingsStatus = serviceMappingsReady
+    ? "ready"
+    : servicesForTiersQuery.isError
+      ? "error"
+      : "loading";
 
   const tenantTiersQuery = useQuery({
     queryKey: ["tenant-tiers"],
@@ -304,6 +334,9 @@ export default function TenantManagementTab({
   const [viewTierTenant, setViewTierTenant] =
     useState<TenantTierAssignment | null>(null);
   const [manageTenant, setManageTenant] = useState<TenantView | null>(null);
+  const [assignTierTenant, setAssignTierTenant] = useState<TenantView | null>(
+    null,
+  );
   const [manageTierId, setManageTierId] = useState("");
   const [originalTierId, setOriginalTierId] = useState("");
   const [manageBudget, setManageBudget] = useState(0);
@@ -313,6 +346,11 @@ export default function TenantManagementTab({
   );
   const [isEditingTier, setIsEditingTier] = useState(false);
   const [budgetAmount, setBudgetAmount] = useState("");
+  const [manageEffectiveFrom, setManageEffectiveFrom] = useState("");
+  const [manageEffectiveTo, setManageEffectiveTo] = useState("");
+  const [originalEffectiveTo, setOriginalEffectiveTo] = useState("");
+  const [windowError, setWindowError] = useState<string | null>(null);
+  const [managePlanError, setManagePlanError] = useState<string | null>(null);
 
   const userFormRoleOptions = useMemo(() => {
     const tenantId =
@@ -381,7 +419,23 @@ export default function TenantManagementTab({
     }
   };
 
-  const openManagePlan = (tenant: TenantView) => {
+  const handleTierAssigned = async (tenantId: string) => {
+    await queryClient.refetchQueries({ queryKey: ["tenant-tiers"] });
+    await syncTenantAfterPlanChange(tenantId);
+  };
+
+  const closeAssignTier = () => {
+    onAssignTierClose();
+    setAssignTierTenant(null);
+  };
+
+  const openTenantPlan = (tenant: TenantView) => {
+    if (!hasTierAssignment(tenant)) {
+      setAssignTierTenant(tenant);
+      onAssignTierOpen();
+      return;
+    }
+
     const assignment = resolveTenantTierAssignment(
       tenant,
       tenantTierAssignments,
@@ -396,6 +450,18 @@ export default function TenantManagementTab({
     setManageBudget(tenantBudgetNumber(tenant) ?? 0);
     setBudgetAmount("");
     setBudgetAction("topup");
+    // From is read-only here, so whatever is seeded is what gets sent.
+    // Manage Tier always shows the stored From, lapsed window included — a
+    // reassignment keeps its original start date. Only Assign Tier, which
+    // has no stored window, falls back to today.
+    const storedFrom = isoToDateInputValue(tenant.budget_effective_from);
+    setManageEffectiveFrom(storedFrom || todayDateInputValue());
+    // To keeps the lapsed value so the admin can see what expired, and is
+    // the one field they can move.
+    setManageEffectiveTo(isoToDateInputValue(tenant.budget_effective_to));
+    setOriginalEffectiveTo(isoToDateInputValue(tenant.budget_effective_to));
+    setWindowError(null);
+    setManagePlanError(null);
     onViewTierOpen();
   };
 
@@ -411,6 +477,11 @@ export default function TenantManagementTab({
 
     setBudgetAmount("");
     setBudgetAction("topup");
+    setManageEffectiveFrom("");
+    setManageEffectiveTo("");
+    setOriginalEffectiveTo("");
+    setWindowError(null);
+    setManagePlanError(null);
   };
 
   const handleSaveManagePlan = async () => {
@@ -449,6 +520,7 @@ export default function TenantManagementTab({
     }
 
     setIsSavingPlan(true);
+    setManagePlanError(null);
     try {
       await changeTenantTier(String(manageTenant.tenant_id), manageTierId);
       toast({
@@ -486,14 +558,72 @@ export default function TenantManagementTab({
   const handleApplyBudget = async () => {
     if (!manageTenant) return;
 
+    setWindowError(null);
+    const amountEntered = budgetAmount.trim() !== "";
     const amount = Number(budgetAmount);
-    if (amount <= 0) return;
+
+    // Mirrors revise_tenant_budget's `window_active` (set AND not expired):
+    // a missing or lapsed window is not live, so To has to be (re)set before
+    // the revision has a window to attach to.
+    const windowActive =
+      Boolean(manageTenant.budget_effective_to) &&
+      !isBudgetAssignmentExpired(manageTenant);
+    // Mirrors the service's `has_existing_window`: AI4IDS-2995 locks From
+    // once one is on file at all, lapsed window included (422
+    // effective_from_locked if sent), so From only goes out when this call
+    // founds the tenant's very first window.
+    const hasStoredFrom = Boolean(manageTenant.budget_effective_from);
+    const toChanged = manageEffectiveTo !== originalEffectiveTo;
+
+    // From is never user-settable here — openTenantPlan seeds it to the
+    // stored window's From, or today when there is no stored window — so
+    // only To needs checking.
+    if (!windowActive && !manageEffectiveTo) {
+      setWindowError(
+        "Set a Budget Effective To date to open a new budget window.",
+      );
+      return;
+    }
+    if (
+      (toChanged || !windowActive) &&
+      manageEffectiveFrom &&
+      manageEffectiveTo <
+        budgetWindowToMinDate(manageEffectiveFrom, todayDateInputValue())
+    ) {
+      setWindowError(
+        "Budget Effective To must be later than today, and at least a day after Budget Effective From.",
+      );
+      return;
+    }
+
+    // A window edit stands on its own — the endpoint takes action/amount and
+    // the dates independently, so a date-only revision is a valid call.
+    const windowChanged = toChanged || !windowActive;
+    if (!amountEntered && !windowChanged) return;
+    if (amountEntered && !(amount > 0)) {
+      setWindowError("Enter a top-up or top-down amount greater than ₹0.");
+      return;
+    }
 
     try {
       const res = await adjustTenantBudget({
         tenant_id: String(manageTenant.tenant_id),
-        action: budgetAction === "topup" ? "top-up" : "top-down",
-        amount,
+        ...(amountEntered
+          ? {
+              action: budgetAction === "topup" ? "top-up" : "top-down",
+              amount,
+            }
+          : {}),
+        ...(hasStoredFrom
+          ? {}
+          : {
+              budget_effective_from: dateInputToStartOfDayIso(
+                manageEffectiveFrom,
+              ),
+            }),
+        ...(windowChanged
+          ? { budget_effective_to: dateInputToEndOfDayIso(manageEffectiveTo) }
+          : {}),
       });
 
       const nextBudget = Number(res.allocated_budget);
@@ -504,6 +634,13 @@ export default function TenantManagementTab({
         });
       }
       setBudgetAmount("");
+      const committedFrom = isoToDateInputValue(res.budget_effective_from);
+      const committedTo = isoToDateInputValue(res.budget_effective_to);
+      if (committedFrom) setManageEffectiveFrom(committedFrom);
+      if (committedTo) {
+        setManageEffectiveTo(committedTo);
+        setOriginalEffectiveTo(committedTo);
+      }
 
       // A tenant budget revision never moves any Application's own ₹ (or,
       // therefore, any Key's — keys_recomputed is always literally 0 now
@@ -511,13 +648,15 @@ export default function TenantManagementTab({
       // share of the new total is recalculated; their ₹ allocations are
       // untouched.
       const apps = res.applications_recomputed;
-      let description = `Budget ${budgetAction === "topup" ? "increased" : "decreased"} by ${formatRupees(amount)}.`;
+      let description = amountEntered
+        ? `Budget ${budgetAction === "topup" ? "increased" : "decreased"} by ${formatRupees(amount)}.`
+        : "Budget window updated.";
       if (apps) {
         description += ` ${apps} Application(s)' Budget % ${apps === 1 ? "was" : "were"} recalculated to reflect the new total — their ₹ allocations were not changed.`;
       }
 
       toast({
-        title: "Budget updated",
+        title: amountEntered ? "Budget updated" : "Budget window updated",
         description,
         status: "success",
         duration: 5000,
@@ -531,7 +670,9 @@ export default function TenantManagementTab({
         ?.response?.data?.detail;
 
       toast({
-        title: "Failed to update budget",
+        title: amountEntered
+          ? "Failed to update budget"
+          : "Failed to update budget window",
         description:
           typeof detail === "object" && detail !== null && "message" in detail
             ? String((detail as { message?: string }).message)
@@ -566,13 +707,49 @@ export default function TenantManagementTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tm.tenantDetailView?.tenant_id]);
 
-  const tenantColumns = useMemo((): AdminTableColumn<TenantView>[] => {
+  const tenantSortAccessors = useMemo(
+    () => ({
+      organisation: (t: TenantView) => t.organisation ?? "",
+      contact: (t: TenantView) => t.contact_name ?? "",
+      email: (t: TenantView) => t.email ?? "",
+      created: (t: TenantView) =>
+        t.created_at ? new Date(t.created_at).getTime() : 0,
+    }),
+    [],
+  );
+  const tenantSort = useDeferredColumnSort("organisation", tenantSortAccessors);
+  const sortedTenants = useMemo(
+    () => tenantSort.apply(tm.filteredTenants),
+    [tm.filteredTenants, tenantSort],
+  );
+
+  const userSortAccessors = useMemo(
+    () => ({
+      username: (u: TenantUserView) => u.username ?? u.email ?? "",
+      email: (u: TenantUserView) => u.email ?? "",
+      full_name: (u: TenantUserView) => u.full_name ?? "",
+      created: (u: TenantUserView) => {
+        const created = (u as { created_at?: string }).created_at;
+        return created ? new Date(created).getTime() : 0;
+      },
+    }),
+    [],
+  );
+  const userSort = useDeferredColumnSort("username", userSortAccessors);
+  const sortedTenantUsers = useMemo(
+    () => userSort.apply(tm.filteredTenantUsers),
+    [tm.filteredTenantUsers, userSort],
+  );
+
+  const tenantColumns = useMemo((): DataTableColumn<TenantView>[] => {
     return [
       {
         id: "organisation",
         header: INSTITUTION,
         thProps: { w: "420px", maxW: "420px" },
         tdProps: { maxW: "420px" },
+        sortable: true,
+        sortAccessor: (t) => t.organisation ?? "",
         cell: (t) => (
           <HStack spacing={3} minW={0}>
             <Center
@@ -617,6 +794,8 @@ export default function TenantManagementTab({
         header: "Contact",
         thProps: { w: "280px", maxW: "280px" },
         tdProps: { maxW: "280px" },
+        sortable: true,
+        sortAccessor: (t) => t.contact_name ?? "",
         cell: (t) => (
           <Tooltip
             label={dash(t.contact_name)}
@@ -630,7 +809,13 @@ export default function TenantManagementTab({
           </Tooltip>
         ),
       },
-      { id: "email", header: "Email", cell: (t) => dash(t.email) },
+      {
+        id: "email",
+        header: "Email",
+        sortable: true,
+        sortAccessor: (t) => t.email ?? "",
+        cell: (t) => dash(t.email),
+      },
       {
         id: "status",
         header: "Status",
@@ -643,6 +828,9 @@ export default function TenantManagementTab({
       {
         id: "created",
         header: "Onboarded",
+        sortable: true,
+        sortAccessor: (t) =>
+          t.created_at ? new Date(t.created_at).getTime() : 0,
         cell: (t) => fmtDate(t.created_at),
       },
       {
@@ -655,15 +843,29 @@ export default function TenantManagementTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tm]);
 
-  const userColumns = useMemo((): AdminTableColumn<TenantUserView>[] => {
+  const userColumns = useMemo((): DataTableColumn<TenantUserView>[] => {
     return [
       {
         id: "username",
         header: "Username",
+        sortable: true,
+        sortAccessor: (u) => u.username ?? u.email ?? "",
         cell: (u) => u.username ?? dash(u.email),
       },
-      { id: "email", header: "Email", cell: (u) => dash(u.email) },
-      { id: "full_name", header: "Full Name", cell: (u) => dash(u.full_name) },
+      {
+        id: "email",
+        header: "Email",
+        sortable: true,
+        sortAccessor: (u) => u.email ?? "",
+        cell: (u) => dash(u.email),
+      },
+      {
+        id: "full_name",
+        header: "Full Name",
+        sortable: true,
+        sortAccessor: (u) => u.full_name ?? "",
+        cell: (u) => dash(u.full_name),
+      },
       {
         id: "roles",
         header: "Roles",
@@ -685,6 +887,11 @@ export default function TenantManagementTab({
       {
         id: "created",
         header: "Created",
+        sortable: true,
+        sortAccessor: (u) => {
+          const created = (u as { created_at?: string }).created_at;
+          return created ? new Date(created).getTime() : 0;
+        },
         cell: (u) => fmtDate((u as { created_at?: string }).created_at),
       },
       {
@@ -714,6 +921,16 @@ export default function TenantManagementTab({
       {renderStatusConfirmDialog()}
       {renderDeleteUserDialog()}
       {renderViewTierModal()}
+      <AssignTierModal
+        isOpen={isAssignTierOpen}
+        onClose={closeAssignTier}
+        tenant={assignTierTenant}
+        tierOptions={tierOptions}
+        tierIdsWithServices={tierIdsWithServices}
+        serviceMappingsStatus={serviceMappingsStatus}
+        noServicesMessage={TIER_NO_SERVICES_MSG}
+        onAssigned={handleTierAssigned}
+      />
     </Box>
   );
 
@@ -739,10 +956,13 @@ export default function TenantManagementTab({
           </HStack>
         </CardHeader>
         <CardBody>
-          <AdminDataTable
-            items={tm.filteredTenants}
+          <DataTable
+            layout="admin"
+            items={sortedTenants}
             columns={tenantColumns}
             getRowKey={(t) => t.tenant_id}
+            sort={tenantSort.sort}
+            onSortChange={tenantSort.onSortChange}
             onRowClick={tm.handleViewTenant}
             isLoading={tm.isLoadingTenants}
             emptyMessage={`No ${INSTITUTIONS.toLowerCase()} found.`}
@@ -755,28 +975,30 @@ export default function TenantManagementTab({
               tm.setTenantFilterStatus("all");
               tm.setTenantSearch("");
             }}
-            filters={
-              <>
-                <TableSearchField
-                  placeholder={`Search by organisation or ${INSTITUTION.toLowerCase()} ID`}
-                  value={tm.tenantSearch}
-                  onChange={tm.setTenantSearch}
-                />
-                <TableSelectField
-                  label="Status"
-                  value={tm.tenantFilterStatus}
-                  onChange={tm.setTenantFilterStatus}
-                  formControlProps={{ w: { base: "full", sm: "200px" } }}
-                >
-                  <option value="all">All statuses</option>
-                  {TENANT_STATUS_LIST.map((s) => (
-                    <option key={s} value={s}>
-                      {formatTenantStatusLabel(s)}
-                    </option>
-                  ))}
-                </TableSelectField>
-              </>
-            }
+            search={{
+              value: tm.tenantSearch,
+              onChange: tm.setTenantSearch,
+              placeholder: `Search by organisation or ${INSTITUTION.toLowerCase()} ID`,
+              fields: ["organisation", "tenant_id"],
+            }}
+            filterDefs={[
+              {
+                id: "status",
+                label: "Status",
+                type: "select",
+                param: "status",
+                value: tm.tenantFilterStatus,
+                onChange: tm.setTenantFilterStatus,
+                width: { base: "full", sm: "200px" },
+                options: [
+                  { label: "All statuses", value: "all" },
+                  ...TENANT_STATUS_LIST.map((s) => ({
+                    label: formatTenantStatusLabel(s),
+                    value: s,
+                  })),
+                ],
+              },
+            ]}
           />
         </CardBody>
       </Card>
@@ -846,11 +1068,14 @@ export default function TenantManagementTab({
 
   function renderTenantUsersTable() {
     return (
-      <AdminDataTable
+      <DataTable
+        layout="admin"
         key={tm.tenantDetailView?.tenant_id ?? "tenant-users"}
-        items={tm.filteredTenantUsers}
+        items={sortedTenantUsers}
         columns={userColumns}
         getRowKey={(u) => u.user_id}
+        sort={userSort.sort}
+        onSortChange={userSort.onSortChange}
         onRowClick={tm.handleViewUser}
         isLoading={tm.isLoadingTenantUsers}
         emptyMessage={`No users in this ${INSTITUTION.toLowerCase()}.`}
@@ -862,41 +1087,46 @@ export default function TenantManagementTab({
           tm.userSearch.trim() !== ""
         }
         onClearFilters={tm.handleResetUserFilters}
-        filters={
-          <>
-            <TableSearchField
-              placeholder="Search by username, email, or full name"
-              value={tm.userSearch}
-              onChange={tm.setUserSearch}
-            />
-            <TableSelectField
-              label="Status"
-              value={tm.userFilterStatus}
-              onChange={tm.setUserFilterStatus}
-              formControlProps={{ w: { base: "full", sm: "200px" } }}
-            >
-              <option value="all">All statuses</option>
-              {TENANT_USER_STATUS_LIST.map((s) => (
-                <option key={s} value={s}>
-                  {formatTenantUserStatusLabel(s)}
-                </option>
-              ))}
-            </TableSelectField>
-            <TableSelectField
-              label="Role"
-              value={tm.userFilterRole}
-              onChange={tm.setUserFilterRole}
-              formControlProps={{ w: { base: "full", sm: "200px" } }}
-            >
-              <option value="all">All roles</option>
-              {tm.tenantUserRoleFilterOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </TableSelectField>
-          </>
-        }
+        search={{
+          value: tm.userSearch,
+          onChange: tm.setUserSearch,
+          placeholder: "Search by username, email, or full name",
+          fields: ["username", "email", "full_name"],
+        }}
+        filterDefs={[
+          {
+            id: "status",
+            label: "Status",
+            type: "select",
+            param: "status",
+            value: tm.userFilterStatus,
+            onChange: tm.setUserFilterStatus,
+            width: { base: "full", sm: "200px" },
+            options: [
+              { label: "All statuses", value: "all" },
+              ...TENANT_USER_STATUS_LIST.map((s) => ({
+                label: formatTenantUserStatusLabel(s),
+                value: s,
+              })),
+            ],
+          },
+          {
+            id: "role",
+            label: "Role",
+            type: "select",
+            param: "role",
+            value: tm.userFilterRole,
+            onChange: tm.setUserFilterRole,
+            width: { base: "full", sm: "200px" },
+            options: [
+              { label: "All roles", value: "all" },
+              ...tm.tenantUserRoleFilterOptions.map((opt) => ({
+                label: opt.label,
+                value: opt.value,
+              })),
+            ],
+          },
+        ]}
       />
     );
   }
@@ -1179,6 +1409,8 @@ export default function TenantManagementTab({
   function renderTenantRowActions(t: TenantView) {
     const stopRowClick = (e: React.MouseEvent) => e.stopPropagation();
     const isProtectedDefaultOrg = isDefaultTenant(t);
+    const hasTier = hasTierAssignment(t);
+    const planActionLabel = hasTier ? "Manage Tier" : "Assign Tier";
 
     const items: RowActionMenuItem[] = (() => {
       if (isTenantStatus(t.status, TENANT.STATUS.PENDING)) {
@@ -1201,7 +1433,7 @@ export default function TenantManagementTab({
               tm.handleOpenTenantStatus(t, TENANT.STATUS.DEACTIVATED),
             color: "red.600",
             hoverBg: "red.50",
-            icon: <DeleteIcon boxSize={4} />,
+            icon: <FiMinusCircle size={16} />,
           });
         }
         return pendingItems;
@@ -1226,7 +1458,7 @@ export default function TenantManagementTab({
               tm.handleOpenTenantStatus(t, TENANT.STATUS.DEACTIVATED),
             color: "red.600",
             hoverBg: "red.50",
-            icon: <DeleteIcon boxSize={4} />,
+            icon: <FiMinusCircle size={16} />,
           },
         ];
       }
@@ -1250,7 +1482,7 @@ export default function TenantManagementTab({
               tm.handleOpenTenantStatus(t, TENANT.STATUS.DEACTIVATED),
             color: "red.600",
             hoverBg: "red.50",
-            icon: <DeleteIcon boxSize={4} />,
+            icon: <FiMinusCircle size={16} />,
           });
         }
         return suspendedItems;
@@ -1299,21 +1531,28 @@ export default function TenantManagementTab({
             tm.handleOpenEditTenant(t);
           }}
         />
-        <Tooltip label="Manage plan">
+        <Tooltip label={planActionLabel}>
           <IconButton
-            aria-label="Manage plan"
-            icon={<FiSliders size={14} />}
-            size="xs"
-            w={4}
-            h={4}
-            minW={4}
-            variant="outline"
-            colorScheme="blue"
+            aria-label={planActionLabel}
+            icon={
+              <Image
+                src={
+                  hasTier
+                    ? "/assests/icons/tier-assigned.svg"
+                    : "/assests/icons/tier-unassigned.svg"
+                }
+                alt=""
+                boxSize="24px"
+              />
+            }
+            size="sm"
+            variant="ghost"
+            colorScheme="gray"
             borderRadius="full"
-            _hover={{ bg: "blue.50" }}
+            _hover={{ bg: "gray.100" }}
             onClick={(e) => {
               stopRowClick(e);
-              openManagePlan(t);
+              openTenantPlan(t);
             }}
           />
         </Tooltip>
@@ -1525,84 +1764,6 @@ export default function TenantManagementTab({
                   {FIELD_HINTS.tenant.phone.helper}
                 </FieldHint>
               </FormControl>
-              <FormControl>
-                <FormLabel>Tier</FormLabel>
-                <TierSelect
-                  value={tm.tenantForm.tier_id}
-                  onChange={(id) =>
-                    tm.setTenantForm({ ...tm.tenantForm, tier_id: id })
-                  }
-                  tierOptions={tierOptions}
-                  serviceMappingsReady={serviceMappingsReady}
-                  tierIdsWithServices={tierIdsWithServices}
-                />
-                <FieldHint>{FIELD_HINTS.tenant.onboardTier.helper}</FieldHint>
-              </FormControl>
-              <FormControl
-                isInvalid={Boolean(tm.tenantFormErrors.allocated_budget)}
-              >
-                <FormLabel>Initial Budget</FormLabel>
-                <InputGroup size="sm">
-                  <InputLeftAddon>₹</InputLeftAddon>
-                  <Input
-                    value={tm.tenantForm.allocated_budget}
-                    onChange={(e) =>
-                      tm.setTenantForm({
-                        ...tm.tenantForm,
-                        allocated_budget: clampBudgetInput(e.target.value),
-                      })
-                    }
-                    placeholder={FIELD_HINTS.tenant.onboardBudget.placeholder}
-                    type="number"
-                    min={0}
-                    step="any"
-                  />
-                </InputGroup>
-                {tm.tenantFormErrors.allocated_budget && (
-                  <FormErrorMessage>
-                    {tm.tenantFormErrors.allocated_budget}
-                  </FormErrorMessage>
-                )}
-                <FieldHint show={!tm.tenantFormErrors.allocated_budget}>
-                  {FIELD_HINTS.tenant.onboardBudget.helper}
-                </FieldHint>
-              </FormControl>
-              <HStack spacing={4} align="flex-start">
-                <FormControl>
-                  <FormLabel>Budget effective from</FormLabel>
-                  <Input
-                    type="date"
-                    size="sm"
-                    value={tm.tenantForm.budget_effective_from}
-                    onChange={(e) =>
-                      tm.setTenantForm({
-                        ...tm.tenantForm,
-                        budget_effective_from: e.target.value,
-                      })
-                    }
-                  />
-                  <FieldHint>
-                    {FIELD_HINTS.tenant.onboardBudgetEffectiveFrom.helper}
-                  </FieldHint>
-                </FormControl>
-                <FormControl>
-                  <FormLabel>Budget effective to</FormLabel>
-                  <Input
-                    type="date"
-                    size="sm"
-                    value={tm.tenantForm.budget_effective_to}
-                    onChange={(e) =>
-                      tm.setTenantForm({
-                        ...tm.tenantForm,
-                        budget_effective_to: e.target.value,
-                      })
-                    }
-                  />
-                  <FieldHint>
-                    {FIELD_HINTS.tenant.onboardBudgetEffectiveTo.helper}
-                  </FieldHint>
-                </FormControl>
-              </HStack>
               <ConsentCheckbox
                 isChecked={tenantConsentAccepted}
                 onChange={(checked) => {
@@ -2212,10 +2373,27 @@ export default function TenantManagementTab({
       serviceMappingsReady &&
       !tierIdsWithServices.has(String(manageTierId));
 
-    const showSaveButton = isEditingTier && hasTierChanged && manageTierId;
+    // PATCH /tenants/{id}/tier accepts tier_id only — Save when the tier changes.
+    const showSaveButton = isEditingTier && hasTierChanged && !!manageTierId;
 
     const selectedTierName =
       tierOptions.find((t) => t.id === manageTierId)?.name ?? "";
+    const planDrawerTitle = hasTierAssignment(manageTenant)
+      ? "Manage Tier"
+      : "Assign Tier";
+    const planExpired = isBudgetAssignmentExpired(manageTenant);
+    // From is read-only throughout Manage Tier, so manageEffectiveFrom is
+    // always the From in effect and Effective To is the only lever.
+    const effectiveToMin = manageEffectiveFrom
+      ? budgetWindowToMinDate(manageEffectiveFrom, todayDateInputValue())
+      : undefined;
+    // Until To clears that floor the window is still lapsed, and a budget
+    // revision has no live window to attach to.
+    const windowNeedsExtension =
+      planExpired &&
+      (!manageEffectiveTo ||
+        !effectiveToMin ||
+        manageEffectiveTo < effectiveToMin);
 
     return (
       <Drawer
@@ -2227,17 +2405,29 @@ export default function TenantManagementTab({
         <DrawerOverlay />
         <DrawerContent>
           <DrawerCloseButton />
-          <DrawerHeader
-            fontSize="md"
-            fontWeight="semibold"
-            borderBottomWidth="1px"
-            borderColor="gray.200"
-          >
-            {`Manage Plan${manageTenant ? ` — ${manageTenant.organisation}` : ""}`}
+          <DrawerHeader borderBottomWidth="1px" borderColor="gray.200">
+            <VStack align="flex-start" spacing={1}>
+              <Text fontSize="md" fontWeight="semibold">
+                {`${planDrawerTitle}${manageTenant ? ` — ${manageTenant.organisation}` : ""}`}
+              </Text>
+              {planExpired && (
+                <Badge colorScheme="red" textTransform="none" fontSize="xs">
+                  Budget expired
+                </Badge>
+              )}
+            </VStack>
           </DrawerHeader>
           <DrawerBody py={6}>
             {manageTenant ? (
               <VStack align="stretch" spacing={5}>
+                {managePlanError && (
+                  <Alert status="error" borderRadius="md">
+                    <AlertIcon />
+                    <AlertDescription fontSize="sm">
+                      {managePlanError}
+                    </AlertDescription>
+                  </Alert>
+                )}
                 <FormControl>
                   <FormLabel>Tier</FormLabel>
                   {!isEditingTier && originalTierId ? (
@@ -2294,6 +2484,52 @@ export default function TenantManagementTab({
                     cursor="default"
                   />
                 </FormControl>
+
+                <HStack spacing={4} align="flex-start">
+                  <FormControl>
+                    <FormLabel fontWeight="semibold" fontSize="sm">
+                      Budget Effective From
+                    </FormLabel>
+                    <Input
+                      type="date"
+                      size="sm"
+                      value={manageEffectiveFrom}
+                      isReadOnly
+                      bg="gray.50"
+                      cursor="default"
+                      sx={{
+                        "&::-webkit-calendar-picker-indicator": {
+                          display: "none",
+                        },
+                      }}
+                    />
+                  </FormControl>
+
+                  <FormControl>
+                    <FormLabel fontWeight="semibold" fontSize="sm">
+                      Budget Effective To
+                    </FormLabel>
+                    <Input
+                      type="date"
+                      size="sm"
+                      value={manageEffectiveTo}
+                      min={effectiveToMin}
+                      onChange={(e) => {
+                        setManageEffectiveTo(e.target.value);
+                        setWindowError(null);
+                      }}
+                    />
+                  </FormControl>
+                </HStack>
+
+                {windowError && (
+                  <Alert status="error" borderRadius="md">
+                    <AlertIcon />
+                    <AlertDescription fontSize="sm">
+                      {windowError}
+                    </AlertDescription>
+                  </Alert>
+                )}
                 <FormControl>
                   <Box
                     borderWidth="1px"
@@ -2303,7 +2539,11 @@ export default function TenantManagementTab({
                     bg="gray.50"
                   >
                     <HStack justify="space-between" mb={3}>
-                      <Text fontSize="sm" fontWeight="medium">
+                      <Text
+                        fontSize="sm"
+                        fontWeight="medium"
+                        color={windowNeedsExtension ? "gray.400" : undefined}
+                      >
                         Adjust Budget
                       </Text>
 
@@ -2315,6 +2555,7 @@ export default function TenantManagementTab({
                           }
                           colorScheme="green"
                           borderRightRadius={0}
+                          isDisabled={windowNeedsExtension}
                           onClick={() => setBudgetAction("topup")}
                         >
                           + Top-up
@@ -2327,6 +2568,7 @@ export default function TenantManagementTab({
                           }
                           colorScheme="red"
                           borderLeftRadius={0}
+                          isDisabled={windowNeedsExtension}
                           onClick={() => setBudgetAction("topdown")}
                         >
                           - Top-down
@@ -2339,13 +2581,18 @@ export default function TenantManagementTab({
                         placeholder="Amount in ₹"
                         type="number"
                         value={budgetAmount}
+                        isDisabled={windowNeedsExtension}
                         onChange={(e) => setBudgetAmount(e.target.value)}
                       />
 
                       <Button
                         colorScheme="blue"
                         onClick={handleApplyBudget}
-                        isDisabled={!budgetAmount}
+                        isDisabled={
+                          windowNeedsExtension ||
+                          (!budgetAmount &&
+                            manageEffectiveTo === originalEffectiveTo)
+                        }
                       >
                         Apply
                       </Button>
@@ -2358,7 +2605,7 @@ export default function TenantManagementTab({
                 </FormControl>
               </VStack>
             ) : (
-              <Text>Select an institution to manage plan.</Text>
+              <Text>Select an institution to manage its tier.</Text>
             )}
           </DrawerBody>
           <DrawerFooter
@@ -2379,7 +2626,7 @@ export default function TenantManagementTab({
                   servicesForTiersQuery.isError
                 }
               >
-                Change Tier
+                {originalTierId ? "Change Tier" : "Assign Tier"}
               </Button>
             )}
           </DrawerFooter>

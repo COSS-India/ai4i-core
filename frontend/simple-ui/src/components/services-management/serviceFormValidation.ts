@@ -5,8 +5,10 @@
  * (app/schemas/model_management/service.py) after the ULCA alignment, so
  * admins get inline errors instead of an unexplained 422.
  *
- * CREATE ONLY. `ServiceUpdateRequest` carries none of these length
- * constraints — the edit flow must not use these helpers.
+ * The LENGTH rules here are CREATE ONLY — `ServiceUpdateRequest` carries none
+ * of them, so the edit flow must not use those helpers. `validatePricePerUnit`
+ * is the exception: the same bounds sit on both request schemas, so it applies
+ * to create and edit alike.
  */
 
 /** `description` — 25-1000 chars, required (alias: `serviceDescription`). */
@@ -22,6 +24,20 @@ const SERVICE_NAME_PATTERN = /^[a-zA-Z0-9/-]+$/;
 /** Strips what the Service Name charset rejects — spaces, `_`, punctuation. */
 export const sanitizeServiceName = (value: string): string =>
   value.replaceAll(/[^a-zA-Z0-9/-]/g, "");
+
+/**
+ * Strips what the Service ID charset rejects. LLM is the stricter case: its
+ * Service ID is submitted as the Service Name too, so it inherits the name
+ * charset (no `_`). Every other task type has its own Service Name field and
+ * may keep underscores.
+ *
+ * Shared by the Service ID input and the model-name prefill so the two can
+ * never disagree about which characters survive.
+ */
+export const sanitizeServiceId = (value: string, isLlm: boolean): string =>
+  isLlm
+    ? sanitizeServiceName(value)
+    : value.replaceAll(/[^a-zA-Z0-9/_-]/g, "");
 
 /** `inferenceEndPoint.infraDescription` — 5-100 chars (alias: `hardwareDescription`). */
 export const INFRA_DESCRIPTION_MIN_LEN = 5;
@@ -108,3 +124,35 @@ export const validateServiceIdLength = (
   lengthError("Service ID", value, SERVICE_ID_MIN_LEN, SERVICE_ID_MAX_LEN, {
     required: true,
   });
+
+/**
+ * `costPerUnit` — 0 to 10,000,000, on BOTH `ServiceCreateRequest` and
+ * `ServiceUpdateRequest` (`ge=0, le=10_000_000`).
+ */
+export const PRICE_PER_UNIT_MAX = 10_000_000;
+
+/** Grouped form of the cap, for hint and error copy. */
+export const PRICE_PER_UNIT_MAX_LABEL = PRICE_PER_UNIT_MAX.toLocaleString("en-US");
+
+/**
+ * Returns a user-facing message for the first problem found, or null when the
+ * price is acceptable. 0 is allowed, matching the backend's `ge=0` — a free
+ * service is a legitimate configuration.
+ */
+export const validatePricePerUnit = (value: string): string | null => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "Price per unit size is required.";
+  }
+  const priceNum = Number(trimmed);
+  if (!Number.isFinite(priceNum)) {
+    return "Price per unit size must be a number.";
+  }
+  if (priceNum < 0) {
+    return "Price per unit size must be 0 or greater.";
+  }
+  if (priceNum > PRICE_PER_UNIT_MAX) {
+    return `Price per unit size must not exceed ${PRICE_PER_UNIT_MAX_LABEL}.`;
+  }
+  return null;
+};

@@ -53,8 +53,9 @@ const layoutRoutes = [
   '/logs',
   '/usage-dashboard',
   '/traces',
-  // Alerts Management removed from UI — uncomment to restore
+  // Legacy Alerts Management removed — uncomment to restore
   // '/alerts-management',
+  '/notifications-alerts',
   // PII Guardrail removed from UI — uncomment to restore
   // '/pii-management',
   '/tier-management',

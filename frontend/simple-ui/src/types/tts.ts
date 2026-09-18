@@ -112,8 +112,6 @@ export interface VoiceSelectorProps {
   onFormatChange: (format: AudioFormat) => void;
   onSampleRateChange: (rate: SampleRate) => void;
   availableLanguages: string[];
-  availableVoices?: Voice[];
-  loading?: boolean;
   /** When true, all voice controls are disabled (e.g. no service selected yet). */
   disabled?: boolean;
 }

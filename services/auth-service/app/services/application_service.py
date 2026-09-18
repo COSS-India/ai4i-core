@@ -64,15 +64,6 @@ class ApplicationService:
 
     # ── Scope / lookups ─────────────────────────────────────────────────
 
-    async def _authorize(self, user: User, tenant_id: int) -> None:
-        """Institution-scope check for Application Management — see
-        authorize_institution_scope's docstring for the full rationale.
-        AllocationService (the three Budget Allocation endpoints) enforces
-        the identical rule via the same shared helper, not a second copy of
-        this logic.
-        """
-        await authorize_institution_scope(self._roles, user, tenant_id)
-
     async def _load_tenant_or_404(self, tenant_id: int) -> Tenant:
         tenant = await self._tenants.get_by_id(tenant_id)
         if not tenant:
@@ -103,7 +94,7 @@ class ApplicationService:
         body: ApplicationCreate,
         current_user: User,
     ) -> Application:
-        await self._authorize(current_user, tenant_id)
+        await authorize_institution_scope(self._roles, current_user, tenant_id)
         tenant = await self._load_tenant_or_404(tenant_id)
 
         if await self._applications.get_by_name(tenant_id, body.name):
@@ -227,7 +218,7 @@ class ApplicationService:
     async def get_application(
         self, tenant_id: int, application_id: int, current_user: User
     ) -> Application:
-        await self._authorize(current_user, tenant_id)
+        await authorize_institution_scope(self._roles, current_user, tenant_id)
         return await self._load_application_or_404(tenant_id, application_id)
 
     async def list_applications(
@@ -240,7 +231,7 @@ class ApplicationService:
         offset: int = 0,
         limit: int = 100,
     ) -> tuple[list[Application], int]:
-        await self._authorize(current_user, tenant_id)
+        await authorize_institution_scope(self._roles, current_user, tenant_id)
         await self._load_tenant_or_404(tenant_id)
         return await self._applications.list_for_tenant(
             tenant_id, search=search, domain=domain, offset=offset, limit=limit
@@ -254,7 +245,7 @@ class ApplicationService:
         current_user: User,
         platform_core_db: Optional[AsyncSession] = None,
     ) -> Application:
-        await self._authorize(current_user, tenant_id)
+        await authorize_institution_scope(self._roles, current_user, tenant_id)
         app = await self._load_application_or_404(tenant_id, application_id)
 
         data = body.model_dump(exclude_unset=True)

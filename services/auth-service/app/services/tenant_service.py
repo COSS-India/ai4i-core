@@ -9,7 +9,7 @@ repository access and provisioning lives in this file.
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Callable, Dict, Literal, Optional
 from uuid import UUID
@@ -30,6 +30,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
+from app.utils.budget_window import as_utc_date, is_budget_window_expired
 from app.utils.common import role_name_to_str
 from app.models.tenant import Tenant, TenantStatus
 from app.models.tenant_plan import TenantPlan
@@ -41,6 +42,11 @@ from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationRepository
 from app.core.responses import to_response
+from ai4i_core.kafka import (
+    publish_admin_event as publish_notification_event,
+    is_notification_enabled,
+    check_and_record_action,
+)
 from app.schemas.tenant import (
     TenantCreate,
     TenantResponse,
@@ -60,6 +66,7 @@ from app.services.tenant_lifecycle import (
     TENANT_ONBOARDING_STATUSES,
     assert_default_tenant_not_targeted,
     assert_valid_tenant_status_transition,
+    is_default_tenant,
     sync_tenant_users_for_status,
 )
 from app.services.email_helpers import (
@@ -78,6 +85,10 @@ from app.utils.username import allocate_unique_username, derive_username_from_em
 
 logger = logging.getLogger(__name__)
 
+# Matches platform-core-service's usage_service._CURRENCY — tenant budgets
+# are INR-only today; no per-tenant currency column exists yet.
+_BUDGET_CURRENCY = "INR"
+
 # Derived from tenants.allocated_budget's own column type (NUMERIC(15, 2))
 # rather than hand-computed, so widening that column can't silently leave
 # this stale — a stale literal here would keep rejecting valid budgets with
@@ -89,7 +100,70 @@ MAX_TENANT_BUDGET = Decimal(10) ** (
 ) - Decimal(1).scaleb(-_allocated_budget_type.scale)
 
 
-async def _assign_plan_to_tenant(tenant_id: int, plan_id: UUID, db: AsyncSession) -> None:
+def _validate_new_effective_from(budget_effective_from: datetime) -> None:
+    """Only applies to a From being set for the first time (no active
+    window exists yet) — an already-stored From is never re-validated
+    against "today", since today has moved on since it was first set and
+    that's expected (see revise_tenant_budget's locking rule)."""
+    from_date = as_utc_date(budget_effective_from)
+    today_utc = datetime.now(timezone.utc).date()
+    if from_date < today_utc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "budget_effective_from_invalid",
+                "message": (
+                    f"budget_effective_from ({from_date.isoformat()}) must not be before "
+                    f"today ({today_utc.isoformat()}) UTC."
+                ),
+            },
+        )
+
+
+def _validate_effective_to_after_from(budget_effective_from: datetime, budget_effective_to: datetime) -> None:
+    """Compares whichever From is actually in effect — the one just
+    supplied (fresh assignment) or the one already on file (extending an
+    active window) — against the proposed To. Calendar dates in UTC, so a
+    same-day pair is rejected consistently regardless of either side's time
+    portion."""
+    from_date = as_utc_date(budget_effective_from)
+    to_date = as_utc_date(budget_effective_to)
+    if to_date < from_date + timedelta(days=1):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "budget_effective_to_invalid",
+                "message": (
+                    f"budget_effective_to ({to_date.isoformat()}) must be at least one "
+                    f"calendar day after budget_effective_from ({from_date.isoformat()})."
+                ),
+            },
+        )
+
+
+def _validate_new_effective_to_not_in_past(budget_effective_to: datetime) -> None:
+    """Only applies when reactivating a lapsed window (budget_effective_from
+    stays put, so _validate_new_effective_from can't run) — a caller
+    extending an already-expired window must land on a To that actually
+    reopens it, not one that's already in the past too."""
+    to_date = as_utc_date(budget_effective_to)
+    today_utc = datetime.now(timezone.utc).date()
+    if to_date < today_utc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "budget_effective_to_invalid",
+                "message": (
+                    f"budget_effective_to ({to_date.isoformat()}) must not be before "
+                    f"today ({today_utc.isoformat()}) UTC when reactivating a lapsed window."
+                ),
+            },
+        )
+
+
+async def _assign_plan_to_tenant(
+    tenant_id: int, plan_id: UUID, db: AsyncSession, created_by: Optional[UUID] = None
+) -> None:
     base = (settings.platform_core_url or "").rstrip("/")
     if not base:
         logger.warning("platform_core_url not set; skipping plan assignment for tenant %s", tenant_id)
@@ -118,6 +192,7 @@ async def _assign_plan_to_tenant(tenant_id: int, plan_id: UUID, db: AsyncSession
             quota_config=plan_data.get("quota_config") or {},
             rate_limit_config=plan_data.get("rate_limit_config") or {},
             allowed_services=allowed_services if isinstance(allowed_services, list) else [],
+            created_by=created_by,
         )
         db.add(row)
         await db.commit()
@@ -260,11 +335,49 @@ class TenantService:
                 },
             )
 
+    async def _assert_not_last_platform_admin(self, target: User, tenant: Tenant, *, action: str) -> None:
+        """Raise 422 if the target is the sole active ADMIN (platform admin) in the Default Organization.
+
+        Only applies within the Default Organization — that's the only tenant
+        the ADMIN role is granted in. Mirrors ``_assert_not_last_tenant_admin``,
+        but the check is skipped entirely for other tenants.
+        """
+        if not is_default_tenant(tenant):
+            return
+        if not target.is_active:
+            # Already inactive — removing them doesn't change the active-admin
+            # count, so this can't be the action that drops it to zero.
+            return
+        roles = await self._roles.get_user_roles(target.id)
+        if RoleName.ADMIN.value not in roles:
+            return
+        # Serialize concurrent last-admin checks within the same tenant.
+        await self._tenants._db.execute(
+            text("SELECT pg_advisory_xact_lock(:tid)"), {"tid": tenant.id}
+        )
+        count = await self._roles.count_admins_in_tenant(tenant.id)
+        if count <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "LAST_PLATFORM_ADMIN",
+                    "message": (
+                        f"Cannot {action} the only Admin in the Default Organization. "
+                        "Promote another user to Admin first."
+                    ),
+                },
+            )
+
     async def _set_tenant_user_role(
-        self, user_id: UUID, role: TenantUserRole | RoleName | str, *, commit: bool = True
+        self,
+        user_id: UUID,
+        role: TenantUserRole | RoleName | str,
+        *,
+        commit: bool = True,
+        created_by: Optional[UUID] = None,
     ) -> None:
         target = role.value if isinstance(role, TenantUserRole) else role_name_to_str(role)
-        await self._roles.assign_role(user_id, target, commit=commit)
+        await self._roles.assign_role(user_id, target, commit=commit, created_by=created_by)
 
     async def build_tenant_user_response(
         self, user: User, *, unmask_phone: bool = False
@@ -319,6 +432,7 @@ class TenantService:
         role_name: str = RoleName.USER,
         background_tasks: Optional[BackgroundTasks] = None,
         email_kind: Literal["setup", "verify", "none"] = "setup",
+        created_by: Optional[UUID] = None,
     ) -> tuple[str, str]:
         """Create an inactive user without credentials.
 
@@ -328,6 +442,11 @@ class TenantService:
         - ``setup``: welcome + set-password link (new tenant admins and invited users)
         - ``verify``: verify-email link (/auth/register self-signup only)
         - ``none``: no email
+
+        ``created_by`` is the acting admin's id — both current callers
+        (create_tenant's own first-admin provisioning, create_tenant_user)
+        are admin-triggered and always have one; left None only for a
+        hypothetical future self-service caller with no admin actor.
         """
         if await self._users.email_exists(email):
             raise DuplicateEntityError("User", "email")
@@ -348,11 +467,12 @@ class TenantService:
             tenant_id=parsed_tenant_id,
             is_active=False,
             creation_type=creation,
+            created_by=created_by,
         )
         await self._users.create(user)
 
         try:
-            await self._roles.assign_role(user.id, role_name)
+            await self._roles.assign_role(user.id, role_name, created_by=created_by)
         except EntityNotFoundError:
             logger.warning("Role %r not found, skipping role assignment.", role_name)
 
@@ -450,6 +570,13 @@ class TenantService:
 
         Tenant starts PENDING. The contact admin receives one welcome/set-password email.
         Tenant becomes ACTIVE only after they set a password (see AuthService.set_password_with_token).
+
+        budget_effective_from/_to are optional (both omitted = no window
+        assigned yet), but if given, both are required together and
+        validated the same way revise_tenant_budget validates a fresh
+        window — 422 effective_window_required if only one is given, 422
+        budget_effective_from_invalid/budget_effective_to_invalid for a
+        backdated From or an inverted/same-day window.
         """
         if await self._tenants.get_by_email(body.email):
             raise HTTPException(
@@ -466,6 +593,34 @@ class TenantService:
                 message="allocated_budget must not be negative.",
                 code="INVALID_BUDGET",
             )
+        # Same validation revise_tenant_budget applies when a tenant has no
+        # window yet — these columns were inert display data before
+        # create_api_key/validate started enforcing them (see
+        # is_budget_window_expired's callers), so an unvalidated window set
+        # here could create a tenant that's already dead on arrival (an
+        # already-past budget_effective_to 422s every create_api_key call
+        # with BUDGET_EXPIRED and no obvious cause) or inverted (To before
+        # From). Both omitted is fine (no window assigned yet, same as
+        # always); giving only one is rejected the same way
+        # revise_tenant_budget rejects a partial window with nothing on
+        # file to fall back to — reuses that endpoint's own
+        # effective_window_required/budget_effective_*_invalid codes so a
+        # client sees identical errors for the identical violation
+        # regardless of which endpoint it came from.
+        if (body.budget_effective_from is None) != (body.budget_effective_to is None):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "effective_window_required",
+                    "message": (
+                        "budget_effective_from and budget_effective_to must be given "
+                        "together, or both omitted."
+                    ),
+                },
+            )
+        if body.budget_effective_from is not None and body.budget_effective_to is not None:
+            _validate_new_effective_from(body.budget_effective_from)
+            _validate_effective_to_after_from(body.budget_effective_from, body.budget_effective_to)
         if body.tier_id is not None:
             # Same lookup assign_tenant_tier uses — without it, a tenant
             # created with an unknown/inactive tier id would pass
@@ -479,7 +634,7 @@ class TenantService:
                 )
             tier_row = (
                 await platform_core_db.execute(
-                    text("SELECT id FROM tiers WHERE id = :tid AND is_active = true"),
+                    text("SELECT id FROM tiers WHERE id = :tid AND status = 'ACTIVE'"),
                     {"tid": body.tier_id},
                 )
             ).first()
@@ -516,6 +671,7 @@ class TenantService:
             role_name=RoleName.TENANT_ADMIN,
             background_tasks=background_tasks,
             email_kind="setup",
+            created_by=current_user.id,
         )
 
         # provision_user committed; refresh to surface server-side defaults.
@@ -524,7 +680,9 @@ class TenantService:
 
         if body.plan_id:
             try:
-                await _assign_plan_to_tenant(tenant.id, body.plan_id, self._tenants._db)
+                await _assign_plan_to_tenant(
+                    tenant.id, body.plan_id, self._tenants._db, created_by=current_user.id
+                )
             except Exception as e:
                 logger.exception("Plan assignment after tenant creation failed (tenant was created): %s", e)
 
@@ -849,6 +1007,110 @@ class TenantService:
     # local Tenant row with no cross-DB PPU-assignment bookkeeping and no
     # HTTP round trip to another service.
 
+    async def _fetch_tier_email_fields(
+        self, tier_id: UUID, platform_core_db: AsyncSession
+    ) -> tuple[str, list[str]]:
+        """(description, quota_lines) for TIER_ASSIGNED/TIER_CHANGED's details
+        array (design doc §9.5) — quota_lines is one "NAME: N req/mo" string
+        per Model Task Type on this tier. Rate limit and Effective From/To
+        are deliberately not part of this email at all (not merely omitted
+        here) — a Tier has no rate-limit column and no expiry (it applies
+        until reassigned), so there's nothing real to show for either; see
+        design doc §9.5."""
+        description = ""
+        quota_lines: list[str] = []
+        try:
+            tier_row = (
+                await platform_core_db.execute(
+                    text("SELECT description FROM tiers WHERE id = :tid"), {"tid": tier_id}
+                )
+            ).first()
+            if tier_row is not None and tier_row.description:
+                description = tier_row.description
+            quota_rows = (
+                await platform_core_db.execute(
+                    text(
+                        "SELECT it.name AS inference_name, tq.monthly_quota "
+                        "FROM tier_quotas tq JOIN inference_types it ON it.id = tq.inference_type_id "
+                        "WHERE tq.tier_id = :tid ORDER BY it.name"
+                    ),
+                    {"tid": tier_id},
+                )
+            ).all()
+            quota_lines = [
+                f"{row.inference_name.upper()}: {row.monthly_quota:,.0f} req/mo" for row in quota_rows
+            ]
+        except Exception:
+            pass
+        return description, quota_lines
+
+    async def _publish_tier_event(
+        self,
+        old_tier_id: Optional[UUID],
+        new_tier_id: UUID,
+        new_tier_name: str,
+        tenant_id: int,
+        actor_id: str,
+        platform_core_db: Optional[AsyncSession],
+    ) -> None:
+        """Fire TIER_ASSIGNED/TIER_CHANGED after the tier write commits.
+        Best-effort — a Kafka outage must never fail the tier assignment
+        itself, matching _notify_tier_updated's existing framing.
+
+        Before publishing, ledger_notification_alert (design doc §5-7) is
+        checked/updated with the identical occurred_at: it's the atomic,
+        DB-level dedup guard against this exact action double-firing (e.g.
+        two producer replicas racing the same commit) — is_notification_enabled
+        is only the fast "is anyone listening at all" pre-check, not dedup.
+
+        details is the positional array design doc §9.5 specifies for these
+        two events, not the old {"tier_name": ...}/{"previous", "current"}
+        dict shape — the consumer (emailer.py) now indexes into it
+        positionally."""
+        occurred_at = datetime.now(timezone.utc).isoformat()
+        if old_tier_id is None:
+            if platform_core_db is not None and await is_notification_enabled(platform_core_db, "TIER_ASSIGNED"):
+                fired = await check_and_record_action(
+                    platform_core_db, "TIER_ASSIGNED", str(tenant_id), {}, occurred_at, str(actor_id)
+                )
+                if fired:
+                    description, quota_lines = await self._fetch_tier_email_fields(new_tier_id, platform_core_db)
+                    publish_notification_event(
+                        event_name="TIER_ASSIGNED",
+                        tenant_id=str(tenant_id),
+                        subject={},
+                        details=[new_tier_name, description, quota_lines],
+                        actor_id=str(actor_id),
+                        occurred_at=occurred_at,
+                    )
+            return
+        if platform_core_db is None or not await is_notification_enabled(platform_core_db, "TIER_CHANGED"):
+            return
+        old_tier_name = old_tier_id
+        try:
+            old_row = (
+                await platform_core_db.execute(
+                    text("SELECT name FROM tiers WHERE id = :tid"), {"tid": old_tier_id}
+                )
+            ).first()
+            if old_row is not None:
+                old_tier_name = old_row.name
+        except Exception:
+            pass
+        fired = await check_and_record_action(
+            platform_core_db, "TIER_CHANGED", str(tenant_id), {}, occurred_at, str(actor_id)
+        )
+        if fired:
+            description, quota_lines = await self._fetch_tier_email_fields(new_tier_id, platform_core_db)
+            publish_notification_event(
+                event_name="TIER_CHANGED",
+                tenant_id=str(tenant_id),
+                subject={},
+                details=[str(old_tier_name), new_tier_name, description, quota_lines],
+                actor_id=str(actor_id),
+                occurred_at=occurred_at,
+            )
+
     async def assign_tenant_tier(
         self,
         current_user: User,
@@ -899,7 +1161,7 @@ class TenantService:
             )
         row = (
             await platform_core_db.execute(
-                text("SELECT id, name FROM tiers WHERE id = :tid AND is_active = true"),
+                text("SELECT id, name FROM tiers WHERE id = :tid AND status = 'ACTIVE'"),
                 {"tid": tier_uuid},
             )
         ).first()
@@ -917,10 +1179,15 @@ class TenantService:
                     "message": f"Tenant '{tenant_id}' is already on tier '{row.name}'.",
                 },
             )
+        old_tier_id = tenant.tier_id
         await self._tenants.update(
             tenant, {"tier_id": tier_uuid, "updated_by": current_user.id}
         )
         await self._tenants.save_and_refresh(tenant)
+
+        await self._publish_tier_event(
+            old_tier_id, tier_uuid, row.name, tenant_id, current_user.id, platform_core_db
+        )
 
         if self._api_keys is not None:
             # Quota is tier-scoped: flags earned under the old tier would
@@ -933,6 +1200,37 @@ class TenantService:
             await self._api_keys.clear_quota_flags_for_tenant(tenant_id)
             await self._api_keys.set_tier_id_for_tenant(tenant_id, str(tier_uuid))
         return tenant
+
+    async def sync_budget_effective_to_cache(self, tenant_id: int) -> Optional[datetime]:
+        """Force-push tenants.budget_effective_to onto every cached API key
+        for this tenant via APIKeyService.set_budget_effective_to_for_tenant
+        — the raw date /auth/validate compares directly against "now"
+        (app.utils.budget_window.is_budget_window_expired), not a
+        separately computed boolean flag.
+
+        Called by revise_tenant_budget right after persisting a revised
+        window: revise_tenant_budget changes tenants.budget_effective_to
+        directly and never touches any api_key row, so nothing else would
+        notice the change for an already-cached key until something
+        unrelated (a rename, a tier reassignment) happened to rebuild its
+        cache — see APIKeyService._refresh_redis_cache's own callers, which
+        re-derive this value fresh from an already-loaded Tenant each time
+        rather than needing a preserve-on-refresh mechanism the way
+        budget-exhausted/quota-* do. This is the one path that genuinely
+        needs an explicit tenant-wide push, the same reasoning
+        set_tier_id_for_tenant already has for tier reassignment.
+
+        Returns the value pushed (None if the tenant doesn't exist or
+        APIKeyService isn't wired), mainly for tests/observability — no
+        caller currently branches on it.
+        """
+        if self._api_keys is None:
+            return None
+        tenant = await self._tenants.get_by_id(tenant_id)
+        if tenant is None:
+            return None
+        await self._api_keys.set_budget_effective_to_for_tenant(tenant_id, tenant.budget_effective_to)
+        return tenant.budget_effective_to
 
     async def _sync_ppu_wallet_and_exhaustion(
         self,
@@ -1018,8 +1316,10 @@ class TenantService:
         self,
         current_user: User,
         tenant_id: int,
-        action: Literal["top-up", "top-down"],
-        amount: Decimal,
+        action: Optional[Literal["top-up", "top-down"]],
+        amount: Optional[Decimal],
+        budget_effective_from: Optional[datetime] = None,
+        budget_effective_to: Optional[datetime] = None,
         platform_core_db: Optional[AsyncSession] = None,
     ) -> tuple[Tenant, int, int, bool]:
         """Top-up or top-down a tenant's budget — PATCH /auth/tenants/{id}/budget.
@@ -1029,6 +1329,61 @@ class TenantService:
         (or any other spend-tracking figure) on ``tenants`` itself — spend
         lives in platform-core's budget_usage ledger, summed here across
         every API key under the tenant.
+
+        ``budget_effective_from``/``budget_effective_to`` are both optional
+        and their required-ness depends on whether this tenant currently has
+        a LIVE window (``budget_effective_to`` set and not yet reached — see
+        is_budget_window_expired):
+
+          * Window still active: ``budget_effective_from`` is LOCKED — it
+            can never move once the window it belongs to is live, so
+            supplying it here raises 422 ``effective_from_locked``.
+            ``budget_effective_to`` is optional: omitted means "leave
+            unchanged" (a plain amount top-up/top-down untouches the
+            window entirely — this is what the shipped UI already does,
+            since it only ever sends action+amount); given, it's validated
+            against the *stored* From (never a client-supplied one, since
+            that's locked) and may only extend the window, never shrink or
+            re-found it.
+          * Window has LAPSED but this tenant has been assigned one before
+            (``tenants.budget_effective_from`` is on file): ``budget_effective_from``
+            is LOCKED here too (AI4IDS-2995 locks it once a window is on
+            file at all, active or lapsed — not just while live), so
+            supplying it raises 422 ``effective_from_locked`` exactly like
+            the active-window branch. Omitting it REACTIVATES that same
+            window — the stored From is reused as-is (never re-validated
+            against "today", since it's not moving) and ``budget_effective_to``
+            just needs to be a later date than that From, and not itself
+            already in the past (422 ``budget_effective_to_invalid``
+            either way). allocated_budget and spend are never window-
+            scoped (see below), so this is a pure date change: a tenant
+            with 700 left unspent from a lapsed Sep 1-16 window keeps
+            that same 700 once ``budget_effective_to`` is pushed to Sep
+            20 — nothing resets. ``action``/``amount`` are independent of
+            this and may be omitted entirely for a pure window edit (both
+            are optional; the two are only ever required together — see
+            ``TenantBudgetRequest``), or given alongside it to top-up/
+            top-down at the same time.
+          * No window on file at all (``tenants.budget_effective_from`` is
+            None — never assigned before): both ``budget_effective_from``
+            and ``budget_effective_to`` become REQUIRED (422
+            ``effective_window_required`` if either is missing), since
+            there's nothing on file to fall back to. From is validated
+            against today (``_validate_new_effective_from``); To against
+            the newly-given From (``_validate_effective_to_after_from``).
+            This is the ONLY branch that can ever set a new
+            ``budget_effective_from`` — once one is on file, it never
+            moves again, active or lapsed.
+
+        Either way, To is always validated against whichever From ends up
+        in effect (the newly-given one, or the existing stored one) via
+        ``_validate_effective_to_after_from`` — at least one calendar day
+        after, comparing UTC calendar dates, not wall-clock instants (a
+        same-day pair is rejected regardless of the time portion either side
+        sent). This whole decision needs the Tenant row loaded first (to see
+        what's already on file), so it runs right after
+        ``_load_tenant_for_update_or_404`` below, not before it as a
+        request-only check would.
 
         The revision never moves any Application's own ₹: every Application
         under the tenant keeps exactly the allocated_budget it already
@@ -1099,9 +1454,93 @@ class TenantService:
 
         tenant = await self._load_tenant_for_update_or_404(tenant_id)
 
+        window_active = tenant.budget_effective_to is not None and not is_budget_window_expired(
+            tenant.budget_effective_to
+        )
+        has_existing_window = tenant.budget_effective_from is not None
+        if has_existing_window:
+            # AI4IDS-2995: budget_effective_from is locked once a window is
+            # on file at all — active OR lapsed. It never moves again after
+            # the tenant's first assignment.
+            if budget_effective_from is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={
+                        "error": "effective_from_locked",
+                        "message": (
+                            "budget_effective_from is locked once a budget window has "
+                            f"been assigned ({tenant.budget_effective_from} to "
+                            f"{tenant.budget_effective_to}), whether that window is "
+                            "still active or has since lapsed — omit it, or extend "
+                            "budget_effective_to instead."
+                        ),
+                    },
+                )
+            new_effective_from = tenant.budget_effective_from
+            if window_active:
+                new_effective_to = (
+                    budget_effective_to if budget_effective_to is not None else tenant.budget_effective_to
+                )
+                if budget_effective_to is not None:
+                    _validate_effective_to_after_from(new_effective_from, new_effective_to)
+            else:
+                # Reactivating/extending a LAPSED window without moving its
+                # original start date — e.g. Sep 1-16 expired on Sep 17,
+                # caller now sends only a later budget_effective_to (Sep 20)
+                # to reopen it. allocated_budget and spend are never
+                # window-scoped (see this method's own docstring), so the
+                # tenant's remaining balance carries over untouched; this
+                # branch only ever changes budget_effective_to, not the ₹.
+                if budget_effective_to is not None:
+                    _validate_effective_to_after_from(new_effective_from, budget_effective_to)
+                    _validate_new_effective_to_not_in_past(budget_effective_to)
+                    new_effective_to = budget_effective_to
+                else:
+                    # No window change requested — a plain amount top-up/
+                    # top-down on a tenant whose window is still lapsed; it
+                    # stays lapsed (still blocked) until effective_to is
+                    # given.
+                    new_effective_to = tenant.budget_effective_to
+        elif budget_effective_from is not None:
+            # Explicit fresh founding — only reachable when this tenant has
+            # never had a window on file before.
+            if budget_effective_to is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={
+                        "error": "effective_window_required",
+                        "message": (
+                            "budget_effective_to is required when supplying a new "
+                            "budget_effective_from."
+                        ),
+                    },
+                )
+            _validate_new_effective_from(budget_effective_from)
+            _validate_effective_to_after_from(budget_effective_from, budget_effective_to)
+            new_effective_from = budget_effective_from
+            new_effective_to = budget_effective_to
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "effective_window_required",
+                    "message": (
+                        "This tenant has never had a budget window assigned — "
+                        "budget_effective_from and budget_effective_to are both "
+                        "required to assign one."
+                    ),
+                },
+            )
+
         current_budget = tenant.allocated_budget or Decimal("0")
-        delta = amount if action == "top-up" else -amount
-        new_budget = current_budget + delta
+        if action is None:
+            # Pure window edit (e.g. reactivating a lapsed window) — the
+            # schema's own _validate_action_amount_pair guarantees amount is
+            # also None here, since the two are only ever given together.
+            new_budget = current_budget
+        else:
+            delta = amount if action == "top-up" else -amount
+            new_budget = current_budget + delta
 
         if action == "top-up" and new_budget > MAX_TENANT_BUDGET:
             raise HTTPException(
@@ -1197,11 +1636,48 @@ class TenantService:
             tenant,
             {
                 "allocated_budget": new_budget,
+                "budget_effective_from": new_effective_from,
+                "budget_effective_to": new_effective_to,
                 "updated_by": current_user.id,
             },
         )
         await self._tenants.commit()
         await self._tenants.refresh(tenant)
+
+        # ledger_notification_alert is the atomic dedup guard (design doc
+        # §5-7) — see _publish_tier_event for the full reasoning;
+        # is_notification_enabled is only the fast "anyone listening"
+        # pre-check.
+        budget_event_name = "BUDGET_ASSIGNED" if current_budget == 0 else "BUDGET_UPDATED"
+        if (
+            action is not None
+            and platform_core_db is not None
+            and await is_notification_enabled(platform_core_db, budget_event_name)
+        ):
+            occurred_at_dt = datetime.now(timezone.utc)
+            occurred_at = occurred_at_dt.isoformat()
+            fired = await check_and_record_action(
+                platform_core_db, budget_event_name, str(tenant_id), {}, occurred_at, str(current_user.id)
+            )
+            if fired:
+                # A Budget revision is instant (design doc §9.5's own note on
+                # BUDGET_UPDATED's effective_date) — new_effective_from only
+                # differs from today when this revision itself set a future
+                # start date, which is the case worth showing.
+                effective_date = (new_effective_from or occurred_at_dt).date().isoformat()
+                details = (
+                    [_BUDGET_CURRENCY, str(new_budget)]
+                    if current_budget == 0
+                    else [_BUDGET_CURRENCY, str(current_budget), str(new_budget), effective_date]
+                )
+                publish_notification_event(
+                    event_name=budget_event_name,
+                    tenant_id=str(tenant_id),
+                    subject={},
+                    details=details,
+                    actor_id=str(current_user.id),
+                    occurred_at=occurred_at,
+                )
 
         snapshot_write_failed = not await write_budget_snapshot(snapshot_writes, platform_core_db)
         if snapshot_write_failed:
@@ -1218,6 +1694,23 @@ class TenantService:
             )
         if platform_core_db is not None:
             await self._sync_ppu_wallet_and_exhaustion(tenant_id, new_budget, platform_core_db)
+        try:
+            # Best-effort: the primary write already committed, so a
+            # failure here degrades to a stale cached budget_effective_to
+            # for this tenant's keys (self-heals whenever any OTHER cache
+            # rebuild next happens for one of them — a rename, a tier
+            # reassignment — since those re-derive it fresh from the
+            # Tenant row too) rather than rolling back an otherwise-
+            # successful revision. Unconditional — doesn't need
+            # platform_core_db — so this still runs even when the sync
+            # above is skipped for lacking it.
+            await self.sync_budget_effective_to_cache(tenant_id)
+        except Exception:
+            logger.exception(
+                "Failed to sync cached budget_effective_to for tenant_id=%s after a budget "
+                "revision; tenants.budget_effective_to/_from were still updated.",
+                tenant_id,
+            )
         return tenant, applications_recomputed, keys_recomputed, snapshot_write_failed
 
     async def list_tenant_tiers(
@@ -1266,12 +1759,12 @@ class TenantService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail={"code": "INVALID_TIER_ID", "message": "tier_id must be a valid UUID."},
                 )
-            # is_active = true, matching assign_tenant_tier's lookup — a tier
+            # status = 'ACTIVE', matching assign_tenant_tier's lookup — a tier
             # listable here but rejected as not-found on assign would be a
             # visible inconsistency between the two endpoints.
             exists = (
                 await platform_core_db.execute(
-                    text("SELECT 1 FROM tiers WHERE id = :tid AND is_active = true"), {"tid": tier_uuid}
+                    text("SELECT 1 FROM tiers WHERE id = :tid AND status = 'ACTIVE'"), {"tid": tier_uuid}
                 )
             ).first()
             if exists is None:
@@ -1356,6 +1849,7 @@ class TenantService:
             creation_type="tenant",
             role_name=body.role.value,
             background_tasks=background_tasks,
+            created_by=current_user.id,
         )
 
     async def update_tenant_user(
@@ -1380,7 +1874,9 @@ class TenantService:
         await self._users.update(target, payload)
         if role_update is not None:
             # Single commit via save_and_refresh — role repo shares this session.
-            await self._set_tenant_user_role(target.id, role_update, commit=False)
+            await self._set_tenant_user_role(
+                target.id, role_update, commit=False, created_by=current_user.id
+            )
         await self._users.save_and_refresh(target)
         return target
 
@@ -1405,6 +1901,8 @@ class TenantService:
                         "message": "Tenant admins cannot deactivate their own account.",
                     },
                 )
+        if body.is_active is False:
+            await self._assert_not_last_platform_admin(target, tenant, action="suspend")
         payload = {"is_active": body.is_active, "updated_by": current_user.id}
         _assert_tenant_active_for_user_deactivation(tenant, payload)
 
@@ -1494,6 +1992,7 @@ class TenantService:
         if RoleName.TENANT_ADMIN.value in target_roles:
             await self._deny_moderator(current_user)
         await self._assert_not_last_tenant_admin(target, tenant)
+        await self._assert_not_last_platform_admin(target, tenant, action="delete")
 
         # Capture PII before anonymisation — enqueue_email is called after commit
         # so a failed update/commit cannot leak a deletion email.

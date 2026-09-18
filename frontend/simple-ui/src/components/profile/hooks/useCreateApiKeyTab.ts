@@ -26,6 +26,40 @@ function formatPct(value: number | null | undefined): string {
   return `${rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(2)}`;
 }
 
+/** Percentage keys plus rupee-seeded uncapped keys (null % with allocated_budget). */
+function usedAllocationPct(
+  keys: {
+    allocated_percentage: number | null;
+    allocated_budget: number | null;
+    is_active?: boolean;
+    is_revoked?: boolean;
+  }[],
+  applicationBudget: number | null | undefined,
+): { usedPct: number; uncappedHoldsRemainder: boolean } {
+  const active = keys.filter((k) => k.is_active !== false && k.is_revoked !== true);
+  let usedPct = 0;
+  let uncappedHoldsRemainder = false;
+  for (const key of active) {
+    if (key.allocated_percentage != null) {
+      usedPct += key.allocated_percentage;
+      continue;
+    }
+    if (
+      applicationBudget != null &&
+      applicationBudget > 0 &&
+      key.allocated_budget != null
+    ) {
+      uncappedHoldsRemainder = true;
+      if (key.allocated_budget <= 0) {
+        usedPct = Math.max(usedPct, 100);
+      } else {
+        usedPct += (key.allocated_budget / applicationBudget) * 100;
+      }
+    }
+  }
+  return { usedPct, uncappedHoldsRemainder };
+}
+
 export function useCreateApiKeyTab({
   tenantId,
   onApiKeyCreated,
@@ -36,6 +70,7 @@ export function useCreateApiKeyTab({
   const [applications, setApplications] = useState<Application[]>([]);
   const [isLoadingApplications, setIsLoadingApplications] = useState(false);
   const [availablePct, setAvailablePct] = useState(100);
+  const [uncappedHoldsRemainder, setUncappedHoldsRemainder] = useState(false);
   const [formBannerError, setFormBannerError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<{
     application_id?: string;
@@ -91,6 +126,7 @@ export function useCreateApiKeyTab({
     async (applicationId: string) => {
       if (!applicationId) {
         setAvailablePct(100);
+        setUncappedHoldsRemainder(false);
         return;
       }
       if (!tenantId) return;
@@ -99,15 +135,19 @@ export function useCreateApiKeyTab({
           application_id: applicationId,
         });
         const keys = grouped.groups.flatMap((g) => g.api_keys);
-        const used = keys
-          .filter((k) => k.is_active !== false && k.is_revoked !== true)
-          .reduce((sum, k) => sum + (k.allocated_percentage ?? 0), 0);
-        setAvailablePct(Math.max(0, 100 - used));
+        const appBudget =
+          applications.find((a) => a.application_id === applicationId)
+            ?.allocated_budget ?? null;
+        const { usedPct, uncappedHoldsRemainder: holdsRemainder } =
+          usedAllocationPct(keys, appBudget);
+        setAvailablePct(Math.max(0, 100 - usedPct));
+        setUncappedHoldsRemainder(holdsRemainder);
       } catch {
         setAvailablePct(100);
+        setUncappedHoldsRemainder(false);
       }
     },
-    [tenantId],
+    [tenantId, applications],
   );
 
   const handleLoadPermissions = async () => {
@@ -185,36 +225,39 @@ export function useCreateApiKeyTab({
     }
 
     const rawBudget = apiKeyForm.allocated_percentage.trim();
-    if (!rawBudget) {
-      setFieldErrors((prev) => ({
-        ...prev,
-        budget: BUDGET_VALIDATION.enterBudgetAllocationPercentage,
-      }));
-      return;
+    let allocatedPct: number | undefined;
+    if (rawBudget) {
+      const pct = Number(rawBudget);
+      if (!Number.isFinite(pct) || pct < 0) {
+        setFieldErrors((prev) => ({
+          ...prev,
+          budget: BUDGET_VALIDATION.budgetCannotBeNegative,
+        }));
+        return;
+      }
+      if (pct > 100) {
+        setFieldErrors((prev) => ({
+          ...prev,
+          budget: BUDGET_VALIDATION.percentageMustBeBetween0And100,
+        }));
+        return;
+      }
+      if (pct === 0) {
+        setFieldErrors((prev) => ({
+          ...prev,
+          budget: BUDGET_VALIDATION.budgetMustBeGreaterThanZero,
+        }));
+        return;
+      }
+      if (pct > availablePct + 1e-6) {
+        setFieldErrors((prev) => ({
+          ...prev,
+          budget: `Budget can't exceed ${formatPct(availablePct)}% — that's all that's unallocated within this Application.`,
+        }));
+        return;
+      }
+      allocatedPct = pct;
     }
-    const pct = Number(rawBudget);
-    if (!Number.isFinite(pct) || pct < 0) {
-      setFieldErrors((prev) => ({
-        ...prev,
-        budget: BUDGET_VALIDATION.budgetCannotBeNegative,
-      }));
-      return;
-    }
-    if (pct === 0) {
-      setFieldErrors((prev) => ({
-        ...prev,
-        budget: BUDGET_VALIDATION.budgetMustBeGreaterThanZero,
-      }));
-      return;
-    }
-    if (pct > availablePct + 1e-6) {
-      setFieldErrors((prev) => ({
-        ...prev,
-        budget: `Budget can't exceed ${formatPct(availablePct)}% — that's all that's unallocated within this Application.`,
-      }));
-      return;
-    }
-    const allocatedPct = pct;
 
     const tid = tenantId?.trim();
     if (!tid) {
@@ -229,16 +272,26 @@ export function useCreateApiKeyTab({
         permissions: selectedPermissions,
         expires_days: Number(apiKeyForm.expires_days) || 30,
         application_id: apiKeyForm.application_id,
-        allocated_percentage: allocatedPct,
+        ...(allocatedPct != null ? { allocated_percentage: allocatedPct } : {}),
       });
       onApiKeyCreated?.();
       if (createdKey.api_key) {
         setCreatedApiKeyToken(createdKey.api_key);
       }
-      showToast({
-        type: "success",
-        message: `API key "${createdKey.key_name}" was created. Copy it now — it won't be shown again.`,
-      });
+      showToast(
+        createdKey.budget_exhausted
+          ? {
+              type: "warning",
+              message:
+                `API key "${createdKey.key_name}" was created, but this Application has no remaining Budget — ` +
+                "the key will be rejected on its first billed request until the Application Budget is increased. " +
+                "Copy it now — it won't be shown again.",
+            }
+          : {
+              type: "success",
+              message: `API key "${createdKey.key_name}" was created. Copy it now — it won't be shown again.`,
+            },
+      );
       setApiKeyForm({
         key_name: "",
         application_id: "",
@@ -344,6 +397,7 @@ export function useCreateApiKeyTab({
     selectedApplication,
     budgetPreview,
     availablePct,
+    uncappedHoldsRemainder,
     formBannerError,
     fieldErrors,
     formatAvailablePct: () => formatPct(availablePct),

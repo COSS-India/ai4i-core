@@ -23,9 +23,19 @@ from app.core.database import (
 from app.core.exceptions import register_exception_handlers
 from app.core.database import get_primary_session_factory as _get_pii_session_factory
 from app.core.redis import close_redis, get_redis_client, init_redis
+from ai4i_core.kafka import (
+    init_kafka_producer,
+    close_kafka_producer,
+    refresh_notification_settings_cache,
+    start_notification_settings_listener,
+    stop_notification_settings_listener,
+)
 from app.routes import api_router, versioning
 # services/model-management/ is hyphenated; importlib is the only way to pull symbols out.
 import importlib as _importlib
+
+from app.utils.cache_warmup import warmup_cache
+
 EndpointValidationFailedError = _importlib.import_module(
     "app.services.model-management.service_service"
 ).EndpointValidationFailedError
@@ -52,10 +62,13 @@ async def lifespan(app: FastAPI):
     )
     # Secondary auth_db engine — no-op if AUTH_DB_NAME is not configured.
     init_auth_database()
+    # Initialize redis connection to a db index.
     await init_redis(
         url=settings.get_redis_url(),
         socket_timeout=settings.redis_timeout,
     )
+    # Warm up cache. inference_type is added.
+    await warmup_cache()
     # ── Telemetry / OpenSearch ────────────────────────────────────────────
     if settings.opensearch_url and settings.opensearch_username and settings.opensearch_password:
         from app.utils.opensearch_client import OpenSearchTraceClient
@@ -125,7 +138,22 @@ async def lifespan(app: FastAPI):
 
     logger.info("PII guard ready (kb=%s, policy_sync=%s)", kb_svc.ready, policy_sync.ready)
 
+    init_kafka_producer(
+        bootstrap_servers=settings.kafka_server,
+        topic=settings.topic_notification,
+        enabled=settings.kafka_enabled,
+    )
+    # configs_notification_alert lives in this service's own primary DB —
+    # is_notification_enabled()/get_threshold_bands() back the "should this
+    # even be published" check before QUOTA_LIMIT_UPDATED.
+    async with _get_pii_session_factory()() as _notif_db:
+        await refresh_notification_settings_cache(_notif_db)
+    start_notification_settings_listener(app.state.redis_client)
+
     yield
+
+    await stop_notification_settings_listener()
+    close_kafka_producer()
 
     sync_task = getattr(app.state, "alert_sync_task", None)
     if sync_task is not None:

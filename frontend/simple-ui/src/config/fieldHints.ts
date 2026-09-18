@@ -1,5 +1,7 @@
 import { INSTITUTION } from "./constants";
 import { EMAIL_AVAILABLE_MSG } from "../utils/tenantEmailValidation";
+import { PRICE_PER_UNIT_MAX_LABEL } from "../components/services-management/serviceFormValidation";
+import { QUOTA_LIMIT_MAX_LABEL } from "../components/tier-management/tierFormValidation";
 
 const org = INSTITUTION.toLowerCase();
 
@@ -31,17 +33,6 @@ export const FIELD_HINTS = {
       "If you change the contact email, the update takes effect only after the new address is verified.",
     emailPendingOnly: `The contact email can only be corrected while the ${org} is pending verification.`,
     planAppliesImmediately: "Tier and Budget changes apply immediately.",
-    onboardTier: { helper: "Optional. Tier applies when the institution is activated." },
-    onboardBudget: {
-      placeholder: "Enter initial budget amount",
-      helper: "Optional initial ₹ total. Must be greater than 0 when provided.",
-    },
-    onboardBudgetEffectiveFrom: {
-      helper: "Optional. Defaults to today; cannot be backdated.",
-    },
-    onboardBudgetEffectiveTo: {
-      helper: "Optional. Must be after Effective From.",
-    },
   },
   tenantUser: {
     tenant: { helper: `Auto-filled from selected ${org}` },
@@ -66,9 +57,15 @@ export const FIELD_HINTS = {
       "You are the only Admin in the default organisation and cannot change your role.",
   },
   assignTier: {
-    budget: { placeholder: "Enter budget amount", helper: "Must be greater than 0" },
+    budget: {
+      placeholder: "Enter budget amount",
+      helper: "Total budget for this window; must be greater than 0",
+    },
     effectiveFrom: { helper: "Defaults to today; cannot be backdated" },
-    effectiveTo: { helper: "Must be a later date than Effective From" },
+    effectiveTo: {
+      helper:
+        "Must be at least one day after Effective From",
+    },
   },
   model: {
     jsonUpload: {
@@ -93,7 +90,7 @@ export const FIELD_HINTS = {
     serviceId: {
       placeholder: "Enter service ID",
       helper:
-        "5–255 characters. Letters, numbers, hyphens, underscores, and slashes only. e.g: [model-name]/[GPU]",
+        "Pre-filled with the model prefix. Letters, numbers, hyphens, underscores, and slashes only. 5–255 characters. e.g: [model-name]/[GPU]",
       llmHelper:
         "Pre-filled with the model prefix. Letters, numbers, hyphens, and slashes only. 5–255 characters. e.g: [model-name]/[GPU]",
     },
@@ -115,7 +112,10 @@ export const FIELD_HINTS = {
     },
     unitType: { helper: "Auto-set based on the task type", needTaskType: "Select a task type first" },
     unitSize: { placeholder: "Select unit size", helper: "Defines the unit size for pricing" },
-    price: { placeholder: "Enter price", helper: "e.g., 600. Must be 0 or greater" },
+    price: {
+      placeholder: "Enter price",
+      helper: `e.g., 600. Must be between 0 and ${PRICE_PER_UNIT_MAX_LABEL}`,
+    },
     tier: { placeholder: "Select applicable tier(s)", helper: "Select at least one" },
     tierSearch: { placeholder: "Search tiers..." },
   },
@@ -153,7 +153,10 @@ export const FIELD_HINTS = {
       helper: "e.g. Enterprise tier for high usage.",
     },
     quotaUnit: { helper: "Auto-filled based on Model Task Type (e.g., tokens for LLM)" },
-    quotaLimit: { placeholder: "Enter quota limit", helper: "e.g. 10000. Must be greater than 0" },
+    quotaLimit: {
+      placeholder: "Enter quota limit",
+      helper: `e.g. 10000. Whole number between 1 and ${QUOTA_LIMIT_MAX_LABEL}`,
+    },
   },
   apiKey: {
     keyName: {
@@ -170,7 +173,8 @@ export const FIELD_HINTS = {
     },
     budget: {
       placeholder: "0",
-      helper: "Required. Percentage of the parent Application's Budget.",
+      helper:
+        "Optional. Percentage of the parent Application's Budget. Leave blank to use the Application's remaining Budget as this key's ceiling. If the Application has no Budget, the key has no ceiling.",
     },
     search: {
       placeholder: "Search by key name",
@@ -221,8 +225,6 @@ export const FIELD_HINTS = {
       "This Institution does not have a Budget (₹) assigned yet. Assign a Tier and Budget from Institution Management before saving Application budget allocations.",
     inactiveBudgetNotEditable:
       "Inactive applications cannot have their budget allocation changed. Reactivate the application to edit its budget.",
-    amountRequiresInstitutionBudget:
-      "Assign an Institution Budget (₹) before entering amounts.",
     bulkBudgetEdit: {
       intro:
         "Rebalance Budget % across all Applications. Only changed rows are submitted. Unallocated % can remain at the Institution level. Inactive applications are shown for reference but cannot be edited.",

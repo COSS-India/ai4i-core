@@ -17,17 +17,17 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { DeleteIcon, EditIcon, ViewIcon } from "@chakra-ui/icons";
-import { FaDownload, FaUpload } from "react-icons/fa";
+import { MdOutlineCheckCircle, MdOutlineUnpublished } from "react-icons/md";
 import React, { useMemo } from "react";
 import ManagementPageHeader from "../common/ManagementPageHeader";
 import type { Service } from "../../services/servicesManagementService";
 import ConfirmDialog from "../common/ConfirmDialog";
-import { useAdminTableSurface } from "../common/TableControls";
-import { type AdminTableColumn } from "../common/AdminDataTable";
+import { useAdminTableSurface, type DataTableColumn } from "../common/table";
 import { useServicesManagement } from "../../hooks/useServicesManagement";
 import ServiceRegistryTab from "./ServiceRegistryTab";
 import ServiceFormTab from "./ServiceFormTab";
 import ServiceDetailTab from "./ServiceDetailTab";
+import { resolveTaskType } from "../../utils/platformService";
 
 function getTaskColor(taskType?: string) {
   if (!taskType) return "gray";
@@ -79,9 +79,7 @@ const ServicesManagement: React.FC = () => {
     taskTypeNames,
     hasActiveFilters,
     clearAllFilters,
-    nameSortDirection,
-    handleSortNameAsc,
-    handleSortNameDesc,
+    registrySort,
     handleViewService,
     handleEditService,
     handleDeleteClick,
@@ -96,6 +94,7 @@ const ServicesManagement: React.FC = () => {
     unitType,
     pricePerUnit,
     setPricePerUnit,
+    pricePerUnitError,
     unitSize,
     setUnitSize,
     currency,
@@ -103,6 +102,7 @@ const ServicesManagement: React.FC = () => {
     selectedTiers,
     toggleTier,
     availableTiers,
+    isCreateServiceTabDisabled,
     isCreateFormModelSelected,
     canCreateService,
     isLlmTaskType,
@@ -140,19 +140,13 @@ const ServicesManagement: React.FC = () => {
     cancelUnpublishRef,
   } = useServicesManagement();
 
-  const serviceColumns = useMemo((): AdminTableColumn<Service>[] => {
+  const serviceColumns = useMemo((): DataTableColumn<Service>[] => {
     return [
       {
         id: "name",
         header: "Name",
-        sortable: {
-          label: "Name",
-          direction: nameSortDirection,
-          onAsc: handleSortNameAsc,
-          onDesc: handleSortNameDesc,
-          ascAriaLabel: "Sort services by name ascending",
-          descAriaLabel: "Sort services by name descending",
-        },
+        sortable: true,
+        sortAccessor: (service) => service.name ?? "",
         cell: (service) => (
           <Text fontSize="sm" noOfLines={1} title={service.name}>
             {service.name || "N/A"}
@@ -162,27 +156,21 @@ const ServicesManagement: React.FC = () => {
       {
         id: "task",
         header: "Model Task Type",
-        cell: (service) => (
-          <Badge
-            colorScheme={getTaskColor(
-              service.model?.task?.type ||
-                service.task?.type ||
-                service.task_type,
-            )}
-            fontSize="sm"
-            p={1}
-          >
-            {(
-              service.model?.task?.type ||
-              service.task?.type ||
-              service.task_type
-            )?.toUpperCase() || "N/A"}
-          </Badge>
-        ),
+        cell: (service) => {
+          const taskType = resolveTaskType(service);
+          return (
+            <Badge colorScheme={getTaskColor(taskType)} fontSize="sm" p={1}>
+              {taskType ? taskType.toUpperCase() : "N/A"}
+            </Badge>
+          );
+        },
       },
       {
         id: "tiers",
         header: "Tiers",
+        sortable: true,
+        sortAccessor: (service) =>
+          (service.tierNames ?? service.tiers ?? []).join(", ").toLowerCase(),
         cell: (service) => {
           const names = service.tierNames;
           if (!names || names.length === 0) {
@@ -225,6 +213,9 @@ const ServicesManagement: React.FC = () => {
       {
         id: "created",
         header: "Created At",
+        sortable: true,
+        sortAccessor: (service) =>
+          service.createdAt ? new Date(service.createdAt).getTime() : 0,
         cell: (service) => (
           <Text fontSize="sm" color="gray.600">
             {service.createdAt
@@ -276,7 +267,7 @@ const ServicesManagement: React.FC = () => {
                 <Tooltip label="Unpublish" placement="top" hasArrow>
                   <IconButton
                     aria-label="Unpublish"
-                    icon={<FaDownload />}
+                    icon={<MdOutlineUnpublished />}
                     size="sm"
                     variant="ghost"
                     colorScheme="red"
@@ -302,7 +293,7 @@ const ServicesManagement: React.FC = () => {
                   <Box as="span" display="inline-block">
                     <IconButton
                       aria-label="Publish"
-                      icon={<FaUpload />}
+                      icon={<MdOutlineCheckCircle />}
                       size="sm"
                       variant="ghost"
                       colorScheme="green"
@@ -339,7 +330,6 @@ const ServicesManagement: React.FC = () => {
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    nameSortDirection,
     unpublishingServiceUuid,
     publishingServiceUuid,
     deletingServiceUuid,
@@ -370,7 +360,15 @@ const ServicesManagement: React.FC = () => {
               <TabList>
                 <Tab fontWeight="semibold">Service Registry</Tab>
                 {!isRegistryReadOnly && (
-                  <Tab fontWeight="semibold">
+                  <Tab
+                    fontWeight="semibold"
+                    isDisabled={isCreateServiceTabDisabled}
+                    title={
+                      isCreateServiceTabDisabled
+                        ? "Create at least one Tier before creating a Service."
+                        : undefined
+                    }
+                  >
                     {editingService ? "Edit Service" : "Create Service"}
                   </Tab>
                 )}
@@ -387,6 +385,8 @@ const ServicesManagement: React.FC = () => {
                     cardBorder={cardBorder}
                     items={registryTableItems}
                     columns={serviceColumns}
+                    sort={registrySort.sort}
+                    onSortChange={registrySort.onSortChange}
                     isLoading={isLoading}
                     totalServicesCount={totalServicesCount}
                     onRowClick={(service) =>
@@ -427,6 +427,7 @@ const ServicesManagement: React.FC = () => {
                       unitType={unitType}
                       pricePerUnit={pricePerUnit}
                       onPricePerUnitChange={setPricePerUnit}
+                      pricePerUnitError={pricePerUnitError}
                       unitSize={unitSize}
                       onUnitSizeChange={setUnitSize}
                       currency={currency}

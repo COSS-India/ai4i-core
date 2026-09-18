@@ -2,7 +2,7 @@
 
 No route-level role dependency, same as tenants.py — role gating (only
 Adopter Admin / Institution Admin, MODERATOR excluded) happens inside
-ApplicationService._authorize via a DB-verified role lookup, matching how
+ApplicationService via authorize_institution_scope, a DB-verified role lookup, matching how
 TenantService.enforce_scope / _deny_moderator / _assert_can_reveal_pii do it.
 """
 

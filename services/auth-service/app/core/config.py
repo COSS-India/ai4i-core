@@ -67,6 +67,11 @@ class AuthSettings(BaseSettings):
     redis_timeout: int = 10
     redis_max_connections: int = 50
 
+    # ── Kafka (notification producer) ──
+    kafka_enabled: bool = False
+    kafka_server: str = "localhost:9093"
+    topic_notification: str = "notification.events"
+
     # ── RS256 JWT ──
     rs256_key_directory: str = "keys"
     rs256_min_key_count: int = 10
@@ -88,6 +93,10 @@ class AuthSettings(BaseSettings):
     # Redis miss — short so a later tenant/user reactivation isn't blocked by
     # a stale tombstone.
     invalid_api_key_cache_ttl_seconds: int = 1 * 24 * 60 * 60
+
+    # ── Tier status cache (in-memory, loaded from platform-core DB) ──
+    # Propagation bound for Deactivate/Reactivate at the validation hot path.
+    tier_status_cache_refresh_interval_seconds: int = 600  # 10 minutes
 
     # ── PII field encryption (email / phone at rest) ──
     # Base64- or hex-encoded AES-SIV key (decodes to 32, 48, or 64 bytes; use

@@ -39,7 +39,15 @@ from app.models.pii_management.domain_policy import DomainPolicy  # noqa: E402
 from app.models.pii_management.pattern import GeoLibrary, PatternLibrary  # noqa: E402
 from app.models.pii_management.tenant_map import TenantPiiDomainMap  # noqa: E402
 
+# Notification-management tables (no cross-domain FKs)
+from app.models.notification_management.config_notification_alert import (  # noqa: E402
+    ConfigNotificationAlert,
+)
+
 # Pay-per-use tables (Tier before TierQuota FK)
+# Pay-per-use tables (InferenceType before the tables that FK to it;
+# Tier before TierQuota/TenantTierAssignment FK)
+from app.models.pay_per_use.inference_type import InferenceType  # noqa: E402
 from app.models.pay_per_use.tier import Tier, TierQuota  # noqa: E402
 from app.models.pay_per_use.quota_usage import QuotaUsage  # noqa: E402
 from app.models.pay_per_use.budget_usage import BudgetUsage  # noqa: E402
@@ -61,7 +69,10 @@ __all__ = [
     "PatternLibrary",
     "GeoLibrary",
     "TenantPiiDomainMap",
+    # notification-management
+    "ConfigNotificationAlert",
     # pay-per-use
+    "InferenceType",
     "Tier",
     "TierQuota",
     "QuotaUsage",

@@ -64,7 +64,7 @@ The following terms are used throughout this guide.
 Register models, configure tiers and services, and onboard institutions.
 
 
-## 1. Getting Started
+## 4. Getting Started
 
 
 ![Image](images/onboarding-adopter/image_1.jpg)
@@ -73,7 +73,7 @@ Register models, configure tiers and services, and onboard institutions.
 ![Image](images/onboarding-adopter/image_2.jpg)
 
 
-## 2. Register a Model
+## 5. Register a Model
 
 
 ![Image](images/onboarding-adopter/image_3.jpg)
@@ -94,7 +94,7 @@ Register models, configure tiers and services, and onboard institutions.
 ![Image](images/onboarding-adopter/image_8.jpg)
 
 
-## 3. Configure a Tier
+## 6. Configure a Tier
 
 
 ![Image](images/onboarding-adopter/image_9.jpg)
@@ -112,7 +112,7 @@ Register models, configure tiers and services, and onboard institutions.
 ![Image](images/onboarding-adopter/image_13.png)
 
 
-## 4. Create Service and Configure Pricing
+## 7. Create Service and Configure Pricing
 
 
 ![Image](images/onboarding-adopter/image_14.jpg)
@@ -127,7 +127,7 @@ Register models, configure tiers and services, and onboard institutions.
 ![Image](images/onboarding-adopter/image_17.jpg)
 
 
-## 5. Onboard an Institution
+## 8. Onboard an Institution
 
 
 ![Image](images/onboarding-adopter/image_18.jpg)
@@ -142,7 +142,7 @@ Register models, configure tiers and services, and onboard institutions.
 ![Image](images/onboarding-adopter/image_21.jpg)
 
 
-## 6. Assign Tier & Allocate Budget to an Institution
+## 9. Assign Tier & Allocate Budget to an Institution
 
 
 ![Image](images/onboarding-adopter/image_22.jpg)
@@ -159,7 +159,7 @@ Register models, configure tiers and services, and onboard institutions.
 Monitor platform performance, and track budget and usage across institutions.
 
 
-## 1. Monitoring Dashboard
+## 10. Monitoring Dashboard
 
 
 ![Image](images/onboarding-adopter/image_26.jpg)
@@ -177,7 +177,7 @@ Monitor platform performance, and track budget and usage across institutions.
 ![Image](images/onboarding-adopter/image_30.jpg)
 
 
-## 2. Metering Dashboard
+## 11. Metering Dashboard
 
 
 ![Image](images/onboarding-adopter/image_31.jpg)
@@ -200,7 +200,7 @@ Monitor platform performance, and track budget and usage across institutions.
 Day-to-day management and maintenance tasks you'll return to after initial setup.
 
 
-## 1. Manage Institutions
+## 12. Manage Institutions
 
 
 ![Image](images/onboarding-adopter/image_37.jpg)
@@ -224,7 +224,7 @@ Day-to-day management and maintenance tasks you'll return to after initial setup
 ![Image](images/onboarding-adopter/image_43.jpg)
 
 
-## 2. Manage API Keys
+## 13. Manage API Keys
 
 
 ![Image](images/onboarding-adopter/image_44.jpg)
@@ -251,7 +251,7 @@ Day-to-day management and maintenance tasks you'll return to after initial setup
 ![Image](images/onboarding-adopter/image_51.jpg)
 
 
-## 3. Manage Tiers
+## 14. Manage Tiers
 
 
 ![Image](images/onboarding-adopter/image_52.jpg)
@@ -275,7 +275,7 @@ Day-to-day management and maintenance tasks you'll return to after initial setup
 ![Image](images/onboarding-adopter/image_58.jpg)
 
 
-## 4. Manage Models
+## 15. Manage Models
 
 
 ![Image](images/onboarding-adopter/image_59.jpg)
@@ -296,7 +296,7 @@ Day-to-day management and maintenance tasks you'll return to after initial setup
 ![Image](images/onboarding-adopter/image_64.jpg)
 
 
-## 5. Manage Services
+## 16. Manage Services
 
 
 ![Image](images/onboarding-adopter/image_65.jpg)
@@ -323,7 +323,7 @@ Day-to-day management and maintenance tasks you'll return to after initial setup
 ![Image](images/onboarding-adopter/image_72.jpg)
 
 
-## 6. Onboard Your Organization's Users
+## 17. Onboard Your Organization's Users
 
 
 ![Image](images/onboarding-adopter/image_73.jpg)
@@ -349,7 +349,7 @@ Alternatively, a new team member can create their own account directly.
 ![Image](images/onboarding-adopter/image_79.jpg)
 
 
-## 7. Manage Your Profile
+## 18. Manage Your Profile
 
 
 ![Image](images/onboarding-adopter/image_80.jpg)
@@ -361,7 +361,7 @@ Alternatively, a new team member can create their own account directly.
 ![Image](images/onboarding-adopter/image_82.jpg)
 
 
-## 8. Logs Dashboard
+## 19. Logs Dashboard
 
 
 ![Image](images/onboarding-adopter/image_83.jpg)
@@ -373,7 +373,7 @@ Alternatively, a new team member can create their own account directly.
 ![Image](images/onboarding-adopter/image_85.png)
 
 
-## 9. Try It Now
+## 20. Try It Now
 
 
 ![Image](images/onboarding-adopter/image_86.jpg)

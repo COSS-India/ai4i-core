@@ -163,7 +163,7 @@ class TestTenantScopeResolution:
         svc = _svc()
         svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant())
         apps = _three_apps()
-        svc._applications.list_by_tenant_for_update = AsyncMock(return_value=apps)
+        svc._applications.lock_tenant_applications = AsyncMock(return_value=apps)
         svc._applications.update = AsyncMock()
         svc._api_keys.list_by_applications = AsyncMock(return_value=[])
 
@@ -201,7 +201,7 @@ class TestTenantScopeResolution:
         svc = _svc()
         svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant())
         apps = _three_apps()
-        svc._applications.list_by_tenant_for_update = AsyncMock(return_value=apps)
+        svc._applications.lock_tenant_applications = AsyncMock(return_value=apps)
         svc._applications.update = AsyncMock()
         svc._api_keys.list_by_applications = AsyncMock(return_value=[])
 
@@ -230,7 +230,7 @@ class TestTenantScopeResolution:
         svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant())
         apps = _three_apps()
         apps[2].status = ApplicationStatus.INACTIVE  # App C
-        svc._applications.list_by_tenant_for_update = AsyncMock(return_value=apps)
+        svc._applications.lock_tenant_applications = AsyncMock(return_value=apps)
         svc._applications.update = AsyncMock()
         svc._api_keys.list_by_applications = AsyncMock(return_value=[])
 
@@ -260,7 +260,7 @@ class TestTenantScopeResolution:
         svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant())
         apps = _three_apps()
         apps[2].status = ApplicationStatus.INACTIVE  # App C
-        svc._applications.list_by_tenant_for_update = AsyncMock(return_value=apps)
+        svc._applications.lock_tenant_applications = AsyncMock(return_value=apps)
         svc._applications.update = AsyncMock()
 
         body = TenantBudgetAllocationRequest(
@@ -276,12 +276,12 @@ class TestTenantScopeResolution:
     async def test_every_application_is_locked_not_just_listed(self) -> None:
         """refit_unlisted=True means any Application may end up written, so
         every one under the Tenant is locked up front, not just the row(s)
-        explicitly listed — via one batched list_by_tenant_for_update
+        explicitly listed — via one batched lock_tenant_applications
         (SELECT ... FOR UPDATE over every row), not a per-row lock loop."""
         svc = _svc()
         svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant())
         apps = _three_apps()
-        svc._applications.list_by_tenant_for_update = AsyncMock(return_value=apps)
+        svc._applications.lock_tenant_applications = AsyncMock(return_value=apps)
         svc._applications.update = AsyncMock()
         svc._api_keys.list_by_applications = AsyncMock(return_value=[])
 
@@ -292,7 +292,7 @@ class TestTenantScopeResolution:
              patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()):
             await svc.update_tenant_application_allocations(101, body, _user(), None)
 
-        svc._applications.list_by_tenant_for_update.assert_awaited_once_with(101)
+        svc._applications.lock_tenant_applications.assert_awaited_once_with(101)
         svc._applications.get_by_id_for_update.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -301,7 +301,7 @@ class TestTenantScopeResolution:
         svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant())
         apps = _three_apps()
         keys = [_key(21, 2, allocated_budget=Decimal("30000"), allocated_percentage=Decimal("100"))]
-        svc._applications.list_by_tenant_for_update = AsyncMock(return_value=apps)
+        svc._applications.lock_tenant_applications = AsyncMock(return_value=apps)
         svc._api_keys.list_by_applications = AsyncMock(return_value=keys)
 
         body = TenantBudgetAllocationRequest(
@@ -334,7 +334,7 @@ class TestTenantScopeResolution:
                 is_active=False,
             )
         ]
-        svc._applications.list_by_tenant_for_update = AsyncMock(return_value=apps)
+        svc._applications.lock_tenant_applications = AsyncMock(return_value=apps)
         svc._api_keys.list_by_applications = AsyncMock(return_value=keys)
 
         body = TenantBudgetAllocationRequest(
@@ -357,7 +357,7 @@ class TestTenantScopeResolution:
         apps = _three_apps()
         key1 = _key(11, 1, allocated_budget=Decimal("30000"), allocated_percentage=Decimal("60"))
         key2 = _key(12, 1, allocated_budget=Decimal("20000"), allocated_percentage=Decimal("40"))
-        svc._applications.list_by_tenant_for_update = AsyncMock(return_value=apps)
+        svc._applications.lock_tenant_applications = AsyncMock(return_value=apps)
         svc._applications.update = AsyncMock()
         svc._api_keys.list_by_applications = AsyncMock(return_value=[key1, key2])
         svc._api_keys.update = AsyncMock()
@@ -402,7 +402,7 @@ class TestTenantScopeResolution:
         apps = _three_apps()
         key1 = _key(11, 1, allocated_budget=Decimal("30000"), allocated_percentage=Decimal("60"))
         key2 = _key(12, 1, allocated_budget=Decimal("20000"), allocated_percentage=Decimal("40"))
-        svc._applications.list_by_tenant_for_update = AsyncMock(return_value=apps)
+        svc._applications.lock_tenant_applications = AsyncMock(return_value=apps)
         svc._applications.update = AsyncMock()
         svc._api_keys.list_by_applications = AsyncMock(return_value=[key1, key2])
         svc._api_keys.update = AsyncMock()
@@ -450,7 +450,7 @@ class TestTenantScopeResolution:
         apps = _three_apps()
         key1 = _key(11, 1, allocated_budget=Decimal("30000"), allocated_percentage=Decimal("60"))
         key2 = _key(12, 1, allocated_budget=Decimal("20000"), allocated_percentage=Decimal("40"))
-        svc._applications.list_by_tenant_for_update = AsyncMock(return_value=apps)
+        svc._applications.lock_tenant_applications = AsyncMock(return_value=apps)
         svc._applications.update = AsyncMock()
         svc._api_keys.list_by_applications = AsyncMock(return_value=[key1, key2])
         svc._api_keys.update = AsyncMock()
@@ -477,7 +477,7 @@ class TestTenantScopeResolution:
         svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant())
         apps = _three_apps()
         key_under_app2 = _key(99, 2, allocated_budget=Decimal("30000"), allocated_percentage=Decimal("100"))
-        svc._applications.list_by_tenant_for_update = AsyncMock(return_value=apps)
+        svc._applications.lock_tenant_applications = AsyncMock(return_value=apps)
         svc._api_keys.list_by_applications = AsyncMock(return_value=[key_under_app2])
         svc._api_keys.get_by_id = AsyncMock(return_value=key_under_app2)
 
@@ -506,12 +506,12 @@ class TestTenantBudgetCascade:
     @pytest.mark.asyncio
     async def test_batched_lock_not_per_row(self) -> None:
         """Every Application under the tenant is locked via one
-        list_by_tenant_for_update call, not a get_by_id_for_update loop —
+        lock_tenant_applications call, not a get_by_id_for_update loop —
         same reasoning as update_tenant_application_allocations's own
         locking, since this cascade can end up writing any of them too."""
         svc = _svc()
         apps = _three_apps()
-        svc._applications.list_by_tenant_for_update = AsyncMock(return_value=apps)
+        svc._applications.lock_tenant_applications = AsyncMock(return_value=apps)
         svc._applications.update = AsyncMock()
         svc._api_keys.list_by_applications = AsyncMock(return_value=[])
 
@@ -520,7 +520,7 @@ class TestTenantBudgetCascade:
                 101, Decimal("120000"), _user(), None
             )
 
-        svc._applications.list_by_tenant_for_update.assert_awaited_once_with(101)
+        svc._applications.lock_tenant_applications.assert_awaited_once_with(101)
         svc._applications.get_by_id_for_update.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -540,7 +540,7 @@ class TestTenantBudgetCascade:
         distributed)."""
         svc = _svc()
         apps = _three_apps()
-        svc._applications.list_by_tenant_for_update = AsyncMock(return_value=apps)
+        svc._applications.lock_tenant_applications = AsyncMock(return_value=apps)
         svc._applications.update = AsyncMock()
         svc._api_keys.list_by_applications = AsyncMock(return_value=[])
 
@@ -575,7 +575,7 @@ class TestTenantBudgetCascade:
         fixture), so 90000 still covers them; only percentages move."""
         svc = _svc()
         apps = _three_apps()[:2]  # App1 (50000/50%), App2 (30000/30%) only
-        svc._applications.list_by_tenant_for_update = AsyncMock(return_value=apps)
+        svc._applications.lock_tenant_applications = AsyncMock(return_value=apps)
         svc._applications.update = AsyncMock()
         svc._api_keys.list_by_applications = AsyncMock(return_value=[])
 
@@ -605,7 +605,7 @@ class TestTenantBudgetCascade:
         anymore, so the whole revision is rejected instead."""
         svc = _svc()
         apps = _three_apps()
-        svc._applications.list_by_tenant_for_update = AsyncMock(return_value=apps)
+        svc._applications.lock_tenant_applications = AsyncMock(return_value=apps)
         svc._applications.update = AsyncMock()
         svc._api_keys.list_by_applications = AsyncMock(return_value=[])
 
@@ -628,7 +628,7 @@ class TestTenantBudgetCascade:
         svc = _svc()
         apps = _three_apps()
         apps[2].status = ApplicationStatus.INACTIVE  # App3
-        svc._applications.list_by_tenant_for_update = AsyncMock(return_value=apps)
+        svc._applications.lock_tenant_applications = AsyncMock(return_value=apps)
         svc._applications.update = AsyncMock()
         svc._api_keys.list_by_applications = AsyncMock(return_value=[])
 
@@ -648,7 +648,7 @@ class TestTenantBudgetCascade:
     @pytest.mark.asyncio
     async def test_no_applications_under_tenant_is_a_no_op(self) -> None:
         svc = _svc()
-        svc._applications.list_by_tenant_for_update = AsyncMock(return_value=[])
+        svc._applications.lock_tenant_applications = AsyncMock(return_value=[])
 
         result = await svc.cascade_tenant_budget_revision(
             101, Decimal("120000"), _user(), None
@@ -659,6 +659,30 @@ class TestTenantBudgetCascade:
 
 
 class TestApplicationScope:
+    @pytest.mark.asyncio
+    async def test_tenant_admin_of_different_tenant_masked_404(self) -> None:
+        """Adversarial cross-tenant case (code review #5): a Tenant Admin
+        of tenant 999 passes application_id=1, which actually belongs to
+        tenant 101. The tenant used for the scope check must come from the
+        Application row itself (application.tenant_id), never from
+        anything the caller supplies — otherwise a Tenant Admin could
+        reallocate another Institution's Application budget. Masked as 404
+        (not 403), matching TestTenantScopeAuthAndShape's own
+        test_tenant_admin_of_different_tenant_masked_404 one level up, so
+        the caller can't distinguish "wrong tenant" from "doesn't exist"."""
+        svc = _svc(roles=["TENANT ADMIN"])
+        app = _application(1, allocated_budget=Decimal("50000"), allocated_percentage=Decimal("50"), tenant_id=101)
+        svc._applications.get_by_id = AsyncMock(return_value=app)
+        body = ApplicationBudgetAllocationRequest(application_id=1, allocation=_pct("50"))
+
+        with pytest.raises(HTTPException) as exc:
+            await svc.update_application_key_allocations(1, body, _user(tenant_id=999), None)
+
+        assert exc.value.status_code == 404
+        # Rejected before the row is ever locked or any Key is touched.
+        svc._applications.get_by_id_for_update.assert_not_called()
+        svc._api_keys.update.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_application_id_mismatch(self) -> None:
         svc = _svc()
@@ -850,6 +874,30 @@ class TestApplicationScope:
 
 class TestSingleApiKeyScope:
     @pytest.mark.asyncio
+    async def test_tenant_admin_of_different_tenant_masked_404(self) -> None:
+        """Adversarial cross-tenant case (code review #5): a Tenant Admin
+        of tenant 999 targets api_key_id=11, whose owning Application
+        actually belongs to tenant 101. The scope check derives the tenant
+        from key -> application.tenant_id — the caller never supplies a
+        tenant_id anywhere in this request, so there's no field to spoof;
+        the guard is entirely about not trusting the ROUTE (application_id
+        isn't even part of this endpoint's path) and always re-deriving
+        ownership from the DB rows themselves."""
+        svc = _svc(roles=["TENANT ADMIN"])
+        key1 = _key(11, 1, allocated_budget=Decimal("30000"), allocated_percentage=Decimal("60"))
+        app = _application(1, allocated_budget=Decimal("50000"), allocated_percentage=Decimal("50"), tenant_id=101)
+        svc._api_keys.get_by_id = AsyncMock(return_value=key1)
+        svc._applications.get_by_id = AsyncMock(return_value=app)
+        body = APIKeyBudgetAllocationRequest(api_key_id=11, allocation=_pct("70"))
+
+        with pytest.raises(HTTPException) as exc:
+            await svc.update_single_api_key_allocation(11, body, _user(tenant_id=999), None)
+
+        assert exc.value.status_code == 404
+        svc._applications.get_by_id_for_update.assert_not_called()
+        svc._api_keys.update.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_key_id_mismatch(self) -> None:
         svc = _svc()
         body = APIKeyBudgetAllocationRequest(api_key_id=99, allocation=_pct("50"))
@@ -1011,6 +1059,66 @@ class TestSyncKeyExhaustionFlags:
 
         api_key_service.set_budget_exhausted_for_keys.assert_awaited_once_with([11], True)
 
+    @pytest.mark.asyncio
+    async def test_explicitly_funding_a_never_configured_key_clears_it(self) -> None:
+        """The self-heal path for a Key created with allocated_budget=None
+        (flagged budget-exhausted at creation now that "intentionally
+        uncapped Application" is no longer a valid escape hatch, or seeded
+        under a Tenant that had no Budget at all): the moment an admin
+        explicitly gives this Key its own real ₹ share via a Budget
+        Allocation edit, it resolves to a genuine ceiling and lands in
+        snapshot_writes, clearing the flag through the exact same
+        _sync_key_exhaustion_flags path every other allocation edit uses —
+        no separate mechanism needed."""
+        api_key_service = AsyncMock()
+        svc = _svc(api_key_service=api_key_service)
+        app = _application(1, allocated_budget=Decimal("50000"), allocated_percentage=Decimal("50"))
+        key1 = _key(11, 1, allocated_budget=None, allocated_percentage=None)
+        svc._api_keys.get_by_id = AsyncMock(return_value=key1)
+        svc._applications.get_by_id = AsyncMock(return_value=app)
+        svc._applications.get_by_id_for_update = AsyncMock(return_value=app)
+        svc._api_keys.list_by_application = AsyncMock(return_value=[key1])
+        svc._api_keys.update = AsyncMock()
+
+        body = APIKeyBudgetAllocationRequest(api_key_id=11, allocation=_fixed("20000"))
+        with patch(
+            "app.services.budget_usage.fetch_budget_usage",
+            AsyncMock(return_value={}),
+        ), patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()):
+            await svc.update_single_api_key_allocation(11, body, _user(), None)
+
+        api_key_service.set_budget_exhausted_for_keys.assert_awaited_once_with([11], False)
+
+    @pytest.mark.asyncio
+    async def test_funding_a_never_funded_application_alone_clears_its_keys_too(self) -> None:
+        """Same self-heal, reached the other way — an admin funds the
+        Application itself for the FIRST time (never touching the Key
+        directly), via the tenant-level endpoint. Before the
+        allocation_validator.py percentage fallback, this path left every
+        unlisted Key at 0 (nothing to scale from — the Application had no
+        ₹ history either), so the natural admin response of "just fund the
+        Application" cleared none of its pre-existing keys, only an
+        explicit per-key allocation (test above) did. Pins that funding the
+        Application alone is now enough."""
+        api_key_service = AsyncMock()
+        svc = _svc(api_key_service=api_key_service)
+        app = _application(1, allocated_budget=None, allocated_percentage=Decimal("0"))
+        key1 = _key(11, 1, allocated_budget=None, allocated_percentage=Decimal("50"))
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant())
+        svc._applications.lock_tenant_applications = AsyncMock(return_value=[app])
+        svc._api_keys.list_by_applications = AsyncMock(return_value=[key1])
+
+        body = TenantBudgetAllocationRequest(
+            applications=[ApplicationAllocationRow(application_id=1, allocation=_fixed("30000"))]
+        )
+        with patch(
+            "app.services.budget_usage.fetch_budget_usage",
+            AsyncMock(return_value={}),
+        ), patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()):
+            await svc.update_tenant_application_allocations(101, body, _user(), None)
+
+        api_key_service.set_budget_exhausted_for_keys.assert_awaited_once_with([11], False)
+
 
 class TestExhaustionFlagSyncWiredIntoEachEndpoint:
     """One test per Budget Allocation endpoint, confirming
@@ -1076,7 +1184,7 @@ class TestExhaustionFlagSyncWiredIntoEachEndpoint:
         app = _application(1, allocated_budget=Decimal("50000"), allocated_percentage=Decimal("50"))
         key1 = _key(11, 1, allocated_budget=Decimal("40000"), allocated_percentage=Decimal("80"))
         svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant())
-        svc._applications.list_by_tenant_for_update = AsyncMock(return_value=[app])
+        svc._applications.lock_tenant_applications = AsyncMock(return_value=[app])
         svc._api_keys.list_by_applications = AsyncMock(return_value=[key1])
 
         body = TenantBudgetAllocationRequest(

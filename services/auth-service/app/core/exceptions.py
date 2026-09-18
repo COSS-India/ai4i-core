@@ -35,6 +35,8 @@ from ai4i_core.exceptions import (  # noqa: F401
     TenantResolutionError,
     # Rate Limiting
     RateLimitExceededError,
+    # Service / Infrastructure (500, 503)
+    ServiceUnavailableError,
     # Handlers
     register_exception_handlers,
     # Response envelope
