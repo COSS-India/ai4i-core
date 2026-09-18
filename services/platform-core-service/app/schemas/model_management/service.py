@@ -224,6 +224,14 @@ class InferenceAPIEndPoint(BaseSchema):
         max_length=100,
         description="Optional. Model identifier used to test the inference API key.",
     )
+    authenticationToken: Optional[str] = Field(
+        None,
+        description=(
+            "Optional, LLM task type only. Sent as `Authorization: Bearer "
+            "<value>` to the model endpoint. Stored encrypted; masked in "
+            "API responses. Send an empty string to clear it."
+        ),
+    )
 
     @field_validator("endpoint_schema")
     @classmethod
@@ -566,6 +574,12 @@ class ServiceCreateRequest(BaseSchema):
         self.endpoint = callback_url
         self.hardwareDescription = infra_description
         self.api_key = inference_api_key.value if inference_api_key else self.api_key
+
+        if self.inferenceEndPoint.authenticationToken and self.taskType != "llm":
+            raise ValueError(
+                "inferenceEndPoint.authenticationToken is only supported for "
+                "LLM task type services."
+            )
         return self
 
 
@@ -772,6 +786,20 @@ class ServiceUpdateRequest(BaseSchema):
                 f"whose taskType matches this service's task ('{self.taskType}'); "
                 f"got: {[e.get('taskType') for e in self.inferenceEndPoint.endpoint_schema]}"
             )
+
+        # No "taskType omitted" fallback needed here (unlike the schema
+        # cross-check above): touching inferenceEndPoint always requires
+        # taskType too, via _require_billing_fields_on_substantive_edit.
+        if (
+            self.inferenceEndPoint is not None
+            and self.inferenceEndPoint.authenticationToken
+            and self.taskType is not None
+            and self.taskType != "llm"
+        ):
+            raise ValueError(
+                "inferenceEndPoint.authenticationToken is only supported for "
+                "LLM task type services."
+            )
         return self
 
     @model_validator(mode="after")
@@ -856,6 +884,7 @@ class ServiceInferenceEndpoint(BaseSchema):
 
     callbackUrl: Optional[str] = None
     inferenceApiKey: Optional[InferenceApiKey] = None
+    authenticationToken: Optional[str] = None
     isMultilingualEnabled: Optional[bool] = None
     supportedInputFormats: Optional[SupportedFormats] = None
     supportedOutputFormats: Optional[SupportedFormats] = None

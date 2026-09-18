@@ -170,6 +170,15 @@ class CoreSettings(BaseSettings):
     endpoint_validation_max_poll_attempts: int = 10
     endpoint_validation_max_poll_wait_seconds: float = 60.0
 
+    # ── Service credential encryption ──
+    # Encrypts mm_services.llm_auth_token at rest — see
+    # app/core/service_credentials_crypto.py.
+    service_credentials_encryption_key: Optional[str] = None
+    # Shared secret inference-service presents on GET /internal/services/{id}
+    # to receive credentials unmasked. Must match inference-service's
+    # MODEL_MANAGEMENT_SERVICE_INTERNAL_TOKEN.
+    internal_service_shared_secret: Optional[str] = None
+
     # ── External services ──
     auth_service_url: str = ""
     model_management_url: str = ""
