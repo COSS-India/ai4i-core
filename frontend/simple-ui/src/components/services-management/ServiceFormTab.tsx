@@ -8,6 +8,7 @@ import {
   CardBody,
   CardHeader,
   Checkbox,
+  IconButton,
   FormControl,
   FormErrorMessage,
   FormLabel,
@@ -16,6 +17,7 @@ import {
   Input,
   InputGroup,
   InputLeftElement,
+  InputRightElement,
   Menu,
   MenuButton,
   MenuItem,
@@ -27,7 +29,7 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
-import { ChevronDownIcon, SearchIcon } from "@chakra-ui/icons";
+import { ChevronDownIcon, SearchIcon, ViewIcon, ViewOffIcon } from "@chakra-ui/icons";
 import React, { useMemo, useState } from "react";
 import { formatModelTaskTypeLabel } from "../../config/constants";
 import { FIELD_HINTS } from "../../config/fieldHints";
@@ -78,6 +80,9 @@ interface ServiceFormTabProps {
   isCreateFormModelSelected: boolean;
   canCreateService: boolean;
   isLlmTaskType: boolean;
+  authToken: string;
+  onAuthTokenChange: (value: string) => void;
+  hasAuthToken: boolean;
   serviceIdError?: string | null;
   serviceIdLengthError?: string | null;
   serviceDescriptionError?: string | null;
@@ -125,6 +130,9 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
   isCreateFormModelSelected,
   canCreateService,
   isLlmTaskType,
+  authToken,
+  onAuthTokenChange,
+  hasAuthToken,
   serviceIdError,
   serviceIdLengthError,
   serviceDescriptionError,
@@ -151,7 +159,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
   const nameError = afterBlur("name", serviceNameError);
   const descriptionError = afterBlur("serviceDescription", serviceDescriptionError);
   const infraError = afterBlur("hardwareDescription", hardwareDescriptionError);
-  
+
   const priceError = pricePerUnit.trim()
     ? (pricePerUnitError ?? null)
     : afterBlur("pricePerUnit", pricePerUnitError);
@@ -164,6 +172,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
       : afterBlur("serviceId", serviceIdLengthError));
 
   const [tierSearch, setTierSearch] = useState("");
+  const [showAuthToken, setShowAuthToken] = useState(false);
 
   /**
    * Names for the service's own tier ids, which `availableTiers` need not
@@ -435,6 +444,46 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   : FIELD_HINTS.service.endpoint.helper}
               </FieldHint>
             </FormControl>
+
+            {isLlmTaskType && (
+              <FormControl>
+                <FormLabel fontWeight="semibold">Authentication Token</FormLabel>
+                <InputGroup>
+                  <Input
+                    type={showAuthToken ? "text" : "password"}
+                    value={authToken}
+                    onChange={(e) => onAuthTokenChange(e.target.value)}
+                    placeholder={FIELD_HINTS.service.authToken.placeholder}
+                    bg="white"
+                    autoComplete="new-password"
+                    spellCheck={false}
+                    pr="4.5rem"
+                  />
+                  <InputRightElement width="4.5rem">
+                    <IconButton
+                      aria-label={
+                        showAuthToken
+                          ? "Hide authentication token"
+                          : "Show authentication token"
+                      }
+                      icon={showAuthToken ? <ViewIcon /> : <ViewOffIcon />}
+                      h="1.75rem"
+                      size="sm"
+                      type="button"
+                      onClick={() => setShowAuthToken((prev) => !prev)}
+                      variant="ghost"
+                    />
+                  </InputRightElement>
+                </InputGroup>
+                <FieldHint>
+                  {editingService
+                    ? hasAuthToken
+                      ? FIELD_HINTS.service.authToken.editHelper
+                      : FIELD_HINTS.service.authToken.editEmptyHelper
+                    : FIELD_HINTS.service.authToken.helper}
+                </FieldHint>
+              </FormControl>
+            )}
 
             {/* Hardware Description → inferenceEndPoint.infraDescription */}
             <FormControl isRequired={!editingService} isInvalid={!!infraError}>
