@@ -6,6 +6,72 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/).
 
 
+## [2.7.0] - 2026-09-18
+
+> Notifications and alerts release, 61 PRs merged
+
+### Added
+- Notification and alert catalog in platform-core: the `configs_notification_alert` table, seeded notification and alert types, and the catalog API at `GET /api/v1/notification-alerts/catalog` and `PATCH /api/v1/notification-alerts/catalog/{name}` (AI4IDS-3023, AI4IDS-3024)
+- Kafka notification producers for tier, budget and usage-threshold events, gated by `NOTIFICATION_PRODUCER_ENABLED` and publishing to `TOPIC_NOTIFICATION` (AI4IDS-3025)
+- `notifications_consumer`: consumes that topic, resolves recipients by role, renders branded HTML and text emails, sends over SMTP, and records every send in `ledger_notification_alert` (AI4IDS-3026, AI4IDS-3027, AI4IDS-3037)
+- Notifications and Alerts Management UI (AI4IDS-3096)
+- Tier lifecycle status: a `status` column on `tiers` with validation and caching, `PATCH /api/v1/pay-per-use/tier/{tier_id}/status` behind a new admin-only permission, a status filter on the list tiers endpoint, and the Tier Lifecycle Status Management UI (AI4IDS-2209, AI4IDS-3089, AI4IDS-3097)
+- Effective dates persisted for tier and budget assignment, with automatic expiry and expired API keys blocked (AI4IDS-3081, AI4IDS-2995)
+- Inference types: the `inference_types` table, `inference_type_id` on the pay-per-use tables, and CRUD at `/api/v1/inference-types` (AI4IDS-2933)
+- OpenAI-compatible model listing at `GET /api/v1/models`, using `serviceId` as the model id and listing only ACTIVE published LLM services
+- OpenSearch-backed metering for the Overview, Tenant Consumption and Model Consumption request counts, selected by `METERING_DATA_SOURCE`, with an ISM policy for the logs indices (AI4IDS-3055)
+- `created_by` audit trail across institutions, applications and API keys, including `tenant_plans.created_by` (AI4IDS-3112)
+- Reusable table component with standardised sorting across the UI (AI4IDS-2993)
+
+### Changed
+- The platform model catalogue moved from `GET /api/v1/models` to `GET /api/v1/models/list`, freeing the OpenAI-compatible path
+- `config.thresholds` reshaped from a percent-keyed dictionary to a list of `{percentage, active}` bands, replaced wholesale on PATCH. The migration keeps whatever each row already held rather than resetting to the seeded 70, 80 and 90 (AI4IDS-3100)
+- An Application with no budget allocation now blocks inference instead of counting as uncapped, with a backfill for keys created before the change (AI4IDS-3127)
+- A tier disengages from an institution once its Effective To date is reached (AI4IDS-3111)
+- Cost per unit updates take effect immediately instead of waiting for the hourly cache refresh (AI4IDS-3101)
+- Numeric columns widened for large quotas and costs, and a tier name is reusable after delete through a partial unique index on non-deleted rows (AI4IDS-3097)
+- Allocation service refactored, behaviour unchanged (AI4IDS-3113)
+- Notifications and Alerts screens refer to Institution rather than tenant (AI4IDS-3120)
+- The API key budget field is optional in the UI (AI4IDS-3123)
+- Navigation simplified, and the Budget and Usage filters reworked (AI4IDS-2947, AI4IDS-2960)
+- Rate limit and effective dates dropped from tier emails, and the threshold percentage capped at 100 (AI4IDS-3042)
+- Manage Plan renamed to Assign Tier, and the Create Institution dialog design restored (AI4IDS-3044)
+- Email send timeout configurable through `SMTP_TIMEOUT` (AI4IDS-3037)
+
+### Fixed
+- BUDGET_THRESHOLD and BUDGET_EXHAUSTED notifications scoped to the tenant, the tenant budget ceiling matched to the dashboard, and only the highest crossed band fires (AI4IDS-3139)
+- API key `allocatedBudget.percentage` calculation (AI4IDS-3077)
+- Tier Management offered Reactivate and Publish actions that are not valid tier statuses (AI4IDS-3124, AI4IDS-3125)
+- Create Tier accepted unlimited and other unsupported quota limit values (AI4IDS-3102)
+- Catalog PATCH rejects the strings "true" and "false" for `recipient_roles` and `thresholds` (AI4IDS-3104)
+- Service ID pre-populated with a trailing slash for non-LLM services (AI4IDS-3085)
+- Text-to-Speech 404 after selecting a source language (AI4IDS-3088)
+- Delete Account missing for the Moderator role (AI4IDS-3021)
+- Conflicting action icons in Institution and Service Management (AI4IDS-2992)
+- Range validation of 0 to 100 on percentage fields (AI4IDS-3048), max validation on price and quota limit fields (AI4IDS-2982), and a description cap on models within services (AI4IDS-2990)
+- Clear all and Create Tier button alignment, and Logs time filters grouped (AI4IDS-3008)
+- Kubernetes-style `REDIS_PORT` values handled in the backfill migration (AI4IDS-3127)
+- Log message parsing in the notifications consumer (AI4IDS-3037)
+- Build failure from an `applyResolved()` argument mismatch
+
+### Security
+- `/auth/validate` 401 responses sanitised to a generic body (AI4IDS-3103)
+- Suspending or deleting the only active Admin in the Default Organization is blocked (AI4IDS-3047)
+- Recipient email addresses stay encrypted at rest. The notifications consumer reads `users.email` ciphertext directly and decrypts it with the same `PII_ENCRYPTION_KEY` auth-service uses
+
+### Migration hygiene
+- The two `ai4iplatform_core` alembic heads merged, and a further merge of the threshold and tiers index heads (AI4IDS-3100)
+
+### Upgrade notes
+- Shared library `ai4i-core` 1.0.23 to 1.0.31. auth-service, platform-core and inference pin 1.0.31, kafka-consumers pins 1.0.30
+- Twenty migrations: three on the auth database (the tier status update permission, `tenant_plans.created_by`, and the unconfigured key exhaustion backfill) and seventeen on the core database (inference types and their backfill, tier status, the notification and alert catalog with its seeds, the notification ledger, the threshold bands, the widened numerics, and the partial unique index on tier name)
+- Callers of the platform model catalogue must move from `GET /api/v1/models` to `GET /api/v1/models/list`. The old path now returns the OpenAI-compatible listing
+- An Application with no budget allocation is now treated as exhausted, so inference under its keys is refused. Allocate a budget to every Application expected to serve traffic before deploying
+- New configuration for notifications: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_USE_TLS`, `SMTP_TIMEOUT`, `EMAIL_PROVIDER`, `EMAIL_FROM`, `EMAIL_FROM_NAME`, `EMAIL_REPLY_TO`, `PORTAL_URL`, `TOPIC_NOTIFICATION`, `NOTIFICATION_PRODUCER_ENABLED`, and `PII_ENCRYPTION_KEY` set to the same value auth-service uses
+- Metering backend selected by `METERING_DATA_SOURCE`, with `OPENSEARCH_LOGS_INDEX` for the OpenSearch path
+
+---
+
 ## [2.6.0] - 2026-09-07
 
 > Applications and budget allocation release, 70 PRs merged
