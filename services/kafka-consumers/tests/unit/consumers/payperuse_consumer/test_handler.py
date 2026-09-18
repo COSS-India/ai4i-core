@@ -250,10 +250,10 @@ class TestBillUsageThreadsInferenceTypeId:
 
     class _FakeAuthSessionScope:
         """Stub for bootstrap.lifecycle.session_scope(name="auth") — _bill_usage
-        opens this unconditionally now (fetch_tenant_budget_status needs a
+        opens this unconditionally now (fetch_tenant_budget_snap needs a
         tenant-level read regardless of any one key's own budget_usage row),
         so every test reaching that far needs it to be usable as an async
-        context manager even though these tests stub fetch_tenant_budget_status
+        context manager even though these tests stub fetch_tenant_budget_snap
         itself and never actually touch the yielded object."""
 
         async def __aenter__(self):
@@ -317,9 +317,9 @@ class TestBillUsageThreadsInferenceTypeId:
                 quota_exhausted=False,
             )
 
-        async def _no_tenant_budget(auth_db, core_db, tenant_id):
+        async def _no_tenant_budget(auth_db, tenant_id):
             # Not under test here (see TestPublishUsageCrossingEvents /
-            # TestFetchTenantBudgetStatus) — None mirrors "tenant has no
+            # TestFetchTenantBudgetSnap) — None mirrors "tenant has no
             # allocated_budget configured", so _publish_usage_crossing_events'
             # budget block is a no-op, same as this class's tests intend.
             return None
@@ -328,14 +328,14 @@ class TestBillUsageThreadsInferenceTypeId:
             # Not under test here — _bill_usage now checks this (in-memory
             # cache read) *before* deciding whether to open the "auth"
             # session at all (see handler.py). False means it never does,
-            # so _FakeAuthSessionScope/fetch_tenant_budget_status below are
+            # so _FakeAuthSessionScope/fetch_tenant_budget_snap below are
             # only there in case a future test in this class needs them.
             return False
 
         monkeypatch.setattr(h, "get_service_pricing", _pricing)
         monkeypatch.setattr(h, "get_inference_type_id", _resolve)
         monkeypatch.setattr(h, "deduct_balance_and_update_quota", _write)
-        monkeypatch.setattr(h, "fetch_tenant_budget_status", _no_tenant_budget)
+        monkeypatch.setattr(h, "fetch_tenant_budget_snap", _no_tenant_budget)
         monkeypatch.setattr(h, "is_notification_enabled", _disabled)
         monkeypatch.setattr(
             h, "session_scope", lambda name=None: self._FakeAuthSessionScope()
@@ -423,8 +423,9 @@ class TestBillUsageThreadsInferenceTypeId:
 
 class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
     """_publish_usage_crossing_events — BUDGET_THRESHOLD/BUDGET_EXHAUSTED must
-    fire off the TENANT's pooled budget (fetch_tenant_budget_status), never
-    one API key's own budget_usage row. Design doc section 4's subject rule
+    fire off the TENANT's pooled budget (ceiling from fetch_tenant_budget_snap,
+    running spend from the Redis counter), never one API key's own
+    budget_usage row. Design doc section 4's subject rule
     already specified {} for these two events (Budget is a property of the
     whole Tenant, same as Tier) — this suite pins the code actually matching
     that, including the subject shape carrying no api_key_id any more.
@@ -468,17 +469,39 @@ class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
         base.update(overrides)
         return BillingWriteResult(**base)
 
-    def _patch_kafka_helpers(self, monkeypatch, *, tenant_budget):
+    class _FakeRedis:
+        """INCRBYFLOAT is atomic per key on the real Redis — this fake just
+        needs to mirror that shape: add the amount, return the new running
+        total. Seeded to whatever the tenant's counter already held before
+        this message, so tests can express "pre" the same way the real
+        counter would arrive at it."""
+
+        def __init__(self, seed: Decimal):
+            self.value = float(seed)
+            self.calls: list[tuple[str, float]] = []
+
+        async def incrbyfloat(self, key, amount):
+            self.calls.append((key, amount))
+            self.value += float(amount)
+            return self.value
+
+    def _patch_kafka_helpers(self, monkeypatch, *, snap, redis_seed=Decimal("0")):
         """Stub every ai4i_core.kafka call _publish_usage_crossing_events
-        makes, plus fetch_tenant_budget_status — records every
-        check_and_record_threshold/check_and_record_exhaustion/
-        publish_notification_event call for assertions."""
+        makes, plus fetch_tenant_budget_snap (the ceiling) and
+        get_redis_client (a stateful fake standing in for the tenant's
+        running-spend counter) — records every check_and_record_threshold/
+        check_and_record_exhaustion/publish_notification_event call for
+        assertions."""
         from consumers.payperuse_consumer import handler as h
 
         calls: dict = {"threshold": [], "exhaustion": [], "published": []}
+        fake_redis = self._FakeRedis(redis_seed)
 
-        async def _tenant_budget(auth_db, core_db, tenant_id):
-            return tenant_budget
+        async def _snap(auth_db, tenant_id):
+            return snap
+
+        def _get_redis():
+            return fake_redis
 
         async def _enabled(db, event_name):
             return True
@@ -499,7 +522,8 @@ class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
                 {"event_name": event_name, "tenant_id": tenant_id, "subject": dict(subject), "details": details}
             )
 
-        monkeypatch.setattr(h, "fetch_tenant_budget_status", _tenant_budget)
+        monkeypatch.setattr(h, "fetch_tenant_budget_snap", _snap)
+        monkeypatch.setattr(h, "get_redis_client", _get_redis)
         monkeypatch.setattr(h, "is_notification_enabled", _enabled)
         monkeypatch.setattr(h, "get_threshold_bands", _bands)
         monkeypatch.setattr(h, "check_and_record_threshold", _record_threshold)
@@ -511,12 +535,11 @@ class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
         """The whole point of the design change: one crossing per tenant, so
         the ledger dedup subject needs nothing more specific than event_name
         + tenant_id — no api_key_id, unlike the old per-key subject."""
-        from consumers.payperuse_consumer._billing import TenantBudgetStatus
         from consumers.payperuse_consumer.handler import _publish_usage_crossing_events
 
-        # pre = (955-60)/1000 = 89.5%, post = 95.5% — crosses the 90% band.
-        tenant_budget = TenantBudgetStatus(used=Decimal("955"), snap=Decimal("1000"))
-        calls = self._patch_kafka_helpers(monkeypatch, tenant_budget=tenant_budget)
+        # counter already holds 895; this message's own 60 pushes it to 955:
+        # pre = 895/1000 = 89.5%, post = 955/1000 = 95.5% — crosses the 90% band.
+        calls = self._patch_kafka_helpers(monkeypatch, snap=Decimal("1000"), redis_seed=Decimal("895"))
 
         await _publish_usage_crossing_events(
             db=object(), auth_db=object(), ctx=self._ctx(), write=self._write(),
@@ -534,17 +557,16 @@ class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
     async def test_percentage_comes_from_tenant_totals_not_the_one_keys_row(self, monkeypatch):
         """write.api_key_budget_used/snap (this one key's own row) must be
         completely ignored for BUDGET_THRESHOLD/BUDGET_EXHAUSTED now — only
-        tenant_budget.used/snap may drive the percentage."""
-        from consumers.payperuse_consumer._billing import TenantBudgetStatus
+        the tenant's own ceiling/running-total counter may drive the
+        percentage."""
         from consumers.payperuse_consumer.handler import _publish_usage_crossing_events
 
         # This key's own row reads 99.9% used — if that leaked in, every
         # band (and exhaustion) would fire. The tenant total is a much
         # healthier 55%, and crosses only the 50% band.
         write = self._write(api_key_budget_used=Decimal("999"), api_key_budget_snap=Decimal("1000"))
-        tenant_budget = TenantBudgetStatus(used=Decimal("550"), snap=Decimal("1000"))
-        cost = Decimal("60")  # pre = (550-60)/1000 = 49.0%, post = 55.0%
-        calls = self._patch_kafka_helpers(monkeypatch, tenant_budget=tenant_budget)
+        cost = Decimal("60")  # pre = 490/1000 = 49.0%, post = 550/1000 = 55.0%
+        calls = self._patch_kafka_helpers(monkeypatch, snap=Decimal("1000"), redis_seed=Decimal("490"))
 
         await _publish_usage_crossing_events(
             db=object(), auth_db=object(), ctx=self._ctx(), write=write,
@@ -557,13 +579,13 @@ class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
         assert calls["exhaustion"] == []  # 55% does not cross 100%
 
     async def test_no_tenant_budget_configured_skips_both_checks_entirely(self, monkeypatch):
-        """fetch_tenant_budget_status returning None (no allocated_budget on
+        """fetch_tenant_budget_snap returning None (no allocated_budget on
         the tenant) must skip BUDGET_THRESHOLD/BUDGET_EXHAUSTED outright —
         even though this key's own write.api_key_budget_snap is set."""
         from consumers.payperuse_consumer.handler import _publish_usage_crossing_events
 
         write = self._write(api_key_budget_used=Decimal("999"), api_key_budget_snap=Decimal("1000"))
-        calls = self._patch_kafka_helpers(monkeypatch, tenant_budget=None)
+        calls = self._patch_kafka_helpers(monkeypatch, snap=None)
 
         await _publish_usage_crossing_events(
             db=object(), auth_db=object(), ctx=self._ctx(), write=write,
@@ -576,12 +598,11 @@ class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
         assert calls["published"] == []
 
     async def test_exhaustion_subject_uses_the_tenants_snap_not_the_keys(self, monkeypatch):
-        from consumers.payperuse_consumer._billing import TenantBudgetStatus
         from consumers.payperuse_consumer.handler import _publish_usage_crossing_events
 
         write = self._write(api_key_budget_used=Decimal("1"), api_key_budget_snap=Decimal("2"))
-        tenant_budget = TenantBudgetStatus(used=Decimal("1000"), snap=Decimal("1000"))
-        calls = self._patch_kafka_helpers(monkeypatch, tenant_budget=tenant_budget)
+        # counter already at 999; this message's own 1 pushes it to 1000 = 100%.
+        calls = self._patch_kafka_helpers(monkeypatch, snap=Decimal("1000"), redis_seed=Decimal("999"))
 
         await _publish_usage_crossing_events(
             db=object(), auth_db=object(), ctx=self._ctx(), write=write,
@@ -596,7 +617,8 @@ class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
     async def test_quota_block_is_unaffected_by_the_budget_change(self, monkeypatch):
         """Quota was already tenant-level (quota_usage is keyed by tenant_id,
         not api_key_id) — this change must not touch its subject shape or
-        its data source (write.quota_used/quota_snap, not tenant_budget)."""
+        its data source (write.quota_used/quota_snap, not the tenant budget
+        counter)."""
         from consumers.payperuse_consumer.handler import _publish_usage_crossing_events
 
         write = self._write(
@@ -605,7 +627,7 @@ class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
             quota_used=Decimal("80"),
             quota_snap=Decimal("100"),
         )
-        calls = self._patch_kafka_helpers(monkeypatch, tenant_budget=None)
+        calls = self._patch_kafka_helpers(monkeypatch, snap=None)
 
         await _publish_usage_crossing_events(
             db=object(), auth_db=object(), ctx=self._ctx(), write=write,

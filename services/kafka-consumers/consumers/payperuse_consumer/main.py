@@ -49,11 +49,12 @@ async def run() -> None:
     settings = cfg.get_settings()
 
     async with infra(db_name=db.PLATFORM_CORE_DB):
-        # Second connection, named "auth" — _billing.fetch_tenant_budget_status
-        # reads tenants.allocated_budget and this tenant's api_key ids from
-        # ai4iplatform_auth (design change: BUDGET_THRESHOLD/BUDGET_EXHAUSTED
-        # now fire on the tenant's pooled budget, not one API key's own
-        # allocation — see handler.py's _publish_usage_crossing_events).
+        # Second connection, named "auth" — _billing.fetch_tenant_budget_snap
+        # reads tenants.allocated_budget from ai4iplatform_auth (design
+        # change: BUDGET_THRESHOLD/BUDGET_EXHAUSTED now fire on the tenant's
+        # pooled budget, not one API key's own allocation — see handler.py's
+        # _publish_usage_crossing_events; the running-spend side is a Redis
+        # counter, not a second query here).
         # Opened once here, not per-message; infra()'s own teardown closes it
         # alongside the default connection. Mirrors notifications_consumer/
         # main.py's identical second connection exactly.

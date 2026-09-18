@@ -18,7 +18,7 @@ from consumers.payperuse_consumer._billing import (
     ServicePricing,
     calculate_cost,
     deduct_balance_and_update_quota,
-    fetch_tenant_budget_status,
+    fetch_tenant_budget_snap,
     get_inference_type_id,
     get_service_pricing,
     _get_billing_data,
@@ -318,41 +318,46 @@ async def _publish_usage_crossing_events(
     allowed to affect billing correctness (called only after the commit
     above).
 
-    pre = post - this_debit (for the BUDGET side; see below) is exact
-    without a second query ONLY because this consumer group runs a single
-    replica — ARCHITECTURE.md §8 pins it there. That is a platform-wide
-    deployment constraint, not a per-partition one: tenant_budget.used is a
-    fresh SUM over every API key under the tenant (see
-    fetch_tenant_budget_status), pooled across whichever Kafka partitions
-    those keys' spans landed on (spans carry no tenant-aware partition key
-    — see trace/setup.py's exporter, which sends with no `key=` at all — so
-    two keys under the same tenant can and do land on different
-    partitions). "This consumer processes one message at a time per
-    partition" is true, but it only ever made the OLD, per-key version of
-    this read exact (a single API key's own budget_usage row can only be
-    touched by whichever one partition its spans are on). It says nothing
-    about a tenant-pooled read: with more than one replica, a sibling
-    instance's commit for a *different* key under the *same* tenant can
-    land in between this instance's own commit and this SUM, inflating
-    pre_pct and silently skipping whichever threshold band falls between
-    the true and the overstated pre_pct — the ledger only remembers the
-    highest band reached, so a skipped band is never recovered by a later
-    message. See ARCHITECTURE.md §8/§11 for why this is a *second*,
-    independent prerequisite for raising replicas — the write-time guard
-    and reconciliation job §11 already lists guard against a different
-    hazard (duplicate billing from a repeated span) and do not cover this
-    one (a notification that was never published, for two distinct spans
-    each billed exactly once).
+    BUDGET's pre/post no longer come from summing budget_usage across the
+    tenant's keys (see fetch_tenant_budget_snap's docstring for why that
+    approach — pre = post - this_debit, reconstructed from a fresh
+    cross-database SUM — was only exact for a single consumer replica).
+    Instead, ``used`` is a Redis counter (Constants.TENANT_BUDGET_USED_PREFIX),
+    incremented by this debit via INCRBYFLOAT and read back in that same
+    call. INCRBYFLOAT is atomic per key regardless of how many replicas call
+    it concurrently — a sibling instance's own INCRBYFLOAT for a different
+    key under the same tenant is strictly before or after this one, never
+    interleaved with it — so pre = post - cost is exact by construction, not
+    a guess, independent of replica count. This is the fix ARCHITECTURE.md
+    §8/§11 describe as the second, independent prerequisite for raising
+    replicas (distinct from the write-time guard/reconciliation job, which
+    guard against a repeated span being billed twice, not a notification
+    that was silently never published for two distinct spans each billed
+    once) — once this ships, that prerequisite is satisfied.
+
+    Deliberately notification-only: the usage dashboard's own tenant totals
+    (usage_repository.py, platform-core-service) still derive from summing
+    budget_usage and are untouched by this — the two numbers are not
+    reconciled against each other. Redis is not a durable ledger (no
+    persistence guarantee assumed here, no TTL either — see Constants), so
+    this counter is best-effort for notification purposes, same spirit as
+    the existing Redis-outage handling in _is_already_billed (ARCHITECTURE.md
+    §11): losing it degrades a warning email, never billing correctness.
 
     ledger_notification_alert (design doc §5-7) is checked/updated with
     check_and_record_threshold/check_and_record_exhaustion before each
     publish — the atomic DB-level dedup guard (highest band reached /
     on-off exhausted flag), not just the in-memory is_notification_enabled
-    pre-check.
+    pre-check. crossed_bands can return more than one band for a single
+    debit that jumps past several at once; only the highest is ever
+    recorded/published — the dedup ledger has no notion of "highest" on its
+    own, it only compares "does this differ from what's stored", so calling
+    it once per crossed band would fire one email per band instead of one
+    for the highest reached.
 
     Both BUDGET and QUOTA crossings are tenant-level events, never a single
     API key's/Application's own allocation running out on its own (design
-    change — see fetch_tenant_budget_status's docstring for BUDGET; QUOTA
+    change — see fetch_tenant_budget_snap's docstring for BUDGET; QUOTA
     was already tenant-level, since quota_usage is keyed by tenant_id, not
     api_key_id, and every key under a tenant shares that tenant's one
     active tier). This is distinct from — and does not change — the
@@ -364,62 +369,73 @@ async def _publish_usage_crossing_events(
     budget_threshold_enabled/budget_exhausted_enabled are passed in already
     resolved (_bill_usage checks them before deciding whether to open the
     second, "auth" DB connection at all) rather than read again here — both
-    are in-memory cache reads, but fetch_tenant_budget_status is two real
-    cross-database queries, and auth_db is None whenever the caller skipped
-    opening that connection because neither flag was set."""
+    are in-memory cache reads, and auth_db is None whenever the caller
+    skipped opening that connection because neither flag was set."""
     if auth_db is not None and (budget_threshold_enabled or budget_exhausted_enabled):
-        tenant_budget = await fetch_tenant_budget_status(auth_db, db, str(ctx.tenant_id))
-        if tenant_budget is not None and tenant_budget.snap is not None:
-            post_pct = percent(tenant_budget.used, tenant_budget.snap)
-            pre_pct = percent(tenant_budget.used - cost, tenant_budget.snap)
-            if post_pct is not None and pre_pct is not None:
-                # No api_key_id (or anything else) in subject — there is exactly
-                # one budget crossing per tenant now, not one per key, so the
-                # dedup ledger needs nothing more specific than event_name +
-                # tenant_id to identify "this" crossing.
-                budget_subject = {}
-                if budget_threshold_enabled:
-                    bands = await get_threshold_bands(db, "BUDGET_THRESHOLD")
-                    for band in crossed_bands(pre_pct, post_pct, bands):
-                        fired = await check_and_record_threshold(
-                            db, "BUDGET_THRESHOLD", str(ctx.tenant_id), budget_subject, band
+        snap = await fetch_tenant_budget_snap(auth_db, str(ctx.tenant_id))
+        if snap is not None:
+            post_used = None
+            try:
+                redis = get_redis_client()
+                key = f"{cfg.Constants.TENANT_BUDGET_USED_PREFIX}{ctx.tenant_id}"
+                post_used = Decimal(str(await redis.incrbyfloat(key, float(cost))))
+            except Exception:
+                logger.warning(
+                    "Redis unavailable for tenant budget counter — skipping BUDGET_THRESHOLD/"
+                    "BUDGET_EXHAUSTED check for this message | tenant=%s", ctx.tenant_id,
+                    exc_info=True,
+                )
+            if post_used is not None:
+                pre_used = post_used - cost
+                post_pct = percent(post_used, snap)
+                pre_pct = percent(pre_used, snap)
+                if post_pct is not None and pre_pct is not None:
+                    # No api_key_id (or anything else) in subject — there is exactly
+                    # one budget crossing per tenant now, not one per key, so the
+                    # dedup ledger needs nothing more specific than event_name +
+                    # tenant_id to identify "this" crossing.
+                    budget_subject = {}
+                    if budget_threshold_enabled:
+                        bands = await get_threshold_bands(db, "BUDGET_THRESHOLD")
+                        crossed = crossed_bands(pre_pct, post_pct, bands)
+                        if crossed:
+                            band = max(crossed)
+                            fired = await check_and_record_threshold(
+                                db, "BUDGET_THRESHOLD", str(ctx.tenant_id), budget_subject, band
+                            )
+                            if fired:
+                                alert_at = datetime.now(timezone.utc)
+                                publish_notification_event(
+                                    event_name="BUDGET_THRESHOLD",
+                                    tenant_id=str(ctx.tenant_id),
+                                    subject=budget_subject,
+                                    details=[
+                                        str(band),
+                                        _alert_datetime_ist(alert_at),
+                                        f"{_display_pct(post_pct):.0f}%",
+                                    ],
+                                    occurred_at=alert_at.isoformat(),
+                                )
+                    if budget_exhausted_enabled and crossed_exhaustion(pre_pct, post_pct):
+                        # budget_snap (the ceiling) in the exhaustion subject too:
+                        # it moves whenever the tenant's allocated_budget changes
+                        # (a top-up/top-down), so a change in that ceiling gets
+                        # its own row instead of colliding with the
+                        # already-recorded True from before the change —
+                        # without this, re-exhausting after a top-up would never
+                        # re-fire, since the same {value: True} would already be
+                        # stored.
+                        budget_exhaustion_subject = {"budget_snap": str(snap)}
+                        fired = await check_and_record_exhaustion(
+                            db, "BUDGET_EXHAUSTED", str(ctx.tenant_id), budget_exhaustion_subject
                         )
-                        if not fired:
-                            continue
-                        alert_at = datetime.now(timezone.utc)
-                        publish_notification_event(
-                            event_name="BUDGET_THRESHOLD",
-                            tenant_id=str(ctx.tenant_id),
-                            subject=budget_subject,
-                            details=[
-                                str(band),
-                                _alert_datetime_ist(alert_at),
-                                f"{_display_pct(post_pct):.0f}%",
-                            ],
-                            occurred_at=alert_at.isoformat(),
-                        )
-                if budget_exhausted_enabled and crossed_exhaustion(pre_pct, post_pct):
-                    # budget_snap (the ceiling) in the exhaustion subject too:
-                    # it moves whenever the tenant's pooled key allocations
-                    # change (a budget top-up/top-down, or a key/Application
-                    # being added, resized or revoked — see
-                    # fetch_tenant_budget_status), so a change in that
-                    # ceiling gets its own row instead of colliding with the
-                    # already-recorded True from before the change —
-                    # without this, re-exhausting after a top-up would never
-                    # re-fire, since the same {value: True} would already be
-                    # stored.
-                    budget_exhaustion_subject = {"budget_snap": str(tenant_budget.snap)}
-                    fired = await check_and_record_exhaustion(
-                        db, "BUDGET_EXHAUSTED", str(ctx.tenant_id), budget_exhaustion_subject
-                    )
-                    if fired:
-                        publish_notification_event(
-                            event_name="BUDGET_EXHAUSTED",
-                            tenant_id=str(ctx.tenant_id),
-                            subject=budget_exhaustion_subject,
-                            details=["INR", str(tenant_budget.snap)],
-                        )
+                        if fired:
+                            publish_notification_event(
+                                event_name="BUDGET_EXHAUSTED",
+                                tenant_id=str(ctx.tenant_id),
+                                subject=budget_exhaustion_subject,
+                                details=["INR", str(snap)],
+                            )
 
     if write.quota_recorded and write.quota_used is not None and write.quota_snap is not None:
         post_pct = percent(write.quota_used, write.quota_snap)
@@ -428,22 +444,23 @@ async def _publish_usage_crossing_events(
             subject = {"model_task_type": inference_name}
             if await is_notification_enabled(db, "QUOTA_THRESHOLD"):
                 bands = await get_threshold_bands(db, "QUOTA_THRESHOLD")
-                for band in crossed_bands(pre_pct, post_pct, bands):
+                crossed = crossed_bands(pre_pct, post_pct, bands)
+                if crossed:
+                    band = max(crossed)
                     fired = await check_and_record_threshold(db, "QUOTA_THRESHOLD", str(ctx.tenant_id), subject, band)
-                    if not fired:
-                        continue
-                    alert_at = datetime.now(timezone.utc)
-                    publish_notification_event(
-                        event_name="QUOTA_THRESHOLD",
-                        tenant_id=str(ctx.tenant_id),
-                        subject=subject,
-                        details=[
-                            str(band),
-                            _alert_datetime_ist(alert_at),
-                            f"{_display_pct(post_pct):.0f}% ({inference_name.upper()})",
-                        ],
-                        occurred_at=alert_at.isoformat(),
-                    )
+                    if fired:
+                        alert_at = datetime.now(timezone.utc)
+                        publish_notification_event(
+                            event_name="QUOTA_THRESHOLD",
+                            tenant_id=str(ctx.tenant_id),
+                            subject=subject,
+                            details=[
+                                str(band),
+                                _alert_datetime_ist(alert_at),
+                                f"{_display_pct(post_pct):.0f}% ({inference_name.upper()})",
+                            ],
+                            occurred_at=alert_at.isoformat(),
+                        )
             if crossed_exhaustion(pre_pct, post_pct) and await is_notification_enabled(db, "QUOTA_EXHAUSTED"):
                 # billing_month in the exhaustion subject: quota resets at
                 # the start of each month (design doc §6.4's epoch
@@ -589,10 +606,10 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
 
     # Both are in-memory cache reads (notification_settings_cache) — cheap
     # to check before deciding whether the BUDGET side needs the second,
-    # named "auth" connection at all (fetch_tenant_budget_status reads
-    # tenants.allocated_budget and this tenant's api_key ids from
-    # ai4iplatform_auth; the connection is otherwise unused for the billing
-    # write above, and neither event ever fires without one of these set).
+    # named "auth" connection at all (fetch_tenant_budget_snap reads
+    # tenants.allocated_budget from ai4iplatform_auth; the connection is
+    # otherwise unused for the billing write above, and neither event ever
+    # fires without one of these set).
     budget_threshold_enabled = await is_notification_enabled(db, "BUDGET_THRESHOLD")
     budget_exhausted_enabled = await is_notification_enabled(db, "BUDGET_EXHAUSTED")
     if budget_threshold_enabled or budget_exhausted_enabled:

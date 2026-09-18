@@ -25,6 +25,15 @@ class Constants:
     # unenforced for that task type until the memo expires.
     INFERENCE_TYPE_NEGATIVE_MEMO_TTL = 300
     PRICING_CACHE_TTL = 3600
+    # Tenant-pooled BUDGET_THRESHOLD/BUDGET_EXHAUSTED running total (see
+    # handler.py's _publish_usage_crossing_events). Redis INCRBYFLOAT is
+    # atomic per-key regardless of how many replicas call it concurrently —
+    # that's the property this exists for, not caching. No TTL: this must
+    # persist as long as the tenant's real spend does, not expire like the
+    # pricing/billed-dedup caches below. Notification-only best-effort — the
+    # usage dashboard's own tenant totals are untouched, still derived from
+    # budget_usage; the two are not reconciled against each other (yet).
+    TENANT_BUDGET_USED_PREFIX = "ppu:tenant_budget_used:"
     BILLED_KEY_PREFIX = "ppu:billed:"
     # Only needs to outlive the redelivery window after a consumer crash/
     # restart (one message, redelivered within seconds of the consumer group
@@ -60,12 +69,13 @@ class Settings(BaseSettings):
         default="ai4iplatform_auth",
         description="Database name for the second, named connection this consumer "
         "opens (main.py, bootstrap.lifecycle.add_database) so _billing.py's "
-        "fetch_tenant_budget_status can read tenants.allocated_budget and enumerate "
-        "the api_key ids under a tenant — both live in auth-service's own database, "
-        "not this consumer's default (platform-core's ai4iplatform_core). Same "
-        "Postgres instance/credentials as the default connection — only the "
-        "database name differs. Mirrors notifications_consumer/config.py's own "
-        "AUTH_SERVICE_DB field exactly.",
+        "fetch_tenant_budget_snap can read tenants.allocated_budget — the tenant's "
+        "ceiling, which lives in auth-service's own database, not this consumer's "
+        "default (platform-core's ai4iplatform_core). The running-spend side of "
+        "the same check is a Redis counter (TENANT_BUDGET_USED_PREFIX above), not "
+        "a second query here. Same Postgres instance/credentials as the default "
+        "connection — only the database name differs. Mirrors "
+        "notifications_consumer/config.py's own AUTH_SERVICE_DB field exactly.",
     )
 
     class Config:
