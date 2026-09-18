@@ -30,34 +30,14 @@ from app.models.api_key import APIKey
 from app.repositories.api_key_repository import APIKeyRepository
 from app.services.api_key_service import APIKeyService
 
-# The catalogue is a network resource now, so these tests declare the types
-# they expect rather than importing a bundled list. _stub_catalogue below feeds
-# the same set into the service under test, so the two cannot drift.
-_INFERENCE_TYPE_NAMES = [
-    "llm", "asr", "nmt", "tts", "ner", "ocr", "transliteration",
-    "language-detection", "language-diarization", "speaker-diarization",
-    "audio-lang-detection", "pipeline",
-]
-_INFERENCE_FIELDS = [f"quota-{name}" for name in _INFERENCE_TYPE_NAMES]
+# quota-* field names used across these tests. Deliberately NOT sourced from
+# the inference-type catalogue (there is no catalogue dependency any more —
+# see clear_quota_flags_for_tenant/_discover_quota_field_names): the fields
+# to clear are discovered from each key's own cached_data.
+_INFERENCE_FIELDS = ["quota-asr", "quota-nmt"]
 
 
-@pytest.fixture(autouse=True)
-def _stub_catalogue(monkeypatch):
-    """Point api_key_service's catalogue lookup at the list above.
-
-    Without this the quota-field sweep sees an empty catalogue and — by design —
-    aborts rather than reporting a successful clear, so every assertion here
-    would fail for the wrong reason.
-    """
-    from app.services import api_key_service as svc
-
-    async def _names():
-        return list(_INFERENCE_FIELDS)
-
-    monkeypatch.setattr(svc, "_quota_field_names", _names)
-
-
-def _api_key(*, is_active: bool = True, application_id: int = 1) -> APIKey:
+def _api_key(*, is_active: bool = True, application_id: int = 1, cached_data=None) -> APIKey:
     return APIKey(
         id=1,
         application_id=application_id,
@@ -65,18 +45,23 @@ def _api_key(*, is_active: bool = True, application_id: int = 1) -> APIKey:
         api_key="a" * 32,
         permissions=[1],
         is_active=is_active,
-        cached_data={"api_key": "x"},
+        cached_data=cached_data if cached_data is not None else {"api_key": "x"},
     )
 
 
-def _service_with_one_active_key():
+def _service_with_one_active_key(*, cached_data=None):
     """A repo yielding exactly one active key for tenant_id=1, wired the way
     _for_each_active_tenant_key walks it (one keyset page, shorter than the
-    page size, so the loop stops after processing it)."""
+    page size, so the loop stops after processing it). AsyncMock's
+    return_value (not side_effect) means repeat calls all see the same page,
+    which clear_quota_flags_for_tenant/reset_all_quota_fields now rely on
+    (they walk active keys twice: once to discover quota-* fields, once to
+    clear them)."""
     repo = AsyncMock()
     cache = AsyncMock()
-    key = _api_key()
+    key = _api_key(cached_data=cached_data)
     repo.list_active_keys_for_tenant = AsyncMock(return_value=[key])
+    repo.list_active_keys = AsyncMock(return_value=[key])
     svc = APIKeyService(repo, cache)
     return svc, repo, cache, key
 
@@ -320,7 +305,9 @@ class TestSetQuotaExhaustedForTenant:
 class TestClearQuotaFlagsForTenant:
     @pytest.mark.asyncio
     async def test_clears_redis_and_cached_data(self) -> None:
-        svc, repo, cache, key = _service_with_one_active_key()
+        svc, repo, cache, key = _service_with_one_active_key(
+            cached_data={"api_key": "a" * 32, "quota-asr": "1", "quota-nmt": "1", "tier_id": "t1"}
+        )
         await svc.clear_quota_flags_for_tenant(1)
         cache.delete_api_key_cache_fields.assert_awaited_once_with(key.api_key, _INFERENCE_FIELDS)
         repo.remove_cached_data_fields_for_tenant.assert_awaited_once_with(1, _INFERENCE_FIELDS)
@@ -333,14 +320,52 @@ class TestClearQuotaFlagsForTenant:
         await svc.clear_quota_flags_for_tenant(1)
         cache.delete_api_key_cache_fields.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_no_quota_flags_set_is_a_noop(self) -> None:
+        """A tenant with no quota-exhausted flags currently set (nothing to
+        clear) must not touch Redis/cached_data or commit — distinct from
+        the old catalogue-driven behavior, where an empty field list from
+        the catalogue was ambiguous with 'unreachable' and had to abort."""
+        svc, repo, cache, _key = _service_with_one_active_key(
+            cached_data={"api_key": "a" * 32, "tier_id": "t1"}
+        )
+        await svc.clear_quota_flags_for_tenant(1)
+        cache.delete_api_key_cache_fields.assert_not_awaited()
+        repo.remove_cached_data_fields_for_tenant.assert_not_awaited()
+        repo.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_clears_a_quota_flag_for_a_type_no_longer_in_the_catalogue(self) -> None:
+        """Regression test for the reported bug: a tenant's key has
+        quota-legacy-ocr=1 set from a tier under an inference type that has
+        since been removed from (or was never in) the catalogue. The old
+        implementation asked the catalogue for the list of fields to clear
+        and could never name a type the catalogue doesn't know about, so
+        this flag stayed stuck on the existing API key forever after a tier
+        reassignment — only a brand-new key (with no such flag to begin
+        with) worked. Discovery reads the flag straight off cached_data, so
+        it has no such gap regardless of what the catalogue currently lists.
+        """
+        svc, repo, cache, key = _service_with_one_active_key(
+            cached_data={"api_key": "a" * 32, "quota-legacy-ocr": "1", "tier_id": "old-tier"}
+        )
+        await svc.clear_quota_flags_for_tenant(1)
+        cache.delete_api_key_cache_fields.assert_awaited_once_with(key.api_key, ["quota-legacy-ocr"])
+        repo.remove_cached_data_fields_for_tenant.assert_awaited_once_with(1, ["quota-legacy-ocr"])
+        repo.commit.assert_awaited_once()
+
 
 class TestResetAllQuotaFields:
     @pytest.mark.asyncio
     async def test_clears_redis_pages_then_cached_data_once(self) -> None:
         repo = AsyncMock()
         cache = AsyncMock()
-        key = _api_key()
-        repo.list_active_keys = AsyncMock(side_effect=[[key], []])
+        key = _api_key(cached_data={"api_key": "a" * 32, "quota-asr": "1", "quota-nmt": "1"})
+        # Discovery (_discover_quota_field_names) and the clearing loop each
+        # independently page through list_active_keys — one call each here,
+        # since a page shorter than page_size ends the loop right away — so
+        # the mock must serve two separate passes, not one.
+        repo.list_active_keys = AsyncMock(side_effect=[[key], [key]])
         svc = APIKeyService(repo, cache)
         await svc.reset_all_quota_fields()
         cache.delete_api_key_cache_fields_bulk.assert_awaited_once_with([key.api_key], _INFERENCE_FIELDS)
@@ -348,6 +373,17 @@ class TestResetAllQuotaFields:
         # No trailing service-level commit: remove_cached_data_fields_globally now
         # commits per batch internally (keyset-paginated).
         repo.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_quota_flags_set_is_a_noop(self) -> None:
+        repo = AsyncMock()
+        cache = AsyncMock()
+        key = _api_key(cached_data={"api_key": "a" * 32, "tier_id": "t1"})
+        repo.list_active_keys = AsyncMock(side_effect=[[key], []])
+        svc = APIKeyService(repo, cache)
+        await svc.reset_all_quota_fields()
+        cache.delete_api_key_cache_fields_bulk.assert_not_awaited()
+        repo.remove_cached_data_fields_globally.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_missing_repo_skips(self) -> None:

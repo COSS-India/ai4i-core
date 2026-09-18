@@ -31,8 +31,6 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai4i_core.ppu import get_catalogue
-
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.exceptions import (
@@ -75,33 +73,15 @@ _open_db_session = asynccontextmanager(get_db)
 # already has the tenant loaded) — see _build_cache_payload's callers, which
 # pass it in fresh each time instead of preserving a possibly-stale copy.
 # quota-<name> is a prefix, not a fixed set — kept as a startswith check
-# rather than enumerated via _quota_field_names, since the latter can miss a
-# type deleted from the catalogue (see that function's own KNOWN GAP) and a
-# preserve-list must never drop a field just because the catalogue moved on.
+# rather than an enumerated list, since the inference-type catalogue only
+# lists types that exist NOW and would miss a type since removed from it
+# (see _discover_quota_field_names) — a preserve-list must never drop a
+# field just because the catalogue moved on.
 _PRESERVED_BILLING_FIELD_NAMES = frozenset({"budget-exhausted"})
 
 
 def _is_preserved_billing_field(field: str) -> bool:
     return field in _PRESERVED_BILLING_FIELD_NAMES or field.startswith("quota-")
-
-
-async def _quota_field_names() -> list[str]:
-    """``quota-<name>`` fields to clear, one per catalogue entry.
-
-    Returns [] when the catalogue is unreachable, and every caller must treat
-    that as "do nothing and retry later" rather than "nothing to clear" — see
-    the guards below.
-
-    KNOWN GAP: this can only sweep types the catalogue still lists. A type
-    deleted from it leaves its ``quota-<old>`` field set on every cached hash
-    forever, because the name needed to clear it is exactly the one that is
-    gone. The robust fix is a prefix sweep (HSCAN/HDEL every ``quota-*`` field,
-    and a jsonb rebuild dropping keys LIKE 'quota-%' on the Postgres side),
-    which removes the dependency on any name list at all. That is a separate
-    change — it rewrites the cached_data SQL in two repository methods — and is
-    not bundled into the YAML removal.
-    """
-    return [f"quota-{entry['name']}" for entry in await get_catalogue().get_all()]
 
 
 class APIKeyService:
@@ -575,6 +555,34 @@ class APIKeyService:
         """
         await self._patch_all_tenant_key_caches(tenant_id, "tier_id", tier_id)
 
+    async def _discover_quota_field_names(self) -> list[str]:
+        """Union of quota-* field names present in any active key's
+        cached_data, across every tenant.
+
+        Read off the data being cleared instead of the inference-type
+        catalogue: the catalogue only lists types that exist right now, so a
+        type removed from it after a flag was set under it could never be
+        named again, and clear_quota_flags_for_tenant/reset_all_quota_fields
+        would leave that flag stuck forever. cached_data is a reliable
+        source for this because every quota-* writer (set_quota_exhausted_
+        for_tenant, via _patch_all_tenant_key_caches) mirrors the flag into
+        it at the same time it's set in Redis — see
+        test_api_key_billing_cache_writethrough.py's module docstring.
+        """
+        fields: set[str] = set()
+        offset = 0
+        page_size = _TENANT_CASCADE_PAGE_SIZE
+        while True:
+            keys = await self._repo.list_active_keys(offset=offset, limit=page_size)
+            if not keys:
+                break
+            for key in keys:
+                fields.update(f for f in (key.cached_data or {}) if f.startswith("quota-"))
+            if len(keys) < page_size:
+                break
+            offset += page_size
+        return sorted(fields)
+
     async def reset_all_quota_fields(self) -> None:
         """HDEL every quota-* field from all active API key hashes across all tenants,
         and remove the same fields from cached_data. Called by the monthly cron on
@@ -591,17 +599,13 @@ class APIKeyService:
         if self._repo is None:
             logger.warning("reset_all_quota_fields skipped: missing repositories")
             return
-        inference_fields = await _quota_field_names()
+        inference_fields = await self._discover_quota_field_names()
         if not inference_fields:
-            # Both the Redis and the Postgres clear return immediately on an
-            # empty field list, so proceeding here would report a successful
-            # monthly reset while clearing nothing. Bail loudly instead and let
-            # the next run retry.
-            logger.error(
-                "reset_all_quota_fields aborted: the inference type catalogue is "
-                "unreachable, so no quota-* fields can be cleared. Quota-exhausted "
-                "flags will persist into the new cycle until this succeeds."
-            )
+            # Nothing has a quota-* flag set right now — a genuine no-op,
+            # not the "source unreachable" case the catalogue-driven version
+            # used to guard against (discovery reads the same Postgres this
+            # method already depends on, so it fails the same way the rest
+            # of this method would anyway).
             return
         offset = 0
         page_size = _TENANT_CASCADE_PAGE_SIZE
@@ -634,6 +638,14 @@ class APIKeyService:
         a fresh row under the new tier_id, so any quota-exhausted flag set
         under the previous tier is stale and must not keep 429'ing requests
         until the monthly cron runs.
+
+        The field list to clear is discovered from this tenant's own
+        cached_data (see _discover_quota_field_names for why), not the
+        inference-type catalogue — a catalogue outage or a since-removed
+        inference type used to make this a silent no-op while the tier
+        change itself still committed, leaving the tenant's existing API
+        keys permanently 429'ing under the new tier until a brand-new key
+        was issued.
         """
         if self._repo is None:
             logger.warning(
@@ -641,20 +653,20 @@ class APIKeyService:
                 tenant_id,
             )
             return
-        inference_fields = await _quota_field_names()
-        if not inference_fields:
-            logger.error(
-                "clear_quota_flags_for_tenant aborted: the inference type catalogue "
-                "is unreachable (tenant_id=%s). Stale quota-exhausted flags from the "
-                "previous tier will keep 429'ing until this is re-run.",
-                tenant_id,
-            )
+        fields: set[str] = set()
+
+        async def _collect(key: APIKey) -> None:
+            fields.update(f for f in (key.cached_data or {}) if f.startswith("quota-"))
+
+        await self._for_each_active_tenant_key(tenant_id, _collect)
+        if not fields:
             return
+        field_list = sorted(fields)
         await self._for_each_active_tenant_key(
             tenant_id,
-            lambda key: self._cache.delete_api_key_cache_fields(key.api_key, inference_fields),
+            lambda key: self._cache.delete_api_key_cache_fields(key.api_key, field_list),
         )
-        await self._repo.remove_cached_data_fields_for_tenant(tenant_id, inference_fields)
+        await self._repo.remove_cached_data_fields_for_tenant(tenant_id, field_list)
         await self._repo.commit()
 
     async def _committed_total_for_application(
