@@ -312,13 +312,37 @@ async def _publish_usage_crossing_events(
     inference_name: str, budget_threshold_enabled: bool, budget_exhausted_enabled: bool,
 ) -> None:
     """QUOTA_THRESHOLD/BUDGET_THRESHOLD/QUOTA_EXHAUSTED/BUDGET_EXHAUSTED —
-    fired post-commit, per-message. Deductions are incremental and this
-    consumer processes one message at a time per partition, so
-    pre = post - this_debit is exact without a second query. Best-effort:
-    every failure is caught inside publish(); this function itself is not
-    wrapped so a bug here surfaces in logs rather than being silently eaten,
-    but it must never be allowed to affect billing correctness (called only
-    after the commit above).
+    fired post-commit, per-message. Best-effort: every failure is caught
+    inside publish(); this function itself is not wrapped so a bug here
+    surfaces in logs rather than being silently eaten, but it must never be
+    allowed to affect billing correctness (called only after the commit
+    above).
+
+    pre = post - this_debit (for the BUDGET side; see below) is exact
+    without a second query ONLY because this consumer group runs a single
+    replica — ARCHITECTURE.md §8 pins it there. That is a platform-wide
+    deployment constraint, not a per-partition one: tenant_budget.used is a
+    fresh SUM over every API key under the tenant (see
+    fetch_tenant_budget_status), pooled across whichever Kafka partitions
+    those keys' spans landed on (spans carry no tenant-aware partition key
+    — see trace/setup.py's exporter, which sends with no `key=` at all — so
+    two keys under the same tenant can and do land on different
+    partitions). "This consumer processes one message at a time per
+    partition" is true, but it only ever made the OLD, per-key version of
+    this read exact (a single API key's own budget_usage row can only be
+    touched by whichever one partition its spans are on). It says nothing
+    about a tenant-pooled read: with more than one replica, a sibling
+    instance's commit for a *different* key under the *same* tenant can
+    land in between this instance's own commit and this SUM, inflating
+    pre_pct and silently skipping whichever threshold band falls between
+    the true and the overstated pre_pct — the ledger only remembers the
+    highest band reached, so a skipped band is never recovered by a later
+    message. See ARCHITECTURE.md §8/§11 for why this is a *second*,
+    independent prerequisite for raising replicas — the write-time guard
+    and reconciliation job §11 already lists guard against a different
+    hazard (duplicate billing from a repeated span) and do not cover this
+    one (a notification that was never published, for two distinct spans
+    each billed exactly once).
 
     ledger_notification_alert (design doc §5-7) is checked/updated with
     check_and_record_threshold/check_and_record_exhaustion before each
