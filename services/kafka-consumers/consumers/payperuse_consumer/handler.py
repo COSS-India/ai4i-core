@@ -356,24 +356,36 @@ async def _publish_usage_crossing_events(
                 budget_subject = {}
                 if budget_threshold_enabled:
                     bands = await get_threshold_bands(db, "BUDGET_THRESHOLD")
-                    for band in crossed_bands(pre_pct, post_pct, bands):
+                    # Only the HIGHEST band this debit newly crossed, not every
+                    # one of them — a jump from 59% straight to 82% (bands
+                    # 70/80/90) must send exactly one email, for 80, not two
+                    # (70 then 80). The ledger's dedup (check_and_record_
+                    # threshold) only compares "does this new value differ
+                    # from what's stored" — it has no notion of "highest" on
+                    # its own, so calling it once per crossed band (ascending)
+                    # would fire once per band in the same message. Design doc
+                    # §6 Pattern 1 and this function's own docstring already
+                    # describe "highest band reached" as the intended
+                    # behaviour; this is what actually makes that true.
+                    crossed = crossed_bands(pre_pct, post_pct, bands)
+                    if crossed:
+                        band = max(crossed)
                         fired = await check_and_record_threshold(
                             db, "BUDGET_THRESHOLD", str(ctx.tenant_id), budget_subject, band
                         )
-                        if not fired:
-                            continue
-                        alert_at = datetime.now(timezone.utc)
-                        publish_notification_event(
-                            event_name="BUDGET_THRESHOLD",
-                            tenant_id=str(ctx.tenant_id),
-                            subject=budget_subject,
-                            details=[
-                                str(band),
-                                _alert_datetime_ist(alert_at),
-                                f"{_display_pct(post_pct):.0f}%",
-                            ],
-                            occurred_at=alert_at.isoformat(),
-                        )
+                        if fired:
+                            alert_at = datetime.now(timezone.utc)
+                            publish_notification_event(
+                                event_name="BUDGET_THRESHOLD",
+                                tenant_id=str(ctx.tenant_id),
+                                subject=budget_subject,
+                                details=[
+                                    str(band),
+                                    _alert_datetime_ist(alert_at),
+                                    f"{_display_pct(post_pct):.0f}%",
+                                ],
+                                occurred_at=alert_at.isoformat(),
+                            )
                 if budget_exhausted_enabled and crossed_exhaustion(pre_pct, post_pct):
                     # budget_snap (the ceiling) in the exhaustion subject too:
                     # it moves whenever the tenant's pooled key allocations
@@ -404,22 +416,25 @@ async def _publish_usage_crossing_events(
             subject = {"model_task_type": inference_name}
             if await is_notification_enabled(db, "QUOTA_THRESHOLD"):
                 bands = await get_threshold_bands(db, "QUOTA_THRESHOLD")
-                for band in crossed_bands(pre_pct, post_pct, bands):
+                # Same "highest band only" fix as BUDGET_THRESHOLD above —
+                # see that block's comment for why.
+                crossed = crossed_bands(pre_pct, post_pct, bands)
+                if crossed:
+                    band = max(crossed)
                     fired = await check_and_record_threshold(db, "QUOTA_THRESHOLD", str(ctx.tenant_id), subject, band)
-                    if not fired:
-                        continue
-                    alert_at = datetime.now(timezone.utc)
-                    publish_notification_event(
-                        event_name="QUOTA_THRESHOLD",
-                        tenant_id=str(ctx.tenant_id),
-                        subject=subject,
-                        details=[
-                            str(band),
-                            _alert_datetime_ist(alert_at),
-                            f"{_display_pct(post_pct):.0f}% ({inference_name.upper()})",
-                        ],
-                        occurred_at=alert_at.isoformat(),
-                    )
+                    if fired:
+                        alert_at = datetime.now(timezone.utc)
+                        publish_notification_event(
+                            event_name="QUOTA_THRESHOLD",
+                            tenant_id=str(ctx.tenant_id),
+                            subject=subject,
+                            details=[
+                                str(band),
+                                _alert_datetime_ist(alert_at),
+                                f"{_display_pct(post_pct):.0f}% ({inference_name.upper()})",
+                            ],
+                            occurred_at=alert_at.isoformat(),
+                        )
             if crossed_exhaustion(pre_pct, post_pct) and await is_notification_enabled(db, "QUOTA_EXHAUSTED"):
                 # billing_month in the exhaustion subject: quota resets at
                 # the start of each month (design doc §6.4's epoch
