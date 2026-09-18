@@ -144,7 +144,7 @@ async def test_proxy_traced_injects_model_name_from_adapter_config(llm_service):
     """Payload forwarded to upstream must contain model from MMS adapter_config."""
     captured = {}
 
-    async def capture_forward(url, payload):
+    async def capture_forward(url, payload, api_key=None):
         captured["payload"] = payload
         return 200, {"choices": [], "model": "google/gemma-4-E4B-it", "usage": {}}
 
@@ -164,7 +164,7 @@ async def test_proxy_traced_replaces_client_model_with_upstream_model(llm_servic
     upstream model from adapter_config before forwarding to vLLM."""
     captured = {}
 
-    async def capture_forward(url, payload):
+    async def capture_forward(url, payload, api_key=None):
         captured["payload"] = payload
         return 200, {"choices": [], "model": "gemma", "usage": {}}
 
@@ -509,7 +509,7 @@ async def test_proxy_traced_stream_injects_upstream_model_and_include_usage(llm_
     plus stream_options so the usage chunk is emitted."""
     captured = {}
 
-    async def capture_stream(path, payload):
+    async def capture_stream(path, payload, api_key=None):
         captured["path"] = path
         captured["payload"] = payload
         return "stream", 200, _sse_lines([])
@@ -795,3 +795,221 @@ async def test_proxy_multipart_emits_model_span_task_type_on_tier_rejected(
 # test in tests/test_audio_upload_span.py (pre-existing in this repo,
 # already covers "emits a model span" + "still reaches proxy_multipart when
 # under the cap" — no need to duplicate here).
+
+
+# ── vLLM auth token (Authorization: Bearer <api_key>) ─────────────────────────
+#
+# Bug this covers: mm_services.api_key / inference_api_key was already
+# modeled, persisted, and resolved into service_info by
+# InferenceServerResolver — but OpenAIProxyService never read it, so a vLLM
+# server started with --api-key rejected every request from this proxy with
+# 401, regardless of what was configured on the service. Triton's equivalent
+# path (task_service.py::_call_triton_inference) already did this correctly;
+# these tests pin the same behavior for the LLM/vLLM proxy paths.
+
+_STUB_SERVICE_INFO_WITH_KEY = {**_STUB_SERVICE_INFO, "api_key": "sk-test-vllm-token"}
+
+
+@pytest.mark.asyncio
+async def test_forward_sends_bearer_header_when_api_key_present(llm_service):
+    """The exact bug scenario: a service with an api_key configured must have
+    it sent as `Authorization: Bearer <api_key>`, or an auth-enabled vLLM
+    server (--api-key) rejects the request with 401."""
+    captured = {}
+
+    with patch("services.llm_service.httpx.AsyncClient") as mock_client_cls:
+        mock_post = AsyncMock(return_value=MagicMock(
+            status_code=200, json=MagicMock(return_value={"choices": []}),
+        ))
+
+        async def capture_post(url, json=None, headers=None):
+            captured["headers"] = headers
+            return await mock_post(url, json=json, headers=headers)
+
+        mock_client_cls.return_value.__aenter__.return_value.post = capture_post
+        await llm_service.forward(
+            "http://vllm:8000/v1/chat/completions", {"model": "gemma"}, "sk-test-vllm-token",
+        )
+
+    assert captured["headers"]["Authorization"] == "Bearer sk-test-vllm-token"
+
+
+@pytest.mark.asyncio
+async def test_forward_omits_auth_header_when_api_key_absent(llm_service):
+    """Backward compatibility: a service configured with only an endpoint
+    (no api_key) must send the exact same request as before this feature —
+    no Authorization header at all, not an empty one."""
+    captured = {}
+
+    async def capture_post(url, json=None, headers=None):
+        captured["headers"] = headers
+        return MagicMock(status_code=200, json=MagicMock(return_value={"choices": []}))
+
+    with patch("services.llm_service.httpx.AsyncClient") as mock_client_cls:
+        mock_client_cls.return_value.__aenter__.return_value.post = capture_post
+        await llm_service.forward("http://vllm:8000/v1/chat/completions", {"model": "gemma"})
+
+    assert "Authorization" not in captured["headers"]
+
+
+@pytest.mark.asyncio
+async def test_proxy_traced_threads_api_key_from_service_info_to_forward(llm_service):
+    """End-to-end regression: proxy_traced() must pass the api_key MMS
+    resolved onto service_info all the way down to forward(), not just
+    resolve it and drop it (the actual historical bug)."""
+    captured = {}
+
+    async def capture_forward(url, payload, api_key=None):
+        captured["api_key"] = api_key
+        return 200, {"choices": [], "model": "gemma", "usage": {}}
+
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(return_value=(
+                          "http://vllm:8000/v1/chat/completions", _STUB_SERVICE_INFO_WITH_KEY,
+                      ))), \
+         patch.object(llm_service, "forward", side_effect=capture_forward):
+        await llm_service.proxy_traced(
+            "/v1/chat/completions", {"model": "svc-1", "messages": []},
+        )
+
+    assert captured["api_key"] == "sk-test-vllm-token"
+
+
+@pytest.mark.asyncio
+async def test_open_stream_sends_bearer_header_when_api_key_present(llm_service):
+    """Streaming counterpart of the forward() auth-header test."""
+    mock_response = MagicMock(status_code=200)
+    captured = {}
+
+    with patch("services.llm_service.httpx.AsyncClient") as mock_client_cls:
+        client = mock_client_cls.return_value
+
+        def capture_build_request(method, url, json=None, headers=None):
+            captured["headers"] = headers
+            return MagicMock()
+
+        client.build_request = MagicMock(side_effect=capture_build_request)
+        client.send = AsyncMock(return_value=mock_response)
+        await llm_service.open_stream(
+            "http://vllm:8000/v1/chat/completions", {}, "sk-test-vllm-token",
+        )
+
+    assert captured["headers"]["Authorization"] == "Bearer sk-test-vllm-token"
+
+
+@pytest.mark.asyncio
+async def test_open_stream_omits_auth_header_when_api_key_absent(llm_service):
+    mock_response = MagicMock(status_code=200)
+    captured = {}
+
+    with patch("services.llm_service.httpx.AsyncClient") as mock_client_cls:
+        client = mock_client_cls.return_value
+
+        def capture_build_request(method, url, json=None, headers=None):
+            captured["headers"] = headers
+            return MagicMock()
+
+        client.build_request = MagicMock(side_effect=capture_build_request)
+        client.send = AsyncMock(return_value=mock_response)
+        await llm_service.open_stream("http://vllm:8000/v1/chat/completions", {})
+
+    assert "Authorization" not in captured["headers"]
+
+
+@pytest.mark.asyncio
+async def test_proxy_traced_stream_threads_api_key_to_proxy_stream(llm_service):
+    """End-to-end regression for the streaming path — same bug as
+    test_proxy_traced_threads_api_key_from_service_info_to_forward, but via
+    proxy_traced_stream() -> proxy_stream() -> open_stream()."""
+    captured = {}
+
+    async def capture_stream(path, payload, api_key=None):
+        captured["api_key"] = api_key
+        return "stream", 200, _sse_lines([])
+
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(return_value=(
+                          "http://vllm:8000/v1/chat/completions", _STUB_SERVICE_INFO_WITH_KEY,
+                      ))), \
+         patch.object(llm_service, "proxy_stream", side_effect=capture_stream):
+        kind, _, result, _ = await llm_service.proxy_traced_stream(
+            "/v1/chat/completions", {"model": "svc-1", "stream": True},
+        )
+        await _drain(result)
+
+    assert kind == "stream"
+    assert captured["api_key"] == "sk-test-vllm-token"
+
+
+@pytest.mark.asyncio
+async def test_proxy_multipart_sends_bearer_header_when_api_key_present(llm_service):
+    """Multipart/audio passthrough must also honour a configured api_key."""
+    captured = {}
+
+    async def capture_post(url, files=None, data=None, headers=None):
+        captured["headers"] = headers
+        return MagicMock(status_code=200, json=MagicMock(return_value={"text": "hi"}))
+
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(return_value=(
+                          "http://vllm:8000/audio/transcriptions", _STUB_SERVICE_INFO_WITH_KEY,
+                      ))), \
+         patch("services.llm_service.httpx.AsyncClient") as mock_client_cls:
+        mock_client_cls.return_value.__aenter__.return_value.post = capture_post
+        await llm_service.proxy_multipart(
+            "/audio/transcriptions",
+            files={"file": ("clip.wav", b"RIFF", "audio/wav")},
+            data={"model": "svc-1"},
+        )
+
+    assert captured["headers"]["Authorization"] == "Bearer sk-test-vllm-token"
+
+
+@pytest.mark.asyncio
+async def test_proxy_multipart_omits_auth_header_when_api_key_absent(llm_service):
+    captured = {}
+
+    async def capture_post(url, files=None, data=None, headers=None):
+        captured["headers"] = headers
+        return MagicMock(status_code=200, json=MagicMock(return_value={"text": "hi"}))
+
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(return_value=(
+                          "http://vllm:8000/audio/transcriptions", _STUB_SERVICE_INFO,
+                      ))), \
+         patch("services.llm_service.httpx.AsyncClient") as mock_client_cls:
+        mock_client_cls.return_value.__aenter__.return_value.post = capture_post
+        await llm_service.proxy_multipart(
+            "/audio/transcriptions",
+            files={"file": ("clip.wav", b"RIFF", "audio/wav")},
+            data={"model": "svc-1"},
+        )
+
+    assert "Authorization" not in captured["headers"]
+
+
+@pytest.mark.asyncio
+async def test_api_key_never_logged_by_llm_proxy(llm_service, caplog):
+    """Security requirement: the token must never reach logs/traces. forward()
+    only ever logs `url`/`service_id` (see proxy_traced's "LLM proxy -> %s"
+    line) — assert the configured sentinel never shows up in any log record
+    produced while a real request carries it."""
+    import logging
+    sentinel = "sk-super-secret-DO-NOT-LOG-12345"
+
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(return_value=(
+                          "http://vllm:8000/v1/chat/completions",
+                          {**_STUB_SERVICE_INFO, "api_key": sentinel},
+                      ))), \
+         patch.object(llm_service, "forward",
+                      new=AsyncMock(return_value=(200, {"choices": [], "model": "gemma", "usage": {}}))), \
+         caplog.at_level(logging.DEBUG):
+        await llm_service.proxy_traced(
+            "/v1/chat/completions", {"model": "svc-1", "messages": []},
+        )
+
+    for record in caplog.records:
+        assert sentinel not in record.getMessage(), (
+            f"api_key leaked into log record: {record.getMessage()!r}"
+        )
