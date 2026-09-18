@@ -111,17 +111,39 @@ class OpenAIProxyService:
             )
         return f"{base.rstrip('/')}{path}", service_info
 
-    async def forward(self, upstream_url: str, payload: Any) -> Tuple[int, Any]:
+    @staticmethod
+    def _build_headers(
+        service_info: Dict[str, Any], *, content_type: Optional[str] = None
+    ) -> Dict[str, str]:
+        """
+        Build outbound headers for a call to this service's upstream
+        endpoint. Adds `Authorization: Bearer <token>` when configured —
+        omitted entirely otherwise, so unconfigured services see no change.
+
+        Never log the return value — it may carry the real token.
+        """
+        headers: Dict[str, str] = {}
+        if content_type:
+            headers["Content-Type"] = content_type
+        token = service_info.get("llm_auth_token")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        return headers
+
+    async def forward(
+        self, upstream_url: str, payload: Any, service_info: Dict[str, Any]
+    ) -> Tuple[int, Any]:
         """
         POST ``payload`` to ``upstream_url`` and return (status_code, body).
         Body is parsed as JSON when possible, otherwise returned as
         ``{"raw": <text>}``.
         """
+        headers = self._build_headers(service_info, content_type="application/json")
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(
                 upstream_url,
                 json=payload,
-                headers={"Content-Type": "application/json"},
+                headers=headers,
             )
 
         try:
@@ -165,7 +187,7 @@ class OpenAIProxyService:
         path: str,
         payload: Any,
         request: Optional[Any] = None,
-    ) -> Tuple[str, str, str, Any]:
+    ) -> Tuple[str, str, str, Any, Dict[str, Any]]:
         """
         Shared pre-flight for both the buffered and the streaming proxy:
 
@@ -174,7 +196,9 @@ class OpenAIProxyService:
           3. Tier entitlement check — before any billing span is created
           4. Inject the real upstream model name into payload for vLLM
 
-        Returns ``(url, service_id, model_name, payload)``. Raises
+        Returns ``(url, service_id, model_name, payload, service_info)`` —
+        callers pass ``service_info`` into ``forward()``/``open_stream()`` so
+        a configured auth token reaches the outbound headers. Raises
         ``LLMProxyError`` when the request must not reach upstream, so the
         streaming path can never diverge from the buffered path on resolution
         or entitlement (a tier gate that only guards one of the two would let
@@ -220,7 +244,7 @@ class OpenAIProxyService:
         # bridge _bridge_llm_usage_to_request() uses for the others.
         set_llm_usage_model_id(service_info.get("model_id") or "")
 
-        return url, service_id, model_name, payload
+        return url, service_id, model_name, payload, service_info
 
     @staticmethod
     def _seed_model_attrs(
@@ -271,7 +295,7 @@ class OpenAIProxyService:
         model + ai-inference spans wrap the actual forward.
         """
         try:
-            url, service_id, model_name, payload = await self._prepare_request(
+            url, service_id, model_name, payload, service_info = await self._prepare_request(
                 path=path, payload=payload, request=request,
             )
         except LLMProxyError as exc:
@@ -301,7 +325,7 @@ class OpenAIProxyService:
 
                 logger.info("LLM proxy -> %s (service_id=%s)", url, service_id)
                 try:
-                    status_code, body = await self.forward(url, payload)
+                    status_code, body = await self.forward(url, payload, service_info)
                 except httpx.RequestError as exc:
                     logger.warning(_UPSTREAM_FAILED_LOG, path, exc)
                     # traced_span only marks the span "failure" when an
@@ -346,7 +370,9 @@ class OpenAIProxyService:
 
         return status_code, body
 
-    async def open_stream(self, upstream_url: str, payload: Any) -> Tuple[httpx.AsyncClient, httpx.Response]:
+    async def open_stream(
+        self, upstream_url: str, payload: Any, service_info: Dict[str, Any]
+    ) -> Tuple[httpx.AsyncClient, httpx.Response]:
         """
         Send ``payload`` to ``upstream_url`` with the response streamed
         rather than buffered, returning the still-open ``(client, response)``
@@ -365,9 +391,10 @@ class OpenAIProxyService:
         client = httpx.AsyncClient(
             timeout=httpx.Timeout(connect=self.timeout, read=None, write=self.timeout, pool=self.timeout)
         )
+        headers = self._build_headers(service_info, content_type="application/json")
         request = client.build_request(
             "POST", upstream_url, json=payload,
-            headers={"Content-Type": "application/json"},
+            headers=headers,
         )
         try:
             response = await client.send(request, stream=True)
@@ -424,7 +451,9 @@ class OpenAIProxyService:
         stream_options.setdefault("include_usage", True)
         return {**payload, "stream_options": stream_options}
 
-    async def proxy_stream(self, path: str, payload: Any) -> Tuple[str, int, Any]:
+    async def proxy_stream(
+        self, path: str, payload: Any, service_info: Dict[str, Any]
+    ) -> Tuple[str, int, Any]:
         """
         Streaming counterpart to ``forward()``. Opens the upstream connection
         and returns one of:
@@ -440,7 +469,7 @@ class OpenAIProxyService:
         """
         logger.info("LLM proxy (stream) -> %s", path)
         try:
-            client, response = await self.open_stream(path, payload)
+            client, response = await self.open_stream(path, payload, service_info)
         except UpstreamStreamError as exc:
             return "error", exc.status_code, exc.body
         except httpx.RequestError as exc:
@@ -486,7 +515,7 @@ class OpenAIProxyService:
         is now consistent.
         """
         try:
-            url, service_id, model_name, payload = await self._prepare_request(
+            url, service_id, model_name, payload, service_info = await self._prepare_request(
                 path=path, payload=payload, request=request,
             )
         except LLMProxyError as exc:
@@ -495,7 +524,7 @@ class OpenAIProxyService:
 
         payload = self._with_include_usage(payload)
 
-        kind, status_code, result = await self.proxy_stream(path=url, payload=payload)
+        kind, status_code, result = await self.proxy_stream(path=url, payload=payload, service_info=service_info)
         if kind == "error":
             model_ctx = {"service_id": service_id, "model_name": model_name}
             return "error", status_code, result, model_ctx
@@ -619,9 +648,13 @@ class OpenAIProxyService:
             self._seed_model_attrs(model_attrs, service_id, model)
 
         logger.info("LLM proxy (multipart) -> %s (service_id=%s)", url, service_id)
+        # No content_type override: httpx computes the multipart boundary
+        # Content-Type itself from `files`, as long as headers doesn't
+        # already set one — _build_headers only ever adds Authorization.
+        headers = self._build_headers(service_info)
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(url, files=files, data=data)
+                response = await client.post(url, files=files, data=data, headers=headers)
         except httpx.RequestError as exc:
             logger.warning(
                 _UPSTREAM_FAILED_LOG, path, exc
