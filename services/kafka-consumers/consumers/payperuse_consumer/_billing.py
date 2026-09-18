@@ -28,13 +28,13 @@ class ServicePricing:
 class TenantBudgetStatus:
     """Tenant-level budget position — SUM of every API key's own
     budget_usage.api_key_budget_used under this tenant (across every
-    Application it has), against the SUM of those same keys' own
-    api_key_budget_snap — the ceiling actually reachable via per-key
-    enforcement, not tenants.allocated_budget itself (see
-    fetch_tenant_budget_status). ``used`` is always a real Decimal (0 when
-    the tenant has no keys yet); ``snap`` mirrors
-    BillingWriteResult.api_key_budget_snap's "None = no ceiling configured,
-    don't enforce" convention."""
+    Application it has), against a ceiling built per key: its own
+    api_key_budget_snap while still active, or its frozen
+    api_key_budget_used once revoked (see fetch_tenant_budget_status for
+    why unconditional SUM(snap) or tenants.allocated_budget itself are both
+    wrong). ``used`` is always a real Decimal (0 when the tenant has no
+    keys yet); ``snap`` mirrors BillingWriteResult.api_key_budget_snap's
+    "None = no ceiling configured, don't enforce" convention."""
     used: Decimal
     snap: Optional[Decimal]
 
@@ -64,19 +64,31 @@ async def fetch_tenant_budget_status(
     against the tenant's pooled ceiling; it just can't accumulate any more
     (nothing bills against a revoked key going forward).
 
-    The ceiling compared against is the SUM of the tenant's keys' own
-    api_key_budget_snap, not tenants.allocated_budget directly.
-    Application allocations are only rejected when their percentages would
-    exceed 100% (application_service.py's ALLOCATION_TOTAL_EXCEEDED check),
-    never when they undershoot it, so a tenant can easily have less than
-    its full allocated_budget actually assigned to any key's budget_usage
-    row. Comparing against the raw allocated_budget would then make
-    BUDGET_THRESHOLD/BUDGET_EXHAUSTED unreachable — pooled usage could
-    never cross the configured bands, or 100%, even after every key the
-    tenant owns is itself fully spent and blocked by per-key enforcement.
-    SQL SUM ignores NULL snaps (uncapped keys), so it returns NULL — same
-    "no ceiling, don't enforce" convention as a NULL per-key snap — only
-    when none of the tenant's keys have one.
+    The ceiling compared against is the SUM, over the tenant's keys, of
+    each key's own api_key_budget_snap while it is still active, or its
+    frozen api_key_budget_used once revoked — not tenants.allocated_budget
+    directly, and not an unconditional SUM(snap) either. Two failure modes,
+    both real:
+
+      * Comparing against tenants.allocated_budget: Application allocations
+        are only rejected when their percentages would exceed 100%
+        (application_service.py's ALLOCATION_TOTAL_EXCEEDED check), never
+        when they undershoot it, so a tenant can easily have less than its
+        full allocated_budget actually assigned to any key's budget_usage
+        row — the bands/100% would then be permanently unreachable.
+      * Unconditionally SUM(snap) across every key ever created, including
+        revoked ones: a revoked key can never spend past whatever it had
+        already spent at revocation, so its own snap (which may be far
+        larger) is not a real, still-reachable contribution to the pool —
+        counting it anyway inflates the ceiling with every revoke +
+        recreate cycle (e.g. a key rotation), making the bands/100%
+        increasingly, and eventually permanently, unreachable as key churn
+        accumulates. Its frozen used is the true maximum it will ever
+        contribute.
+
+    SQL SUM ignores NULL (an active key with no snap — uncapped), so it
+    returns NULL — same "no ceiling, don't enforce" convention as a NULL
+    per-key snap — only when none of the tenant's keys have one.
 
     Returns None when the tenant has no allocated_budget configured at all
     (nullable — never had one set), isn't found, or tenant_id isn't a
@@ -89,7 +101,8 @@ async def fetch_tenant_budget_status(
     rows = (
         await auth_db.execute(
             text(
-                "SELECT t.allocated_budget AS allocated_budget, ak.id AS api_key_id"
+                "SELECT t.allocated_budget AS allocated_budget,"
+                "       ak.id AS api_key_id, ak.is_active AS is_active"
                 "  FROM tenants t"
                 "  LEFT JOIN applications a ON a.tenant_id = t.id"
                 "  LEFT JOIN api_key ak ON ak.application_id = a.id"
@@ -105,18 +118,21 @@ async def fetch_tenant_budget_status(
     if allocated_budget is None:
         return None
 
-    key_ids = [row.api_key_id for row in rows if row.api_key_id is not None]
-    if not key_ids:
+    active_ids = [row.api_key_id for row in rows if row.api_key_id is not None and row.is_active]
+    revoked_ids = [row.api_key_id for row in rows if row.api_key_id is not None and not row.is_active]
+    if not active_ids and not revoked_ids:
         return TenantBudgetStatus(used=Decimal("0"), snap=None)
 
     totals = (
         await core_db.execute(
             text(
-                "SELECT COALESCE(SUM(api_key_budget_used), 0) AS used_total,"
-                "       SUM(api_key_budget_snap) AS snap_total"
+                "SELECT"
+                "    COALESCE(SUM(api_key_budget_used), 0) AS used_total,"
+                "    SUM(CASE WHEN api_key_id = ANY(:active_ids) THEN api_key_budget_snap"
+                "             ELSE api_key_budget_used END) AS snap_total"
                 "  FROM budget_usage WHERE api_key_id = ANY(:key_ids)"
             ),
-            {"key_ids": key_ids},
+            {"active_ids": active_ids, "key_ids": active_ids + revoked_ids},
         )
     ).first()
     used = totals.used_total if totals is not None else Decimal("0")
