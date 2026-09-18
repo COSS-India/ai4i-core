@@ -26,6 +26,109 @@ export type {
   ServiceUpdateRequest,
 } from "../types/platform";
 
+type ServiceRecord = Service & Record<string, unknown>;
+
+const isNonEmptySecret = (value: unknown): boolean => {
+  if (value == null) return false;
+  const text = String(value).trim();
+  return text.length > 0;
+};
+
+const nestedInferenceKey = (endpoint: unknown): unknown => {
+  if (!endpoint || typeof endpoint !== "object") return undefined;
+  const ep = endpoint as Record<string, unknown>;
+  return ep.inferenceApiKey ?? ep.inference_api_key;
+};
+
+const nestedHasInferenceKey = (endpoint: unknown): boolean => {
+  const key = nestedInferenceKey(endpoint);
+  if (!key) return false;
+  if (typeof key === "string") return isNonEmptySecret(key);
+  if (typeof key === "object") {
+    const rec = key as Record<string, unknown>;
+    return isNonEmptySecret(rec.value) || isNonEmptySecret(rec.name);
+  }
+  return false;
+};
+
+/**
+ * Whether a vLLM auth token is configured. Prefers `hasAuthToken` (AI4IDS-3148)
+ * and falls back to current/legacy payload shapes so the UI works before and
+ * after the backend field lands. Never treats the raw secret as display data.
+ */
+export const resolveHasAuthToken = (
+  service: Partial<Service> | null | undefined,
+): boolean => {
+  if (!service) return false;
+  if (typeof service.hasAuthToken === "boolean") return service.hasAuthToken;
+  if (typeof service.has_auth_token === "boolean") return service.has_auth_token;
+  const rec = service as ServiceRecord;
+  if (
+    nestedHasInferenceKey(rec.inferenceEndPoint) ||
+    nestedHasInferenceKey(rec.inference_end_point)
+  ) {
+    return true;
+  }
+  return (
+    isNonEmptySecret(service.api_key) ||
+    isNonEmptySecret(service.apiKey) ||
+    isNonEmptySecret(rec.authToken) ||
+    isNonEmptySecret(rec.auth_token)
+  );
+};
+
+const redactNestedInferenceKey = (endpoint: unknown): unknown => {
+  if (!endpoint || typeof endpoint !== "object") return endpoint;
+  const ep = { ...(endpoint as Record<string, unknown>) };
+  const redact = (key: unknown): unknown => {
+    if (!key || typeof key !== "object") return key;
+    const rec = { ...(key as Record<string, unknown>) };
+    if ("value" in rec) rec.value = isNonEmptySecret(rec.value) ? "***" : rec.value;
+    return rec;
+  };
+  if ("inferenceApiKey" in ep) ep.inferenceApiKey = redact(ep.inferenceApiKey);
+  if ("inference_api_key" in ep) ep.inference_api_key = redact(ep.inference_api_key);
+  return ep;
+};
+
+/** Drop raw token fields so list/detail/form state never hold the secret. */
+export const sanitizeService = (service: Service): Service => {
+  if (!service || typeof service !== "object") return service;
+  const rec = { ...(service as ServiceRecord) };
+  const hasAuthToken = resolveHasAuthToken(rec);
+  delete rec.authToken;
+  delete rec.auth_token;
+  delete rec.api_key;
+  delete rec.apiKey;
+  if (rec.inferenceEndPoint) {
+    rec.inferenceEndPoint = redactNestedInferenceKey(
+      rec.inferenceEndPoint,
+    ) as Service["inferenceEndPoint"];
+  }
+  if (rec.inference_end_point) {
+    rec.inference_end_point = redactNestedInferenceKey(rec.inference_end_point);
+  }
+  rec.hasAuthToken = hasAuthToken;
+  return rec as Service;
+};
+
+/** Attach the planned `authToken` field, plus today's `api_key` alias. */
+const applyAuthTokenToPayload = (
+  apiPayload: Record<string, unknown>,
+  serviceData: Partial<Service>,
+  { sendEmptyApiKey }: { sendEmptyApiKey: boolean },
+) => {
+  const token = (serviceData.authToken || "").trim();
+  if (token) {
+    apiPayload.authToken = token;
+    apiPayload.api_key = token;
+    return;
+  }
+  if (sendEmptyApiKey) {
+    apiPayload.api_key = serviceData.api_key || serviceData.apiKey || "";
+  }
+};
+
 /**
  * List all services (no pagination — returns everything, backward-compatible)
  * @returns Promise with list of services
@@ -36,7 +139,7 @@ export const listServices = async (): Promise<Service[]> => {
       suppressErrorAlert: true,
       responseSchema: servicesListSchema,
     });
-    return response.data || [];
+    return (response.data || []).map(sanitizeService);
   } catch (error: any) {
     console.error("List services error:", error);
     throw error;
@@ -116,7 +219,7 @@ export const listServicesPaginated = async (
       10,
     );
     const payload = response.data;
-    const items = Array.isArray(payload) ? payload : [];
+    const items = (Array.isArray(payload) ? payload : []).map(sanitizeService);
     // Fall back to items.length when the header is absent (API uses meta.total instead)
     const total = Number.isNaN(headerTotal) ? items.length : headerTotal;
 
@@ -147,7 +250,7 @@ export const getServiceById = async (serviceId: string): Promise<Service> => {
         responseSchema: serviceSingleSchema,
       },
     );
-    return response.data;
+    return sanitizeService(response.data);
   } catch (error: any) {
     console.error("Get service error:", error);
     // Don't transform the error - let extractErrorInfo handle it
@@ -176,8 +279,8 @@ export const createService = async (
       modelVersion:
         serviceData.modelVersion || serviceData.model_version || "1.0", // Default to '1.0' if not provided
       endpoint: serviceData.endpoint || serviceData.endpoint_url,
-      api_key: serviceData.api_key || serviceData.apiKey || "",
     };
+    applyAuthTokenToPayload(apiPayload, serviceData, { sendEmptyApiKey: true });
 
     // Add billing/pricing fields if provided
     if (serviceData.task_type) apiPayload.taskType = serviceData.task_type;
@@ -206,7 +309,7 @@ export const createService = async (
       apiPayload,
       { suppressErrorAlert: true, responseSchema: serviceSingleSchema },
     );
-    return response.data;
+    return sanitizeService(response.data);
   } catch (error: any) {
     console.error("Create service error:", error);
     // Don't transform the error - let extractErrorInfo handle it
@@ -248,8 +351,8 @@ export const updateService = async (
         modelId: serviceData.modelId || serviceData.model_id,
         modelVersion: serviceData.modelVersion || serviceData.model_version,
         endpoint: serviceData.endpoint || serviceData.endpoint_url,
-        api_key: serviceData.api_key || serviceData.apiKey,
       };
+      applyAuthTokenToPayload(apiPayload, serviceData, { sendEmptyApiKey: false });
 
       // Preserve empty string so admins can clear an existing description.
       if ("serviceDescription" in serviceData) {
@@ -285,7 +388,7 @@ export const updateService = async (
       apiPayload,
       { suppressErrorAlert: true, responseSchema: serviceSingleSchema },
     );
-    return response.data;
+    return sanitizeService(response.data);
   } catch (error: any) {
     console.error("Update service error:", error);
     // Don't transform the error - let extractErrorInfo handle it
