@@ -74,7 +74,15 @@ class InferenceServerResolver:
 
         try:
             http_client = HTTPServiceClient(timeout=settings.MODEL_MANAGEMENT_SERVICE_TIMEOUT)
-            url = f"{model_management_url.rstrip('/')}/api/v1/services/{service_id}"
+            # /internal/services/{id} (not the public /api/v1/services/{id})
+            # — this call carries no per-request identity (it's this service
+            # calling out on its own, not forwarding an end user's request),
+            # so the public route's RBAC field filter always treats it as
+            # non-admin and strips api_key/inferenceApiKey before it ever
+            # reaches _normalize_mms_response below. The /internal route
+            # returns the same shape unfiltered, matching every other
+            # network-trust-only /internal/* route in platform-core-service.
+            url = f"{model_management_url.rstrip('/')}/internal/services/{service_id}"
             raw = await http_client.get_json(url)
             service_info = self._normalize_mms_response(raw, service_id)
             # Never log the full service_info dict — it contains the resolved
