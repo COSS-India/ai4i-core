@@ -17,6 +17,7 @@ from ai4i_core.kafka import (
     publish_admin_event as publish_notification_event,
     is_notification_enabled,
     check_and_record_actions_bulk,
+    NotificationName,
 )
 from app.models.pay_per_use.tier import Tier, TierQuota
 from app.repositories.pay_per_use.usage_repository import update_tier_cache
@@ -379,7 +380,7 @@ async def _publish_quota_limit_updated(
     would otherwise be 600 commits before this PATCH can respond). All
     pairs share the identical occurred_at, since they're all the same
     admin action; publishing happens only after that one commit succeeds."""
-    if not await is_notification_enabled(session, "QUOTA_LIMIT_UPDATED"):
+    if not await is_notification_enabled(session, NotificationName.QUOTA_LIMIT_UPDATED):
         return
     try:
         tenant_ids = await _fetch_tenant_ids_for_tier(tier.id, auth_db)
@@ -392,7 +393,7 @@ async def _publish_quota_limit_updated(
             for change in quota_changes
         ]
         fired_pairs = await check_and_record_actions_bulk(
-            session, "QUOTA_LIMIT_UPDATED", tenant_subjects, occurred_at, str(updated_by or "")
+            session, NotificationName.QUOTA_LIMIT_UPDATED, tenant_subjects, occurred_at, str(updated_by or "")
         )
         fired_set = {(tenant_id, subject["model_task_type"]) for tenant_id, subject in fired_pairs}
         for tenant_id in tenant_ids:
@@ -408,7 +409,7 @@ async def _publish_quota_limit_updated(
                 # array here, matching this event's model_task_type-scoped
                 # subject.
                 publish_notification_event(
-                    event_name="QUOTA_LIMIT_UPDATED",
+                    event_name=NotificationName.QUOTA_LIMIT_UPDATED,
                     tenant_id=str(tenant_id),
                     subject={"model_task_type": change["inference_name"]},
                     details=[
