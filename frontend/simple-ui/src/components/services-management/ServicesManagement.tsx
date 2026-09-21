@@ -92,6 +92,7 @@ const ServicesManagement: React.FC = () => {
     authToken,
     setAuthToken,
     hasAuthToken,
+    savedAuthTokenMask,
     isLoadingModels,
     filteredModelsForDropdown,
     unitType,
@@ -444,6 +445,7 @@ const ServicesManagement: React.FC = () => {
                       authToken={authToken}
                       onAuthTokenChange={setAuthToken}
                       hasAuthToken={hasAuthToken}
+                      savedAuthTokenMask={savedAuthTokenMask}
                       serviceIdError={serviceIdError}
                       serviceIdLengthError={serviceIdLengthError}
                       serviceDescriptionError={serviceDescriptionError}
