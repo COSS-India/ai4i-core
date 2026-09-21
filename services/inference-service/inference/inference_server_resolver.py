@@ -117,7 +117,8 @@ class InferenceServerResolver:
         Flat shape (no envelope) is passed through as-is for legacy/fallback.
 
         Returns:
-            Normalized dict with keys: name, endpoint, api_key, adapter_config
+            Normalized dict with keys: name, endpoint, fallback_endpoint,
+            api_key, adapter_config
         """
         # Real MMS shape: {"success": true, "data": {...}}
         if "success" in raw and "data" in raw:
@@ -143,6 +144,19 @@ class InferenceServerResolver:
             else:
                 endpoint = base_endpoint
 
+            # Some in-house OCR backends aren't native Triton — they only
+            # expose an LLM-style chat-completions route rather than the
+            # standard KServe v2 path. Rather than requiring the admin to
+            # know which shape their backend actually speaks, give
+            # _call_triton_inference a second URL to retry with if the
+            # primary one 404s (same request body either way — this is a
+            # URL fallback, not a payload/protocol translation). Scoped to
+            # "ocr" only: every other task type keeps its single resolved
+            # endpoint unchanged.
+            fallback_endpoint = (
+                f"{base_endpoint}/v1/chat/completions" if task_type == "ocr" else None
+            )
+
             # adapter_config can be at data level or at model top-level
             adapter_config = (
                 data.get("adapter_config")
@@ -159,6 +173,7 @@ class InferenceServerResolver:
             return {
                 "name": data.get("serviceName") or data.get("name"),
                 "endpoint": endpoint,
+                "fallback_endpoint": fallback_endpoint,
                 "api_key": data.get("apiKey") or data.get("api_key"),
                 "adapter_config": adapter_config,
                 "class_instance": model_block.get("classInstance"),

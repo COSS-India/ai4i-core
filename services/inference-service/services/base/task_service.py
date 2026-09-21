@@ -281,6 +281,7 @@ class BaseTaskService:
 
         model_name = serviceInfo.get('name', '')
         triton_endpoint = serviceInfo.get('endpoint', '')
+        fallback_endpoint = serviceInfo.get('fallback_endpoint')
         api_key = serviceInfo.get('api_key')
         service_id = serviceInfo.get('serviceId', '')
         self._adapter_config = serviceInfo.get('adapter_config')
@@ -363,6 +364,7 @@ class BaseTaskService:
                     triton_inputs=triton_inputs,
                     triton_outputs=triton_outputs,
                     api_key=api_key,
+                    fallback_endpoint=fallback_endpoint,
                 )
                 group_response_data = await self.convert_triton_output_to_task_format(raw_triton_output)
                 response_data.extend(group_response_data)
@@ -385,6 +387,7 @@ class BaseTaskService:
         triton_inputs: List[Dict[str, Any]],
         triton_outputs: List[str],
         api_key: Optional[str] = None,
+        fallback_endpoint: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Make HTTP request to Triton inference server.
@@ -395,6 +398,11 @@ class BaseTaskService:
             triton_inputs: KServe v2 formatted input list
             triton_outputs: Expected output tensor names
             api_key: Optional API key for auth
+            fallback_endpoint: Retried with the same request body if
+                triton_endpoint 404s — set by the resolver (currently OCR
+                only) for backends that don't speak the standard KServe v2
+                URL shape. This is a URL fallback only, never a
+                payload/protocol translation.
 
         Returns:
             Raw output from Triton
@@ -421,26 +429,32 @@ class BaseTaskService:
             # Inputs carrying raw bytes (e.g. ASR AUDIO_SIGNAL float samples)
             # use the KServe binary tensor extension: raw bytes appended after
             # a JSON header, avoiding multi-MB JSON float serialization.
-            if any("_raw" in inp for inp in triton_inputs):
+            is_binary = any("_raw" in inp for inp in triton_inputs)
+            if is_binary:
                 body, binary_headers = self._build_binary_request(triton_inputs, triton_outputs)
                 headers.update(binary_headers)
-                response = await client.post(
-                    triton_endpoint,
-                    content=body,
-                    headers=headers,
-                    timeout=settings.DEFAULT_TRITON_TIMEOUT,
-                )
             else:
                 payload = {
                     "inputs": triton_inputs,
                     "outputs": [{"name": name} for name in triton_outputs],
                 }
-                response = await client.post(
-                    triton_endpoint,
-                    json=payload,
-                    headers=headers,
-                    timeout=settings.DEFAULT_TRITON_TIMEOUT,
+
+            async def _post(url: str):
+                if is_binary:
+                    return await client.post(
+                        url, content=body, headers=headers, timeout=settings.DEFAULT_TRITON_TIMEOUT
+                    )
+                return await client.post(
+                    url, json=payload, headers=headers, timeout=settings.DEFAULT_TRITON_TIMEOUT
                 )
+
+            response = await _post(triton_endpoint)
+            if response.status_code == 404 and fallback_endpoint:
+                self.logger.debug(
+                    "Primary inference route 404'd for model=%s, retrying fallback route",
+                    self.service_info.get("name", ""),
+                )
+                response = await _post(fallback_endpoint)
             if response.status_code == 404:
                 raise LookupError("Triton endpoint not found")
             response.raise_for_status()
