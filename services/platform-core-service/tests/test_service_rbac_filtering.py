@@ -237,7 +237,10 @@ class TestViewServiceRoute:
         }
 
     @pytest.mark.asyncio
-    async def test_admin_gets_full_detail(self) -> None:
+    async def test_admin_gets_full_detail_but_credentials_still_masked(self) -> None:
+        """Admin gets every field _filter_service_fields would otherwise
+        strip, but never a real credential value — only the shared-secret
+        internal route (app/routes/internal.py) does."""
         svc = MagicMock()
         svc.get_service_detail = AsyncMock(return_value=dict(_FULL_SERVICE))
 
@@ -245,7 +248,8 @@ class TestViewServiceRoute:
             request=_make_request("1"), service_id="svc-1", svc=svc
         )
 
-        assert result.data.api_key == "super-secret-key"
+        assert result.data.api_key == "***"
+        assert result.data.hardwareDescription == "8x A100"
 
 
 class TestTryItServiceListRoute:

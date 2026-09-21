@@ -50,6 +50,13 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     logger.info("Starting %s v%s", settings.service_name, settings.service_version)
 
+    # Fail fast on a missing/malformed encryption key rather than at the
+    # first request that writes/reads mm_services.llm_auth_token.
+    from app.core import service_credentials_crypto
+
+    service_credentials_crypto.configure_key(settings.service_credentials_encryption_key)
+    service_credentials_crypto.validate_key()
+
     # Shared HTTP client — connection pool reused across all Prometheus queries.
     app.state.http_client = httpx.AsyncClient()
 
