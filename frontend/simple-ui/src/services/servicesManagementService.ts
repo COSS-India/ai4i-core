@@ -34,27 +34,25 @@ const isNonEmptySecret = (value: unknown): boolean => {
   return text.length > 0;
 };
 
-const nestedInferenceKey = (endpoint: unknown): unknown => {
+/**
+ * Read `authenticationToken` off an inferenceEndPoint of unknown shape,
+ * accepting either casing. Takes `unknown` so the snake_case sibling — which
+ * reaches us untyped through ServiceRecord's index signature — can be passed
+ * without an unchecked property access.
+ */
+const nestedAuthenticationToken = (endpoint: unknown): unknown => {
   if (!endpoint || typeof endpoint !== "object") return undefined;
   const ep = endpoint as Record<string, unknown>;
-  return ep.inferenceApiKey ?? ep.inference_api_key;
-};
-
-const nestedHasInferenceKey = (endpoint: unknown): boolean => {
-  const key = nestedInferenceKey(endpoint);
-  if (!key) return false;
-  if (typeof key === "string") return isNonEmptySecret(key);
-  if (typeof key === "object") {
-    const rec = key as Record<string, unknown>;
-    return isNonEmptySecret(rec.value) || isNonEmptySecret(rec.name);
-  }
-  return false;
+  return ep.authenticationToken ?? ep.authentication_token;
 };
 
 /**
- * Whether a vLLM auth token is configured. Prefers `hasAuthToken` (AI4IDS-3148)
- * and falls back to current/legacy payload shapes so the UI works before and
- * after the backend field lands. Never treats the raw secret as display data.
+ * Whether a vLLM auth token is configured (AI4IDS-3146).
+ *
+ * `inferenceEndPoint.authenticationToken` is the only source of truth. Its
+ * presence is checked, not equality with "***" — not every route masks it.
+ * `api_key`/`inferenceApiKey` are the Triton credential, a different column
+ * on a different call path, so consulting them reports the status backwards.
  */
 export const resolveHasAuthToken = (
   service: Partial<Service> | null | undefined,
@@ -63,21 +61,13 @@ export const resolveHasAuthToken = (
   if (typeof service.hasAuthToken === "boolean") return service.hasAuthToken;
   if (typeof service.has_auth_token === "boolean") return service.has_auth_token;
   const rec = service as ServiceRecord;
-  if (
-    nestedHasInferenceKey(rec.inferenceEndPoint) ||
-    nestedHasInferenceKey(rec.inference_end_point)
-  ) {
-    return true;
-  }
   return (
-    isNonEmptySecret(service.api_key) ||
-    isNonEmptySecret(service.apiKey) ||
-    isNonEmptySecret(rec.authToken) ||
-    isNonEmptySecret(rec.auth_token)
+    isNonEmptySecret(nestedAuthenticationToken(rec.inferenceEndPoint)) ||
+    isNonEmptySecret(nestedAuthenticationToken(rec.inference_end_point))
   );
 };
 
-const redactNestedInferenceKey = (endpoint: unknown): unknown => {
+const redactNestedSecrets = (endpoint: unknown): unknown => {
   if (!endpoint || typeof endpoint !== "object") return endpoint;
   const ep = { ...(endpoint as Record<string, unknown>) };
   const redact = (key: unknown): unknown => {
@@ -88,6 +78,11 @@ const redactNestedInferenceKey = (endpoint: unknown): unknown => {
   };
   if ("inferenceApiKey" in ep) ep.inferenceApiKey = redact(ep.inferenceApiKey);
   if ("inference_api_key" in ep) ep.inference_api_key = redact(ep.inference_api_key);
+  // Already "***" on every caller-facing response; re-masked here so a raw
+  // value can't survive in local state if an unmasked path ever feeds us.
+  for (const field of ["authenticationToken", "authentication_token"]) {
+    if (isNonEmptySecret(ep[field])) ep[field] = "***";
+  }
   return ep;
 };
 
@@ -101,12 +96,12 @@ export const sanitizeService = (service: Service): Service => {
   delete rec.api_key;
   delete rec.apiKey;
   if (rec.inferenceEndPoint) {
-    rec.inferenceEndPoint = redactNestedInferenceKey(
+    rec.inferenceEndPoint = redactNestedSecrets(
       rec.inferenceEndPoint,
     ) as Service["inferenceEndPoint"];
   }
   if (rec.inference_end_point) {
-    rec.inference_end_point = redactNestedInferenceKey(rec.inference_end_point);
+    rec.inference_end_point = redactNestedSecrets(rec.inference_end_point);
   }
   rec.hasAuthToken = hasAuthToken;
   return rec as Service;
@@ -120,8 +115,10 @@ const applyAuthTokenToPayload = (
 ) => {
   const token = (serviceData.authToken || "").trim();
   if (token) {
-    apiPayload.authToken = token;
-    apiPayload.api_key = token;
+    apiPayload.inferenceEndPoint = {
+      ...(apiPayload.inferenceEndPoint as object),
+      authenticationToken: token,
+    };
     return;
   }
   if (sendEmptyApiKey) {

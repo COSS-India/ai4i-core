@@ -349,6 +349,7 @@ export interface ServiceInferenceApiKey {
 export interface ServiceInferenceEndPoint {
   callbackUrl?: string | null;
   inferenceApiKey?: ServiceInferenceApiKey | null;
+  authenticationToken?: string | null;
   infraDescription?: string | null;
 }
 
@@ -365,8 +366,9 @@ export interface ServiceResponse {
   inferenceServerType?: string;
   sslVerify?: boolean;
   /**
-   * AI4IDS-3148: GET returns whether a vLLM auth token is stored.
-   * The raw token is never returned.
+   * Set by `sanitizeService` from the masked response, and honoured first by
+   * `resolveHasAuthToken` should the backend ever return it directly. The
+   * raw token is never returned.
    */
   hasAuthToken?: boolean;
   api_key?: string | null;
@@ -447,8 +449,11 @@ export interface ServiceLegacyFields {
   /** Display names of tiers this service is available under (returned by list API). */
   tierNames?: string[] | null;
   /**
-   * UI-only submit field (AI4IDS-3148). Sent as `authToken` on create/update.
-   * Never persisted in list/detail state — GET returns `hasAuthToken` instead.
+   * UI-only submit field. Serialized as
+   * `inferenceEndPoint.authenticationToken` on create/update — never as a
+   * top-level `authToken`, which the backend silently drops, and never
+   * copied into `api_key`, which would store it in plaintext. Stripped from
+   * list/detail state by `sanitizeService`.
    */
   authToken?: string;
   /** Snake_case alias some list/detail payloads may use before `hasAuthToken`. */
@@ -465,7 +470,8 @@ export interface ServiceCreateRequest {
   modelId: string;
   modelVersion: string;
   endpoint: string;
-  /** Optional vLLM endpoint credential (AI4IDS-3148). LLM task type only. */
+  /** Optional vLLM endpoint credential, LLM task type only. Serialized as
+   * `inferenceEndPoint.authenticationToken`. */
   authToken?: string;
   api_key?: string;
   inferenceServerType?: string;
@@ -481,7 +487,9 @@ export interface ServiceUpdateRequest {
   serviceDescription?: string;
   hardwareDescription?: string;
   endpoint?: string;
-  /** Optional replacement vLLM credential (AI4IDS-3148). Omit to keep existing. */
+  /** Optional replacement vLLM credential, serialized as
+   * `inferenceEndPoint.authenticationToken`. Omit to keep the stored one;
+   * the backend clears it on an explicit empty string. */
   authToken?: string;
   api_key?: string;
   inferenceServerType?: string;
