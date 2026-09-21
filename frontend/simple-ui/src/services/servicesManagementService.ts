@@ -67,6 +67,25 @@ export const resolveHasAuthToken = (
   );
 };
 
+/**
+ * The masked token string the backend sent for this service (today: "***").
+ *
+ * Shown as-is in the edit form so the field isn't blank for a service that has
+ * a token. It is a display stand-in, never a credential: the real value stays
+ * on the backend, so it must not be submitted back — `savedAuthTokenMask` in
+ * useServicesManagement guards that.
+ */
+export const resolveMaskedAuthToken = (
+  service: Partial<Service> | null | undefined,
+): string => {
+  if (!service) return "";
+  const rec = service as ServiceRecord;
+  const raw =
+    nestedAuthenticationToken(rec.inferenceEndPoint) ??
+    nestedAuthenticationToken(rec.inference_end_point);
+  return isNonEmptySecret(raw) ? String(raw).trim() : "";
+};
+
 const redactNestedSecrets = (endpoint: unknown): unknown => {
   if (!endpoint || typeof endpoint !== "object") return endpoint;
   const ep = { ...(endpoint as Record<string, unknown>) };

@@ -14,6 +14,7 @@ import {
   updateService,
   deleteService,
   sanitizeService,
+  resolveMaskedAuthToken,
   Service,
 } from "../services/servicesManagementService";
 import { getAllModels, getModelById } from "../services/modelManagementService";
@@ -97,6 +98,13 @@ export function useServicesManagement() {
   /** Typed token kept out of Service objects so list/detail never hold the secret. */
   const [authToken, setAuthToken] = useState("");
   const [hasAuthToken, setHasAuthToken] = useState(false);
+  /**
+   * The masked token the backend sent for the service being edited ("***").
+   * It seeds `authToken` so the field shows the saved token instead of being
+   * blank, and is compared against on submit so the mask is never saved back
+   * over the real credential.
+   */
+  const [savedAuthTokenMask, setSavedAuthTokenMask] = useState("");
   /** All existing serviceIds (unfiltered) — used to flag duplicates in the create form */
   const [existingServiceIds, setExistingServiceIds] = useState<string[]>([]);
   const [pricePerUnit, setPricePerUnit] = useState<string>("");
@@ -552,6 +560,7 @@ export function useServicesManagement() {
     if (taskType.trim().toLowerCase() !== "llm") {
       setAuthToken("");
       setHasAuthToken(false);
+      setSavedAuthTokenMask("");
     }
   };
 
@@ -667,6 +676,7 @@ export function useServicesManagement() {
     setFormData(emptyServiceForm());
     setAuthToken("");
     setHasAuthToken(false);
+    setSavedAuthTokenMask("");
     setPricePerUnit("");
     setUnitSize("");
     setCurrency("INR");
@@ -706,9 +716,14 @@ export function useServicesManagement() {
           updateData.endpoint = formData.endpoint;
         }
         const trimmedToken = authToken.trim();
+        // An untouched field still holds the backend's mask ("***"); sending
+        // it would overwrite the stored token with the mask.
+        const tokenIsSavedMask =
+          !!savedAuthTokenMask && trimmedToken === savedAuthTokenMask;
         if (
           (formData.task_type || "").trim().toLowerCase() === "llm" &&
-          trimmedToken
+          trimmedToken &&
+          !tokenIsSavedMask
         ) {
           updateData.authToken = trimmedToken;
         }
@@ -1003,7 +1018,9 @@ export function useServicesManagement() {
         modelSubmissionDate: "",
         modelVersion: service.modelVersion || service.model_version || "1.0",
       });
-      setAuthToken("");
+      const maskedAuthToken = resolveMaskedAuthToken(service);
+      setAuthToken(maskedAuthToken);
+      setSavedAuthTokenMask(maskedAuthToken);
       setHasAuthToken(!!service.hasAuthToken);
       setPricePerUnit(
         service.costPerUnit != null ? String(service.costPerUnit) : "",
@@ -1311,6 +1328,7 @@ export function useServicesManagement() {
     authToken,
     setAuthToken,
     hasAuthToken,
+    savedAuthTokenMask,
     isLoadingModels,
     filteredModelsForDropdown,
     unitType,

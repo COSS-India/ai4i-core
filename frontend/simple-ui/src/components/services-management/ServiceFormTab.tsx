@@ -83,6 +83,8 @@ interface ServiceFormTabProps {
   authToken: string;
   onAuthTokenChange: (value: string) => void;
   hasAuthToken: boolean;
+  /** Backend's masked stand-in ("***") for an already-saved token, if any. */
+  savedAuthTokenMask?: string;
   serviceIdError?: string | null;
   serviceIdLengthError?: string | null;
   serviceDescriptionError?: string | null;
@@ -133,6 +135,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
   authToken,
   onAuthTokenChange,
   hasAuthToken,
+  savedAuthTokenMask = "",
   serviceIdError,
   serviceIdLengthError,
   serviceDescriptionError,
@@ -173,6 +176,31 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
 
   const [tierSearch, setTierSearch] = useState("");
   const [showAuthToken, setShowAuthToken] = useState(false);
+
+  /** The field still holds the backend's masked token, untouched by the user. */
+  const isShowingSavedAuthMask =
+    !!savedAuthTokenMask && authToken === savedAuthTokenMask;
+
+  /**
+   * The mask is atomic, not editable text: deleting any part of it clears the
+   * field, and typing around it keeps only what was typed. Either way the
+   * value can never contain "***", so the mask cannot be saved as a token.
+   */
+  const handleAuthTokenChange = (next: string) => {
+    if (!isShowingSavedAuthMask) {
+      onAuthTokenChange(next);
+      return;
+    }
+    if (next.includes(savedAuthTokenMask)) {
+      onAuthTokenChange(next.split(savedAuthTokenMask).join(""));
+      return;
+    }
+    const isPartialMask =
+      next === "" ||
+      savedAuthTokenMask.startsWith(next) ||
+      savedAuthTokenMask.endsWith(next);
+    onAuthTokenChange(isPartialMask ? "" : next);
+  };
 
   /**
    * Names for the service's own tier ids, which `availableTiers` need not
@@ -450,30 +478,40 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 <FormLabel fontWeight="semibold">Authentication Token</FormLabel>
                 <InputGroup>
                   <Input
-                    type={showAuthToken ? "text" : "password"}
+                    // The stored token arrives already masked as "***", so it
+                    // is shown as-is; only a token the user types is hidden.
+                    type={
+                      isShowingSavedAuthMask || showAuthToken
+                        ? "text"
+                        : "password"
+                    }
                     value={authToken}
-                    onChange={(e) => onAuthTokenChange(e.target.value)}
+                    onChange={(e) => handleAuthTokenChange(e.target.value)}
                     placeholder={FIELD_HINTS.service.authToken.placeholder}
                     bg="white"
                     autoComplete="new-password"
                     spellCheck={false}
-                    pr="4.5rem"
+                    pr={isShowingSavedAuthMask ? undefined : "4.5rem"}
                   />
-                  <InputRightElement width="4.5rem">
-                    <IconButton
-                      aria-label={
-                        showAuthToken
-                          ? "Hide authentication token"
-                          : "Show authentication token"
-                      }
-                      icon={showAuthToken ? <ViewIcon /> : <ViewOffIcon />}
-                      h="1.75rem"
-                      size="sm"
-                      type="button"
-                      onClick={() => setShowAuthToken((prev) => !prev)}
-                      variant="ghost"
-                    />
-                  </InputRightElement>
+                  {/* Nothing to hide while the mask is shown — the toggle
+                      appears once the user types a real token. */}
+                  {!isShowingSavedAuthMask && (
+                    <InputRightElement width="4.5rem">
+                      <IconButton
+                        aria-label={
+                          showAuthToken
+                            ? "Hide authentication token"
+                            : "Show authentication token"
+                        }
+                        icon={showAuthToken ? <ViewIcon /> : <ViewOffIcon />}
+                        h="1.75rem"
+                        size="sm"
+                        type="button"
+                        onClick={() => setShowAuthToken((prev) => !prev)}
+                        variant="ghost"
+                      />
+                    </InputRightElement>
+                  )}
                 </InputGroup>
                 <FieldHint>
                   {editingService
