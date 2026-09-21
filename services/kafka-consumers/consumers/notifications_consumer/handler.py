@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
+from ai4i_core.kafka import NotificationChannel
 from ai4i_core.logging import get_logger
 from confluent_kafka import Message
 
@@ -142,7 +143,7 @@ async def _process_channel(
         )
         return
 
-    if channel != "EMAIL":
+    if channel != NotificationChannel.EMAIL:
         # Slack/WhatsApp sending isn't built yet — design doc §8's "Templates
         # folder" note and §12's open questions.
         await ledger.mark_delivery(db, row_id=row_id, delivery="skipped")

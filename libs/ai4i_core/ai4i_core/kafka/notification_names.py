@@ -21,3 +21,23 @@ class NotificationName(str, Enum):
     BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
     QUOTA_THRESHOLD = "QUOTA_THRESHOLD"
     BUDGET_THRESHOLD = "BUDGET_THRESHOLD"
+
+
+class NotificationType(str, Enum):
+    """The family a catalog row belongs to: the 7 notification-management
+    rows are NOTIFICATION, the 2 alert-catalog rows (QUOTA_THRESHOLD,
+    BUDGET_THRESHOLD) are ALERT."""
+
+    NOTIFICATION = "NOTIFICATION"
+    ALERT = "ALERT"
+
+
+class NotificationChannel(str, Enum):
+    """Delivery channels for a configs_notification_alert row. Only EMAIL is
+    used in v1; the rest are declared now so enabling one later is a seed
+    update, not a schema change."""
+
+    EMAIL = "EMAIL"
+    SMS = "SMS"
+    SLACK = "SLACK"
+    WHATSAPP = "WHATSAPP"

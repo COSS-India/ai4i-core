@@ -9,16 +9,18 @@ alert_management.py) — request/response schemas validate against these.
 
 from enum import Enum
 
-from ai4i_core.kafka import NotificationName
+from ai4i_core.kafka import NotificationName, NotificationType, NotificationChannel
 
-
-class NotificationType(str, Enum):
-    """The family a catalog row belongs to: the 7 notification-management
-    rows are NOTIFICATION, the 2 alert-catalog rows (QUOTA_THRESHOLD,
-    BUDGET_THRESHOLD) are ALERT. What the two catalog screens filter on."""
-
-    NOTIFICATION = "NOTIFICATION"
-    ALERT = "ALERT"
+__all__ = [
+    "NotificationName",
+    "NotificationType",
+    "NotificationModule",
+    "NotificationChannel",
+    "VALID_NOTIFICATION_NAMES",
+    "VALID_NOTIFICATION_TYPES",
+    "VALID_NOTIFICATION_MODULES",
+    "VALID_NOTIFICATION_CHANNELS",
+]
 
 
 class NotificationModule(str, Enum):
@@ -27,16 +29,6 @@ class NotificationModule(str, Enum):
     TIER = "TIER"
     BUDGET = "BUDGET"
     QUOTA = "QUOTA"
-
-
-class NotificationChannel(str, Enum):
-    """All four declared now so enabling one later is a seed update, not a
-    schema change. Only EMAIL is used in v1."""
-
-    EMAIL = "EMAIL"
-    SMS = "SMS"
-    SLACK = "SLACK"
-    WHATSAPP = "WHATSAPP"
 
 
 VALID_NOTIFICATION_NAMES = {member.value for member in NotificationName}
