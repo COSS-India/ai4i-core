@@ -28,10 +28,10 @@ class ServicePricing:
 class TenantBudgetStatus:
     """Tenant-level budget position — SUM of every API key's own
     budget_usage.api_key_budget_used under this tenant (across every
-    Application it has), against the SUM of those same keys' own
-    api_key_budget_snap — the ceiling actually reachable via per-key
-    enforcement, not tenants.allocated_budget itself (see
-    fetch_tenant_budget_status). ``used`` is always a real Decimal (0 when
+    Application it has), against tenants.allocated_budget itself — the
+    SAME ceiling the usage dashboard reports (platform-core-service's
+    get_tenant_budgets, usage_repository.py: "budget_limit =
+    tenants.allocated_budget"). ``used`` is always a real Decimal (0 when
     the tenant has no keys yet); ``snap`` mirrors
     BillingWriteResult.api_key_budget_snap's "None = no ceiling configured,
     don't enforce" convention."""
@@ -53,30 +53,41 @@ async def fetch_tenant_budget_status(
 
     Mirrors platform-core-service's own get_tenant_budgets
     (usage_repository.py) and auth-service's _sync_ppu_wallet_and_exhaustion
-    (tenant_service.py) — same reconstruction, same two-database split:
-    tenants.allocated_budget and the tenant's api_key ids live in
-    ai4iplatform_auth (``auth_db`` — this consumer's second, named "auth"
-    connection, see main.py); the actual spend lives locally in this
-    consumer's own DB, in budget_usage (``core_db``), keyed by api_key_id.
+    (tenant_service.py) — same reconstruction, same two-database split,
+    and (this is the part an earlier version of this function got wrong —
+    see below) the SAME formula for the ceiling: tenants.allocated_budget
+    and the tenant's api_key ids live in ai4iplatform_auth (``auth_db`` —
+    this consumer's second, named "auth" connection, see main.py); the
+    actual spend lives locally in this consumer's own DB, in budget_usage
+    (``core_db``), keyed by api_key_id.
 
-    Revoked keys are deliberately NOT filtered out here — same reasoning as
-    _sync_ppu_wallet_and_exhaustion: a revoked key's past spend still counts
-    against the tenant's pooled ceiling; it just can't accumulate any more
-    (nothing bills against a revoked key going forward).
+    Revoked keys are deliberately NOT filtered out of the ``used`` sum —
+    same reasoning as _sync_ppu_wallet_and_exhaustion: a revoked key's
+    past spend still counts against the tenant's allocated_budget; it
+    just can't accumulate any more (nothing bills against a revoked key
+    going forward).
 
-    The ceiling compared against is the SUM of the tenant's keys' own
-    api_key_budget_snap, not tenants.allocated_budget directly.
-    Application allocations are only rejected when their percentages would
-    exceed 100% (application_service.py's ALLOCATION_TOTAL_EXCEEDED check),
-    never when they undershoot it, so a tenant can easily have less than
-    its full allocated_budget actually assigned to any key's budget_usage
-    row. Comparing against the raw allocated_budget would then make
-    BUDGET_THRESHOLD/BUDGET_EXHAUSTED unreachable — pooled usage could
-    never cross the configured bands, or 100%, even after every key the
-    tenant owns is itself fully spent and blocked by per-key enforcement.
-    SQL SUM ignores NULL snaps (uncapped keys), so it returns NULL — same
-    "no ceiling, don't enforce" convention as a NULL per-key snap — only
-    when none of the tenant's keys have one.
+    ``snap`` is tenants.allocated_budget directly — NOT the SUM of the
+    tenant's keys' own api_key_budget_snap. An earlier version of this
+    function used that SUM instead, on the theory that Application
+    allocations are only rejected when their percentages would exceed
+    100% (never when they undershoot it), so a tenant can have less than
+    its full allocated_budget actually assigned to any key, and comparing
+    against the raw allocated_budget could then make BUDGET_EXHAUSTED
+    unreachable in that case. But that made this function disagree with
+    every other place that reports "the tenant's budget" — confirmed live:
+    a tenant with allocated_budget=5000 and exactly one Key allocated 50%
+    of it (2500) produced a BUDGET_EXHAUSTED email reporting "INR 2500" as
+    the tenant's budget, while the usage dashboard correctly showed 5000 —
+    the SUM-of-snaps version was silently reporting a partial, per-key-
+    shaped number as if it were the tenant's real ceiling, and would keep
+    doing so for any tenant whose full budget isn't 100% delegated to
+    Keys yet (the common case, not an edge case). Matching the dashboard's
+    number is worth more than closing that one theoretical gap; if "every
+    Key is individually maxed out but the tenant technically has
+    unallocated headroom" needs its own signal later, that should be a
+    separate, clearly-labelled thing — not a silent redefinition of what
+    "the tenant's budget" means here.
 
     Returns None when the tenant has no allocated_budget configured at all
     (nullable — never had one set), isn't found, or tenant_id isn't a
@@ -107,21 +118,19 @@ async def fetch_tenant_budget_status(
 
     key_ids = [row.api_key_id for row in rows if row.api_key_id is not None]
     if not key_ids:
-        return TenantBudgetStatus(used=Decimal("0"), snap=None)
+        return TenantBudgetStatus(used=Decimal("0"), snap=allocated_budget)
 
-    totals = (
+    used_row = (
         await core_db.execute(
             text(
-                "SELECT COALESCE(SUM(api_key_budget_used), 0) AS used_total,"
-                "       SUM(api_key_budget_snap) AS snap_total"
+                "SELECT COALESCE(SUM(api_key_budget_used), 0) AS total"
                 "  FROM budget_usage WHERE api_key_id = ANY(:key_ids)"
             ),
             {"key_ids": key_ids},
         )
     ).first()
-    used = totals.used_total if totals is not None else Decimal("0")
-    snap = totals.snap_total if totals is not None else None
-    return TenantBudgetStatus(used=used, snap=snap)
+    used = used_row.total if used_row is not None else Decimal("0")
+    return TenantBudgetStatus(used=used, snap=allocated_budget)
 
 
 @dataclass

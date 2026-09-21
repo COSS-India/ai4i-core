@@ -31,7 +31,8 @@ class InferenceServerResolver:
     async def resolve_service(self, service_id: str) -> Dict[str, Any]:
         """
         Resolve inference service information (name, endpoint, api_key,
-        adapter_config) for the given service_id, via cache or MMS.
+        llm_auth_token, adapter_config) for the given service_id, via cache
+        or MMS.
 
         Raises:
             LookupError: If the service does not exist in MMS
@@ -74,8 +75,14 @@ class InferenceServerResolver:
 
         try:
             http_client = HTTPServiceClient(timeout=settings.MODEL_MANAGEMENT_SERVICE_TIMEOUT)
-            url = f"{model_management_url.rstrip('/')}/api/v1/services/{service_id}"
-            raw = await http_client.get_json(url)
+            # The internal, shared-secret-gated route, not the public
+            # /api/v1/services/{id} — the public route's RBAC filter treats
+            # any caller with no identity headers as non-admin and strips
+            # api_key/inference_api_key/llm_auth_token, which this call
+            # always is.
+            url = f"{model_management_url.rstrip('/')}/internal/services/{service_id}"
+            headers = {"X-Internal-Service-Token": settings.MODEL_MANAGEMENT_SERVICE_INTERNAL_TOKEN or ""}
+            raw = await http_client.get_json(url, headers=headers)
             service_info = self._normalize_mms_response(raw, service_id)
             # Never log the full service_info dict — it contains the resolved
             # Triton endpoint URL and api_key. Log only the safe identifiers
@@ -118,7 +125,7 @@ class InferenceServerResolver:
 
         Returns:
             Normalized dict with keys: name, endpoint, fallback_endpoint,
-            api_key, adapter_config
+            api_key, llm_auth_token, adapter_config
         """
         # Real MMS shape: {"success": true, "data": {...}}
         if "success" in raw and "data" in raw:
@@ -175,6 +182,8 @@ class InferenceServerResolver:
                 "endpoint": endpoint,
                 "fallback_endpoint": fallback_endpoint,
                 "api_key": data.get("apiKey") or data.get("api_key"),
+                # Never log this — see llm_service.py's _build_headers().
+                "llm_auth_token": (data.get("inferenceEndPoint") or {}).get("authenticationToken"),
                 "adapter_config": adapter_config,
                 "class_instance": model_block.get("classInstance"),
                 "is_published": bool(data.get("isPublished", False)),
