@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 
 CHANNEL = "notification_alert_updates"
 TTL_SECONDS = 3600
-CACHE_KEY = "core:notif_settings:all"
+CACHE_KEY = "core:notification_settings:all"
 
 _refresh_lock = asyncio.Lock()
 _listener_task: Optional[asyncio.Task] = None

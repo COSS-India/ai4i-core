@@ -37,7 +37,7 @@ from typing import Any, Dict
 logger = logging.getLogger(__name__)
 
 TTL_SECONDS = 3600
-KEY_PREFIX = "core:notif_ledger:"
+KEY_PREFIX = "core:notification_ledger:"
 
 _redis_client = None
 
