@@ -63,6 +63,11 @@ class Service(Base):
     # canonical {name, value} shape; `api_key` above is kept only as a
     # deprecated legacy value (no dual-write, no backfill).
     inference_api_key = Column(JSONB, nullable=True)
+    # Sent as Authorization: Bearer <value> to the model endpoint. Only
+    # meaningful for task_type == "llm" (enforced at the schema layer, not by
+    # a DB constraint). Stored encrypted (app/core/service_credentials_crypto.py
+    # — see the read/write sites in service_service.py and serializers.py).
+    llm_auth_token = Column(Text, nullable=True)
     # ULCA's `schema` (InferenceSchemaArray) — required at the API layer on
     # new creates, nullable here since existing rows have none and are never
     # backfilled. Distinct from expected_response_schema below (that's a

@@ -59,6 +59,7 @@ def _make_service_orm(
     instance.model_id = "model-1"
     instance.model_version = "1.0"
     instance.api_key = None
+    instance.llm_auth_token = None
     instance.task_type = task_type
     instance.expected_response_schema = expected_response_schema
     instance.endpoint = endpoint
