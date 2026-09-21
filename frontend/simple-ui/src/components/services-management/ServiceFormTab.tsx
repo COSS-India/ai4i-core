@@ -8,6 +8,7 @@ import {
   CardBody,
   CardHeader,
   Checkbox,
+  IconButton,
   FormControl,
   FormErrorMessage,
   FormLabel,
@@ -16,6 +17,7 @@ import {
   Input,
   InputGroup,
   InputLeftElement,
+  InputRightElement,
   Menu,
   MenuButton,
   MenuItem,
@@ -27,7 +29,7 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
-import { ChevronDownIcon, SearchIcon } from "@chakra-ui/icons";
+import { ChevronDownIcon, SearchIcon, ViewIcon, ViewOffIcon } from "@chakra-ui/icons";
 import React, { useMemo, useState } from "react";
 import { formatModelTaskTypeLabel } from "../../config/constants";
 import { FIELD_HINTS } from "../../config/fieldHints";
@@ -78,6 +80,11 @@ interface ServiceFormTabProps {
   isCreateFormModelSelected: boolean;
   canCreateService: boolean;
   isLlmTaskType: boolean;
+  authToken: string;
+  onAuthTokenChange: (value: string) => void;
+  hasAuthToken: boolean;
+  /** Backend's masked stand-in ("***") for an already-saved token, if any. */
+  savedAuthTokenMask?: string;
   serviceIdError?: string | null;
   serviceIdLengthError?: string | null;
   serviceDescriptionError?: string | null;
@@ -125,6 +132,10 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
   isCreateFormModelSelected,
   canCreateService,
   isLlmTaskType,
+  authToken,
+  onAuthTokenChange,
+  hasAuthToken,
+  savedAuthTokenMask = "",
   serviceIdError,
   serviceIdLengthError,
   serviceDescriptionError,
@@ -151,7 +162,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
   const nameError = afterBlur("name", serviceNameError);
   const descriptionError = afterBlur("serviceDescription", serviceDescriptionError);
   const infraError = afterBlur("hardwareDescription", hardwareDescriptionError);
-  
+
   const priceError = pricePerUnit.trim()
     ? (pricePerUnitError ?? null)
     : afterBlur("pricePerUnit", pricePerUnitError);
@@ -164,6 +175,32 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
       : afterBlur("serviceId", serviceIdLengthError));
 
   const [tierSearch, setTierSearch] = useState("");
+  const [showAuthToken, setShowAuthToken] = useState(false);
+
+  /** The field still holds the backend's masked token, untouched by the user. */
+  const isShowingSavedAuthMask =
+    !!savedAuthTokenMask && authToken === savedAuthTokenMask;
+
+  /**
+   * The mask is atomic, not editable text: deleting any part of it clears the
+   * field, and typing around it keeps only what was typed. Either way the
+   * value can never contain "***", so the mask cannot be saved as a token.
+   */
+  const handleAuthTokenChange = (next: string) => {
+    if (!isShowingSavedAuthMask) {
+      onAuthTokenChange(next);
+      return;
+    }
+    if (next.includes(savedAuthTokenMask)) {
+      onAuthTokenChange(next.split(savedAuthTokenMask).join(""));
+      return;
+    }
+    const isPartialMask =
+      next === "" ||
+      savedAuthTokenMask.startsWith(next) ||
+      savedAuthTokenMask.endsWith(next);
+    onAuthTokenChange(isPartialMask ? "" : next);
+  };
 
   /**
    * Names for the service's own tier ids, which `availableTiers` need not
@@ -435,6 +472,56 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   : FIELD_HINTS.service.endpoint.helper}
               </FieldHint>
             </FormControl>
+
+            {isLlmTaskType && (
+              <FormControl>
+                <FormLabel fontWeight="semibold">Authentication Token</FormLabel>
+                <InputGroup>
+                  <Input
+                    // The stored token arrives already masked as "***", so it
+                    // is shown as-is; only a token the user types is hidden.
+                    type={
+                      isShowingSavedAuthMask || showAuthToken
+                        ? "text"
+                        : "password"
+                    }
+                    value={authToken}
+                    onChange={(e) => handleAuthTokenChange(e.target.value)}
+                    placeholder={FIELD_HINTS.service.authToken.placeholder}
+                    bg="white"
+                    autoComplete="new-password"
+                    spellCheck={false}
+                    pr={isShowingSavedAuthMask ? undefined : "4.5rem"}
+                  />
+                  {/* Nothing to hide while the mask is shown — the toggle
+                      appears once the user types a real token. */}
+                  {!isShowingSavedAuthMask && (
+                    <InputRightElement width="4.5rem">
+                      <IconButton
+                        aria-label={
+                          showAuthToken
+                            ? "Hide authentication token"
+                            : "Show authentication token"
+                        }
+                        icon={showAuthToken ? <ViewIcon /> : <ViewOffIcon />}
+                        h="1.75rem"
+                        size="sm"
+                        type="button"
+                        onClick={() => setShowAuthToken((prev) => !prev)}
+                        variant="ghost"
+                      />
+                    </InputRightElement>
+                  )}
+                </InputGroup>
+                <FieldHint>
+                  {editingService
+                    ? hasAuthToken
+                      ? FIELD_HINTS.service.authToken.editHelper
+                      : FIELD_HINTS.service.authToken.editEmptyHelper
+                    : FIELD_HINTS.service.authToken.helper}
+                </FieldHint>
+              </FormControl>
+            )}
 
             {/* Hardware Description → inferenceEndPoint.infraDescription */}
             <FormControl isRequired={!editingService} isInvalid={!!infraError}>

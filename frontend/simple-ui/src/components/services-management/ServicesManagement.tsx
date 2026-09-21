@@ -89,6 +89,10 @@ const ServicesManagement: React.FC = () => {
     handleInputChange,
     handleTaskTypeChange,
     handleModelNameChange,
+    authToken,
+    setAuthToken,
+    hasAuthToken,
+    savedAuthTokenMask,
     isLoadingModels,
     filteredModelsForDropdown,
     unitType,
@@ -438,6 +442,10 @@ const ServicesManagement: React.FC = () => {
                       isCreateFormModelSelected={isCreateFormModelSelected}
                       canCreateService={canCreateService}
                       isLlmTaskType={isLlmTaskType}
+                      authToken={authToken}
+                      onAuthTokenChange={setAuthToken}
+                      hasAuthToken={hasAuthToken}
+                      savedAuthTokenMask={savedAuthTokenMask}
                       serviceIdError={serviceIdError}
                       serviceIdLengthError={serviceIdLengthError}
                       serviceDescriptionError={serviceDescriptionError}

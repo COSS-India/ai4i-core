@@ -1,28 +1,26 @@
 import {
+  Alert,
+  AlertDescription,
+  AlertIcon,
   Box,
   Button,
-  Center,
   Checkbox,
   Flex,
   Select,
-  Spinner,
-  Table,
-  Tbody,
-  Td,
   Text,
-  Th,
-  Thead,
-  Tr,
   VStack,
 } from "@chakra-ui/react";
-import React from "react";
-import { useToastWithDeduplication } from "../../utils/toast";
+import React, { useMemo } from "react";
 import { useNotificationCatalog } from "../../hooks/useNotificationCatalog";
 import {
   bandsForItem,
+  type NotificationAlertCatalogItem,
   type NotificationAlertType,
 } from "../../types/notificationAlerts";
-import CatalogToolbar, { RecipientRoleCheckboxes } from "./CatalogToolbar";
+import { useToastWithDeduplication } from "../../utils/toast";
+import { useDeferredColumnSort } from "../../utils/tableSort";
+import DataTable, { type DataTableColumn } from "../common/table";
+import { RecipientRoleCheckboxes } from "./CatalogToolbar";
 
 interface CatalogTabProps {
   type: NotificationAlertType;
@@ -43,6 +41,7 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
 }) => {
   const toast = useToastWithDeduplication();
   const {
+    items,
     filteredItems,
     search,
     setSearch,
@@ -56,7 +55,106 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
     submit,
   } = useNotificationCatalog(type);
 
-  const colSpan = showThresholds ? 4 : 3;
+  const sortAccessors = useMemo(
+    () => ({
+      name: (item: NotificationAlertCatalogItem) => item.display_name ?? "",
+    }),
+    [],
+  );
+  const catalogSort = useDeferredColumnSort("name", sortAccessors);
+  const sortedItems = useMemo(
+    () => catalogSort.apply(filteredItems),
+    [catalogSort, filteredItems],
+  );
+
+  const columns = useMemo((): DataTableColumn<NotificationAlertCatalogItem>[] => {
+    const cols: DataTableColumn<NotificationAlertCatalogItem>[] = [
+      {
+        id: "name",
+        header: nameColumnHeader,
+        sortable: true,
+        sortAccessor: (item) => item.display_name ?? "",
+        truncate: false,
+        minWidth: "240px",
+        tdProps: { verticalAlign: "top" },
+        cell: (item) => (
+          <VStack align="start" spacing={1}>
+            <Text fontWeight="semibold">{item.display_name}</Text>
+            <Text fontSize="sm" color="gray.600" noOfLines={2}>
+              {item.description}
+            </Text>
+          </VStack>
+        ),
+      },
+      {
+        id: "recipientRole",
+        header: "Recipient Role",
+        truncate: false,
+        tdProps: { verticalAlign: "top" },
+        cell: (item) => {
+          const draft = getDraft(item);
+          return (
+            <RecipientRoleCheckboxes
+              tenantChecked={draft.recipient_roles["TENANT ADMIN"]}
+              adopterChecked={draft.recipient_roles.ADMIN}
+              onTenantChange={(checked) =>
+                setRecipientRole(item.name, "TENANT ADMIN", checked)
+              }
+              onAdopterChange={(checked) =>
+                setRecipientRole(item.name, "ADMIN", checked)
+              }
+            />
+          );
+        },
+      },
+      {
+        id: "channel",
+        header: "Delivery Channel",
+        truncate: false,
+        tdProps: { verticalAlign: "top" },
+        cell: (item) => (
+          <Select
+            value={item.channels[0] ?? "EMAIL"}
+            isDisabled
+            maxW="140px"
+            size="sm"
+            bg="gray.50"
+          >
+            <option value="EMAIL">Email</option>
+          </Select>
+        ),
+      },
+    ];
+
+    if (showThresholds) {
+      cols.push({
+        id: "thresholds",
+        header: "Thresholds",
+        truncate: false,
+        tdProps: { verticalAlign: "top" },
+        cell: (item) => {
+          const draft = getDraft(item);
+          return (
+            <VStack align="start" spacing={1}>
+              {bandsForItem(draft.thresholds).map((band) => (
+                <Checkbox
+                  key={band.percentage}
+                  isChecked={band.active}
+                  onChange={(e) =>
+                    setThreshold(item.name, band.percentage, e.target.checked)
+                  }
+                >
+                  <Text fontSize="sm">{band.percentage}%</Text>
+                </Checkbox>
+              ))}
+            </VStack>
+          );
+        },
+      });
+    }
+
+    return cols;
+  }, [getDraft, nameColumnHeader, setRecipientRole, setThreshold, showThresholds]);
 
   const handleSubmit = async () => {
     const result = await submit();
@@ -89,118 +187,42 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
     });
   };
 
-  if (isLoading) {
-    return (
-      <Center py={16}>
-        <Spinner size="lg" color="blue.500" />
-      </Center>
-    );
-  }
-
   return (
     <Box>
-      <CatalogToolbar
-        search={search}
-        onSearchChange={setSearch}
-        hint={hint}
-      />
+      <Text fontSize="sm" color="gray.600" mb={4}>
+        {hint}
+      </Text>
 
       {error ? (
-        <Text color="red.500" fontSize="sm" mb={3}>
-          {error}
-        </Text>
+        <Alert status="error" borderRadius="md" mb={3}>
+          <AlertIcon />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       ) : null}
 
-      <Box
-        overflowX="auto"
-        borderWidth="1px"
-        borderColor="gray.200"
-        borderRadius="md"
-      >
-        <Table size="md" variant="simple">
-          <Thead bg="gray.50">
-            <Tr>
-              <Th>{nameColumnHeader}</Th>
-              <Th>Recipient Role</Th>
-              <Th>Delivery Channel</Th>
-              {showThresholds ? <Th>Thresholds</Th> : null}
-            </Tr>
-          </Thead>
-          <Tbody>
-            {filteredItems.length === 0 ? (
-              <Tr>
-                <Td colSpan={colSpan}>
-                  <Text color="gray.500" textAlign="center" py={8}>
-                    {emptyMessage}
-                  </Text>
-                </Td>
-              </Tr>
-            ) : (
-              filteredItems.map((item) => {
-                const draft = getDraft(item);
-                return (
-                  <Tr key={item.name}>
-                    <Td verticalAlign="top">
-                      <VStack align="start" spacing={1}>
-                        <Flex align="center" gap={2} flexWrap="wrap">
-                          <Text fontWeight="semibold">{item.display_name}</Text>
-                        </Flex>
-                        <Text fontSize="sm" color="gray.600" noOfLines={2}>
-                          {item.description}
-                        </Text>
-                      </VStack>
-                    </Td>
-                    <Td verticalAlign="top" pt={3}>
-                      <RecipientRoleCheckboxes
-                        tenantChecked={draft.recipient_roles["TENANT ADMIN"]}
-                        adopterChecked={draft.recipient_roles.ADMIN}
-                        onTenantChange={(checked) =>
-                          setRecipientRole(item.name, "TENANT ADMIN", checked)
-                        }
-                        onAdopterChange={(checked) =>
-                          setRecipientRole(item.name, "ADMIN", checked)
-                        }
-                      />
-                    </Td>
-                    <Td verticalAlign="top" pt={3}>
-                      <Select
-                        value={item.channels[0] ?? "EMAIL"}
-                        isDisabled
-                        maxW="140px"
-                        size="sm"
-                        bg="gray.50"
-                      >
-                        <option value="EMAIL">Email</option>
-                      </Select>
-                    </Td>
-                    {showThresholds ? (
-                      <Td verticalAlign="top" pt={3}>
-                        <VStack align="start" spacing={1}>
-                          {bandsForItem(draft.thresholds).map((band) => (
-                            <Checkbox
-                              key={band.percentage}
-                              isChecked={band.active}
-                              onChange={(e) =>
-                                setThreshold(
-                                  item.name,
-                                  band.percentage,
-                                  e.target.checked,
-                                )
-                              }
-                            >
-                              <Text fontSize="sm">{band.percentage}%</Text>
-                            </Checkbox>
-                          ))}
-                        </VStack>
-                      </Td>
-                    ) : null}
-                  </Tr>
-                );
-              })
-            )}
-          </Tbody>
-        </Table>
-      </Box>
+      <DataTable
+        layout="admin"
+        items={sortedItems}
+        columns={columns}
+        getRowKey={(item) => item.name}
+        sort={catalogSort.sort}
+        onSortChange={catalogSort.onSortChange}
+        paginate="client"
+        isLoading={isLoading}
+        loadingMessage={`Loading ${entityLabel}s...`}
+        emptyMessage={`No ${entityLabel}s found.`}
+        noResultsMessage={emptyMessage}
+        unfilteredCount={items.length}
+        hasActiveFilters={search.trim() !== ""}
+        onClearFilters={() => setSearch("")}
+        search={{
+          label: "Search",
+          value: search,
+          onChange: setSearch,
+          placeholder: "Search by name",
+          fields: ["display_name", "name", "description"],
+        }}
+      />
 
       <Flex justify="flex-end" mt={4}>
         <Button
