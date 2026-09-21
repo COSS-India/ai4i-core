@@ -30,6 +30,7 @@ from ai4i_core.kafka import (
     get_threshold_bands,
     check_and_record_threshold,
     check_and_record_exhaustion,
+    NotificationName,
 )
 from consumers.payperuse_consumer._thresholds import (
     crossed_bands,
@@ -355,7 +356,7 @@ async def _publish_usage_crossing_events(
                 # tenant_id to identify "this" crossing.
                 budget_subject = {}
                 if budget_threshold_enabled:
-                    bands = await get_threshold_bands(db, "BUDGET_THRESHOLD")
+                    bands = await get_threshold_bands(db, NotificationName.BUDGET_THRESHOLD)
                     # Only the HIGHEST band this debit newly crossed, not every
                     # one of them — a jump from 59% straight to 82% (bands
                     # 70/80/90) must send exactly one email, for 80, not two
@@ -371,12 +372,12 @@ async def _publish_usage_crossing_events(
                     if crossed:
                         band = max(crossed)
                         fired = await check_and_record_threshold(
-                            db, "BUDGET_THRESHOLD", str(ctx.tenant_id), budget_subject, band
+                            db, NotificationName.BUDGET_THRESHOLD, str(ctx.tenant_id), budget_subject, band
                         )
                         if fired:
                             alert_at = datetime.now(timezone.utc)
                             publish_notification_event(
-                                event_name="BUDGET_THRESHOLD",
+                                event_name=NotificationName.BUDGET_THRESHOLD,
                                 tenant_id=str(ctx.tenant_id),
                                 subject=budget_subject,
                                 details=[
@@ -399,11 +400,11 @@ async def _publish_usage_crossing_events(
                     # stored.
                     budget_exhaustion_subject = {"budget_snap": str(tenant_budget.snap)}
                     fired = await check_and_record_exhaustion(
-                        db, "BUDGET_EXHAUSTED", str(ctx.tenant_id), budget_exhaustion_subject
+                        db, NotificationName.BUDGET_EXHAUSTED, str(ctx.tenant_id), budget_exhaustion_subject
                     )
                     if fired:
                         publish_notification_event(
-                            event_name="BUDGET_EXHAUSTED",
+                            event_name=NotificationName.BUDGET_EXHAUSTED,
                             tenant_id=str(ctx.tenant_id),
                             subject=budget_exhaustion_subject,
                             details=["INR", str(tenant_budget.snap)],
@@ -414,18 +415,20 @@ async def _publish_usage_crossing_events(
         pre_pct = percent(write.quota_used - billed_units, write.quota_snap)
         if post_pct is not None and pre_pct is not None:
             subject = {"model_task_type": inference_name}
-            if await is_notification_enabled(db, "QUOTA_THRESHOLD"):
-                bands = await get_threshold_bands(db, "QUOTA_THRESHOLD")
+            if await is_notification_enabled(db, NotificationName.QUOTA_THRESHOLD):
+                bands = await get_threshold_bands(db, NotificationName.QUOTA_THRESHOLD)
                 # Same "highest band only" fix as BUDGET_THRESHOLD above —
                 # see that block's comment for why.
                 crossed = crossed_bands(pre_pct, post_pct, bands)
                 if crossed:
                     band = max(crossed)
-                    fired = await check_and_record_threshold(db, "QUOTA_THRESHOLD", str(ctx.tenant_id), subject, band)
+                    fired = await check_and_record_threshold(
+                        db, NotificationName.QUOTA_THRESHOLD, str(ctx.tenant_id), subject, band
+                    )
                     if fired:
                         alert_at = datetime.now(timezone.utc)
                         publish_notification_event(
-                            event_name="QUOTA_THRESHOLD",
+                            event_name=NotificationName.QUOTA_THRESHOLD,
                             tenant_id=str(ctx.tenant_id),
                             subject=subject,
                             details=[
@@ -435,7 +438,7 @@ async def _publish_usage_crossing_events(
                             ],
                             occurred_at=alert_at.isoformat(),
                         )
-            if crossed_exhaustion(pre_pct, post_pct) and await is_notification_enabled(db, "QUOTA_EXHAUSTED"):
+            if crossed_exhaustion(pre_pct, post_pct) and await is_notification_enabled(db, NotificationName.QUOTA_EXHAUSTED):
                 # billing_month in the exhaustion subject: quota resets at
                 # the start of each month (design doc §6.4's epoch
                 # semantics for quota rows), so October's exhaustion must
@@ -444,13 +447,13 @@ async def _publish_usage_crossing_events(
                 # never re-fire.
                 quota_exhaustion_subject = {**subject, "billing_month": ctx.billing_month}
                 fired = await check_and_record_exhaustion(
-                    db, "QUOTA_EXHAUSTED", str(ctx.tenant_id), quota_exhaustion_subject
+                    db, NotificationName.QUOTA_EXHAUSTED, str(ctx.tenant_id), quota_exhaustion_subject
                 )
                 if fired:
                     tier_name = await _fetch_tier_name(db, write.tier_id)
                     reset_date = _first_of_next_month(ctx.billing_month)
                     publish_notification_event(
-                        event_name="QUOTA_EXHAUSTED",
+                        event_name=NotificationName.QUOTA_EXHAUSTED,
                         tenant_id=str(ctx.tenant_id),
                         subject=quota_exhaustion_subject,
                         details=[
@@ -584,8 +587,8 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
     # tenants.allocated_budget and this tenant's api_key ids from
     # ai4iplatform_auth; the connection is otherwise unused for the billing
     # write above, and neither event ever fires without one of these set).
-    budget_threshold_enabled = await is_notification_enabled(db, "BUDGET_THRESHOLD")
-    budget_exhausted_enabled = await is_notification_enabled(db, "BUDGET_EXHAUSTED")
+    budget_threshold_enabled = await is_notification_enabled(db, NotificationName.BUDGET_THRESHOLD)
+    budget_exhausted_enabled = await is_notification_enabled(db, NotificationName.BUDGET_EXHAUSTED)
     if budget_threshold_enabled or budget_exhausted_enabled:
         async with session_scope(name="auth") as auth_db:
             await _publish_usage_crossing_events(

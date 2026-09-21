@@ -9,23 +9,7 @@ alert_management.py) — request/response schemas validate against these.
 
 from enum import Enum
 
-
-class NotificationName(str, Enum):
-    """The 9 names seeded across 1d3f8e77bac4_seed_notification_catalog (the
-    7 NOTIFICATION-type rows) and add_alert_types_to_notification_catalog /
-    seed_alert_catalog_types (the 2 ALERT-type rows: QUOTA_THRESHOLD,
-    BUDGET_THRESHOLD — the standard alert catalog from the "Define Alerts"
-    ticket)."""
-
-    TIER_ASSIGNED = "TIER_ASSIGNED"
-    TIER_CHANGED = "TIER_CHANGED"
-    BUDGET_ASSIGNED = "BUDGET_ASSIGNED"
-    BUDGET_UPDATED = "BUDGET_UPDATED"
-    QUOTA_LIMIT_UPDATED = "QUOTA_LIMIT_UPDATED"
-    QUOTA_EXHAUSTED = "QUOTA_EXHAUSTED"
-    BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
-    QUOTA_THRESHOLD = "QUOTA_THRESHOLD"
-    BUDGET_THRESHOLD = "BUDGET_THRESHOLD"
+from ai4i_core.kafka import NotificationName
 
 
 class NotificationType(str, Enum):
