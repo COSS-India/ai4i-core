@@ -30,6 +30,7 @@ from .ledger import (
     check_and_record_actions_bulk,
 )
 from .notification_names import NotificationName, NotificationType, NotificationChannel
+from .delivery_status import DeliveryStatus
 
 __all__ = [
     "init_kafka_producer",
@@ -53,4 +54,5 @@ __all__ = [
     "NotificationName",
     "NotificationType",
     "NotificationChannel",
+    "DeliveryStatus",
 ]
