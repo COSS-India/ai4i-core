@@ -39,9 +39,9 @@ starts changing "delivery" independently — a delivery-only change on the
 existing row must never look like "this is a new occurrence" and cause a
 duplicate publish; only a genuine value change does. A row coming back
 means "this is new, publish"; nothing coming back means "already recorded,
-skip". This runs as a real, atomic DB-level guard (not a pure in-memory
+skip". This runs as a real, atomic DB-level guard (not a pure cache-based
 decision) so two producer replicas racing the same event can never both
-"win" — the in-memory settings cache (notification_id/channels) and the
+"win" — the Redis-backed settings cache (notification_id/channels) and the
 ledger_cache fast-path below are both pre-checks only, never the source of
 truth for dedup.
 
@@ -115,10 +115,10 @@ async def _record(
     subject_json = json.dumps(subject, sort_keys=True)
     status_json = json.dumps(status)
 
-    channels_to_check = [
-        channel for channel in channels
-        if not matches_cached_status(notification_id, tenant_id, subject_json, channel, status)
-    ]
+    channels_to_check = []
+    for channel in channels:
+        if not await matches_cached_status(notification_id, tenant_id, subject_json, channel, status):
+            channels_to_check.append(channel)
     if not channels_to_check:
         # Every configured channel's cache already reflects this exact
         # status — a confirmed miss, no need to touch the DB at all.
@@ -142,7 +142,7 @@ async def _record(
                 fired = True
             # Whether the UPSERT changed the row or found it already
             # matching, the DB now holds exactly `status` for this channel.
-            set_cached_status(notification_id, tenant_id, subject_json, channel, status)
+            await set_cached_status(notification_id, tenant_id, subject_json, channel, status)
         await db.commit()
     except Exception as exc:
         logger.warning("Ledger upsert failed for %s/tenant=%s: %s", name, tenant_id, exc)

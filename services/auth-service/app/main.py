@@ -38,6 +38,7 @@ from ai4i_core.kafka import (
     refresh_notification_settings_cache,
     start_notification_settings_listener,
     stop_notification_settings_listener,
+    configure_notification_cache_redis,
 )
 from app.routes import api_router, versioning
 from app.services.role_permission_cache import role_permission_cache
@@ -83,6 +84,10 @@ async def _configure_notification_settings_cache():
         logger.warning("Notification settings cache skipped: platform-core DB not configured.")
         return
     try:
+        # auth-service runs its own local Redis client (app.core.redis), not
+        # ai4i_core.bootstrap's own singleton — hand it over explicitly so
+        # the shared cache modules actually have a client to read/write.
+        configure_notification_cache_redis(get_redis_client())
         async with session_factory() as db:
             await refresh_notification_settings_cache(db)
         start_notification_settings_listener(get_redis_client())
