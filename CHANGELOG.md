@@ -6,6 +6,36 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/).
 
 
+## [2.7.1] - 2026-09-21
+
+> Hotfix on the 2.7 line, 4 PRs merged. Tagged as `v2.7.1-hotfix`
+
+### Added
+- Optional vLLM Authentication Token on Create and Update Service, as `inferenceEndPoint.authenticationToken`, accepted only for the LLM task type. It is stored encrypted at rest (AES-256-GCM) in `mm_services.llm_auth_token`, masked in every public API response, and sent as `Authorization: Bearer <token>` on the buffered, streaming and multipart vLLM proxy calls. Services without a token behave as before (AI4IDS-3146, AI4IDS-3148)
+- Authentication Token field in the Service Management create, edit and detail views (AI4IDS-3148)
+- `GET /internal/services/{id}` on platform-core, gated by the `X-Internal-Service-Token` shared secret and excluded from the OpenAPI schema. inference-service now resolves services through it to receive credentials unmasked (AI4IDS-3146)
+
+### Changed
+- inference-service refuses to start when `MODEL_MANAGEMENT_SERVICE_INTERNAL_TOKEN` is unset, and platform-core refuses to start when `SERVICE_CREDENTIALS_ENCRYPTION_KEY` is unset or malformed. Before this, a missing token sent an empty header, platform-core returned 403, and every inference call failed as a `ConnectionError`
+- The Notifications and Alerts catalog uses the reusable sortable table component
+- Institution Admin Guide and Adopter Admin Guide updated to the current version (AI4IDS-3156)
+
+### Fixed
+- Triton services lost their `Authorization` header since 2026-07-21. inference-service resolved services through the public route with no identity headers, so the RBAC filter added in AI4IDS-1816 always stripped `api_key`. Resolving through the internal route restores it (AI4IDS-3146)
+- A saved Authentication Token displayed as empty in Edit Service for LLM services (AI4IDS-3161)
+- The Institution usage panel labelled usage by task type as all-time
+
+### Upgrade notes
+- One migration on the core database, `d2e4f6a8b0c2`, adding `mm_services.llm_auth_token` as a nullable `TEXT` column. Existing rows are untouched and nothing is backfilled
+- New required configuration. Both services fail at startup without it:
+  1. `SERVICE_CREDENTIALS_ENCRYPTION_KEY` on platform-core: base64 of 32 random bytes
+  2. `INTERNAL_SERVICE_SHARED_SECRET` on platform-core and `MODEL_MANAGEMENT_SERVICE_INTERNAL_TOKEN` on inference-service, set to the same value. A mismatch rejects every service resolution call, Triton and LLM alike, with 403
+- `SERVICE_CREDENTIALS_ENCRYPTION_KEY` must stay stable across deploys. Rotating it makes every stored token read back as empty, so those services call vLLM with no `Authorization` header until the token is re-entered
+- `cryptography>=41.0.0` added to platform-core's requirements
+- Shared library `ai4i-core` unchanged from 2.7.0
+
+---
+
 ## [2.7.0] - 2026-09-18
 
 > Notifications and alerts release, 61 PRs merged
@@ -409,7 +439,10 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-[Unreleased]: https://github.com/COSS-India/ai4i-core/compare/v2.5...HEAD
+[Unreleased]: https://github.com/COSS-India/ai4i-core/compare/v2.7.1-hotfix...HEAD
+[2.7.1]: https://github.com/COSS-India/ai4i-core/compare/v2.7...v2.7.1-hotfix
+[2.7.0]: https://github.com/COSS-India/ai4i-core/compare/v2.6...v2.7
+[2.6.0]: https://github.com/COSS-India/ai4i-core/compare/v2.5...v2.6
 [2.5.0]: https://github.com/COSS-India/ai4i-core/compare/v2.4...v2.5
 [2.4.0]: https://github.com/COSS-India/ai4i-core/compare/v2.3...v2.4
 [2.3.0]: https://github.com/COSS-India/ai4i-core/compare/v2.2...v2.3
