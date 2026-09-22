@@ -202,6 +202,24 @@ function resolveTierLabel(
   return match?.name ?? tierId;
 }
 
+/**
+ * Keyed off `tenant.tier_id` alone, the same field the Tier filter matches on,
+ * so a row cannot show a tier yet filter as "No tier assigned". The name falls
+ * back to the assignment list, which covers a tier newer than the cached catalog.
+ */
+function resolveTenantTierName(
+  tenant: TenantView,
+  tierOptions: TierOption[],
+  assignmentsByTenantId: Map<string, TenantTierAssignment>,
+): string | null {
+  const tierId = tenant.tier_id;
+  if (!tierId) return null;
+  const match = tierOptions.find((tier) => String(tier.id) === String(tierId));
+  if (match?.name?.trim()) return match.name.trim();
+  const assignment = assignmentsByTenantId.get(String(tenant.tenant_id));
+  return assignment?.tier_name?.trim() || tenant.tier_name?.trim() || null;
+}
+
 function formatRupees(amount: number | null | undefined): string {
   if (amount == null) return "—";
   return `₹${amount.toLocaleString("en-IN")}`;
@@ -297,7 +315,8 @@ export default function TenantManagementTab({
     staleTime: 5 * 60_000,
     enabled: isAdmin,
   });
-  const tierOptions = tiersQuery.data?.data ?? [];
+  // Memoized: the sort accessors and column defs below key off it.
+  const tierOptions = useMemo(() => tiersQuery.data?.data ?? [], [tiersQuery.data]);
 
   // Shared with Tier Management so service↔tier mappings stay consistent
   const servicesForTiersQuery = useQuery({
@@ -330,6 +349,14 @@ export default function TenantManagementTab({
     enabled: isAdmin,
   });
   const tenantTierAssignments = tenantTiersQuery.data?.data ?? [];
+
+  const tenantTierAssignmentsById = useMemo(() => {
+    const byId = new Map<string, TenantTierAssignment>();
+    for (const assignment of tenantTiersQuery.data?.data ?? []) {
+      byId.set(String(assignment.tenant_id), assignment);
+    }
+    return byId;
+  }, [tenantTiersQuery.data]);
 
   const [viewTierTenant, setViewTierTenant] =
     useState<TenantTierAssignment | null>(null);
@@ -712,10 +739,13 @@ export default function TenantManagementTab({
       organisation: (t: TenantView) => t.organisation ?? "",
       contact: (t: TenantView) => t.contact_name ?? "",
       email: (t: TenantView) => t.email ?? "",
+      // Sort on the rendered label, so the order matches what is on screen.
+      tier: (t: TenantView) =>
+        resolveTenantTierName(t, tierOptions, tenantTierAssignmentsById) ?? "",
       created: (t: TenantView) =>
         t.created_at ? new Date(t.created_at).getTime() : 0,
     }),
-    [],
+    [tierOptions, tenantTierAssignmentsById],
   );
   const tenantSort = useDeferredColumnSort("organisation", tenantSortAccessors);
   const sortedTenants = useMemo(
@@ -825,6 +855,54 @@ export default function TenantManagementTab({
           </Badge>
         ),
       },
+      // ADMIN-only: both tier queries are gated on `isAdmin`, so anyone else
+      // would see a column of dashes reading as "no tier assigned".
+      ...((isAdmin
+        ? [
+            {
+              id: "tier",
+              header: "Tier",
+              thProps: { w: "180px", maxW: "180px" },
+              tdProps: { maxW: "180px" },
+              sortable: true,
+              // Badge treatment mirrors the Service Registry "Tiers" column.
+              truncate: false,
+              cell: (t) => {
+                const name = resolveTenantTierName(
+                  t,
+                  tierOptions,
+                  tenantTierAssignmentsById,
+                );
+                if (!name) {
+                  return (
+                    <Text fontSize="sm" color="gray.400">
+                      —
+                    </Text>
+                  );
+                }
+                return (
+                  <Tooltip
+                    label={name}
+                    placement="top"
+                    hasArrow
+                    openDelay={300}
+                  >
+                    <Badge
+                      colorScheme="gray"
+                      fontSize="xs"
+                      px={2}
+                      py={0.5}
+                      maxW="100%"
+                      isTruncated
+                    >
+                      {name}
+                    </Badge>
+                  </Tooltip>
+                );
+              },
+            },
+          ]
+        : []) as DataTableColumn<TenantView>[]),
       {
         id: "created",
         header: "Onboarded",
@@ -841,7 +919,7 @@ export default function TenantManagementTab({
       },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tm]);
+  }, [tm, isAdmin, tierOptions, tenantTierAssignmentsById]);
 
   const userColumns = useMemo((): DataTableColumn<TenantUserView>[] => {
     return [
@@ -969,10 +1047,13 @@ export default function TenantManagementTab({
             noResultsMessage={`No ${INSTITUTIONS.toLowerCase()} match the current filters.`}
             unfilteredCount={tm.tenants.length}
             hasActiveFilters={
-              tm.tenantFilterStatus !== "all" || tm.tenantSearch.trim() !== ""
+              tm.tenantFilterStatus !== "all" ||
+              tm.tenantFilterTier !== TENANT.TIER_FILTER.ALL ||
+              tm.tenantSearch.trim() !== ""
             }
             onClearFilters={() => {
               tm.setTenantFilterStatus("all");
+              tm.setTenantFilterTier(TENANT.TIER_FILTER.ALL);
               tm.setTenantSearch("");
             }}
             search={{
@@ -998,6 +1079,32 @@ export default function TenantManagementTab({
                   })),
                 ],
               },
+              // ADMIN-only, for the same reason as the Tier column: without
+              // the catalog there are no names to populate the options with.
+              ...(isAdmin
+                ? [
+                    {
+                      id: "tier",
+                      label: "Tier",
+                      // Filtered client-side — GET /tenants takes only `status`.
+                      type: "select" as const,
+                      value: tm.tenantFilterTier,
+                      onChange: tm.setTenantFilterTier,
+                      width: { base: "full", sm: "200px" },
+                      options: [
+                        { label: "All tiers", value: TENANT.TIER_FILTER.ALL },
+                        ...tierOptions.map((tier) => ({
+                          label: tier.name,
+                          value: String(tier.id),
+                        })),
+                        {
+                          label: "No tier assigned",
+                          value: TENANT.TIER_FILTER.NONE,
+                        },
+                      ],
+                    },
+                  ]
+                : []),
             ]}
           />
         </CardBody>

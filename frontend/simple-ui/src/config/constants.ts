@@ -981,6 +981,14 @@ export const TENANT = {
     PENDING_ACTIVATION: "PENDING_ACTIVATION",
     SUSPENDED: "SUSPENDED",
   },
+  /**
+   * Tier filter sentinels for the Institutions table; every other value is a
+   * tier UUID. ALL is "all", not "", to match the Status filter beside it.
+   */
+  TIER_FILTER: {
+    ALL: "all",
+    NONE: "none",
+  },
 } as const;
 
 export type TenantStatusValue = (typeof TENANT.STATUS)[keyof typeof TENANT.STATUS];
@@ -1434,6 +1442,17 @@ export const MODEL_FIELD_LIMITS = {
   SUBMITTER_NAME_MAX: 50,
   TEAM_NAME_MIN: 5,
   TEAM_NAME_MAX: 50,
+} as const;
+
+/**
+ * Tier filter sentinels for the Service Registry; every other value is a tier
+ * UUID. ALL is "", matching the Status / Model Task Type filters beside it.
+ */
+export const SERVICE_TIER = {
+  FILTER: {
+    ALL: "",
+    NONE: "none",
+  },
 } as const;
 
 /** Service publish state (services-management). */
