@@ -20,6 +20,26 @@ logger = logging.getLogger(__name__)
 _PUBLIC_PATHS = {"/", "/health", "/api/v1/inference/health", "/docs", "/redoc", "/openapi.json"}
 
 
+def _validate_internal_service_token() -> None:
+    """Fail fast if service resolution would 403 on every request.
+
+    Every service lookup (Triton and LLM alike) goes through the
+    shared-secret-gated GET /internal/services/{id} on platform-core-service.
+    An unset token sends an empty X-Internal-Service-Token, which
+    platform-core-service's _require_internal_caller always rejects with
+    403 — turned into a ConnectionError on every inference call, not just
+    LLM ones. Mirrors platform-core-service's app/main.py encryption-key
+    check: fail at startup, not on the first request.
+    """
+    token = settings.MODEL_MANAGEMENT_SERVICE_INTERNAL_TOKEN
+    if settings.MODEL_MANAGEMENT_SERVICE_URL and not (token and token.strip()):
+        raise RuntimeError(
+            "MODEL_MANAGEMENT_SERVICE_INTERNAL_TOKEN is not set. It must match "
+            "platform-core-service's INTERNAL_SERVICE_SHARED_SECRET, or every "
+            "service resolution call will be rejected with 403."
+        )
+
+
 async def _configure_inference_type_catalogue() -> None:
     """Point ai4i_core.ppu at the catalogue and warm it.
 
@@ -68,6 +88,7 @@ async def _configure_inference_type_catalogue() -> None:
 async def _lifespan(app: FastAPI):
     """Startup/shutdown lifecycle: warm the inference-type catalogue, then
     flush tracing spans on graceful shutdown."""
+    _validate_internal_service_token()
     await _configure_inference_type_catalogue()
     logger.info("✓ Inference service started")
     yield

@@ -13,6 +13,8 @@ import {
   getServiceById,
   updateService,
   deleteService,
+  sanitizeService,
+  resolveMaskedAuthToken,
   Service,
 } from "../services/servicesManagementService";
 import { getAllModels, getModelById } from "../services/modelManagementService";
@@ -93,6 +95,16 @@ export function useServicesManagement() {
   /** Service being edited in the Create Service tab; null = create mode */
   const [editingService, setEditingService] = useState<Service | null>(null);
   const [formData, setFormData] = useState<Partial<Service>>(emptyServiceForm);
+  /** Typed token kept out of Service objects so list/detail never hold the secret. */
+  const [authToken, setAuthToken] = useState("");
+  const [hasAuthToken, setHasAuthToken] = useState(false);
+  /**
+   * The masked token the backend sent for the service being edited ("***").
+   * It seeds `authToken` so the field shows the saved token instead of being
+   * blank, and is compared against on submit so the mask is never saved back
+   * over the real credential.
+   */
+  const [savedAuthTokenMask, setSavedAuthTokenMask] = useState("");
   /** All existing serviceIds (unfiltered) — used to flag duplicates in the create form */
   const [existingServiceIds, setExistingServiceIds] = useState<string[]>([]);
   const [pricePerUnit, setPricePerUnit] = useState<string>("");
@@ -257,14 +269,15 @@ export function useServicesManagement() {
     s.serviceId || s.service_id || "";
 
   const upsertLocalService = useCallback((service: Service) => {
-    const id = serviceKey(service);
+    const clean = sanitizeService(service);
+    const id = serviceKey(clean);
     if (!id) return;
     setServices((prev) => [
-      service,
+      clean,
       ...prev.filter((s) => serviceKey(s) !== id),
     ]);
     setSelectedService((prev) =>
-      prev && serviceKey(prev) === id ? { ...prev, ...service } : prev,
+      prev && serviceKey(prev) === id ? { ...prev, ...clean } : prev,
     );
     setRegistryEpoch((e) => e + 1);
   }, []);
@@ -544,6 +557,11 @@ export function useServicesManagement() {
       name: taskType.trim().toLowerCase() === "llm" ? "" : prev.name,
       serviceId: "",
     }));
+    if (taskType.trim().toLowerCase() !== "llm") {
+      setAuthToken("");
+      setHasAuthToken(false);
+      setSavedAuthTokenMask("");
+    }
   };
 
   const toggleTier = (tier: string) => {
@@ -656,6 +674,9 @@ export function useServicesManagement() {
   const resetCreateForm = () => {
     setCreateFormEpoch((n) => n + 1);
     setFormData(emptyServiceForm());
+    setAuthToken("");
+    setHasAuthToken(false);
+    setSavedAuthTokenMask("");
     setPricePerUnit("");
     setUnitSize("");
     setCurrency("INR");
@@ -694,6 +715,18 @@ export function useServicesManagement() {
         if (formData.endpoint !== storedEndpoint) {
           updateData.endpoint = formData.endpoint;
         }
+        const trimmedToken = authToken.trim();
+        // An untouched field still holds the backend's mask ("***"); sending
+        // it would overwrite the stored token with the mask.
+        const tokenIsSavedMask =
+          !!savedAuthTokenMask && trimmedToken === savedAuthTokenMask;
+        if (
+          (formData.task_type || "").trim().toLowerCase() === "llm" &&
+          trimmedToken &&
+          !tokenIsSavedMask
+        ) {
+          updateData.authToken = trimmedToken;
+        }
         // PATCH returns only `{ serviceId }` — do not treat it as a full Service
         await updateService(updateData);
         mutatedServiceId = serviceId;
@@ -725,6 +758,7 @@ export function useServicesManagement() {
         delete serviceFormData.modelSubmissionDate;
         const tierIds = selectedTiers; // selectedTiers stores tier IDs directly
 
+        const trimmedToken = authToken.trim();
         const serviceData: Partial<Service> = {
           ...serviceFormData,
           name: serviceName,
@@ -739,6 +773,7 @@ export function useServicesManagement() {
           costPerUnit: pricePerUnit ? Number(pricePerUnit) : undefined,
           unitSize: unitSize ? Number(unitSize) : undefined,
           tierIds,
+          ...(taskIsLlm && trimmedToken ? { authToken: trimmedToken } : {}),
         };
 
         const created = await createService(serviceData);
@@ -983,6 +1018,10 @@ export function useServicesManagement() {
         modelSubmissionDate: "",
         modelVersion: service.modelVersion || service.model_version || "1.0",
       });
+      const maskedAuthToken = resolveMaskedAuthToken(service);
+      setAuthToken(maskedAuthToken);
+      setSavedAuthTokenMask(maskedAuthToken);
+      setHasAuthToken(!!service.hasAuthToken);
       setPricePerUnit(
         service.costPerUnit != null ? String(service.costPerUnit) : "",
       );
@@ -1286,6 +1325,10 @@ export function useServicesManagement() {
     handleInputChange,
     handleTaskTypeChange,
     handleModelNameChange,
+    authToken,
+    setAuthToken,
+    hasAuthToken,
+    savedAuthTokenMask,
     isLoadingModels,
     filteredModelsForDropdown,
     unitType,

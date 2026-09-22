@@ -741,7 +741,7 @@ the 8-partition per-partition-offset bug in particular. If a second consumer end
 up with a byte-identical loop, that is the signal to promote the loop into
 `bootstrap/` — not a reason to have done so preemptively.
 
-### 3.6 Tests for the shared code **`[PLANNED]`** 
+### 3.6 Tests for the shared code **`[PLANNED]`**
 
 > **There is no test suite on this branch.** `bootstrap/` (§3) ships with zero
 > committed tests. It is documented here because it is
@@ -1446,9 +1446,19 @@ whatever members are alive. What Kafka does **not** handle is two members briefl
 processing the same offsets during a rebalance (§6.4) — which on a billing path
 means charging a customer twice.
 
-> **Replicas stay at `1` until the write-time guard and the reconciliation job
-> that backstops it are live (§11). Once both ship, replicas may be raised.**
-> A hard gate, not a preference. Everything below is what makes lifting it safe.
+> **Replicas stay at `1` until ALL of the following are true (§11): the
+> write-time guard and the reconciliation job that backstops it are live,
+> AND payperuse_consumer's tenant-pooled BUDGET_THRESHOLD/BUDGET_EXHAUSTED
+> read (`_publish_usage_crossing_events`) no longer assumes a single
+> replica. The write-time guard closes duplicate billing from a repeated
+> span during a rebalance; it does NOT close the second hazard — two
+> distinct spans, for two distinct keys under one tenant, each billed
+> exactly once but interleaving across replicas, silently skipping a
+> threshold notification that never gets a second chance to fire. These
+> are two independent prerequisites that happen to share this one
+> tripwire today — shipping the first does not satisfy the second.**
+> A hard gate, not a preference. Everything below is what makes lifting
+> the rebalance/duplicate-billing half of it safe; §11 has the inventory.
 
 ### 8.1 What to expect operationally
 
@@ -1583,6 +1593,29 @@ Recorded deliberately. None are addressed by this redesign.
 - **Duplicate-billing window** between `db.commit()` and the Redis dedup `set`.
   Would be closed by a write-time guard at the sink (not yet implemented); live
   until it ships, which is what the §8 replica gate exists for.
+- **Tenant-pooled budget notifications can silently skip a threshold band
+  across replicas — a second, independent prerequisite for raising
+  replicas, not covered by the write-time guard above.** payperuse_consumer's
+  `_publish_usage_crossing_events` (BUDGET_THRESHOLD/BUDGET_EXHAUSTED)
+  reconstructs "pre" by subtracting this message's own cost from a fresh
+  SUM taken across every API key under the tenant, after this message's own
+  commit. That subtraction is exact only because there is exactly one
+  replica: with more than one, a sibling instance's commit for a
+  *different* key under the *same* tenant (spans carry no tenant-aware
+  partition key, so two keys under one tenant can land on any partition,
+  processed by any replica) can land between this instance's own commit
+  and its SUM read, inflating `pre_pct` and silently skipping whichever
+  band falls between the true and the overstated value — the ledger only
+  remembers the highest band reached, so a skipped band never re-fires
+  later. This is a *different* hazard from the one above: two distinct
+  spans, for two distinct keys, each billed exactly once — no repeated
+  span, so a write-time guard (which makes a repeated span a no-op at the
+  sink) never sees it, and the reconciliation job doesn't cover it either,
+  since it backstops billing state, not a notification that was never
+  published. The two hazards are only coupled by sharing the same §8
+  tripwire today; closing the write-time-guard/reconciliation gap does not
+  close this one. See handler.py's `_publish_usage_crossing_events`
+  docstring for the full mechanism.
 - **Loop logic is copied, not shared** (§3.5) — a deliberate line, but a real
   cost: the offset and retry discipline of §6 and §7 is normative and unenforced.
   Watch for the second consumer; a byte-identical loop is the signal to promote it

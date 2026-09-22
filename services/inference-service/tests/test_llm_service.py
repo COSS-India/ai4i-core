@@ -35,6 +35,74 @@ async def _drain(stream):
     return [chunk async for chunk in stream]
 
 
+# ── _build_headers ────────────────────────────────────────────────────────────
+
+class TestBuildHeaders:
+    def test_no_token_configured_yields_no_authorization_header(self, llm_service):
+        """Existing services with nothing configured must see the exact
+        same outbound headers as before this feature existed."""
+        headers = llm_service._build_headers({}, content_type="application/json")
+        assert headers == {"Content-Type": "application/json"}
+
+    def test_configured_token_adds_bearer_authorization(self, llm_service):
+        headers = llm_service._build_headers(
+            {"llm_auth_token": "sk-vllm-secret"}, content_type="application/json"
+        )
+        assert headers["Authorization"] == "Bearer sk-vllm-secret"
+        assert headers["Content-Type"] == "application/json"
+
+    def test_no_content_type_when_omitted(self, llm_service):
+        """proxy_multipart() must not force a Content-Type — httpx computes
+        the multipart boundary header itself from `files`."""
+        headers = llm_service._build_headers({"llm_auth_token": "sk-vllm-secret"})
+        assert "Content-Type" not in headers
+        assert headers["Authorization"] == "Bearer sk-vllm-secret"
+
+    def test_falsy_token_yields_no_authorization_header(self, llm_service):
+        headers = llm_service._build_headers({"llm_auth_token": ""})
+        assert "Authorization" not in headers
+
+
+@pytest.mark.asyncio
+async def test_forward_sends_configured_token_as_bearer_header(llm_service):
+    """End-to-end: forward() must actually attach the Authorization header
+    on the real outbound call, not just build it in isolation."""
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"choices": []}
+    mock_response.status_code = 200
+
+    with patch("services.llm_service.httpx.AsyncClient") as mock_client_cls:
+        client = mock_client_cls.return_value.__aenter__.return_value
+        client.post = AsyncMock(return_value=mock_response)
+
+        await llm_service.forward(
+            "http://vllm:8000/v1/chat/completions",
+            {"model": "gemma"},
+            {"llm_auth_token": "sk-vllm-secret"},
+        )
+
+    _, kwargs = client.post.call_args
+    assert kwargs["headers"]["Authorization"] == "Bearer sk-vllm-secret"
+
+
+@pytest.mark.asyncio
+async def test_forward_omits_authorization_when_no_token(llm_service):
+    """Existing services with nothing configured must see byte-identical
+    outbound headers to before this feature existed."""
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"choices": []}
+    mock_response.status_code = 200
+
+    with patch("services.llm_service.httpx.AsyncClient") as mock_client_cls:
+        client = mock_client_cls.return_value.__aenter__.return_value
+        client.post = AsyncMock(return_value=mock_response)
+
+        await llm_service.forward("http://vllm:8000/v1/chat/completions", {"model": "gemma"}, {})
+
+    _, kwargs = client.post.call_args
+    assert kwargs["headers"] == {"Content-Type": "application/json"}
+
+
 # ── resolve_upstream_url ──────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -144,7 +212,7 @@ async def test_proxy_traced_injects_model_name_from_adapter_config(llm_service):
     """Payload forwarded to upstream must contain model from MMS adapter_config."""
     captured = {}
 
-    async def capture_forward(url, payload):
+    async def capture_forward(url, payload, service_info=None):
         captured["payload"] = payload
         return 200, {"choices": [], "model": "google/gemma-4-E4B-it", "usage": {}}
 
@@ -164,7 +232,7 @@ async def test_proxy_traced_replaces_client_model_with_upstream_model(llm_servic
     upstream model from adapter_config before forwarding to vLLM."""
     captured = {}
 
-    async def capture_forward(url, payload):
+    async def capture_forward(url, payload, service_info=None):
         captured["payload"] = payload
         return 200, {"choices": [], "model": "gemma", "usage": {}}
 
@@ -509,7 +577,7 @@ async def test_proxy_traced_stream_injects_upstream_model_and_include_usage(llm_
     plus stream_options so the usage chunk is emitted."""
     captured = {}
 
-    async def capture_stream(path, payload):
+    async def capture_stream(path, payload, service_info=None):
         captured["path"] = path
         captured["payload"] = payload
         return "stream", 200, _sse_lines([])
@@ -663,7 +731,7 @@ async def test_open_stream_raises_upstream_stream_error_on_4xx(llm_service):
         client.aclose = AsyncMock()
 
         with pytest.raises(UpstreamStreamError) as exc_info:
-            await llm_service.open_stream("http://vllm:8000/v1/chat/completions", {})
+            await llm_service.open_stream("http://vllm:8000/v1/chat/completions", {}, {})
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.body == {"detail": "bad request"}
@@ -676,7 +744,7 @@ async def test_proxy_stream_maps_upstream_error_to_error_tuple(llm_service):
     with patch.object(llm_service, "open_stream",
                       new=AsyncMock(side_effect=UpstreamStreamError(429, {"detail": "rate limited"}))):
         kind, status, body = await llm_service.proxy_stream(
-            "http://vllm:8000/v1/chat/completions", {}
+            "http://vllm:8000/v1/chat/completions", {}, {}
         )
     assert (kind, status) == ("error", 429)
     assert body == {"detail": "rate limited"}
@@ -687,7 +755,7 @@ async def test_proxy_stream_maps_transport_error_to_502(llm_service):
     with patch.object(llm_service, "open_stream",
                       new=AsyncMock(side_effect=httpx.ConnectError("unreachable"))):
         kind, status, body = await llm_service.proxy_stream(
-            "http://vllm:8000/v1/chat/completions", {}
+            "http://vllm:8000/v1/chat/completions", {}, {}
         )
     assert (kind, status) == ("error", 502)
     assert body["error"]["type"] == "upstream_error"

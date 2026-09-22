@@ -15,7 +15,10 @@ import {
 } from "@chakra-ui/react";
 import { MdOutlineCheckCircle, MdOutlineUnpublished } from "react-icons/md";
 import React from "react";
-import type { Service } from "../../services/servicesManagementService";
+import {
+  resolveHasAuthToken,
+  type Service,
+} from "../../services/servicesManagementService";
 import { resolveTaskType } from "../../utils/platformService";
 
 interface ServiceDetailTabProps {
@@ -210,6 +213,19 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
               </Text>
             </Box>
           </SimpleGrid>
+
+          {taskType.trim().toLowerCase() === "llm" && (
+            <Box>
+              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+                Authentication Token
+              </Text>
+              <Text fontSize="md">
+                {resolveHasAuthToken(selectedService)
+                  ? "Configured"
+                  : "Not configured"}
+              </Text>
+            </Box>
+          )}
 
           <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
             <Box>
