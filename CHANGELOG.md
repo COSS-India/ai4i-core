@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/).
 
 
+## [2.7.2] - 2026-09-22
+
+> Hotfix on the 2.7 line, 1 PR merged. Tagged as `v2.7.2-hotfix`
+
+### Changed
+- inference-service logs request payloads at INFO in two places: the full `/v1/chat/completions` body as JSON in the route, and every inference payload just before `run_inference` in `BaseTaskService`, for all task types (#1642)
+
+### Upgrade notes
+- No migrations, no new configuration, and shared library `ai4i-core` unchanged from 2.7.1
+- Request content now reaches the logs, and through them OpenSearch. That includes chat prompts, text inputs, and audio and image content, which can carry personal data and inflate log volume. Check log retention and access on each environment before deploying
+
+---
+
 ## [2.7.1] - 2026-09-21
 
 > Hotfix on the 2.7 line, 4 PRs merged. Tagged as `v2.7.1-hotfix`
@@ -439,7 +452,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-[Unreleased]: https://github.com/COSS-India/ai4i-core/compare/v2.7.1-hotfix...HEAD
+[Unreleased]: https://github.com/COSS-India/ai4i-core/compare/v2.7.2-hotfix...HEAD
+[2.7.2]: https://github.com/COSS-India/ai4i-core/compare/v2.7.1-hotfix...v2.7.2-hotfix
 [2.7.1]: https://github.com/COSS-India/ai4i-core/compare/v2.7...v2.7.1-hotfix
 [2.7.0]: https://github.com/COSS-India/ai4i-core/compare/v2.6...v2.7
 [2.6.0]: https://github.com/COSS-India/ai4i-core/compare/v2.5...v2.6
