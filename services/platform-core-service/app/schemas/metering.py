@@ -77,8 +77,8 @@ class PlatformAdoption(BaseModel):
     active_24h: Optional[int] = None
     active_7d: Optional[int] = None
     active_30d: Optional[int] = None
-    # Overall LLM request volume, current calendar month (MTD) vs previous
-    # calendar month — null when the previous month had no traffic.
+    # Overall LLM request volume, rolling last 30 days vs the 30 days
+    # before that — null when the previous 30-day window had no traffic.
     model_usage_growth_pct: Optional[float] = None
 
 
