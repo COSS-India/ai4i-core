@@ -56,9 +56,9 @@ export const METERING = {
     },
     HELPERS: {
       total_requests: `Across all ${INSTITUTIONS}`,
-      successful: "of all requests",
-      failed: "of all requests",
-      avg_rps: "requests per second",
+      successful: "Of all requests",
+      failed: "Of all requests",
+      avg_rps: "Requests per second",
     },
     TOOLTIPS: {
       total_requests:
@@ -301,7 +301,7 @@ export const METERING = {
   SECTIONS: {
     CONSUMPTION_OVERVIEW: {
       TITLE: "Usage concentration",
-      SUBTITLE: `${INSTITUTIONS} by request volume · reflects selected time window`,
+      SUBTITLE: `${INSTITUTIONS} by request volume – reflects the selected time window`,
       DONUT_SECONDARY: INSTITUTIONS.toLowerCase(),
     },
     KEY_METRICS: {
@@ -313,25 +313,25 @@ export const METERING = {
         {
           key: "total_tenants",
           label: `Total ${INSTITUTIONS.toLowerCase()}`,
-          helper: "registered on platform",
+          helper: "Registered on platform",
           tooltip: `Count of ${INSTITUTIONS.toLowerCase()} registered on the platform.`,
         },
         {
           key: "active_30d",
           label: `Active ${INSTITUTIONS.toLowerCase()}`,
-          helper: "in last 30 days",
+          helper: "In the last 30 days",
           tooltip: `${INSTITUTIONS} with at least one AI Model request in the last 30 days.`,
         },
         {
           key: "new_tenants_15d",
           label: `New ${INSTITUTIONS.toLowerCase()}`,
-          helper: "in last 15 days",
+          helper: "In the last 15 days",
           tooltip: `Count of ${INSTITUTIONS.toLowerCase()} onboarded in the last 15 days.`,
         },
         {
           key: "tenants_budget_exhausted",
           label: "Budget exhausted",
-          helper: INSTITUTIONS.toLowerCase(),
+          helper: INSTITUTIONS,
           tooltip: `Count of ${INSTITUTIONS.toLowerCase()} that have consumed 100% of their allocated budget.`,
         },
       ] as const,
@@ -339,13 +339,13 @@ export const METERING = {
         {
           key: "total_models",
           label: "Total models",
-          helper: "on platform",
+          helper: "On platform",
           tooltip: "Total number of models registered on the platform.",
         },
         {
           key: "active_models_30d",
           label: "Active models",
-          helper: "in last 30 days",
+          helper: "In the last 30 days",
           tooltip:
             "Total number of models that have received at least one request in the last 30 days.",
         },
@@ -386,16 +386,16 @@ export const METERING = {
     MODEL: {
       TITLE: "Model consumption",
       SUBTITLE:
-        "Model request distribution · reflects selected time window",
+        "Model request distribution – reflects the selected time window",
       BREAKDOWN_TITLE: "Model consumption Drill down",
-      BREAKDOWN_SUBTITLE_PREFIX: "Consumption across all Models ·",
+      BREAKDOWN_SUBTITLE_PREFIX: "Consumption across all Models –",
       DONUT_PRIMARY: "All",
       DONUT_SECONDARY: "Models",
       TOTAL_MODELS: "Total models",
       ACTIVE_MODELS: "Active models",
       MOST_USED: "Most used model",
       OVERALL_SUCCESS: "Overall success rate %",
-      SUCCESS_RATE_SUFFIX: "across all models",
+      SUCCESS_RATE_SUFFIX: "Across all models",
       REQUESTS_SUFFIX: "requests",
       REQUESTS_ACROSS_INSTITUTIONS: `requests across all ${INSTITUTIONS}`,
       REQUESTS_ACROSS_INSTITUTION: `requests across this ${INSTITUTION}`,
