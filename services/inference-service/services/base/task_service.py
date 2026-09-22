@@ -121,6 +121,7 @@ class BaseTaskService:
 
         await self.validate_request(payload)
         preprocessed = await self.preprocess_input(payload)
+        self.logger.info(f"Right before run_inference payload={payload}")
         result = await self.run_inference(preprocessed, serviceInfo)
         response = await self.postprocess_output(result)
         if isinstance(response, dict):
