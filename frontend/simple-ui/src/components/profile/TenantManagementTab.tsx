@@ -220,6 +220,48 @@ function resolveTenantTierName(
   return assignment?.tier_name?.trim() || tenant.tier_name?.trim() || null;
 }
 
+/**
+ * Tier filter options, from the tiers the rows carry rather than the catalog
+ * alone: the catalog query is ACTIVE-only and cached, so a row can name a tier
+ * it does not list. Reusing resolveTenantTierName — the column's own label —
+ * keeps the options a superset of what is on screen. Same shape as the Service
+ * Registry tier filter.
+ */
+function buildTierFilterOptions(
+  catalog: TierOption[],
+  tenants: TenantView[],
+  assignmentsByTenantId: Map<string, TenantTierAssignment>,
+  pinned: TierOption | null,
+): TierOption[] {
+  const inCatalog = (id: string) =>
+    catalog.some((tier) => String(tier.id) === id);
+  const extras = new Map<string, string>();
+
+  for (const tenant of tenants) {
+    if (!tenant.tier_id) continue;
+    const id = String(tenant.tier_id);
+    if (inCatalog(id) || extras.has(id)) continue;
+    extras.set(
+      id,
+      resolveTenantTierName(tenant, catalog, assignmentsByTenantId) ?? id,
+    );
+  }
+  // The selected tier can leave the list under the admin — moving the last
+  // tenant off it drops it from both sources — which would blank the select
+  // while the filter is still applied. Pinning it keeps the choice visible
+  // until it is changed.
+  if (pinned && !inCatalog(pinned.id) && !extras.has(pinned.id)) {
+    extras.set(pinned.id, pinned.name);
+  }
+
+  return [
+    ...catalog,
+    ...Array.from(extras, ([id, name]) => ({ id, name })).sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+    ),
+  ];
+}
+
 function formatRupees(amount: number | null | undefined): string {
   if (amount == null) return "—";
   return `₹${amount.toLocaleString("en-IN")}`;
@@ -357,6 +399,36 @@ export default function TenantManagementTab({
     }
     return byId;
   }, [tenantTiersQuery.data]);
+
+  /** Remembers the label as it is picked, so a later refetch cannot orphan it. */
+  const [pinnedTierFilter, setPinnedTierFilter] = useState<TierOption | null>(
+    null,
+  );
+
+  const tierFilterOptions = useMemo(
+    () =>
+      buildTierFilterOptions(
+        tierOptions,
+        tm.tenants,
+        tenantTierAssignmentsById,
+        pinnedTierFilter,
+      ),
+    [tierOptions, tm.tenants, tenantTierAssignmentsById, pinnedTierFilter],
+  );
+
+  const handleTierFilterChange = (next: string) => {
+    setPinnedTierFilter(
+      next === TENANT.TIER_FILTER.ALL || next === TENANT.TIER_FILTER.NONE
+        ? null
+        : (() => {
+            const picked = tierFilterOptions.find(
+              (tier) => String(tier.id) === next,
+            );
+            return picked ? { id: next, name: picked.name } : null;
+          })(),
+    );
+    tm.setTenantFilterTier(next);
+  };
 
   const [viewTierTenant, setViewTierTenant] =
     useState<TenantTierAssignment | null>(null);
@@ -1053,7 +1125,7 @@ export default function TenantManagementTab({
             }
             onClearFilters={() => {
               tm.setTenantFilterStatus("all");
-              tm.setTenantFilterTier(TENANT.TIER_FILTER.ALL);
+              handleTierFilterChange(TENANT.TIER_FILTER.ALL);
               tm.setTenantSearch("");
             }}
             search={{
@@ -1089,11 +1161,11 @@ export default function TenantManagementTab({
                       // Filtered client-side — GET /tenants takes only `status`.
                       type: "select" as const,
                       value: tm.tenantFilterTier,
-                      onChange: tm.setTenantFilterTier,
+                      onChange: handleTierFilterChange,
                       width: { base: "full", sm: "200px" },
                       options: [
                         { label: "All tiers", value: TENANT.TIER_FILTER.ALL },
-                        ...tierOptions.map((tier) => ({
+                        ...tierFilterOptions.map((tier) => ({
                           label: tier.name,
                           value: String(tier.id),
                         })),
