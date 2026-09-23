@@ -23,6 +23,9 @@ def _base_payload(**overrides):
         domain=["general"],
         submitter={"name": "Test User"},
         trainingDataset={"description": "test training dataset"},
+        # Required for every task type except llm/pipeline — see
+        # _validate_class_instance_required. Default task above is "nmt".
+        classInstance="NMTTaskService",
     )
     defaults.update(overrides)
     return defaults
@@ -189,11 +192,113 @@ def test_create_adapter_config_without_outputs_rejected():
 
 def test_create_adapter_config_with_inputs_and_outputs_accepted():
     adapter = {
+        "version": "1.0",
         "inputs": [{"tensor": "IN", "dtype": "BYTES", "shape": [-1, 1], "value_path": "input.source"}],
         "outputs": [{"tensor": "OUT", "dtype": "BYTES", "maps_to": "text"}],
     }
     req = ModelCreateRequest(**_base_payload(adapterConfig=adapter))
     assert req.adapterConfig == adapter
+
+
+def test_create_adapter_config_without_version_rejected():
+    adapter = {
+        "inputs": [{"tensor": "IN", "dtype": "BYTES", "shape": [-1, 1], "value_path": "input.source"}],
+        "outputs": [{"tensor": "OUT", "dtype": "BYTES", "maps_to": "text"}],
+    }
+    with pytest.raises(ValidationError, match="version"):
+        ModelCreateRequest(**_base_payload(adapterConfig=adapter))
+
+
+def test_create_adapter_config_input_without_value_path_or_value_rejected():
+    adapter = {
+        "version": "1.0",
+        "inputs": [{"tensor": "IN", "dtype": "BYTES", "shape": [-1, 1]}],
+        "outputs": [{"tensor": "OUT", "dtype": "BYTES", "maps_to": "text"}],
+    }
+    with pytest.raises(ValidationError, match="value_path"):
+        ModelCreateRequest(**_base_payload(adapterConfig=adapter))
+
+
+def test_create_adapter_config_unsupported_dtype_rejected():
+    adapter = {
+        "version": "1.0",
+        "inputs": [{"tensor": "IN", "dtype": "NOT_A_DTYPE", "shape": [-1, 1], "value_path": "input.source"}],
+        "outputs": [{"tensor": "OUT", "dtype": "BYTES", "maps_to": "text"}],
+    }
+    with pytest.raises(ValidationError, match="dtype"):
+        ModelCreateRequest(**_base_payload(adapterConfig=adapter))
+
+
+def test_create_tts_adapter_config_requires_output_generated_audio_tensor():
+    adapter = {
+        "version": "1.0",
+        "inputs": [{"tensor": "INPUT_TEXT", "dtype": "BYTES", "shape": [1], "value_path": "input.source"}],
+        "outputs": [{"tensor": "SOME_OTHER_NAME", "dtype": "FP32", "maps_to": "audio_data"}],
+    }
+    with pytest.raises(ValidationError, match="OUTPUT_GENERATED_AUDIO"):
+        ModelCreateRequest(**_base_payload(task={"type": "tts"}, adapterConfig=adapter))
+
+
+def test_create_ner_adapter_config_requires_json_parse_transform():
+    adapter = {
+        "version": "1.0",
+        "inputs": [{"tensor": "INPUT_TEXT", "dtype": "BYTES", "shape": [-1, 1], "value_path": "input.source"}],
+        "outputs": [{"tensor": "OUTPUT_TEXT", "dtype": "BYTES", "maps_to": "target"}],
+    }
+    with pytest.raises(ValidationError, match="json_parse"):
+        ModelCreateRequest(**_base_payload(task={"type": "ner"}, adapterConfig=adapter))
+
+
+def test_create_llm_adapter_config_requires_model_name():
+    adapter = {
+        "version": "1.0",
+        "inputs": [{"tensor": "INPUT_TEXT", "dtype": "BYTES", "shape": [-1, 1], "value_path": "input.source"}],
+        "outputs": [{"tensor": "OUTPUT_TEXT", "dtype": "BYTES", "maps_to": "target"}],
+    }
+    with pytest.raises(ValidationError, match="model_name"):
+        ModelCreateRequest(**_base_payload(task={"type": "llm"}, adapterConfig=adapter))
+
+
+def test_create_schema_task_type_mismatch_rejected():
+    schema = {
+        "taskType": "nmt",
+        "model_name": "x",
+        "request": {},
+        "response": {},
+    }
+    with pytest.raises(ValidationError, match="does not match"):
+        ModelCreateRequest(**_base_payload(
+            task={"type": "asr"},
+            classInstance="ASRTaskService",
+            **{"schema": schema},
+        ))
+
+
+def test_create_schema_task_type_match_accepted():
+    schema = {
+        "taskType": "asr",
+        "model_name": "x",
+        "request": {},
+        "response": {},
+    }
+    req = ModelCreateRequest(**_base_payload(
+        task={"type": "asr"},
+        classInstance="ASRTaskService",
+        **{"schema": schema},
+    ))
+    assert req.endpoint_schema == schema
+
+
+def test_create_schema_task_type_nmt_translation_equivalence_accepted():
+    # nmt <-> translation are treated as equivalent, not an exact-match mismatch.
+    schema = {
+        "taskType": "translation",
+        "model_name": "x",
+        "request": {},
+        "response": {},
+    }
+    req = ModelCreateRequest(**_base_payload(**{"schema": schema}))
+    assert req.endpoint_schema == schema
 
 
 # ── Partial PATCH — adapterConfig and schema are now top-level fields ─────────
@@ -234,14 +339,58 @@ def test_create_boolean_field_rejects_string(field):
     ("isMultilingual", True),
     ("isMultilingual", False),
     ("isSyncApi", True),
-    ("isSyncApi", False),
 ])
 def test_create_boolean_field_accepts_bool(field, value):
     req = ModelCreateRequest(**_base_payload(**{field: value}))
     assert getattr(req, field) is value
 
 
+def test_create_is_sync_api_false_accepts_bool_with_async_details():
+    # isSyncApi=False requires asyncApiDetails (see
+    # ModelCreateRequest._validate_async_details_required_when_async) —
+    # unlike the other boolean fields, it can't be tested standalone.
+    req = ModelCreateRequest(**_base_payload(
+        isSyncApi=False,
+        asyncApiDetails={"pollingUrl": "https://example.com/poll", "pollInterval": 1000},
+    ))
+    assert req.isSyncApi is False
+
+
+def test_create_is_sync_api_false_without_async_details_rejected():
+    with pytest.raises(ValidationError, match="asyncApiDetails"):
+        ModelCreateRequest(**_base_payload(isSyncApi=False))
+
+
 @pytest.mark.parametrize("field", ["isLangDetectionEnabled", "isMultilingual", "isSyncApi"])
 def test_patch_boolean_field_rejects_string(field):
     with pytest.raises(ValidationError, match=field):
         ModelUpdateRequest(modelId="abc123", version="1.0", **{field: "false"})
+
+
+# ── classInstance required for every task type except llm/pipeline ────────────
+
+
+def test_create_missing_class_instance_rejected_for_non_llm_task():
+    payload = _base_payload()
+    del payload["classInstance"]
+    with pytest.raises(ValidationError, match="classInstance"):
+        ModelCreateRequest(**payload)
+
+
+def test_create_class_instance_not_required_for_llm():
+    payload = _base_payload(task={"type": "llm"})
+    del payload["classInstance"]
+    req = ModelCreateRequest(**payload)
+    assert req.classInstance is None
+
+
+def test_create_class_instance_not_required_for_pipeline():
+    payload = _base_payload(task={"type": "pipeline"})
+    del payload["classInstance"]
+    req = ModelCreateRequest(**payload)
+    assert req.classInstance is None
+
+
+def test_create_class_instance_provided_for_non_llm_task_accepted():
+    req = ModelCreateRequest(**_base_payload(task={"type": "asr"}, classInstance="ASRTaskService"))
+    assert req.classInstance == "ASRTaskService"
