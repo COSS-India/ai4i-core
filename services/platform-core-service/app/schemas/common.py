@@ -182,6 +182,55 @@ def is_recognized_schema_task_type(task_type: Any) -> bool:
     return task_type in INFERENCE_SCHEMA_TASK_TYPES
 
 
+# Mirrors inference-service's SUPPORTED_TRITON_DTYPES
+# (services/base/config_mapper.py) — the set of Triton datatypes its
+# GenericTritonMapper accepts for adapterConfig input/output tensors. Kept
+# here so Model creation can reject an unsupported dtype before it reaches a
+# real inference call, where it currently only surfaces as a RuntimeError.
+SUPPORTED_TRITON_DTYPES = {
+    "BOOL",
+    "BYTES",
+    "FP16",
+    "FP32",
+    "FP64",
+    "INT8",
+    "INT16",
+    "INT32",
+    "INT64",
+    "UINT8",
+    "UINT16",
+    "UINT32",
+    "UINT64",
+}
+
+
+# Same equivalence used on both sides of a `taskType` comparison: a model's
+# own `task.type` (or a service's) vs. a `schema` entry's `taskType`. Shared
+# by Model.schema and Service.inferenceEndPoint.schema so a mismatch (e.g. an
+# `asr` model shipping an `nmt` schema) is caught once, consistently, instead
+# of each domain maintaining its own copy that can drift apart.
+TASK_TYPE_SCHEMA_EQUIVALENTS: Dict[str, set] = {
+    "nmt": {"nmt", "translation"},
+    "translation": {"nmt", "translation"},
+    "language-detection": {"language-detection", "txt-lang-detection"},
+    "txt-lang-detection": {"language-detection", "txt-lang-detection"},
+}
+
+
+def schema_matches_task_type(
+    task_type: Optional[str], schema_entries: Optional[List[Dict[str, Any]]]
+) -> bool:
+    """True if at least one `schema` entry's taskType is ULCA-equivalent to
+    `task_type`. With nothing to compare (`task_type`/`schema_entries` not
+    yet known) this returns True — callers decide separately whether either
+    side is required at all; this only catches an outright mismatch when
+    both are present."""
+    if not task_type or not schema_entries:
+        return True
+    equivalents = TASK_TYPE_SCHEMA_EQUIVALENTS.get(task_type, {task_type})
+    return any(entry.get("taskType") in equivalents for entry in schema_entries)
+
+
 # ── Inference endpoint supporting types ──
 
 
