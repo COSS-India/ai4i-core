@@ -77,6 +77,9 @@ const ServicesManagement: React.FC = () => {
     filterTaskType,
     setFilterTaskType,
     taskTypeNames,
+    filterTier,
+    setFilterTier,
+    tierFilterOptions,
     hasActiveFilters,
     clearAllFilters,
     registrySort,
@@ -406,6 +409,9 @@ const ServicesManagement: React.FC = () => {
                     filterTaskType={filterTaskType}
                     onFilterTaskTypeChange={setFilterTaskType}
                     taskTypeNames={taskTypeNames}
+                    filterTier={filterTier}
+                    onFilterTierChange={setFilterTier}
+                    tierFilterOptions={tierFilterOptions}
                     hasActiveFilters={hasActiveFilters}
                     onClearFilters={clearAllFilters}
                   />

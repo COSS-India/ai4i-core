@@ -11,7 +11,8 @@ import DataTable, {
   type DataTableColumn,
   type DataTableSortState,
 } from "../common/table";
-import { formatModelTaskTypeLabel } from "../../config/constants";
+import { SERVICE_TIER, formatModelTaskTypeLabel } from "../../config/constants";
+import type { ServiceTierFilterOption } from "../../hooks/useServicesManagement";
 import type { Service } from "../../services/servicesManagementService";
 
 interface ServiceRegistryTabProps {
@@ -32,6 +33,9 @@ interface ServiceRegistryTabProps {
   filterTaskType: string;
   onFilterTaskTypeChange: (value: string) => void;
   taskTypeNames: string[];
+  filterTier: string;
+  onFilterTierChange: (value: string) => void;
+  tierFilterOptions: ServiceTierFilterOption[];
   hasActiveFilters: boolean;
   onClearFilters: () => void;
 }
@@ -54,6 +58,9 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
   filterTaskType,
   onFilterTaskTypeChange,
   taskTypeNames,
+  filterTier,
+  onFilterTierChange,
+  tierFilterOptions,
   hasActiveFilters,
   onClearFilters,
 }) => {
@@ -124,6 +131,24 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
                   label: formatModelTaskTypeLabel(t),
                   value: t,
                 })),
+              ],
+            },
+            {
+              id: "tier",
+              label: "Tier",
+              // No `param`: GET /services has no tier filter, so this one is
+              // applied client-side rather than refetching.
+              type: "select",
+              value: filterTier,
+              onChange: onFilterTierChange,
+              width: { base: "full", sm: "180px" },
+              options: [
+                { label: "All", value: SERVICE_TIER.FILTER.ALL },
+                ...tierFilterOptions.map((tier) => ({
+                  label: tier.name,
+                  value: tier.id,
+                })),
+                { label: "No tier", value: SERVICE_TIER.FILTER.NONE },
               ],
             },
           ]}

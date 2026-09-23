@@ -17,6 +17,7 @@ import {
   IconButton,
   Input,
   Select,
+  Skeleton,
   Spinner,
   Tab,
   TabList,
@@ -47,6 +48,7 @@ import ConfirmDialog from "../common/ConfirmDialog";
 import FormFieldsRow, { FORM_LABEL_TO_INPUT_PT } from "../common/FormFieldsRow";
 import StandardModal from "../common/StandardModal";
 import {
+  effectiveTierStatus,
   getTierStatusAction,
   useTierManagement,
   type TierStatusActionKey,
@@ -130,14 +132,23 @@ const TIER_STATUS_BADGE: Record<
   DELETED: { label: "Deleted", colorScheme: "red" },
 };
 
+/**
+ * DELETED is absent because `list_tiers` excludes deleted tiers from every
+ * response, so the option would always return nothing. It stays in
+ * TIER_STATUS_BADGE only because that map is keyed by the full union.
+ */
+const TIER_FILTER_STATUSES: TierStatus[] = [
+  "ACTIVE",
+  "INACTIVE",
+  "DEACTIVATED",
+];
+
 const TIER_STATUS_COLUMN: DataTableColumn<Tier> = {
   id: "status",
   header: "Status",
   thProps: { w: "240px" },
   cell: (tier) => {
-    const badge = tier.status
-      ? TIER_STATUS_BADGE[tier.status]
-      : TIER_STATUS_BADGE.INACTIVE;
+    const badge = TIER_STATUS_BADGE[effectiveTierStatus(tier)];
     return (
       <Badge
         colorScheme={badge.colorScheme}
@@ -195,6 +206,70 @@ const TIER_TASK_TYPES_COLUMN: DataTableColumn<Tier> = {
     </HStack>
   ),
 };
+
+/**
+ * A per-tier count column. Counts are aggregated in the hook from one fetch,
+ * and render blank rather than `0` until it settles — "0" and "not loaded yet"
+ * read very differently.
+ */
+function makeTierCountColumn(
+  id: string,
+  header: string,
+  countByTierId: Map<string, number>,
+  isLoading: boolean,
+  hasError: boolean,
+  errorLabel: string,
+): DataTableColumn<Tier> {
+  return {
+    id,
+    header,
+    thProps: { w: "140px" },
+    sortable: true,
+    align: "center",
+    cell: (tier) => {
+      if (isLoading) {
+        // `mx="auto"`: a fixed-width block is not moved by textAlign.
+        return (
+          <Skeleton height="20px" width="28px" borderRadius="md" mx="auto" />
+        );
+      }
+      if (hasError) {
+        return (
+          <Tooltip label={errorLabel} placement="top" hasArrow>
+            <Text fontSize="sm" color="gray.400">
+              —
+            </Text>
+          </Tooltip>
+        );
+      }
+      // Non-zero gets a neutral chip so tiers in use stand out; zero stays a
+      // bare number, or an empty tier would carry the same weight as a used
+      // one. `minW` keeps 1- and 2-digit chips even in the centred column.
+      const count = countByTierId.get(tier.id) ?? 0;
+      if (count === 0) {
+        return (
+          <Text fontSize="sm" color="gray.500">
+            0
+          </Text>
+        );
+      }
+      return (
+        <Badge
+          colorScheme="gray"
+          fontSize="xs"
+          fontWeight="bold"
+          px={2}
+          py={0.5}
+          borderRadius="md"
+          minW="28px"
+          textAlign="center"
+        >
+          {count}
+        </Badge>
+      );
+    },
+  };
+}
 
 function makeTierActionsColumn(
   deletingId: string | null,
@@ -737,8 +812,16 @@ const TierManagement: React.FC = () => {
     setSearchQuery,
     filterTaskType,
     setFilterTaskType,
+    filterStatus,
+    setFilterStatus,
     hasActiveFilters,
     clearFilters,
+    serviceCountByTierId,
+    isServiceCountLoading,
+    hasServiceCountError,
+    institutionCountByTierId,
+    isInstitutionCountLoading,
+    hasInstitutionCountError,
     filteredTiers,
     tiers,
     isLoading,
@@ -801,8 +884,11 @@ const TierManagement: React.FC = () => {
   const tierSortAccessors = useMemo(
     () => ({
       name: (tier: Tier) => tier.name ?? "",
+      // This table owns its sort, so a column's own `sortAccessor` is ignored.
+      services: (tier: Tier) => serviceCountByTierId.get(tier.id) ?? 0,
+      institutions: (tier: Tier) => institutionCountByTierId.get(tier.id) ?? 0,
     }),
-    [],
+    [serviceCountByTierId, institutionCountByTierId],
   );
   const tierSort = useDeferredColumnSort("name", tierSortAccessors);
   const sortedTiers = useMemo(
@@ -815,6 +901,22 @@ const TierManagement: React.FC = () => {
       TIER_NAME_COLUMN,
       TIER_STATUS_COLUMN,
       TIER_TASK_TYPES_COLUMN,
+      makeTierCountColumn(
+        "services",
+        "Services",
+        serviceCountByTierId,
+        isServiceCountLoading,
+        hasServiceCountError,
+        "Could not load services",
+      ),
+      makeTierCountColumn(
+        "institutions",
+        INSTITUTIONS,
+        institutionCountByTierId,
+        isInstitutionCountLoading,
+        hasInstitutionCountError,
+        `Could not load ${INSTITUTIONS.toLowerCase()}`,
+      ),
       makeTierActionsColumn(
         deletingId,
         updatingStatusId,
@@ -831,6 +933,12 @@ const TierManagement: React.FC = () => {
       handleOpenEdit,
       handleViewClick,
       handleStatusClick,
+      serviceCountByTierId,
+      isServiceCountLoading,
+      hasServiceCountError,
+      institutionCountByTierId,
+      isInstitutionCountLoading,
+      hasInstitutionCountError,
     ],
   );
 
@@ -900,6 +1008,24 @@ const TierManagement: React.FC = () => {
               ...taskTypeNames.map((t) => ({
                 label: formatModelTaskTypeLabel(t),
                 value: t,
+              })),
+            ],
+          },
+          {
+            id: "status",
+            label: "Status",
+            // No `param`: client-side, since fetching by status would make
+            // `unfilteredCount` the filtered count.
+            type: "select",
+            value: filterStatus,
+            onChange: setFilterStatus,
+            width: { base: "full", sm: "180px" },
+            options: [
+              { label: "All", value: "" },
+              // Labels from the badge map, so dropdown and column agree.
+              ...TIER_FILTER_STATUSES.map((s) => ({
+                label: TIER_STATUS_BADGE[s].label,
+                value: s,
               })),
             ],
           },

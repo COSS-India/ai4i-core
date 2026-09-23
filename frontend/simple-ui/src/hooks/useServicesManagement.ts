@@ -37,6 +37,7 @@ import { showError } from "../utils/errorHandler";
 import { showToast } from "../utils/toast";
 import { refreshUntil } from "../utils/postMutationRefresh";
 import { useInferenceTypes } from "./useInferenceTypes";
+import { SERVICE_TIER } from "../config/constants";
 
 /** Query keys of per-task service lists that must refresh after registry mutations. */
 const SERVICE_QUERY_KEYS = [
@@ -67,6 +68,53 @@ const emptyServiceForm = (): Partial<Service> => ({
   modelVersion: "1.0",
   tiers: [],
 });
+
+export type ServiceTierFilterOption = { id: string; name: string };
+
+/**
+ * Tier options built from the loaded rows, not `availableTiers` — that list is
+ * ACTIVE-only and task-type-scoped, so it can omit tiers badged in the Tiers
+ * column. `tierNames` is positionally aligned with `tierIds` server-side.
+ * `pinnedId` keeps the active selection listed when a refetch leaves no row
+ * carrying it, so the filter stays clearable.
+ */
+const buildTierFilterOptions = (
+  services: Service[],
+  pinnedId: string,
+  pinnedName?: string,
+): ServiceTierFilterOption[] => {
+  const byId = new Map<string, string>();
+  for (const service of services) {
+    const ids = service.tierIds ?? [];
+    const names = service.tierNames ?? [];
+    ids.forEach((id, index) => {
+      if (!id) return;
+      const key = String(id);
+      const name = names[index];
+      if (!byId.has(key) || (name && byId.get(key) === key)) {
+        byId.set(key, name?.trim() || key);
+      }
+    });
+  }
+  if (
+    pinnedId &&
+    pinnedId !== SERVICE_TIER.FILTER.NONE &&
+    !byId.has(pinnedId)
+  ) {
+    byId.set(pinnedId, pinnedName?.trim() || pinnedId);
+  }
+  return Array.from(byId, ([id, name]) => ({ id, name })).sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+  );
+};
+
+/** Client-side tier filter: a service carries many tiers, so this is membership. */
+const serviceMatchesTier = (service: Service, filterTierId: string): boolean => {
+  if (filterTierId === SERVICE_TIER.FILTER.ALL) return true;
+  const ids = (service.tierIds ?? []).filter(Boolean).map(String);
+  if (filterTierId === SERVICE_TIER.FILTER.NONE) return ids.length === 0;
+  return ids.includes(String(filterTierId));
+};
 
 const formatModelSubmissionDate = (value?: string | number | null): string => {
   if (value == null || value === "") return "";
@@ -131,6 +179,13 @@ export function useServicesManagement() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<string>("");
   const [filterTaskType, setFilterTaskType] = useState<string>("");
+  const [filterTier, setFilterTierValue] = useState<string>(
+    SERVICE_TIER.FILTER.ALL,
+  );
+  /** The selected tier's option, kept so it stays listed across refetches. */
+  const [pinnedTier, setPinnedTier] = useState<ServiceTierFilterOption | null>(
+    null,
+  );
   const {
     taskTypeNames,
     unitByTaskType,
@@ -178,24 +233,48 @@ export function useServicesManagement() {
   const isRegistryReadOnly = isRegistryReadOnlyUser(user?.roles);
   const viewTabIndex = isRegistryReadOnly ? 1 : 2;
 
-  // Client-side name filter + multi-column sort over the full fetched registry list.
+  // Name + tier filter, then sort, over the full fetched list. Tier is
+  // client-side because GET /services takes no tier param.
   const registryTableItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    const filtered = q
+    let filtered = q
       ? services.filter((s) => (s.name ?? "").toLowerCase().includes(q))
       : services;
+    if (filterTier !== SERVICE_TIER.FILTER.ALL) {
+      filtered = filtered.filter((s) => serviceMatchesTier(s, filterTier));
+    }
     return registrySort.apply(filtered);
-  }, [services, searchQuery, registrySort]);
+  }, [services, searchQuery, filterTier, registrySort]);
+
+  const tierFilterOptions = useMemo(
+    () => buildTierFilterOptions(services, filterTier, pinnedTier?.name),
+    [services, filterTier, pinnedTier],
+  );
+
+  /** Remembers the label as it is picked, so a later refetch cannot orphan it. */
+  const setFilterTier = useCallback(
+    (next: string) => {
+      setPinnedTier(
+        next && next !== SERVICE_TIER.FILTER.NONE
+          ? (tierFilterOptions.find((o) => o.id === next) ?? null)
+          : null,
+      );
+      setFilterTierValue(next);
+    },
+    [tierFilterOptions],
+  );
 
   const showTaskTypeAllOption = taskTypeNames.length > 1;
   const hasActiveFilters =
     filterStatus !== "" ||
     (showTaskTypeAllOption && filterTaskType !== "") ||
+    filterTier !== SERVICE_TIER.FILTER.ALL ||
     searchQuery.trim() !== "";
   const clearAllFilters = () => {
     setSearchQuery("");
     setFilterStatus("");
     setFilterTaskType(taskTypeNames.length === 1 ? taskTypeNames[0] : "");
+    setFilterTier(SERVICE_TIER.FILTER.ALL);
   };
 
   const router = useRouter();
@@ -1303,13 +1382,17 @@ export function useServicesManagement() {
     registryTableItems,
     totalServicesCount: services.length,
     isLoading,
-    tableKey: `${filterStatus}-${filterTaskType}-${registryEpoch}`,
+    // Remounts the table so client pagination returns to page 1 on a filter change.
+    tableKey: `${filterStatus}-${filterTaskType}-${filterTier}-${registryEpoch}`,
     searchQuery,
     setSearchQuery,
     filterStatus,
     setFilterStatus,
     filterTaskType,
     setFilterTaskType,
+    filterTier,
+    setFilterTier,
+    tierFilterOptions,
     taskTypeNames,
     hasActiveFilters,
     clearAllFilters,

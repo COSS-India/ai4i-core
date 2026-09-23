@@ -86,6 +86,13 @@ import {
 const USER_EMAIL_PAGE_SIZE = 100;
 const DEFAULT_TENANT_USER_ROLE = "USER" as const;
 
+/** Matched on `tier_id`: the catalog lives in the component, the id is on the row. */
+function tenantMatchesTier(t: TenantView, filterTierId: string): boolean {
+  if (filterTierId === TENANT.TIER_FILTER.ALL) return true;
+  if (filterTierId === TENANT.TIER_FILTER.NONE) return !t.tier_id;
+  return String(t.tier_id ?? "") === String(filterTierId);
+}
+
 /** Client-side tenant list search: organisation name or tenant ID (substring, case-insensitive). */
 function tenantMatchesSearch(t: TenantView, rawSearch: string): boolean {
   const search = rawSearch.trim().toLowerCase();
@@ -121,6 +128,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const defaultOrgRoleOverridesRef = useRef<Map<string, string>>(new Map());
 
   const [tenantFilterStatus, setTenantFilterStatus] = useState<string>("all");
+  const [tenantFilterTier, setTenantFilterTier] = useState<string>(
+    TENANT.TIER_FILTER.ALL,
+  );
   const [tenantSearch, setTenantSearch] = useState("");
   const [userFilterStatus, setUserFilterStatus] = useState<string>("all");
   const [userFilterRole, setUserFilterRole] = useState<string>("all");
@@ -242,9 +252,12 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         ) {
           return false;
         }
+        if (!tenantMatchesTier(t, tenantFilterTier)) {
+          return false;
+        }
         return tenantMatchesSearch(t, tenantSearch);
       }),
-    [tenants, tenantFilterStatus, tenantSearch],
+    [tenants, tenantFilterStatus, tenantFilterTier, tenantSearch],
   );
 
   const activeUserListTenant = useMemo(() => {
@@ -446,6 +459,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   const handleResetTenantFilters = () => {
     setTenantFilterStatus("all");
+    setTenantFilterTier(TENANT.TIER_FILTER.ALL);
     setTenantSearch("");
     setUserFilterStatus("all");
     setUserFilterRole("all");
@@ -1723,6 +1737,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     // Filters
     tenantFilterStatus,
     setTenantFilterStatus,
+    tenantFilterTier,
+    setTenantFilterTier,
     tenantSearch,
     setTenantSearch,
     userFilterStatus,
