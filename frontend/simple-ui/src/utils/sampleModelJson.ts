@@ -202,7 +202,10 @@ export const SAMPLE_MODEL_JSON = `{
     //                whoever called the model.
     //
     // FOR CHAT/AI MODELS (task "llm") ONLY: "model_name" below is required — it's the
-    // real, exact model name the AI server itself expects to see. Leaving it out means
+    // real, exact model name the AI server itself expects to see. This is NOT the same as
+    // the "name" field near the top of this file (that one is just this model's label on
+    // the platform) — "model_name" here must match the original model's own name exactly,
+    // as the AI server that hosts it knows it. Leaving it out, or getting it wrong, means
     // requests get sent with the wrong model name and are rejected by the AI server, even
     // though this model saved successfully. "inputs"/"outputs" aren't actually used for
     // chat/AI models, but the platform still requires at least one placeholder entry in
@@ -357,10 +360,18 @@ export const SAMPLE_MODEL_JSON = `{
    "adapterConfig", and "schema" sections above (leave everything else — name,
    description, license, submitter, and so on — as it already is).
 
-   Each block below is a real, working example already used successfully on this
-   platform — so copying one exactly (task type + the matching taskType inside "schema" +
-   the matching classInstance) is what actually lets the model work once someone starts
-   using it, not just save successfully.
+   Each block below is taken from a real model already working successfully on this
+   platform, so it shows the exact shape (task type + the matching taskType inside
+   "schema" + the matching classInstance) your own model of that type needs to actually
+   work once someone starts using it, not just save successfully. The block itself won't
+   make YOUR model work as-is, though — it describes that other, specific model. Copy the
+   block for reference and then replace its values (model_name, callbackUrl, tensor
+   value_paths where relevant, and so on) with the real details of your own model.
+
+   Note: in several blocks below, "schema" -> "model_name" happens to be spelled exactly
+   like the task type (e.g. "nmt", "tts", "ner") — that's just because those particular
+   real models were named that way on the server that hosts them, not a rule to follow.
+   Set "model_name" to whatever your own model is actually called there instead.
 
    ── TEXT-BASED MODELS ────────────────────────────────────────────────────
 
