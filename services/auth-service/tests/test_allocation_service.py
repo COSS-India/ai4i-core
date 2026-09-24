@@ -348,40 +348,134 @@ class TestTenantScopeResolution:
                 await svc.update_tenant_application_allocations(101, body, _user(), None)
         assert exc.value.code == "ALLOCATION_BELOW_CONSUMED"
 
-    @pytest.mark.asyncio
-    async def test_resized_application_cascades_into_its_own_unlisted_keys(self) -> None:
-        """App A resized 50000 -> 40000; two Keys (30000/20000, unlisted) must
-        proportionally re-fit to sum <= 40000, and get persisted + snapshotted."""
+    @staticmethod
+    def _resize_svc(key_budgets):
+        """App A (₹50000, 50%) with one active Key per entry in key_budgets."""
         svc = _svc()
         svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant())
-        apps = _three_apps()
-        key1 = _key(11, 1, allocated_budget=Decimal("30000"), allocated_percentage=Decimal("60"))
-        key2 = _key(12, 1, allocated_budget=Decimal("20000"), allocated_percentage=Decimal("40"))
-        svc._applications.lock_tenant_applications = AsyncMock(return_value=apps)
+        keys = [
+            _key(11 + i, 1, allocated_budget=Decimal(b), allocated_percentage=Decimal(b) / 500)
+            for i, b in enumerate(key_budgets)
+        ]
+        svc._applications.lock_tenant_applications = AsyncMock(return_value=_three_apps())
         svc._applications.update = AsyncMock()
-        svc._api_keys.list_by_applications = AsyncMock(return_value=[key1, key2])
+        svc._api_keys.list_by_applications = AsyncMock(return_value=keys)
         svc._api_keys.update = AsyncMock()
+        return svc, keys
 
+    @pytest.mark.asyncio
+    async def test_shrinking_application_below_what_its_keys_hold_is_blocked(self) -> None:
+        """Exact bug: App A 50000 -> 40000 while its Keys hold 30000 + 20000.
+        Previously succeeded and silently re-fit the Keys to 24000/16000.
+        Must now be rejected outright — nothing adjusted underneath."""
+        svc, _keys = self._resize_svc(["30000", "20000"])
         body = TenantBudgetAllocationRequest(
             applications=[ApplicationAllocationRow(application_id=1, allocation=_fixed("40000"))]
         )
+
+        with patch("app.services.budget_usage.fetch_budget_usage", AsyncMock(return_value={})), \
+             patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()) as write_snap:
+            with pytest.raises(ValidationError) as exc:
+                await svc.update_tenant_application_allocations(101, body, _user(), None)
+
+        assert exc.value.code == "ALLOCATION_TOTAL_EXCEEDED"
+        assert "already hold 50000" in exc.value.message
+        svc._api_keys.update.assert_not_awaited()
+        svc._db.commit.assert_not_awaited()
+        write_snap.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_shrinking_application_that_still_fits_keeps_keys_rupees(self) -> None:
+        """App A 50000 -> 45000 while its Keys hold 30000 + 10000 (fits).
+        Allowed, and each Key keeps its exact ₹ — only its percentage is
+        rebased onto the new amount (sum stays exactly 40000/45000)."""
+        svc, _keys = self._resize_svc(["30000", "10000"])
+        body = TenantBudgetAllocationRequest(
+            applications=[ApplicationAllocationRow(application_id=1, allocation=_fixed("45000"))]
+        )
+
         with patch("app.services.budget_usage.fetch_budget_usage", AsyncMock(return_value={})), \
              patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()) as write_snap:
             data = await svc.update_tenant_application_allocations(101, body, _user(), None)
 
         app_row = next(row for row in data if row.application_id == 1)
-        assert app_row.allocated_budget == Decimal("40000.00")
-        assert app_row.allocation == AllocationValue(type="FIXED", value=Decimal("40000.00"))
+        assert app_row.allocated_budget == Decimal("45000.00")
         key_rows = {r.api_key_id: r for r in app_row.api_keys}
-        assert key_rows[11].allocated_budget == Decimal("24000.00")
-        assert key_rows[12].allocated_budget == Decimal("16000.00")
-        # Auto-refitted Keys always report back PERCENTAGE — type is never
-        # persisted/inferred for a row the caller didn't submit this call.
-        assert key_rows[11].allocation.type == "PERCENTAGE"
-        assert svc._api_keys.update.await_count == 2
-        write_snap.assert_awaited_once()
-        snapshot_arg = write_snap.await_args.args[0]
-        assert snapshot_arg == {11: Decimal("24000.00"), 12: Decimal("16000.00")}
+        assert key_rows[11].allocated_budget == Decimal("30000")
+        assert key_rows[12].allocated_budget == Decimal("10000")
+        assert key_rows[11].allocation == AllocationValue(type="PERCENTAGE", value=Decimal("66.66"))
+        assert key_rows[12].allocation == AllocationValue(type="PERCENTAGE", value=Decimal("22.23"))
+        # Only percentages are written — no ₹ change, so no ceiling snapshot.
+        for call in svc._api_keys.update.await_args_list:
+            assert "allocated_budget" not in call.args[1]
+        write_snap.assert_awaited_once_with({}, None)
+
+    @pytest.mark.asyncio
+    async def test_growing_application_keeps_keys_rupees(self) -> None:
+        """App A 50000 -> 100000: the growth becomes unallocated headroom,
+        not a proportional raise — Keys keep 30000/20000, now 30%/20%."""
+        svc, _keys = self._resize_svc(["30000", "20000"])
+        body = TenantBudgetAllocationRequest(
+            applications=[ApplicationAllocationRow(application_id=1, allocation=_fixed("100000"))]
+        )
+        tenant = _tenant(allocated_budget=Decimal("200000"))
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
+
+        with patch("app.services.budget_usage.fetch_budget_usage", AsyncMock(return_value={})), \
+             patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()):
+            data = await svc.update_tenant_application_allocations(101, body, _user(), None)
+
+        key_rows = {r.api_key_id: r for r in next(r for r in data if r.application_id == 1).api_keys}
+        assert key_rows[11].allocated_budget == Decimal("30000")
+        assert key_rows[12].allocated_budget == Decimal("20000")
+        assert key_rows[11].allocation.value == Decimal("30.00")
+        assert key_rows[12].allocation.value == Decimal("20.00")
+
+    @pytest.mark.asyncio
+    async def test_shrink_with_nested_key_reductions_that_fit_is_allowed(self) -> None:
+        """The caller can reduce Keys explicitly in the SAME call: App A
+        50000 -> 30000 with Key 11 30000 -> 10000; unlisted Key 12 keeps
+        20000. 10000 + 20000 = 30000 fits."""
+        svc, _keys = self._resize_svc(["30000", "20000"])
+        body = TenantBudgetAllocationRequest(
+            applications=[
+                ApplicationAllocationRow(
+                    application_id=1,
+                    allocation=_fixed("30000"),
+                    api_keys=[APIKeyAllocationRow(api_key_id=11, allocation=_fixed("10000"))],
+                )
+            ]
+        )
+
+        with patch("app.services.budget_usage.fetch_budget_usage", AsyncMock(return_value={})), \
+             patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()) as write_snap:
+            data = await svc.update_tenant_application_allocations(101, body, _user(), None)
+
+        key_rows = {r.api_key_id: r for r in next(r for r in data if r.application_id == 1).api_keys}
+        assert key_rows[11].allocated_budget == Decimal("10000.00")
+        assert key_rows[12].allocated_budget == Decimal("20000")
+        write_snap.assert_awaited_once_with({11: Decimal("10000.00")}, None)
+
+    @pytest.mark.asyncio
+    async def test_shrink_with_nested_key_reductions_that_still_dont_fit_is_blocked(self) -> None:
+        svc, _keys = self._resize_svc(["30000", "20000"])
+        body = TenantBudgetAllocationRequest(
+            applications=[
+                ApplicationAllocationRow(
+                    application_id=1,
+                    allocation=_fixed("30000"),
+                    api_keys=[APIKeyAllocationRow(api_key_id=11, allocation=_fixed("15000"))],
+                )
+            ]
+        )
+
+        with patch("app.services.budget_usage.fetch_budget_usage", AsyncMock(return_value={})), \
+             patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()):
+            with pytest.raises(ValidationError) as exc:
+                await svc.update_tenant_application_allocations(101, body, _user(), None)
+
+        assert exc.value.code == "ALLOCATION_TOTAL_EXCEEDED"
+        svc._db.commit.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_unchanged_application_with_explicit_key_edits_still_cascades(self) -> None:
@@ -1090,16 +1184,11 @@ class TestSyncKeyExhaustionFlags:
         api_key_service.set_budget_exhausted_for_keys.assert_awaited_once_with([11], False)
 
     @pytest.mark.asyncio
-    async def test_funding_a_never_funded_application_alone_clears_its_keys_too(self) -> None:
-        """Same self-heal, reached the other way — an admin funds the
-        Application itself for the FIRST time (never touching the Key
-        directly), via the tenant-level endpoint. Before the
-        allocation_validator.py percentage fallback, this path left every
-        unlisted Key at 0 (nothing to scale from — the Application had no
-        ₹ history either), so the natural admin response of "just fund the
-        Application" cleared none of its pre-existing keys, only an
-        explicit per-key allocation (test above) did. Pins that funding the
-        Application alone is now enough."""
+    async def test_funding_a_never_funded_application_does_not_touch_its_keys(self) -> None:
+        """Nothing is adjusted underneath an Application resize any more —
+        funding a never-funded Application (legacy Key with no ₹ ceiling)
+        leaves the Key exactly as it is; the admin allocates it explicitly
+        (see test_explicitly_funding_a_never_configured_key_clears_it)."""
         api_key_service = AsyncMock()
         svc = _svc(api_key_service=api_key_service)
         app = _application(1, allocated_budget=None, allocated_percentage=Decimal("0"))
@@ -1117,8 +1206,8 @@ class TestSyncKeyExhaustionFlags:
         ), patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()):
             await svc.update_tenant_application_allocations(101, body, _user(), None)
 
-        api_key_service.set_budget_exhausted_for_keys.assert_awaited_once_with([11], False)
-
+        svc._api_keys.update.assert_not_awaited()
+        api_key_service.set_budget_exhausted_for_keys.assert_not_awaited()
 
 class TestExhaustionFlagSyncWiredIntoEachEndpoint:
     """One test per Budget Allocation endpoint, confirming
@@ -1330,10 +1419,11 @@ class TestExplicitKeyAllocationMustBePositive:
         svc._api_keys.update.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_application_shrink_to_zero_still_refits_unlisted_keys(self) -> None:
-        """Only caller-submitted Key rows are checked: resizing an
-        Application to 0% at the Tenant level still re-fits its unlisted
-        Keys to ₹0 — that's the parent's explicit decision, not a Key edit."""
+    async def test_application_shrink_to_zero_with_active_keys_is_blocked(self) -> None:
+        """Review finding: setting an Application to 0% with no Key rows
+        skipped the explicit-row guard and re-fit every unlisted Key to ₹0
+        — an Active ₹0 Key reached via the parent. Now rejected outright:
+        its Keys still hold 25000."""
         svc = _svc()
         svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant())
         key1 = _key(11, 1, allocated_budget=Decimal("25000"), allocated_percentage=Decimal("50"))
@@ -1346,11 +1436,40 @@ class TestExplicitKeyAllocationMustBePositive:
         )
 
         with patch("app.services.budget_usage.fetch_budget_usage", AsyncMock(return_value={})), \
+             patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()) as write_snap:
+            with pytest.raises(ValidationError) as exc:
+                await svc.update_tenant_application_allocations(101, body, _user(), None)
+
+        assert exc.value.code == "ALLOCATION_TOTAL_EXCEEDED"
+        assert "already hold 25000" in exc.value.message
+        svc._api_keys.update.assert_not_awaited()
+        svc._db.commit.assert_not_awaited()
+        write_snap.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_application_shrink_to_zero_after_revoking_its_keys_is_allowed(self) -> None:
+        """The supported path: revoke the Keys first, then zero the
+        Application. A revoked Key's ceiling no longer blocks the resize."""
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant())
+        revoked = _key(
+            11, 1, allocated_budget=Decimal("25000"), allocated_percentage=Decimal("50"),
+            is_active=False,
+        )
+        svc._applications.lock_tenant_applications = AsyncMock(return_value=_three_apps())
+        svc._applications.update = AsyncMock()
+        svc._api_keys.list_by_applications = AsyncMock(return_value=[revoked])
+        svc._api_keys.update = AsyncMock()
+        body = TenantBudgetAllocationRequest(
+            applications=[ApplicationAllocationRow(application_id=1, allocation=_pct("0"))]
+        )
+
+        with patch("app.services.budget_usage.fetch_budget_usage", AsyncMock(return_value={})), \
              patch("app.services.budget_usage.write_budget_snapshot", AsyncMock()):
             data = await svc.update_tenant_application_allocations(101, body, _user(), None)
 
-        key_rows = {r.api_key_id: r for r in {row.application_id: row for row in data}[1].api_keys}
-        assert key_rows[11].allocated_budget == Decimal("0")
+        assert next(r for r in data if r.application_id == 1).allocated_budget == Decimal("0.00")
+        svc._api_keys.update.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_positive_key_edit_still_allowed(self) -> None:

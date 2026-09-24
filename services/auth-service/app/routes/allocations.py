@@ -49,10 +49,12 @@ async def update_tenant_budget_allocation(
     is — resizing one Application never moves another. An explicit row is
     checked against whatever's genuinely unallocated and rejected
     (422 ALLOCATION_TOTAL_EXCEEDED) rather than made to fit by shrinking a
-    sibling. A listed Application's own un-listed Keys DO react, though:
-    that Application's own total is what's actually changing, so its Keys
-    are unconditionally re-fit to track it — a parent/child relationship,
-    not a sibling one. Returns every Application under the Tenant that has
+    sibling. A resized Application's own Keys never move to fit it either:
+    each Key keeps its exact ₹, so an Application can't be reduced below
+    what its active Keys already hold (including to ₹0 while it still has
+    funded Keys) — 422 ALLOCATION_TOTAL_EXCEEDED. Reduce Keys first (nested
+    ``api_keys`` in the same call, or separately) or revoke them. Returns
+    every Application under the Tenant that has
     an allocation, not just the ones listed — see
     AllocationService.update_tenant_application_allocations.
     """
