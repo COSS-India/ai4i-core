@@ -26,6 +26,9 @@ export type {
   ServiceUpdateRequest,
 } from "../types/platform";
 
+/** RQ cache key for unfiltered GET /services. Shared by Model Management and Services Management. */
+export const SERVICES_ALL_QUERY_KEY = ["services-all"] as const;
+export const SERVICES_ALL_STALE_MS = 5 * 60 * 1000;
 type ServiceRecord = Service & Record<string, unknown>;
 
 const isNonEmptySecret = (value: unknown): boolean => {

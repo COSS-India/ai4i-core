@@ -59,7 +59,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
       boxShadow="none"
     >
       <CardHeader>
-        <Heading size="md" color="gray.700" userSelect="none" cursor="default">
+        <Heading size="md" color="ink.800" userSelect="none" cursor="default">
           {selectedService.name ||
             selectedService.serviceId ||
             selectedService.service_id}
@@ -81,7 +81,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
           )}
           <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
             <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+              <Text fontWeight="bold" color="ink.600" fontSize="sm" mb={1}>
                 Service ID
               </Text>
               <Text fontSize="md">
@@ -91,7 +91,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
               </Text>
             </Box>
             <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+              <Text fontWeight="bold" color="ink.600" fontSize="sm" mb={1}>
                 Name
               </Text>
               <Text fontSize="md">{selectedService.name || "N/A"}</Text>
@@ -99,7 +99,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
           </SimpleGrid>
 
           <Box>
-            <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+            <Text fontWeight="bold" color="ink.600" fontSize="sm" mb={1}>
               Description
             </Text>
             <Text fontSize="md">
@@ -111,7 +111,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
 
           <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
             <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+              <Text fontWeight="bold" color="ink.600" fontSize="sm" mb={1}>
                 Model Task Type
               </Text>
               <Badge
@@ -123,7 +123,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
               </Badge>
             </Box>
             <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+              <Text fontWeight="bold" color="ink.600" fontSize="sm" mb={1}>
                 Status (Publish/Unpublish)
               </Text>
               <HStack spacing={2} align="center" flexWrap="wrap">
@@ -195,7 +195,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
 
           <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
             <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+              <Text fontWeight="bold" color="ink.600" fontSize="sm" mb={1}>
                 Model ID
               </Text>
               <Text fontSize="md">
@@ -203,7 +203,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
               </Text>
             </Box>
             <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+              <Text fontWeight="bold" color="ink.600" fontSize="sm" mb={1}>
                 Endpoint
               </Text>
               <Text fontSize="md" wordBreak="break-all">
@@ -229,7 +229,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
 
           <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
             <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+              <Text fontWeight="bold" color="ink.600" fontSize="sm" mb={1}>
                 Hardware Description
               </Text>
               <Text fontSize="md">
@@ -237,7 +237,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
               </Text>
             </Box>
             <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+              <Text fontWeight="bold" color="ink.600" fontSize="sm" mb={1}>
                 Published On
               </Text>
               <Text fontSize="md">
@@ -252,13 +252,13 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
 
           <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
             <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+              <Text fontWeight="bold" color="ink.600" fontSize="sm" mb={1}>
                 Unit Type
               </Text>
               <Text fontSize="md">{viewServiceUnitType || "N/A"}</Text>
             </Box>
             <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+              <Text fontWeight="bold" color="ink.600" fontSize="sm" mb={1}>
                 Price per unit size
               </Text>
               <Text fontSize="md">
@@ -271,13 +271,13 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
 
           <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
             <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+              <Text fontWeight="bold" color="ink.600" fontSize="sm" mb={1}>
                 Currency
               </Text>
               <Text fontSize="md">INR</Text>
             </Box>
             <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+              <Text fontWeight="bold" color="ink.600" fontSize="sm" mb={1}>
                 Unit Size
               </Text>
               <Text fontSize="md">
@@ -289,7 +289,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
           </SimpleGrid>
 
           <Box>
-            <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+            <Text fontWeight="bold" color="ink.600" fontSize="sm" mb={1}>
               Tier
             </Text>
             {selectedService.tierNames &&
@@ -314,7 +314,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
 
           {selectedService.created_at && (
             <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+              <Text fontWeight="bold" color="ink.600" fontSize="sm" mb={1}>
                 Created At
               </Text>
               <Text fontSize="md">
@@ -325,7 +325,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
 
           {selectedService.updated_at && (
             <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+              <Text fontWeight="bold" color="ink.600" fontSize="sm" mb={1}>
                 Updated At
               </Text>
               <Text fontSize="md">

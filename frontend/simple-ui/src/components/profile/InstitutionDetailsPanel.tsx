@@ -74,7 +74,7 @@ export default function InstitutionDetailsPanel({
       <Card>
         <CardBody>
           <Center h="240px">
-            <Spinner size="lg" color="orange.500" />
+            <Spinner size="lg" />
           </Center>
         </CardBody>
       </Card>
@@ -121,14 +121,14 @@ export default function InstitutionDetailsPanel({
               {formatTenantStatusLabel(institution.status)}
             </Badge>
           </HStack>
-          <HStack spacing={2} color="gray.500" flexShrink={0}>
+          <HStack spacing={2} color="ink.500" flexShrink={0}>
             <FiEye aria-hidden />
             <Text fontSize="sm">View only</Text>
           </HStack>
         </HStack>
       </CardHeader>
 
-      <CardBody borderTopWidth="1px" borderColor="gray.100">
+      <CardBody borderTopWidth="1px" borderColor="ink.100">
         <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
           <DetailField label={`${INSTITUTION} ID`}>
             <Text fontFamily="mono">{institution.tenant_id}</Text>
@@ -172,8 +172,8 @@ export default function InstitutionDetailsPanel({
         )}
       </CardBody>
 
-      <CardFooter borderTopWidth="1px" borderColor="gray.100" pt={4}>
-        <HStack spacing={2} color="gray.500">
+      <CardFooter borderTopWidth="1px" borderColor="ink.100" pt={4}>
+        <HStack spacing={2} color="ink.500">
           <FiInfo aria-hidden />
           <Text fontSize="sm">
             Contact your adopter admin to request changes to these details.

@@ -57,6 +57,10 @@ export const unpublishModel = async (
   }
 };
 
+/** RQ cache key for unfiltered GET /models. Used by Services Management create-form dropdown. */
+export const MODELS_ALL_QUERY_KEY = ["models-all"] as const;
+export const MODELS_ALL_STALE_MS = 5 * 60 * 1000;
+
 /**
  * Get all models (no pagination — returns everything, backward-compatible)
  * @returns Promise with list of models

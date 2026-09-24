@@ -17,8 +17,7 @@ import {
 import { FaExchangeAlt, FaInfoCircle } from 'react-icons/fa';
 import { useQuery } from '@tanstack/react-query';
 import { LanguageSelectorProps } from '../../types/nmt';
-import { listNMTServices, getNMTLanguagesForService } from '../../services/nmtService';
-import { NMTServiceDetailsResponse, NMTLanguagesResponse } from '../../types/nmt';
+import { listNMTServices } from '../../services/nmtService';
 import { useAuth } from '../../hooks/useAuth';
 import { LANG_CODE_TO_LABEL } from '../../config/constants';
 
@@ -44,8 +43,6 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
   inferenceInProgress = false,
 }) => {
   const [currentServiceId, setCurrentServiceId] = useState<string>(selectedServiceId || '');
-  const [availableLanguages, setAvailableLanguages] = useState<string[]>([]);
-  const [languageDetails, setLanguageDetails] = useState<Array<{code: string; name: string}>>([]);
   const { isAuthenticated, isLoading: authLoading } = useAuth();
 
   // Fetch available services (key includes auth so we refetch after login and get published list, not cached anonymous IndicTrans)
@@ -60,24 +57,16 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
   // Find selected service
   const selectedService = services?.find((s) => s.service_id === currentServiceId);
 
-  // Fetch languages for selected service
-  const { data: languagesData, isLoading: languagesLoading } = useQuery({
-    queryKey: ['nmt-languages', currentServiceId],
-    queryFn: () => getNMTLanguagesForService(currentServiceId),
-    enabled: !!currentServiceId,
-    staleTime: 5 * 60 * 1000, // 5 minutes
-  });
-
-  // Update available languages when languages data changes; clear when null (e.g. service not found) to avoid stale options
-  useEffect(() => {
-    if (languagesData) {
-      setAvailableLanguages(languagesData.supported_languages || []);
-      setLanguageDetails(languagesData.language_details || []);
-    } else if (currentServiceId) {
-      setAvailableLanguages([]);
-      setLanguageDetails([]);
-    }
-  }, [languagesData, currentServiceId]);
+  // Languages are already on the service catalog — do not refetch GET /services.
+  const availableLanguages = selectedService?.supported_languages ?? [];
+  const languageDetails = useMemo(
+    () =>
+      availableLanguages.map((code) => ({
+        code,
+        name: LANG_CODE_TO_LABEL[code] || code,
+      })),
+    [availableLanguages],
+  );
 
   // When current language pair is not in the new service's options, sync parent so state matches display and Translate uses correct languages
   useEffect(() => {
@@ -298,9 +287,9 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
         <Text className="dview-service-try-option-title" mb={4}>
           Language Configuration
         </Text>
-        {languagesLoading && currentServiceId ? (
+        {servicesLoading && currentServiceId ? (
           <Stack spacing={2} align="center" py={4}>
-            <Spinner size="md" color="orange.500" />
+            <Spinner size="md" />
             <Text fontSize="sm" color="gray.600">Loading languages...</Text>
           </Stack>
         ) : (
@@ -334,7 +323,7 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
                 isDisabled={languageConfigLocked || !isSwapAvailable}
                 variant="outline"
                 size="md"
-                colorScheme="orange"
+                colorScheme="ink"
               />
 
               {/* Target Language */}
