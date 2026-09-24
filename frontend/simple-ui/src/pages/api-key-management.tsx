@@ -1,36 +1,32 @@
 import {
-  Box,
-  Card,
   Center,
   Heading,
   Spinner,
-  Tabs,
-  TabList,
-  TabPanels,
-  Tab,
-  TabPanel,
-  useColorModeValue,
+  useDisclosure,
   VStack,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
+import CreateButton from "../components/common/CreateButton";
+import FormActions from "../components/common/FormActions";
+import { CreateModal } from "../components/common/StandardModal";
 import { useAuth } from "../hooks/useAuth";
 import CreateApiKeyTab from "../components/profile/CreateApiKeyTab";
 import ApiKeyManagementTab from "../components/profile/ApiKeyManagementTab";
 import { userMayManageApiKeys } from "../utils/rbac";
 import { getPlatformName } from "../config/runtimeConfig";
+
 const ApiKeyManagementPage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
-
-  const [activeTabIndex, setActiveTabIndex] = useState(0);
+  const { isOpen: isCreateOpen, onOpen: onCreateOpen, onClose: onCreateClose } =
+    useDisclosure();
+  const [isCreatingKey, setIsCreatingKey] = useState(false);
   const refreshManagedKeysRef = useRef<(() => Promise<void>) | null>(null);
 
-  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
-  const isTenantAdmin = Boolean(user?.roles?.includes("TENANT ADMIN"));
   const showApiKeyManagement = userMayManageApiKeys(user?.roles);
 
   useEffect(() => {
@@ -39,31 +35,11 @@ const ApiKeyManagementPage: React.FC = () => {
     }
   }, [authLoading, isAuthenticated, router, showApiKeyManagement]);
 
-  const tabs = useMemo(() => {
-    const t: { id: "create" | "manage"; label: string; show: boolean }[] = [
-      { id: "manage", label: "Manage API Keys", show: isAdmin || isTenantAdmin },
-      { id: "create", label: "Create API Key", show: isAdmin || isTenantAdmin },
-    ];
-    return t.filter((x) => x.show);
-  }, [isAdmin, isTenantAdmin]);
-
-  const manageTabIndex = tabs.findIndex((t) => t.id === "manage");
-
-  const handleTabChange = (idx: number) => {
-    setActiveTabIndex(idx);
-    if (tabs[idx]?.id === "manage") {
-      void refreshManagedKeysRef.current?.();
-    }
-  };
-
-  const cardBg = useColorModeValue("white", "gray.800");
-  const cardBorder = useColorModeValue("gray.200", "gray.700");
-
   if (authLoading) {
     return (
       <ContentLayout>
         <Center h="400px">
-          <Spinner size="xl" color="orange.500" />
+          <Spinner size="xl" />
         </Center>
       </ContentLayout>
     );
@@ -74,8 +50,8 @@ const ApiKeyManagementPage: React.FC = () => {
       <ContentLayout>
         <Center h="400px">
           <VStack spacing={4}>
-            <Spinner size="xl" color="orange.500" />
-            <Heading size="sm" color="gray.600">
+            <Spinner size="xl" />
+            <Heading size="sm" color="ink.600">
               Redirecting...
             </Heading>
           </VStack>
@@ -92,52 +68,50 @@ const ApiKeyManagementPage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <Box maxW="7xl" mx="auto" py={8} px={4}>
-          <ManagementPageHeader
-            title="Manage API"
-            description="Create and manage API keys for your account"
-          />
+        <ManagementPageHeader
+          title="API Keys"
+          description="Create keys, set permissions, and optionally cap budget as a percentage of the application"
+          actions={
+            <CreateButton onClick={onCreateOpen}>Create API Key</CreateButton>
+          }
+        />
 
-          <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px">
-            <Tabs
-              colorScheme="blue"
-              variant="enclosed"
-              isLazy={false}
-              index={activeTabIndex}
-              onChange={handleTabChange}
-            >
-              <TabList>
-                {tabs.map((t) => (
-                  <Tab key={t.id} fontWeight="semibold">
-                    {t.label}
-                  </Tab>
-                ))}
-              </TabList>
-
-              <TabPanels>
-                {tabs.map((t) => (
-                  <TabPanel key={t.id} px={0} pt={6}>
-                    {t.id === "create" && (
-                      <CreateApiKeyTab
-                        tenantId={user.tenant_id}
-                        onApiKeyCreated={() => void refreshManagedKeysRef.current?.()}
-                      />
-                    )}
-                    {t.id === "manage" && (
-                      <ApiKeyManagementTab
-                        isActive={activeTabIndex === manageTabIndex}
-                        onRegisterRefresh={(refresh) => {
-                          refreshManagedKeysRef.current = refresh;
-                        }}
-                      />
-                    )}
-                  </TabPanel>
-                ))}
-              </TabPanels>
-            </Tabs>
-          </Card>
-        </Box>
+        <ApiKeyManagementTab
+          isActive
+          onRegisterRefresh={(refresh) => {
+            refreshManagedKeysRef.current = refresh;
+          }}
+        />
       </ContentLayout>
+
+      <CreateModal
+        isOpen={isCreateOpen}
+        onClose={onCreateClose}
+        size="lg"
+        title="Create API Key"
+        description="Create a key, set permissions, and optionally cap budget as a percentage of the application."
+        footer={
+          <FormActions
+            submitLabel="Create API Key"
+            onCancel={onCreateClose}
+            submitType="submit"
+            form="create-api-key-form"
+            isLoading={isCreatingKey}
+            loadingText="Creating..."
+            justify="space-between"
+            pt={0}
+          />
+        }
+      >
+        <CreateApiKeyTab
+          key={isCreateOpen ? "open" : "closed"}
+          tenantId={user.tenant_id}
+          onApiKeyCreated={() => void refreshManagedKeysRef.current?.()}
+          hideActions
+          formId="create-api-key-form"
+          onCreatingChange={setIsCreatingKey}
+        />
+      </CreateModal>
     </>
   );
 };
