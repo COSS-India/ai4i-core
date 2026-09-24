@@ -8,7 +8,6 @@ import type {
   ThresholdDraftBand,
 } from "../types/notificationAlerts";
 import {
-  bandsEqual,
   DEFAULT_ENABLE_ROLE,
   draftBandsEqual,
   isCatalogItemEnabled,
@@ -286,18 +285,15 @@ export function useNotificationCatalog(type: NotificationAlertType) {
         const payload: CatalogUpdatePayload = {
           recipient_roles: draft.recipient_roles,
         };
-        // Only sent when a band actually changed, so an unrelated role edit
-        // can't write the 70/80/90 default into an untouched row. The
-        // re-validation is belt-and-braces (the modal already refuses an
-        // invalid set) — a clear message beats a 422 mid-save-loop.
         if (item.type === "ALERT" && draft.thresholds) {
-          const { bands } = validateThresholdDrafts(draft.thresholds);
-          if (!bands) {
-            const message = `Fix the thresholds on '${item.display_name}' before saving.`;
-            setError(message);
-            return { succeeded, failed: { name: item.name, message } };
-          }
-          if (!bandsEqual(bands, item.thresholds)) {
+          const original = toThresholdDrafts(item.thresholds);
+          if (!draftBandsEqual(draft.thresholds, original)) {
+            const { bands } = validateThresholdDrafts(draft.thresholds);
+            if (!bands) {
+              const message = `Fix the thresholds on '${item.display_name}' before saving.`;
+              setError(message);
+              return { succeeded, failed: { name: item.name, message } };
+            }
             payload.thresholds = bands;
           }
         }
