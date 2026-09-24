@@ -4,7 +4,7 @@ export interface ApplicationKeyPreviewInput {
   id: number;
   key_name: string;
   allocated_percentage: number;
-  allocated_budget: number;
+  allocated_budget: number | null;
   consumed_budget?: number | null;
 }
 
