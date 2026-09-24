@@ -8,13 +8,13 @@ interface ContentLayoutProps {
 }
 
 const ContentLayout: React.FC<ContentLayoutProps> = ({ children }) => {
-  const bgColor = useColorModeValue('light.100', 'dark.100');
+  const bgColor = useColorModeValue('white', 'dark.100');
 
   return (
     <Box
-      pt="calc(3.5rem + 0.5rem)"
-      px={6}
-      pb={4}
+      px={{ base: 3, md: 5 }}
+      pb={5}
+      pt={3}
       flex="1"
       minH={0}
       minW={0}
@@ -23,18 +23,18 @@ const ContentLayout: React.FC<ContentLayoutProps> = ({ children }) => {
       w="100%"
     >
       <Box
-        py={4}
-        px={4}
+        py={5}
+        px={{ base: 4, md: 6 }}
         bg={bgColor}
-        borderRadius="md"
+        borderRadius="lg"
+        border="1px solid"
+        borderColor="ink.200"
+        boxShadow="xs"
         flex="1"
         minH={0}
         minW={0}
         overflow="auto"
         w="100%"
-        maxW="1400px"
-        mx="auto"
-        sx={{ maxWidth: '100%' }}
       >
         {children}
       </Box>

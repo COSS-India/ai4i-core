@@ -26,13 +26,15 @@ export default function Document() {
         <link rel="icon" href="/favicon.ico" />
 
         {/* Google Fonts */}
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap"
           rel="stylesheet"
         />
 
         {/* Theme Color */}
-        <meta name="theme-color" content="#ff8c00" />
+        <meta name="theme-color" content="#0F172A" />
 
         {/* Open Graph Meta Tags */}
         <meta property="og:title" content={platformName} />

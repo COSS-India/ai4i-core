@@ -69,7 +69,7 @@ export type {
 export const DATA_TABLE_HEADER_SX = {
   fontSize: "11.5px",
   letterSpacing: "0.05em",
-  color: "gray.500",
+  color: "ink.400",
   textTransform: "uppercase" as const,
 } as const;
 
@@ -637,7 +637,7 @@ function CardLayoutDataTable<T>({
       overflowX="auto"
       mt={containerMt}
       borderWidth="1px"
-      borderColor="gray.300"
+      borderColor="ink.200"
       borderRadius={borderRadius}
       bg="white"
     >
@@ -695,7 +695,7 @@ function CardLayoutDataTable<T>({
                   cursor: "pointer" as const,
                   _hover: {
                     bg: "#FAFBFE",
-                    "& .data-table-chevron": { color: "blue.500" },
+                    "& .data-table-chevron": { color: "ink.600" },
                   },
                   onClick: () => onRowClick?.(row),
                   onKeyDown: (e: React.KeyboardEvent) => {
@@ -750,7 +750,7 @@ function CardLayoutDataTable<T>({
   if (isLoading) {
     return (
       <Center h={asyncStateHeight}>
-        <Spinner size="lg" color="orange.500" />
+        <Spinner size="lg" color="ink.600" />
       </Center>
     );
   }
@@ -767,7 +767,7 @@ function CardLayoutDataTable<T>({
   if (isEmpty) {
     return (
       <Center h={asyncStateHeight}>
-        <Text color="gray.500">{emptyMessage}</Text>
+        <Text color="ink.500">{emptyMessage}</Text>
       </Center>
     );
   }
@@ -908,7 +908,7 @@ function AdminLayoutDataTable<T>({
         onLast={pagination.onLast}
         canPrev={pagination.canPrev}
         canNext={pagination.canNext}
-        borderColor="gray.300"
+        borderColor="ink.200"
         bg="#FAFBFD"
         variant="attached"
         placement={paginationPosition}
@@ -979,7 +979,7 @@ function AdminLayoutDataTable<T>({
               cursor={onRowClick ? "pointer" : undefined}
               _hover={{
                 bg: "#FAFBFE",
-                ...(rowChevron ? { "& .data-table-chevron": { color: "blue.500" } } : {}),
+                ...(rowChevron ? { "& .data-table-chevron": { color: "ink.600" } } : {}),
               }}
               transition="background 0.15s"
             >
@@ -1043,7 +1043,7 @@ function AdminLayoutDataTable<T>({
         {isLoading ? (
           <Center py={8}>
             <VStack spacing={4}>
-              <Spinner size="lg" color="blue.500" />
+              <Spinner size="lg" color="ink.600" />
               <Text color="gray.600">{loadingMessage}</Text>
             </VStack>
           </Center>
@@ -1055,7 +1055,7 @@ function AdminLayoutDataTable<T>({
         ) : (
           <Box
             borderWidth="1px"
-            borderColor="gray.300"
+            borderColor="ink.200"
             borderRadius="14px"
             bg="white"
             overflow="hidden"

@@ -14,10 +14,10 @@ import InfoTip from "./InfoTip";
 /** Shared light/dark surface tokens for admin data tables (list pages, profile tabs, etc.). */
 export function useAdminTableSurface() {
   const tableBg = useColorModeValue("white", "gray.800");
-  const tableHeaderBg = useColorModeValue("gray.50", "gray.700");
-  const tableRowHoverBg = useColorModeValue("gray.50", "gray.700");
+  const tableHeaderBg = useColorModeValue("ink.50", "gray.700");
+  const tableRowHoverBg = useColorModeValue("ink.50", "gray.700");
   const cardBg = useColorModeValue("white", "gray.800");
-  const borderColor = useColorModeValue("gray.200", "gray.700");
+  const borderColor = useColorModeValue("ink.100", "gray.700");
   return { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor };
 }
 
@@ -75,11 +75,11 @@ function SortCaretButton({
         border="none"
         bg="transparent"
         cursor="pointer"
-        color={isActive ? "blue.500" : "gray.300"}
-        _hover={{ color: isActive ? "blue.600" : "gray.500" }}
+        color={isActive ? "ink.700" : "ink.300"}
+        _hover={{ color: isActive ? "ink.800" : "ink.500" }}
         _focusVisible={{
           outline: "2px solid",
-          outlineColor: "blue.300",
+          outlineColor: "ink.300",
           outlineOffset: "1px",
           borderRadius: "2px",
         }}
@@ -94,7 +94,7 @@ function SortCaretButton({
 
 /**
  * Column header with optional hint and a compact stacked asc/desc caret control.
- * Inactive columns show muted dual carets; the active direction uses a blue caret.
+ * Inactive columns show muted dual carets; the active direction uses an ink caret.
  */
 export function TableSortHeader({
   label,
@@ -132,7 +132,7 @@ export function TableSortHeader({
         as="span"
         fontSize="11.5px"
         letterSpacing="0.05em"
-        color={active ? "gray.700" : "gray.500"}
+        color={active ? "ink.700" : "ink.400"}
         textTransform="uppercase"
         fontWeight="bold"
       >
@@ -149,7 +149,7 @@ export function TableSortHeader({
         px="2px"
         py="1px"
         borderRadius="4px"
-        bg={active ? "blue.50" : "transparent"}
+        bg={active ? "ink.50" : "transparent"}
         _groupHover={{ bg: "gray.100" }}
         transition="background 0.12s ease"
         aria-hidden={false}
@@ -261,7 +261,7 @@ export function TablePaginationBar({
           <Text
             fontSize="11.5px"
             letterSpacing="0.04em"
-            color="gray.500"
+            color="ink.500"
             textTransform="uppercase"
             fontWeight="bold"
             whiteSpace="nowrap"
