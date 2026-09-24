@@ -57,26 +57,9 @@ export const unpublishModel = async (
   }
 };
 
-/** RQ cache key for unfiltered GET /models. Used by Services Management create-form dropdown. */
+/** RQ cache key for every model. GET /models defaults `limit` to 100, so callers page. */
 export const MODELS_ALL_QUERY_KEY = ["models-all"] as const;
 export const MODELS_ALL_STALE_MS = 5 * 60 * 1000;
-
-/**
- * Get all models (no pagination — returns everything, backward-compatible)
- * @returns Promise with list of models
- */
-export const getAllModels = async (): Promise<ModelDetails[]> => {
-  try {
-    const response = await apiService.get(apiEndpoints.platform.models.base, {
-      suppressErrorAlert: true,
-      responseSchema: modelsListSchema,
-    });
-    return response.data || [];
-  } catch (error: unknown) {
-    console.error('Get models error:', error);
-    throw error;
-  }
-};
 
 /**
  * Get models with server-side pagination, filtering, and search.
@@ -109,6 +92,12 @@ export const fetchAllModelsMatchingFilters = async (
   }
 
   return { items, total, offset: 0, limit: null };
+};
+
+/** Every model. GET /models defaults limit to 100 and caps a page at 1000. */
+export const getAllModels = async (): Promise<ModelDetails[]> => {
+  const { items } = await fetchAllModelsMatchingFilters();
+  return items;
 };
 
 export const getModelsPaginated = async (params: ModelListParams = {}): Promise<PaginatedModels> => {

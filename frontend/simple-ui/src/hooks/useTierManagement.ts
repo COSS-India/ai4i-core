@@ -246,9 +246,8 @@ export function useTierManagement() {
   });
 
   // Tenant directory, used to resolve tenant_id → organisation name for display.
-  // Shares TENANTS_LIST_QUERY_KEY with Logs / Metering / Institution Management.
-  // limit is capped at 500 by the auth-service tenants endpoint (le=500).
-  // Still gated on the View modal: the count column needs ids, not names.
+  // Shares TENANTS_LIST_QUERY_KEY with Institution Management. The fetch walks
+  // pages of 500. Still gated on the View modal: the count column needs ids, not names.
   const tenantsDirectoryQuery = useQuery({
     queryKey: TENANTS_LIST_QUERY_KEY,
     queryFn: fetchTenantsDirectory,
