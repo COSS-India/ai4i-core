@@ -142,7 +142,7 @@ const topNavItems: NavItem[] = [
   },
   {
     id: TABS.notificationsAlerts,
-    label: "Notifications & Alerts",
+    label: "Platform Settings",
     shortLabel: "Notifications",
     path: `/${TABS.notificationsAlerts}`,
     icon: IoNotificationsOutline,
@@ -294,7 +294,7 @@ const Sidebar: React.FC<SidebarProps> = ({ pinned, onTogglePin }) => {
     const isActive =
       router.pathname === item.path || router.pathname.startsWith(`${item.path}/`);
     const requiresAuth = item.requiresAuth ?? false;
-    const label = isExpanded ? item.shortLabel : item.label;
+    const label = item.label;
     const itemIconColor = isActive ? "brand.700" : iconColor;
 
     const button = (

@@ -87,7 +87,7 @@ const Header: React.FC = () => {
         setTitle("Model Management");
         break;
       case "/notifications-alerts":
-        setTitle("Notifications & Alerts");
+        setTitle("Platform Settings");
         break;
       case "/logs":
         setTitle("Logs");
