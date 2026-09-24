@@ -853,8 +853,17 @@ class APIKeyService:
         # Everything budget-related below reads the LOCKED row, never the
         # earlier unlocked one, which may be a stale identity-map copy.
         locked_application = await self._applications.get_by_id_for_update(application_id)
-        if locked_application is not None:
-            application = locked_application
+        if locked_application is None:
+            # populate_existing can legitimately return None if the row was
+            # deleted between the unlocked read and the lock. Falling back to
+            # the unlocked copy would run every budget check below on stale
+            # data with no lock held (and fail later on the api_keys FK) —
+            # 404 instead, same as AllocationService._load_and_lock_application.
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "APPLICATION_NOT_FOUND", "message": "Application not found."},
+            )
+        application = locked_application
 
         # Covers both "never funded" (NULL) and "funded with ₹0": either way
         # there is no available Application Budget, so any positive

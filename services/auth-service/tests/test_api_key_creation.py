@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError as PydanticValidationError
 
 from app.core.exceptions import ValidationError
@@ -120,12 +121,18 @@ class TestBudgetAllocationMandatory:
     the Application's available Budget, and the server must never assign
     the Application's remaining Budget on its own."""
 
-    @staticmethod
-    def _svc(application, *, locked_application=None, existing_keys=(), pct_sum=Decimal("0")):
+    _SAME_ROW = object()
+
+    @classmethod
+    def _svc(
+        cls, application, *, locked_application=_SAME_ROW, existing_keys=(), pct_sum=Decimal("0")
+    ):
+        # locked_application defaults to "the lock returns the same row";
+        # pass None explicitly to simulate the row vanishing before the lock.
         applications = AsyncMock()
         applications.get_by_id_for_tenant = AsyncMock(return_value=application)
         applications.get_by_id_for_update = AsyncMock(
-            return_value=locked_application if locked_application is not None else application
+            return_value=application if locked_application is cls._SAME_ROW else locked_application
         )
         applications.sum_api_key_allocated_percentage = AsyncMock(return_value=pct_sum)
         tenants = AsyncMock()
@@ -225,6 +232,34 @@ class TestBudgetAllocationMandatory:
 
         assert exc.value.code == "APPLICATION_BUDGET_NOT_SET"
         repo.create.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_application_deleted_before_lock_returns_404_not_stale_checks(self) -> None:
+        """Exact review scenario: the unlocked read finds a funded
+        Application, but the row is gone by the time it is locked
+        (get_by_id_for_update -> None). Must 404 — not fall back to the
+        stale unlocked row, pass every budget check on its ₹50000, and
+        only fail later on the api_keys FK as a 500."""
+        stale = _application(allocated_budget=Decimal("50000"))
+        svc, repo, applications = self._svc(stale, locked_application=None)
+
+        with patch(
+            "app.services.api_key_service.budget_usage.fetch_budget_usage", new=AsyncMock()
+        ) as fetch_usage, patch(
+            "app.services.budget_usage.write_budget_snapshot", AsyncMock()
+        ) as write_snap:
+            with pytest.raises(HTTPException) as exc:
+                await self._create(svc, allocated_percentage=Decimal("50"))
+
+        assert exc.value.status_code == 404
+        assert exc.value.detail["code"] == "APPLICATION_NOT_FOUND"
+        applications.get_by_id_for_update.assert_awaited_once_with(1)
+        # No check ran against the stale row, and nothing was persisted.
+        applications.sum_api_key_allocated_percentage.assert_not_awaited()
+        fetch_usage.assert_not_awaited()
+        repo.create.assert_not_awaited()
+        write_snap.assert_not_awaited()
+        svc._cache.set_api_key_cache.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_percentage_rounding_to_zero_rupees_is_rejected(self) -> None:
