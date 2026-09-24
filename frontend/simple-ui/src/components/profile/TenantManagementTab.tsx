@@ -85,9 +85,7 @@ import CreateInstitutionForm, {
 } from "./CreateInstitutionForm";
 import EditInstitutionModal from "./EditInstitutionModal";
 import InstitutionForm from "./InstitutionForm";
-import AddInstitutionUserModal from "../tenant-management/AddInstitutionUserModal";
-import EditInstitutionUserModal from "../tenant-management/EditInstitutionUserModal";
-import ViewInstitutionUserModal from "../tenant-management/ViewInstitutionUserModal";
+import InstitutionUserModal from "../tenant-management/InstitutionUserModal";
 import InstitutionConfirmDialogs from "../tenant-management/InstitutionConfirmDialogs";
 import {
   InstitutionTenantRowActions,
@@ -1006,9 +1004,7 @@ export default function TenantManagementTab({
       {/* Modals always mounted */}
       {renderCreateInstitutionModal()}
       <EditInstitutionModal tm={tm} />
-      <AddInstitutionUserModal tm={tm} />
-      <EditInstitutionUserModal tm={tm} />
-      <ViewInstitutionUserModal
+      <InstitutionUserModal
         tm={tm}
         resolveUserDisplayStatus={resolveUserDisplayStatus}
       />
