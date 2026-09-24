@@ -1,9 +1,19 @@
 """allocation_validator — the one shared resolve_level/convert implementation
-behind every allocation write path (PATCH .../budget, each of the three
-Budget Allocation endpoints, and the Application->Key cascade).
+behind every allocation write path (PATCH .../budget and each of the three
+Budget Allocation endpoints).
 
 Scenarios mirror the worked numbered examples from the design discussion —
 same numbers, so a wrong result here is a wrong result there too.
+
+Note on refit_unlisted=True: AllocationService itself no longer calls
+resolve_level with refit_unlisted=True anywhere (both the Tenant ->
+Application and Application -> Key cascades now only recompute an unlisted
+child's allocated_percentage, never its ₹ — see AllocationService.
+cascade_tenant_budget_revision and ._cascade_into_keys). The tests below
+that exercise refit_unlisted=True still matter: it's the pure, tested
+proportional-re-fit mode of the shared algorithm, kept in case a future
+edge genuinely needs it — just not reachable through AllocationService
+today.
 """
 
 from decimal import Decimal
@@ -194,14 +204,18 @@ class TestResolveLevelShrink:
 class TestResolveLevelAcceptanceCriteria:
     """The exact story example: Institution 100%, App A=50%(40 used),
     App B=30%(30 used, exhausted), App C=20%(5 used), exercised here with
-    refit_unlisted=False — the Application->Keys edge's own top scope
-    (an unlisted Key is left exactly as it is when the Application's own
-    total isn't changing), and what AllocationService.
-    update_application_key_allocations actually calls. The Tenant->
-    Applications edge now calls this with refit_unlisted=True instead — an
-    unlisted Application IS proportionally re-fit, even though the Tenant's
-    own total isn't changing either (same refit_unlisted=True math the
-    other tests below already cover, e.g. TestSlackSurvivesAResize)."""
+    refit_unlisted=False — an unlisted child is left exactly as it is when
+    its parent's own total isn't changing this call. This is what every
+    AllocationService call site actually uses today:
+    update_application_key_allocations and update_single_api_key_allocation
+    (a sibling Key edit never moves another Key), the Tenant-level
+    endpoint's own un-listed Applications (a sibling Application edit
+    never moves another Application), AND — via
+    cascade_tenant_budget_revision / _cascade_into_keys — the cascade into
+    an un-listed Application/Key when its OWN parent resizes too (that
+    case additionally recomputes the un-listed child's
+    allocated_percentage outside resolve_level itself; see those methods'
+    own docstrings)."""
 
     @staticmethod
     def _apps():
@@ -259,12 +273,15 @@ class TestRefitUnlistedFalse:
     returned — only the explicit rows come back, and the sibling-sum check
     uses siblings' CURRENT amounts.
 
-    Not currently reachable through AllocationService — every one of its
-    call sites resolves Keys with refit_unlisted=True (resizing one Key
-    proportionally re-fits its unlisted siblings; see allocation_service.
-    _resolve_and_persist_keys), so this mode has no live caller today. Kept
-    and tested here because it's a real, distinct mode of the shared
-    algorithm, not because anything currently invokes it that way."""
+    This is what every AllocationService call site resolves Keys/
+    Applications with today: resizing one Key never moves another Key
+    under the same Application (update_application_key_allocations,
+    update_single_api_key_allocation), resizing one Application never
+    moves another Application (the Tenant-level endpoint's own un-listed
+    Applications), and — as of this fix — a parent's own resize no longer
+    re-fits its un-listed children's ₹ either (AllocationService.
+    _resolve_and_persist_keys always passes refit_unlisted=False now; see
+    _cascade_into_keys)."""
 
     @staticmethod
     def _apps():
@@ -378,13 +395,16 @@ class TestRefitUnlistedFalse:
 
 
 class TestUnlistedRefitNoOpExemption:
-    """resolve_level's refit_unlisted=True branch: the reviewed bug from
-    the "Edit Budget" Application flow. Editing an Application's own ₹
-    forces every one of its unlisted Keys through this branch — including
-    a Key holding a 0% ceiling that picked up a sliver of consumed spend
-    via the one-call-past-exhaustion design. Its proportional re-fit
-    naturally lands back at 0 (0% of anything is 0), identical to what it
-    already had — that must not be treated as a reduction."""
+    """resolve_level's refit_unlisted=True branch: the originally-reviewed
+    bug from the "Edit Budget" Application flow, back when editing an
+    Application's own ₹ still forced every one of its unlisted Keys
+    through this branch (it no longer does — see the module docstring's
+    note on refit_unlisted=True). Still real algorithm behavior worth
+    pinning directly: a child holding a 0% ceiling that picked up a sliver
+    of consumed spend via the one-call-past-exhaustion design must have
+    its proportional re-fit landing back at 0 (0% of anything is 0),
+    identical to what it already had, treated as a no-op, not a
+    reduction."""
 
     def test_unlisted_key_refit_back_to_its_existing_zero_ceiling_is_allowed(self) -> None:
         # KeyX holds the Application's entire 80,000 room; id707 holds 0%
@@ -459,15 +479,21 @@ class TestUnlistedWithZeroOldTotal:
 
 
 class TestUnlistedFallsBackToStoredPercentageWhenNothingToScaleFrom:
-    """The fallback this fix adds: when a parent that never had ANY ₹
-    (allocated_amount=0 for the whole unlisted group, same trigger as
-    TestUnlistedWithZeroOldTotal above) is funded for the first time, a
-    child that already has a stored allocated_percentage — from being
-    created/edited under that still-unfunded parent — is no longer left at
-    0 by default. Its stored percentage is used instead, since the
-    ALLOCATION_TOTAL_EXCEEDED gate every create/edit path already enforces
-    guarantees the group's stored percentages sum to <=100% regardless of
-    the parent's own funding state."""
+    """The fallback that fix added, under resolve_level's refit_unlisted=True
+    branch: when a parent that never had ANY ₹ (allocated_amount=0 for the
+    whole unlisted group, same trigger as TestUnlistedWithZeroOldTotal
+    above) is funded for the first time, a child that already has a stored
+    allocated_percentage — from being created/edited under that
+    still-unfunded parent — is no longer left at 0 by default. Its stored
+    percentage is used instead, since the ALLOCATION_TOTAL_EXCEEDED gate
+    every create/edit path already enforces guarantees the group's stored
+    percentages sum to <=100% regardless of the parent's own funding state.
+
+    Not reachable through AllocationService today (see the module
+    docstring's note on refit_unlisted=True) — a never-funded child now
+    stays at ₹0/budget-exhausted even after its parent gets funded for the
+    first time, until an Admin explicitly allocates it its own ₹. Kept and
+    tested here as a real, distinct mode of the shared algorithm."""
 
     def test_single_unlisted_child_gets_its_stored_percentage_of_new_funding(self) -> None:
         # Application (id="App") had 0; Key "A" was created under it earlier
@@ -542,13 +568,17 @@ class TestUnlistedFallsBackToStoredPercentageWhenNothingToScaleFrom:
 
 
 class TestSlackSurvivesAResize:
-    """The bug: normalizing an unlisted group to fill 100% of whatever room
-    is left inflates an under-allocated child instead of preserving the
-    slack it never claimed. An Application holds one Key at 10,000 of its
-    own 100,000 budget (90,000 deliberately never assigned to any Key); the
-    Application is resized down to 40,000. The Key must land at 4,000 (its
-    same 10% share, scaled) — 40,000 would silently hand it the entire new
-    budget just because it was the only unlisted child."""
+    """The bug (in resolve_level's refit_unlisted=True branch — see the
+    module docstring's note; a scenario like the one below no longer
+    reaches this code through AllocationService, which recomputes an
+    un-listed child's percentage only and never touches its ₹): normalizing
+    an unlisted group to fill 100% of whatever room is left inflates an
+    under-allocated child instead of preserving the slack it never claimed.
+    An Application holds one Key at 10,000 of its own 100,000 budget
+    (90,000 deliberately never assigned to any Key); the Application is
+    resized down to 40,000. The Key must land at 4,000 (its same 10% share,
+    scaled) — 40,000 would silently hand it the entire new budget just
+    because it was the only unlisted child."""
 
     def test_under_allocated_unlisted_child_keeps_its_own_share_not_the_whole_room(self) -> None:
         children = [_row("Key1", "10000", "10", consumed="0")]

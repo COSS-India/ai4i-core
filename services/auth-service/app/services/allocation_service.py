@@ -16,18 +16,20 @@ for every key that changed.
 Three entry points, one shared implementation of every step except "which
 repository holds the parent," "is the parent's own share also up for
 resolution this call, or is it fixed and echoed back," and "does an
-unlisted sibling move." That last one splits along a parent/child vs.
-sibling/sibling line, not per-endpoint: a child whose OWN parent's total is
-what's actually changing this call is unconditionally re-fit to track that
-change (refit_unlisted=True) — an Application explicitly resized by the
-Tenant-level endpoint still cascades into its own un-listed Keys, same as
-it always has. But a SIBLING of whatever's being explicitly edited never
-moves just because it wasn't listed (refit_unlisted=False) — resizing one
-Application never moves another Application, resizing one Key never moves
-another Key under the same Application; the explicit edit is checked
-against whatever's genuinely unallocated instead, and rejected
-(ALLOCATION_TOTAL_EXCEEDED) if it doesn't fit. See each method's own
-docstring for which rule applies where.
+unlisted sibling move." A child is NEVER auto-resized just because its own
+parent's total changed this call, at either edge of the hierarchy
+(Tenant -> Application or Application -> Key): every un-listed child keeps
+its stored ₹ exactly (refit_unlisted=False, always), and only its
+allocated_percentage is recomputed against the parent's new total (see
+cascade_tenant_budget_revision's and _cascade_into_keys's own docstrings) —
+a child's own ₹ moves only through an explicit Admin action naming that
+child, never as a side effect of its parent being resized. An explicit edit
+is checked against whatever's genuinely unallocated (the parent's total
+minus every OTHER child's current ₹, listed or not) and rejected
+(ALLOCATION_TOTAL_EXCEEDED) if it doesn't fit, rather than made to fit by
+shrinking a sibling — same rule whether "sibling" means another
+Application, another Key, or every un-touched child of a just-resized
+parent. See each method's own docstring for the exact shape at its edge.
 """
 
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
@@ -125,19 +127,19 @@ class AllocationService:
         be), but so the feasibility check reads a consistent, race-free
         snapshot of every sibling's current ₹.
 
-        An explicitly-resized Application's OWN Keys are a different
-        story: that Application's own total genuinely IS changing, so its
-        Keys are unconditionally re-fit to track it (refit_unlisted=True,
-        same as always) — a parent/child relationship, not a sibling one.
-        This can (rarely) fail one of those Keys' own
-        ALLOCATION_BELOW_CONSUMED check; when it does, the WHOLE call is
-        rejected, including the Application's own resize. But if a caller
-        submits an Application at its CURRENT value (unchanged) purely to
-        nest explicit ``api_keys`` edits under it, that Application's total
-        isn't actually moving — its un-listed Keys follow the same sibling
-        rule as everywhere else this call (refit_unlisted=False), not the
-        parent/child one, since there's no genuine total change forcing
-        them to react (see _cascade_into_keys).
+        An explicitly-resized Application's OWN Keys never move their ₹
+        just because their parent Application resized — same "a parent's
+        resize is not an Admin action on its children" rule
+        cascade_tenant_budget_revision already applies one level up. Its
+        Keys' allocated_percentage IS recomputed against the Application's
+        new total (the same ₹ is now a different share of it), and a
+        decrease that would no longer cover its Keys' existing ₹ is
+        rejected (ALLOCATION_TOTAL_EXCEEDED), same as any other sibling
+        check — when it is, the WHOLE call is rejected, including the
+        Application's own resize. A nested, explicit ``api_keys`` row is
+        still honored as an Admin action on that specific Key, whether or
+        not the Application's own total changed this same call (see
+        _cascade_into_keys).
         """
         await authorize_institution_scope(self._roles, current_user, tenant_id)
 
@@ -191,7 +193,7 @@ class AllocationService:
         )
 
         # Phase 1: resolve and persist application-level allocations
-        resolved_apps, old_amounts_by_id, fixed_ids = await self._resolve_and_persist_applications(
+        resolved_apps, fixed_ids = await self._resolve_and_persist_applications(
             parent_amount=tenant.allocated_budget,
             request_rows=body.applications,
             applications=applications,
@@ -218,7 +220,6 @@ class AllocationService:
                 key_allocations_out = await self._cascade_into_keys(
                     application_id=resolved.id,
                     new_application_amount=resolved.amount,
-                    old_application_amount=old_amounts_by_id[resolved.id],
                     nested_explicit=nested_api_keys,
                     existing_keys=self._active(keys_by_app.get(resolved.id, [])),
                     usage_map=usage_map,
@@ -499,50 +500,20 @@ class AllocationService:
         # several apps each rounding up by a fraction can compound into a
         # sum that looks like more than what's actually allocated, which
         # sum_allocated_percentage (create_application's own room check)
-        # would then read at face value. Same fix resolve_level's own
-        # refit_unlisted=True branch already uses one level down: quantize
-        # every app but the last with ROUND_DOWN (never rounds UP past its
-        # true share), and let the last one absorb whatever residual that
-        # leaves — so the group's stored sum is exactly the single,
-        # once-quantized total_target_percentage below, not the coincidental
-        # result of N independent roundings.
-        applications_recomputed = 0
-        if new_amount:
-            total_allocated = sum((app.allocated_budget or _ZERO) for app in applications)
-            total_target_percentage = (total_allocated / new_amount * Decimal("100")).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP
-            )
-            running_total = _ZERO
-            for index, app in enumerate(applications):
-                is_last = index == len(applications) - 1
-                if not app.allocated_budget:
-                    new_percentage = _ZERO
-                elif is_last:
-                    new_percentage = total_target_percentage - running_total
-                else:
-                    new_percentage = (app.allocated_budget / new_amount * Decimal("100")).quantize(
-                        Decimal("0.01"), rounding=ROUND_DOWN
-                    )
-                running_total += new_percentage
-                if new_percentage != (app.allocated_percentage or _ZERO):
-                    applications_recomputed += 1
-                    await self._applications.update(
-                        app,
-                        {
-                            "allocated_percentage": new_percentage,
-                            "updated_by": current_user.id,
-                        },
-                    )
-        else:
-            # new_amount == 0: the feasibility gate above already rejects
-            # this unless every Application is also at 0 allocated_budget —
-            # nothing to divide by, every percentage is trivially 0.
-            for app in applications:
-                if (app.allocated_percentage or _ZERO) != _ZERO:
-                    applications_recomputed += 1
-                    await self._applications.update(
-                        app, {"allocated_percentage": _ZERO, "updated_by": current_user.id}
-                    )
+        # would then read at face value. _recompute_unlisted_percentages
+        # guards against that (ROUND_DOWN-then-residual) — shared with the
+        # identical recompute one level down (Application -> its own
+        # un-listed Keys, see _cascade_into_keys).
+        original_percentages = {app.id: (app.allocated_percentage or _ZERO) for app in applications}
+        new_percentages = await self._recompute_unlisted_percentages(
+            new_amount=new_amount,
+            entities=applications,
+            repo=self._applications,
+            current_user=current_user,
+        )
+        applications_recomputed = sum(
+            1 for app_id, pct in new_percentages.items() if pct != original_percentages[app_id]
+        )
 
         return applications_recomputed, 0, {}
 
@@ -694,15 +665,22 @@ class AllocationService:
         existing_keys: list[APIKey],
         fixed_ids: set[int],
         refit_unlisted: bool,
+        recomputed_percentages: Optional[dict[int, Decimal]] = None,
     ) -> list[APIKeyAllocationResponseItem]:
         """Build the full per-key response for a parent Application.
 
-        When refit_unlisted=False, resolve_level only returns the explicitly
-        edited keys — every untouched sibling is merged back in here from its
-        current DB values, always reported as PERCENTAGE. When refit_unlisted=True,
-        resolve_level already returns every key (the parent amount changed, so all
-        children were re-fit), so no merge-back is needed."""
+        resolve_level only returns the explicitly edited keys (whether
+        refit_unlisted is True or False, every call site now resolves Keys
+        with refit_unlisted=False — see _cascade_into_keys) — every
+        untouched sibling is merged back in here from its current DB
+        values, always reported as PERCENTAGE. ``recomputed_percentages``
+        (from _recompute_unlisted_percentages, only ever non-empty when the
+        owning Application's own amount changed this call) overrides an
+        untouched Key's stale stored percentage with its freshly recomputed
+        one — its ₹ never moved, but its share of the Application's new
+        total did."""
         resolved_ids = {r.id for r in resolved_keys}
+        recomputed_percentages = recomputed_percentages or {}
         rows = [
             APIKeyAllocationResponseItem(
                 api_key_id=r.id,
@@ -714,16 +692,78 @@ class AllocationService:
         if not refit_unlisted:
             for key in existing_keys:
                 if key.id not in resolved_ids:
+                    percentage = recomputed_percentages.get(key.id, key.allocated_percentage or _ZERO)
                     rows.append(
                         APIKeyAllocationResponseItem(
                             api_key_id=key.id,
-                            allocation=AllocationValue(
-                                type="PERCENTAGE", value=key.allocated_percentage or _ZERO
-                            ),
+                            allocation=AllocationValue(type="PERCENTAGE", value=percentage),
                             allocated_budget=key.allocated_budget or _ZERO,
                         )
                     )
         return rows
+
+    @staticmethod
+    async def _recompute_unlisted_percentages(
+        *,
+        new_amount: Decimal,
+        entities: list,
+        repo: Union[ApplicationRepository, APIKeyRepository],
+        current_user: User,
+    ) -> dict[int, Decimal]:
+        """A parent's own total changing recomputes every child's
+        allocated_percentage ONLY, never its ₹ — the same ₹ is simply a
+        different share of a different-sized parent now (see
+        cascade_tenant_budget_revision's docstring for the full rule this
+        implements: Tenant -> Applications and, via _cascade_into_keys,
+        Application -> its own Keys, share this exact recompute).
+
+        ROUND_DOWN every entity but the last (never rounds UP past its true
+        share), the last absorbs whatever residual that leaves, so the
+        group's stored percentage sum is exact by construction rather than
+        the coincidental result of independently rounding each one.
+
+        Persists only the entities whose percentage actually changed,
+        always via ``allocated_percentage`` (never ``allocated_budget``).
+        Returns every entity's resolved percentage (changed or not), keyed
+        by id, for the caller's own response/count building.
+        """
+        result: dict[int, Decimal] = {}
+        if not entities:
+            return result
+        if new_amount:
+            total_allocated = sum((e.allocated_budget or _ZERO) for e in entities)
+            total_target_percentage = (total_allocated / new_amount * Decimal("100")).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            running_total = _ZERO
+            for index, entity in enumerate(entities):
+                is_last = index == len(entities) - 1
+                if not entity.allocated_budget:
+                    new_percentage = _ZERO
+                elif is_last:
+                    new_percentage = total_target_percentage - running_total
+                else:
+                    new_percentage = (entity.allocated_budget / new_amount * Decimal("100")).quantize(
+                        Decimal("0.01"), rounding=ROUND_DOWN
+                    )
+                running_total += new_percentage
+                result[entity.id] = new_percentage
+                if new_percentage != (entity.allocated_percentage or _ZERO):
+                    await repo.update(
+                        entity,
+                        {"allocated_percentage": new_percentage, "updated_by": current_user.id},
+                    )
+        else:
+            # new_amount == 0: the feasibility gate the caller already ran
+            # rejects this unless every entity is also at 0 allocated_budget —
+            # nothing to divide by, every percentage is trivially 0.
+            for entity in entities:
+                result[entity.id] = _ZERO
+                if (entity.allocated_percentage or _ZERO) != _ZERO:
+                    await repo.update(
+                        entity, {"allocated_percentage": _ZERO, "updated_by": current_user.id}
+                    )
+        return result
 
     async def _load_and_lock_application(self, application_id: int, current_user: User) -> Application:
         """Unlocked lookup (for tenant_id) → authorize → locked re-fetch → validate budget set.
@@ -795,14 +835,12 @@ class AllocationService:
         keys_by_app: dict[int, list[APIKey]],
         usage_map: dict[int, tuple[Decimal, Decimal]],
         current_user: User,
-    ) -> tuple[list[ResolvedRow], dict[int, Decimal], set[int]]:
+    ) -> tuple[list[ResolvedRow], set[int]]:
         """Resolve and persist application-level allocations (tenant → apps).
 
         Builds children from the active Application list, calls
         _resolve_and_persist_level with refit_unlisted=False (an unlisted
         Application is never moved), and returns the resolved rows plus
-        old_amounts_by_id (captured before any update so the cascade phase
-        can scale each Application's Keys by the actual change) and
         fixed_ids (for response type reporting).
         """
         applications_by_id = {app.id: app for app in applications}
@@ -816,11 +854,6 @@ class AllocationService:
             )
             for app in applications
         ]
-        # Must be captured before _resolve_and_persist_level mutates these
-        # identity-mapped objects — app.allocated_budget stops being the old
-        # amount the instant it's persisted, and _cascade_into_keys needs the
-        # true delta to scale each Application's Keys correctly.
-        old_amounts_by_id = {app.id: (app.allocated_budget or _ZERO) for app in applications}
         explicit = [_explicit_input(row.application_id, row.allocation) for row in request_rows]
         fixed_ids = {row.application_id for row in request_rows if row.allocation.type == "FIXED"}
 
@@ -834,14 +867,13 @@ class AllocationService:
             refit_unlisted=False,
         )
 
-        return resolved_rows, old_amounts_by_id, fixed_ids
+        return resolved_rows, fixed_ids
 
     async def _cascade_into_keys(
         self,
         *,
         application_id: int,
         new_application_amount: Decimal,
-        old_application_amount: Decimal,
         nested_explicit: list[APIKeyAllocationRow],
         existing_keys: list[APIKey],
         usage_map: dict[int, tuple[Decimal, Decimal]],
@@ -849,41 +881,58 @@ class AllocationService:
         snapshot_writes: dict[int, Decimal],
         application_amount_changed: bool,
     ) -> list[APIKeyAllocationResponseItem]:
-        """Two different reasons this gets called, two different rules:
+        """An Application's own amount changing NEVER moves an existing
+        Key's own ₹ any more — the same "a parent's resize is not an Admin
+        action on its children" rule cascade_tenant_budget_revision already
+        applies one level up now applies here too (see its docstring):
 
-        - The Application's own amount actually changed this call
-          (``application_amount_changed=True``): its Keys are
-          unconditionally re-fit to track that change (refit_unlisted=True)
-          — a parent/child relationship, not a sibling one.
-        - The Application's own amount did NOT change, but the caller
-          nested explicit ``api_keys`` edits under it anyway
-          (``application_amount_changed=False``): the Application's total
-          is fixed, so this is exactly the same shape as the direct
-          Application-level/single-Key endpoints editing some of an
-          Application's Keys while its own total holds still — un-listed
-          Keys are left exactly as they are (refit_unlisted=False), not
-          swept into a re-fit that has no forcing function behind it.
+        - A nested, explicit ``api_keys`` row is still honored as an Admin
+          action on that specific Key, checked against whatever's genuinely
+          unallocated within the (possibly just-resized) Application —
+          same sibling rule as the two direct Key-level endpoints
+          (refit_unlisted=False, always).
+        - Every OTHER (un-listed) Key keeps its stored ₹ exactly. When the
+          Application's own amount DID change this call
+          (``application_amount_changed=True``), each un-listed Key's
+          allocated_percentage (only) is additionally recomputed against
+          the new Application total — the same ₹ is now a different share
+          of a different-sized Application — via
+          _recompute_unlisted_percentages, the same recompute
+          cascade_tenant_budget_revision runs one level up for an
+          un-listed Application against a new Tenant total. When it did
+          NOT change (only nested ``api_keys`` edits, Application's own
+          total fixed), nothing about an un-listed Key's percentage needs
+          to move either, so this step is skipped.
 
-        ``old_application_amount`` is only meaningful for the True case —
-        required so that re-fit can scale each Key by the Application's
-        actual change instead of normalizing to fill whatever room the
-        resize left (see resolve_level's docstring). resolve_level itself
-        already returns every Key when refit_unlisted=True, so no
-        merge-back-in step is needed here for that path; the False path's
-        merge-back happens inside _build_key_response, same as the
-        direct endpoints."""
+        Because refit_unlisted=False's own sibling-sum check already counts
+        every un-listed Key at its CURRENT ₹ against new_application_amount,
+        an Application decrease that would no longer cover its Keys'
+        existing ₹ is rejected (ALLOCATION_TOTAL_EXCEEDED) before any of
+        this runs — no Key ever auto-shrinks to make room.
+        """
         resolved_keys, fixed_ids, refit_unlisted = await self._resolve_and_persist_keys(
             parent_amount=new_application_amount,
-            parent_old_amount=old_application_amount,
             nested_explicit=nested_explicit,
             existing_keys=existing_keys,
             usage_map=usage_map,
             current_user=current_user,
             snapshot_writes=snapshot_writes,
-            refit_unlisted=application_amount_changed,
+            refit_unlisted=False,
             owning_application_id=application_id,
         )
-        return self._build_key_response(resolved_keys, existing_keys, fixed_ids, refit_unlisted)
+        recomputed_percentages: dict[int, Decimal] = {}
+        if application_amount_changed:
+            resolved_ids = {r.id for r in resolved_keys}
+            unlisted_keys = [key for key in existing_keys if key.id not in resolved_ids]
+            recomputed_percentages = await self._recompute_unlisted_percentages(
+                new_amount=new_application_amount,
+                entities=unlisted_keys,
+                repo=self._api_keys,
+                current_user=current_user,
+            )
+        return self._build_key_response(
+            resolved_keys, existing_keys, fixed_ids, refit_unlisted, recomputed_percentages
+        )
 
     async def _resolve_and_persist_keys(
         self,
@@ -902,14 +951,14 @@ class AllocationService:
         cascade, the direct Application-level endpoint, and the single-Key
         endpoint) actually resolves + persists Keys — same
         _resolve_and_persist_level call, same persistence, same snapshot
-        bookkeeping; only ``refit_unlisted`` and the KEY_APPLICATION_MISMATCH
-        check (only meaningful when nested under a specific Application) differ
-        per call site. ``refit_unlisted=True`` is for _cascade_into_keys only
-        (an Application's own total genuinely changing forces its Keys to
-        react); the two direct-edit endpoints
-        (update_application_key_allocations,
-        update_single_api_key_allocation) always pass False — resizing one
-        Key never moves another.
+        bookkeeping; only the KEY_APPLICATION_MISMATCH check (only
+        meaningful when nested under a specific Application) differs per
+        call site. Every call site now passes ``refit_unlisted=False`` —
+        resizing a Key (explicitly, or because its owning Application
+        just resized) never moves another Key under the same Application;
+        _cascade_into_keys handles its Application-resize case by
+        recomputing un-listed Keys' percentages separately, not by asking
+        resolve_level to re-fit their ₹.
 
         Returns (resolved_keys, fixed_ids, refit_unlisted). Returning
         refit_unlisted alongside the other values ensures _build_key_response
