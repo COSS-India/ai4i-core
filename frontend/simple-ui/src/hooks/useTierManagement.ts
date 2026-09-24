@@ -14,7 +14,7 @@ import {
   type Tier,
   type TierStatus,
 } from "../services/tierManagementService";
-import { listTenants } from "../services/tenantService";
+import { fetchTenantsDirectory, TENANTS_LIST_QUERY_KEY } from "../services/tenantService";
 import { INSTITUTION } from "../config/constants";
 import { fetchAllServicesMatchingFilters } from "../services/servicesManagementService";
 import { useInferenceTypes } from "./useInferenceTypes";
@@ -246,11 +246,11 @@ export function useTierManagement() {
   });
 
   // Tenant directory, used to resolve tenant_id → organisation name for display.
-  // limit is capped at 500 by the auth-service tenants endpoint (le=500).
-  // Still gated on the View modal: the count column needs ids, not names.
+  // Shares TENANTS_LIST_QUERY_KEY with Institution Management. The fetch walks
+  // pages of 500. Still gated on the View modal: the count column needs ids, not names.
   const tenantsDirectoryQuery = useQuery({
-    queryKey: ["tenants-directory"],
-    queryFn: () => listTenants({ limit: 500 }),
+    queryKey: TENANTS_LIST_QUERY_KEY,
+    queryFn: fetchTenantsDirectory,
     staleTime: 5 * 60 * 1000,
     enabled: !!viewTierId,
   });
@@ -481,7 +481,7 @@ export function useTierManagement() {
   }, [onCreateOpen]);
 
   const handleCreateSubmit = useCallback(async () => {
-    if (!checkSessionExpiry()) return;
+    if (!checkSessionExpiry()) return false;
     if (!formData.name.trim()) {
       toast({
         title: "Tier name is required",
@@ -489,7 +489,7 @@ export function useTierManagement() {
         duration: 3000,
         isClosable: true,
       });
-      return;
+      return false;
     }
     if (formData.name.trim().length < 2) {
       toast({
@@ -498,7 +498,7 @@ export function useTierManagement() {
         duration: 3000,
         isClosable: true,
       });
-      return;
+      return false;
     }
     const quotaError = validateQuotas(formData.quotas);
     if (quotaError) {
@@ -509,7 +509,7 @@ export function useTierManagement() {
         duration: 3000,
         isClosable: true,
       });
-      return;
+      return false;
     }
     setIsSubmitting(true);
     try {
@@ -531,6 +531,7 @@ export function useTierManagement() {
       });
       onCreateClose();
       refreshTiers();
+      return true;
     } catch (error: any) {
       const {
         title: errTitle,
@@ -544,6 +545,7 @@ export function useTierManagement() {
         duration: 5000,
         isClosable: true,
       });
+      return false;
     } finally {
       setIsSubmitting(false);
     }

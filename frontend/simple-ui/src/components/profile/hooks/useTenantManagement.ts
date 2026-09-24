@@ -1,6 +1,7 @@
 // Tenant Management state + handlers, backed by auth-service tenant endpoints.
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { forceFrontendSessionEnd } from "../../../hooks/useAuth";
 import { showToast } from "../../../utils/toast";
 import authService from "../../../services/authService";
@@ -112,6 +113,7 @@ export interface UseTenantManagementOptions {
 
 export function useTenantManagement(options: UseTenantManagementOptions) {
   const { user } = options;
+  const queryClient = useQueryClient();
   const isTenantAdmin = isTenantAdminUser(user?.roles);
   const isAdopterManager = isAdopterInstitutionManager(user?.roles);
   const isAdmin = isPlatformAdminUser(user?.roles);
@@ -174,7 +176,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     string | null
   >(null);
 
-  // View user modal (tenant detail uses inline panel via tenantDetailView, not a modal)
+  // View user modal
   const [viewUserDetail, setViewUserDetail] = useState<TenantUserView | null>(
     null,
   );
@@ -318,14 +320,23 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   // ----- Fetchers -----
   /** Read tenants without committing React state (for refreshUntil polls). */
-  const loadTenants = async (): Promise<TenantView[]> => {
+  const loadTenants = async (options?: { force?: boolean }): Promise<TenantView[]> => {
     if (isTenantScopedUser) {
       const tenantId = user?.tenant_id?.trim();
       if (!tenantId) return [];
       const tenant = await tenantService.getViewTenant(tenantId);
       return tenant ? applyTenantPendingSoftDeleteFlags([tenant]) : [];
     }
-    const res = await tenantService.listTenants();
+    if (options?.force) {
+      await queryClient.invalidateQueries({
+        queryKey: tenantService.TENANTS_LIST_QUERY_KEY,
+      });
+    }
+    const res = await queryClient.fetchQuery({
+      queryKey: tenantService.TENANTS_LIST_QUERY_KEY,
+      queryFn: tenantService.fetchTenantsDirectory,
+      staleTime: tenantService.TENANTS_LIST_STALE_MS,
+    });
     return applyTenantPendingSoftDeleteFlags(res.tenants ?? []);
   };
 
@@ -336,10 +347,12 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
   };
 
-  const handleFetchTenants = async (): Promise<TenantView[]> => {
+  const handleFetchTenants = async (options?: {
+    force?: boolean;
+  }): Promise<TenantView[]> => {
     setIsLoadingTenants(true);
     try {
-      const rows = await loadTenants();
+      const rows = await loadTenants(options);
       commitTenants(rows);
       return rows;
     } catch (err) {
@@ -441,10 +454,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   ) => {
     if (isAdopterManager) {
       if (expectReady) {
-        const rows = await refreshUntil(loadTenants, expectReady);
+        const rows = await refreshUntil(() => loadTenants({ force: true }), expectReady);
         commitTenants(rows);
       } else {
-        await handleFetchTenants();
+        await handleFetchTenants({ force: true });
       }
     }
     const tenantId =
@@ -486,7 +499,14 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     try {
       let tenantRows: TenantView[] = tenants;
       if (isAdopterManager) {
-        tenantRows = (await tenantService.listTenants()).tenants ?? [];
+        tenantRows =
+          (
+            await queryClient.fetchQuery({
+              queryKey: tenantService.TENANTS_LIST_QUERY_KEY,
+              queryFn: tenantService.fetchTenantsDirectory,
+              staleTime: tenantService.TENANTS_LIST_STALE_MS,
+            })
+          ).tenants ?? [];
       } else {
         const tenantId = user?.tenant_id?.trim();
         if (tenantId) {
@@ -525,6 +545,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     tenants,
     tenantUsers,
     syncKnownEmailsFromLists,
+    queryClient,
   ]);
 
   const patchTenantFormError = useCallback(
@@ -856,14 +877,14 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     return errors;
   };
 
-  const handleRegisterTenant = async () => {
+  const handleRegisterTenant = async (): Promise<boolean> => {
     const errors = collectCreateTenantErrors();
     delete errors.email;
     const emailOk = await createTenantEmailAvailability.verifyNow();
-    if (!emailOk) return;
+    if (!emailOk) return false;
     if (Object.keys(errors).length > 0) {
       setTenantFormErrors(errors);
-      return;
+      return false;
     }
     setTenantFormErrors({});
     setIsSubmittingTenant(true);
@@ -888,9 +909,11 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         created.tenant_id,
         (rows) => rows.some((t) => t.tenant_id === created.tenant_id),
       );
+      return true;
     } catch (err) {
       console.error("Failed to register tenant:", err);
       showError(err);
+      return false;
     } finally {
       setIsSubmittingTenant(false);
     }
@@ -1106,16 +1129,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   ]);
 
   // ----- View tenant / view user -----
-  const handleViewTenant = async (t: TenantView) => {
+  const handleViewTenant = (t: TenantView) => {
     setTenantDetailView(t);
     setTenantDetailSubTab("overview");
-    try {
-      const users = await loadTenantUsersForTenant(t.tenant_id);
-      commitTenantUsers(users);
-    } catch (err) {
-      console.error("Failed to fetch tenant users:", err);
-      showError(err);
-    }
   };
 
   const closeTenantDetailView = () => {
@@ -1794,7 +1810,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     userEmailStatus: addUserEmailAvailability.status,
     canSubmitUserForm,
     openAddUserForTenant,
-    // View user modal (tenant detail uses inline panel)
+    // View user modal
     viewUserDetail,
     isViewUserModalOpen,
     handleViewTenant,
