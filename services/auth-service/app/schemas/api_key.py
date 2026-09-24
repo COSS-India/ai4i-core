@@ -57,7 +57,10 @@ class CreateAPIKeyRequest(BaseSchema):
     )
     budget: Optional[Decimal] = Field(
         None,
-        gt=0,
+        # ge=0, not gt=0: a 0 must reach the service so it returns the same
+        # 422 BUDGET_TOO_SMALL as allocated_percentage=0 and the edit path,
+        # instead of a generic Pydantic 422. Negatives are still rejected here.
+        ge=0,
         max_digits=15,
         decimal_places=2,
         description=(

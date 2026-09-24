@@ -830,8 +830,9 @@ class APIKeyService:
                 code="ALLOCATION_REQUIRED",
             )
         # Negative values never reach here (the request schema bounds both
-        # fields), but an explicit 0% does — a ₹0 ceiling is a Key that can
-        # never spend anything, not a real allocation.
+        # fields at >= 0), but an explicit 0 does, for either field — a ₹0
+        # ceiling is a Key that can never spend anything, not a real
+        # allocation.
         if allocated_percentage is not None and allocated_percentage <= 0:
             raise ValidationError(
                 message="allocated_percentage must be greater than 0 — a 0% allocation gives "

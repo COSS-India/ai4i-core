@@ -305,14 +305,99 @@ class TestBudgetAllocationMandatory:
         repo.create.assert_awaited_once()
 
     @pytest.mark.parametrize(
-        "allocation",
-        [{"allocated_percentage": Decimal("-1")}, {"budget": Decimal("-1")}, {"budget": Decimal("0")}],
+        "allocation", [{"allocated_percentage": Decimal("-1")}, {"budget": Decimal("-1")}]
     )
-    def test_request_schema_rejects_negative_and_zero_budget(self, allocation) -> None:
+    def test_request_schema_rejects_negative_allocation(self, allocation) -> None:
         with pytest.raises(PydanticValidationError):
             CreateAPIKeyRequest(
                 key_name="test", permissions=["nmt.inference"], application_id=1, **allocation
             )
+
+    @pytest.mark.parametrize(
+        "allocation", [{"allocated_percentage": Decimal("0")}, {"budget": Decimal("0")}]
+    )
+    def test_request_schema_lets_zero_through_to_the_service(self, allocation) -> None:
+        """0 must reach create_api_key so it gets BUDGET_TOO_SMALL — the
+        schema only bounds negatives."""
+        CreateAPIKeyRequest(
+            key_name="test", permissions=["nmt.inference"], application_id=1, **allocation
+        )
+
+
+class TestZeroAllocationErrorShapeOverHttp:
+    """Review finding: budget was gt=0 in the request schema, so
+    POST /auth/api-keys {budget: 0} failed as a generic Pydantic 422 (a
+    list, no code) while {allocated_percentage: 0} returned 422
+    BUDGET_TOO_SMALL — the same mistake with two different error shapes.
+    Sent through the real route and exception handlers, not just the
+    service, since the bug was the schema short-circuiting the service."""
+
+    @staticmethod
+    def _client():
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.core.database import get_platform_core_db
+        from app.core.exceptions import register_exception_handlers
+        from app.dependencies.services import get_api_key_service
+        from app.routes import api_key as api_key_routes
+
+        svc, repo, applications, tenants = _service()
+        applications.get_by_id = AsyncMock(return_value=_application())
+        tenants.get_operational_fields = AsyncMock(return_value=_tenant())
+        repo.get_permission_ids_by_names = AsyncMock(return_value={"nmt.inference": 1})
+
+        app = FastAPI()
+        register_exception_handlers(app)
+        app.include_router(api_key_routes.router)
+        route = next(
+            r for r in api_key_routes.router.routes
+            if r.path == "/auth/api-keys" and "POST" in r.methods
+        )
+        role_dep = next(d.call for d in route.dependant.dependencies if d.name == "current_user")
+        app.dependency_overrides[role_dep] = lambda: MagicMock(id=uuid4())
+        app.dependency_overrides[get_api_key_service] = lambda: svc
+        app.dependency_overrides[get_platform_core_db] = lambda: None
+        return TestClient(app), repo, applications
+
+    @pytest.mark.parametrize(
+        "allocation", [{"budget": 0}, {"budget": "0.00"}, {"allocated_percentage": 0}]
+    )
+    def test_zero_returns_budget_too_small_for_either_field(self, allocation) -> None:
+        client, repo, applications = self._client()
+
+        with patch(
+            "app.routes.api_key._resolve_caller_tenant_scope", return_value=None
+        ):
+            response = client.post(
+                "/auth/api-keys",
+                json={
+                    "key_name": "k",
+                    "permissions": ["nmt.inference"],
+                    "application_id": 1,
+                    **allocation,
+                },
+            )
+
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert isinstance(detail, dict), detail  # named error, not a Pydantic list
+        assert detail["code"] == "BUDGET_TOO_SMALL"
+        applications.get_by_id_for_update.assert_not_awaited()
+        repo.create.assert_not_awaited()
+
+    def test_negative_budget_is_still_rejected_by_the_schema(self) -> None:
+        client, repo, _ = self._client()
+
+        response = client.post(
+            "/auth/api-keys",
+            json={"key_name": "k", "permissions": ["nmt.inference"], "application_id": 1, "budget": -1},
+        )
+
+        assert response.status_code == 422
+        assert isinstance(response.json()["detail"], list)
+        assert response.json()["detail"][0]["loc"] == ["body", "budget"]
+        repo.create.assert_not_awaited()
 
 
 class TestBudgetExpiredBlocksKeyCreation:
