@@ -3,15 +3,17 @@
 import {
   Box,
   Button,
-  Divider,
-  Heading,
+  Flex,
   Icon,
-  useColorModeValue,
+  Text,
+  Tooltip,
   VStack,
+  useColorModeValue,
 } from "@chakra-ui/react";
 import { useRouter } from "next/router";
 import React, { useCallback, useMemo, useState } from "react";
 import { IconType } from "react-icons";
+import { MdPushPin } from "react-icons/md";
 import {
   IoCompassOutline,
   IoKeyOutline,
@@ -22,14 +24,16 @@ import {
   IoAppsOutline,
   IoPulseOutline,
   IoNotificationsOutline,
-  // Restore with PII Guardrail nav item
-  // IoShieldCheckmarkOutline,
   IoFolderOpenOutline,
   IoStatsChartOutline,
 } from "react-icons/io5";
 import { INSTITUTION, TABS } from "../../config/constants";
 import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
+import {
+  SIDEBAR_COLLAPSED_WIDTH,
+  SIDEBAR_EXPANDED_WIDTH,
+} from "../../hooks/useSidebarPin";
 import { getTenantIdFromToken } from "../../utils/helpers";
 import { getHomePath, getUsageDashboardOverviewPath } from "../../utils/navigation";
 import {
@@ -39,231 +43,129 @@ import {
   isPlatformAdminUser,
   isTenantAdminUser,
   isUsageDashboardOnlyUser,
+  userHasRole,
   userMayManageApiKeys,
 } from "../../utils/rbac";
 import AdopterLogo from "./AdopterLogo";
 
-const safeColorMap = {
-  [TABS.modelManagement]: { // Rose → Pastel Rose
-    50:  "#FFF1F2",
-    300: "#FFC1C7",
-    400: "#FF9FA8",
-    600: "#FF6B7A",
-  },
-  [TABS.servicesManagement]: { // Cyan → Pastel Cyan
-    50:  "#E0F7FA",
-    300: "#80DEEA",
-    400: "#4DD0E1",
-    600: "#00ACC1",
-  },
-  [TABS.tenantManagement]: { // Teal → Pastel Teal
-    50:  "#E0F2F1",
-    300: "#80CBC4",
-    400: "#4DB6AC",
-    600: "#00897B",
-  },
-  [TABS.logs]: { // Green → Pastel Green
-    50:  "#E8F5E9",
-    300: "#81C784",
-    400: "#66BB6A",
-    600: "#43A047",
-  },
-  [TABS.usageDashboard]: {
-    50:  "#FFF7ED",
-    300: "#FDBA74",
-    400: "#FB923C",
-    600: "#EA580C",
-  },
-  [TABS.traces]: { // Purple → Pastel Purple
-    50:  "#F3E5F5",
-    300: "#BA68C8",
-    400: "#AB47BC",
-    600: "#8E24AA",
-  },
-  // Legacy Alerts Management (definitions/receivers) removed — uncomment to restore
-  // [TABS.alertsManagement]: { // Amber/Yellow → Pastel Amber
-  //   50:  "#FFF8E1",
-  //   300: "#FFD54F",
-  //   400: "#FFCA28",
-  //   600: "#F9A825",
-  // },
-  [TABS.notificationsAlerts]: {
-    50: "#FFF8E1",
-    300: "#FFD54F",
-    400: "#FFCA28",
-    600: "#F9A825",
-  },
-  // PII Guardrail removed from UI — uncomment to restore
-  // [TABS.piiManagement]: {
-  //   50:  "#E8EAF6",
-  //   300: "#9FA8DA",
-  //   400: "#7986CB",
-  //   600: "#5C6BC0",
-  // },
-  [TABS.tierManagement]: {
-    50:  "#E3F2FD",
-    300: "#90CAF9",
-    400: "#42A5F5",
-    600: "#1565C0",
-  },
-  [TABS.policyManagement]: {
-    50:  "#E3F2FD",
-    300: "#64B5F6",
-    400: "#42A5F5",
-    600: "#1E88E5",
-  },
-};
-
-const getColor = (serviceId: string, shade: 50 | 300 | 400 | 600) => {
-  if (!serviceId) return undefined;
-  const entry = safeColorMap[serviceId as keyof typeof safeColorMap];
-  if (entry?.[shade]) return entry[shade];
-  return shade === 50 ? "#F7FAFC" : shade === 300 ? "#CBD5E1" : shade === 400 ? "#A0AEC0" : "#1A202C";
-};
+type NavSectionId = "try" | "monitor" | "manage";
 
 interface NavItem {
   id: string;
   label: string;
+  shortLabel: string;
   path: string;
   icon: IconType;
-  iconSize: number;
-  iconColor: string;
   requiresAuth?: boolean;
+  section: NavSectionId;
 }
+
+const NAV_SECTIONS: { id: NavSectionId; label: string }[] = [
+  { id: "try", label: "Try" },
+  { id: "monitor", label: "Monitor" },
+  { id: "manage", label: "Manage" },
+];
 
 // Unsigned-in users only see Explore. Remaining top-nav items are role-gated.
 const topNavItems: NavItem[] = [
   {
     id: TABS.home,
     label: "Explore",
+    shortLabel: "Explore",
     path: "/",
     icon: IoCompassOutline,
-    iconSize: 10,
-    iconColor: "black.500",
     requiresAuth: false,
+    section: "try",
   },
-  // Usage Dashboard placed after Explore — to restore previous order (after Logs),
-  // move this block back below Logs (see commented copy there) and remove this entry.
   {
     id: TABS.usageDashboard,
     label: "Usage Dashboard",
+    shortLabel: "Usage",
     path: `/${TABS.usageDashboard}`,
     icon: IoStatsChartOutline,
-    iconSize: 10,
-    iconColor: "",
     requiresAuth: true,
-  },
-  {
-    id: TABS.modelManagement,
-    label: "Model Management",
-    path: `/${TABS.modelManagement}`,
-    icon: IoServerOutline,
-    iconSize: 10,
-    iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: true,
-  },
-  {
-    id: TABS.servicesManagement,
-    label: "Services Management",
-    path: `/${TABS.servicesManagement}`,
-    icon: IoAppsOutline,
-    iconSize: 10,
-    iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: true,
-  },
-  {
-    id: TABS.tenantManagement,
-    label: `${INSTITUTION} Management`,
-    path: `/${TABS.tenantManagement}`,
-    icon: IoPeopleOutline,
-    iconSize: 10,
-    iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: true,
-  },
-  {
-    id: TABS.apiKeyManagement,
-    label: "API Key Management",
-    path: `/${TABS.apiKeyManagement}`,
-    icon: IoKeyOutline,
-    iconSize: 10,
-    iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: true,
+    section: "monitor",
   },
   {
     id: TABS.logs,
     label: "Logs Dashboard",
+    shortLabel: "Logs",
     path: `/${TABS.logs}`,
     icon: IoDocumentTextOutline,
-    iconSize: 10,
-    iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
+    section: "monitor",
   },
-  // Previous Usage Dashboard position (after Logs) — uncomment and remove the
-  // entry after Explore above to restore the original sidebar order.
-  // {
-  //   id: TABS.usageDashboard,
-  //   label: "Usage Dashboard",
-  //   path: `/${TABS.usageDashboard}`,
-  //   icon: IoStatsChartOutline,
-  //   iconSize: 10,
-  //   iconColor: "",
-  //   requiresAuth: true,
-  // },
   {
     id: TABS.traces,
     label: "Traces Dashboard",
+    shortLabel: "Traces",
     path: `/${TABS.traces}`,
     icon: IoPulseOutline,
-    iconSize: 10,
-    iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
+    section: "monitor",
   },
-  // Legacy Alerts Management (definitions/receivers) removed — uncomment to restore
-  // {
-  //   id: TABS.alertsManagement,
-  //   label: "Alerts Management",
-  //   path: `/${TABS.alertsManagement}`,
-  //   icon: IoNotificationsOutline,
-  //   iconSize: 10,
-  //   iconColor: "",
-  //   requiresAuth: true,
-  // },
+  {
+    id: TABS.modelManagement,
+    label: "Model Management",
+    shortLabel: "Models",
+    path: `/${TABS.modelManagement}`,
+    icon: IoServerOutline,
+    requiresAuth: true,
+    section: "manage",
+  },
+  {
+    id: TABS.servicesManagement,
+    label: "Services Management",
+    shortLabel: "Services",
+    path: `/${TABS.servicesManagement}`,
+    icon: IoAppsOutline,
+    requiresAuth: true,
+    section: "manage",
+  },
+  {
+    id: TABS.tenantManagement,
+    label: `${INSTITUTION} Management`,
+    shortLabel: INSTITUTION,
+    path: `/${TABS.tenantManagement}`,
+    icon: IoPeopleOutline,
+    requiresAuth: true,
+    section: "manage",
+  },
+  {
+    id: TABS.apiKeyManagement,
+    label: "API Key Management",
+    shortLabel: "API Keys",
+    path: `/${TABS.apiKeyManagement}`,
+    icon: IoKeyOutline,
+    requiresAuth: true,
+    section: "manage",
+  },
   {
     id: TABS.notificationsAlerts,
     label: "Platform Settings",
+    shortLabel: "Notifications",
     path: `/${TABS.notificationsAlerts}`,
     icon: IoNotificationsOutline,
-    iconSize: 10,
-    iconColor: "",
     requiresAuth: true,
+    section: "manage",
   },
-  // PII Guardrail removed from UI — uncomment to restore
-  // {
-  //   id: TABS.piiManagement,
-  //   label: "PII Guardrail",
-  //   path: `/${TABS.piiManagement}`,
-  //   icon: IoShieldCheckmarkOutline,
-  //   iconSize: 10,
-  //   iconColor: "",
-  //   requiresAuth: true,
-  // },
   {
     id: TABS.tierManagement,
     label: "Tier Management",
+    shortLabel: "Tiers",
     path: `/${TABS.tierManagement}`,
     icon: IoPricetagOutline,
-    iconSize: 10,
-    iconColor: "",
     requiresAuth: true,
+    section: "manage",
   },
   {
     id: TABS.policyManagement,
     label: "Policy Management",
+    shortLabel: "Policies",
     path: `/${TABS.policyManagement}`,
     icon: IoFolderOpenOutline,
-    iconSize: 10,
-    iconColor: "",
     requiresAuth: true,
+    section: "manage",
   },
 ];
 
@@ -305,14 +207,8 @@ function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean 
       return !ctx.isUser && !ctx.isGuest && Boolean(ctx.tenantId || ctx.isAdmin);
     case TABS.usageDashboard:
       return canAccessUsageDashboard(ctx.userRoles);
-    // Legacy Alerts Management removed — uncomment to restore
-    // case TABS.alertsManagement:
-    //   return ctx.isAdmin;
     case TABS.notificationsAlerts:
       return ctx.isAdmin;
-    // PII Guardrail removed from UI — uncomment to restore
-    // case TABS.piiManagement:
-    //   return ctx.isAdmin || ctx.isTenantAdmin;
     case TABS.tierManagement:
       return ctx.isAdmin;
     default:
@@ -320,23 +216,24 @@ function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean 
   }
 }
 
-const Sidebar: React.FC = () => {
+interface SidebarProps {
+  pinned: boolean;
+  onTogglePin: () => void;
+}
+
+const Sidebar: React.FC<SidebarProps> = ({ pinned, onTogglePin }) => {
   const router = useRouter();
   const { isLoading, user, isAuthenticated } = useAuth();
   const { checkSessionExpiry } = useSessionExpiry();
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
 
-  // Check if user is GUEST or USER
-  const isGuest = user?.roles?.includes('GUEST') || false;
-  const isUser = user?.roles?.includes('USER') || false;
+  const isExpanded = pinned || isHovered;
 
-  // Check if user is ADMIN
+  const isGuest = userHasRole(user?.roles, "GUEST");
+  const isUser = userHasRole(user?.roles, "USER");
   const isAdmin = isPlatformAdminUser(user?.roles);
   const isTenantAdmin = isTenantAdminUser(user?.roles);
-
   const showTenantManagement = canAccessInstitutionManagement(user?.roles);
-
-  // Get tenant_id from JWT token
   const tenantId = getTenantIdFromToken();
 
   const topNavFilterContext = useMemo<TopNavFilterContext>(
@@ -367,15 +264,6 @@ const Sidebar: React.FC = () => {
     [topNavFilterContext],
   );
 
-  const handleSidebarMouseEnter = useCallback(() => {
-    setIsExpanded(true);
-  }, []);
-
-  const handleSidebarMouseLeave = useCallback(() => {
-    setIsExpanded(false);
-  }, []);
-
-  // Role-aware: the Usage-Dashboard-only role has no access to "/".
   const goHome = useCallback(() => {
     router.push(getHomePath(user?.roles));
   }, [router, user?.roles]);
@@ -394,9 +282,74 @@ const Sidebar: React.FC = () => {
     [checkSessionExpiry, isLoading, router],
   );
 
-  const bgColor = useColorModeValue("light.100", "dark.100");
-  const borderColor = useColorModeValue("gray.200", "gray.700");
-  const hoverBgColor = useColorModeValue("gray.50", "gray.900");
+  const bgColor = useColorModeValue("white", "dark.100");
+  const borderColor = useColorModeValue("ink.200", "gray.700");
+  const hoverBgColor = useColorModeValue("ink.50", "gray.900");
+  const activeBg = useColorModeValue("brand.50", "whiteAlpha.200");
+  const activeColor = useColorModeValue("ink.800", "ink.100");
+  const iconColor = useColorModeValue("ink.500", "gray.300");
+  const overlaying = isHovered && !pinned;
+
+  const renderNavButton = (item: NavItem) => {
+    const isActive =
+      router.pathname === item.path || router.pathname.startsWith(`${item.path}/`);
+    const requiresAuth = item.requiresAuth ?? false;
+    const label = item.label;
+    const itemIconColor = isActive ? "brand.700" : iconColor;
+
+    const button = (
+      <Button
+        variant="ghost"
+        size="sm"
+        h="2.375rem"
+        minH="2.375rem"
+        w="full"
+        position="relative"
+        justifyContent={isExpanded ? "flex-start" : "center"}
+        leftIcon={
+          isExpanded ? (
+            <Icon as={item.icon} boxSize={4} color={itemIconColor} />
+          ) : undefined
+        }
+        bg={isActive ? activeBg : "transparent"}
+        color={isActive ? activeColor : "ink.700"}
+        aria-current={isActive ? "page" : undefined}
+        onClick={(e) => onTopNavClick(e, item.path, requiresAuth, item.id)}
+        _hover={{
+          bg: isActive ? activeBg : hoverBgColor,
+        }}
+        _before={{
+          content: '""',
+          position: "absolute",
+          left: 0,
+          top: "6px",
+          bottom: "6px",
+          width: "3px",
+          borderRadius: "full",
+          bg: isActive ? "brand.600" : "transparent",
+        }}
+        px={isExpanded ? 3 : 0}
+        borderRadius="md"
+        fontWeight={isActive ? "semibold" : "medium"}
+      >
+        {isExpanded ? (
+          <Text fontSize="sm" color="inherit" fontWeight="inherit" noOfLines={1}>
+            {label}
+          </Text>
+        ) : (
+          <Icon as={item.icon} boxSize={4} color={itemIconColor} />
+        )}
+      </Button>
+    );
+
+    if (isExpanded) return button;
+
+    return (
+      <Tooltip key={item.id} label={item.label} placement="right" openDelay={200} hasArrow>
+        {button}
+      </Tooltip>
+    );
+  };
 
   return (
     <Box
@@ -405,92 +358,108 @@ const Sidebar: React.FC = () => {
       top={0}
       minH="100vh"
       h="100%"
-      w={isExpanded ? "350px" : "4.5rem"}
+      w={isExpanded ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_COLLAPSED_WIDTH}
       bg={bgColor}
-      boxShadow="md"
       zIndex={60}
       transition="width 0.2s ease"
-      onMouseEnter={handleSidebarMouseEnter}
-      onMouseLeave={handleSidebarMouseLeave}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
       borderRight="1px"
       borderColor={borderColor}
+      boxShadow={overlaying ? "lg" : "none"}
       sx={{
-        /* Small viewport height so sidebar never extends past visible area (1312×848, scaled Mac) */
-        minHeight: '100svh',
-        height: '100svh',
+        minHeight: "100svh",
+        height: "100svh",
       }}
     >
-      <VStack spacing={3} p={3} overflowY="auto" overflowX="hidden" sx={{ height: 'calc(100svh - 3.5rem)', minHeight: 0 }}>
-        {/* Logo Section */}
-        <VStack spacing={2} w="full">
-          <Box
-            cursor="pointer"
-            onClick={goHome}
-            _hover={{ opacity: 0.8 }}
-            transition="opacity 0.2s"
-            display="flex"
-            alignItems="center"
-            justifyContent="center"
-          >
-            <AdopterLogo
-              boxSize={isExpanded ? 16 : 10}
-              transition="all 0.2s ease"
-            />
-          </Box>
-        </VStack>
+      <VStack spacing={0} h="full" align="stretch">
+        <Flex
+          h="3.5rem"
+          align="center"
+          justify="center"
+          flexShrink={0}
+          borderBottom="1px"
+          borderColor={borderColor}
+          cursor="pointer"
+          onClick={goHome}
+          _hover={{ bg: "ink.50" }}
+          px={3}
+        >
+          <AdopterLogo
+            boxSize={isExpanded ? 10 : 8}
+            transition="all 0.2s ease"
+          />
+        </Flex>
 
-        <Divider />
-
-        {/* Top Navigation Items (Explore and management pages) */}
-        <VStack spacing={2} w="full" align="stretch">
-          {topItems.map((item) => {
-            const isActive = router.pathname === item.path;
-            const requiresAuth = item.requiresAuth ?? false;
-
+        <VStack
+          spacing={2}
+          p={2}
+          overflowY="auto"
+          overflowX="hidden"
+          flex="1"
+          minH={0}
+          align="stretch"
+        >
+          {NAV_SECTIONS.map((section) => {
+            const items = topItems.filter((item) => item.section === section.id);
+            if (items.length === 0) return null;
             return (
-              <Button
-                key={item.id}
-                variant="ghost"
-                size="sm"
-                h="3rem"
-                minH="3rem"
-                w="full"
-                justifyContent={isExpanded ? "flex-start" : "center"}
-                leftIcon={
-                  isExpanded ? (
-                    <Icon
-                      as={item.icon}
-                      boxSize={5}
-                      color={item.id === TABS.home ? "black" : getColor(item.id, 600)}
-                    />
-                  ) : undefined
-                }
-                bg={isActive ? "gray.200" : "transparent"}
-                color={isActive ? "gray.800" : "gray.700"}
-                boxShadow={isActive ? "sm" : "none"}
-                onClick={(e) => onTopNavClick(e, item.path, requiresAuth, item.id)}
-                _hover={{
-                  bg: isActive ? "gray.200" : hoverBgColor,
-                  transform: "translateY(-1px)",
-                }}
-                transition="all 0.2s"
-                px={isExpanded ? 3 : 0}
-              >
+              <VStack key={section.id} spacing={0.5} w="full" align="stretch">
                 {isExpanded ? (
-                  <Heading size="sm" color="gray.800" fontWeight="medium" whiteSpace="pre-line">
-                    {item.label}
-                  </Heading>
-                ) : (
-                  <Icon
-                    as={item.icon}
-                    boxSize={6}
-                    color={item.id === TABS.home ? "black" : getColor(item.id, 600)}
-                  />
-                )}
-              </Button>
+                  <Text
+                    px={3}
+                    pt={2}
+                    pb={1}
+                    fontSize="11px"
+                    fontWeight="semibold"
+                    color="ink.500"
+                    textTransform="uppercase"
+                    letterSpacing="0.06em"
+                  >
+                    {section.label}
+                  </Text>
+                ) : null}
+                {items.map((item) => (
+                  <React.Fragment key={item.id}>{renderNavButton(item)}</React.Fragment>
+                ))}
+              </VStack>
             );
           })}
         </VStack>
+
+        <Box px={2} py={2} borderTop="1px" borderColor={borderColor}>
+          <Tooltip
+            label={pinned ? "Collapse menu" : "Keep menu open"}
+            placement="right"
+            openDelay={200}
+            hasArrow
+          >
+            <Button
+              variant="ghost"
+              size="sm"
+              h="2.5rem"
+              w="full"
+              justifyContent={isExpanded ? "flex-start" : "center"}
+              leftIcon={
+                isExpanded ? (
+                  <Icon as={MdPushPin} boxSize={4} transform={pinned ? undefined : "rotate(45deg)"} />
+                ) : undefined
+              }
+              onClick={onTogglePin}
+              aria-pressed={pinned}
+              aria-label={pinned ? "Collapse menu" : "Keep menu open"}
+              color={pinned ? "ink.800" : "ink.500"}
+              bg={pinned ? "ink.50" : "transparent"}
+              px={isExpanded ? 3 : 0}
+            >
+              {isExpanded ? (
+                <Text fontSize="sm">{pinned ? "Menu pinned" : "Keep open"}</Text>
+              ) : (
+                <Icon as={MdPushPin} boxSize={4} transform={pinned ? undefined : "rotate(45deg)"} />
+              )}
+            </Button>
+          </Tooltip>
+        </Box>
       </VStack>
     </Box>
   );

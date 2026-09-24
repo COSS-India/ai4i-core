@@ -1,23 +1,20 @@
-// Header/navbar component for top navigation with authentication and API key management
-
-import { ArrowBackIcon, ChevronDownIcon, HamburgerIcon } from "@chakra-ui/icons";
+import { ChevronDownIcon } from "@chakra-ui/icons";
 import {
-  Badge,
+  Avatar,
   Box,
   Button,
   HStack,
-  Heading,
-  IconButton,
   Menu,
   MenuButton,
   MenuGroup,
   MenuItem,
   MenuList,
+  Text,
   useColorModeValue,
 } from "@chakra-ui/react";
 import { useRouter } from "next/router";
 import React, { useEffect, useState } from "react";
-import { getServiceTitle, type ServiceId } from "../../config/serviceMetadata";
+import { getServiceTitle, PATH_TO_SERVICE_ID } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { INSTITUTION } from "../../config/constants";
@@ -26,23 +23,8 @@ import {
   getOnboardingGuideHref,
   getPreLoginGuideOptions,
 } from "../../config/onboardingGuide";
-import { getHomePath, isHomePathname } from "../../utils/navigation";
+import { getHomePath } from "../../utils/navigation";
 import AuthModal from "../auth/AuthModal";
-
-const PATH_TO_SERVICE: Record<string, ServiceId> = {
-  "/asr": "asr",
-  "/tts": "tts",
-  "/nmt": "nmt",
-  "/llm": "llm",
-  "/pipeline": "pipeline",
-  "/ocr": "ocr",
-  "/transliteration": "transliteration",
-  "/language-detection": "language-detection",
-  "/speaker-diarization": "speaker-diarization",
-  "/language-diarization": "language-diarization",
-  "/audio-language-detection": "audio-language-detection",
-  "/ner": "ner",
-};
 
 const Header: React.FC = () => {
   const router = useRouter();
@@ -57,7 +39,6 @@ const Header: React.FC = () => {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [title, setTitle] = useState("");
 
-  // Determine if we should show user menu or sign in button
   const showUserMenu =
     !isAuthLoading && isUserAuthenticated && !!user;
 
@@ -70,14 +51,12 @@ const Header: React.FC = () => {
   const showHomeOnboardingGuideLink =
     !showUserMenu && router.pathname === "/";
 
-  // Check session expiry on mount and when user changes
   useEffect(() => {
     if (isUserAuthenticated && !isAuthLoading) {
       checkSessionExpiry();
     }
   }, [isUserAuthenticated, isAuthLoading, checkSessionExpiry]);
 
-  // Periodic session expiry check (every 60 seconds)
   useEffect(() => {
     if (!isUserAuthenticated || isAuthLoading) {
       return;
@@ -85,15 +64,14 @@ const Header: React.FC = () => {
 
     const intervalId = setInterval(() => {
       checkSessionExpiry();
-    }, 60000); // Check every 60 seconds
+    }, 60000);
 
     return () => clearInterval(intervalId);
   }, [isUserAuthenticated, isAuthLoading, checkSessionExpiry]);
 
-  // Update title based on route (service pages use serviceMetadata; others use fixed labels)
   useEffect(() => {
     const pathname = router.pathname;
-    const serviceId = PATH_TO_SERVICE[pathname];
+    const serviceId = PATH_TO_SERVICE_ID[pathname];
     if (serviceId) {
       setTitle(getServiceTitle(serviceId));
       return;
@@ -108,34 +86,17 @@ const Header: React.FC = () => {
       case "/model-management":
         setTitle("Model Management");
         break;
-      case "/services-management":
-        setTitle("Services Management");
-        break;
-      case "/institution-management":
-        setTitle(`${INSTITUTION} Management`);
-        break;
-      case "/api-key-management":
-        setTitle("API Key Management");
-        break;
-      // PII Guardrail removed from UI — uncomment to restore
-      // case "/pii-management":
-      //   setTitle("PII Guardrail");
-      //   break;
-      // Legacy Alerts Management removed — uncomment to restore
-      // case "/alerts-management":
-      //   setTitle("Alerts Management");
-      //   break;
       case "/notifications-alerts":
-        setTitle("Notifications & Alerts");
+        setTitle("Platform Settings");
         break;
       case "/logs":
-        setTitle("Logs Dashboard");
+        setTitle("Logs");
         break;
       case "/usage-dashboard":
         setTitle("Usage Dashboard");
         break;
-      case "/tier-management":
-        setTitle("Tier Management");
+      case "/traces":
+        setTitle("Traces");
         break;
       case "/policy-management":
         setTitle("Policy Management");
@@ -144,97 +105,114 @@ const Header: React.FC = () => {
         setTitle("Sign In");
         break;
       case "/":
-        setTitle("");
+        setTitle("Explore");
         break;
       default:
-        setTitle("");
+        if (pathname.startsWith("/services-management")) {
+          setTitle("Services Management");
+        } else if (pathname.startsWith("/institution-management")) {
+          setTitle(`${INSTITUTION} Management`);
+        } else if (pathname.startsWith("/tier-management")) {
+          setTitle("Tier Management");
+        } else if (pathname.startsWith("/api-key-management")) {
+          setTitle("API Keys");
+        } else {
+          setTitle("");
+        }
     }
   }, [router.pathname]);
 
   const bgColor = useColorModeValue("white", "gray.800");
-  const borderColor = useColorModeValue("gray.200", "gray.700");
-  // Home is role-aware: restricted roles (Usage Dashboard only) cannot reach "/",
+  const borderColor = useColorModeValue("ink.200", "gray.700");
   const homePath = getHomePath(user?.roles);
-  const showBackButton = !isHomePathname(router.pathname, user?.roles);
-
-  const handleBack = () => {
-    if (router.pathname === "/services-management" && router.query.tab === "2") {
-      router.push("/services-management");
-      return;
-    }
-    if (router.pathname === "/api-key-management") {
-      router.push("/profile");
-      return;
-    }
-    if (router.pathname === "/model-management" && router.query.tab === "2") {
-      router.push("/model-management");
-      return;
-    }
-    if (router.pathname === "/traces") {
-       router.push("/logs");
-       return;
-    }
-    router.push(homePath);
-  };
 
   const handleAuthClick = () => {
-    console.log("Header: Sign In button clicked, redirecting to /auth");
     router.push("/auth");
   };
-
-  // Debug: Log AuthModal state
-  useEffect(() => {
-    console.log("Header: AuthModal state:", { isAuthModalOpen });
-  }, [isAuthModalOpen]);
 
   return (
     <>
       <Box
         h="3.5rem"
         bg={bgColor}
-        pl="calc(4.5rem + 1.5rem)"
-        pr="1.5rem"
-        boxShadow="sm"
-        position="fixed"
-        top={0}
-        left={0}
-        right={0}
-        zIndex={50}
+        px={6}
+        flexShrink={0}
         borderBottom="1px"
         borderColor={borderColor}
+        position="sticky"
+        top={0}
+        zIndex={50}
       >
-        <HStack justify="space-between" h="full">
-          {/* Left side - Back button, Logo and Page title */}
-          <HStack spacing={3}>
-            {showBackButton && (
-              <IconButton
-                aria-label="Go back"
-                icon={<ArrowBackIcon />}
-                variant="ghost"
-                size="sm"
-                onClick={handleBack}
-                colorScheme="gray"
-                _hover={{ bg: "gray.100" }}
-              />
-            )}
-            <Heading size="md" color="gray.800">
-              {title}
-            </Heading>
-          </HStack>
+        <HStack justify="space-between" h="full" spacing={4}>
+          <Text fontSize="sm" fontWeight="500" color="ink.500" noOfLines={1} letterSpacing="-0.01em">
+            {title}
+          </Text>
 
-          {/* Right side - Menu and Auth */}
-          <HStack spacing={4}>
-            {/* Authentication: Show full name badge or Sign In button */}
+          <HStack spacing={3}>
             {showUserMenu ? (
-              <Badge
-                colorScheme="gray"
-                fontSize="sm"
-                px={3}
-                py={1}
-                borderRadius="md"
-              >
-                {profileDisplayName}
-              </Badge>
+              <Menu placement="bottom-end">
+                <MenuButton
+                  as={Button}
+                  variant="ghost"
+                  size="sm"
+                  rightIcon={<ChevronDownIcon />}
+                  px={2}
+                  h="2.5rem"
+                >
+                  <HStack spacing={2}>
+                    <Avatar
+                      size="sm"
+                      name={
+                        profileDisplayName !== "N/A"
+                          ? profileDisplayName
+                          : user?.username || "User"
+                      }
+                      bg="ink.700"
+                      color="white"
+                      getInitials={(name) => name.trim().charAt(0).toUpperCase()}
+                    />
+                    <Text
+                      fontSize="sm"
+                      fontWeight="600"
+                      color="ink.700"
+                      noOfLines={1}
+                      maxW="10rem"
+                      display={{ base: "none", md: "block" }}
+                    >
+                      {profileDisplayName}
+                    </Text>
+                  </HStack>
+                </MenuButton>
+                <MenuList minW="12rem">
+                  <MenuItem
+                    onClick={() => {
+                      if (!checkSessionExpiry()) return;
+                      router.push("/profile");
+                    }}
+                  >
+                    Profile
+                  </MenuItem>
+                  {showOnboardingGuideMenu && (
+                    <MenuItem
+                      onClick={() => {
+                        if (!checkSessionExpiry()) return;
+                        window.open(onboardingGuideHref, "_blank", "noopener,noreferrer");
+                      }}
+                    >
+                      Onboarding guide
+                    </MenuItem>
+                  )}
+                  <MenuItem
+                    onClick={async () => {
+                      if (!checkSessionExpiry()) return;
+                      await logout();
+                      router.push(homePath);
+                    }}
+                  >
+                    Sign out
+                  </MenuItem>
+                </MenuList>
+              </Menu>
             ) : (
               <HStack spacing={3}>
                 {showHomeOnboardingGuideLink && (
@@ -245,7 +223,7 @@ const Header: React.FC = () => {
                       size="sm"
                       rightIcon={<ChevronDownIcon />}
                     >
-                      Onboarding Guide
+                      Onboarding guide
                     </MenuButton>
                     <MenuList minW="16rem">
                       <MenuGroup title="Select your guide">
@@ -265,68 +243,22 @@ const Header: React.FC = () => {
                   </Menu>
                 )}
                 <Button
-                  colorScheme="blue"
-                  variant="outline"
+                  colorScheme="ink"
+                  variant="solid"
                   size="sm"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    console.log("Header: Sign In button clicked");
-                    handleAuthClick();
-                  }}
+                  onClick={handleAuthClick}
                 >
-                  Sign In
+                  Sign in
                 </Button>
               </HStack>
-            )}
-
-            {/* Menu */}
-            {showUserMenu && (
-              <Menu>
-                <MenuButton
-                  as={IconButton}
-                  aria-label="Options"
-                  icon={<HamburgerIcon />}
-                  variant="ghost"
-                  size="sm"
-                />
-                <MenuList>
-                  <MenuItem onClick={() => {
-                    // Check session expiry before navigating to profile
-                    if (!checkSessionExpiry()) return;
-                    router.push("/profile");
-                  }}>
-                    Profile
-                  </MenuItem>
-                  {showOnboardingGuideMenu && (
-                    <MenuItem
-                      onClick={() => {
-                        if (!checkSessionExpiry()) return;
-                        window.open(onboardingGuideHref, "_blank", "noopener,noreferrer");
-                      }}
-                    >
-                      Onboarding Guide
-                    </MenuItem>
-                  )}
-                  <MenuItem onClick={async () => {
-                    // Check session expiry before logout
-                    if (!checkSessionExpiry()) return;
-                    await logout();
-                  }}>Sign out</MenuItem>
-                </MenuList>
-              </Menu>
             )}
           </HStack>
         </HStack>
       </Box>
 
-      {/* Auth Modal */}
       <AuthModal
         isOpen={isAuthModalOpen}
-        onClose={() => {
-          console.log("Header: Closing AuthModal");
-          setIsAuthModalOpen(false);
-        }}
+        onClose={() => setIsAuthModalOpen(false)}
         initialMode="login"
       />
     </>

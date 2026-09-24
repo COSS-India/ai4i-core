@@ -48,6 +48,15 @@ function unwrapTenantView(payload: unknown): TenantView {
   return tenantViewSchema.parse(parsed);
 }
 
+/**
+ * RQ cache key for the tenant directory (max page the API allows).
+ * Shared by Logs, Metering, Institution Management, Profile, Policy, Alerts, and Tier view.
+ */
+export const TENANTS_LIST_QUERY_KEY = ["tenants-list"] as const;
+/** Auth-service tenants list is capped at 500 (`le=500`); default without this is 100. */
+export const TENANTS_DIRECTORY_LIMIT = 500;
+export const TENANTS_LIST_STALE_MS = 5 * 60 * 1000;
+
 export async function listTenants(params?: {
   status?: TenantStatus;
   offset?: number;
@@ -64,6 +73,11 @@ export async function listTenants(params?: {
   const root = response.data as { data?: TenantView[] };
   const tenants = Array.isArray(root?.data) ? root.data : [];
   return { count: tenants.length, tenants };
+}
+
+/** Full tenant directory for shared React Query consumers (API max page size). */
+export async function fetchTenantsDirectory(): Promise<ListTenantsResponse> {
+  return listTenants({ limit: TENANTS_DIRECTORY_LIMIT });
 }
 
 export async function getViewTenant(
