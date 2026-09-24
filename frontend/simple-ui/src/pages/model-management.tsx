@@ -23,7 +23,6 @@ import {
   Tab,
   TabPanel,
   Textarea,
-  SimpleGrid,
   Alert,
   AlertIcon,
   AlertDescription,
@@ -33,7 +32,7 @@ import {
   Tooltip,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import { CopyIcon, ViewIcon } from "@chakra-ui/icons";
+import { CopyIcon } from "@chakra-ui/icons";
 import { useRouter } from "next/router";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -45,6 +44,10 @@ import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import CreateButton from "../components/common/CreateButton";
 import FormActions from "../components/common/FormActions";
 import { CreateModal } from "../components/common/StandardModal";
+import FormSection from "../components/common/FormSection";
+import ModelExtraDetails from "../components/model-management/ModelDetails";
+import ModelForm from "../components/model-management/ModelForm";
+import ModelReview from "../components/model-management/ModelReview";
 import {
   fetchAllModelsMatchingFilters,
   createModel,
@@ -249,8 +252,6 @@ const ModelManagementPage: React.FC = () => {
     setFilterVersionStatus("");
     setFilterTaskType(taskTypeNames.length === 1 ? taskTypeNames[0] : "");
   };
-
-  const selectedModelTaskType = resolveTaskType(selectedModel);
 
   const handleClearUpload = () => {
     setUploadedModelData(null);
@@ -774,15 +775,6 @@ const ModelManagementPage: React.FC = () => {
         tdProps: { onClick: (e) => e.stopPropagation() },
         cell: (model) => (
           <HStack spacing={3} align="center">
-            <Tooltip label="View" placement="top" hasArrow>
-              <IconButton
-                aria-label="View"
-                icon={<ViewIcon />}
-                size="sm"
-                variant="ghost"
-                onClick={() => handleViewModel(model.modelId)}
-              />
-            </Tooltip>
             {!isRegistryReadOnly &&
               ((model.versionStatus?.toLowerCase() === "active" || !model.versionStatus) &&
               !modelIdsWithPublishedService.has(model.modelId) ? (
@@ -992,157 +984,12 @@ const ModelManagementPage: React.FC = () => {
                                 Read-only
                               </Badge>
                             )}
-                            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                              <Box>
-                                <Text fontWeight="semibold" color="ink.600" fontSize="sm" mb={1}>
-                                  Model ID
-                                </Text>
-                                <Text fontSize="md" wordBreak="break-all">{selectedModel.modelId}</Text>
-                              </Box>
-                              <Box>
-                                <Text fontWeight="semibold" color="ink.600" fontSize="sm" mb={1}>
-                                  Model name
-                                </Text>
-                                <Text fontSize="md">{selectedModel.name}</Text>
-                              </Box>
-                              <Box>
-                                <Text fontWeight="semibold" color="ink.600" fontSize="sm" mb={1}>
-                                  Version
-                                </Text>
-                                <Text fontSize="md">{selectedModel.version || "1.0"}</Text>
-                              </Box>
-                              <Box>
-                                <Text fontWeight="semibold" color="ink.600" fontSize="sm" mb={1}>
-                                  Status
-                                </Text>
-                                <Badge
-                                  colorScheme={
-                                    isModelVersionStatusActive(selectedModel.versionStatus)
-                                      ? "green"
-                                      : "gray"
-                                  }
-                                  fontSize="sm"
-                                  p={2}
-                                >
-                                  {formatModelVersionStatusLabel(selectedModel.versionStatus)}
-                                </Badge>
-                              </Box>
-                              <Box>
-                                <Text fontWeight="semibold" color="ink.600" fontSize="sm" mb={1}>
-                                  Task type
-                                </Text>
-                                <Badge
-                                  colorScheme={getTaskColorScheme(selectedModelTaskType)}
-                                  fontSize="sm"
-                                  p={2}
-                                >
-                                  {selectedModelTaskType
-                                    ? selectedModelTaskType.toUpperCase()
-                                    : "N/A"}
-                                </Badge>
-                              </Box>
-                            </SimpleGrid>
-
-                            <Box>
-                              <Text fontWeight="semibold" color="ink.600" fontSize="sm" mb={1}>
-                                Description
-                              </Text>
-                              <Text fontSize="md">{selectedModel.description || "—"}</Text>
-                            </Box>
-
-                            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                              <Box>
-                                <Text fontWeight="semibold" color="ink.600" fontSize="sm" mb={1}>
-                                  License
-                                </Text>
-                                <Text fontSize="md">{selectedModel.license || "—"}</Text>
-                              </Box>
-                              <Box>
-                                <Text fontWeight="semibold" color="ink.600" fontSize="sm" mb={1}>
-                                  Source
-                                </Text>
-                                <Text fontSize="md">{selectedModel.source || "—"}</Text>
-                              </Box>
-                              {selectedModel.licenseUrl ? (
-                                <Box>
-                                  <Text fontWeight="semibold" color="ink.600" fontSize="sm" mb={1}>
-                                    License URL
-                                  </Text>
-                                  <Text fontSize="md">{selectedModel.licenseUrl}</Text>
-                                </Box>
-                              ) : null}
-                              <Box>
-                                <Text fontWeight="semibold" color="ink.600" fontSize="sm" mb={1}>
-                                  Language auto-detection
-                                </Text>
-                                <Text fontSize="md">
-                                  {selectedModel.isLangDetectionEnabled ? "Enabled" : "Disabled"}
-                                </Text>
-                              </Box>
-                              <Box>
-                                <Text fontWeight="semibold" color="ink.600" fontSize="sm" mb={1}>
-                                  Multilingual
-                                </Text>
-                                <Text fontSize="md">
-                                  {selectedModel.isMultilingual ? "Yes" : "No"}
-                                </Text>
-                              </Box>
-                            </SimpleGrid>
-
-                            <Box>
-                              <Text fontWeight="semibold" color="ink.600" fontSize="sm" mb={2}>
-                                Domain
-                              </Text>
-                              <HStack spacing={2} flexWrap="wrap">
-                                {selectedModel.domain && selectedModel.domain.length > 0 ? (
-                                  selectedModel.domain.map((domain, idx) => (
-                                    <Badge key={idx} fontSize="sm" colorScheme="gray" p={2}>
-                                      {domain}
-                                    </Badge>
-                                  ))
-                                ) : (
-                                  <Text color="ink.500" fontSize="sm">No domains specified</Text>
-                                )}
-                              </HStack>
-                            </Box>
-
-                            {selectedModel.trainingDataset ? (
-                              <Box>
-                                <Text fontWeight="semibold" color="ink.600" fontSize="sm" mb={1}>
-                                  Training dataset
-                                </Text>
-                                <Text fontSize="md">
-                                  {selectedModel.trainingDataset.description || "—"}
-                                </Text>
-                                {selectedModel.trainingDataset.datasetId ? (
-                                  <Text fontSize="sm" color="ink.500" mt={1}>
-                                    ID: {selectedModel.trainingDataset.datasetId}
-                                  </Text>
-                                ) : null}
-                              </Box>
-                            ) : null}
-
-                            {selectedModel.adapterConfig ? (
-                              <Box>
-                                <Text fontWeight="semibold" color="ink.600" fontSize="sm" mb={1}>
-                                  Adapter config
-                                </Text>
-                                <Text fontSize="sm" fontFamily="mono" whiteSpace="pre-wrap">
-                                  {JSON.stringify(selectedModel.adapterConfig, null, 2)}
-                                </Text>
-                              </Box>
-                            ) : null}
-
-                            {selectedModel.schema ? (
-                              <Box>
-                                <Text fontWeight="semibold" color="ink.600" fontSize="sm" mb={1}>
-                                  Schema
-                                </Text>
-                                <Text fontSize="sm" fontFamily="mono" whiteSpace="pre-wrap">
-                                  {JSON.stringify(selectedModel.schema, null, 2)}
-                                </Text>
-                              </Box>
-                            ) : null}
+                            <ModelForm mode="view" model={selectedModel} />
+                            <ModelExtraDetails
+                              trainingDataset={selectedModel.trainingDataset}
+                              adapterConfig={selectedModel.adapterConfig}
+                              schema={selectedModel.schema}
+                            />
                           </VStack>
                       </CardBody>
                     </Card>
@@ -1174,6 +1021,7 @@ const ModelManagementPage: React.FC = () => {
           }
         >
           <VStack spacing={6} align="stretch">
+            <FormSection title="Upload Model Definition">
             <Box>
               <FormControl>
                 <HStack justify="space-between" mb={2}>
@@ -1218,6 +1066,7 @@ const ModelManagementPage: React.FC = () => {
                 </Box>
               </FormControl>
             </Box>
+            </FormSection>
 
             {isValidating && (
               <Center py={8}>
@@ -1298,27 +1147,16 @@ const ModelManagementPage: React.FC = () => {
                     JSON file validated successfully! Review the data below and click &quot;Create Model&quot; to proceed.
                   </AlertDescription>
                 </Alert>
-                <Heading size="sm" color="ink.700" mb={4} userSelect="none" cursor="default">
-                  Parsed Model Data
-                </Heading>
-                <Box
-                  bg="ink.50"
-                  p={4}
-                  borderRadius="md"
-                  border="1px solid"
-                  borderColor="ink.200"
-                >
-                  <Code
-                    display="block"
-                    whiteSpace="pre-wrap"
-                    fontSize="sm"
-                    p={4}
-                    bg="white"
-                    borderRadius="md"
-                  >
-                    {JSON.stringify(parsedModelData, null, 2)}
-                  </Code>
-                </Box>
+                <FormSection title="Review Model">
+                  <VStack align="stretch" spacing={6}>
+                    <ModelReview model={parsedModelData} />
+                    <ModelExtraDetails
+                      trainingDataset={parsedModelData.trainingDataset}
+                      adapterConfig={parsedModelData.adapterConfig}
+                      schema={parsedModelData.schema}
+                    />
+                  </VStack>
+                </FormSection>
               </Box>
             )}
 

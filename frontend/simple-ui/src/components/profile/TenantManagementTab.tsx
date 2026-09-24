@@ -84,6 +84,7 @@ import CreateInstitutionForm, {
   CREATE_INSTITUTION_FORM_ID,
 } from "./CreateInstitutionForm";
 import EditInstitutionModal from "./EditInstitutionModal";
+import InstitutionForm from "./InstitutionForm";
 import AddInstitutionUserModal from "../tenant-management/AddInstitutionUserModal";
 import EditInstitutionUserModal from "../tenant-management/EditInstitutionUserModal";
 import ViewInstitutionUserModal from "../tenant-management/ViewInstitutionUserModal";
@@ -1384,7 +1385,17 @@ export default function TenantManagementTab({
                     </Box>
                   </Alert>
                 )}
-                <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
+                <InstitutionForm
+                  mode="view"
+                  showOrganisation={false}
+                  values={{
+                    organisation: t.organisation,
+                    contact_name: t.contact_name ?? "",
+                    email: t.email ?? "",
+                    phone_number: t.phone_number ?? "",
+                  }}
+                />
+                <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3} mt={4}>
                   <Box>
                     <Text fontWeight="semibold">{INSTITUTION} ID</Text>
                     <Text fontFamily="mono">{t.tenant_id}</Text>
@@ -1394,18 +1405,6 @@ export default function TenantManagementTab({
                     <Badge colorScheme={getTenantStatusColorScheme(t.status)}>
                       {formatTenantStatusLabel(t.status)}
                     </Badge>
-                  </Box>
-                  <Box>
-                    <Text fontWeight="semibold">Contact Name</Text>
-                    <Text wordBreak="break-word">{dash(t.contact_name)}</Text>
-                  </Box>
-                  <Box>
-                    <Text fontWeight="semibold">Email</Text>
-                    <Text>{dash(t.email)}</Text>
-                  </Box>
-                  <Box>
-                    <Text fontWeight="semibold">Phone</Text>
-                    <Text>{dash(t.phone_number)}</Text>
                   </Box>
                   <Box>
                     <Text fontWeight="semibold">Created</Text>

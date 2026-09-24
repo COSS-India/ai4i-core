@@ -1,22 +1,16 @@
-import {
-  Badge,
-  Box,
-  Text,
-  VStack,
-} from "@chakra-ui/react";
+import { Badge, Box, Text, VStack } from "@chakra-ui/react";
 import React from "react";
 import FieldLabel from "../common/FieldLabel";
 import FormActions from "../common/FormActions";
 import StandardModal from "../common/StandardModal";
-import TenantUserRoleBadges from "../common/TenantUserRoleBadges";
 import {
   formatTenantUserStatusLabel,
   getTenantStatusColorScheme,
   type TenantUserStatusValue,
 } from "../../config/constants";
-import { dash } from "../../utils/valueFormatters";
-import type { TenantUserView } from "../../types/tenant";
 import { useTenantManagement } from "../profile/hooks/useTenantManagement";
+import type { TenantUserView } from "../../types/tenant";
+import InstitutionUserForm from "./InstitutionUserForm";
 
 type ViewInstitutionUserModalProps = {
   tm: ReturnType<typeof useTenantManagement>;
@@ -52,43 +46,18 @@ export default function ViewInstitutionUserModal({
     >
       {u ? (
         <VStack align="stretch" spacing={4}>
-          <Box>
-            <FieldLabel variant="inline">Username</FieldLabel>
-            <Text>{u.username}</Text>
-          </Box>
+          <InstitutionUserForm mode="view" tm={tm} />
           <Box>
             <FieldLabel variant="inline">User ID</FieldLabel>
             <Text fontFamily="mono">{u.user_id}</Text>
           </Box>
           <Box>
-            <FieldLabel variant="inline">Email</FieldLabel>
-            <Text>{dash(u.email)}</Text>
-          </Box>
-          <Box>
-            <FieldLabel variant="inline">Full Name</FieldLabel>
-            <Text>{dash(u.full_name)}</Text>
-          </Box>
-          <Box>
-            <FieldLabel variant="inline">Phone</FieldLabel>
-            <Text>{dash(u.phone_number)}</Text>
-          </Box>
-          <Box>
             <FieldLabel variant="inline">Status</FieldLabel>
             <Badge
-              colorScheme={getTenantStatusColorScheme(
-                resolveUserDisplayStatus(u),
-              )}
+              colorScheme={getTenantStatusColorScheme(resolveUserDisplayStatus(u))}
             >
               {formatTenantUserStatusLabel(resolveUserDisplayStatus(u))}
             </Badge>
-          </Box>
-          <Box>
-            <FieldLabel variant="inline">Roles</FieldLabel>
-            <TenantUserRoleBadges
-              role={u.role}
-              roles={u.roles}
-              badgeFontSize="sm"
-            />
           </Box>
         </VStack>
       ) : (

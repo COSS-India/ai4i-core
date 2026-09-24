@@ -28,7 +28,6 @@ import {
   VStack,
   NumberInput,
   NumberInputField,
-  Divider,
   Grid,
 } from "@chakra-ui/react";
 import {
@@ -36,7 +35,6 @@ import {
   DeleteIcon,
   EditIcon,
   SmallCloseIcon,
-  ViewIcon,
 } from "@chakra-ui/icons";
 import { FiArrowUp, FiCalendar, FiPause, FiPlay } from "react-icons/fi";
 import DataTable, {
@@ -278,7 +276,6 @@ function makeTierCountColumn(
 function makeTierActionsColumn(
   deletingId: string | null,
   updatingStatusId: string | null,
-  onView: (tier: Tier) => void,
   onEdit: (tier: Tier) => void,
   onDelete: (tier: Tier) => void,
   onStatusChange: (tier: Tier) => void,
@@ -289,13 +286,6 @@ function makeTierActionsColumn(
       const canDelete = tier.status === "DEACTIVATED";
       const busy = deletingId !== null || updatingStatusId !== null;
       return [
-        {
-          id: "view",
-          label: "View",
-          icon: <ViewIcon />,
-          onClick: () => onView(tier),
-          "aria-label": "View tier",
-        },
         {
           id: "edit",
           label: "Edit",
@@ -346,6 +336,7 @@ interface QuotaEditorProps {
   readonly onRemove?: (quota: TierFormQuota) => void;
   readonly removingTaskType?: string | null;
   readonly isEditMode?: boolean;
+  readonly mode?: "create" | "edit" | "view";
   readonly showErrors?: boolean;
 }
 
@@ -608,6 +599,7 @@ interface TierFormProps {
   readonly onRemove?: (quota: TierFormQuota) => void;
   readonly removingTaskType?: string | null;
   readonly isEditMode?: boolean;
+  readonly mode?: "create" | "edit" | "view";
   readonly showErrors?: boolean;
 }
 
@@ -620,8 +612,54 @@ export function TierForm({
   onRemove,
   removingTaskType,
   isEditMode,
+  mode,
   showErrors,
 }: TierFormProps) {
+  const formMode = mode ?? (isEditMode ? "edit" : "create");
+  if (formMode === "view") {
+    return (
+      <VStack align="stretch" spacing={4}>
+        <Box>
+          <FieldLabel variant="inline">Tier Name</FieldLabel>
+          <Text fontSize="md" color="ink.800">{formData.name || "—"}</Text>
+        </Box>
+        <Box>
+          <FieldLabel variant="inline">Description</FieldLabel>
+          <Text fontSize="md" color="ink.700">{formData.description || "—"}</Text>
+        </Box>
+        <Box>
+          <Text fontSize="xs" fontWeight="semibold" color="ink.500" textTransform="uppercase" mb={2}>
+            Quota by Model Task Type
+          </Text>
+          <VStack align="stretch" spacing={2}>
+            {formData.quotas.length ? (
+              formData.quotas.map((q) => {
+                const limit = Number(q.limit);
+                const { boldText, suffixText } = formatQuotaAmount(
+                  Number.isFinite(limit) ? limit : 0,
+                  q.unit,
+                );
+                return (
+                  <HStack key={q.modelTaskType} justify="space-between">
+                    <Text fontSize="sm" color="ink.700">
+                      {formatModelTaskTypeLabel(q.modelTaskType)}
+                    </Text>
+                    <Text fontSize="sm">
+                      <Text as="span" fontWeight="semibold" color="ink.800">{boldText}</Text>{" "}
+                      <Text as="span" color="ink.600">{suffixText}</Text>
+                    </Text>
+                  </HStack>
+                );
+              })
+            ) : (
+              <Text fontSize="sm" color="ink.400">—</Text>
+            )}
+          </VStack>
+        </Box>
+      </VStack>
+    );
+  }
+
   return (
     <VStack align="stretch" spacing={0}>
       <FormSection title="Basic information">
@@ -931,7 +969,6 @@ const TierManagement: React.FC<{
       makeTierActionsColumn(
         deletingId,
         updatingStatusId,
-        handleViewClick,
         handleOpenEdit,
         handleDeleteClick,
         handleStatusClick,
@@ -942,7 +979,6 @@ const TierManagement: React.FC<{
       updatingStatusId,
       handleDeleteClick,
       handleOpenEdit,
-      handleViewClick,
       handleStatusClick,
       serviceCountByTierId,
       isServiceCountLoading,
@@ -1212,18 +1248,6 @@ const TierManagement: React.FC<{
           <DrawerBody py={6}>
             {viewTier && (
               <VStack align="stretch" spacing={5}>
-                {/* Name + description */}
-                <Box>
-                  <Text fontSize="lg" fontWeight="bold" color="ink.800">
-                    {viewTier.name}
-                  </Text>
-                  {viewTier.description && (
-                    <Text fontSize="sm" color="ink.500" mt={0.5}>
-                      {viewTier.description}
-                    </Text>
-                  )}
-                </Box>
-
                 <Tabs colorScheme="blue" size="sm">
                   <TabList>
                     <Tab>Current</Tab>
@@ -1232,81 +1256,21 @@ const TierManagement: React.FC<{
                   <TabPanels>
                     <TabPanel px={0}>
                       <VStack align="stretch" spacing={4}>
-                        <HStack justify="space-between" align="flex-start">
-                          <Text fontSize="sm" color="ink.600">
-                            Tier Name
-                          </Text>
-                          <Text
-                            fontSize="sm"
-                            fontWeight="semibold"
-                            color="ink.800"
-                          >
-                            {viewTier.name}
-                          </Text>
-                        </HStack>
-
-                        <HStack justify="space-between" align="flex-start">
-                          <Text fontSize="sm" color="ink.600">
-                            Description
-                          </Text>
-                          <Text
-                            fontSize="sm"
-                            color="ink.700"
-                            textAlign="right"
-                          >
-                            {viewTier.description || "—"}
-                          </Text>
-                        </HStack>
-
-                        <Divider />
-
-                        <Box>
-                          <Text
-                            fontSize="xs"
-                            fontWeight="semibold"
-                            color="ink.500"
-                            textTransform="uppercase"
-                            mb={2}
-                          >
-                            Quota by Model Task Type
-                          </Text>
-                          <VStack align="stretch" spacing={2}>
-                            {viewTier.quotas?.length ? (
-                              viewTier.quotas.map((q) => {
-                                const { boldText, suffixText } =
-                                  formatQuotaAmount(q.limit, q.unit);
-                                return (
-                                  <HStack
-                                    key={q.modelTaskType}
-                                    justify="space-between"
-                                  >
-                                    <Text fontSize="sm" color="ink.700">
-                                      {formatModelTaskTypeLabel(
-                                        q.modelTaskType,
-                                      )}
-                                    </Text>
-                                    <Text fontSize="sm">
-                                      <Text
-                                        as="span"
-                                        fontWeight="semibold"
-                                        color="ink.800"
-                                      >
-                                        {boldText}
-                                      </Text>{" "}
-                                      <Text as="span" color="ink.600">
-                                        {suffixText}
-                                      </Text>
-                                    </Text>
-                                  </HStack>
-                                );
-                              })
-                            ) : (
-                              <Text fontSize="sm" color="ink.400">
-                                —
-                              </Text>
-                            )}
-                          </VStack>
-                        </Box>
+                        <TierForm
+                          mode="view"
+                          formData={{
+                            name: viewTier.name,
+                            description: viewTier.description ?? "",
+                            quotas: (viewTier.quotas ?? []).map((q) => ({
+                              modelTaskType: q.modelTaskType,
+                              unit: q.unit ?? "",
+                              limit: String(q.limit ?? ""),
+                            })),
+                          }}
+                          onChange={() => undefined}
+                          taskTypeNames={taskTypeNames}
+                          unitByTaskType={unitByTaskType}
+                        />
 
                         <ServicesMappedSection
                           services={servicesForViewTier}

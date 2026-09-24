@@ -8,7 +8,7 @@ import {
   MenuList,
   Tooltip,
 } from "@chakra-ui/react";
-import { ChevronDownIcon, DeleteIcon, EditIcon, ViewIcon } from "@chakra-ui/icons";
+import { ChevronDownIcon, DeleteIcon, EditIcon } from "@chakra-ui/icons";
 import React from "react";
 import {
   FiMail,
@@ -200,16 +200,6 @@ export function InstitutionTenantRowActions({
   return (
     <HStack spacing={2}>
       <IconButton
-        aria-label={`View ${INSTITUTION.toLowerCase()}`}
-        icon={<ViewIcon />}
-        size="sm"
-        variant="ghost"
-        onClick={(e) => {
-          stopRowClick(e);
-          tm.handleViewTenant(t);
-        }}
-      />
-      <IconButton
         aria-label={`Edit ${INSTITUTION.toLowerCase()}`}
         icon={<EditIcon />}
         size="sm"
@@ -335,16 +325,6 @@ export function InstitutionUserRowActions({
 
   return (
     <HStack spacing={2}>
-      <IconButton
-        aria-label="View user"
-        icon={<ViewIcon />}
-        size="sm"
-        variant="ghost"
-        onClick={(e) => {
-          stopRowClick(e);
-          tm.handleViewUser(u);
-        }}
-      />
       <IconButton
         aria-label="Edit user"
         icon={<EditIcon />}

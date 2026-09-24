@@ -7,11 +7,11 @@ import {
   Card,
   CardBody,
   Checkbox,
-  IconButton,
   FormControl,
   FormErrorMessage,
   HStack,
   Input,
+  IconButton,
   InputGroup,
   InputLeftElement,
   InputRightElement,
@@ -28,7 +28,7 @@ import {
 } from "@chakra-ui/react";
 import { ChevronDownIcon, SearchIcon, ViewIcon, ViewOffIcon } from "@chakra-ui/icons";
 import React, { useMemo, useState } from "react";
-import { formatModelTaskTypeLabel } from "../../config/constants";
+import { formatModelTaskTypeLabel, getTaskColorScheme } from "../../config/constants";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import FieldHint from "../common/FieldHint";
 import FieldLabel from "../common/FieldLabel";
@@ -95,6 +95,8 @@ interface ServiceFormTabProps {
   onCancel: () => void;
   /** False when hosted in Create/Edit modals (no nested card). */
   embedded?: boolean;
+  /** View reuses this form read-only. Create and edit stay the default. */
+  mode?: "create" | "edit" | "view";
   hideActions?: boolean;
   formId?: string;
 }
@@ -151,7 +153,10 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
   embedded = true,
   hideActions = false,
   formId,
+  mode,
 }) => {
+  const formMode = mode ?? (editingService ? "edit" : "create");
+  const isView = formMode === "view";
   const unitSizeSelectOptions = useMemo(() => {
     const opts: string[] = [...UNIT_SIZE_OPTIONS];
     if (unitSize && !opts.includes(unitSize)) {
@@ -182,17 +187,10 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
       : afterBlur("serviceId", serviceIdLengthError));
 
   const [tierSearch, setTierSearch] = useState("");
-  const [showAuthToken, setShowAuthToken] = useState(false);
 
-  /** The field still holds the backend's masked token, untouched by the user. */
+  const [showAuthToken, setShowAuthToken] = useState(false);
   const isShowingSavedAuthMask =
     !!savedAuthTokenMask && authToken === savedAuthTokenMask;
-
-  /**
-   * The mask is atomic, not editable text: deleting any part of it clears the
-   * field, and typing around it keeps only what was typed. Either way the
-   * value can never contain "***", so the mask cannot be saved as a token.
-   */
   const handleAuthTokenChange = (next: string) => {
     if (!isShowingSavedAuthMask) {
       onAuthTokenChange(next);
@@ -264,11 +262,21 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
   const form = (
         <form id={formId} onSubmit={onSubmit}>
           <VStack spacing={0} align="stretch">
-            <FormSection title="Model">
+            <FormSection title="Select Model">
             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
               <FormControl isRequired>
                 <FieldLabel>Model Task Type</FieldLabel>
-                {editingService ? (
+                {isView ? (
+                  <Badge
+                    colorScheme={getTaskColorScheme(formData.task_type)}
+                    fontSize="sm"
+                    p={2}
+                  >
+                    {formData.task_type
+                      ? formatModelTaskTypeLabel(formData.task_type)
+                      : "N/A"}
+                  </Badge>
+                ) : editingService ? (
                   <Input
                     value={formatModelTaskTypeLabel(formData.task_type || "")}
                     isReadOnly
@@ -345,7 +353,11 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                     formData.modelSubmissionDate ? "ink.800" : "ink.500"
                   }
                 >
-                  {isCreateFormModelSelected
+                  {isView
+                    ? formatSubmissionDateDisplay(
+                        formData.modelSubmissionDate as string | undefined,
+                      )
+                    : isCreateFormModelSelected
                     ? formatSubmissionDateDisplay(
                         formData.modelSubmissionDate as string | undefined,
                       )
@@ -356,7 +368,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
             </SimpleGrid>
             </FormSection>
 
-            <FormSection title="Service details">
+            <FormSection title="Service Details">
             {showServiceName && (
               <FormControl isRequired isInvalid={!!nameError}>
                 <FieldLabel>Service Name</FieldLabel>
@@ -425,7 +437,8 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 }
                 onBlur={() => markBlurred("serviceDescription")}
                 placeholder={FIELD_HINTS.service.description.placeholder}
-                bg="white"
+                bg={isView ? "ink.50" : "white"}
+                isReadOnly={isView}
                 rows={4}
                 maxLength={SERVICE_DESCRIPTION_MAX_LEN}
               />
@@ -442,6 +455,9 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
               )}
             </FormControl>
 
+            </FormSection>
+
+            <FormSection title="Deployment">
             {/* Endpoint */}
             <FormControl isRequired>
               <FieldLabel>Endpoint</FieldLabel>
@@ -453,7 +469,8 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                     ? FIELD_HINTS.service.endpoint.llmPlaceholder
                     : FIELD_HINTS.service.endpoint.placeholder
                 }
-                bg="white"
+                bg={isView ? "ink.50" : "white"}
+                isReadOnly={isView}
               />
               <FieldHint>
                 {isLlmTaskType
@@ -462,13 +479,15 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
               </FieldHint>
             </FormControl>
 
+
             {isLlmTaskType && (
               <FormControl>
-                <FormLabel fontWeight="semibold">Authentication Token</FormLabel>
+                <FieldLabel variant={isView ? "inline" : undefined}>Authentication Token</FieldLabel>
+                {isView ? (
+                  <Text fontSize="md">{hasAuthToken ? "Configured" : "Not configured"}</Text>
+                ) : (
                 <InputGroup>
                   <Input
-                    // The stored token arrives already masked as "***", so it
-                    // is shown as-is; only a token the user types is hidden.
                     type={
                       isShowingSavedAuthMask || showAuthToken
                         ? "text"
@@ -482,8 +501,6 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                     spellCheck={false}
                     pr={isShowingSavedAuthMask ? undefined : "4.5rem"}
                   />
-                  {/* Nothing to hide while the mask is shown — the toggle
-                      appears once the user types a real token. */}
                   {!isShowingSavedAuthMask && (
                     <InputRightElement width="4.5rem">
                       <IconButton
@@ -502,6 +519,8 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                     </InputRightElement>
                   )}
                 </InputGroup>
+                )}
+                {!isView && (
                 <FieldHint>
                   {editingService
                     ? hasAuthToken
@@ -509,6 +528,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                       : FIELD_HINTS.service.authToken.editEmptyHelper
                     : FIELD_HINTS.service.authToken.helper}
                 </FieldHint>
+                )}
               </FormControl>
             )}
 
@@ -539,7 +559,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
             </FormControl>
             </FormSection>
 
-            <FormSection title="Pricing">
+            <FormSection title="Pricing & Access">
             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
                 <FormControl>
                   <FieldLabel>Unit Type</FieldLabel>
@@ -558,6 +578,9 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
 
                 <FormControl isRequired>
                   <FieldLabel>Unit Size</FieldLabel>
+                  {isView ? (
+                    <Input value={unitSize || "N/A"} isReadOnly bg="ink.50" />
+                  ) : (
                   <Select
                     value={unitSize}
                     onChange={(e) => onUnitSizeChange(e.target.value)}
@@ -570,6 +593,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                       </option>
                     ))}
                   </Select>
+                  )}
                   <FieldHint>{FIELD_HINTS.service.unitSize.helper}</FieldHint>
                 </FormControl>
               </SimpleGrid>
@@ -585,7 +609,8 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                     type="number"
                     min={0}
                     max={PRICE_PER_UNIT_MAX}
-                    bg="white"
+                    bg={isView ? "ink.50" : "white"}
+                    isReadOnly={isView}
                   />
                   {priceError ? (
                     <FormErrorMessage>{priceError}</FormErrorMessage>
@@ -596,6 +621,9 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
 
                 <FormControl isRequired>
                   <FieldLabel>Currency</FieldLabel>
+                  {isView ? (
+                    <Input value={currency || "INR"} isReadOnly bg="ink.50" />
+                  ) : (
                   <Select
                     value={currency}
                     onChange={(e) => onCurrencyChange(e.target.value)}
@@ -607,13 +635,24 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                       </option>
                     ))}
                   </Select>
+                  )}
                 </FormControl>
               </SimpleGrid>
-            </FormSection>
-
-            <FormSection title="Access">
             <FormControl isRequired>
               <FieldLabel>Tier</FieldLabel>
+              {isView ? (
+                selectedTierNames.length > 0 ? (
+                  <HStack spacing={1} flexWrap="wrap">
+                    {selectedTierNames.map((name) => (
+                      <Badge key={name} colorScheme="gray" fontSize="xs" px={2} py={0.5}>
+                        {name}
+                      </Badge>
+                    ))}
+                  </HStack>
+                ) : (
+                  <Text fontSize="md">N/A</Text>
+                )
+              ) : (
               <Menu
                 closeOnSelect={false}
                 matchWidth
@@ -720,6 +759,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   </MenuList>
                 </Portal>
               </Menu>
+              )}
               <FieldHint>{FIELD_HINTS.service.tier.helper}</FieldHint>
             </FormControl>
             </FormSection>

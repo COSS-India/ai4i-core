@@ -13,7 +13,7 @@ import {
   Tooltip,
   VStack,
 } from "@chakra-ui/react";
-import { DeleteIcon, EditIcon, ViewIcon } from "@chakra-ui/icons";
+import { DeleteIcon, EditIcon } from "@chakra-ui/icons";
 import { MdOutlineCheckCircle, MdOutlineUnpublished } from "react-icons/md";
 import React, { useMemo } from "react";
 import ManagementPageHeader from "../common/ManagementPageHeader";
@@ -228,19 +228,6 @@ const ServicesManagement: React.FC = () => {
         tdProps: { onClick: (e) => e.stopPropagation() },
         cell: (service) => (
           <HStack spacing={1}>
-            <Tooltip label="View" placement="top" hasArrow>
-              <IconButton
-                aria-label="View"
-                icon={<ViewIcon />}
-                size="sm"
-                variant="ghost"
-                onClick={() =>
-                  handleViewService(
-                    service.serviceId || service.service_id || "",
-                  )
-                }
-              />
-            </Tooltip>
             {!isRegistryReadOnly && (
               <Tooltip label="Edit" placement="top" hasArrow>
                 <IconButton
