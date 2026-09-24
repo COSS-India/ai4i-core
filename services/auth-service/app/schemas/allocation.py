@@ -74,6 +74,11 @@ class AllocationValue(BaseSchema):
 
 
 class APIKeyAllocationRow(BaseSchema):
+    """One explicit Key allocation. Unlike an Application row, it must
+    resolve to a positive ceiling: 0 (or a value that rounds to ₹0.00 /
+    0.00%) is rejected with 422 BUDGET_TOO_SMALL, same as POST
+    /auth/api-keys — revoke the Key instead to free its share."""
+
     model_config = ConfigDict(extra="forbid")
 
     api_key_id: int

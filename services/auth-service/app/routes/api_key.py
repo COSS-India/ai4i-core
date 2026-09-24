@@ -161,7 +161,9 @@ async def create_api_key(
     assigned automatically); 0 returns 422 BUDGET_TOO_SMALL; an Application
     with no Budget (unset or ₹0) returns 422 APPLICATION_BUDGET_NOT_SET; an
     allocation beyond what is available returns 422
-    ALLOCATION_TOTAL_EXCEEDED or BUDGET_OVERCOMMITTED.
+    ALLOCATION_TOTAL_EXCEEDED or BUDGET_OVERCOMMITTED. The positive-
+    allocation rule also applies to later edits via the Budget Allocation
+    endpoints (PUT .../budget-allocation).
     """
     caller_tenant_id = _resolve_caller_tenant_scope(request, current_user)
     raw_key, api_key, budget_exhausted = await svc.create_api_key(

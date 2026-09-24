@@ -54,7 +54,13 @@ from app.schemas.allocation import (
     TenantBudgetAllocationRequest,
 )
 from app.services import budget_usage
-from app.services.allocation_validator import AllocationRow, ExplicitInput, ResolvedRow, resolve_level
+from app.services.allocation_validator import (
+    AllocationRow,
+    ExplicitInput,
+    ResolvedRow,
+    convert,
+    resolve_level,
+)
 from app.services.api_key_service import APIKeyService
 from app.services.authorization import authorize_institution_scope
 
@@ -942,6 +948,30 @@ class AllocationService:
                         )
                         # else: unknown everywhere — resolve_level below raises
                         # EntityNotFoundError for it, same as any other unknown id.
+
+        # Same rule as APIKeyService.create_api_key: an explicit Key
+        # allocation must resolve to a positive ceiling, or an edit could
+        # turn a live Key into the ₹0 "Active" Key that create refuses to
+        # issue. Only caller-submitted rows — unlisted Keys re-fit toward 0
+        # by a shrinking parent are the parent resize's doing, not this.
+        for row in nested_explicit:
+            if parent_amount is None or parent_amount <= 0:
+                raise ValidationError(
+                    message="This Application has no available Budget — allocate Budget to "
+                    "the Application before allocating it to its API Keys.",
+                    code="APPLICATION_BUDGET_NOT_SET",
+                )
+            amount, percentage = convert(_explicit_input(row.api_key_id, row.allocation), parent_amount)
+            if amount <= 0 or percentage <= 0:
+                raise ValidationError(
+                    message=(
+                        f"api_key_id={row.api_key_id}: allocation must be greater than 0 — "
+                        f"{row.allocation.value} ({row.allocation.type}) resolves to "
+                        f"₹{amount} / {percentage}%, a ceiling this Key could never use. "
+                        "Revoke the Key instead to free its share."
+                    ),
+                    code="BUDGET_TOO_SMALL",
+                )
 
         keys_by_id = {key.id: key for key in existing_keys}
         explicit = [_explicit_input(row.api_key_id, row.allocation) for row in nested_explicit]
