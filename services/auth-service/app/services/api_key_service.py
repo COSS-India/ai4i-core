@@ -819,8 +819,10 @@ class APIKeyService:
         # "uncapped" Key that was silently seeded with whatever remained of
         # the Application's Budget (or left genuinely untracked under an
         # unfunded Application) — the admin never chose that figure, so it
-        # is rejected here instead. Same code the frontend already maps to
-        # its "enter a Budget Allocation" field error.
+        # is rejected here instead. The code reaches the client as
+        # detail.code; the create form's ALLOCATION_REQUIRED field error
+        # (useCreateApiKeyTab) only fires if getApiKeyErrorCode reads it
+        # from there.
         if allocated_percentage is None and budget is None:
             raise ValidationError(
                 message="Budget Allocation is required — give this Key a positive "
