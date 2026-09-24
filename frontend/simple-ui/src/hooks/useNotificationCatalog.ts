@@ -5,20 +5,21 @@ import type {
   NotificationAlertCatalogItem,
   NotificationAlertType,
   RecipientRoleKey,
-  ThresholdBand,
+  ThresholdDraftBand,
 } from "../types/notificationAlerts";
 import {
-  bandsEqual,
-  bandsForItem,
   DEFAULT_ENABLE_ROLE,
+  draftBandsEqual,
   isCatalogItemEnabled,
+  toThresholdDrafts,
+  validateThresholdDrafts,
 } from "../types/notificationAlerts";
 import { replaceTenantCopy } from "../utils/replaceTenantCopy";
 
 export interface CatalogDraft {
   recipient_roles: Record<RecipientRoleKey, boolean>;
   /** ALERT rows only. Always the complete band set once present. */
-  thresholds?: ThresholdBand[];
+  thresholds?: ThresholdDraftBand[];
 }
 
 export interface CatalogSubmitResult {
@@ -26,12 +27,15 @@ export interface CatalogSubmitResult {
   failed?: { name: string; message: string };
 }
 
+/**
+ * Bands are sorted here — on load and after each save — and never again
+ * while the user is editing. Re-sorting a live draft would make a row jump
+ * under the cursor the moment someone typed a digit that reordered it.
+ */
 function toDraft(item: NotificationAlertCatalogItem): CatalogDraft {
   return {
     recipient_roles: { ...item.recipient_roles },
-    thresholds: item.thresholds
-      ? item.thresholds.map((band) => ({ ...band }))
-      : undefined,
+    thresholds: item.thresholds ? toThresholdDrafts(item.thresholds) : undefined,
   };
 }
 
@@ -39,14 +43,14 @@ function draftEnabled(draft: CatalogDraft): boolean {
   return isCatalogItemEnabled(draft.recipient_roles);
 }
 
-function draftsEqual(a: CatalogDraft, b: CatalogDraft): boolean {
-  if (a.recipient_roles["TENANT ADMIN"] !== b.recipient_roles["TENANT ADMIN"]) {
+function draftsEqual(draft: CatalogDraft, item: NotificationAlertCatalogItem): boolean {
+  if (draft.recipient_roles["TENANT ADMIN"] !== item.recipient_roles["TENANT ADMIN"]) {
     return false;
   }
-  if (a.recipient_roles.ADMIN !== b.recipient_roles.ADMIN) return false;
-  // Neither side has bands at all — nothing to compare (NOTIFICATION rows).
-  if (!a.thresholds && !b.thresholds) return true;
-  return bandsEqual(a.thresholds, b.thresholds);
+  if (draft.recipient_roles.ADMIN !== item.recipient_roles.ADMIN) return false;
+  // No bands at all — nothing to compare (NOTIFICATION rows).
+  if (!draft.thresholds) return true;
+  return draftBandsEqual(draft.thresholds, toThresholdDrafts(item.thresholds));
 }
 
 function catalogErrorMessage(error: unknown, fallback: string): string {
@@ -148,7 +152,7 @@ export function useNotificationCatalog(type: NotificationAlertType) {
       name: string,
       patch: {
         recipient_roles?: Partial<Record<RecipientRoleKey, boolean>>;
-        thresholds?: ThresholdBand[];
+        thresholds?: ThresholdDraftBand[];
       },
     ) => {
       setDrafts((prev) => {
@@ -245,21 +249,16 @@ export function useNotificationCatalog(type: NotificationAlertType) {
   );
 
   /**
-   * Flips one band's `active`. The draft carries the whole band set (BE
-   * requires exactly 3 on PATCH), so this rebuilds the full list rather
-   * than patching a single key the way recipient_roles does.
+   * Replaces a row's whole band set at once — the only threshold mutator.
+   * Never a per-band patch the way recipient_roles does it: an editable
+   * percentage is no stable key to merge against. The modal validates before
+   * applying, so bands arrive complete and valid — what the API takes too.
    */
-  const setThreshold = useCallback(
-    (name: string, percentage: number, checked: boolean) => {
-      const item = items.find((row) => row.name === name);
-      const current = bandsForItem(drafts[name]?.thresholds ?? item?.thresholds);
-      updateDraft(name, {
-        thresholds: current.map((band) =>
-          band.percentage === percentage ? { ...band, active: checked } : band,
-        ),
-      });
+  const setThresholds = useCallback(
+    (name: string, thresholds: ThresholdDraftBand[]) => {
+      updateDraft(name, { thresholds });
     },
-    [drafts, items, updateDraft],
+    [updateDraft],
   );
 
   const allFilteredEnabled =
@@ -270,7 +269,7 @@ export function useNotificationCatalog(type: NotificationAlertType) {
     return items.reduce((count, item) => {
       const draft = drafts[item.name];
       if (!draft) return count;
-      return draftsEqual(draft, toDraft(item)) ? count : count + 1;
+      return draftsEqual(draft, item) ? count : count + 1;
     }, 0);
   }, [items, drafts]);
 
@@ -281,20 +280,22 @@ export function useNotificationCatalog(type: NotificationAlertType) {
     try {
       for (const item of items) {
         const draft = drafts[item.name];
-        if (!draft || draftsEqual(draft, toDraft(item))) continue;
+        if (!draft || draftsEqual(draft, item)) continue;
 
         const payload: CatalogUpdatePayload = {
           recipient_roles: draft.recipient_roles,
         };
-        // Only sent when a band actually changed — an unrelated role edit
-        // must not write the 70/80/90 default into a row the user never
-        // touched. When sent it is the full replacement list (bandsForItem
-        // guarantees the 3 bands the BE validates against).
-        if (
-          item.type === "ALERT" &&
-          !bandsEqual(draft.thresholds, item.thresholds)
-        ) {
-          payload.thresholds = bandsForItem(draft.thresholds);
+        if (item.type === "ALERT" && draft.thresholds) {
+          const original = toThresholdDrafts(item.thresholds);
+          if (!draftBandsEqual(draft.thresholds, original)) {
+            const { bands } = validateThresholdDrafts(draft.thresholds);
+            if (!bands) {
+              const message = `Fix the thresholds on '${item.display_name}' before saving.`;
+              setError(message);
+              return { succeeded, failed: { name: item.name, message } };
+            }
+            payload.thresholds = bands;
+          }
         }
 
         try {
@@ -342,7 +343,7 @@ export function useNotificationCatalog(type: NotificationAlertType) {
     setEnabled,
     setAllEnabled,
     setRecipientRole,
-    setThreshold,
+    setThresholds,
     allFilteredEnabled,
     dirtyCount,
     submit,

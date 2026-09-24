@@ -4,7 +4,6 @@ import {
   AlertIcon,
   Box,
   Button,
-  Checkbox,
   Flex,
   Select,
   Text,
@@ -13,7 +12,7 @@ import {
 import React, { useMemo } from "react";
 import { useNotificationCatalog } from "../../hooks/useNotificationCatalog";
 import {
-  bandsForItem,
+  toThresholdDrafts,
   type NotificationAlertCatalogItem,
   type NotificationAlertType,
 } from "../../types/notificationAlerts";
@@ -21,6 +20,7 @@ import { useToastWithDeduplication } from "../../utils/toast";
 import { useDeferredColumnSort } from "../../utils/tableSort";
 import DataTable, { type DataTableColumn } from "../common/table";
 import { RecipientRoleCheckboxes } from "./CatalogToolbar";
+import ThresholdBandsCell from "./ThresholdBandsCell";
 
 interface CatalogTabProps {
   type: NotificationAlertType;
@@ -50,7 +50,7 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
     error,
     getDraft,
     setRecipientRole,
-    setThreshold,
+    setThresholds,
     dirtyCount,
     submit,
   } = useNotificationCatalog(type);
@@ -131,30 +131,29 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
         id: "thresholds",
         header: "Thresholds",
         truncate: false,
+        minWidth: "200px",
         tdProps: { verticalAlign: "top" },
         cell: (item) => {
           const draft = getDraft(item);
           return (
-            <VStack align="start" spacing={1}>
-              {bandsForItem(draft.thresholds).map((band) => (
-                <Checkbox
-                  key={band.percentage}
-                  isChecked={band.active}
-                  onChange={(e) =>
-                    setThreshold(item.name, band.percentage, e.target.checked)
-                  }
-                >
-                  <Text fontSize="sm">{band.percentage}%</Text>
-                </Checkbox>
-              ))}
-            </VStack>
+            <ThresholdBandsCell
+              bands={draft.thresholds ?? toThresholdDrafts(item.thresholds)}
+              rowLabel={item.display_name}
+              onApply={(bands) => setThresholds(item.name, bands)}
+            />
           );
         },
       });
     }
 
     return cols;
-  }, [getDraft, nameColumnHeader, setRecipientRole, setThreshold, showThresholds]);
+  }, [
+    getDraft,
+    nameColumnHeader,
+    setRecipientRole,
+    setThresholds,
+    showThresholds,
+  ]);
 
   const handleSubmit = async () => {
     const result = await submit();
