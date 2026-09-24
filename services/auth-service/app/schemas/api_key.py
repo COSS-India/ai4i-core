@@ -49,11 +49,18 @@ class CreateAPIKeyRequest(BaseSchema):
         le=100,
         max_digits=5,
         decimal_places=2,
-        description="Share of the Application's allocated_budget reserved for this key, as a percentage.",
+        description=(
+            "Share of the Application's allocated_budget reserved for this key, as a percentage. "
+            "Budget Allocation is mandatory: give exactly one of allocated_percentage / budget "
+            "(omitting both returns 422 ALLOCATION_REQUIRED; 0 returns 422 BUDGET_TOO_SMALL)."
+        ),
     )
     budget: Optional[Decimal] = Field(
         None,
-        gt=0,
+        # ge=0, not gt=0: a 0 must reach the service so it returns the same
+        # 422 BUDGET_TOO_SMALL as allocated_percentage=0 and the edit path,
+        # instead of a generic Pydantic 422. Negatives are still rejected here.
+        ge=0,
         max_digits=15,
         decimal_places=2,
         description=(
@@ -62,15 +69,11 @@ class CreateAPIKeyRequest(BaseSchema):
             "immediately to run the same ALLOCATION_TOTAL_EXCEEDED cap check every "
             "allocated_percentage-created key goes through (rejected if it rounds to 0.00%), "
             "but stores this exact requested amount as allocated_budget, not the rounded "
-            "derivative. Give at most one of allocated_percentage / budget — omitting both asks "
-            "for an uncapped key, but what that actually means depends on the Application: if "
-            "the owning Application has its own ₹ Budget, the server derives a ceiling from "
-            "whatever remains unallocated of it, writes a budget_usage row, and the key's spend "
-            "IS tracked and capped just like an explicit allocated_percentage/budget key (that "
-            "ceiling can be ₹0 if the Application is already fully committed). Only when the "
-            "owning Application has no Budget of its own does the key stay genuinely untracked "
-            "and uncapped at the key/Application level, leaving the owning Tenant's tier "
-            "monthly quota as the only limit on it."
+            "derivative. Give exactly one of allocated_percentage / budget — Budget Allocation "
+            "is mandatory, and the server never assigns the Application's remaining Budget on "
+            "the caller's behalf. The Application must have a positive Budget of its own "
+            "(otherwise 422 APPLICATION_BUDGET_NOT_SET), and the allocation must fit within what "
+            "is still available of it (422 ALLOCATION_TOTAL_EXCEEDED / BUDGET_OVERCOMMITTED)."
         ),
     )
 
@@ -124,11 +127,9 @@ class CreateAPIKeyData(BaseSchema):
     budget_exhausted: bool = Field(
         False,
         description=(
-            "True when this key was created with nothing left to spend — e.g. an uncapped-key "
-            "request (both allocated_percentage and budget omitted) seeded from an Application "
-            "that was already fully committed, or a Tenant with no allocated_budget at all. The "
-            "key is still created (a 0-remaining request is not an error), but it will 429 on its "
-            "very first billed request until the Application/Tenant's budget is topped up."
+            "True when this key was created with nothing left to spend. Always False for a "
+            "newly created key now that Budget Allocation is mandatory and a ₹0 ceiling is "
+            "rejected; kept for response-shape compatibility."
         ),
     )
 

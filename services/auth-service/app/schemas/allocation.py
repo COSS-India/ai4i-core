@@ -74,6 +74,11 @@ class AllocationValue(BaseSchema):
 
 
 class APIKeyAllocationRow(BaseSchema):
+    """One explicit Key allocation. Unlike an Application row, it must
+    resolve to a positive ceiling: 0 (or a value that rounds to ₹0.00 /
+    0.00%) is rejected with 422 BUDGET_TOO_SMALL, same as POST
+    /auth/api-keys — revoke the Key instead to free its share."""
+
     model_config = ConfigDict(extra="forbid")
 
     api_key_id: int
@@ -108,10 +113,10 @@ class TenantBudgetAllocationRequest(BaseSchema):
     An Application under the tenant NOT listed here is left exactly as it
     is — resizing one Application never moves another. An explicit row is
     rejected (422 ALLOCATION_TOTAL_EXCEEDED) rather than made to fit by
-    shrinking a sibling Application. A listed Application's own un-listed
-    Keys DO react, though — that Application's own total is what's
-    actually changing, so its Keys are unconditionally re-fit to track
-    it."""
+    shrinking a sibling Application. A listed Application's own Keys
+    never move to fit it either: it can't be reduced below what its
+    active Keys already hold (422 ALLOCATION_TOTAL_EXCEEDED) — reduce them
+    via nested ``api_keys`` or revoke them first."""
 
     model_config = ConfigDict(
         extra="forbid",
