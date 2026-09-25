@@ -3,7 +3,6 @@ import {
   AlertDescription,
   AlertIcon,
   Box,
-  Button,
   Flex,
   Select,
   Text,
@@ -18,7 +17,11 @@ import {
 } from "../../types/notificationAlerts";
 import { useToastWithDeduplication } from "../../utils/toast";
 import { useDeferredColumnSort } from "../../utils/tableSort";
-import DataTable, { type DataTableColumn } from "../common/table";
+import DataTable, {
+  DEFAULT_PAGE_SIZE_OPTIONS,
+  type DataTableColumn,
+} from "../common/table";
+import FormActions from "../common/FormActions";
 import { RecipientRoleCheckboxes } from "./CatalogToolbar";
 import ThresholdBandsCell from "./ThresholdBandsCell";
 
@@ -55,13 +58,13 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
     submit,
   } = useNotificationCatalog(type);
 
-  const sortAccessors = useMemo(
+  const catalogSortAccessors = useMemo(
     () => ({
       name: (item: NotificationAlertCatalogItem) => item.display_name ?? "",
     }),
     [],
   );
-  const catalogSort = useDeferredColumnSort("name", sortAccessors);
+  const catalogSort = useDeferredColumnSort("name", catalogSortAccessors);
   const sortedItems = useMemo(
     () => catalogSort.apply(filteredItems),
     [catalogSort, filteredItems],
@@ -79,8 +82,12 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
         tdProps: { verticalAlign: "top" },
         cell: (item) => (
           <VStack align="start" spacing={1}>
-            <Text fontWeight="semibold">{item.display_name}</Text>
-            <Text fontSize="sm" color="gray.600" noOfLines={2}>
+            <Flex align="center" gap={2} flexWrap="wrap">
+              <Text fontWeight="medium" fontSize="sm">
+                {item.display_name}
+              </Text>
+            </Flex>
+            <Text fontSize="sm" color="ink.600" noOfLines={2}>
               {item.description}
             </Text>
           </VStack>
@@ -118,7 +125,7 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
             isDisabled
             maxW="140px"
             size="sm"
-            bg="gray.50"
+            bg="ink.50"
           >
             <option value="EMAIL">Email</option>
           </Select>
@@ -188,16 +195,16 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
 
   return (
     <Box>
-      <Text fontSize="sm" color="gray.600" mb={4}>
-        {hint}
-      </Text>
-
       {error ? (
         <Alert status="error" borderRadius="md" mb={3}>
           <AlertIcon />
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       ) : null}
+
+      <Text color="ink.600" fontSize="sm" mb={4}>
+        {hint}
+      </Text>
 
       <DataTable
         layout="admin"
@@ -207,15 +214,16 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
         sort={catalogSort.sort}
         onSortChange={catalogSort.onSortChange}
         paginate="client"
+        paginationPosition="bottom"
+        pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
         isLoading={isLoading}
         loadingMessage={`Loading ${entityLabel}s...`}
-        emptyMessage={`No ${entityLabel}s found.`}
+        emptyMessage={emptyMessage}
         noResultsMessage={emptyMessage}
         unfilteredCount={items.length}
         hasActiveFilters={search.trim() !== ""}
         onClearFilters={() => setSearch("")}
         search={{
-          label: "Search",
           value: search,
           onChange: setSearch,
           placeholder: "Search by name",
@@ -223,16 +231,14 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
         }}
       />
 
-      <Flex justify="flex-end" mt={4}>
-        <Button
-          colorScheme="blue"
-          onClick={() => void handleSubmit()}
-          isLoading={isSubmitting}
-          isDisabled={isSubmitting}
-        >
-          Submit{dirtyCount > 0 ? ` (${dirtyCount})` : ""}
-        </Button>
-      </Flex>
+      <FormActions
+        submitLabel={dirtyCount > 0 ? `Submit (${dirtyCount})` : "Submit"}
+        hideCancel
+        onSubmit={() => void handleSubmit()}
+        isLoading={isSubmitting}
+        justify="flex-end"
+        pt={4}
+      />
     </Box>
   );
 };
