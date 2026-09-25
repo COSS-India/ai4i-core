@@ -6,6 +6,7 @@ from app.schemas.common import MessageMeta, SuccessResponse, SuccessResponseWith
 from app.schemas.enums.notification_management import (
     NotificationChannel,
     NotificationModule,
+    NotificationScope,
     NotificationType,
 )
 
@@ -21,8 +22,7 @@ class ThresholdBand(BaseModel):
 
     percentage: int
     # Strict: pydantic's default lax bool coercion would otherwise accept
-    # "true"/"false" (string) and silently coerce them instead of 422ing —
-    # see CatalogUpdate.recipient_roles for the same fix on that field.
+    # "true"/"false" (string) and silently coerce them instead of 422ing.
     active: StrictBool
 
 
@@ -31,7 +31,20 @@ class CatalogItem(BaseModel):
     code-side display metadata (see catalog_metadata.py). ``thresholds`` is
     omitted entirely on a NOTIFICATION row (``None``, dropped from the JSON
     response) rather than sent as an always-empty ``[]`` — that key only
-    ever exists in ``config`` for ALERT-type rows (design section 6.1)."""
+    ever exists in ``config`` for ALERT-type rows (design section 6.1).
+
+    ``scope`` is GLOBAL (applies platform-wide, no per-institution
+    opt-out) or INSTITUTION (available for an institution to subscribe to
+    — see app.routes.notification_subscription). ``recipient_roles`` is
+    kept (not dropped) so the producer-side caches that still raw-SELECT it
+    keep working until they move onto scope. Its ``"ADMIN"`` key (the
+    Adopter Admin's own recipient toggle) is exactly the stored column
+    value, not re-derived from ``scope`` on read — every row was backfilled
+    to already be scope-consistent (True on GLOBAL, False on INSTITUTION,
+    see e2a4c6b8d0f2) and PATCH keeps it that way going forward (see
+    catalog_service._apply_admin_recipient_scope_invariant) — because the
+    send path reads this same column directly, and a value shown here that
+    the stored column disagrees with would be a lie."""
 
     id: int
     name: str
@@ -41,6 +54,7 @@ class CatalogItem(BaseModel):
     module: NotificationModule
     channels: List[NotificationChannel]
     recipient_roles: Dict[str, bool]
+    scope: NotificationScope
     thresholds: Optional[List[ThresholdBand]] = None
 
 
@@ -50,9 +64,14 @@ class CatalogResponse(BaseModel):
 
 class CatalogUpdate(BaseModel):
     """PATCH /notification-alerts/catalog/{name} body. Every field optional — only the fields
-    present are changed; recipient_roles/thresholds each replace their own
-    column/config-key wholesale (the mockup's checkbox group sends its whole
-    current state) without disturbing the other, unset one.
+    present are changed; recipient_roles/scope/thresholds each replace
+    their own column/config-key wholesale (the mockup's checkbox group
+    sends its whole current state) without disturbing the other, unset
+    one.
+
+    ``recipient_roles["ADMIN"]`` (the Adopter Admin's own recipient toggle)
+    is enforced against the row's effective ``scope`` regardless of what's
+    sent here — see catalog_service._apply_admin_recipient_scope_invariant.
 
     ``thresholds``, when present, must be the complete set of exactly
     THRESHOLD_BAND_COUNT bands — there is no partial/per-band PATCH, since a
@@ -67,6 +86,7 @@ class CatalogUpdate(BaseModel):
     # real bool instead of 422ing — silently masking a loosely-typed
     # caller's bug instead of failing fast (per this endpoint's spec).
     recipient_roles: Optional[Dict[str, StrictBool]] = None
+    scope: Optional[NotificationScope] = None
     thresholds: Optional[List[ThresholdBand]] = None
 
     @field_validator("channels")

@@ -22,6 +22,8 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.exceptions import InsufficientPermissionsError
+from app.core.permissions import is_admin
 from app.schemas.common import MessageMeta, error_responses
 from app.schemas.notification_management.catalog import CatalogUpdate, UpdateCatalogResponse
 from app.services.notification_management import catalog_service
@@ -40,13 +42,11 @@ async def update_catalog(
     session: AsyncSession = Depends(get_db),
 ) -> UpdateCatalogResponse:
     """Update one catalog row by name (NOTIFICATION or ALERT — whichever
-    that name actually is): channels, recipient_roles and/or thresholds.
-    Only the fields present in the body are changed — recipient_roles/
-    thresholds are independent (recipient_roles is its own column;
-    thresholds is the only key left in config) so setting one never
-    disturbs the other. thresholds is rejected for a NOTIFICATION-type row.
-    Within recipient_roles/thresholds, existing keys are never dropped or
-    reset — a key omitted from the body keeps its current value."""
+    that name actually is): channels, scope and/or thresholds. Only the
+    fields present in the body are changed. thresholds is rejected for a
+    NOTIFICATION-type row. Adopter Admin only."""
+    if not is_admin(request):
+        raise InsufficientPermissionsError()
     updated_by = request.headers.get("X-User-Id")
     item = await catalog_service.update_catalog(session, name, payload, updated_by=updated_by)
     return UpdateCatalogResponse(

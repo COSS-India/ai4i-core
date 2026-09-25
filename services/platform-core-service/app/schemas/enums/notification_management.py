@@ -55,7 +55,18 @@ class NotificationChannel(str, Enum):
     WHATSAPP = "WHATSAPP"
 
 
+class NotificationScope(str, Enum):
+    """Who a catalog row applies to: GLOBAL fires platform-wide for every
+    institution with no per-institution opt-out; INSTITUTION is available
+    for an institution to subscribe to via tenant_notification_subscription.
+    """
+
+    GLOBAL = "GLOBAL"
+    INSTITUTION = "INSTITUTION"
+
+
 VALID_NOTIFICATION_NAMES = {member.value for member in NotificationName}
 VALID_NOTIFICATION_TYPES = {member.value for member in NotificationType}
 VALID_NOTIFICATION_MODULES = {member.value for member in NotificationModule}
 VALID_NOTIFICATION_CHANNELS = {member.value for member in NotificationChannel}
+VALID_NOTIFICATION_SCOPES = {member.value for member in NotificationScope}

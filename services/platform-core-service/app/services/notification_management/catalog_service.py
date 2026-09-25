@@ -20,7 +20,11 @@ from app.core.redis import get_redis_client
 from app.models.notification_management.config_notification_alert import (
     ConfigNotificationAlert,
 )
-from app.schemas.enums.notification_management import NotificationName, NotificationType
+from app.schemas.enums.notification_management import (
+    NotificationName,
+    NotificationScope,
+    NotificationType,
+)
 from app.schemas.notification_management.catalog import CatalogItem, CatalogUpdate, ThresholdBand
 from app.services.notification_management.catalog_metadata import (
     LEGAL_RECIPIENT_ROLES,
@@ -57,6 +61,31 @@ def _parse_thresholds(raw) -> List[ThresholdBand]:
     return [ThresholdBand(**band) for band in raw]
 
 
+def _apply_admin_recipient_scope_invariant(
+    recipient_roles: Dict[str, bool], scope: str
+) -> Dict[str, bool]:
+    """Ties the ``"ADMIN"`` key (the Adopter Admin's own recipient toggle)
+    to ``scope``, per design: defaults to selected and can be overridden
+    while GLOBAL; forced off while INSTITUTION — an Institution-scope row
+    is never delivered to the Adopter Admin as such, delivery for it is
+    governed by tenant_notification_subscription instead.
+
+    Applied on every WRITE only (update_catalog), never re-derived on
+    read: the send path (notification_settings_cache.is_notification_enabled,
+    the kafka-consumers catalog cache) reads the stored recipient_roles
+    column directly, not scope. Deriving ADMIN on read would make the
+    catalog UI show a value the send path disagrees with until that row
+    happens to be PATCHed — every existing row is instead backfilled to
+    already be invariant-consistent by e2a4c6b8d0f2, so what's stored is
+    always what both sides see."""
+    result = dict(recipient_roles)
+    if scope == NotificationScope.INSTITUTION.value:
+        result["ADMIN"] = False
+    else:
+        result.setdefault("ADMIN", True)
+    return result
+
+
 def _to_catalog_item(row: ConfigNotificationAlert) -> CatalogItem:
     meta = NOTIFICATION_METADATA.get(row.name)
     is_alert = row.type == NotificationType.ALERT.value
@@ -68,7 +97,10 @@ def _to_catalog_item(row: ConfigNotificationAlert) -> CatalogItem:
         type=row.type,
         module=row.module,
         channels=list(row.channels or []),
+        # The stored value, as-is — see _apply_admin_recipient_scope_invariant
+        # for why this must not re-derive ADMIN from scope on read.
         recipient_roles=row.recipient_roles or {},
+        scope=row.scope,
         # None (dropped from the response) on a NOTIFICATION row — that key
         # only ever exists in config for ALERT-type rows.
         thresholds=(
@@ -151,13 +183,16 @@ async def update_catalog(
 
     ``thresholds`` is ALERT-only (the key only ever exists in ``config`` for
     ALERT-type rows); sending it for a NOTIFICATION row is a validation
-    error. channels/recipient_roles are accepted for both types.
+    error. channels/recipient_roles/scope are accepted for both types.
 
     recipient_roles is a partial-update dict, not a wholesale replacement:
     every key already stored on the row keeps its current value unless the
     payload names it, in which case it's set to exactly what the payload
-    says. ``thresholds`` is different — it's a wholesale replacement of the
-    whole THRESHOLD_BAND_COUNT-length list, since a band's ``percentage`` is
+    says — except ``"ADMIN"``, which is always re-derived from the row's
+    effective scope afterward (see _apply_admin_recipient_scope_invariant),
+    overriding whatever the payload sent for that one key. ``thresholds``
+    is different — it's a wholesale replacement of the whole
+    THRESHOLD_BAND_COUNT-length list, since a band's ``percentage`` is
     itself editable and bands have no other stable key to merge a partial
     update against."""
     # Validate against the enum in Python before it ever reaches the query:
@@ -182,10 +217,21 @@ async def update_catalog(
             code="INVALID_THRESHOLDS",
         )
 
+    if payload.scope is not None:
+        row.scope = payload.scope.value
+
     if payload.recipient_roles is not None:
         merged = _merged_bool_dict(row.recipient_roles or {}, payload.recipient_roles)
         _validate_recipient_roles(row.name, merged)
         row.recipient_roles = merged
+
+    # Re-applied unconditionally (not just when payload touched
+    # recipient_roles) — a scope-only PATCH into INSTITUTION must still
+    # clear a previously-true ADMIN flag, and a row's ADMIN key must never
+    # drift out of sync with its current scope.
+    row.recipient_roles = _apply_admin_recipient_scope_invariant(
+        row.recipient_roles or {}, row.scope
+    )
 
     if payload.thresholds is not None:
         _validate_thresholds(row.name, payload.thresholds)
@@ -202,14 +248,20 @@ async def update_catalog(
     await session.commit()
     await session.refresh(row)
 
-    if payload.thresholds is not None or payload.recipient_roles is not None:
+    if (
+        payload.thresholds is not None
+        or payload.scope is not None
+        or payload.recipient_roles is not None
+    ):
         # Every producer's in-memory settings cache (ai4i_core.kafka.
         # notification_settings_cache) subscribes to this channel and does a
-        # full reload on any message — recipient_roles changes matter there
-        # too (a notification with no roles selected is treated as "off"),
-        # not just thresholds. Best-effort: a cache falls back to its last
-        # known value (and its own DB reload on next restart) if this fails,
-        # same framing as every other pub/sub-notify call in this codebase.
+        # full reload on any message — scope/recipient_roles changes matter
+        # there too (a notification with no roles selected is treated as
+        # "off", and scope decides whether an event fires platform-wide or
+        # is gated by a tenant's subscription), not just thresholds.
+        # Best-effort: a cache falls back to its last known value (and its
+        # own DB reload on next restart) if this fails, same framing as
+        # every other pub/sub-notify call in this codebase.
         try:
             redis = get_redis_client()
             await redis.publish(NOTIFICATION_ALERT_UPDATES_CHANNEL, row.name)
