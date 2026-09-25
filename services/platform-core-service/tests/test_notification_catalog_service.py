@@ -148,12 +148,8 @@ class TestToCatalogItem:
         assert item.thresholds == _bands((70, False), (80, True), (90, False))
 
     def test_recipient_roles_reads_the_column_not_config(self):
-        # ADMIN explicitly set on both scopes' branch of the invariant so
-        # this test isolates "the column, not config" from the invariant's
-        # own default-filling behavior (covered separately below).
         item = svc._to_catalog_item(
             _row(
-                scope="GLOBAL",
                 recipient_roles={"TENANT ADMIN": True, "ADMIN": False},
                 config={"recipient_roles": {"ADMIN": True}},  # stale shape, must be ignored
             )
@@ -172,27 +168,28 @@ class TestToCatalogItem:
         assert item.description == ""
 
 
-# ── the ADMIN/scope invariant ─────────────────────────────────────────────────
+# ── the ADMIN/scope invariant must NOT be re-derived on read ──────────────────
 
 
-class TestAdminRecipientScopeInvariant:
-    def test_global_scope_defaults_admin_to_true_when_absent(self):
+class TestToCatalogItemDoesNotDeriveAdminFromScope:
+    """The send path (notification_settings_cache.is_notification_enabled,
+    the kafka-consumers catalog cache) reads recipient_roles directly, not
+    scope — _to_catalog_item deriving ADMIN from scope on every GET would
+    let the catalog UI show a value the send path disagrees with. The
+    stored column is made scope-consistent once, by update_catalog on
+    write and by e2a4c6b8d0f2's backfill for pre-existing rows — a read
+    must return exactly what's stored, even a stale/inconsistent value,
+    rather than silently paper over it."""
+
+    def test_global_scope_with_empty_recipient_roles_is_returned_empty(self):
+        # No derived {"ADMIN": True} default — an un-backfilled or
+        # otherwise inconsistent row must be visible as what it is.
         item = svc._to_catalog_item(_row(scope="GLOBAL", recipient_roles={}))
-        assert item.recipient_roles["ADMIN"] is True
+        assert item.recipient_roles == {}
 
-    def test_global_scope_respects_an_explicit_admin_override(self):
-        item = svc._to_catalog_item(_row(scope="GLOBAL", recipient_roles={"ADMIN": False}))
-        assert item.recipient_roles["ADMIN"] is False
-
-    def test_institution_scope_forces_admin_false_even_if_stored_true(self):
+    def test_institution_scope_with_a_stale_true_admin_is_returned_as_stored(self):
         item = svc._to_catalog_item(_row(scope="INSTITUTION", recipient_roles={"ADMIN": True}))
-        assert item.recipient_roles["ADMIN"] is False
-
-    def test_institution_scope_leaves_other_roles_alone(self):
-        item = svc._to_catalog_item(
-            _row(scope="INSTITUTION", recipient_roles={"ADMIN": True, "TENANT ADMIN": True})
-        )
-        assert item.recipient_roles == {"ADMIN": False, "TENANT ADMIN": True}
+        assert item.recipient_roles == {"ADMIN": True}
 
 
 # ── list_catalog ─────────────────────────────────────────────────────────────

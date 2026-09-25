@@ -15,6 +15,18 @@ whole query (not just the recipient lookup), silently stopping every
 notification/alert send. recipient_roles is dropped only in the follow-up
 that moves those readers onto scope + tenant_notification_subscription.
 
+Also backfills recipient_roles["ADMIN"] from the same scope every row just
+got: true on GLOBAL rows, false on INSTITUTION rows. Every row was seeded
+with recipient_roles = {} (1d3f8e77bac4/6dc231d5809a), so without this,
+"the Adopter Admin recipient defaults to selected" would only be true on
+screen — app.services.notification_management.catalog_service._to_catalog_item
+would derive ADMIN: true for display, but is_notification_enabled (both
+producer-side caches) and the consumer's handler.py gate read the stored
+{} and would send nothing for all 7 GLOBAL rows until each one happened to
+be PATCHed. The stored value is what the send path reads; catalog_service
+returns it as-is rather than re-deriving it on every GET, so a row can't
+show one thing and send another.
+
 Revision ID: e2a4c6b8d0f2
 Revises: d2e4f6a8b0c2
 Create Date: 2026-09-25 00:00:00.000000
@@ -58,6 +70,22 @@ def upgrade() -> None:
             f"UPDATE configs_notification_alert SET scope = 'INSTITUTION' WHERE name IN ({names});"
         )
 
+        # Backfill recipient_roles["ADMIN"] from the scope every row just
+        # got, so the send path (which reads recipient_roles, not scope)
+        # agrees with the catalog UI from the moment this migration lands
+        # — not only once each row happens to be PATCHed. jsonb `||` merges
+        # in the key without disturbing any other role already stored.
+        op.execute(
+            "UPDATE configs_notification_alert "
+            "   SET recipient_roles = recipient_roles || '{\"ADMIN\": true}'::jsonb "
+            " WHERE scope = 'GLOBAL';"
+        )
+        op.execute(
+            "UPDATE configs_notification_alert "
+            "   SET recipient_roles = recipient_roles || '{\"ADMIN\": false}'::jsonb "
+            " WHERE scope = 'INSTITUTION';"
+        )
+
 
 def downgrade() -> None:
     conn = op.get_bind()
@@ -65,5 +93,8 @@ def downgrade() -> None:
     existing_columns = {col["name"] for col in inspector.get_columns("configs_notification_alert")}
 
     if "scope" in existing_columns:
+        # Mirrors the backfill above — jsonb `-` removes just the one key
+        # this migration added, leaving any other role untouched.
+        op.execute("UPDATE configs_notification_alert SET recipient_roles = recipient_roles - 'ADMIN';")
         op.drop_column("configs_notification_alert", "scope")
         op.execute(f"DROP TYPE IF EXISTS {SCOPE_ENUM}")
