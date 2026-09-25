@@ -7,7 +7,6 @@ import {
   CardBody,
   CardHeader,
   FormControl,
-  FormLabel,
   Heading,
   IconButton,
   Input,
@@ -24,8 +23,6 @@ import {
   Tab,
   TabPanel,
   Textarea,
-  SimpleGrid,
-  Grid,
   Alert,
   AlertIcon,
   AlertDescription,
@@ -35,28 +32,43 @@ import {
   Tooltip,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import { ViewIcon } from "@chakra-ui/icons";
+import { CopyIcon } from "@chakra-ui/icons";
 import { useRouter } from "next/router";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import ContentLayout from "../components/common/ContentLayout";
 import FieldHint from "../components/common/FieldHint";
+import FieldLabel from "../components/common/FieldLabel";
 import { FIELD_HINTS } from "../config/fieldHints";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
+import CreateButton from "../components/common/CreateButton";
+import FormActions from "../components/common/FormActions";
+import { CreateModal } from "../components/common/StandardModal";
+import FormSection from "../components/common/FormSection";
+import ModelExtraDetails from "../components/model-management/ModelDetails";
+import ModelForm from "../components/model-management/ModelForm";
+import ModelReview from "../components/model-management/ModelReview";
 import {
   fetchAllModelsMatchingFilters,
   createModel,
   getModelById,
   updateModel,
+  MODELS_ALL_QUERY_KEY,
 } from "../services/modelManagementService";
-import type { ModelCreateRequest, ModelDetails, ModelUpdateRequest, TaskSpec } from "../types/platform";
-import { listServices as listServicesForModels } from "../services/servicesManagementService";
+import type { ModelCreateRequest, ModelDetails } from "../types/platform";
+import {
+  listServices as listServicesForModels,
+  SERVICES_ALL_QUERY_KEY,
+  SERVICES_ALL_STALE_MS,
+} from "../services/servicesManagementService";
 import { useAuth } from "../hooks/useAuth";
-import { isRegistryReadOnlyUser } from "../utils/rbac";
+import { isRegistryReadOnlyUser, userHasRole } from "../utils/rbac";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { parseError, showError } from "../utils/errorHandler";
 import { SAMPLE_MODEL_JSON } from "../utils/sampleModelJson";
 import { stripJsonComments } from "../utils/stripJsonComments";
 import { showToast } from "../utils/toast";
+import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import DataTable, {
   useAdminTableSurface,
@@ -70,6 +82,7 @@ import {
   MODEL_FIELD_LIMITS,
   MODEL_API_KEY_REDACTED,
   formatModelTaskTypeLabel,
+  getTaskColorScheme,
   formatModelVersionFilterLabel,
   formatModelVersionStatusLabel,
   isModelVersionStatusActive,
@@ -96,20 +109,7 @@ const ModelManagementPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [selectedModel, setSelectedModel] = useState<Model | null>(null);
   const [isViewingModel, setIsViewingModel] = useState(false);
-  const [isEditingModel, setIsEditingModel] = useState(false);
-  const [formData, setFormData] = useState<Partial<Model>>({
-    name: "",
-    description: "",
-    modelId: "",
-    license: "",
-    source: "",
-    task: { type: "" },
-    domain: [],
-    languages: [],
-  });
-  const [updateFormData, setUpdateFormData] = useState<Partial<Model>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isUpdating, setIsUpdating] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
   const [uploadedModelData, setUploadedModelData] = useState<any>(null);
   const [parsedModelData, setParsedModelData] = useState<any>(null);
@@ -118,8 +118,6 @@ const ModelManagementPage: React.FC = () => {
   const [isValidating, setIsValidating] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [updatingModelId, setUpdatingModelId] = useState<string | null>(null);
-  /** Model IDs that have at least one published service; deprecate is disabled for these until all are unpublished */
-  const [modelIdsWithPublishedService, setModelIdsWithPublishedService] = useState<Set<string>>(new Set());
   const [modelToConfirm, setModelToConfirm] = useState<Model | null>(null);
   const [confirmAction, setConfirmAction] = useState<"deprecate" | "activate" | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -154,16 +152,18 @@ const ModelManagementPage: React.FC = () => {
   const cancelConfirmRef = React.useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const isRegistryReadOnly = isRegistryReadOnlyUser(user?.roles);
-  /** View tab index shifts when the create/register tab is hidden (tenant admin read-only). */
-  const viewTabIndex = isRegistryReadOnly ? 1 : 2;
+  const viewTabIndex = 1;
+  const { isOpen: isCreateOpen, onOpen: onCreateOpen, onClose: onCreateCloseRaw } = useDisclosure();
+  const { copy } = useCopyToClipboard();
 
   const { checkSessionExpiry } = useSessionExpiry();
   const router = useRouter();
 
   // Check if user is GUEST or USER and redirect if so
   useEffect(() => {
-    if (user?.roles?.includes('GUEST') || user?.roles?.includes('USER')) {
+    if (userHasRole(user?.roles, "GUEST") || userHasRole(user?.roles, "USER")) {
       showToast({
         type: "error",
         message: "You do not have access to Model Management.",
@@ -172,11 +172,15 @@ const ModelManagementPage: React.FC = () => {
     }
   }, [user, router]);
 
-  // Sync URL tab param to activeTab (e.g. when header back clears tab=2, show list)
+  // Sync URL tab param. ?tab=1 and ?tab=create open CreateModal (legacy create-tab links).
   useEffect(() => {
     const t = router.query.tab;
-    if (isRegistryReadOnly && (t === "1" || t === "create")) {
-      setActiveTab(0);
+    if (t === "1" || t === "create") {
+      if (isRegistryReadOnly) {
+        setActiveTab(0);
+      } else {
+        onCreateOpen();
+      }
       if (router.query.tab) {
         const q = { ...router.query } as Record<string, string>;
         delete q.tab;
@@ -185,9 +189,8 @@ const ModelManagementPage: React.FC = () => {
       return;
     }
     if (t === "2") setActiveTab(viewTabIndex);
-    else if (t === "1") setActiveTab(1);
-    else if (t !== "1" && t !== "2") setActiveTab(0);
-  }, [router.query.tab, isRegistryReadOnly, router, viewTabIndex]);
+    else setActiveTab(0);
+  }, [router.query.tab, isRegistryReadOnly, router, viewTabIndex, onCreateOpen]);
 
   // Fetch all models for current task/status filters (paginated API walk) for client search + pagination
   const fetchModels = useCallback(async () => {
@@ -213,24 +216,20 @@ const ModelManagementPage: React.FC = () => {
     fetchModels();
   }, [fetchModels, taskTypeFilterReady]);
 
-  // Fetch services: deprecate is only disabled when the model has at least one published service
-  useEffect(() => {
-    const fetchServices = async () => {
-      try {
-        const svcs = await listServicesForModels();
-        const ids = new Set<string>();
-        (svcs || []).forEach((s: any) => {
-          const id = s.modelId ?? s.model_id;
-          const published = s.isPublished === true || s.is_published === true;
-          if (id && published) ids.add(String(id));
-        });
-        setModelIdsWithPublishedService(ids);
-      } catch {
-        setModelIdsWithPublishedService(new Set());
-      }
-    };
-    fetchServices();
-  }, []);
+  const { data: allServices } = useQuery({
+    queryKey: SERVICES_ALL_QUERY_KEY,
+    queryFn: listServicesForModels,
+    staleTime: SERVICES_ALL_STALE_MS,
+  });
+  const modelIdsWithPublishedService = useMemo(() => {
+    const ids = new Set<string>();
+    (allServices || []).forEach((s: { modelId?: string; model_id?: string; isPublished?: boolean; is_published?: boolean }) => {
+      const id = s.modelId ?? s.model_id;
+      const published = s.isPublished === true || s.is_published === true;
+      if (id && published) ids.add(String(id));
+    });
+    return ids;
+  }, [allServices]);
 
   const { cardBg, borderColor: cardBorder } = useAdminTableSurface();
 
@@ -254,34 +253,6 @@ const ModelManagementPage: React.FC = () => {
     setFilterTaskType(taskTypeNames.length === 1 ? taskTypeNames[0] : "");
   };
 
-  const getTaskColor = (taskType?: string | null) => {
-    if (!taskType) return "gray";
-    switch (taskType.toLowerCase()) {
-      case "asr":
-        return "orange";
-      case "nmt":
-        return "green";
-      case "tts":
-        return "blue";
-      case "llm":
-        return "purple";
-      default:
-        return "gray";
-    }
-  };
-
-  const selectedModelTaskType = resolveTaskType(selectedModel);
-
-  const handleInputChange = (
-    field: keyof Model,
-    value: string | TaskSpec | string[]
-  ) => {
-    setFormData((prev) => ({
-      ...prev,
-      [field]: value,
-    }));
-  };
-
   const handleClearUpload = () => {
     setUploadedModelData(null);
     setParsedModelData(null);
@@ -292,6 +263,16 @@ const ModelManagementPage: React.FC = () => {
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+  };
+
+  const closeCreateModal = () => {
+    handleClearUpload();
+    onCreateCloseRaw();
+  };
+
+  const openCreateModal = () => {
+    handleClearUpload();
+    onCreateOpen();
   };
 
   const handleDownloadSample = () => {
@@ -506,6 +487,7 @@ const ModelManagementPage: React.FC = () => {
 
       // Refresh models list
       await fetchModels();
+      void queryClient.invalidateQueries({ queryKey: MODELS_ALL_QUERY_KEY });
 
       // Reset file input
       if (fileInputRef.current) {
@@ -581,7 +563,7 @@ const ModelManagementPage: React.FC = () => {
 
       showToast({
         type: "success",
-        message: "JSON file has been validated successfully. Review the data below and click 'Register Model' to proceed.",
+        message: "JSON file has been validated successfully. Review the data below and click 'Create Model' to proceed.",
       });
     } catch (error: any) {
       // Use centralized error handler for consistent error messages
@@ -600,10 +582,6 @@ const ModelManagementPage: React.FC = () => {
     try {
       const model = await getModelById(modelId);
       setSelectedModel(model as unknown as Model);
-      setUpdateFormData({
-        ...(model as unknown as Partial<Model>),
-        task: { type: resolveTaskType(model) },
-      });
       setIsViewingModel(true);
       setActiveTab(viewTabIndex);
       router.replace({ pathname: "/model-management", query: { ...router.query, tab: "2" } }, undefined, { shallow: true });
@@ -613,58 +591,6 @@ const ModelManagementPage: React.FC = () => {
         type: "error",
         message,
       });
-    }
-  };
-
-  const handleUpdateModel = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedModel) return;
-
-    // Check session expiry before updating
-    if (!checkSessionExpiry()) return;
-
-    setIsUpdating(true);
-    try {
-      // Never include `name` — API returns 422 NAME_NOT_UPDATABLE.
-      // Read source (not refUrl) from GET; send as refUrl on write.
-      const updateData: ModelUpdateRequest = {
-        modelId: selectedModel.modelId,
-        version: selectedModel.version,
-        description: updateFormData.description,
-        task: updateFormData.task,
-        license: updateFormData.license as ModelUpdateRequest["license"],
-        licenseUrl: updateFormData.licenseUrl ?? undefined,
-        refUrl: updateFormData.source || undefined,
-        domain: updateFormData.domain as ModelUpdateRequest["domain"],
-        languages: updateFormData.languages,
-        isLangDetectionEnabled: updateFormData.isLangDetectionEnabled,
-        isMultilingual: updateFormData.isMultilingual,
-        trainingDataset: updateFormData.trainingDataset ?? undefined,
-        adapterConfig: updateFormData.adapterConfig ?? undefined,
-        schema: updateFormData.schema ?? undefined,
-      };
-
-      await updateModel(updateData);
-
-      showToast({
-        type: "success",
-        message: "Model has been updated successfully",
-      });
-
-      // Refresh models list and selected model
-      await fetchModels();
-      const updatedModel = await getModelById(selectedModel.modelId);
-      setSelectedModel(updatedModel as unknown as Model);
-      setUpdateFormData(updatedModel as unknown as Partial<Model>);
-      setIsEditingModel(false);
-    } catch (error) {
-      const { message } = parseError(error);
-      showToast({
-        type: "error",
-        message,
-      });
-    } finally {
-      setIsUpdating(false);
     }
   };
 
@@ -696,10 +622,10 @@ const ModelManagementPage: React.FC = () => {
 
       // Refresh models list and selected model
       await fetchModels();
+      void queryClient.invalidateQueries({ queryKey: MODELS_ALL_QUERY_KEY });
       if (selectedModel && selectedModel.modelId === model.modelId) {
         const updatedModel = await getModelById(model.modelId);
         setSelectedModel(updatedModel as unknown as Model);
-        setUpdateFormData(updatedModel as unknown as Partial<Model>);
       }
     } catch (error: any) {
       showError(error);
@@ -736,10 +662,10 @@ const ModelManagementPage: React.FC = () => {
 
       // Refresh models list and selected model
       await fetchModels();
+      void queryClient.invalidateQueries({ queryKey: MODELS_ALL_QUERY_KEY });
       if (selectedModel && selectedModel.modelId === model.modelId) {
         const updatedModel = await getModelById(model.modelId);
         setSelectedModel(updatedModel as unknown as Model);
-        setUpdateFormData(updatedModel as unknown as Partial<Model>);
       }
     } catch (error: any) {
       showError(error);
@@ -777,11 +703,10 @@ const ModelManagementPage: React.FC = () => {
       {
         id: "name",
         header: "Name",
-        truncate: false,
         sortable: true,
         sortAccessor: (model) => model.name ?? "",
         cell: (model) => (
-          <Text fontWeight="bold" fontSize="14px" color="gray.800" noOfLines={1} title={model.name || model.modelId}>
+          <Text fontWeight="medium" fontSize="sm" noOfLines={1} title={model.name || model.modelId}>
             {model.name || model.modelId || "—"}
           </Text>
         ),
@@ -815,7 +740,7 @@ const ModelManagementPage: React.FC = () => {
         cell: (model) => {
           const taskType = resolveTaskType(model);
           return (
-            <Badge colorScheme={getTaskColor(taskType)} fontSize="xs">
+            <Badge colorScheme={getTaskColorScheme(taskType)} fontSize="xs">
               {taskType ? taskType.toUpperCase() : "N/A"}
             </Badge>
           );
@@ -838,7 +763,7 @@ const ModelManagementPage: React.FC = () => {
                 ? model.submittedOn * 1000
                 : NaN;
           return (
-            <Text fontSize="sm" color="gray.600">
+            <Text fontSize="sm" color="ink.600">
               {Number.isFinite(createdMs) ? new Date(createdMs).toLocaleDateString() : "N/A"}
             </Text>
           );
@@ -850,17 +775,6 @@ const ModelManagementPage: React.FC = () => {
         tdProps: { onClick: (e) => e.stopPropagation() },
         cell: (model) => (
           <HStack spacing={3} align="center">
-            <Tooltip label="View" placement="top" hasArrow>
-              <IconButton
-                aria-label="View"
-                icon={<ViewIcon />}
-                size="sm"
-                variant="ghost"
-                colorScheme="blue"
-                _hover={{ bg: "blue.50" }}
-                onClick={() => handleViewModel(model.modelId)}
-              />
-            </Tooltip>
             {!isRegistryReadOnly &&
               ((model.versionStatus?.toLowerCase() === "active" || !model.versionStatus) &&
               !modelIdsWithPublishedService.has(model.modelId) ? (
@@ -913,20 +827,18 @@ const ModelManagementPage: React.FC = () => {
                         ? "View models in the registry (read-only)"
                         : "Manage and configure AI models"
                     }
+                    actions={
+                      !isRegistryReadOnly ? (
+                        <CreateButton onClick={openCreateModal}>Create Model</CreateButton>
+                      ) : undefined
+                    }
                   />
 
-                  <Grid
-                    gap={8}
-                    w="full"
-                    mx="auto"
-                  >
-                    <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px">
-            <Tabs
+                    <Tabs
               colorScheme="blue"
               variant="enclosed"
               index={activeTab}
               onChange={(index) => {
-                if (isRegistryReadOnly && index === 1) return;
                 setActiveTab(index);
                 if (index !== viewTabIndex) {
                   setIsViewingModel(false);
@@ -934,15 +846,12 @@ const ModelManagementPage: React.FC = () => {
                 }
                 const q = { ...router.query } as Record<string, string>;
                 if (index === 0) delete q.tab;
-                else q.tab = String(index);
+                else q.tab = "2";
                 router.replace({ pathname: "/model-management", query: q }, undefined, { shallow: true });
               }}
             >
               <TabList>
                 <Tab fontWeight="semibold">Model Registry</Tab>
-                {!isRegistryReadOnly && (
-                  <Tab fontWeight="semibold">Register Model</Tab>
-                )}
                 {isViewingModel && selectedModel && (
                   <Tab fontWeight="semibold">View Model</Tab>
                 )}
@@ -951,13 +860,6 @@ const ModelManagementPage: React.FC = () => {
               <TabPanels>
                 {/* Model Registry Tab */}
                 <TabPanel px={0} pt={6}>
-                  <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
-                    <CardHeader>
-                      <Heading size="md" color="gray.700" userSelect="none" cursor="default">
-                        Model Registry
-                      </Heading>
-                    </CardHeader>
-                    <CardBody>
                       <DataTable
                         layout="admin"
                         key={`${filterTaskType}-${filterVersionStatus}`}
@@ -968,6 +870,7 @@ const ModelManagementPage: React.FC = () => {
                         getRowKey={(model) => model.modelId}
                         onRowClick={(model) => handleViewModel(model.modelId)}
                         paginate="client"
+                        paginationPosition="bottom"
                         pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
                         isLoading={isLoading}
                         loadingMessage="Loading models..."
@@ -1020,242 +923,7 @@ const ModelManagementPage: React.FC = () => {
                           },
                         ]}
                       />
-                    </CardBody>
-                  </Card>
                 </TabPanel>
-
-                {/* Create Model Tab */}
-                {!isRegistryReadOnly && (
-                <TabPanel px={0} pt={6}>
-                  <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
-                    <CardHeader>
-                      <Heading size="md" color="gray.700" userSelect="none" cursor="default">
-                        Register New Model
-                      </Heading>
-                    </CardHeader>
-                    <CardBody>
-                        <VStack spacing={6} align="stretch">
-                        {/* File Upload Section */}
-                        <Box>
-                          <FormControl>
-                            <HStack justify="space-between" mb={2}>
-                              <FormLabel fontWeight="semibold" mb={0}>Upload JSON File</FormLabel>
-                              <Button
-                                size="sm"
-                                colorScheme="blue"
-                                variant="outline"
-                                onClick={handleDownloadSample}
-                              >
-                                📥 Download Sample JSON
-                              </Button>
-                            </HStack>
-                              <Input
-                              ref={fileInputRef}
-                              type="file"
-                              accept=".json"
-                              onChange={handleFileUpload}
-                              disabled={isUploading || isValidating}
-                                bg="white"
-                              p={2}
-                            />
-                            <FieldHint mt={2} fontSize="sm">
-                              {FIELD_HINTS.model.jsonUpload.helper}
-                            </FieldHint>
-                            <Box mt={2} p={3} bg="blue.50" borderRadius="md" border="1px solid" borderColor="blue.200">
-                              <Text fontSize="xs" fontWeight="semibold" color="blue.700" mb={1}>
-                                Required Fields (ULCA):
-                              </Text>
-                              <Text fontSize="xs" color="blue.600">
-                                name (5–100 chars, no spaces), version, description (25–1000 chars),
-                                task.type, license (closed enum), domain (closed enum, ≥1),
-                                trainingDataset.{"{description}"},
-                                submitter.name. Optional: refUrl, languages (Indic + English codes only),
-                                licenseUrl, isLangDetectionEnabled, isMultilingual,
-                                adapterConfig, schema, benchmarks.
-                                modelId is auto-generated from name:version. Do not send submittedOn/updatedOn
-                                unless you intend to override — they are server-set by default.
-                              </Text>
-                            </Box>
-                            </FormControl>
-                        </Box>
-
-                        {/* Validating State */}
-                        {isValidating && (
-                          <Center py={8}>
-                            <VStack spacing={4}>
-                              <Spinner size="lg" color="blue.500" />
-                              <Text color="gray.600">Validating JSON file...</Text>
-                            </VStack>
-                          </Center>
-                        )}
-
-                        {/* Loading State */}
-                        {isUploading && (
-                          <Center py={8}>
-                            <VStack spacing={4}>
-                              <Spinner size="lg" color="blue.500" />
-                              <Text color="gray.600">Creating model...</Text>
-                            </VStack>
-                          </Center>
-                        )}
-
-                        {/* Validation Errors Display */}
-                        {validationErrors.length > 0 && (
-                          <Alert status="error" borderRadius="md">
-                            <AlertIcon />
-                            <AlertDescription>
-                              <VStack align="stretch" spacing={3}>
-                                <Box>
-                                  <Text fontWeight="semibold" mb={2}>Validation Failed</Text>
-                                  <Text mb={2}>Please fix the following errors:</Text>
-                                  <Box as="ul" pl={4}>
-                                    {validationErrors.map((error, index) => (
-                                      <Text key={index} as="li" fontSize="sm" mb={1}>
-                                        {error}
-                                      </Text>
-                                    ))}
-                                  </Box>
-                                </Box>
-                                <Button
-                                  size="sm"
-                                  colorScheme="gray"
-                                  variant="outline"
-                                  onClick={handleClearUpload}
-                                  alignSelf="flex-start"
-                                >
-                                  Clear & Upload New File
-                                </Button>
-                              </VStack>
-                            </AlertDescription>
-                          </Alert>
-                        )}
-
-                        {/* General Error Display */}
-                        {uploadError && validationErrors.length === 0 && (
-                          <Alert status="error" borderRadius="md">
-                            <AlertIcon />
-                            <AlertDescription>
-                              <VStack align="stretch" spacing={3}>
-                                <Box>
-                                  <Text fontWeight="semibold" mb={2}>Error</Text>
-                                  <Text>{uploadError}</Text>
-                                </Box>
-                                <Button
-                                  size="sm"
-                                  colorScheme="gray"
-                                  variant="outline"
-                                  onClick={handleClearUpload}
-                                  alignSelf="flex-start"
-                                >
-                                  Clear & Upload New File
-                                </Button>
-                              </VStack>
-                            </AlertDescription>
-                          </Alert>
-                        )}
-
-                        {/* Parsed Data - Ready for Creation */}
-                        {parsedModelData && !isUploading && !isValidating && (
-                          <Box>
-                            <Alert status="success" borderRadius="md" mb={4}>
-                              <AlertIcon />
-                              <AlertDescription>
-                                JSON file validated successfully! Review the data below and click &quot;Register Model&quot; to proceed.
-                              </AlertDescription>
-                            </Alert>
-                            <Box>
-                              <Heading size="sm" color="gray.700" mb={4} userSelect="none" cursor="default">
-                                Parsed Model Data
-                              </Heading>
-                              <Box
-                                bg="gray.50"
-                                p={4}
-                                borderRadius="md"
-                                border="1px solid"
-                                borderColor="gray.200"
-                                maxH="600px"
-                                overflowY="auto"
-                              >
-                                <Code
-                                  display="block"
-                                  whiteSpace="pre-wrap"
-                                  fontSize="sm"
-                                  p={4}
-                                  bg="white"
-                                  borderRadius="md"
-                                >
-                                  {JSON.stringify(parsedModelData, null, 2)}
-                                </Code>
-                              </Box>
-                              <HStack spacing={3} mt={4}>
-                                <Button
-                                  colorScheme="green"
-                                  onClick={handleCreateModel}
-                                  isLoading={isUploading}
-                                  loadingText="Creating..."
-                                >
-                                  Register Model
-                                </Button>
-                                <Button
-                                  colorScheme="gray"
-                                  variant="outline"
-                                  onClick={handleClearUpload}
-                                >
-                                  Cancel
-                                </Button>
-                              </HStack>
-                            </Box>
-                          </Box>
-                        )}
-
-                        {/* Success - Model Created */}
-                        {uploadedModelData && !isUploading && (
-                          <Box>
-                            <Alert status="success" borderRadius="md" mb={4}>
-                              <AlertIcon />
-                              <AlertDescription>
-                                Model created successfully! Model data is displayed below.
-                              </AlertDescription>
-                            </Alert>
-                            <Box>
-                              <Heading size="sm" color="gray.700" mb={4} userSelect="none" cursor="default">
-                                Created Model Data
-                              </Heading>
-                              <Box
-                                bg="gray.50"
-                                p={4}
-                                borderRadius="md"
-                                border="1px solid"
-                                borderColor="gray.200"
-                                maxH="600px"
-                                overflowY="auto"
-                              >
-                                <Code
-                                  display="block"
-                                  whiteSpace="pre-wrap"
-                                  fontSize="sm"
-                                  p={4}
-                                  bg="white"
-                                  borderRadius="md"
-                                >
-                                  {JSON.stringify(uploadedModelData, null, 2)}
-                                </Code>
-                              </Box>
-                            <Button
-                                mt={4}
-                                colorScheme="blue"
-                              onClick={handleClearUpload}
-                              >
-                                Upload Another Model
-                            </Button>
-                            </Box>
-                          </Box>
-                        )}
-                        </VStack>
-                    </CardBody>
-                  </Card>
-                </TabPanel>
-                )}
 
                 {/* View Model Tab */}
                 {isViewingModel && selectedModel && (
@@ -1263,21 +931,22 @@ const ModelManagementPage: React.FC = () => {
                     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                       <CardHeader>
                         <HStack justify="space-between" align="center">
-                          <Heading size="md" color="gray.700" userSelect="none" cursor="default">
+                          <Heading size="md" color="ink.800" userSelect="none" cursor="default">
                            {selectedModel.name}
                           </Heading>
                           <HStack spacing={2}>
                             {!isRegistryReadOnly &&
                               (selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && (
-                              <Button
+                              <CreateButton
                                 size="sm"
-                                colorScheme="blue"
                                 onClick={() => {
-                                  router.push(`/services-management?modelId=${selectedModel.modelId}&tab=create`);
+                                  router.push(
+                                    `/services-management?modelId=${selectedModel.modelId}&tab=create`,
+                                  );
                                 }}
                               >
                                 Create Service
-                              </Button>
+                              </CreateButton>
                             )}
                             {!isRegistryReadOnly &&
                             (selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && !modelIdsWithPublishedService.has(selectedModel.modelId) ? (
@@ -1309,176 +978,244 @@ const ModelManagementPage: React.FC = () => {
                         </HStack>
                       </CardHeader>
                       <CardBody>
-                        {!isEditingModel && (
                           <VStack spacing={6} align="stretch">
                             {isRegistryReadOnly && (
                               <Badge colorScheme="gray" alignSelf="flex-start" fontSize="sm" px={2} py={1}>
                                 Read-only
                               </Badge>
                             )}
-                            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                              <Box>
-                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                                  Model ID
-                                </Text>
-                                <Text fontSize="md" wordBreak="break-all">{selectedModel.modelId}</Text>
-                              </Box>
-                              <Box>
-                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                                  Model name
-                                </Text>
-                                <Text fontSize="md">{selectedModel.name}</Text>
-                              </Box>
-                              <Box>
-                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                                  Version
-                                </Text>
-                                <Text fontSize="md">{selectedModel.version || "1.0"}</Text>
-                              </Box>
-                              <Box>
-                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                                  Status
-                                </Text>
-                                <Badge
-                                  colorScheme={
-                                    isModelVersionStatusActive(selectedModel.versionStatus)
-                                      ? "green"
-                                      : "gray"
-                                  }
-                                  fontSize="sm"
-                                  p={2}
-                                >
-                                  {formatModelVersionStatusLabel(selectedModel.versionStatus)}
-                                </Badge>
-                              </Box>
-                              <Box>
-                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                                  Task type
-                                </Text>
-                                <Badge
-                                  colorScheme={getTaskColor(selectedModelTaskType)}
-                                  fontSize="sm"
-                                  p={2}
-                                >
-                                  {selectedModelTaskType
-                                    ? selectedModelTaskType.toUpperCase()
-                                    : "N/A"}
-                                </Badge>
-                              </Box>
-                            </SimpleGrid>
-
-                            <Box>
-                              <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                                Description
-                              </Text>
-                              <Text fontSize="md">{selectedModel.description || "—"}</Text>
-                            </Box>
-
-                            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                              <Box>
-                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                                  License
-                                </Text>
-                                <Text fontSize="md">{selectedModel.license || "—"}</Text>
-                              </Box>
-                              <Box>
-                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                                  Source
-                                </Text>
-                                <Text fontSize="md">{selectedModel.source || "—"}</Text>
-                              </Box>
-                              {selectedModel.licenseUrl ? (
-                                <Box>
-                                  <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                                    License URL
-                                  </Text>
-                                  <Text fontSize="md">{selectedModel.licenseUrl}</Text>
-                                </Box>
-                              ) : null}
-                              <Box>
-                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                                  Language auto-detection
-                                </Text>
-                                <Text fontSize="md">
-                                  {selectedModel.isLangDetectionEnabled ? "Enabled" : "Disabled"}
-                                </Text>
-                              </Box>
-                              <Box>
-                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                                  Multilingual
-                                </Text>
-                                <Text fontSize="md">
-                                  {selectedModel.isMultilingual ? "Yes" : "No"}
-                                </Text>
-                              </Box>
-                            </SimpleGrid>
-
-                            <Box>
-                              <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={2}>
-                                Domain
-                              </Text>
-                              <HStack spacing={2} flexWrap="wrap">
-                                {selectedModel.domain && selectedModel.domain.length > 0 ? (
-                                  selectedModel.domain.map((domain, idx) => (
-                                    <Badge key={idx} fontSize="sm" colorScheme="gray" p={2}>
-                                      {domain}
-                                    </Badge>
-                                  ))
-                                ) : (
-                                  <Text color="gray.500" fontSize="sm">No domains specified</Text>
-                                )}
-                              </HStack>
-                            </Box>
-
-                            {selectedModel.trainingDataset ? (
-                              <Box>
-                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                                  Training dataset
-                                </Text>
-                                <Text fontSize="md">
-                                  {selectedModel.trainingDataset.description || "—"}
-                                </Text>
-                                {selectedModel.trainingDataset.datasetId ? (
-                                  <Text fontSize="sm" color="gray.500" mt={1}>
-                                    ID: {selectedModel.trainingDataset.datasetId}
-                                  </Text>
-                                ) : null}
-                              </Box>
-                            ) : null}
-
-                            {selectedModel.adapterConfig ? (
-                              <Box>
-                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                                  Adapter config
-                                </Text>
-                                <Text fontSize="sm" fontFamily="mono" whiteSpace="pre-wrap">
-                                  {JSON.stringify(selectedModel.adapterConfig, null, 2)}
-                                </Text>
-                              </Box>
-                            ) : null}
-
-                            {selectedModel.schema ? (
-                              <Box>
-                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                                  Schema
-                                </Text>
-                                <Text fontSize="sm" fontFamily="mono" whiteSpace="pre-wrap">
-                                  {JSON.stringify(selectedModel.schema, null, 2)}
-                                </Text>
-                              </Box>
-                            ) : null}
+                            <ModelForm mode="view" model={selectedModel} />
+                            <ModelExtraDetails
+                              trainingDataset={selectedModel.trainingDataset}
+                              adapterConfig={selectedModel.adapterConfig}
+                              schema={selectedModel.schema}
+                            />
                           </VStack>
-                        )}
-                        {/* Editing disabled for models after creation - edit form removed */}
                       </CardBody>
                     </Card>
                   </TabPanel>
                 )}
               </TabPanels>
             </Tabs>
-          </Card></Grid>
      </VStack>
       </ContentLayout>
+
+      {!isRegistryReadOnly && (
+        <CreateModal
+          isOpen={isCreateOpen}
+          onClose={closeCreateModal}
+          size="lg"
+          title="Create Model"
+          description="Upload a model definition to add it to the registry."
+          footer={
+            <FormActions
+              submitLabel="Create Model"
+              onCancel={closeCreateModal}
+              onSubmit={() => void handleCreateModel()}
+              isLoading={isUploading}
+              loadingText="Creating..."
+              isDisabled={!parsedModelData}
+              justify="space-between"
+              pt={0}
+            />
+          }
+        >
+          <VStack spacing={6} align="stretch">
+            <FormSection title="Upload Model Definition">
+            <Box>
+              <FormControl>
+                <HStack justify="space-between" mb={2}>
+                  <FieldLabel formLabelProps={{ fontWeight: "semibold", mb: 0 }}>
+                    Upload JSON File
+                  </FieldLabel>
+                  <Button
+                    size="sm"
+                    colorScheme="blue"
+                    variant="outline"
+                    onClick={handleDownloadSample}
+                  >
+                    📥 Download Sample JSON
+                  </Button>
+                </HStack>
+                <Input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json"
+                  onChange={handleFileUpload}
+                  disabled={isUploading || isValidating}
+                  bg="white"
+                  p={2}
+                />
+                <FieldHint mt={2} fontSize="sm">
+                  {FIELD_HINTS.model.jsonUpload.helper}
+                </FieldHint>
+                <Box mt={2} p={3} bg="blue.50" borderRadius="md" border="1px solid" borderColor="blue.200">
+                  <Text fontSize="xs" fontWeight="semibold" color="blue.700" mb={1}>
+                    Required Fields (ULCA):
+                  </Text>
+                  <Text fontSize="xs" color="blue.600">
+                    name (5–100 chars, no spaces), version, description (25–1000 chars),
+                    task.type, license (closed enum), domain (closed enum, ≥1),
+                    trainingDataset.{"{description}"},
+                    submitter.name. Optional: refUrl, languages (Indic + English codes only),
+                    licenseUrl, isLangDetectionEnabled, isMultilingual,
+                    adapterConfig, schema, benchmarks.
+                    modelId is auto-generated from name:version. Do not send submittedOn/updatedOn
+                    unless you intend to override — they are server-set by default.
+                  </Text>
+                </Box>
+              </FormControl>
+            </Box>
+            </FormSection>
+
+            {isValidating && (
+              <Center py={8}>
+                <VStack spacing={4}>
+                  <Spinner size="lg" />
+                  <Text color="ink.600">Validating JSON file...</Text>
+                </VStack>
+              </Center>
+            )}
+
+            {isUploading && (
+              <Center py={8}>
+                <VStack spacing={4}>
+                  <Spinner size="lg" />
+                  <Text color="ink.600">Creating model...</Text>
+                </VStack>
+              </Center>
+            )}
+
+            {validationErrors.length > 0 && (
+              <Alert status="error" borderRadius="md">
+                <AlertIcon />
+                <AlertDescription>
+                  <VStack align="stretch" spacing={3}>
+                    <Box>
+                      <Text fontWeight="semibold" mb={2}>Validation Failed</Text>
+                      <Text mb={2}>Please fix the following errors:</Text>
+                      <Box as="ul" pl={4}>
+                        {validationErrors.map((error, index) => (
+                          <Text key={index} as="li" fontSize="sm" mb={1}>
+                            {error}
+                          </Text>
+                        ))}
+                      </Box>
+                    </Box>
+                    <Button
+                      size="sm"
+                      colorScheme="gray"
+                      variant="outline"
+                      onClick={handleClearUpload}
+                      alignSelf="flex-start"
+                    >
+                      Clear & Upload New File
+                    </Button>
+                  </VStack>
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {uploadError && validationErrors.length === 0 && (
+              <Alert status="error" borderRadius="md">
+                <AlertIcon />
+                <AlertDescription>
+                  <VStack align="stretch" spacing={3}>
+                    <Box>
+                      <Text fontWeight="semibold" mb={2}>Error</Text>
+                      <Text>{uploadError}</Text>
+                    </Box>
+                    <Button
+                      size="sm"
+                      colorScheme="gray"
+                      variant="outline"
+                      onClick={handleClearUpload}
+                      alignSelf="flex-start"
+                    >
+                      Clear & Upload New File
+                    </Button>
+                  </VStack>
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {parsedModelData && !isUploading && !isValidating && (
+              <Box>
+                <Alert status="success" borderRadius="md" mb={4}>
+                  <AlertIcon />
+                  <AlertDescription>
+                    JSON file validated successfully! Review the data below and click &quot;Create Model&quot; to proceed.
+                  </AlertDescription>
+                </Alert>
+                <FormSection title="Review Model">
+                  <VStack align="stretch" spacing={6}>
+                    <ModelReview model={parsedModelData} />
+                    <ModelExtraDetails
+                      trainingDataset={parsedModelData.trainingDataset}
+                      adapterConfig={parsedModelData.adapterConfig}
+                      schema={parsedModelData.schema}
+                    />
+                  </VStack>
+                </FormSection>
+              </Box>
+            )}
+
+            {uploadedModelData && !isUploading && (
+              <Box>
+                <Alert status="success" borderRadius="md" mb={4}>
+                  <AlertIcon />
+                  <AlertDescription>
+                    Model created successfully! Model data is displayed below. Copy it if you need a record — the modal stays open until you close it.
+                  </AlertDescription>
+                </Alert>
+                <HStack justify="space-between" align="center" mb={4}>
+                  <Heading size="sm" color="ink.700" userSelect="none" cursor="default">
+                    Created Model Data
+                  </Heading>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    leftIcon={<CopyIcon />}
+                    onClick={() => {
+                      void copy(
+                        JSON.stringify(uploadedModelData, null, 2),
+                        "Model data copied to clipboard",
+                      );
+                    }}
+                  >
+                    Copy
+                  </Button>
+                </HStack>
+                <Box
+                  bg="ink.50"
+                  p={4}
+                  borderRadius="md"
+                  border="1px solid"
+                  borderColor="ink.200"
+                >
+                  <Code
+                    display="block"
+                    whiteSpace="pre-wrap"
+                    fontSize="sm"
+                    p={4}
+                    bg="white"
+                    borderRadius="md"
+                  >
+                    {JSON.stringify(uploadedModelData, null, 2)}
+                  </Code>
+                </Box>
+                <Button
+                  mt={4}
+                  colorScheme="blue"
+                  onClick={handleClearUpload}
+                >
+                  Upload Another Model
+                </Button>
+              </Box>
+            )}
+          </VStack>
+        </CreateModal>
+      )}
 
       <ConfirmDialog
         isOpen={isConfirmOpen}

@@ -105,6 +105,15 @@ export const FIELD_HINTS = {
       llmHelper: "Enter the model host URL (host:port only).",
       llmPlaceholder: "e.g. http://host:port",
     },
+    authToken: {
+      placeholder: "Enter authentication token",
+      helper:
+        "Optional. Sent as Authorization: Bearer when the vLLM endpoint requires authentication.",
+      editHelper:
+        "A token is already saved. Leave blank to keep it, or enter a new token to replace it.",
+      editEmptyHelper:
+        "Optional. Leave blank if the endpoint does not require authentication.",
+    },
     hardware: {
       placeholder: "e.g. Auto-scalable deployment, using T4 GPUs",
       helper: (min: number, max: number) =>

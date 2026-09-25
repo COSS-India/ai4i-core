@@ -15,8 +15,12 @@ import {
 } from "@chakra-ui/react";
 import { MdOutlineCheckCircle, MdOutlineUnpublished } from "react-icons/md";
 import React from "react";
-import type { Service } from "../../services/servicesManagementService";
+import {
+  resolveHasAuthToken,
+  type Service,
+} from "../../services/servicesManagementService";
 import { resolveTaskType } from "../../utils/platformService";
+import ServiceFormTab from "./ServiceFormTab";
 
 interface ServiceDetailTabProps {
   cardBg: string;
@@ -38,7 +42,6 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
   cardBorder,
   selectedService,
   isRegistryReadOnly,
-  getTaskColor,
   isServiceModelDeprecated,
   selectedServiceModelDeprecated,
   viewServiceUnitType,
@@ -48,6 +51,10 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
   onRequestPublish,
 }) => {
   const taskType = resolveTaskType(selectedService);
+  const modelId = selectedService.modelId || selectedService.model_id || "";
+  const tierIds = selectedService.tierIds?.length
+    ? selectedService.tierIds
+    : (selectedService.tierNames ?? []);
   return (
     <Card
       bg={cardBg}
@@ -56,7 +63,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
       boxShadow="none"
     >
       <CardHeader>
-        <Heading size="md" color="gray.700" userSelect="none" cursor="default">
+        <Heading size="md" color="ink.800" userSelect="none" cursor="default">
           {selectedService.name ||
             selectedService.serviceId ||
             selectedService.service_id}
@@ -78,49 +85,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
           )}
           <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
             <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Service ID
-              </Text>
-              <Text fontSize="md">
-                {selectedService.serviceId ||
-                  selectedService.service_id ||
-                  "N/A"}
-              </Text>
-            </Box>
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Name
-              </Text>
-              <Text fontSize="md">{selectedService.name || "N/A"}</Text>
-            </Box>
-          </SimpleGrid>
-
-          <Box>
-            <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-              Description
-            </Text>
-            <Text fontSize="md">
-              {selectedService.serviceDescription ||
-                selectedService.description ||
-                "N/A"}
-            </Text>
-          </Box>
-
-          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Model Task Type
-              </Text>
-              <Badge
-                colorScheme={getTaskColor(taskType)}
-                fontSize="sm"
-                p={2}
-              >
-                {taskType ? taskType.toUpperCase() : "N/A"}
-              </Badge>
-            </Box>
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+              <Text fontWeight="bold" color="ink.600" fontSize="sm" mb={1}>
                 Status (Publish/Unpublish)
               </Text>
               <HStack spacing={2} align="center" flexWrap="wrap">
@@ -190,38 +155,56 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
             </Box>
           </SimpleGrid>
 
-          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Model ID
-              </Text>
-              <Text fontSize="md">
-                {selectedService.modelId || selectedService.model_id || "N/A"}
-              </Text>
-            </Box>
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Endpoint
-              </Text>
-              <Text fontSize="md" wordBreak="break-all">
-                {selectedService.endpoint ||
-                  selectedService.endpoint_url ||
-                  "N/A"}
-              </Text>
-            </Box>
-          </SimpleGrid>
+          <ServiceFormTab
+            mode="view"
+            embedded={false}
+            hideActions
+            cardBg={cardBg}
+            cardBorder={cardBorder}
+            editingService={selectedService}
+            formData={{
+              name: selectedService.name || "",
+              serviceId: selectedService.serviceId || selectedService.service_id || "",
+              serviceDescription:
+                selectedService.serviceDescription || selectedService.description || "",
+              hardwareDescription: selectedService.hardwareDescription || "",
+              modelId,
+              modelName: selectedService.model?.name || modelId,
+              endpoint: selectedService.endpoint || selectedService.endpoint_url || "",
+              task_type: taskType,
+            }}
+            onInputChange={() => undefined}
+            onTaskTypeChange={() => undefined}
+            onModelNameChange={() => undefined}
+            taskTypeNames={taskType ? [taskType] : []}
+            isLoadingModels={false}
+            filteredModelsForDropdown={[]}
+            unitType={viewServiceUnitType}
+            pricePerUnit={
+              selectedService.costPerUnit != null ? String(selectedService.costPerUnit) : ""
+            }
+            onPricePerUnitChange={() => undefined}
+            unitSize={selectedService.unitSize != null ? String(selectedService.unitSize) : ""}
+            onUnitSizeChange={() => undefined}
+            currency="INR"
+            onCurrencyChange={() => undefined}
+            selectedTiers={tierIds}
+            onToggleTier={() => undefined}
+            availableTiers={[]}
+            isCreateFormModelSelected={Boolean(modelId)}
+            canCreateService={false}
+            isLlmTaskType={taskType.trim().toLowerCase() === "llm"}
+            authToken=""
+            onAuthTokenChange={() => undefined}
+            hasAuthToken={resolveHasAuthToken(selectedService)}
+            isSubmitting={false}
+            onSubmit={(e) => e.preventDefault()}
+            onCancel={() => undefined}
+          />
 
           <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
             <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Hardware Description
-              </Text>
-              <Text fontSize="md">
-                {selectedService.hardwareDescription || "N/A"}
-              </Text>
-            </Box>
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+              <Text fontWeight="bold" color="ink.600" fontSize="sm" mb={1}>
                 Published On
               </Text>
               <Text fontSize="md">
@@ -234,71 +217,9 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
             </Box>
           </SimpleGrid>
 
-          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Unit Type
-              </Text>
-              <Text fontSize="md">{viewServiceUnitType || "N/A"}</Text>
-            </Box>
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Price per unit size
-              </Text>
-              <Text fontSize="md">
-                {selectedService.costPerUnit != null
-                  ? selectedService.costPerUnit
-                  : "N/A"}
-              </Text>
-            </Box>
-          </SimpleGrid>
-
-          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Currency
-              </Text>
-              <Text fontSize="md">INR</Text>
-            </Box>
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Unit Size
-              </Text>
-              <Text fontSize="md">
-                {selectedService.unitSize != null
-                  ? selectedService.unitSize
-                  : "N/A"}
-              </Text>
-            </Box>
-          </SimpleGrid>
-
-          <Box>
-            <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-              Tier
-            </Text>
-            {selectedService.tierNames &&
-            selectedService.tierNames.length > 0 ? (
-              <HStack spacing={1} flexWrap="wrap">
-                {selectedService.tierNames.map((name) => (
-                  <Badge
-                    key={name}
-                    colorScheme="gray"
-                    fontSize="xs"
-                    px={2}
-                    py={0.5}
-                  >
-                    {name}
-                  </Badge>
-                ))}
-              </HStack>
-            ) : (
-              <Text fontSize="md">N/A</Text>
-            )}
-          </Box>
-
           {selectedService.created_at && (
             <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+              <Text fontWeight="bold" color="ink.600" fontSize="sm" mb={1}>
                 Created At
               </Text>
               <Text fontSize="md">
@@ -309,7 +230,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
 
           {selectedService.updated_at && (
             <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+              <Text fontWeight="bold" color="ink.600" fontSize="sm" mb={1}>
                 Updated At
               </Text>
               <Text fontSize="md">

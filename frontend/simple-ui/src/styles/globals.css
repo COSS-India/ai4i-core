@@ -1,5 +1,5 @@
 /* Global CSS styles for Simple UI */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap');
 
 /* CSS Reset */
 * {
@@ -11,23 +11,22 @@
 html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* Full height so children can use 100% and adapt to scaling */
   height: 100%;
 }
 
 body {
-  /* Allow scroll when content overflows; avoid horizontal clip - main area scrolls internally */
   min-height: 100%;
   height: 100%;
   overflow-x: hidden;
   overflow-y: auto;
+  font-family: "Plus Jakarta Sans", Inter, system-ui, sans-serif;
 }
 
 /* Next.js root: use small viewport height so layout never exceeds visible area (e.g. 1312×848, scaled) */
 #__next {
   height: 100%;
   min-height: 100vh;
-  min-height: 100svh; /* Small viewport = visible area when browser UI visible (Mac/scaled) */
+  min-height: 100svh;
   min-height: 100dvh;
 }
 
@@ -36,17 +35,21 @@ body {
   --app-viewport-height: 100vh;
   --app-viewport-height-small: 100svh;
   --app-viewport-height-dynamic: 100dvh;
+  --ink: #1e293b;
+  --ink-muted: #5a6a80;
+  --line: #d5deea;
+  --canvas: #f4f6fb;
 }
 
 /* Utility Classes */
 .dview-service-try-option-title {
   font-weight: 600;
   min-width: 10rem;
-  color: #4a5568;
+  color: var(--ink-muted);
 }
 
 .dview-service-description {
-  color: #4a5568;
+  color: var(--ink-muted);
   line-height: 1.6;
 }
 
@@ -74,23 +77,23 @@ audio {
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: var(--canvas);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #ff8c00;
+  background: #b3c0d0;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #e67e00;
+  background: #7c8ba0;
 }
 
 /* Firefox scrollbar */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #ff8c00 #f1f1f1;
+  scrollbar-color: #b3c0d0 var(--canvas);
 }
 
 /* Loading Animation */
@@ -108,11 +111,11 @@ audio {
 }
 
 /* Focus styles for accessibility */
-button:focus,
-input:focus,
-textarea:focus,
-select:focus {
-  outline: 2px solid #ff8c00;
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid #3182ce;
   outline-offset: 2px;
 }
 

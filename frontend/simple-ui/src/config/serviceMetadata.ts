@@ -80,3 +80,71 @@ export function getServiceTitle(id: ServiceId): string {
 export function getServiceDescription(id: ServiceId): string {
   return SERVICE_METADATA[id]?.description ?? "";
 }
+
+/** Pastel identity palette for Explore cards. Not a global action colour. */
+export type ServiceAccentShade = 50 | 300 | 400 | 600;
+
+export const SERVICE_ACCENT: Record<
+  ServiceId,
+  Record<ServiceAccentShade, string>
+> = {
+  asr: { 50: "#FFE9E2", 300: "#FFB8A4", 400: "#FF9C86", 600: "#FF7A61" },
+  tts: { 50: "#EAF0FF", 300: "#B3C7FF", 400: "#8CAEFF", 600: "#668FFF" },
+  nmt: { 50: "#E7FAF1", 300: "#B3EFD4", 400: "#90E6C0", 600: "#6AD2A7" },
+  llm: { 50: "#FFE6FA", 300: "#FFB3EB", 400: "#FF8CDE", 600: "#F061C8" },
+  pipeline: { 50: "#F8F0FA", 300: "#E4C9EE", 400: "#D8AFE8", 600: "#C08BD8" },
+  ocr: { 50: "#E5F7F7", 300: "#B5E8E8", 400: "#90DDDD", 600: "#6BC7C7" },
+  transliteration: { 50: "#E8FCFA", 300: "#B5F3EC", 400: "#8DEBDD", 600: "#6BD2C1" },
+  "language-detection": { 50: "#FFE9EE", 300: "#FFBBC8", 400: "#FF9EAF", 600: "#FF7A8F" },
+  "speaker-diarization": { 50: "#FFF9E6", 300: "#FEE5A8", 400: "#FFDA7A", 600: "#F5C554" },
+  "language-diarization": { 50: "#F3FFE8", 300: "#D4FFAA", 400: "#C0FF85", 600: "#99F45A" },
+  "audio-language-detection": { 50: "#E7F7FF", 300: "#B3E4FF", 400: "#89D6FF", 600: "#63C5FF" },
+  ner: { 50: "#F1E8FF", 300: "#D0BBFF", 400: "#BA9AFF", 600: "#9D72FF" },
+};
+
+export function getServiceAccent(
+  id: ServiceId,
+  shade: ServiceAccentShade,
+): string {
+  return SERVICE_ACCENT[id][shade];
+}
+
+/** Shared Explore card chrome. `available` is false for anonymous-blocked services. */
+export function getExploreServiceCardVisuals(id: ServiceId, available: boolean) {
+  const accent = SERVICE_ACCENT[id];
+  if (available) {
+    return {
+      iconBg: accent[50],
+      iconColor: accent[600],
+      iconHoverBg: accent[300],
+      accentBorder: accent[400],
+      ctaBg: accent[300],
+      ctaBorder: accent[300],
+      ctaHoverBg: accent[400],
+      ctaColor: "#141210",
+    };
+  }
+  return {
+    iconBg: accent[50],
+    iconColor: accent[300],
+    iconHoverBg: accent[50],
+    accentBorder: accent[50],
+    ctaBg: "transparent",
+    ctaBorder: undefined,
+    ctaHoverBg: undefined,
+    ctaColor: undefined,
+  };
+}
+
+/** Try-it page path. Always `/${serviceId}`. `pipeline-builder` is not a ServiceId. */
+export function servicePath(id: ServiceId): `/${ServiceId}` {
+  return `/${id}`;
+}
+
+/** Path → ServiceId for the 12 Try-it pages. */
+export const PATH_TO_SERVICE_ID: Record<string, ServiceId> = Object.fromEntries(
+  (Object.keys(SERVICE_METADATA) as ServiceId[]).map((id) => [
+    servicePath(id),
+    id,
+  ]),
+) as Record<string, ServiceId>;

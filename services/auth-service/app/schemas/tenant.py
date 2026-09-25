@@ -85,10 +85,6 @@ class TenantUserRole(str, Enum):
 
     USER = RoleName.USER.value
     TENANT_ADMIN = RoleName.TENANT_ADMIN.value
-    USAGE_VIEWER = RoleName.USAGE_VIEWER.value
-    MODERATOR = RoleName.MODERATOR.value
-
-
 
 _TENANT_CREATE_EXAMPLE = {
     "contact_name": "Jane Doe",
@@ -339,6 +335,7 @@ class TenantUserResponse(BaseSchema):
     # from one who never set a password (Pending Activation).
     is_activated: Optional[bool] = None
     creation_type: Optional[CreationType] = None
+    created_at: Optional[datetime] = None
     roles: list[str]
 
 

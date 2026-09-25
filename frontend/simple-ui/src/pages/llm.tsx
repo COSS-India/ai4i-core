@@ -81,10 +81,15 @@ const LLMPage: React.FC = () => {
       return;
     }
     const stillValid = visibleServices.some((s) => s.service_id === serviceId);
-    if (!stillValid) {
+    if (stillValid) return;
+    // Anonymous users get a single service in a locked dropdown, so auto-select it.
+    // Everyone else must select explicitly; no default to avoid implicit preference.
+    if (isAnonymous && visibleServices.length === 1) {
       setServiceId(visibleServices[0].service_id);
+    } else if (serviceId) {
+      setServiceId("");
     }
-  }, [visibleServices, serviceId]);
+  }, [visibleServices, serviceId, isAnonymous]);
 
   useEffect(() => {
     if (!isAnonymous) return;

@@ -17,6 +17,10 @@ export type {
   UpdateTierStatusPayload,
 } from "../types/tierManagement";
 
+/** RQ cache key for ACTIVE tiers (no task-type filter). Shared by Institution + Services Management. */
+export const ACTIVE_TIERS_QUERY_KEY = ["tiers", "ACTIVE"] as const;
+export const ACTIVE_TIERS_STALE_MS = 5 * 60 * 1000;
+
 export async function fetchTiers(
   modelTaskType?: string,
   status?: TierStatus,

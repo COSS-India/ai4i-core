@@ -14,7 +14,7 @@ import {
   type Tier,
   type TierStatus,
 } from "../services/tierManagementService";
-import { listTenants } from "../services/tenantService";
+import { fetchTenantsDirectory, TENANTS_LIST_QUERY_KEY } from "../services/tenantService";
 import { INSTITUTION } from "../config/constants";
 import { fetchAllServicesMatchingFilters } from "../services/servicesManagementService";
 import { useInferenceTypes } from "./useInferenceTypes";
@@ -24,6 +24,28 @@ import type { TierFormData, TierFormQuota } from "../types/tierManagement";
 import { validateQuotaLimit } from "../components/tier-management/tierFormValidation";
 
 const TIER_QUERY_KEY = "tiers";
+
+/**
+ * `status` is optional on `Tier`; a missing one reads as INACTIVE. Shared with
+ * the Status badge so a row cannot show one status and filter as another.
+ */
+export function effectiveTierStatus(tier: Pick<Tier, "status">): TierStatus {
+  return tier.status ?? "INACTIVE";
+}
+
+/**
+ * Matched by id, falling back to name. Shared by the Services count column and
+ * the View Tier modal so the number cannot disagree with the list behind it.
+ */
+export function serviceBelongsToTier(
+  service: { tierIds?: string[] | null; tierNames?: string[] | null },
+  tier: Pick<Tier, "id" | "name">,
+): boolean {
+  return (
+    (service.tierIds ?? []).includes(tier.id) ||
+    (service.tierNames ?? []).includes(tier.name)
+  );
+}
 
 const TIER_STATUS_ACTIONS = {
   INACTIVE: {
@@ -118,6 +140,8 @@ export function useTierManagement() {
   const cancelRef = useRef<HTMLButtonElement>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterTaskType, setFilterTaskType] = useState("");
+  /** "" = all. Client-side: the tiers query is fetched without a status param. */
+  const [filterStatus, setFilterStatus] = useState("");
   const didInitTaskTypeFilter = useRef(false);
   const [taskTypeFilterReady, setTaskTypeFilterReady] = useState(false);
   useEffect(() => {
@@ -203,7 +227,8 @@ export function useTierManagement() {
     enabled: taskTypeFilterReady,
   });
 
-  const tiers = tiersQuery.data?.data ?? [];
+  // Memoized: the count maps, sort accessors and column defs all key off it.
+  const tiers = useMemo(() => tiersQuery.data?.data ?? [], [tiersQuery.data]);
 
   const viewTier = useMemo(
     () => tiers.find((t) => t.id === viewTierId) ?? null,
@@ -212,21 +237,42 @@ export function useTierManagement() {
 
   // Tenant→tier assignments. Shares the ["tenant-tiers"] query key with the
   // Tenant Management tab so assigning a tier there keeps this view in sync.
+  // Ungated: backs the Institutions count column, and one response covers
+  // every tier.
   const tenantTiersQuery = useQuery({
     queryKey: ["tenant-tiers"],
     queryFn: () => fetchTenantTiers(),
     staleTime: 30 * 1000,
-    enabled: !!viewTierId,
   });
 
   // Tenant directory, used to resolve tenant_id → organisation name for display.
-  // limit is capped at 500 by the auth-service tenants endpoint (le=500).
+  // Shares TENANTS_LIST_QUERY_KEY with Institution Management. The fetch walks
+  // pages of 500. Still gated on the View modal: the count column needs ids, not names.
   const tenantsDirectoryQuery = useQuery({
-    queryKey: ["tenants-directory"],
-    queryFn: () => listTenants({ limit: 500 }),
+    queryKey: TENANTS_LIST_QUERY_KEY,
+    queryFn: fetchTenantsDirectory,
     staleTime: 5 * 60 * 1000,
     enabled: !!viewTierId,
   });
+
+  /**
+   * tier id -> assigned institutions. Counts every status, since
+   * `list_with_tier` filters only on `tier_id IS NOT NULL` — same as the
+   * View modal's list.
+   */
+  const institutionCountByTierId = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const assignment of tenantTiersQuery.data?.data ?? []) {
+      const tierId = String(assignment.tier_id ?? "");
+      if (!tierId) continue;
+      counts.set(tierId, (counts.get(tierId) ?? 0) + 1);
+    }
+    return counts;
+  }, [tenantTiersQuery.data]);
+
+  /** Counts are unknown, not zero, until the assignments resolve. */
+  const isInstitutionCountLoading = tenantTiersQuery.isPending;
+  const hasInstitutionCountError = tenantTiersQuery.isError;
 
   const assignedTenantsForViewTier = useMemo(() => {
     if (!viewTier) return [];
@@ -255,25 +301,40 @@ export function useTierManagement() {
     !!viewTierId &&
     (tenantTiersQuery.isLoading || tenantsDirectoryQuery.isLoading);
 
-  // Services carry their tier mapping as an array of tier UUIDs (tierIds).
-  // There's no server-side tier filter, so fetch all services and filter here.
+  // No server-side tier filter and no count on TierOut, so the registry is
+  // fetched once and counted here — one request, not one per tier row. The key
+  // is shared with Institution Management's identical fetch. Gated on
+  // `taskTypeFilterReady` so it is not fetched unscoped and then refetched.
   const servicesQuery = useQuery({
     queryKey: ["services-for-tiers", enabledTaskTypesParam ?? "all"],
     queryFn: () =>
       fetchAllServicesMatchingFilters({ taskTypes: enabledTaskTypesParam }),
     staleTime: 60 * 1000,
-    enabled: !!viewTierId,
+    enabled: taskTypeFilterReady,
   });
+
+  /** tier id -> mapped services. O(tiers × services); both are small. */
+  const serviceCountByTierId = useMemo(() => {
+    const services = servicesQuery.data?.items ?? [];
+    const counts = new Map<string, number>();
+    for (const tier of tiers) {
+      counts.set(
+        tier.id,
+        services.filter((s) => serviceBelongsToTier(s, tier)).length,
+      );
+    }
+    return counts;
+  }, [tiers, servicesQuery.data]);
+
+  /** Counts are unknown, not zero, until the registry resolves. */
+  const isServiceCountLoading = servicesQuery.isPending;
+  const hasServiceCountError = servicesQuery.isError;
 
   const servicesForViewTier = useMemo(() => {
     if (!viewTier) return [];
     const services = servicesQuery.data?.items ?? [];
     return services
-      .filter(
-        (s) =>
-          (s.tierIds ?? []).includes(viewTier.id) ||
-          (s.tierNames ?? []).includes(viewTier.name),
-      )
+      .filter((s) => serviceBelongsToTier(s, viewTier))
       .map((s) => {
         const taskType = resolveTaskType(s);
         return {
@@ -296,21 +357,26 @@ export function useTierManagement() {
         ),
       );
     }
+    if (filterStatus) {
+      result = result.filter((t) => effectiveTierStatus(t) === filterStatus);
+    }
     const q = searchQuery.trim().toLowerCase();
     if (q) {
       result = result.filter((t) => t.name.toLowerCase().includes(q));
     }
     return result;
-  }, [tiers, searchQuery, filterTaskType]);
+  }, [tiers, searchQuery, filterTaskType, filterStatus]);
 
   const showTaskTypeAllOption = taskTypeNames.length > 1;
   const hasActiveFilters =
     searchQuery.trim() !== "" ||
-    (showTaskTypeAllOption && filterTaskType !== "");
+    (showTaskTypeAllOption && filterTaskType !== "") ||
+    filterStatus !== "";
 
   const clearFilters = useCallback(() => {
     setSearchQuery("");
     setFilterTaskType(taskTypeNames.length === 1 ? taskTypeNames[0] : "");
+    setFilterStatus("");
   }, [taskTypeNames]);
 
   const refreshTiers = useCallback(() => {
@@ -415,7 +481,7 @@ export function useTierManagement() {
   }, [onCreateOpen]);
 
   const handleCreateSubmit = useCallback(async () => {
-    if (!checkSessionExpiry()) return;
+    if (!checkSessionExpiry()) return false;
     if (!formData.name.trim()) {
       toast({
         title: "Tier name is required",
@@ -423,7 +489,7 @@ export function useTierManagement() {
         duration: 3000,
         isClosable: true,
       });
-      return;
+      return false;
     }
     if (formData.name.trim().length < 2) {
       toast({
@@ -432,7 +498,7 @@ export function useTierManagement() {
         duration: 3000,
         isClosable: true,
       });
-      return;
+      return false;
     }
     const quotaError = validateQuotas(formData.quotas);
     if (quotaError) {
@@ -443,7 +509,7 @@ export function useTierManagement() {
         duration: 3000,
         isClosable: true,
       });
-      return;
+      return false;
     }
     setIsSubmitting(true);
     try {
@@ -465,6 +531,7 @@ export function useTierManagement() {
       });
       onCreateClose();
       refreshTiers();
+      return true;
     } catch (error: any) {
       const {
         title: errTitle,
@@ -478,6 +545,7 @@ export function useTierManagement() {
         duration: 5000,
         isClosable: true,
       });
+      return false;
     } finally {
       setIsSubmitting(false);
     }
@@ -756,6 +824,8 @@ export function useTierManagement() {
     setSearchQuery,
     filterTaskType,
     setFilterTaskType,
+    filterStatus,
+    setFilterStatus,
     hasActiveFilters,
     clearFilters,
     // Tiers data
@@ -812,6 +882,12 @@ export function useTierManagement() {
     isAssignedTenantsLoading,
     servicesForViewTier,
     isServicesForViewTierLoading,
+    serviceCountByTierId,
+    isServiceCountLoading,
+    hasServiceCountError,
+    institutionCountByTierId,
+    isInstitutionCountLoading,
+    hasInstitutionCountError,
     // Shared form
     formData,
     setFormData,

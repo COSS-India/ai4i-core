@@ -125,13 +125,14 @@ class CoreSettings(BaseSettings):
     # How many days of history the deployment's Prometheus actually retains
     # (its own --storage.tsdb.retention.time, or the effective window of a
     # remote long-term-storage backend). Used by
-    # MeteringService.model_usage_growth_pct() to refuse a previous-month
-    # comparison it can't fully cover, rather than silently computing from
-    # whatever partial data survives retention. Defaults to Prometheus's own
+    # MeteringService.model_usage_growth_pct() to refuse its rolling
+    # last-30-days-vs-prior-30-days comparison when it can't fully cover the
+    # flat 60-day lookback, rather than silently computing from whatever
+    # partial data survives retention. Defaults to Prometheus's own
     # out-of-box default (15d) — deliberately conservative, since we can't
     # know this repo's operator has raised it. Set
-    # PROMETHEUS_RETENTION_DAYS to match your actual retention (>= ~90d
-    # recommended) to get a real percentage instead of null.
+    # PROMETHEUS_RETENTION_DAYS to match your actual retention (>= 60d
+    # required) to get a real percentage instead of null.
     prometheus_retention_days: int = 15
 
     # ── Model management business rules ──
@@ -169,6 +170,15 @@ class CoreSettings(BaseSettings):
     # unbounded `while (true)` loop, which we deliberately do not copy.
     endpoint_validation_max_poll_attempts: int = 10
     endpoint_validation_max_poll_wait_seconds: float = 60.0
+
+    # ── Service credential encryption ──
+    # Encrypts mm_services.llm_auth_token at rest — see
+    # app/core/service_credentials_crypto.py.
+    service_credentials_encryption_key: Optional[str] = None
+    # Shared secret inference-service presents on GET /internal/services/{id}
+    # to receive credentials unmasked. Must match inference-service's
+    # MODEL_MANAGEMENT_SERVICE_INTERNAL_TOKEN.
+    internal_service_shared_secret: Optional[str] = None
 
     # ── External services ──
     auth_service_url: str = ""

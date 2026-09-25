@@ -26,6 +26,128 @@ export type {
   ServiceUpdateRequest,
 } from "../types/platform";
 
+/** RQ cache key for unfiltered GET /services. Shared by Model Management and Services Management. */
+export const SERVICES_ALL_QUERY_KEY = ["services-all"] as const;
+export const SERVICES_ALL_STALE_MS = 5 * 60 * 1000;
+type ServiceRecord = Service & Record<string, unknown>;
+
+const isNonEmptySecret = (value: unknown): boolean => {
+  if (value == null) return false;
+  const text = String(value).trim();
+  return text.length > 0;
+};
+
+/**
+ * Read `authenticationToken` off an inferenceEndPoint of unknown shape,
+ * accepting either casing. Takes `unknown` so the snake_case sibling — which
+ * reaches us untyped through ServiceRecord's index signature — can be passed
+ * without an unchecked property access.
+ */
+const nestedAuthenticationToken = (endpoint: unknown): unknown => {
+  if (!endpoint || typeof endpoint !== "object") return undefined;
+  const ep = endpoint as Record<string, unknown>;
+  return ep.authenticationToken ?? ep.authentication_token;
+};
+
+/**
+ * Whether a vLLM auth token is configured (AI4IDS-3146).
+ *
+ * `inferenceEndPoint.authenticationToken` is the only source of truth. Its
+ * presence is checked, not equality with "***" — not every route masks it.
+ * `api_key`/`inferenceApiKey` are the Triton credential, a different column
+ * on a different call path, so consulting them reports the status backwards.
+ */
+export const resolveHasAuthToken = (
+  service: Partial<Service> | null | undefined,
+): boolean => {
+  if (!service) return false;
+  if (typeof service.hasAuthToken === "boolean") return service.hasAuthToken;
+  if (typeof service.has_auth_token === "boolean") return service.has_auth_token;
+  const rec = service as ServiceRecord;
+  return (
+    isNonEmptySecret(nestedAuthenticationToken(rec.inferenceEndPoint)) ||
+    isNonEmptySecret(nestedAuthenticationToken(rec.inference_end_point))
+  );
+};
+
+/**
+ * The masked token string the backend sent for this service (today: "***").
+ *
+ * Shown as-is in the edit form so the field isn't blank for a service that has
+ * a token. It is a display stand-in, never a credential: the real value stays
+ * on the backend, so it must not be submitted back — `savedAuthTokenMask` in
+ * useServicesManagement guards that.
+ */
+export const resolveMaskedAuthToken = (
+  service: Partial<Service> | null | undefined,
+): string => {
+  if (!service) return "";
+  const rec = service as ServiceRecord;
+  const raw =
+    nestedAuthenticationToken(rec.inferenceEndPoint) ??
+    nestedAuthenticationToken(rec.inference_end_point);
+  return isNonEmptySecret(raw) ? String(raw).trim() : "";
+};
+
+const redactNestedSecrets = (endpoint: unknown): unknown => {
+  if (!endpoint || typeof endpoint !== "object") return endpoint;
+  const ep = { ...(endpoint as Record<string, unknown>) };
+  const redact = (key: unknown): unknown => {
+    if (!key || typeof key !== "object") return key;
+    const rec = { ...(key as Record<string, unknown>) };
+    if ("value" in rec) rec.value = isNonEmptySecret(rec.value) ? "***" : rec.value;
+    return rec;
+  };
+  if ("inferenceApiKey" in ep) ep.inferenceApiKey = redact(ep.inferenceApiKey);
+  if ("inference_api_key" in ep) ep.inference_api_key = redact(ep.inference_api_key);
+  // Already "***" on every caller-facing response; re-masked here so a raw
+  // value can't survive in local state if an unmasked path ever feeds us.
+  for (const field of ["authenticationToken", "authentication_token"]) {
+    if (isNonEmptySecret(ep[field])) ep[field] = "***";
+  }
+  return ep;
+};
+
+/** Drop raw token fields so list/detail/form state never hold the secret. */
+export const sanitizeService = (service: Service): Service => {
+  if (!service || typeof service !== "object") return service;
+  const rec = { ...(service as ServiceRecord) };
+  const hasAuthToken = resolveHasAuthToken(rec);
+  delete rec.authToken;
+  delete rec.auth_token;
+  delete rec.api_key;
+  delete rec.apiKey;
+  if (rec.inferenceEndPoint) {
+    rec.inferenceEndPoint = redactNestedSecrets(
+      rec.inferenceEndPoint,
+    ) as Service["inferenceEndPoint"];
+  }
+  if (rec.inference_end_point) {
+    rec.inference_end_point = redactNestedSecrets(rec.inference_end_point);
+  }
+  rec.hasAuthToken = hasAuthToken;
+  return rec as Service;
+};
+
+/** Attach the planned `authToken` field, plus today's `api_key` alias. */
+const applyAuthTokenToPayload = (
+  apiPayload: Record<string, unknown>,
+  serviceData: Partial<Service>,
+  { sendEmptyApiKey }: { sendEmptyApiKey: boolean },
+) => {
+  const token = (serviceData.authToken || "").trim();
+  if (token) {
+    apiPayload.inferenceEndPoint = {
+      ...(apiPayload.inferenceEndPoint as object),
+      authenticationToken: token,
+    };
+    return;
+  }
+  if (sendEmptyApiKey) {
+    apiPayload.api_key = serviceData.api_key || serviceData.apiKey || "";
+  }
+};
+
 /**
  * List all services (no pagination — returns everything, backward-compatible)
  * @returns Promise with list of services
@@ -36,7 +158,7 @@ export const listServices = async (): Promise<Service[]> => {
       suppressErrorAlert: true,
       responseSchema: servicesListSchema,
     });
-    return response.data || [];
+    return (response.data || []).map(sanitizeService);
   } catch (error: any) {
     console.error("List services error:", error);
     throw error;
@@ -116,7 +238,7 @@ export const listServicesPaginated = async (
       10,
     );
     const payload = response.data;
-    const items = Array.isArray(payload) ? payload : [];
+    const items = (Array.isArray(payload) ? payload : []).map(sanitizeService);
     // Fall back to items.length when the header is absent (API uses meta.total instead)
     const total = Number.isNaN(headerTotal) ? items.length : headerTotal;
 
@@ -147,7 +269,7 @@ export const getServiceById = async (serviceId: string): Promise<Service> => {
         responseSchema: serviceSingleSchema,
       },
     );
-    return response.data;
+    return sanitizeService(response.data);
   } catch (error: any) {
     console.error("Get service error:", error);
     // Don't transform the error - let extractErrorInfo handle it
@@ -176,8 +298,8 @@ export const createService = async (
       modelVersion:
         serviceData.modelVersion || serviceData.model_version || "1.0", // Default to '1.0' if not provided
       endpoint: serviceData.endpoint || serviceData.endpoint_url,
-      api_key: serviceData.api_key || serviceData.apiKey || "",
     };
+    applyAuthTokenToPayload(apiPayload, serviceData, { sendEmptyApiKey: true });
 
     // Add billing/pricing fields if provided
     if (serviceData.task_type) apiPayload.taskType = serviceData.task_type;
@@ -206,7 +328,7 @@ export const createService = async (
       apiPayload,
       { suppressErrorAlert: true, responseSchema: serviceSingleSchema },
     );
-    return response.data;
+    return sanitizeService(response.data);
   } catch (error: any) {
     console.error("Create service error:", error);
     // Don't transform the error - let extractErrorInfo handle it
@@ -248,8 +370,8 @@ export const updateService = async (
         modelId: serviceData.modelId || serviceData.model_id,
         modelVersion: serviceData.modelVersion || serviceData.model_version,
         endpoint: serviceData.endpoint || serviceData.endpoint_url,
-        api_key: serviceData.api_key || serviceData.apiKey,
       };
+      applyAuthTokenToPayload(apiPayload, serviceData, { sendEmptyApiKey: false });
 
       // Preserve empty string so admins can clear an existing description.
       if ("serviceDescription" in serviceData) {
@@ -285,7 +407,7 @@ export const updateService = async (
       apiPayload,
       { suppressErrorAlert: true, responseSchema: serviceSingleSchema },
     );
-    return response.data;
+    return sanitizeService(response.data);
   } catch (error: any) {
     console.error("Update service error:", error);
     // Don't transform the error - let extractErrorInfo handle it

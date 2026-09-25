@@ -1,4 +1,5 @@
 import { HStack, IconButton, Tooltip } from "@chakra-ui/react";
+import { DeleteIcon, DownloadIcon, EditIcon, ViewIcon } from "@chakra-ui/icons";
 import React from "react";
 import type { DataTableColumn } from "./DataTable";
 
@@ -14,7 +15,7 @@ export type DataTableAction = {
   id: DataTableActionId;
   /** Accessible name and default tooltip. */
   label: string;
-  icon: React.ReactElement;
+  icon?: React.ReactElement;
   onClick: () => void;
   /** When false, the action is hidden. Default true. */
   visible?: boolean;
@@ -29,12 +30,19 @@ export type DataTableAction = {
   "aria-label"?: string;
 };
 
+const DEFAULT_ICONS: Record<string, React.ReactElement> = {
+  view: <ViewIcon />,
+  edit: <EditIcon />,
+  delete: <DeleteIcon />,
+  download: <DownloadIcon />,
+};
+
 const ACTION_HOVER: Record<string, { color: string; bg: string }> = {
-  view: { color: "blue.500", bg: "blue.50" },
-  edit: { color: "green.500", bg: "green.50" },
+  view: { color: "ink.700", bg: "ink.50" },
+  edit: { color: "ink.700", bg: "ink.50" },
   delete: { color: "red.500", bg: "red.50" },
-  download: { color: "blue.500", bg: "blue.50" },
-  custom: { color: "blue.500", bg: "blue.50" },
+  download: { color: "ink.700", bg: "ink.50" },
+  custom: { color: "ink.700", bg: "ink.50" },
 };
 
 export type DataTableActionsProps = {
@@ -66,16 +74,18 @@ export function DataTableActions({
     >
       {visible.map((action) => {
         const hover = ACTION_HOVER[action.id] ?? ACTION_HOVER.custom;
-        const color = action.color ?? "gray.700";
+        const color = action.color ?? "ink.600";
         const hoverColor = action.hoverColor ?? hover.color;
         const hoverBg = action.hoverBg ?? hover.bg;
         const tooltip = action.tooltip ?? action.label;
         const aria = action["aria-label"] ?? action.label;
+        const icon = action.icon ?? DEFAULT_ICONS[action.id];
+        if (!icon) return null;
 
         const button = (
           <IconButton
             aria-label={aria}
-            icon={action.icon}
+            icon={icon}
             size="sm"
             variant="ghost"
             color={color}

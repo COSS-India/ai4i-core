@@ -1,23 +1,25 @@
-import { Box, Center, Spinner, Text, VStack } from "@chakra-ui/react";
+import { Center } from "@chakra-ui/react";
 import Head from "next/head";
 import { useRouter } from "next/router";
-import React, { useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 import { useToastWithDeduplication } from "../utils/toast";
 import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
+import LoadingSpinner from "../components/common/LoadingSpinner";
 import { INSTITUTION } from "../config/constants";
 import TierManagement from "../components/tier-management/TierManagement";
 import { useAuth } from "../hooks/useAuth";
-import { useAdminTableSurface } from "../components/common/table";
 import { getPlatformName } from "../config/runtimeConfig";
+import { isPlatformAdminUser } from "../utils/rbac";
+import CreateButton from "../components/common/CreateButton";
 
 const TierManagementPage: React.FC = () => {
   const router = useRouter();
   const toast = useToastWithDeduplication();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
-  const { cardBg, borderColor } = useAdminTableSurface();
+  const openCreateRef = useRef<() => void>(() => {});
 
-  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
+  const isAdmin = isPlatformAdminUser(user?.roles);
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -49,7 +51,7 @@ const TierManagementPage: React.FC = () => {
     return (
       <ContentLayout>
         <Center h="400px">
-          <Spinner size="xl" color="blue.500" />
+          <LoadingSpinner size="xl" />
         </Center>
       </ContentLayout>
     );
@@ -59,10 +61,7 @@ const TierManagementPage: React.FC = () => {
     return (
       <ContentLayout>
         <Center h="400px">
-          <VStack spacing={4}>
-            <Spinner size="xl" color="blue.500" />
-            <Text color="gray.600">Redirecting...</Text>
-          </VStack>
+          <LoadingSpinner size="xl" label="Redirecting..." />
         </Center>
       </ContentLayout>
     );
@@ -76,23 +75,21 @@ const TierManagementPage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <Box maxW="full" mx="auto" py={8} px={6}>
-          <ManagementPageHeader
-            title="Tier Management"
-            description={`Configure tiers for ${INSTITUTION.toLowerCase()} access`}
-          />
+        <ManagementPageHeader
+          title="Tier Management"
+          description={`Configure tiers for ${INSTITUTION.toLowerCase()} access`}
+          actions={
+            <CreateButton onClick={() => openCreateRef.current()}>
+              Create Tier
+            </CreateButton>
+          }
+        />
 
-          <Box
-            mt={6}
-            bg={cardBg}
-            borderWidth="1px"
-            borderColor={borderColor}
-            borderRadius="lg"
-            p={6}
-          >
-            <TierManagement />
-          </Box>
-        </Box>
+        <TierManagement
+          onRegisterCreate={(open) => {
+            openCreateRef.current = open;
+          }}
+        />
       </ContentLayout>
     </>
   );

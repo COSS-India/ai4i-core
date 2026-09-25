@@ -55,7 +55,13 @@ from app.schemas.allocation import (
     TenantBudgetAllocationRequest,
 )
 from app.services import budget_usage
-from app.services.allocation_validator import AllocationRow, ExplicitInput, ResolvedRow, resolve_level
+from app.services.allocation_validator import (
+    AllocationRow,
+    ExplicitInput,
+    ResolvedRow,
+    convert,
+    resolve_level,
+)
 from app.services.api_key_service import APIKeyService
 from app.services.authorization import authorize_institution_scope
 
@@ -991,6 +997,16 @@ class AllocationService:
         recomputing un-listed Keys' percentages separately, not by asking
         resolve_level to re-fit their ₹.
 
+        Every caller-submitted (``nested_explicit``) row must also resolve
+        to a POSITIVE ceiling — same rule as APIKeyService.create_api_key:
+        an edit that resolves to ₹0 (or a value that rounds to it) would
+        turn a live Key into the ₹0 "Active" Key create already refuses to
+        issue, and an edit against an Application with no available Budget
+        at all can never resolve to anything usable either. Only
+        caller-submitted rows are checked this way — an un-listed Key's
+        percentage-only recompute (see _cascade_into_keys) never moves its
+        ₹, so it can't newly trip this floor.
+
         Returns (resolved_keys, fixed_ids).
         """
         known_key_ids = {k.id for k in existing_keys}
@@ -1019,6 +1035,25 @@ class AllocationService:
                         )
                         # else: unknown everywhere — resolve_level below raises
                         # EntityNotFoundError for it, same as any other unknown id.
+
+        for row in nested_explicit:
+            if parent_amount is None or parent_amount <= 0:
+                raise ValidationError(
+                    message="This Application has no available Budget — allocate Budget to "
+                    "the Application before allocating it to its API Keys.",
+                    code="APPLICATION_BUDGET_NOT_SET",
+                )
+            amount, percentage = convert(_explicit_input(row.api_key_id, row.allocation), parent_amount)
+            if amount <= 0 or percentage <= 0:
+                raise ValidationError(
+                    message=(
+                        f"api_key_id={row.api_key_id}: allocation must be greater than 0 — "
+                        f"{row.allocation.value} ({row.allocation.type}) resolves to "
+                        f"₹{amount} / {percentage}%, a ceiling this Key could never use. "
+                        "Revoke the Key instead to free its share."
+                    ),
+                    code="BUDGET_TOO_SMALL",
+                )
 
         keys_by_id = {key.id: key for key in existing_keys}
         explicit = [_explicit_input(row.api_key_id, row.allocation) for row in nested_explicit]
