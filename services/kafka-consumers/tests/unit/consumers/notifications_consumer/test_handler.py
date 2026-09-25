@@ -23,7 +23,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from consumers.notifications_consumer.catalog_cache import NotificationConfig
-from consumers.notifications_consumer.handler import _process_channel
+from consumers.notifications_consumer.handler import _process_channel, handle_notification_event
 
 
 def _cfg(**overrides) -> NotificationConfig:
@@ -231,3 +231,80 @@ class TestProcessChannelStateMachine:
             await _process_channel(db, _cfg(), _envelope(), "EMAIL")
 
         mark.assert_awaited_once_with(db, row_id=1, delivery="failed")
+
+
+class TestHandleNotificationEventEmptyRecipients:
+    """handle_notification_event must NOT gate on an empty recipients list
+    itself. The producer already committed the ledger row as "in_progress"
+    before ever publishing (check_and_record_threshold /
+    check_and_record_exhaustion), and main.py commits the Kafka offset once
+    this function returns regardless of what it did. An early return on
+    ``not envelope["recipients"]`` used to skip _process_channel entirely,
+    leaving that row wedged at "in_progress" forever with no failed record
+    and no automatic recovery — exactly the bug test_delivery_raising_
+    still_settles_failed above exists to prevent for a raise, but for this
+    path nothing settled the row at all, not even to "failed".
+
+    Empty recipients must instead flow all the way through to
+    delivery.deliver()'s real "no_recipients" outcome (not stubbed — this
+    exercises the actual empty-`people`-list branch), which
+    _process_channel already settles as "failed"."""
+
+    async def test_empty_recipients_settles_the_ledger_row_to_failed(self):
+        db = object()
+        row = (1, {"value": "x", "delivery": "in_progress"})
+        msg = object()  # never actually parsed — _parse_envelope is stubbed below
+
+        with patch(
+            "consumers.notifications_consumer.handler._parse_envelope",
+            lambda _msg: _envelope(recipients=[]),
+        ), patch(
+            "consumers.notifications_consumer.handler.session_scope",
+            _auth_session_scope_stub(db),
+        ), patch(
+            "consumers.notifications_consumer.handler.get_config",
+            AsyncMock(return_value=_cfg(channels=["EMAIL"])),
+        ), patch(
+            "consumers.notifications_consumer.handler.ledger.fetch_row",
+            AsyncMock(return_value=row),
+        ), patch(
+            "consumers.notifications_consumer.handler.ledger.claim_send",
+            AsyncMock(return_value=True),
+        ), patch(
+            "consumers.notifications_consumer.handler.ledger.mark_delivery", AsyncMock()
+        ) as mark:
+            # delivery.deliver itself is deliberately NOT patched — with
+            # recipients=[], it builds an empty `people` list and returns
+            # "no_recipients" on its own, the real behavior this test pins.
+            await handle_notification_event(msg)
+
+        mark.assert_awaited_once_with(db, row_id=1, delivery="failed")
+
+    async def test_empty_recipients_reaches_process_channel_for_every_configured_channel(self):
+        """A lighter-weight companion to the settlement test above: pins
+        that _process_channel is actually invoked (the early return this
+        PR removes would have skipped it) for each of the catalog row's
+        configured channels, not just EMAIL."""
+        process_channel = AsyncMock()
+        envelope = _envelope(recipients=[])
+        cfg = _cfg(channels=["EMAIL", "SLACK"])
+
+        with patch(
+            "consumers.notifications_consumer.handler._parse_envelope",
+            lambda _msg: envelope,
+        ), patch(
+            "consumers.notifications_consumer.handler.session_scope",
+            _auth_session_scope_stub(object()),
+        ), patch(
+            "consumers.notifications_consumer.handler.get_config",
+            AsyncMock(return_value=cfg),
+        ), patch(
+            "consumers.notifications_consumer.handler._process_channel", process_channel,
+        ):
+            await handle_notification_event(object())
+
+        assert process_channel.await_count == 2
+        called_channels = {call.args[3] for call in process_channel.await_args_list}
+        assert called_channels == {"EMAIL", "SLACK"}
+        for call in process_channel.await_args_list:
+            assert call.args[2] is envelope

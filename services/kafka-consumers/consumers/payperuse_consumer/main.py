@@ -67,9 +67,14 @@ async def run() -> None:
             enabled=settings.NOTIFICATION_PRODUCER_ENABLED,
         )
         # Recipient resolution (ai4i_core.kafka.recipients) decrypts
-        # ai4iplatform_auth.users.email itself now — needs the SAME key
-        # auth-service does (settings.PII_ENCRYPTION_KEY, kafka-consumers'
-        # own .env, same value as notifications_consumer's).
+        # ai4iplatform_auth.users.email itself now — needs the exact same
+        # key auth-service's own PII_ENCRYPTION_KEY is set to (see
+        # config.py's field docstring and env.template's PII_ENCRYPTION_KEY
+        # entry). A missing/wrong key here is silent at startup —
+        # configure_key(None) doesn't raise until an encrypted value is
+        # actually decrypted — so a deployment that forgets this drops
+        # every notification for a tenant with no plaintext-email users,
+        # not just PII.
         pii_crypto.configure_key(settings.PII_ENCRYPTION_KEY)
         configure_recipient_decryption(pii_crypto.decrypt_email)
         async with session_scope() as _db:

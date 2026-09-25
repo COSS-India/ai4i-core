@@ -100,13 +100,14 @@ async def handle_notification_event(msg: Message) -> None:
             # resolution genuinely found nobody (e.g. a lookup failure, or a
             # tenant with no ADMIN/TENANT ADMIN and no extra recipients on
             # file), not that this consumer has anything left to look up.
-            if not envelope["recipients"]:
-                logger.info(
-                    "Gated — no recipients resolved for event_name=%s tenant_id=%s",
-                    envelope["event_name"], envelope["tenant_id"],
-                )
-                return
-
+            # Deliberately NOT gated here: the producer already committed
+            # the ledger row as "in_progress" before publishing, and
+            # main.py commits the Kafka offset once this function returns
+            # regardless — an early return here would leave that row
+            # wedged at "in_progress" forever, with no failed record and no
+            # automatic recovery. Fall through to _process_channel so
+            # delivery.deliver()'s "no_recipients" outcome settles it to
+            # "failed" instead, same as any other delivery failure.
             for channel in cfg.channels:
                 await _process_channel(db, cfg, envelope, channel)
     except Exception:

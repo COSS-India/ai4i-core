@@ -3,8 +3,9 @@ directly — a second, named connection opened once at startup (see main.py,
 bootstrap.lifecycle.add_database).
 
 Used to also resolve WHICH people get an email (resolve(), from
-configs_notification_alert.recipient_roles) — that column is gone; who
-receives a notification is resolved by the producer now
+configs_notification_alert.recipient_roles) — that column still exists
+(platform-core's e2a4c6b8d0f2 kept it for the Adopter Admin catalog UI),
+but who receives a notification is resolved by the producer now
 (ai4i_core.kafka.recipients), before the event is ever published, and
 travels with the message as a plain list of emails. See delivery.py.
 """

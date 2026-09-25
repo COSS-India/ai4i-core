@@ -3,8 +3,10 @@
 Who receives a notification is decided entirely by the producer now
 (ai4i_core.kafka.recipients, at publish time) — this module used to
 re-resolve that itself from configs_notification_alert.recipient_roles
-(recipients.resolve()), a column that no longer exists. All that's left to
-look up here is the tenant's institution_name for the email body.
+(recipients.resolve()). That column is kept on purpose (platform-core's
+e2a4c6b8d0f2 — the Adopter Admin catalog UI's own recipient toggle still
+lives there) but nothing on the consumer side reads it anymore. All that's
+left to look up here is the tenant's institution_name for the email body.
 """
 from __future__ import annotations
 
