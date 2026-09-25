@@ -58,15 +58,19 @@ def _parse_thresholds(raw) -> List[Dict[str, Any]]:
 class NotificationConfig:
     """One row of configs_notification_alert, as this consumer needs it.
 
-    No separate is_enabled column exists — "off" is expressed purely as
-    "no role in recipient_roles is True" (handler.py's gate)."""
+    Whether an event is even eligible to be enqueued at all (scope, and for
+    an INSTITUTION-scope row, that tenant's subscription) is decided by the
+    producer (ai4i_core.kafka.notification_settings_cache) before it ever
+    publishes — this consumer only needs id (the ledger's FK) and channels
+    (which delivery mechanisms to attempt). Who receives it also travels
+    with the message now (envelope["recipients"], resolved by the
+    producer) rather than being looked up here from a role column."""
 
     id: int
     name: str
     type: str
     module: str
     channels: list
-    recipient_roles: Dict[str, bool] = field(default_factory=dict)
     # config.thresholds is a list of {"percentage": int, "active": bool}
     # bands (platform-core-service's catalog_service.py) — not a dict keyed
     # by percent. Unused by this consumer today (see handler.py), carried
@@ -108,19 +112,15 @@ class _Cache:
     async def _refresh(self, db: AsyncSession) -> None:
         result = await db.execute(
             text(
-                "SELECT id, name, type, module, channels, recipient_roles, config"
+                "SELECT id, name, type, module, channels, config"
                 "  FROM configs_notification_alert"
             )
         )
         by_name: Dict[str, NotificationConfig] = {}
         for row in result.mappings():
-            recipient_roles = row["recipient_roles"] or {}
             config = row["config"] or {}
             # Defensive: some raw-SQL/driver paths hand back jsonb as text
             # rather than an already-decoded object — never trust the shape.
-            if isinstance(recipient_roles, str):
-                import json
-                recipient_roles = json.loads(recipient_roles) if recipient_roles else {}
             if isinstance(config, str):
                 import json
                 config = json.loads(config) if config else {}
@@ -130,7 +130,6 @@ class _Cache:
                 type=row["type"],
                 module=row["module"],
                 channels=list(row["channels"] or []),
-                recipient_roles=recipient_roles,
                 thresholds=_parse_thresholds(config.get("thresholds")),
             )
         self._by_name = by_name

@@ -33,7 +33,6 @@ def _cfg(**overrides) -> NotificationConfig:
         type="NOTIFICATION",
         module="PAY_PER_USE",
         channels=["EMAIL"],
-        recipient_roles={"TENANT ADMIN": True},
         thresholds=[],
     )
     base.update(overrides)
@@ -48,6 +47,7 @@ def _envelope(**overrides) -> dict:
         subject={},
         details=["A", "B", "Some tier", ["NMT: 10,000 req/mo"], "1000", "2026-09-10", "2027-09-09"],
         actor_id=None,
+        recipients=["admin@example.com"],
     )
     base.update(overrides)
     return base
@@ -73,7 +73,7 @@ class TestProcessChannelStateMachine:
         ) as deliver, patch(
             "consumers.notifications_consumer.handler.ledger.mark_delivery", AsyncMock()
         ) as mark:
-            await _process_channel(db, _cfg(), _envelope(), "EMAIL", ["TENANT ADMIN"])
+            await _process_channel(db, _cfg(), _envelope(), "EMAIL")
 
         claim.assert_not_awaited()
         deliver.assert_not_awaited()
@@ -92,7 +92,7 @@ class TestProcessChannelStateMachine:
         ) as claim, patch(
             "consumers.notifications_consumer.handler.delivery.deliver", AsyncMock()
         ) as deliver:
-            await _process_channel(db, _cfg(), _envelope(), "EMAIL", ["TENANT ADMIN"])
+            await _process_channel(db, _cfg(), _envelope(), "EMAIL")
 
         claim.assert_not_awaited()
         deliver.assert_not_awaited()
@@ -111,7 +111,7 @@ class TestProcessChannelStateMachine:
         ) as claim, patch(
             "consumers.notifications_consumer.handler.delivery.deliver", AsyncMock()
         ) as deliver:
-            await _process_channel(db, _cfg(), _envelope(), "EMAIL", ["TENANT ADMIN"])
+            await _process_channel(db, _cfg(), _envelope(), "EMAIL")
 
         claim.assert_not_awaited()
         deliver.assert_not_awaited()
@@ -128,7 +128,7 @@ class TestProcessChannelStateMachine:
             "consumers.notifications_consumer.handler.ledger.mark_delivery", AsyncMock()
         ) as mark:
             await _process_channel(
-                db, _cfg(channels=["SLACK"]), _envelope(), "SLACK", ["TENANT ADMIN"]
+                db, _cfg(channels=["SLACK"]), _envelope(), "SLACK"
             )
 
         claim.assert_not_awaited()
@@ -148,7 +148,7 @@ class TestProcessChannelStateMachine:
         ) as deliver, patch(
             "consumers.notifications_consumer.handler.ledger.mark_delivery", AsyncMock()
         ) as mark:
-            await _process_channel(db, _cfg(), _envelope(), "EMAIL", ["TENANT ADMIN"])
+            await _process_channel(db, _cfg(), _envelope(), "EMAIL")
 
         deliver.assert_not_awaited()
         mark.assert_not_awaited()
@@ -172,7 +172,7 @@ class TestProcessChannelStateMachine:
         ), patch(
             "consumers.notifications_consumer.handler.ledger.mark_delivery", AsyncMock()
         ) as mark:
-            await _process_channel(db, _cfg(), _envelope(), "EMAIL", ["TENANT ADMIN"])
+            await _process_channel(db, _cfg(), _envelope(), "EMAIL")
 
         mark.assert_awaited_once_with(db, row_id=1, delivery="sent")
 
@@ -196,7 +196,7 @@ class TestProcessChannelStateMachine:
         ), patch(
             "consumers.notifications_consumer.handler.ledger.mark_delivery", AsyncMock()
         ) as mark:
-            await _process_channel(db, _cfg(), _envelope(), "EMAIL", ["TENANT ADMIN"])
+            await _process_channel(db, _cfg(), _envelope(), "EMAIL")
 
         mark.assert_awaited_once_with(db, row_id=1, delivery="failed")
 
@@ -228,6 +228,6 @@ class TestProcessChannelStateMachine:
         ) as mark:
             # Must not raise — handler.py settles the row itself rather than
             # letting the exception propagate.
-            await _process_channel(db, _cfg(), _envelope(), "EMAIL", ["TENANT ADMIN"])
+            await _process_channel(db, _cfg(), _envelope(), "EMAIL")
 
         mark.assert_awaited_once_with(db, row_id=1, delivery="failed")

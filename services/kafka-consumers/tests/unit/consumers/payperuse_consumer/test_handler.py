@@ -324,7 +324,7 @@ class TestBillUsageThreadsInferenceTypeId:
             # budget block is a no-op, same as this class's tests intend.
             return None
 
-        async def _disabled(db, event_name):
+        async def _disabled(db, event_name, tenant_id=None):
             # Not under test here — _bill_usage now checks this (in-memory
             # cache read) *before* deciding whether to open the "auth"
             # session at all (see handler.py). False means it never does,
@@ -480,7 +480,7 @@ class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
         async def _tenant_budget(auth_db, core_db, tenant_id):
             return tenant_budget
 
-        async def _enabled(db, event_name):
+        async def _enabled(db, event_name, tenant_id=None):
             return True
 
         async def _bands(db, event_name):
@@ -494,6 +494,12 @@ class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
             calls["exhaustion"].append((event_name, tenant_id, dict(subject)))
             return True  # "fired" — 0 -> 1 transition
 
+        async def _notification_id(db, event_name):
+            return 1
+
+        async def _resolve_recipients(core_db, auth_db, *, notification_id, tenant_id):
+            return ["admin@example.com"]
+
         def _publish(*, event_name, tenant_id, subject, details, **kwargs):
             calls["published"].append(
                 {"event_name": event_name, "tenant_id": tenant_id, "subject": dict(subject), "details": details}
@@ -502,8 +508,10 @@ class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
         monkeypatch.setattr(h, "fetch_tenant_budget_status", _tenant_budget)
         monkeypatch.setattr(h, "is_notification_enabled", _enabled)
         monkeypatch.setattr(h, "get_threshold_bands", _bands)
+        monkeypatch.setattr(h, "get_notification_id", _notification_id)
         monkeypatch.setattr(h, "check_and_record_threshold", _record_threshold)
         monkeypatch.setattr(h, "check_and_record_exhaustion", _record_exhaustion)
+        monkeypatch.setattr(h, "resolve_recipients", _resolve_recipients)
         monkeypatch.setattr(h, "publish_notification_event", _publish)
         return calls
 

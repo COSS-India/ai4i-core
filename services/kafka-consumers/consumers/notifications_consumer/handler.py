@@ -21,13 +21,15 @@ second, undecided retry ladder on top.
 
 Two database connections are in play: the default one (ai4iplatform_core —
 settings, ledger) and a second, named one opened once at startup (main.py)
-against ai4iplatform_auth, for recipients.py to resolve who actually gets
-the email — see delivery.py.
+against ai4iplatform_auth, for recipients.py's fetch_institution_name() —
+see delivery.py. Who actually gets the email no longer needs a lookup here
+at all: it travels with the message (envelope["recipients"]), resolved by
+the producer before it ever published (ai4i_core.kafka.recipients).
 """
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from ai4i_core.logging import get_logger
 from confluent_kafka import Message
@@ -73,6 +75,9 @@ def _parse_envelope(msg: Message) -> Optional[Dict[str, Any]]:
         # email_templates.py renderer emailer.py calls for it.
         "details": data.get("details") or [],
         "actor_id": data.get("actor_id"),
+        # Resolved by the producer (ai4i_core.kafka.recipients) before this
+        # was ever published — a plain list of email addresses, not roles.
+        "recipients": data.get("recipients") or [],
     }
 
 
@@ -90,20 +95,20 @@ async def handle_notification_event(msg: Message) -> None:
                 )
                 return
 
-            # The producer already checked this before publishing
-            # (is_notification_enabled) — re-checking here is cheap
-            # insurance against a stale/racing config read, not the
-            # primary gate.
-            enabled_roles = [role for role, on in cfg.recipient_roles.items() if on]
-            if not enabled_roles:
+            # The producer already resolved who gets this (ai4i_core.kafka.
+            # recipients) before publishing — an empty list here means
+            # resolution genuinely found nobody (e.g. a lookup failure, or a
+            # tenant with no ADMIN/TENANT ADMIN and no extra recipients on
+            # file), not that this consumer has anything left to look up.
+            if not envelope["recipients"]:
                 logger.info(
-                    "Gated — no recipient_roles enabled for event_name=%s tenant_id=%s",
+                    "Gated — no recipients resolved for event_name=%s tenant_id=%s",
                     envelope["event_name"], envelope["tenant_id"],
                 )
                 return
 
             for channel in cfg.channels:
-                await _process_channel(db, cfg, envelope, channel, enabled_roles)
+                await _process_channel(db, cfg, envelope, channel)
     except Exception:
         logger.exception(
             "Unhandled error processing notification event | event_name=%s tenant_id=%s",
@@ -112,7 +117,7 @@ async def handle_notification_event(msg: Message) -> None:
 
 
 async def _process_channel(
-    db, cfg: NotificationConfig, envelope: Dict[str, Any], channel: str, enabled_roles: List[str]
+    db, cfg: NotificationConfig, envelope: Dict[str, Any], channel: str
 ) -> None:
     row = await ledger.fetch_row(
         db,
@@ -166,7 +171,7 @@ async def _process_channel(
             outcome = await delivery.deliver(
                 auth_db,
                 tenant_id=envelope["tenant_id"],
-                roles=enabled_roles,
+                recipients=envelope["recipients"],
                 event_name=envelope["event_name"],
                 details=envelope["details"],
             )
