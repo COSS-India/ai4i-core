@@ -37,11 +37,14 @@ class CatalogItem(BaseModel):
     opt-out) or INSTITUTION (available for an institution to subscribe to
     — see app.routes.notification_subscription). ``recipient_roles`` is
     kept (not dropped) so the producer-side caches that still raw-SELECT it
-    keep working until they move onto scope — see catalog_service.
-    _apply_admin_recipient_scope_invariant for how its ``"ADMIN"`` key
-    (the Adopter Admin's own recipient toggle) is tied to ``scope``: True
-    by default and overridable while GLOBAL, always False while
-    INSTITUTION."""
+    keep working until they move onto scope. Its ``"ADMIN"`` key (the
+    Adopter Admin's own recipient toggle) is exactly the stored column
+    value, not re-derived from ``scope`` on read — every row was backfilled
+    to already be scope-consistent (True on GLOBAL, False on INSTITUTION,
+    see e2a4c6b8d0f2) and PATCH keeps it that way going forward (see
+    catalog_service._apply_admin_recipient_scope_invariant) — because the
+    send path reads this same column directly, and a value shown here that
+    the stored column disagrees with would be a lie."""
 
     id: int
     name: str

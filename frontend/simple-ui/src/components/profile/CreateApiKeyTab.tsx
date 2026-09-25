@@ -1,22 +1,14 @@
 import React from "react";
 import {
   Box,
-  Card,
-  CardBody,
-  CardHeader,
+  Button,
   FormControl,
   FormErrorMessage,
-  FormLabel,
-  Heading,
   Input,
-  InputGroup,
-  InputRightElement,
   IconButton,
   HStack,
   Text,
   VStack,
-  useColorModeValue,
-  Button,
   Alert,
   AlertIcon,
   AlertDescription,
@@ -33,42 +25,60 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import { percentageBoundMessage } from "../../config/budgetMessages";
 import FieldHint from "../common/FieldHint";
+import FieldLabel from "../common/FieldLabel";
+import FormActions from "../common/FormActions";
 import PercentageStepper from "../common/PercentageStepper";
 import { formatPermissionLabel } from "../../utils/apiKeyUtils";
 
 export interface CreateApiKeyTabProps {
   tenantId?: string | null;
   onApiKeyCreated?: () => void;
+  onCancel?: () => void;
+  hideActions?: boolean;
+  formId?: string;
+  onCreatingChange?: (creating: boolean) => void;
+  /** True while the one-time API key token is on screen. */
+  onCreatedTokenChange?: (visible: boolean) => void;
 }
 
 export default function CreateApiKeyTab({
   tenantId,
   onApiKeyCreated,
+  onCancel,
+  hideActions = false,
+  formId,
+  onCreatingChange,
+  onCreatedTokenChange,
 }: CreateApiKeyTabProps) {
-  const cardBg = useColorModeValue("white", "gray.800");
-  const cardBorder = useColorModeValue("gray.200", "gray.700");
-
   const create = useCreateApiKeyTab({ tenantId, onApiKeyCreated });
   const { copy } = useCopyToClipboard();
   const [budgetBoundHint, setBudgetBoundHint] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    onCreatingChange?.(create.isCreating);
+  }, [create.isCreating, onCreatingChange]);
+
+  React.useEffect(() => {
+    onCreatedTokenChange?.(Boolean(create.createdApiKeyToken));
+  }, [create.createdApiKeyToken, onCreatedTokenChange]);
 
   const isLoading = create.isLoadingPermissions || create.isLoadingApplications;
   const budgetError = create.fieldErrors.budget || budgetBoundHint;
 
   return (
-    <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
-      <CardHeader>
-        <Heading size="md" color="gray.700" userSelect="none" cursor="default">
-          Create API Key
-        </Heading>
-      </CardHeader>
-      <CardBody>
-        {isLoading ? (
-          <Center py={8}>
-            <Spinner size="lg" color="blue.500" />
-          </Center>
-        ) : (
-          <VStack spacing={6} align="stretch">
+    <form
+      id={formId}
+      onSubmit={(e) => {
+        e.preventDefault();
+        void create.handleCreateApiKey();
+      }}
+    >
+      {isLoading ? (
+        <Center py={8}>
+          <Spinner size="lg" />
+        </Center>
+      ) : (
+          <VStack spacing={4} align="stretch">
             {create.formBannerError && (
               <Alert status="error" borderRadius="md" variant="left-accent">
                 <AlertIcon />
@@ -80,49 +90,49 @@ export default function CreateApiKeyTab({
               <Alert status="warning" borderRadius="md" variant="left-accent">
                 <AlertIcon />
                 <Box flex="1">
-                  <Text fontWeight="bold" mb={2}>
-                    API Key Created — Copy it now!
+                  <HStack justify="space-between" align="flex-start" mb={2}>
+                    <Text fontWeight="bold">
+                      API Key Created — Copy it now!
+                    </Text>
+                    <IconButton
+                      aria-label="Dismiss"
+                      icon={<CloseIcon />}
+                      size="xs"
+                      variant="ghost"
+                      onClick={create.clearCreatedApiKeyToken}
+                    />
+                  </HStack>
+                  <Text fontSize="xs" color="ink.600" mb={2}>
+                    This token will not be shown again. Store it securely. The modal stays open until you close it.
                   </Text>
-                  <Text fontSize="xs" color="gray.600" mb={2}>
-                    This token will not be shown again. Store it securely.
-                  </Text>
-                  <InputGroup size="sm">
+                  <HStack align="stretch" spacing={2}>
                     <Input
                       value={create.createdApiKeyToken}
                       isReadOnly
                       fontFamily="mono"
                       fontSize="xs"
-                      pr="4rem"
+                      bg="white"
                     />
-                    <InputRightElement width="4rem">
-                      <HStack spacing={0}>
-                        <IconButton
-                          aria-label="Copy API key"
-                          icon={<CopyIcon />}
-                          size="xs"
-                          onClick={() => {
-                            void copy(
-                              create.createdApiKeyToken!,
-                              "API key copied to clipboard",
-                            );
-                          }}
-                        />
-                        <IconButton
-                          aria-label="Dismiss"
-                          icon={<CloseIcon />}
-                          size="xs"
-                          variant="ghost"
-                          onClick={create.clearCreatedApiKeyToken}
-                        />
-                      </HStack>
-                    </InputRightElement>
-                  </InputGroup>
+                    <Button
+                      size="sm"
+                      flexShrink={0}
+                      leftIcon={<CopyIcon />}
+                      onClick={() => {
+                        void copy(
+                          create.createdApiKeyToken!,
+                          "API key copied to clipboard",
+                        );
+                      }}
+                    >
+                      Copy
+                    </Button>
+                  </HStack>
                 </Box>
               </Alert>
             )}
 
             <FormControl isRequired>
-              <FormLabel fontWeight="semibold">Key Name</FormLabel>
+              <FieldLabel>Key Name</FieldLabel>
               <Input
                 value={create.apiKeyForm.key_name}
                 onChange={(e) =>
@@ -136,16 +146,19 @@ export default function CreateApiKeyTab({
             </FormControl>
 
             <FormControl isRequired isInvalid={Boolean(create.fieldErrors.application_id)}>
-              <FormLabel fontWeight="semibold">Application</FormLabel>
+              <FieldLabel>Application</FieldLabel>
               <Select
                 value={create.apiKeyForm.application_id}
-                onChange={(e) =>
+                onChange={(e) => {
+                  setBudgetBoundHint(null);
+                  create.clearFieldError("application_id");
+                  create.clearFieldError("budget");
                   create.setApiKeyForm({
                     ...create.apiKeyForm,
                     application_id: e.target.value,
                     allocated_percentage: "",
-                  })
-                }
+                  });
+                }}
                 placeholder="Select Application"
                 bg="white"
               >
@@ -155,17 +168,14 @@ export default function CreateApiKeyTab({
                   </option>
                 ))}
               </Select>
-              <FieldHint>{FIELD_HINTS.apiKey.application.helper}</FieldHint>
-              {create.fieldErrors.application_id && (
-                <FormErrorMessage>{create.fieldErrors.application_id}</FormErrorMessage>
-              )}
+              <FieldHint show={!create.fieldErrors.application_id}>
+                {FIELD_HINTS.apiKey.application.helper}
+              </FieldHint>
+              <FormErrorMessage>{create.fieldErrors.application_id}</FormErrorMessage>
             </FormControl>
 
             <FormControl isRequired>
-              <FormLabel fontWeight="semibold">Permissions</FormLabel>
-              <FieldHint mb={3} mt={0} fontSize="sm">
-                {FIELD_HINTS.apiKey.permissions.helper}
-              </FieldHint>
+              <FieldLabel>Permissions</FieldLabel>
               <Box borderWidth="1px" borderRadius="md" p={4} bg="white" maxH="300px" overflowY="auto">
                 <CheckboxGroup
                   value={create.selectedPermissions}
@@ -191,7 +201,7 @@ export default function CreateApiKeyTab({
                           Select All
                         </Text>
                       </Checkbox>
-                      <Text fontSize="xs" color="gray.500">
+                      <Text fontSize="xs" color="ink.500">
                         {create.selectedPermissions.length}/{create.permissions.length} selected
                       </Text>
                     </HStack>
@@ -205,19 +215,21 @@ export default function CreateApiKeyTab({
                   </SimpleGrid>
                 </CheckboxGroup>
               </Box>
+              <FieldHint>{FIELD_HINTS.apiKey.permissions.helper}</FieldHint>
             </FormControl>
 
-            <FormControl isInvalid={Boolean(budgetError)}>
-              <FormLabel fontWeight="semibold">
+            <FormControl isRequired isInvalid={Boolean(budgetError)}>
+              <FieldLabel>
                 Budget Allocation{" "}
-                <Text as="span" fontWeight="normal" color="gray.500" fontSize="sm">
+                <Text as="span" fontWeight="normal" color="ink.500" fontSize="sm">
                   (% of the Application&apos;s Budget)
                 </Text>
-              </FormLabel>
+              </FieldLabel>
               <PercentageStepper
                 value={create.apiKeyForm.allocated_percentage}
                 onChange={(next) => {
                   setBudgetBoundHint(null);
+                  create.clearFieldError("budget");
                   create.setApiKeyForm({
                     ...create.apiKeyForm,
                     allocated_percentage: next,
@@ -231,7 +243,7 @@ export default function CreateApiKeyTab({
                 {create.apiKeyForm.application_id &&
                 create.selectedApplication?.allocated_budget != null
                   ? create.uncappedHoldsRemainder
-                    ? " An existing key without a percentage allocation is holding this Application's remaining Budget."
+                    ? " An existing key without a percentage allocation is holding this Application's remaining Budget — give that key an explicit Budget before creating another."
                     : ` Up to ${create.formatAvailablePct()}% available within this Application.`
                   : ""}
               </FieldHint>
@@ -246,7 +258,7 @@ export default function CreateApiKeyTab({
             </FormControl>
 
             <FormControl isRequired>
-              <FormLabel fontWeight="semibold">Expiry (Days)</FormLabel>
+              <FieldLabel>Expiry (Days)</FieldLabel>
               <Input
                 type="number"
                 value={create.apiKeyForm.expires_days === "" ? "" : create.apiKeyForm.expires_days}
@@ -270,18 +282,20 @@ export default function CreateApiKeyTab({
               <FieldHint>{FIELD_HINTS.apiKey.expiry.helper}</FieldHint>
             </FormControl>
 
-            <Button
-              colorScheme="blue"
-              alignSelf="flex-start"
-              onClick={create.handleCreateApiKey}
+            {!hideActions && (
+            <FormActions
+              submitLabel="Create API Key"
+              onCancel={onCancel}
+              hideCancel={!onCancel}
+              onSubmit={create.handleCreateApiKey}
               isLoading={create.isCreating}
               loadingText="Creating..."
-            >
-              Create API Key
-            </Button>
+              justify="space-between"
+              pt={0}
+            />
+            )}
           </VStack>
-        )}
-      </CardBody>
-    </Card>
+      )}
+    </form>
   );
 }

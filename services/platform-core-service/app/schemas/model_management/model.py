@@ -18,6 +18,9 @@ from app.schemas.common import (
     LanguagePair,
     LanguagePairLenient,
     MessageMeta,
+    RESPONSE_KEY_RE,
+    SUPPORTED_OUTPUT_TRANSFORMS,
+    SUPPORTED_TRITON_DTYPES,
     SuccessResponse,
     SuccessResponseWithMeta,
     Submitter,
@@ -25,6 +28,7 @@ from app.schemas.common import (
     TaskSpecLenient,
     TrainingDataset,
     is_recognized_schema_task_type,
+    schema_matches_task_type,
     validate_entity_name,
     validate_license,
 )
@@ -96,7 +100,7 @@ _MODEL_CREATE_EXAMPLE = {
         ),
         "datasetId": "indictrans2-en-hi-corpus-v1",
     },
-    "classInstance": None,
+    "classInstance": "NMTTaskService",
 }
 
 _PAIR_TASK_TYPES = {TaskTypeEnum.nmt, TaskTypeEnum.transliteration, TaskTypeEnum.llm}
@@ -306,6 +310,175 @@ class ModelCreateRequest(BaseSchema):
                 )
         return v
 
+    @model_validator(mode="after")
+    def _validate_adapter_config_shape(self) -> "ModelCreateRequest":
+        """adapterConfig's own completeness check (above) only confirms the
+        'inputs'/'outputs' keys exist. inference-service's real consumer of
+        this data (GenericTritonMapper / AdapterMappingConfig, see
+        services/base/config_mapper.py) is far stricter — a config that
+        passes model creation today only fails once someone actually calls
+        the model, as a RuntimeError with no earlier warning. This mirrors
+        that consumer's own validation so the same errors surface here
+        instead."""
+        ac = self.adapterConfig
+        if ac is None:
+            return self
+
+        task_type = self.task.type if self.task else None
+
+        # llm models never reach GenericTritonMapper — the OpenAI-compatible
+        # proxy (inference-service llm_service.py) reads only
+        # adapter_config.model_name — so the Triton version/tensor rules
+        # below don't apply to them.
+        if task_type == TaskTypeEnum.llm.value:
+            if not ac.get("model_name"):
+                raise ValueError(
+                    "adapterConfig.model_name is required for llm models when "
+                    "adapterConfig is provided — the OpenAI-compatible proxy "
+                    "uses it as the real upstream model name; without it, the "
+                    "client's raw service ID is sent upstream instead, which "
+                    "the real LLM server almost certainly rejects with a 404."
+                )
+            return self
+
+        version = ac.get("version")
+        if not isinstance(version, str) or not version.strip():
+            raise ValueError(
+                "adapterConfig.version is required and must be a non-empty "
+                "string — inference-service rejects an empty/missing version "
+                "at call time (AdapterMappingConfig.version)."
+            )
+
+        inputs = ac.get("inputs")
+        if not isinstance(inputs, list) or not inputs:
+            raise ValueError(
+                "adapterConfig.inputs must be a non-empty list of Triton "
+                "input tensor declarations."
+            )
+        for i, entry in enumerate(inputs):
+            if not isinstance(entry, dict):
+                raise ValueError(f"adapterConfig.inputs[{i}] must be an object")
+            tensor = entry.get("tensor")
+            if not tensor or not str(tensor).strip():
+                raise ValueError(f"adapterConfig.inputs[{i}].tensor is required")
+            dtype = entry.get("dtype")
+            if dtype not in SUPPORTED_TRITON_DTYPES:
+                raise ValueError(
+                    f"adapterConfig.inputs[{i}].dtype '{dtype}' is not a "
+                    f"supported Triton dtype — one of {sorted(SUPPORTED_TRITON_DTYPES)}"
+                )
+            if not entry.get("shape"):
+                raise ValueError(f"adapterConfig.inputs[{i}].shape is required and cannot be empty")
+            if entry.get("value_path") is None and entry.get("value") is None:
+                raise ValueError(
+                    f"adapterConfig.inputs[{i}] ('{tensor}') requires 'value_path' or "
+                    "'value' — without one, inference-service has nothing to fill this "
+                    "tensor from and rejects every real call at runtime."
+                )
+
+        outputs = ac.get("outputs")
+        if not isinstance(outputs, list) or not outputs:
+            raise ValueError(
+                "adapterConfig.outputs must be a non-empty list of Triton "
+                "output tensor declarations."
+            )
+        for i, entry in enumerate(outputs):
+            if not isinstance(entry, dict):
+                raise ValueError(f"adapterConfig.outputs[{i}] must be an object")
+            if not entry.get("tensor") or not str(entry.get("tensor")).strip():
+                raise ValueError(f"adapterConfig.outputs[{i}].tensor is required")
+            dtype = entry.get("dtype")
+            if dtype not in SUPPORTED_TRITON_DTYPES:
+                raise ValueError(
+                    f"adapterConfig.outputs[{i}].dtype '{dtype}' is not a "
+                    f"supported Triton dtype — one of {sorted(SUPPORTED_TRITON_DTYPES)}"
+                )
+            if not entry.get("maps_to") or not str(entry.get("maps_to")).strip():
+                raise ValueError(f"adapterConfig.outputs[{i}].maps_to is required")
+            transform = entry.get("transform")
+            chain = [] if not transform else [transform] if isinstance(transform, str) else transform
+            if not isinstance(chain, list):
+                raise ValueError(
+                    f"adapterConfig.outputs[{i}].transform must be a string or a list of strings"
+                )
+            for t in chain:
+                if t not in SUPPORTED_OUTPUT_TRANSFORMS:
+                    raise ValueError(
+                        f"adapterConfig.outputs[{i}].transform '{t}' is not a "
+                        f"supported transform — one of {sorted(SUPPORTED_OUTPUT_TRANSFORMS)}"
+                    )
+            response_key = entry.get("response_key")
+            if response_key and (
+                not isinstance(response_key, str) or not RESPONSE_KEY_RE.fullmatch(response_key)
+            ):
+                raise ValueError(
+                    f"adapterConfig.outputs[{i}].response_key must be 'output[]' "
+                    f"or 'output[].<key>', got '{response_key}'"
+                )
+
+        if task_type == TaskTypeEnum.tts.value:
+            if not any(o.get("tensor") == "OUTPUT_GENERATED_AUDIO" for o in outputs):
+                raise ValueError(
+                    "adapterConfig.outputs must include an entry with "
+                    "tensor 'OUTPUT_GENERATED_AUDIO' for tts models — "
+                    "TTSTaskService reads this exact literal tensor name "
+                    "from the Triton response and ignores 'maps_to'; any "
+                    "other name means every real TTS call raises "
+                    "RuntimeError('OUTPUT_GENERATED_AUDIO not found')."
+                )
+
+        if task_type == TaskTypeEnum.ner.value:
+            def _has_json_parse(o: Dict[str, Any]) -> bool:
+                t = o.get("transform")
+                return t == "json_parse" or (isinstance(t, list) and "json_parse" in t)
+
+            if not any(o.get("maps_to") == "target" and _has_json_parse(o) for o in outputs):
+                raise ValueError(
+                    "adapterConfig.outputs must include an entry with "
+                    "maps_to 'target' and transform 'json_parse' for ner "
+                    "models — NERTaskService expects that field to already "
+                    "be parsed JSON; without the transform, every real NER "
+                    "call raises ValueError('model returned non-JSON output')."
+                )
+
+        return self
+
+    @model_validator(mode="after")
+    def _validate_class_instance_required(self) -> "ModelCreateRequest":
+        """classInstance is Optional on this schema, but for every task type
+        except llm and pipeline it's what inference-service's orchestrator
+        uses (TASK_SERVICE_REGISTRY[classInstance]) to pick which class
+        actually handles a real inference call — see orchestrator.py. Model
+        creation and Service creation both succeed silently without it; only
+        a real inference call fails, with RuntimeError('No class_instance
+        set on model...'). llm models skip this entirely (they go through a
+        separate OpenAI-compatible proxy that never consults classInstance).
+        pipeline is exempted too — no TaskService class exists for it yet on
+        the registry, so there's no correct value to require here.
+
+        Deliberately NOT validated against the registry's fixed name list
+        (ASRTaskService, NMTTaskService, ...): that list is expected to grow
+        as new task services are added on the inference-service side, and
+        hardcoding it here would make this schema break every time it does,
+        for a model that's actually correctly configured.
+        """
+        if self.task is None:
+            return self
+        task_type = self.task.type.value if hasattr(self.task.type, "value") else self.task.type
+        if task_type in (TaskTypeEnum.llm.value, TaskTypeEnum.pipeline.value):
+            return self
+        if not self.classInstance or not self.classInstance.strip():
+            raise ValueError(
+                f"classInstance is required for task type '{task_type}' — "
+                "inference-service uses it to pick which class handles a "
+                "real inference call for this model; without it, every "
+                "call to this model fails at runtime even though model and "
+                "Service creation both succeed. See the TASK TYPE REFERENCE "
+                "in the sample model JSON for the correct value per task type "
+                "(e.g. 'ASRTaskService' for asr, 'NMTTaskService' for nmt)."
+            )
+        return self
+
     @field_validator("version", mode="before")
     @classmethod
     def _validate_version(cls, v: Any) -> str:
@@ -341,6 +514,46 @@ class ModelCreateRequest(BaseSchema):
     @model_validator(mode="after")
     def _validate_pair_languages(self) -> "ModelCreateRequest":
         _require_full_pair(self.task.type if self.task else None, self.languages)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_schema_task_type_match(self) -> "ModelCreateRequest":
+        """Catch a `schema.taskType` that doesn't describe this model's own
+        `task.type` (e.g. an ASR model shipping an NMT schema) at model
+        creation, instead of only at Service creation — see
+        common.schema_matches_task_type, the same check Service creation
+        runs against the schema it derives from this model. Re-added after
+        being removed and reconsidered: unlike the LLM callbackUrl check
+        that was dropped for good, this one checks the field that really is
+        copied verbatim into a Service's derived schema and compared there,
+        so catching it here is strictly earlier, not different logic."""
+        if self.endpoint_schema is not None and self.task is not None:
+            schema_task_type = self.endpoint_schema.get("taskType")
+            task_type = self.task.type.value if hasattr(self.task.type, "value") else self.task.type
+            if schema_task_type and not schema_matches_task_type(
+                task_type, [self.endpoint_schema]
+            ):
+                raise ValueError(
+                    f"schema.taskType ('{schema_task_type}') does not match "
+                    f"task.type ('{task_type}') — a Service created "
+                    "against this model derives its own inferenceEndPoint.schema "
+                    "from this value and would reject the mismatch anyway "
+                    "(SCHEMA_TASK_TYPE_MISMATCH); catching it here is strictly earlier."
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_async_details_required_when_async(self) -> "ModelCreateRequest":
+        """isSyncApi=False without asyncApiDetails validates today and
+        silently falls back to a *sync* probe at Service creation (the async
+        branch is only taken when a pollingUrl is actually present) — the
+        opposite of what the admin asked for, with no error anywhere. Fail
+        loudly here instead."""
+        if self.isSyncApi is False and self.asyncApiDetails is None:
+            raise ValueError(
+                "asyncApiDetails (with pollingUrl and pollInterval) is "
+                "required when isSyncApi is false."
+            )
         return self
 
 

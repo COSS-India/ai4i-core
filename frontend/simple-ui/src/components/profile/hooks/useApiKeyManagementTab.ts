@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useRef } from "react";
 import { showToast } from "../../../utils/toast";
 import authService from "../../../services/authService";
 import * as tenantService from "../../../services/tenantService";
@@ -104,6 +104,10 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
   const [selectedKeyForView, setSelectedKeyForView] = useState<ApiKeyTableRow | null>(null);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [tenantStatus, setTenantStatus] = useState<string | null>(null);
+  const applicationsRef = useRef(applications);
+  const permissionsRef = useRef(permissions);
+  applicationsRef.current = applications;
+  permissionsRef.current = permissions;
 
   const apiKeyAccessContext = useMemo(
     (): ApiKeyAccessContext => ({
@@ -196,12 +200,14 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
 
       setIsLoadingAllApiKeys(true);
       try {
+        const cachedApps = applicationsRef.current;
+        const cachedPerms = permissionsRef.current;
         const [grouped, apps] = await Promise.all([
           listGroupedApiKeys(tenantId),
-          applications.length > 0 ? Promise.resolve(applications) : loadApplications(),
+          cachedApps.length > 0 ? Promise.resolve(cachedApps) : loadApplications(),
         ]);
         await Promise.all([
-          permissions.length > 0 ? Promise.resolve(permissions) : loadPermissionsCatalog(),
+          cachedPerms.length > 0 ? Promise.resolve(cachedPerms) : loadPermissionsCatalog(),
           loadTenantContext(),
         ]);
         const flat = flattenApiKeyGroups(grouped.groups).map((k) =>
@@ -223,14 +229,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
         setIsLoadingAllApiKeys(false);
       }
     },
-    [
-      applications,
-      loadApplications,
-      loadPermissionsCatalog,
-      loadTenantContext,
-      permissions,
-      user?.tenant_id,
-    ],
+    [loadApplications, loadPermissionsCatalog, loadTenantContext, user?.tenant_id],
   );
 
   const handleOpenUpdateModal = async (key: ApiKeyTableRow) => {
