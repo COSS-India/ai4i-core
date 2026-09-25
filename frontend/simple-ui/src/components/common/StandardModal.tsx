@@ -51,6 +51,12 @@ export interface StandardModalProps {
   isCentered?: boolean;
   hideHeader?: boolean;
   hideCloseButton?: boolean;
+  /**
+   * Block overlay click, Esc, and the header close button.
+   * Footer actions can still close the modal. Use while a request is in
+   * flight or a one-time result must stay on screen.
+   */
+  lockDismiss?: boolean;
   closeOnOverlayClick?: ModalProps["closeOnOverlayClick"];
   closeOnEsc?: ModalProps["closeOnEsc"];
   scrollBehavior?: ModalProps["scrollBehavior"];
@@ -73,6 +79,7 @@ export default function StandardModal({
   isCentered = true,
   hideHeader = false,
   hideCloseButton = false,
+  lockDismiss = false,
   closeOnOverlayClick = true,
   closeOnEsc = true,
   scrollBehavior,
@@ -91,9 +98,10 @@ export default function StandardModal({
       onClose={onClose}
       size={size}
       isCentered={isCentered}
-      closeOnOverlayClick={closeOnOverlayClick}
-      closeOnEsc={closeOnEsc}
+      closeOnOverlayClick={lockDismiss ? false : closeOnOverlayClick}
+      closeOnEsc={lockDismiss ? false : closeOnEsc}
       {...modalProps}
+      {...(lockDismiss ? { closeOnOverlayClick: false, closeOnEsc: false } : {})}
       scrollBehavior={scrollBehavior ?? modalProps?.scrollBehavior}
     >
       <ModalOverlay {...overlayProps} />
@@ -120,7 +128,7 @@ export default function StandardModal({
             {description ? <CreateHeader title={title} description={description} /> : title}
           </ModalHeader>
         )}
-        {!hideCloseButton && (
+        {!hideCloseButton && !lockDismiss && (
           <ModalCloseButton
             _focus={{ boxShadow: "none" }}
             _focusVisible={{ boxShadow: "outline" }}

@@ -225,39 +225,43 @@ export function useCreateApiKeyTab({
     }
 
     const rawBudget = apiKeyForm.allocated_percentage.trim();
-    let allocatedPct: number | undefined;
-    if (rawBudget) {
-      const pct = Number(rawBudget);
-      if (!Number.isFinite(pct) || pct < 0) {
-        setFieldErrors((prev) => ({
-          ...prev,
-          budget: BUDGET_VALIDATION.budgetCannotBeNegative,
-        }));
-        return;
-      }
-      if (pct > 100) {
-        setFieldErrors((prev) => ({
-          ...prev,
-          budget: BUDGET_VALIDATION.percentageMustBeBetween0And100,
-        }));
-        return;
-      }
-      if (pct === 0) {
-        setFieldErrors((prev) => ({
-          ...prev,
-          budget: BUDGET_VALIDATION.budgetMustBeGreaterThanZero,
-        }));
-        return;
-      }
-      if (pct > availablePct + 1e-6) {
-        setFieldErrors((prev) => ({
-          ...prev,
-          budget: `Budget can't exceed ${formatPct(availablePct)}% — that's all that's unallocated within this Application.`,
-        }));
-        return;
-      }
-      allocatedPct = pct;
+    if (!rawBudget) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        budget: BUDGET_VALIDATION.enterBudgetAllocationPercentage,
+      }));
+      return;
     }
+    const pct = Number(rawBudget);
+    if (!Number.isFinite(pct) || pct < 0) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        budget: BUDGET_VALIDATION.budgetCannotBeNegative,
+      }));
+      return;
+    }
+    if (pct > 100) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        budget: BUDGET_VALIDATION.percentageMustBeBetween0And100,
+      }));
+      return;
+    }
+    if (pct === 0) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        budget: BUDGET_VALIDATION.budgetMustBeGreaterThanZero,
+      }));
+      return;
+    }
+    if (pct > availablePct + 1e-6) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        budget: `Budget can't exceed ${formatPct(availablePct)}% — that's all that's unallocated within this Application.`,
+      }));
+      return;
+    }
+    const allocatedPct = pct;
 
     const tid = tenantId?.trim();
     if (!tid) {
@@ -272,7 +276,7 @@ export function useCreateApiKeyTab({
         permissions: selectedPermissions,
         expires_days: Number(apiKeyForm.expires_days) || 30,
         application_id: apiKeyForm.application_id,
-        ...(allocatedPct != null ? { allocated_percentage: allocatedPct } : {}),
+        allocated_percentage: allocatedPct,
       });
       onApiKeyCreated?.();
       if (createdKey.api_key) {

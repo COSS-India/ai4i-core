@@ -183,7 +183,7 @@ export const FIELD_HINTS = {
     budget: {
       placeholder: "0",
       helper:
-        "Optional. Percentage of the parent Application's Budget. Leave blank to use the Application's remaining Budget as this key's ceiling. If the Application has no Budget, the key has no ceiling.",
+        "Required. Percentage of the parent Application's Budget. Must be greater than 0.",
     },
     search: {
       placeholder: "Search by key name",

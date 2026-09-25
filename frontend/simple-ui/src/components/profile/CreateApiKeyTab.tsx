@@ -37,6 +37,8 @@ export interface CreateApiKeyTabProps {
   hideActions?: boolean;
   formId?: string;
   onCreatingChange?: (creating: boolean) => void;
+  /** True while the one-time API key token is on screen. */
+  onCreatedTokenChange?: (visible: boolean) => void;
 }
 
 export default function CreateApiKeyTab({
@@ -46,6 +48,7 @@ export default function CreateApiKeyTab({
   hideActions = false,
   formId,
   onCreatingChange,
+  onCreatedTokenChange,
 }: CreateApiKeyTabProps) {
   const create = useCreateApiKeyTab({ tenantId, onApiKeyCreated });
   const { copy } = useCopyToClipboard();
@@ -54,6 +57,10 @@ export default function CreateApiKeyTab({
   React.useEffect(() => {
     onCreatingChange?.(create.isCreating);
   }, [create.isCreating, onCreatingChange]);
+
+  React.useEffect(() => {
+    onCreatedTokenChange?.(Boolean(create.createdApiKeyToken));
+  }, [create.createdApiKeyToken, onCreatedTokenChange]);
 
   const isLoading = create.isLoadingPermissions || create.isLoadingApplications;
   const budgetError = create.fieldErrors.budget || budgetBoundHint;
@@ -208,7 +215,7 @@ export default function CreateApiKeyTab({
               <FieldHint>{FIELD_HINTS.apiKey.permissions.helper}</FieldHint>
             </FormControl>
 
-            <FormControl isInvalid={Boolean(budgetError)}>
+            <FormControl isRequired isInvalid={Boolean(budgetError)}>
               <FieldLabel>Budget Allocation</FieldLabel>
               <PercentageStepper
                 value={create.apiKeyForm.allocated_percentage}
@@ -223,7 +230,7 @@ export default function CreateApiKeyTab({
                 onBoundHit={(bound) => setBudgetBoundHint(percentageBoundMessage(bound))}
               />
               <FieldHint show={!budgetError}>
-                (% of the Application&apos;s Budget) {FIELD_HINTS.apiKey.budget.helper}
+                {FIELD_HINTS.apiKey.budget.helper}
                 {create.apiKeyForm.application_id &&
                 create.selectedApplication?.allocated_budget != null
                   ? create.uncappedHoldsRemainder

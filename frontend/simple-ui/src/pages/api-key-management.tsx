@@ -22,9 +22,14 @@ import { getPlatformName } from "../config/runtimeConfig";
 const ApiKeyManagementPage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
-  const { isOpen: isCreateOpen, onOpen: onCreateOpen, onClose: onCreateClose } =
+  const { isOpen: isCreateOpen, onOpen: onCreateOpen, onClose: closeCreate } =
     useDisclosure();
   const [isCreatingKey, setIsCreatingKey] = useState(false);
+  const [hasCreatedToken, setHasCreatedToken] = useState(false);
+  const onCreateClose = () => {
+    setHasCreatedToken(false);
+    closeCreate();
+  };
   const refreshManagedKeysRef = useRef<(() => Promise<void>) | null>(null);
 
   const showApiKeyManagement = userMayManageApiKeys(user?.roles);
@@ -70,7 +75,7 @@ const ApiKeyManagementPage: React.FC = () => {
       <ContentLayout>
         <ManagementPageHeader
           title="API Keys"
-          description="Create keys, set permissions, and optionally cap budget as a percentage of the application"
+          description="Create keys, set permissions, and allocate a required budget as a percentage of the application"
           actions={
             <CreateButton onClick={onCreateOpen}>Create API Key</CreateButton>
           }
@@ -87,9 +92,10 @@ const ApiKeyManagementPage: React.FC = () => {
       <CreateModal
         isOpen={isCreateOpen}
         onClose={onCreateClose}
+        lockDismiss={isCreatingKey || hasCreatedToken}
         size="lg"
         title="Create API Key"
-        description="Create a key, set permissions, and optionally cap budget as a percentage of the application."
+        description="Create a key, set permissions, and allocate a required budget as a percentage of the application."
         footer={
           <FormActions
             submitLabel="Create API Key"
@@ -110,6 +116,7 @@ const ApiKeyManagementPage: React.FC = () => {
           hideActions
           formId="create-api-key-form"
           onCreatingChange={setIsCreatingKey}
+          onCreatedTokenChange={setHasCreatedToken}
         />
       </CreateModal>
     </>
