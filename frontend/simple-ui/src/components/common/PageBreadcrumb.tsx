@@ -67,8 +67,8 @@ export default function PageBreadcrumb({ items, ...rest }: PageBreadcrumbProps) 
 
   return (
     <Breadcrumb
-      fontSize="sm"
-      separator={<ChevronRightIcon color="ink.400" boxSize={3.5} />}
+      fontSize="xs"
+      separator={<ChevronRightIcon color="ink.400" boxSize={3} />}
       mb={2}
       {...rest}
     >

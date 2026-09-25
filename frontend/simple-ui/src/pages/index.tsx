@@ -31,6 +31,7 @@ import {
   IoPricetagOutline,
 } from "react-icons/io5";
 import ContentLayout from "../components/common/ContentLayout";
+import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import {
   getExploreServiceCardVisuals,
   getServiceDescription,
@@ -116,33 +117,16 @@ const HomePage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <VStack spacing={8} w="full" align="stretch">
-          <Box w="full">
-            <Text
-              fontSize="xs"
-              fontWeight="600"
-              color="ink.500"
-              letterSpacing="0.08em"
-              textTransform="uppercase"
-              mb={2}
-            >
-              Explore
-            </Text>
-            <Heading
-              as="h1"
-              fontSize={{ base: "2xl", md: "3xl" }}
-              fontWeight="700"
-              lineHeight="1.2"
-              mb={2}
-            >
-              AI Accessibility Studio
-            </Heading>
-            <Text fontSize="md" color="ink.600" fontWeight="500" maxW="36rem" lineHeight="tall">
-              {enabledServiceIds.size === 1 && enabledServiceIds.has("llm")
+        <VStack spacing={0} w="full" align="stretch">
+          <ManagementPageHeader
+            title="AI Accessibility Studio"
+            description={
+              enabledServiceIds.size === 1 && enabledServiceIds.has("llm")
                 ? "Test and explore Large Language Models"
-                : "Test and explore NLP and LLM models"}
-            </Text>
-          </Box>
+                : "Test and explore NLP and LLM models"
+            }
+          />
+          <VStack spacing={5} w="full" align="stretch">
 
           {!isLoading && !isAuthenticated && (
             <Alert status="info" variant="left-accent" w="full">
@@ -297,6 +281,7 @@ const HomePage: React.FC = () => {
               );
             })}
           </SimpleGrid>
+          </VStack>
         </VStack>
       </ContentLayout>
     </>
