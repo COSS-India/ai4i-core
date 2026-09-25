@@ -31,7 +31,7 @@ async def deliver(
     is no per-recipient display name in the envelope, so every send greets
     generically ("there"), matching the fallback recipients.py always used
     for a user with no full_name on file."""
-    people = [Recipient(user_id="", email=email, display_name="there") for email in recipients]
+    people = [Recipient(email=email, display_name="there") for email in recipients]
     if not people:
         logger.warning(
             "No recipients for event_name=%s tenant_id=%s",
@@ -64,7 +64,7 @@ async def deliver(
         if isinstance(outcome, Exception):
             logger.error(
                 "send_one raised for recipient=%s event_name=%s tenant_id=%s: %s",
-                person.user_id, event_name, tenant_id, outcome, exc_info=outcome,
+                person.email, event_name, tenant_id, outcome, exc_info=outcome,
             )
     sent_ok = [o for o in outcomes if o is True]
     return "sent" if sent_ok else "failed"

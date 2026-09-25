@@ -18,10 +18,13 @@ formatting again. _build_message below does nothing but pick the right
 email_templates.py renderer for event_name and plug each position straight
 into its matching keyword argument, in order.
 
-institution_name and recipient_name are NOT part of ``details`` — the
-consumer resolves both itself (recipients.py: tenants.organisation for the
-former, per-recipient full_name for the latter) since it already has
-everything it needs to do that without round-tripping through the producer.
+institution_name is NOT part of ``details`` — the consumer resolves it
+itself (recipients.py: tenants.organisation), since it already has
+everything it needs to do that without round-tripping through the
+producer. recipient_name is NOT resolved at all: the envelope carries only
+a plain list of email addresses (ai4i_core.kafka.recipients resolves and
+decrypts producer-side), no per-recipient identity to look a name up
+against, so every send greets with the same generic "there" (delivery.py).
 """
 from __future__ import annotations
 

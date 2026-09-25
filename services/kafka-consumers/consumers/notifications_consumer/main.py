@@ -1,14 +1,17 @@
 """notifications_consumer — Kafka Consumer Notification.
 
 Implements skills/notification-kafka-design/notification-kafka-design.md:
-reads notification/alert events off TOPIC_NOTIFICATION, resolves recipients
-and sends the email directly (no auth-service call). The producer already
-decided "is this new" and claimed the ledger row (libs/ai4i_core/ai4i_core/
-kafka/ledger.py) before publishing — this consumer only claims and settles
-the delivery half. See catalog_cache.py, ledger.py, recipients.py,
-emailer.py, delivery.py and handler.py for the pieces; this file is just
-the consume loop wiring, plus opening the second (auth) database connection
-recipients.py depends on.
+reads notification/alert events off TOPIC_NOTIFICATION and sends the email
+directly (no auth-service call). Who receives it is not resolved here —
+the producer already resolved and decrypted the recipient list before
+publishing (ai4i_core.kafka.recipients); this consumer just reads
+envelope["recipients"], a plain list of email addresses. The producer also
+already decided "is this new" and claimed the ledger row (libs/ai4i_core/
+ai4i_core/kafka/ledger.py) before publishing — this consumer only claims
+and settles the delivery half. See catalog_cache.py, ledger.py,
+recipients.py, emailer.py, delivery.py and handler.py for the pieces; this
+file is just the consume loop wiring, plus opening the second (auth)
+database connection recipients.py's fetch_institution_name() depends on.
 
 Consumer-side only — the producers (auth-service's admin-change endpoints,
 and payperuse_consumer's producer half) are separate work, not built here.
@@ -30,7 +33,7 @@ from confluent_kafka import KafkaError, KafkaException, Message
 from bootstrap.config import get_db_settings
 from bootstrap.consumers import CommitMode, ManagedConsumer
 from bootstrap.lifecycle import add_database, infra, shutdown_event
-from consumers.notifications_consumer import catalog_cache, config as cfg, pii_crypto
+from consumers.notifications_consumer import catalog_cache, config as cfg
 from consumers.notifications_consumer.handler import handle_notification_event
 
 logger = get_logger(__name__)
@@ -75,19 +78,12 @@ async def run() -> None:
     db = get_db_settings()
     settings = cfg.get_settings()
 
-    # Hand the key to pii_crypto explicitly — pydantic-settings loads .env
-    # into `settings`, not into os.environ, so a bare os.getenv() inside
-    # pii_crypto would never see it. Mirrors auth-service's own
-    # config.py -> pii_crypto.configure_key() handoff exactly.
-    pii_crypto.configure_key(
-        settings.PII_ENCRYPTION_KEY.get_secret_value() if settings.PII_ENCRYPTION_KEY else None
-    )
-
     async with infra(db_name=db.PLATFORM_CORE_DB):
-        # Second connection, named "auth" — recipients.py resolves who holds
-        # which role for a tenant by reading ai4iplatform_auth directly.
-        # Opened once here, not per-message; infra()'s own teardown closes
-        # every named connection alongside the default one.
+        # Second connection, named "auth" — recipients.py reads
+        # tenants.organisation (the email body's institution name) by
+        # reading ai4iplatform_auth directly. Opened once here, not
+        # per-message; infra()'s own teardown closes every named connection
+        # alongside the default one.
         await add_database("auth", db_name=settings.AUTH_SERVICE_DB)
 
         # Live cache invalidation — see catalog_cache.py's module docstring.

@@ -20,7 +20,7 @@ from consumers.notifications_consumer.recipients import Recipient
 
 
 def _recipient() -> Recipient:
-    return Recipient(user_id="1", email="a@b.com", display_name="Priya")
+    return Recipient(email="a@b.com", display_name="Priya")
 
 
 class TestAt:

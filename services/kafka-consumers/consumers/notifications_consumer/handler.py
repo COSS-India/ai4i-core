@@ -158,14 +158,13 @@ async def _process_channel(
         return  # a concurrent redelivery/replica already claimed this send
 
     # Once claim_send has committed "sending", the row MUST be settled no
-    # matter what happens next — a raise here (a decrypt failure on a
-    # mismatched PII_ENCRYPTION_KEY, a StrictUndefined render miss, the auth
-    # DB dropping mid-query) would otherwise leave the row stuck at
-    # "sending" forever: handle_notification_event's own try/except just
-    # logs and moves on, the offset still commits, and every later pass
-    # hits the "Unexpected delivery state" branch above and refuses to
-    # touch it — the notification is lost with no failed record and no
-    # recovery short of a manual UPDATE.
+    # matter what happens next — a raise here (a StrictUndefined render
+    # miss, the auth DB dropping mid-query) would otherwise leave the row
+    # stuck at "sending" forever: handle_notification_event's own
+    # try/except just logs and moves on, the offset still commits, and
+    # every later pass hits the "Unexpected delivery state" branch above
+    # and refuses to touch it — the notification is lost with no failed
+    # record and no recovery short of a manual UPDATE.
     try:
         async with session_scope(name="auth") as auth_db:
             outcome = await delivery.deliver(

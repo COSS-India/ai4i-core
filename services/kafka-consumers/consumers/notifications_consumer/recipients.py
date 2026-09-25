@@ -21,7 +21,11 @@ logger = get_logger(__name__)
 
 @dataclass(frozen=True)
 class Recipient:
-    user_id: str
+    """One resolved-by-the-producer recipient. No ``user_id`` — the
+    envelope carries only email addresses (ai4i_core.kafka.recipients
+    resolves and decrypts on the producer side), so there is no per-
+    recipient identity left to look up here."""
+
     email: str
     display_name: str
 
