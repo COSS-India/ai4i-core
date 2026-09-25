@@ -1,8 +1,9 @@
 """Shared in-memory cache of configs_notification_alert — used by every
 producer (auth-service, platform-core-service, payperuse_consumer) to decide
 whether a notification should even be attempted before publishing: is it
-enabled (recipient_roles has at least one selected role)? and, for the 2
-ALERT rows, which % bands are configured?
+enabled for this tenant (GLOBAL rows always are; INSTITUTION rows depend on
+that tenant's tenant_notification_subscription row)? and, for the 2 ALERT
+rows, which % bands are configured?
 
 Pull-through cache, TTL 1 hour: every read (is_notification_enabled,
 get_threshold_bands, get_notification_id, get_channels) calls _ensure_fresh()
@@ -18,12 +19,20 @@ style pattern platform-core-service's own PolicySyncService already uses for
 an identical problem (an admin-editable table, cached in every reader,
 invalidated the moment a writer changes it). The writer side is
 catalog_service.update_catalog, which publishes to this channel on every
-recipient_roles/thresholds change. The listener doesn't refetch the row
-itself (it has no DB session of its own) — it just calls invalidate(), which
-clears the loaded-at timestamp so the very next read anywhere in this
-process does the actual reload. That keeps the listener simple and means a
-config change is visible on the next real notification-worthy event, not
-just eventually via TTL.
+scope/thresholds change (and subscription_service.py on every subscribe/
+unsubscribe toggle, since that flips an INSTITUTION-scope row's effective
+enablement for one tenant). The listener doesn't refetch the row itself (it
+has no DB session of its own) — it just calls invalidate(), which clears
+the loaded-at timestamp so the very next read anywhere in this process does
+the actual reload. That keeps the listener simple and means a config
+change is visible on the next real notification-worthy event, not just
+eventually via TTL.
+
+Per-tenant subscription state (tenant_notification_subscription) is
+deliberately NOT part of this cached blob — it's one row per (notification,
+tenant), not a fixed 9-row table, so caching it here doesn't fit the "cache
+everything, invalidate everything" model above. is_notification_enabled
+reads it with a direct, uncached point query instead (see its docstring).
 
 A refresh failure (DB unreachable) leaves whatever was cached before in
 place rather than wiping it — a temporary DB outage degrades to serving
@@ -73,14 +82,14 @@ async def refresh_all(db) -> None:
     global _rows, _loaded_at
     try:
         result = await db.execute(
-            text("SELECT id, name, recipient_roles, channels, config FROM configs_notification_alert")
+            text("SELECT id, name, scope, channels, config FROM configs_notification_alert")
         )
         new_rows: Dict[str, Dict[str, Any]] = {}
         for row in result.all():
             thresholds = (row.config or {}).get("thresholds", [])
             new_rows[row.name] = {
                 "id": row.id,
-                "recipient_roles": row.recipient_roles or {},
+                "scope": row.scope,
                 "channels": list(row.channels or []),
                 "threshold_bands": _active_threshold_percentages(thresholds),
             }
@@ -111,15 +120,39 @@ async def _ensure_fresh(db) -> None:
         await refresh_all(db)
 
 
-async def is_notification_enabled(db, name: str) -> bool:
+async def is_notification_enabled(db, name: str, tenant_id: Optional[str] = None) -> bool:
     """False when the row is unknown (bad name, or missing even after a
-    reload) or its recipient_roles has no role turned on — nobody to
-    notify, so the caller should skip publishing entirely."""
+    reload). A GLOBAL-scope row is always enabled — no per-institution
+    opt-out. An INSTITUTION-scope row is enabled only when this tenant has
+    actually subscribed (tenant_notification_subscription.subscribed) — a
+    row absence for this (notification, tenant) pair reads as
+    "unsubscribed", same as the subscription API's own read path
+    (subscription_service._to_subscription_item). tenant_id is required for
+    an INSTITUTION-scope row; omitting it (or passing None) fails closed
+    (False) rather than guessing — there's no tenant to check a
+    subscription for.
+
+    This is a direct, uncached point query against
+    tenant_notification_subscription's own unique index — not folded into
+    the in-memory blob above, since that cache is a fixed 9-row table and
+    this is one row per (notification, tenant). See the module docstring."""
     await _ensure_fresh(db)
     entry = _rows.get(name)
     if entry is None:
         return False
-    return any(entry["recipient_roles"].values())
+    if entry["scope"] == "GLOBAL":
+        return True
+    if not tenant_id:
+        return False
+    result = await db.execute(
+        text(
+            "SELECT subscribed FROM tenant_notification_subscription"
+            " WHERE notification_id = :notification_id AND tenant_id = :tenant_id"
+        ),
+        {"notification_id": entry["id"], "tenant_id": str(tenant_id)},
+    )
+    row = result.first()
+    return bool(row and row.subscribed)
 
 
 async def get_threshold_bands(db, name: str) -> List[int]:
