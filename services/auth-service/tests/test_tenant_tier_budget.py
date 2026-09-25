@@ -663,7 +663,7 @@ class TestReviseTenantBudgetCascade:
         await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("500"), _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO)
 
         allocation_service.cascade_tenant_budget_revision.assert_awaited_once_with(
-            1, Decimal("1500"), ANY, None
+            1, Decimal("1500"), ANY, None, tenant_name="Acme"
         )
         svc._tenants.update.assert_awaited_once()
         assert svc._tenants.update.await_args.args[1]["allocated_budget"] == Decimal("1500")
