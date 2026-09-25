@@ -1,23 +1,20 @@
 import { Center } from "@chakra-ui/react";
 import Head from "next/head";
 import { useRouter } from "next/router";
-import React, { useEffect, useRef } from "react";
+import React, { useEffect } from "react";
 import { useToastWithDeduplication } from "../utils/toast";
 import ContentLayout from "../components/common/ContentLayout";
-import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import LoadingSpinner from "../components/common/LoadingSpinner";
 import { INSTITUTION } from "../config/constants";
 import TierManagement from "../components/tier-management/TierManagement";
 import { useAuth } from "../hooks/useAuth";
 import { getPlatformName } from "../config/runtimeConfig";
 import { isPlatformAdminUser } from "../utils/rbac";
-import CreateButton from "../components/common/CreateButton";
 
 const TierManagementPage: React.FC = () => {
   const router = useRouter();
   const toast = useToastWithDeduplication();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
-  const openCreateRef = useRef<() => void>(() => {});
 
   const isAdmin = isPlatformAdminUser(user?.roles);
 
@@ -75,21 +72,7 @@ const TierManagementPage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <ManagementPageHeader
-          title="Tier Management"
-          description={`Configure tiers for ${INSTITUTION.toLowerCase()} access`}
-          actions={
-            <CreateButton onClick={() => openCreateRef.current()}>
-              Create Tier
-            </CreateButton>
-          }
-        />
-
-        <TierManagement
-          onRegisterCreate={(open) => {
-            openCreateRef.current = open;
-          }}
-        />
+        <TierManagement />
       </ContentLayout>
     </>
   );

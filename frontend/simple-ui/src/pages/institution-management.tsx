@@ -58,17 +58,19 @@ const InstitutionManagementPage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <ManagementPageHeader
-          title={`${INSTITUTION} Management`}
-          description={`Onboard ${INSTITUTIONS.toLowerCase()}, add users, and manage applications from one place.`}
+        {!isInstitutionDetail ? (
+          <ManagementPageHeader
+            title={`${INSTITUTION} Management`}
+            description={`Onboard ${INSTITUTIONS.toLowerCase()}, add users, and manage applications from one place.`}
             actions={
-              isAdmin && !isInstitutionDetail ? (
+              isAdmin ? (
                 <CreateButton onClick={() => openCreateRef.current()}>
                   Create {INSTITUTION}
                 </CreateButton>
               ) : undefined
             }
-        />
+          />
+        ) : null}
         <TenantManagementTab
           isActive={true}
           onRegisterCreateInstitution={(open) => {

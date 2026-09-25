@@ -33,6 +33,7 @@ import { useDeferredColumnSort } from "../../utils/tableSort";
 import StandardModal from "../common/StandardModal";
 import ConfirmDialog from "../common/ConfirmDialog";
 import FormActions from "../common/FormActions";
+import ReadOnlyField from "../common/ReadOnlyField";
 import FieldHint from "../common/FieldHint";
 import {
   API_KEY,
@@ -388,41 +389,31 @@ export default function ApiKeyManagementTab({
       >
             {mgmt.selectedKeyForView && (
               <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                <Box>
-                  <FieldLabel variant="inline">Key Name</FieldLabel>
-                  <Text fontSize="md">{mgmt.selectedKeyForView.key_name}</Text>
-                </Box>
-                <Box>
-                  <FieldLabel variant="inline">Key ID</FieldLabel>
-                  <Text
-                    fontSize="sm"
-                    fontFamily="mono"
-                    color="ink.700"
-                    wordBreak="break-all"
-                  >
+                <ReadOnlyField label="Key Name">
+                  {mgmt.selectedKeyForView.key_name}
+                </ReadOnlyField>
+                <ReadOnlyField label="Key ID">
+                  <Text fontSize="sm" fontFamily="mono" color="ink.700" wordBreak="break-all">
                     {mgmt.formatKeyId(mgmt.selectedKeyForView)}
                   </Text>
-                </Box>
-                <Box>
-                  <FieldLabel variant="inline">Application</FieldLabel>
-                  <Text fontSize="md">
-                    {mgmt.selectedKeyForView.application_name ??
-                      mgmt.selectedKeyForView.application_id ??
-                      "—"}
+                </ReadOnlyField>
+                <ReadOnlyField label="Application">
+                  {mgmt.selectedKeyForView.application_name ??
+                    mgmt.selectedKeyForView.application_id ??
+                    "—"}
+                </ReadOnlyField>
+                <ReadOnlyField label="Budget">
+                  <Text fontSize="sm" color="ink.800">
+                    {mgmt.formatBudgetPct(mgmt.selectedKeyForView)}
                   </Text>
-                </Box>
-                <Box>
-                  <FieldLabel variant="inline">Budget</FieldLabel>
-                  <Text fontSize="md">{mgmt.formatBudgetPct(mgmt.selectedKeyForView)}</Text>
                   {mgmt.selectedKeyForView.allocated_budget != null &&
                     mgmt.formatBudgetPct(mgmt.selectedKeyForView) !== "—" && (
                       <Text fontSize="sm" color="ink.500">
                         {formatSpendMoney(mgmt.selectedKeyForView.allocated_budget, "INR")}
                       </Text>
                     )}
-                </Box>
-                <Box gridColumn={{ base: "span 1", md: "span 2" }}>
-                  <FieldLabel variant="inline">Permissions</FieldLabel>
+                </ReadOnlyField>
+                <ReadOnlyField label="Permissions" fullWidth>
                   {(() => {
                     const visiblePerms = mgmt.visiblePermissionsForKey(
                       mgmt.selectedKeyForView,
@@ -441,9 +432,8 @@ export default function ApiKeyManagementTab({
                       </Text>
                     );
                   })()}
-                </Box>
-                <Box>
-                  <FieldLabel variant="inline">Status</FieldLabel>
+                </ReadOnlyField>
+                <ReadOnlyField label="Status">
                   <Badge
                     colorScheme={getApiKeyDisplayStatusColorScheme(
                       mgmt.resolveKeyDisplayStatus(mgmt.selectedKeyForView)
@@ -462,31 +452,22 @@ export default function ApiKeyManagementTab({
                         mgmt.getKeyRevokedReason(mgmt.selectedKeyForView)}
                     </Text>
                   )}
-                </Box>
-                <Box>
-                  <FieldLabel variant="inline">Created At</FieldLabel>
-                  <Text fontSize="sm">
-                    {mgmt.selectedKeyForView.created_at
-                      ? new Date(mgmt.selectedKeyForView.created_at).toLocaleString()
-                      : "—"}
-                  </Text>
-                </Box>
-                {mgmt.selectedKeyForView.expires_at && (
-                  <Box>
-                    <FieldLabel variant="inline">Expires At</FieldLabel>
-                    <Text fontSize="sm">
-                      {new Date(mgmt.selectedKeyForView.expires_at).toLocaleString()}
-                    </Text>
-                  </Box>
-                )}
-                {mgmt.selectedKeyForView.last_used && (
-                  <Box>
-                    <FieldLabel variant="inline">Last Used</FieldLabel>
-                    <Text fontSize="sm">
-                      {new Date(mgmt.selectedKeyForView.last_used).toLocaleString()}
-                    </Text>
-                  </Box>
-                )}
+                </ReadOnlyField>
+                <ReadOnlyField label="Created At">
+                  {mgmt.selectedKeyForView.created_at
+                    ? new Date(mgmt.selectedKeyForView.created_at).toLocaleString()
+                    : "—"}
+                </ReadOnlyField>
+                {mgmt.selectedKeyForView.expires_at ? (
+                  <ReadOnlyField label="Expires At">
+                    {new Date(mgmt.selectedKeyForView.expires_at).toLocaleString()}
+                  </ReadOnlyField>
+                ) : null}
+                {mgmt.selectedKeyForView.last_used ? (
+                  <ReadOnlyField label="Last Used">
+                    {new Date(mgmt.selectedKeyForView.last_used).toLocaleString()}
+                  </ReadOnlyField>
+                ) : null}
               </SimpleGrid>
             )}
       </StandardModal>

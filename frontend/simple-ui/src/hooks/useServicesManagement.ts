@@ -2,6 +2,7 @@
 // (Service Registry / Create-Edit Service / View Service tabs).
 import { useDisclosure } from "@chakra-ui/react";
 import { useRouter } from "next/router";
+import { isFormReturnHref } from "../components/common/FormPage";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDeferredColumnSort } from "../utils/tableSort";
@@ -309,6 +310,7 @@ export function useServicesManagement() {
     }
   }, [user, router]);
   // Model fetched by ID when navigating from a deprecated model's "Create Service" (not in active list)
+  const [createReturnTo, setCreateReturnTo] = useState<string | null>(null);
   const [preselectedModelFromQuery, setPreselectedModelFromQuery] =
     useState<ModelDetails | null>(null);
 
@@ -475,10 +477,21 @@ export function useServicesManagement() {
     if (isCreateDeepLink && !isRegistryReadOnly) {
       if (isCreateServiceTabDisabled) {
         setActiveTab(0);
+        const rawReturn = router.query.returnTo;
+        const dest =
+          typeof rawReturn === "string" && isFormReturnHref(rawReturn)
+            ? rawReturn
+            : null;
+        if (dest) {
+          setCreateReturnTo(null);
+          void router.push(dest);
+          return;
+        }
         if (router.query.tab || router.query.modelId) {
           const q = { ...router.query } as Record<string, string>;
           delete q.tab;
           delete q.modelId;
+          delete q.returnTo;
           router.replace(
             { pathname: "/services-management", query: q },
             undefined,
@@ -546,10 +559,14 @@ export function useServicesManagement() {
       }
 
       const stripModelIdFromUrl = () => {
-        const { tab: currentTab } = router.query;
         const nextQuery: Record<string, string> = {};
+        const currentTab = router.query.tab;
+        const currentReturn = router.query.returnTo;
         if (typeof currentTab === "string") {
           nextQuery.tab = currentTab;
+        }
+        if (typeof currentReturn === "string" && isFormReturnHref(currentReturn)) {
+          nextQuery.returnTo = currentReturn;
         }
         router.replace(
           { pathname: "/services-management", query: nextQuery },
@@ -769,15 +786,39 @@ export function useServicesManagement() {
 
   const openCreateModal = () => {
     if (isRegistryReadOnly || isCreateServiceTabDisabled) return;
+    setCreateReturnTo(null);
     setEditingService(null);
     resetCreateForm();
     onCreateOpen();
   };
 
-  const closeCreateModal = () => {
+  const clearCreateEntryQuery = useCallback(() => {
+    if (!router.query.returnTo && !router.query.modelId && !router.query.tab) return;
+    const q = { ...router.query } as Record<string, string>;
+    delete q.returnTo;
+    delete q.modelId;
+    delete q.tab;
+    router.replace({ pathname: "/services-management", query: q }, undefined, {
+      shallow: true,
+    });
+  }, [router]);
+
+  const releaseCreateForm = () => {
+    setCreateReturnTo(null);
     resetCreateForm();
     onCreateClose();
   };
+
+  const closeCreateModal = () => {
+    releaseCreateForm();
+    clearCreateEntryQuery();
+  };
+
+  useEffect(() => {
+    const raw = router.query.returnTo;
+    if (typeof raw !== "string" || !isFormReturnHref(raw)) return;
+    setCreateReturnTo(raw);
+  }, [router.query.returnTo]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -892,6 +933,7 @@ export function useServicesManagement() {
       invalidateServiceQueries();
       setEditingService(null);
       resetCreateForm();
+      setCreateReturnTo(null);
       setActiveTab(0);
       onCreateClose();
       router.replace(
@@ -1463,6 +1505,8 @@ export function useServicesManagement() {
     isCreateOpen,
     openCreateModal,
     closeCreateModal,
+    releaseCreateForm,
+    createReturnTo,
 
     // View tab
     selectedService,

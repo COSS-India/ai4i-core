@@ -13,6 +13,11 @@ import { APP_HOME_PATH, USAGE_DASHBOARD_PATH } from "../../utils/navigation";
 export type Crumb = {
   label: string;
   href?: string;
+  /**
+   * Runs on click in addition to `href`. Manage detail pages use this to
+   * clear in-memory create/view state when the list route is already current.
+   */
+  onClick?: () => void;
 };
 
 function homeCrumb(homePath: string): Crumb {
@@ -57,6 +62,29 @@ export function getPageBreadcrumbs(
   return [home, { label: title }];
 }
 
+type ManageParent = {
+  label: string;
+  href: string;
+  onNavigate?: () => void;
+};
+
+/**
+ * Explore → Manage list (link) → current record/page (not a link).
+ * The parent always targets the list route, never history back.
+ */
+export function buildManageCrumbs(
+  parent: ManageParent,
+  currentLabel: string,
+  homePath: string = APP_HOME_PATH,
+): Crumb[] {
+  const trail = getPageBreadcrumbs(parent.href, parent.label, homePath) ?? [];
+  return [
+    ...trail.slice(0, -1),
+    { label: parent.label, href: parent.href, onClick: parent.onNavigate },
+    { label: currentLabel },
+  ];
+}
+
 type PageBreadcrumbProps = {
   items: Crumb[];
 } & Omit<BreadcrumbProps, "children">;
@@ -93,6 +121,7 @@ export default function PageBreadcrumb({ items, ...rest }: PageBreadcrumbProps) 
                   color="ink.500"
                   fontWeight="500"
                   _hover={{ color: "ink.800", textDecoration: "none" }}
+                  onClick={() => item.onClick?.()}
                 >
                   {item.label}
                 </BreadcrumbLink>

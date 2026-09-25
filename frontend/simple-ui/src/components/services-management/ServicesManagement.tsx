@@ -1,4 +1,4 @@
-// Services Management: Registry and View Service tabs. Create and Edit use modals.
+// Services Management: registry list, or the shared form page for create, edit, and view.
 import {
   Badge,
   HStack,
@@ -11,14 +11,14 @@ import React, { useMemo } from "react";
 import ManagementPageHeader from "../common/ManagementPageHeader";
 import CreateButton from "../common/CreateButton";
 import FormActions from "../common/FormActions";
-import { createActionsColumn, useAdminTableSurface, type DataTableColumn } from "../common/table";
+import FormPage from "../common/FormPage";
+import { createActionsColumn, type DataTableColumn } from "../common/table";
 import type { Service } from "../../services/servicesManagementService";
 import ConfirmDialog from "../common/ConfirmDialog";
 import { useServicesManagement } from "../../hooks/useServicesManagement";
 import ServiceRegistryTab from "./ServiceRegistryTab";
 import ServiceFormTab from "./ServiceFormTab";
 import ServiceDetailTab from "./ServiceDetailTab";
-import StandardModal, { CreateModal } from "../common/StandardModal";
 import { getTaskColorScheme } from "../../config/constants";
 import { resolveTaskType } from "../../utils/platformService";
 
@@ -41,7 +41,6 @@ function isServiceModelDeprecated(
 }
 
 const ServicesManagement: React.FC = () => {
-  const { cardBg, borderColor: cardBorder } = useAdminTableSurface();
   const {
     isRegistryReadOnly,
     handleTabChange,
@@ -104,6 +103,8 @@ const ServicesManagement: React.FC = () => {
     isCreateOpen,
     openCreateModal,
     closeCreateModal,
+    releaseCreateForm,
+    createReturnTo,
     selectedService,
     isViewingService,
     selectedServiceModelDeprecated,
@@ -277,208 +278,163 @@ const ServicesManagement: React.FC = () => {
     availableTiers,
   ]);
 
+  const serviceForm = (
+    <ServiceFormTab
+      key={createFormEpoch}
+      editingService={editingService}
+      formData={formData}
+      onInputChange={handleInputChange}
+      onTaskTypeChange={handleTaskTypeChange}
+      onModelNameChange={handleModelNameChange}
+      taskTypeNames={taskTypeNames}
+      isLoadingModels={isLoadingModels}
+      filteredModelsForDropdown={filteredModelsForDropdown}
+      unitType={unitType}
+      pricePerUnit={pricePerUnit}
+      onPricePerUnitChange={setPricePerUnit}
+      pricePerUnitError={pricePerUnitError}
+      unitSize={unitSize}
+      onUnitSizeChange={setUnitSize}
+      currency={currency}
+      onCurrencyChange={setCurrency}
+      selectedTiers={selectedTiers}
+      onToggleTier={toggleTier}
+      availableTiers={availableTiers}
+      isCreateFormModelSelected={isCreateFormModelSelected}
+      canCreateService={canCreateService}
+      isLlmTaskType={isLlmTaskType}
+      authToken={authToken}
+      onAuthTokenChange={setAuthToken}
+      hasAuthToken={hasAuthToken}
+      savedAuthTokenMask={savedAuthTokenMask}
+      serviceIdError={serviceIdError}
+      serviceIdLengthError={serviceIdLengthError}
+      serviceDescriptionError={serviceDescriptionError}
+      serviceNameError={serviceNameError}
+      hardwareDescriptionError={hardwareDescriptionError}
+      isSubmitting={isSubmitting}
+      onSubmit={handleSubmit}
+      onCancel={editingService ? handleCancelForm : closeCreateModal}
+      hideActions
+      formId={editingService ? EDIT_SERVICE_FORM_ID : CREATE_SERVICE_FORM_ID}
+    />
+  );
+
+  const main = isViewingService && selectedService ? (
+    <ServiceDetailTab
+      selectedService={selectedService}
+      isRegistryReadOnly={isRegistryReadOnly}
+      isServiceModelDeprecated={isServiceModelDeprecated}
+      selectedServiceModelDeprecated={selectedServiceModelDeprecated}
+      viewServiceUnitType={viewServiceUnitType}
+      unpublishingServiceUuid={unpublishingServiceUuid}
+      publishingServiceUuid={publishingServiceUuid}
+      onRequestUnpublish={requestUnpublish}
+      onRequestPublish={requestPublish}
+      onBack={() => handleTabChange(0)}
+      onNavigateToList={() => handleTabChange(0)}
+    />
+  ) : editingService && !isRegistryReadOnly ? (
+    <FormPage
+      title={
+        editingService.name ||
+        editingService.serviceId ||
+        editingService.service_id ||
+        "Edit Service"
+      }
+      description="Update pricing and tier mapping. Service metadata is read-only."
+      parent={{
+        label: "Services Management",
+        href: "/services-management",
+        onNavigate: () => handleTabChange(0),
+      }}
+      footer={
+        <FormActions
+          submitLabel="Save Changes"
+          onCancel={handleCancelForm}
+          submitType="submit"
+          form={EDIT_SERVICE_FORM_ID}
+          isLoading={isSubmitting}
+          loadingText="Saving..."
+          isDisabled={!canCreateService || isSubmitting}
+          pt={0}
+        />
+      }
+    >
+      {serviceForm}
+    </FormPage>
+  ) : isCreateOpen ? (
+    <FormPage
+      title="Create Service"
+      description="Register a service and map it to a model and tiers."
+      parent={{
+        label: "Services Management",
+        href: "/services-management",
+        onNavigate: closeCreateModal,
+      }}
+      returnTo={createReturnTo ? { href: createReturnTo } : undefined}
+      onLeave={releaseCreateForm}
+      footer={({ leave }) => (
+        <FormActions
+          cancelLabel="Cancel"
+          submitLabel="Create Service"
+          onCancel={createReturnTo ? leave : closeCreateModal}
+          submitType="submit"
+          form={CREATE_SERVICE_FORM_ID}
+          isLoading={isSubmitting}
+          loadingText="Creating..."
+          isDisabled={!canCreateService || isSubmitting}
+          pt={0}
+        />
+      )}
+    >
+      {serviceForm}
+    </FormPage>
+  ) : (
+    <>
+      <ManagementPageHeader
+        title="Services Management"
+        description={
+          isRegistryReadOnly
+            ? "Browse services in the registry. You can open a service to view its configuration."
+            : "Find a service, open it to view or edit, or create a new one. Publish when it should appear for users."
+        }
+        actions={
+          !isRegistryReadOnly && !isCreateServiceTabDisabled ? (
+            <CreateButton onClick={openCreateModal}>Create Service</CreateButton>
+          ) : undefined
+        }
+      />
+      <ServiceRegistryTab
+        items={registryTableItems}
+        columns={serviceColumns}
+        sort={registrySort.sort}
+        onSortChange={registrySort.onSortChange}
+        isLoading={isLoading}
+        totalServicesCount={totalServicesCount}
+        onRowClick={(service) =>
+          handleViewService(service.serviceId || service.service_id || "")
+        }
+        tableKey={tableKey}
+        searchQuery={searchQuery}
+        onSearchQueryChange={setSearchQuery}
+        filterStatus={filterStatus}
+        onFilterStatusChange={setFilterStatus}
+        filterTaskType={filterTaskType}
+        onFilterTaskTypeChange={setFilterTaskType}
+        taskTypeNames={taskTypeNames}
+        filterTier={filterTier}
+        onFilterTierChange={setFilterTier}
+        tierFilterOptions={tierFilterOptions}
+        hasActiveFilters={hasActiveFilters}
+        onClearFilters={clearAllFilters}
+      />
+    </>
+  );
+
   return (
     <>
-        <ManagementPageHeader
-          title="Services Management"
-          description={
-            isRegistryReadOnly
-              ? "Browse services in the registry. You can open a service to view its configuration."
-              : "Find a service, open it to view or edit, or create a new one. Publish when it should appear for users."
-          }
-          actions={
-            !isRegistryReadOnly &&
-            !editingService &&
-            !isCreateServiceTabDisabled ? (
-              <CreateButton onClick={openCreateModal}>
-                Create Service
-              </CreateButton>
-            ) : undefined
-          }
-        />
-
-                {isViewingService && selectedService ? (
-                    <ServiceDetailTab
-                      cardBg={cardBg}
-                      cardBorder={cardBorder}
-                      selectedService={selectedService}
-                      isRegistryReadOnly={isRegistryReadOnly}
-                      getTaskColor={getTaskColorScheme}
-                      isServiceModelDeprecated={isServiceModelDeprecated}
-                      selectedServiceModelDeprecated={
-                        selectedServiceModelDeprecated
-                      }
-                      viewServiceUnitType={viewServiceUnitType}
-                      unpublishingServiceUuid={unpublishingServiceUuid}
-                      publishingServiceUuid={publishingServiceUuid}
-                      onRequestUnpublish={requestUnpublish}
-                      onRequestPublish={requestPublish}
-                      onBack={() => handleTabChange(0)}
-                    />
-                ) : (
-                  <ServiceRegistryTab
-                    items={registryTableItems}
-                    columns={serviceColumns}
-                    sort={registrySort.sort}
-                    onSortChange={registrySort.onSortChange}
-                    isLoading={isLoading}
-                    totalServicesCount={totalServicesCount}
-                    onRowClick={(service) =>
-                      handleViewService(
-                        service.serviceId || service.service_id || "",
-                      )
-                    }
-                    tableKey={tableKey}
-                    searchQuery={searchQuery}
-                    onSearchQueryChange={setSearchQuery}
-                    filterStatus={filterStatus}
-                    onFilterStatusChange={setFilterStatus}
-                    filterTaskType={filterTaskType}
-                    onFilterTaskTypeChange={setFilterTaskType}
-                    taskTypeNames={taskTypeNames}
-                    filterTier={filterTier}
-                    onFilterTierChange={setFilterTier}
-                    tierFilterOptions={tierFilterOptions}
-                    hasActiveFilters={hasActiveFilters}
-                    onClearFilters={clearAllFilters}
-                  />
-                )}
-
-      <CreateModal
-        isOpen={isCreateOpen}
-        onClose={closeCreateModal}
-        size="xl"
-        title="Create Service"
-        description="Register a service and map it to a model and tiers."
-        footer={
-          <FormActions
-            cancelLabel="Reset"
-            submitLabel="Create Service"
-            onCancel={handleCancelForm}
-            submitType="submit"
-            form={CREATE_SERVICE_FORM_ID}
-            isLoading={isSubmitting}
-            loadingText="Creating..."
-            isDisabled={!canCreateService || isSubmitting}
-            justify="space-between"
-            pt={0}
-          />
-        }
-      >
-        <ServiceFormTab
-          key={createFormEpoch}
-          cardBg={cardBg}
-          cardBorder={cardBorder}
-          editingService={null}
-          formData={formData}
-          onInputChange={handleInputChange}
-          onTaskTypeChange={handleTaskTypeChange}
-          onModelNameChange={handleModelNameChange}
-          taskTypeNames={taskTypeNames}
-          isLoadingModels={isLoadingModels}
-          filteredModelsForDropdown={filteredModelsForDropdown}
-          unitType={unitType}
-          pricePerUnit={pricePerUnit}
-          onPricePerUnitChange={setPricePerUnit}
-          pricePerUnitError={pricePerUnitError}
-          unitSize={unitSize}
-          onUnitSizeChange={setUnitSize}
-          currency={currency}
-          onCurrencyChange={setCurrency}
-          selectedTiers={selectedTiers}
-          onToggleTier={toggleTier}
-          availableTiers={availableTiers}
-          isCreateFormModelSelected={isCreateFormModelSelected}
-          canCreateService={canCreateService}
-          isLlmTaskType={isLlmTaskType}
-          authToken={authToken}
-          onAuthTokenChange={setAuthToken}
-          hasAuthToken={hasAuthToken}
-          savedAuthTokenMask={savedAuthTokenMask}
-          serviceIdError={serviceIdError}
-          serviceIdLengthError={serviceIdLengthError}
-          serviceDescriptionError={serviceDescriptionError}
-          serviceNameError={serviceNameError}
-          hardwareDescriptionError={hardwareDescriptionError}
-          isSubmitting={isSubmitting}
-          onSubmit={handleSubmit}
-          onCancel={handleCancelForm}
-          embedded={false}
-          hideActions
-          formId={CREATE_SERVICE_FORM_ID}
-        />
-      </CreateModal>
-
-      <StandardModal
-        isOpen={Boolean(editingService) && !isRegistryReadOnly}
-        onClose={handleCancelForm}
-        size="5xl"
-        scrollBehavior="inside"
-        title="Edit Service"
-        description="Update pricing and tier mapping. Service metadata is read-only."
-        modalProps={{ blockScrollOnMount: true }}
-        headerProps={{ px: 6, pt: 5, pb: 4 }}
-        bodyProps={{ px: 6, py: 5 }}
-        footerProps={{ px: 6, py: 4 }}
-        footer={
-          <FormActions
-            submitLabel="Save Changes"
-            onCancel={handleCancelForm}
-            submitType="submit"
-            form={EDIT_SERVICE_FORM_ID}
-            isLoading={isSubmitting}
-            loadingText="Saving..."
-            isDisabled={!canCreateService || isSubmitting}
-            justify="space-between"
-            pt={0}
-          />
-        }
-      >
-        {editingService ? (
-          <ServiceFormTab
-            key={createFormEpoch}
-            cardBg={cardBg}
-            cardBorder={cardBorder}
-            editingService={editingService}
-            formData={formData}
-            onInputChange={handleInputChange}
-            onTaskTypeChange={handleTaskTypeChange}
-            onModelNameChange={handleModelNameChange}
-            taskTypeNames={taskTypeNames}
-            isLoadingModels={isLoadingModels}
-            filteredModelsForDropdown={filteredModelsForDropdown}
-            unitType={unitType}
-            pricePerUnit={pricePerUnit}
-            onPricePerUnitChange={setPricePerUnit}
-            pricePerUnitError={pricePerUnitError}
-            unitSize={unitSize}
-            onUnitSizeChange={setUnitSize}
-            currency={currency}
-            onCurrencyChange={setCurrency}
-            selectedTiers={selectedTiers}
-            onToggleTier={toggleTier}
-            availableTiers={availableTiers}
-            isCreateFormModelSelected={isCreateFormModelSelected}
-            canCreateService={canCreateService}
-            isLlmTaskType={isLlmTaskType}
-            authToken={authToken}
-            onAuthTokenChange={setAuthToken}
-            hasAuthToken={hasAuthToken}
-            savedAuthTokenMask={savedAuthTokenMask}
-            serviceIdError={serviceIdError}
-            serviceIdLengthError={serviceIdLengthError}
-            serviceDescriptionError={serviceDescriptionError}
-            serviceNameError={serviceNameError}
-            hardwareDescriptionError={hardwareDescriptionError}
-            isSubmitting={isSubmitting}
-            onSubmit={handleSubmit}
-            onCancel={handleCancelForm}
-            embedded={false}
-            hideActions
-            formId={EDIT_SERVICE_FORM_ID}
-          />
-        ) : null}
-      </StandardModal>
+      {main}
 
       <ConfirmDialog
         isOpen={isOpen}
