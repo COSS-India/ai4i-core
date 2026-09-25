@@ -39,9 +39,9 @@ starts changing "delivery" independently — a delivery-only change on the
 existing row must never look like "this is a new occurrence" and cause a
 duplicate publish; only a genuine value change does. A row coming back
 means "this is new, publish"; nothing coming back means "already recorded,
-skip". This runs as a real, atomic DB-level guard (not a pure in-memory
+skip". This runs as a real, atomic DB-level guard (not a pure cache-based
 decision) so two producer replicas racing the same event can never both
-"win" — the in-memory settings cache (notification_id/channels) and the
+"win" — the Redis-backed settings cache (notification_id/channels) and the
 ledger_cache fast-path below are both pre-checks only, never the source of
 truth for dedup.
 
@@ -68,6 +68,7 @@ from sqlalchemy import text
 
 from .notification_settings_cache import get_channels, get_notification_id
 from .ledger_cache import matches_cached_status, set_cached_status
+from .delivery_status import DeliveryStatus
 
 logger = logging.getLogger(__name__)
 
@@ -114,10 +115,10 @@ async def _record(
     subject_json = json.dumps(subject, sort_keys=True)
     status_json = json.dumps(status)
 
-    channels_to_check = [
-        channel for channel in channels
-        if not matches_cached_status(notification_id, tenant_id, subject_json, channel, status)
-    ]
+    channels_to_check = []
+    for channel in channels:
+        if not await matches_cached_status(notification_id, tenant_id, subject_json, channel, status):
+            channels_to_check.append(channel)
     if not channels_to_check:
         # Every configured channel's cache already reflects this exact
         # status — a confirmed miss, no need to touch the DB at all.
@@ -141,7 +142,7 @@ async def _record(
                 fired = True
             # Whether the UPSERT changed the row or found it already
             # matching, the DB now holds exactly `status` for this channel.
-            set_cached_status(notification_id, tenant_id, subject_json, channel, status)
+            await set_cached_status(notification_id, tenant_id, subject_json, channel, status)
         await db.commit()
     except Exception as exc:
         logger.warning("Ledger upsert failed for %s/tenant=%s: %s", name, tenant_id, exc)
@@ -156,20 +157,24 @@ async def _record(
 async def check_and_record_threshold(
     db, name: str, tenant_id: str, subject: Dict[str, Any], percent: int, actor: str = ""
 ) -> bool:
-    return await _record(db, name, tenant_id, subject, {"value": percent, "delivery": "in_progress"}, actor)
+    return await _record(
+        db, name, tenant_id, subject, {"value": percent, "delivery": DeliveryStatus.IN_PROGRESS.value}, actor
+    )
 
 
 async def check_and_record_exhaustion(
     db, name: str, tenant_id: str, subject: Dict[str, Any], actor: str = ""
 ) -> bool:
-    return await _record(db, name, tenant_id, subject, {"value": True, "delivery": "in_progress"}, actor)
+    return await _record(
+        db, name, tenant_id, subject, {"value": True, "delivery": DeliveryStatus.IN_PROGRESS.value}, actor
+    )
 
 
 async def check_and_record_action(
     db, name: str, tenant_id: str, subject: Dict[str, Any], occurred_at: str, actor: str = ""
 ) -> bool:
     return await _record(
-        db, name, tenant_id, subject, {"value": occurred_at, "delivery": "in_progress"}, actor
+        db, name, tenant_id, subject, {"value": occurred_at, "delivery": DeliveryStatus.IN_PROGRESS.value}, actor
     )
 
 
@@ -204,7 +209,7 @@ async def check_and_record_actions_bulk(
         )
         return []
 
-    status_json = json.dumps({"value": value, "delivery": "in_progress"})
+    status_json = json.dumps({"value": value, "delivery": DeliveryStatus.IN_PROGRESS.value})
     subject_jsons = [json.dumps(subject, sort_keys=True) for _, subject in tenant_subjects]
 
     rows_sql: List[str] = []

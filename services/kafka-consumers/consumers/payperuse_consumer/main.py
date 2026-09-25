@@ -25,6 +25,7 @@ from ai4i_core.kafka import (
     refresh_notification_settings_cache,
     start_notification_settings_listener,
     stop_notification_settings_listener,
+    configure_notification_cache_redis,
 )
 from bootstrap.config import get_db_settings, get_kafka_settings
 from bootstrap.consumers import CommitMode, ManagedConsumer
@@ -64,6 +65,7 @@ async def run() -> None:
             topic=settings.TOPIC_NOTIFICATION,
             enabled=settings.NOTIFICATION_PRODUCER_ENABLED,
         )
+        configure_notification_cache_redis(get_redis_client())
         async with session_scope() as _db:
             await refresh_notification_settings_cache(_db)
         start_notification_settings_listener(get_redis_client())

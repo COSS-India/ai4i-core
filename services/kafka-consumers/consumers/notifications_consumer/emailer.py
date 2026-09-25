@@ -32,6 +32,7 @@ from typing import Any, List
 from ai4i_core.email import EmailClient, EmailMessage
 from ai4i_core.email.providers.factory import build_provider
 from ai4i_core.email.settings import EmailSettings
+from ai4i_core.kafka import NotificationName
 from ai4i_core.logging import get_logger
 
 from consumers.notifications_consumer import email_templates
@@ -84,15 +85,15 @@ def _send_deadline_s() -> float:
 # short array's warning can name what the producer should have sent, not
 # just what index came up empty.
 _EXPECTED_DETAIL_COUNTS = {
-    "TIER_ASSIGNED": 3,
-    "TIER_CHANGED": 4,
-    "BUDGET_ASSIGNED": 2,
-    "BUDGET_UPDATED": 4,
-    "QUOTA_LIMIT_UPDATED": 3,
-    "QUOTA_EXHAUSTED": 2,
-    "BUDGET_EXHAUSTED": 2,
-    "QUOTA_THRESHOLD": 3,
-    "BUDGET_THRESHOLD": 3,
+    NotificationName.TIER_ASSIGNED: 3,
+    NotificationName.TIER_CHANGED: 4,
+    NotificationName.BUDGET_ASSIGNED: 2,
+    NotificationName.BUDGET_UPDATED: 4,
+    NotificationName.QUOTA_LIMIT_UPDATED: 3,
+    NotificationName.QUOTA_EXHAUSTED: 2,
+    NotificationName.BUDGET_EXHAUSTED: 2,
+    NotificationName.QUOTA_THRESHOLD: 3,
+    NotificationName.BUDGET_THRESHOLD: 3,
 }
 
 
@@ -122,14 +123,14 @@ def _build_message(
     meaning mapping this dispatch mirrors — keep the two in sync."""
     common = dict(to=recipient.email, recipient_name=recipient.display_name, institution_name=institution_name)
 
-    if event_name == "TIER_ASSIGNED":
+    if event_name == NotificationName.TIER_ASSIGNED:
         return email_templates.render_tier_assigned_email(
             **common,
             tier_name=_at(details, 0, event_name),
             tier_description=_at(details, 1, event_name),
             quota_lines=_at(details, 2, event_name, default=[]),
         )
-    if event_name == "TIER_CHANGED":
+    if event_name == NotificationName.TIER_CHANGED:
         return email_templates.render_tier_reassigned_email(
             **common,
             current_tier_name=_at(details, 0, event_name),
@@ -137,11 +138,11 @@ def _build_message(
             new_tier_description=_at(details, 2, event_name),
             quota_lines=_at(details, 3, event_name, default=[]),
         )
-    if event_name == "BUDGET_ASSIGNED":
+    if event_name == NotificationName.BUDGET_ASSIGNED:
         return email_templates.render_budget_assigned_email(
             **common, currency=_at(details, 0, event_name), budget_amount=_at(details, 1, event_name),
         )
-    if event_name == "BUDGET_UPDATED":
+    if event_name == NotificationName.BUDGET_UPDATED:
         return email_templates.render_budget_revised_email(
             **common,
             currency=_at(details, 0, event_name),
@@ -149,31 +150,31 @@ def _build_message(
             new_value=_at(details, 2, event_name),
             effective_date=_at(details, 3, event_name),
         )
-    if event_name == "QUOTA_LIMIT_UPDATED":
+    if event_name == NotificationName.QUOTA_LIMIT_UPDATED:
         return email_templates.render_quota_limit_updated_email(
             **common,
             tier_name=_at(details, 0, event_name),
             changes=_at(details, 1, event_name, default=[]),
             effective_date=_at(details, 2, event_name),
         )
-    if event_name == "QUOTA_EXHAUSTED":
+    if event_name == NotificationName.QUOTA_EXHAUSTED:
         return email_templates.render_quota_exhausted_email(
             **common,
             tier_name=_at(details, 0, event_name),
             exhausted_lines=_at(details, 1, event_name, default=[]),
         )
-    if event_name == "BUDGET_EXHAUSTED":
+    if event_name == NotificationName.BUDGET_EXHAUSTED:
         return email_templates.render_budget_exhausted_email(
             **common, currency=_at(details, 0, event_name), budget_amount=_at(details, 1, event_name),
         )
-    if event_name == "QUOTA_THRESHOLD":
+    if event_name == NotificationName.QUOTA_THRESHOLD:
         return email_templates.render_quota_threshold_alert_email(
             **common,
             threshold=_at(details, 0, event_name),
             alert_datetime=_at(details, 1, event_name),
             current_value=_at(details, 2, event_name),
         )
-    if event_name == "BUDGET_THRESHOLD":
+    if event_name == NotificationName.BUDGET_THRESHOLD:
         return email_templates.render_budget_threshold_alert_email(
             **common,
             threshold=_at(details, 0, event_name),

@@ -46,6 +46,7 @@ from ai4i_core.kafka import (
     publish_admin_event as publish_notification_event,
     is_notification_enabled,
     check_and_record_action,
+    NotificationName,
 )
 from app.schemas.tenant import (
     TenantCreate,
@@ -1069,14 +1070,14 @@ class TenantService:
         positionally."""
         occurred_at = datetime.now(timezone.utc).isoformat()
         if old_tier_id is None:
-            if platform_core_db is not None and await is_notification_enabled(platform_core_db, "TIER_ASSIGNED"):
+            if platform_core_db is not None and await is_notification_enabled(platform_core_db, NotificationName.TIER_ASSIGNED):
                 fired = await check_and_record_action(
-                    platform_core_db, "TIER_ASSIGNED", str(tenant_id), {}, occurred_at, str(actor_id)
+                    platform_core_db, NotificationName.TIER_ASSIGNED, str(tenant_id), {}, occurred_at, str(actor_id)
                 )
                 if fired:
                     description, quota_lines = await self._fetch_tier_email_fields(new_tier_id, platform_core_db)
                     publish_notification_event(
-                        event_name="TIER_ASSIGNED",
+                        event_name=NotificationName.TIER_ASSIGNED,
                         tenant_id=str(tenant_id),
                         subject={},
                         details=[new_tier_name, description, quota_lines],
@@ -1084,7 +1085,7 @@ class TenantService:
                         occurred_at=occurred_at,
                     )
             return
-        if platform_core_db is None or not await is_notification_enabled(platform_core_db, "TIER_CHANGED"):
+        if platform_core_db is None or not await is_notification_enabled(platform_core_db, NotificationName.TIER_CHANGED):
             return
         old_tier_name = old_tier_id
         try:
@@ -1098,12 +1099,12 @@ class TenantService:
         except Exception:
             pass
         fired = await check_and_record_action(
-            platform_core_db, "TIER_CHANGED", str(tenant_id), {}, occurred_at, str(actor_id)
+            platform_core_db, NotificationName.TIER_CHANGED, str(tenant_id), {}, occurred_at, str(actor_id)
         )
         if fired:
             description, quota_lines = await self._fetch_tier_email_fields(new_tier_id, platform_core_db)
             publish_notification_event(
-                event_name="TIER_CHANGED",
+                event_name=NotificationName.TIER_CHANGED,
                 tenant_id=str(tenant_id),
                 subject={},
                 details=[str(old_tier_name), new_tier_name, description, quota_lines],
@@ -1648,7 +1649,7 @@ class TenantService:
         # §5-7) — see _publish_tier_event for the full reasoning;
         # is_notification_enabled is only the fast "anyone listening"
         # pre-check.
-        budget_event_name = "BUDGET_ASSIGNED" if current_budget == 0 else "BUDGET_UPDATED"
+        budget_event_name = NotificationName.BUDGET_ASSIGNED if current_budget == 0 else NotificationName.BUDGET_UPDATED
         if (
             action is not None
             and platform_core_db is not None

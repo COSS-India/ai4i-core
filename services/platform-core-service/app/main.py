@@ -29,6 +29,7 @@ from ai4i_core.kafka import (
     refresh_notification_settings_cache,
     start_notification_settings_listener,
     stop_notification_settings_listener,
+    configure_notification_cache_redis,
 )
 from app.routes import api_router, versioning
 # services/model-management/ is hyphenated; importlib is the only way to pull symbols out.
@@ -153,6 +154,11 @@ async def lifespan(app: FastAPI):
     # configs_notification_alert lives in this service's own primary DB —
     # is_notification_enabled()/get_threshold_bands() back the "should this
     # even be published" check before QUOTA_LIMIT_UPDATED.
+    #
+    # platform-core-service runs its own local Redis client (app.core.redis),
+    # not ai4i_core.bootstrap's own singleton — hand it over explicitly so
+    # the shared cache modules actually have a client to read/write.
+    configure_notification_cache_redis(app.state.redis_client)
     async with _get_pii_session_factory()() as _notif_db:
         await refresh_notification_settings_cache(_notif_db)
     start_notification_settings_listener(app.state.redis_client)
