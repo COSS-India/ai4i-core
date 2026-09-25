@@ -16,7 +16,7 @@ testable.
 """
 
 from dataclasses import dataclass
-from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 
 from app.core.exceptions import EntityNotFoundError, ValidationError
@@ -43,6 +43,11 @@ class AllocationRow:
     allocated_percentage: Decimal
     consumed_amount: Decimal
     has_children: bool = False
+    # Display-only — an Application's name or a Key's key_name, when the caller has
+    # one. Used solely to name names in an ALLOCATION_TOTAL_EXCEEDED message; every
+    # other comparison in this module keys strictly off `id`. Falls back to "id=<id>"
+    # wherever it's None, so passing it is optional, not required.
+    label: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -60,7 +65,6 @@ class ResolvedRow:
     amount: Decimal
     percentage: Decimal
     changed: bool
-    auto_refitted: bool  # True for an unlisted child the cascade touched, not an explicit row
 
 
 def convert(explicit: ExplicitInput, parent_amount: Decimal) -> tuple[Decimal, Decimal]:
@@ -94,50 +98,27 @@ def convert(explicit: ExplicitInput, parent_amount: Decimal) -> tuple[Decimal, D
     return amount, percentage
 
 
+def _label(row: AllocationRow) -> str:
+    return row.label if row.label else f"id={row.id}"
+
+
 def resolve_level(
     parent_new_amount: Decimal,
     children: list[AllocationRow],
     explicit: list[ExplicitInput],
     *,
-    refit_unlisted: bool = True,
-    parent_old_amount: Optional[Decimal] = None,
+    parent_label: str = "the parent",
 ) -> list[ResolvedRow]:
     """Resolve one parent's children against parent_new_amount.
 
     Every explicit row is converted (percentage <-> amount) and floor-checked
-    against what it's already consumed. What happens to the children NOT
-    listed depends on ``refit_unlisted``:
-
-      - True (default): every unlisted child is proportionally re-fit to
-        track the PARENT's own change, rather than normalized to fill
-        whatever room is left. Concretely: the unlisted group's new combined
-        total = its own old total, scaled by (room now available to the
-        group) / (room that was available to it before this call) — so a
-        child that already held less than its share of the parent's old
-        room keeps holding proportionally less of the new room too, instead
-        of being topped up to fill the gap just because it wasn't listed.
-        Requires ``parent_old_amount`` (the parent's amount immediately
-        before this call — raises ``ValueError`` if omitted, since without
-        it "the room available before" is undefined). Correct whenever the
-        PARENT's own total is what actually changed this call: a Tenant's
-        or Application's own budget revision cascading into its children,
-        or one call's own just-resized row cascading into ITS un-listed
-        children one level down.
-      - False: unlisted children are left exactly as they are — not
-        resolved, not returned — only counted at their CURRENT amount
-        toward the sibling-sum feasibility gate below. Correct when the
-        parent's own total is NOT changing in this call and only a subset
-        of its children are being explicitly rebalanced among themselves —
-        a sibling nobody mentioned keeps whatever it already had, full stop.
-
-    Within the True branch, each unlisted child's share is quantized to
-    cents independently except the last (by ``children`` order), which
-    absorbs whatever the others' rounding left over — so the group's
-    resolved total is exact by construction, not by luck of the rounding;
-    two children independently rounding up by half a cent each must not be
-    able to trip the sibling-sum check below on their own.
-
-    A sibling-sum check closes the loop as a defensive gate in both cases.
+    against what it's already consumed. A child NOT listed is left exactly as
+    it is — not resolved, not returned — only counted at its CURRENT amount
+    toward the sibling-sum feasibility gate below: a sibling nobody mentioned
+    keeps whatever it already had, full stop. No child's ₹ is ever auto-resized
+    just because its parent's total changed or a sibling was explicitly edited
+    — the same rule at every level and every call site (see AllocationService's
+    module docstring). A sibling-sum check closes the loop as a defensive gate.
 
     Cascading into a resolved child's OWN children (e.g. an Application's
     own Keys, once the Application's amount changes) is NOT done here —
@@ -146,11 +127,25 @@ def resolve_level(
     one level down, for each child whose amount actually changed or whose
     own children were explicitly edited.
 
+    ``parent_label`` names the parent in an ALLOCATION_TOTAL_EXCEEDED message only
+    (e.g. "This Institution's Budget", "Application App1's Budget") — purely
+    cosmetic, defaults to the generic "the parent" when the caller doesn't have
+    (or doesn't need) a friendlier name. Each ``AllocationRow.label`` does the same
+    for a child named in that same message.
+
     Raises ValidationError (422) for PERCENTAGE_AMOUNT_MISMATCH,
     ALLOCATION_BELOW_CONSUMED, ALLOCATION_TOTAL_EXCEEDED, or
     BUDGET_OVERCOMMITTED; EntityNotFoundError (404) if an explicit row's id
-    isn't among ``children``; ValueError (a caller bug, not a request-shape
-    one) if ``refit_unlisted=True`` and ``parent_old_amount`` is omitted.
+    isn't among ``children``.
+
+    Historical note: this function used to also offer a refit_unlisted=True
+    mode — proportionally re-fitting every unlisted child to track the
+    PARENT's own change, rather than leaving it exactly as it was. Removed
+    (not merely disabled) once every call site had migrated off it — no
+    Application or Key auto-resizes just because its parent was resized any
+    more, at either edge of the hierarchy. See git history on this file /
+    AllocationService for the removed algorithm if a future edge genuinely
+    needs proportional re-fitting again.
     """
     children_by_id = {c.id: c for c in children}
     explicit_by_id = {e.id: e for e in explicit}
@@ -203,167 +198,35 @@ def resolve_level(
             amount=amount,
             percentage=percentage,
             changed=(amount != child.allocated_amount),
-            auto_refitted=False,
         )
 
-    # Guard BEFORE the unlisted re-fit loop below: if the explicit rows
-    # alone already exceed the parent's new total, refit_unlisted=True's
-    # room_remaining goes negative, every unlisted sibling gets re-fit
-    # toward a negative amount, and the FIRST one (by ``children`` order)
-    # trips its own floor check — surfacing as ALLOCATION_BELOW_CONSUMED
-    # naming an Application/Key the caller never mentioned, with a
-    # negative ceiling in the message, instead of the real problem: the
-    # explicit ask itself. Reject that here, before any re-fit math runs,
-    # same code the refit_unlisted=False sibling-sum gate below would
-    # eventually raise for the equivalent case, just earlier and correctly
-    # attributed.
+    # Reject here, before the sibling-sum gate below, whenever the explicit
+    # rows alone already exceed the parent's new total — same code that
+    # gate would eventually raise for the equivalent case, just earlier
+    # and correctly attributed to the explicit ask itself rather than
+    # conflated with every untouched sibling's total too.
     if explicit_total > parent_new_amount:
+        parts = ", ".join(f"{_label(children_by_id[cid])} ({resolved[cid].amount})" for cid in explicit_by_id)
         raise ValidationError(
             message=(
-                f"Explicit total ({explicit_total}) already exceeds the parent's amount "
-                f"({parent_new_amount}), before any unlisted sibling is even considered."
+                f"{parent_label} only has {parent_new_amount} available, but this request "
+                f"alone would allocate {explicit_total} across {parts} — before any other "
+                f"sibling is even considered."
             ),
             code="ALLOCATION_TOTAL_EXCEEDED",
         )
 
+    # Untouched siblings keep their current amount exactly — not resolved,
+    # not returned. Still counted at their CURRENT amount for the
+    # feasibility gate below: the explicit rows must still fit alongside
+    # every sibling this call leaves alone.
     unlisted = [c for c in children if c.id not in explicit_by_id]
+    sibling_total = explicit_total + sum((c.allocated_amount for c in unlisted), Decimal("0"))
 
-    if refit_unlisted:
-        if parent_old_amount is None:
-            raise ValueError(
-                "resolve_level(refit_unlisted=True) requires parent_old_amount — the "
-                "unlisted group's re-fit tracks the parent's own change, it doesn't "
-                "normalize to fill whatever room happens to be left."
-            )
-        room_remaining = parent_new_amount - explicit_total
-        unlisted_old_total = sum((c.allocated_amount for c in unlisted), Decimal("0"))
-        explicit_old_total = sum(
-            (children_by_id[child_id].allocated_amount for child_id in explicit_by_id), Decimal("0")
-        )
-        # Room historically available to the unlisted group, before this call —
-        # NOT the same as unlisted_old_total whenever the group didn't already
-        # fill it. Scaling by (new room / old room) rather than normalizing to
-        # unlisted_old_total is what keeps deliberately-left-unallocated room
-        # unallocated (proportionally scaled, not silently absorbed) instead of
-        # inflating an under-allocated child to fill whatever's left.
-        old_room_for_unlisted = parent_old_amount - explicit_old_total
-
-        use_percentage_basis = False
-        unlisted_basis_total = unlisted_old_total
-        if old_room_for_unlisted > 0 and unlisted_old_total > 0:
-            unlisted_target_total = _quantize(
-                unlisted_old_total * (room_remaining / old_room_for_unlisted), _AMT_QUANT
-            )
-        else:
-            # No ₹ history to scale from — either nothing was historically
-            # available to this group, or every member of it currently holds
-            # 0. Rather than leave the room unallocated (silently
-            # re-creating the exact "no ceiling, no budget_usage row"
-            # lockout this whole re-fit exists to avoid, for a child whose
-            # PARENT simply never had money before), fall back to each
-            # child's own stored allocated_percentage — already guaranteed,
-            # by the same ALLOCATION_TOTAL_EXCEEDED gate every create/edit
-            # path through this Application/Tenant enforces regardless of
-            # its own funding state, to sum to <=100% of the parent. Clamped
-            # to room_remaining (not just parent_new_amount) so a percentage
-            # total that would otherwise overshoot — an explicit row also
-            # resolved in this same call already having consumed some of
-            # that room — can never push the group over what's actually
-            # left; the sibling-sum check below still catches anything that
-            # slips past this regardless.
-            unlisted_percentage_total = sum(
-                (c.allocated_percentage for c in unlisted), Decimal("0")
-            )
-            if unlisted_percentage_total > 0 and room_remaining > 0:
-                ideal_from_percentage = _quantize(
-                    parent_new_amount * (unlisted_percentage_total / Decimal("100")),
-                    _AMT_QUANT,
-                )
-                unlisted_target_total = min(ideal_from_percentage, room_remaining)
-                unlisted_basis_total = unlisted_percentage_total
-                use_percentage_basis = True
-            else:
-                # No child in the group has ever been given a percentage
-                # either — genuinely nothing to split by; the room stays
-                # unallocated rather than guessing.
-                unlisted_target_total = Decimal("0")
-
-        running_total = Decimal("0")
-        for index, child in enumerate(unlisted):
-            is_last = index == len(unlisted) - 1
-            if unlisted_target_total == 0:
-                amount = Decimal("0")
-            elif is_last:
-                # Absorbs whatever the independently-rounded amounts above left
-                # over, so the group's total is exact by construction. For a
-                # non-negative unlisted_target_total, this residual is also
-                # never negative: every non-last child below is rounded DOWN,
-                # so none of them is ever quantized above its own ideal share,
-                # which keeps running_total from ever exceeding the target.
-                amount = unlisted_target_total - running_total
-            else:
-                # ROUND_DOWN, not the module's usual ROUND_HALF_UP — see the
-                # `is_last` branch above for why: truncating instead of
-                # rounding is what makes "the last child's residual is never
-                # negative" a guarantee rather than a fix bolted on after the
-                # fact.
-                share = (
-                    child.allocated_percentage / unlisted_basis_total
-                    if use_percentage_basis
-                    else child.allocated_amount / unlisted_old_total
-                )
-                amount = _quantize(unlisted_target_total * share, _AMT_QUANT, rounding=ROUND_DOWN)
-            running_total += amount
-            percentage = _quantize(
-                (amount / parent_new_amount * 100) if parent_new_amount else Decimal("0"), _PCT_QUANT
-            )
-            # Same no-op exemption as the explicit loop above: an unlisted
-            # child's proportional re-fit landing EXACTLY back where it
-            # already was isn't a reduction — without this, a child that
-            # ever picked up any consumed spend while holding an
-            # insufficient (often 0%) ceiling would permanently block every
-            # future edit to its parent's total, including edits that don't
-            # touch this child's own share at all.
-            if amount < child.consumed_amount and amount != child.allocated_amount:
-                raise ValidationError(
-                    message=(
-                        f"id={child.id} would be re-fit to {amount} (from {child.allocated_amount}), "
-                        f"below its already-consumed {child.consumed_amount}."
-                    ),
-                    code="ALLOCATION_BELOW_CONSUMED",
-                    errors=[f"id={child.id} consumed_amount={child.consumed_amount} requested_budget={amount}"],
-                )
-            resolved[child.id] = ResolvedRow(
-                id=child.id,
-                amount=amount,
-                percentage=percentage,
-                changed=(amount != child.allocated_amount),
-                auto_refitted=True,
-            )
-        sibling_total = sum((r.amount for r in resolved.values()), Decimal("0"))
-    else:
-        # Untouched siblings keep their current amount exactly — not resolved,
-        # not returned. Still counted at their CURRENT amount for the
-        # feasibility gate below: the parent's own total isn't changing in
-        # this call, so the explicit rows must still fit alongside every
-        # sibling this call leaves alone.
-        sibling_total = explicit_total + sum((c.allocated_amount for c in unlisted), Decimal("0"))
-
-    # Sibling-sum check. Should always hold EXACTLY when refit_unlisted=True
-    # and unlisted_target_total is non-negative: unlisted_target_total never
-    # exceeds room_remaining, and the group always resolves to EXACTLY
-    # unlisted_target_total — every non-last child's ROUND_DOWN amount never
-    # exceeds its own ideal share, so the last child's residual is never
-    # negative, so nothing is ever clamped or otherwise made inexact. Kept
-    # as the final defensive gate there, not the primary mechanism,
-    # precisely so a future change to the rounding above that breaks that
-    # guarantee fails loudly here instead of silently persisting an
-    # over-committed total — no tolerance in that branch, on purpose.
-    #
-    # When refit_unlisted=False, sibling_total additionally includes every
-    # UNTOUCHED sibling's stored ₹ exactly as persisted, which can carry a
-    # few cents of legacy drift from independently-rounded percentage->₹
-    # derivations at creation time (see
+    # Sibling-sum check — the final defensive gate. sibling_total includes
+    # every UNTOUCHED sibling's stored ₹ exactly as persisted, which can
+    # carry a few cents of legacy drift from independently-rounded
+    # percentage->₹ derivations at creation time (see
     # ApplicationService._assert_allocation_within_cap, now ₹-gated to stop
     # new drift from accruing). Without some tolerance here, a tenant that
     # already drifted a cent over its true ceiling — through no fault of
@@ -375,14 +238,26 @@ def resolve_level(
     # construction to well under a cent per independently-rounded row),
     # never enough to mask a genuine over-allocation, which would be off by
     # whole rupees, not fractions of a cent per row.
-    drift_tolerance = _AMT_QUANT * len(children) if not refit_unlisted else Decimal("0")
+    drift_tolerance = _AMT_QUANT * len(children)
     if sibling_total > parent_new_amount + drift_tolerance:
+        # Name what actually collided, not just the two totals — an admin
+        # reducing a parent (or growing one explicit child) otherwise sees
+        # two numbers with no indication that its OTHER children are what
+        # it collided with (e.g. an Application's own API Keys).
+        detail = ""
+        holders = [c for c in unlisted if c.allocated_amount > 0]
+        if holders:
+            parts = ", ".join(f"{_label(c)} ({c.allocated_amount})" for c in holders)
+            detail = f" Already allocated to {parts}."
         raise ValidationError(
-            message=f"Resolved total ({sibling_total}) exceeds the parent's amount ({parent_new_amount}).",
+            message=(
+                f"{parent_label} only has {parent_new_amount} available, which cannot "
+                f"cover the {sibling_total} this resolves to.{detail}"
+            ),
             code="ALLOCATION_TOTAL_EXCEEDED",
         )
 
     # Preserve input order (children as given), not dict insertion order.
-    # With refit_unlisted=False, ``resolved`` only holds explicit rows, so
-    # untouched siblings are correctly absent from the return value too.
+    # ``resolved`` only ever holds explicit rows, so untouched siblings are
+    # correctly absent from the return value too.
     return [resolved[c.id] for c in children if c.id in resolved]

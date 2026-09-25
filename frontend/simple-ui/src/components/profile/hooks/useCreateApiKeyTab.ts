@@ -77,6 +77,16 @@ export function useCreateApiKeyTab({
     budget?: string;
   }>({});
 
+  /** Drop a submit-time error once the admin edits that field. */
+  const clearFieldError = useCallback((field: "application_id" | "budget") => {
+    setFieldErrors((prev) => {
+      if (prev[field] == null) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  }, []);
+
   const permissions = useMemo(() => {
     if (taskTypeNames.length === 0) return allPermissions;
     const enabled = new Set(taskTypeNames.map((t) => t.trim().toLowerCase()));
@@ -232,8 +242,22 @@ export function useCreateApiKeyTab({
       }));
       return;
     }
+    if (selectedApplication?.allocated_budget == null) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        budget: BUDGET_VALIDATION.applicationBudgetNotAssigned,
+      }));
+      return;
+    }
     const pct = Number(rawBudget);
-    if (!Number.isFinite(pct) || pct < 0) {
+    if (!Number.isFinite(pct)) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        budget: BUDGET_VALIDATION.enterValidPercentage,
+      }));
+      return;
+    }
+    if (pct < 0) {
       setFieldErrors((prev) => ({
         ...prev,
         budget: BUDGET_VALIDATION.budgetCannotBeNegative,
@@ -404,6 +428,7 @@ export function useCreateApiKeyTab({
     uncappedHoldsRemainder,
     formBannerError,
     fieldErrors,
+    clearFieldError,
     formatAvailablePct: () => formatPct(availablePct),
   };
 }

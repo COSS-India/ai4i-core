@@ -1624,7 +1624,7 @@ class TenantService:
             )
         applications_recomputed, keys_recomputed, snapshot_writes = (
             await self._allocations.cascade_tenant_budget_revision(
-                tenant_id, new_budget, current_user, platform_core_db
+                tenant_id, new_budget, current_user, platform_core_db, tenant_name=tenant.name
             )
         )
 

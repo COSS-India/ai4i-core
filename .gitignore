@@ -9,6 +9,7 @@ env-local-setup/
 .env.test.local
 .env.production.local
 .venv
+.venv-test
 
 # Python
 __pycache__/

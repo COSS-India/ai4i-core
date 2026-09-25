@@ -181,9 +181,9 @@ export const FIELD_HINTS = {
       helper: "Required. Keys are scoped to one Application.",
     },
     budget: {
-      placeholder: "0",
+      placeholder: "e.g. 25",
       helper:
-        "Required. Percentage of the parent Application's Budget. Must be greater than 0.",
+        "Required. Percentage of the parent Application's Budget, greater than 0 and within what the Application still has unallocated.",
     },
     search: {
       placeholder: "Search by key name",
