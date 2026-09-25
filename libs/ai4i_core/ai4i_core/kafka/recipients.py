@@ -27,7 +27,7 @@ its own pii_crypto module/key, there's no one shared instance), mirroring
 notification_settings_cache's own module-level state pattern.
 """
 import logging
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 from sqlalchemy import text
 
@@ -129,10 +129,152 @@ async def resolve_recipients(
 
     emails: List[str] = []
     for token in encrypted:
-        email = _decrypt(token)
+        try:
+            email = _decrypt(token)
+        except Exception as exc:
+            logger.warning(
+                "Skipping recipient that failed to decrypt (notification_id=%s tenant_id=%s): %s",
+                notification_id, tenant_id, exc,
+            )
+            continue
         if email:
             emails.append(email)
         else:
             logger.warning("Skipping recipient with no decryptable email (notification_id=%s tenant_id=%s)",
                             notification_id, tenant_id)
     return sorted(emails)
+
+
+async def _role_based_emails_bulk(auth_db, tenant_ids: List[str]) -> Tuple[List[str], Dict[str, List[str]]]:
+    """Bulk sibling of _role_based_emails for many tenants at once: the
+    platform ADMIN list is the same for every tenant, so it's fetched once;
+    TENANT ADMIN users are fetched in a single tenant_id = ANY(...) query and
+    grouped by tenant. Used by a fan-out that touches every tenant on a tier
+    (a tier PATCH), where one query per tenant would otherwise add hundreds
+    of round trips."""
+    admin_result = await auth_db.execute(
+        text(
+            "SELECT DISTINCT u.email"
+            "  FROM users u"
+            "  JOIN user_role ur ON ur.user_id = u.id"
+            "  JOIN roles r ON r.id = ur.role_id"
+            " WHERE r.name = 'ADMIN'"
+            "   AND u.is_delete IS NOT TRUE"
+            "   AND u.is_active IS TRUE"
+        )
+    )
+    admin_emails = [row.email for row in admin_result.all()]
+
+    tenant_admin_result = await auth_db.execute(
+        text(
+            "SELECT u.tenant_id, u.email"
+            "  FROM users u"
+            "  JOIN user_role ur ON ur.user_id = u.id"
+            "  JOIN roles r ON r.id = ur.role_id"
+            " WHERE r.name = 'TENANT ADMIN'"
+            "   AND u.tenant_id::text = ANY(:tenant_ids)"
+            "   AND u.is_delete IS NOT TRUE"
+            "   AND u.is_active IS TRUE"
+        ),
+        {"tenant_ids": tenant_ids},
+    )
+    tenant_admin_emails: Dict[str, List[str]] = {}
+    for row in tenant_admin_result.all():
+        tenant_admin_emails.setdefault(str(row.tenant_id), []).append(row.email)
+    return admin_emails, tenant_admin_emails
+
+
+async def _extra_recipient_emails_bulk(
+    core_db, auth_db, notification_id: int, tenant_ids: List[str]
+) -> Dict[str, List[str]]:
+    """Bulk sibling of _extra_recipient_emails: one subscription-table query
+    and one users query for every tenant in tenant_ids, instead of one pair
+    per tenant."""
+    sub_result = await core_db.execute(
+        text(
+            "SELECT tenant_id, recipients FROM tenant_notification_subscription"
+            " WHERE notification_id = :notification_id AND tenant_id = ANY(:tenant_ids)"
+        ),
+        {"notification_id": notification_id, "tenant_ids": tenant_ids},
+    )
+    user_ids_by_tenant: Dict[str, List[str]] = {}
+    all_user_ids: List[str] = []
+    for row in sub_result.all():
+        ids = list(row.recipients or [])
+        if ids:
+            user_ids_by_tenant[str(row.tenant_id)] = ids
+            all_user_ids.extend(ids)
+    if not all_user_ids:
+        return {}
+
+    users_result = await auth_db.execute(
+        text(
+            "SELECT id, tenant_id, email FROM users"
+            " WHERE tenant_id::text = ANY(:tenant_ids)"
+            "   AND is_delete IS NOT TRUE"
+            "   AND is_active IS TRUE"
+            "   AND id::text = ANY(:user_ids)"
+        ),
+        {"tenant_ids": tenant_ids, "user_ids": all_user_ids},
+    )
+    # Keyed by (tenant_id, user_id) rather than user_id alone, so a
+    # recipient id that (incorrectly) matches a user in another tenant can
+    # never leak across tenants here.
+    email_by_tenant_user: Dict[Tuple[str, str], str] = {
+        (str(row.tenant_id), str(row.id)): row.email for row in users_result.all()
+    }
+
+    extra_by_tenant: Dict[str, List[str]] = {}
+    for tenant_id, user_ids in user_ids_by_tenant.items():
+        emails = [
+            email_by_tenant_user[(tenant_id, uid)]
+            for uid in user_ids
+            if (tenant_id, uid) in email_by_tenant_user
+        ]
+        if emails:
+            extra_by_tenant[tenant_id] = emails
+    return extra_by_tenant
+
+
+async def resolve_recipients_bulk(
+    core_db, auth_db, *, notification_id: int, tenant_ids: List[str]
+) -> Dict[str, List[str]]:
+    """Bulk sibling of resolve_recipients: the same per-tenant recipient set
+    (ADMIN + TENANT ADMIN + extra subscribed recipients), but for every
+    tenant in tenant_ids using a fixed number of queries instead of one set
+    of queries per tenant — for a fan-out like a tier PATCH that can touch
+    hundreds of tenants at once. Best-effort per tenant, same as
+    resolve_recipients: a tenant that isn't in the returned dict, or that
+    fails entirely, gets []."""
+    tenant_ids = [str(t) for t in tenant_ids]
+    if not tenant_ids:
+        return {}
+    try:
+        admin_emails, tenant_admin_emails = await _role_based_emails_bulk(auth_db, tenant_ids)
+        extra_emails = await _extra_recipient_emails_bulk(core_db, auth_db, notification_id, tenant_ids)
+    except Exception as exc:
+        logger.warning(
+            "Bulk recipient resolution failed for notification_id=%s tenant_ids=%s: %s",
+            notification_id, tenant_ids, exc,
+        )
+        return {}
+
+    result: Dict[str, List[str]] = {}
+    for tenant_id in tenant_ids:
+        encrypted = set(admin_emails)
+        encrypted.update(tenant_admin_emails.get(tenant_id, []))
+        encrypted.update(extra_emails.get(tenant_id, []))
+        emails: List[str] = []
+        for token in encrypted:
+            try:
+                email = _decrypt(token)
+            except Exception as exc:
+                logger.warning(
+                    "Skipping recipient that failed to decrypt (notification_id=%s tenant_id=%s): %s",
+                    notification_id, tenant_id, exc,
+                )
+                continue
+            if email:
+                emails.append(email)
+        result[tenant_id] = sorted(emails)
+    return result

@@ -16,6 +16,7 @@ from .notification_settings_cache import (
     refresh_all as refresh_notification_settings_cache,
     invalidate as invalidate_notification_settings_cache,
     is_notification_enabled,
+    is_notification_enabled_bulk,
     get_threshold_bands,
     get_notification_id,
     get_channels,
@@ -29,7 +30,11 @@ from .ledger import (
     check_and_record_action,
     check_and_record_actions_bulk,
 )
-from .recipients import configure as configure_recipient_decryption, resolve_recipients
+from .recipients import (
+    configure as configure_recipient_decryption,
+    resolve_recipients,
+    resolve_recipients_bulk,
+)
 
 __all__ = [
     "init_kafka_producer",
@@ -40,6 +45,7 @@ __all__ = [
     "refresh_notification_settings_cache",
     "invalidate_notification_settings_cache",
     "is_notification_enabled",
+    "is_notification_enabled_bulk",
     "get_threshold_bands",
     "get_notification_id",
     "get_channels",
@@ -52,4 +58,5 @@ __all__ = [
     "check_and_record_actions_bulk",
     "configure_recipient_decryption",
     "resolve_recipients",
+    "resolve_recipients_bulk",
 ]
