@@ -16,7 +16,9 @@ from app.core.exceptions import ValidationError
 from ai4i_core.kafka import (
     publish_admin_event as publish_notification_event,
     is_notification_enabled,
+    get_notification_id,
     check_and_record_actions_bulk,
+    resolve_recipients,
 )
 from app.models.pay_per_use.tier import Tier, TierQuota
 from app.repositories.pay_per_use.usage_repository import update_tier_cache
@@ -382,6 +384,7 @@ async def _publish_quota_limit_updated(
     if not await is_notification_enabled(session, "QUOTA_LIMIT_UPDATED"):
         return
     try:
+        notification_id = await get_notification_id(session, "QUOTA_LIMIT_UPDATED")
         tenant_ids = await _fetch_tenant_ids_for_tier(tier.id, auth_db)
         occurred_at_dt = datetime.now(timezone.utc)
         occurred_at = occurred_at_dt.isoformat()
@@ -395,10 +398,18 @@ async def _publish_quota_limit_updated(
             session, "QUOTA_LIMIT_UPDATED", tenant_subjects, occurred_at, str(updated_by or "")
         )
         fired_set = {(tenant_id, subject["model_task_type"]) for tenant_id, subject in fired_pairs}
+        # Recipients depend only on tenant_id, not on which task type
+        # changed — resolved once per tenant (not once per fired pair) so a
+        # tenant with 3 changed quotas doesn't trigger 3 identical lookups.
+        recipients_by_tenant: dict = {}
         for tenant_id in tenant_ids:
             for change in quota_changes:
                 if (str(tenant_id), change["inference_name"]) not in fired_set:
                     continue
+                if str(tenant_id) not in recipients_by_tenant and notification_id is not None:
+                    recipients_by_tenant[str(tenant_id)] = await resolve_recipients(
+                        session, auth_db, notification_id=notification_id, tenant_id=str(tenant_id)
+                    )
                 # Positional array per design doc §9.5, not the old
                 # {"inference_name", "previous", "current"} dict — emailer.py
                 # now indexes into it. changes is an array (one line per
@@ -421,6 +432,7 @@ async def _publish_quota_limit_updated(
                     ],
                     actor_id=str(updated_by or ""),
                     occurred_at=occurred_at,
+                    recipients=recipients_by_tenant.get(str(tenant_id), []),
                 )
     except Exception as exc:
         logger.warning("QUOTA_LIMIT_UPDATED publish failed for tier %s: %s", tier.id, exc)

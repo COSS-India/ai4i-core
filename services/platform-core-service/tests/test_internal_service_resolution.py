@@ -21,6 +21,8 @@ if "ai4i_core.kafka" not in sys.modules:
     _kafka_stub.publish_admin_event = MagicMock()
     _kafka_stub.is_notification_enabled = MagicMock()
     _kafka_stub.check_and_record_actions_bulk = MagicMock()
+    _kafka_stub.get_notification_id = MagicMock()
+    _kafka_stub.resolve_recipients = MagicMock()
     sys.modules["ai4i_core.kafka"] = _kafka_stub
 
 _spec = importlib.util.spec_from_file_location(
