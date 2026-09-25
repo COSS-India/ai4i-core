@@ -1,4 +1,4 @@
-import { HStack, IconButton, Tooltip } from "@chakra-ui/react";
+import { Box, HStack, IconButton, Tooltip } from "@chakra-ui/react";
 import { DeleteIcon, DownloadIcon, EditIcon, ViewIcon } from "@chakra-ui/icons";
 import React from "react";
 import type { DataTableColumn } from "./DataTable";
@@ -101,7 +101,13 @@ export function DataTableActions({
 
         return (
           <Tooltip key={action.id} label={tooltip} hasArrow openDelay={300} isDisabled={!tooltip}>
-            {button}
+            {action.disabled ? (
+              <Box as="span" display="inline-flex">
+                {button}
+              </Box>
+            ) : (
+              button
+            )}
           </Tooltip>
         );
       })}

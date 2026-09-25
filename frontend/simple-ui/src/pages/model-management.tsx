@@ -17,11 +17,6 @@ import {
   VStack,
   HStack,
   useDisclosure,
-  Tabs,
-  TabList,
-  TabPanels,
-  Tab,
-  TabPanel,
   Textarea,
   Alert,
   AlertIcon,
@@ -32,7 +27,7 @@ import {
   Tooltip,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import { CopyIcon } from "@chakra-ui/icons";
+import { ArrowBackIcon, CopyIcon } from "@chakra-ui/icons";
 import { useRouter } from "next/router";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -110,7 +105,6 @@ const ModelManagementPage: React.FC = () => {
   const [selectedModel, setSelectedModel] = useState<Model | null>(null);
   const [isViewingModel, setIsViewingModel] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [activeTab, setActiveTab] = useState(0);
   const [uploadedModelData, setUploadedModelData] = useState<any>(null);
   const [parsedModelData, setParsedModelData] = useState<any>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
@@ -154,7 +148,6 @@ const ModelManagementPage: React.FC = () => {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const isRegistryReadOnly = isRegistryReadOnlyUser(user?.roles);
-  const viewTabIndex = 1;
   const { isOpen: isCreateOpen, onOpen: onCreateOpen, onClose: onCreateCloseRaw } = useDisclosure();
   const { copy } = useCopyToClipboard();
 
@@ -176,9 +169,7 @@ const ModelManagementPage: React.FC = () => {
   useEffect(() => {
     const t = router.query.tab;
     if (t === "1" || t === "create") {
-      if (isRegistryReadOnly) {
-        setActiveTab(0);
-      } else {
+      if (!isRegistryReadOnly) {
         onCreateOpen();
       }
       if (router.query.tab) {
@@ -186,11 +177,8 @@ const ModelManagementPage: React.FC = () => {
         delete q.tab;
         router.replace({ pathname: "/model-management", query: q }, undefined, { shallow: true });
       }
-      return;
     }
-    if (t === "2") setActiveTab(viewTabIndex);
-    else setActiveTab(0);
-  }, [router.query.tab, isRegistryReadOnly, router, viewTabIndex, onCreateOpen]);
+  }, [router.query.tab, isRegistryReadOnly, router, onCreateOpen]);
 
   // Fetch all models for current task/status filters (paginated API walk) for client search + pagination
   const fetchModels = useCallback(async () => {
@@ -583,7 +571,6 @@ const ModelManagementPage: React.FC = () => {
       const model = await getModelById(modelId);
       setSelectedModel(model as unknown as Model);
       setIsViewingModel(true);
-      setActiveTab(viewTabIndex);
       router.replace({ pathname: "/model-management", query: { ...router.query, tab: "2" } }, undefined, { shallow: true });
     } catch (error) {
       const { message } = parseError(error);
@@ -592,6 +579,14 @@ const ModelManagementPage: React.FC = () => {
         message,
       });
     }
+  };
+
+  const closeModelView = () => {
+    setIsViewingModel(false);
+    setSelectedModel(null);
+    const q = { ...router.query } as Record<string, string>;
+    delete q.tab;
+    router.replace({ pathname: "/model-management", query: q }, undefined, { shallow: true });
   };
 
   const handleDeprecateModel = async (model: Model) => {
@@ -819,7 +814,6 @@ const ModelManagementPage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-           <VStack spacing={6} w="full">
                   <ManagementPageHeader
                     title="Model Management"
                     description={
@@ -834,107 +828,23 @@ const ModelManagementPage: React.FC = () => {
                     }
                   />
 
-                    <Tabs
-              w="full"
-              colorScheme="blue"
-              variant="enclosed"
-              index={activeTab}
-              onChange={(index) => {
-                setActiveTab(index);
-                if (index !== viewTabIndex) {
-                  setIsViewingModel(false);
-                  setSelectedModel(null);
-                }
-                const q = { ...router.query } as Record<string, string>;
-                if (index === 0) delete q.tab;
-                else q.tab = "2";
-                router.replace({ pathname: "/model-management", query: q }, undefined, { shallow: true });
-              }}
-            >
-              <TabList>
-                <Tab fontWeight="semibold">Model Registry</Tab>
-                {isViewingModel && selectedModel && (
-                  <Tab fontWeight="semibold">View Model</Tab>
-                )}
-              </TabList>
-
-              <TabPanels>
-                {/* Model Registry Tab */}
-                <TabPanel>
-                      <DataTable
-                        layout="admin"
-                        key={`${filterTaskType}-${filterVersionStatus}`}
-                        items={registryTableItems}
-                        columns={modelColumns}
-            sort={modelSort.sort}
-            onSortChange={modelSort.onSortChange}
-                        getRowKey={(model) => model.modelId}
-                        onRowClick={(model) => handleViewModel(model.modelId)}
-                        paginate="client"
-                        paginationPosition="bottom"
-                        pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
-                        isLoading={isLoading}
-                        loadingMessage="Loading models..."
-                        emptyMessage="No models in the registry yet."
-                        noResultsMessage="No results found. Try adjusting your search or filters."
-                        unfilteredCount={models.length}
-                        hasActiveFilters={hasActiveFilters}
-                        onClearFilters={clearAllFilters}
-                        search={{
-                          label: "Search",
-                          value: searchQuery,
-                          onChange: setSearchQuery,
-                          placeholder: "Search by model name...",
-                          fields: ["model_name", "name"],
-                        }}
-                        filterDefs={[
-                          {
-                            id: "status",
-                            label: "Status",
-                            type: "select",
-                            param: "version_status",
-                            value: filterVersionStatus,
-                            onChange: setFilterVersionStatus,
-                            width: { base: "full", sm: "140px" },
-                            options: [
-                              { label: "All", value: MODEL_VERSION.FILTER.ALL },
-                              ...MODEL_VERSION_FILTER_LIST.map((s) => ({
-                                label: formatModelVersionFilterLabel(s),
-                                value: s,
-                              })),
-                            ],
-                          },
-                          {
-                            id: "taskType",
-                            label: "Task type",
-                            type: "select",
-                            param: "model_task_type",
-                            value: filterTaskType,
-                            onChange: setFilterTaskType,
-                            width: { base: "full", sm: "160px" },
-                            options: [
-                              ...(showTaskTypeAllOption
-                                ? [{ label: "All", value: "" }]
-                                : []),
-                              ...taskTypeNames.map((t) => ({
-                                label: formatModelTaskTypeLabel(t),
-                                value: t,
-                              })),
-                            ],
-                          },
-                        ]}
-                      />
-                </TabPanel>
-
-                {/* View Model Tab */}
-                {isViewingModel && selectedModel && (
-                  <TabPanel>
+                {isViewingModel && selectedModel ? (
                     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                       <CardHeader>
                         <HStack justify="space-between" align="center">
-                          <Heading size="md" color="ink.800" userSelect="none" cursor="default">
+                          <HStack spacing={2} minW={0}>
+                            <IconButton
+                              aria-label="Back"
+                              icon={<ArrowBackIcon />}
+                              size="sm"
+                              variant="ghost"
+                              onClick={closeModelView}
+                              flexShrink={0}
+                            />
+                            <Heading size="md" color="ink.800" userSelect="none" cursor="default">
                            {selectedModel.name}
                           </Heading>
+                          </HStack>
                           <HStack spacing={2}>
                             {!isRegistryReadOnly &&
                               (selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && (
@@ -994,11 +904,69 @@ const ModelManagementPage: React.FC = () => {
                           </VStack>
                       </CardBody>
                     </Card>
-                  </TabPanel>
+                ) : (
+                      <DataTable
+                        layout="admin"
+                        key={`${filterTaskType}-${filterVersionStatus}`}
+                        items={registryTableItems}
+                        columns={modelColumns}
+            sort={modelSort.sort}
+            onSortChange={modelSort.onSortChange}
+                        getRowKey={(model) => model.modelId}
+                        onRowClick={(model) => handleViewModel(model.modelId)}
+                        paginate="client"
+                        paginationPosition="bottom"
+                        pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
+                        isLoading={isLoading}
+                        loadingMessage="Loading models..."
+                        emptyMessage="No models in the registry yet."
+                        noResultsMessage="No results found. Try adjusting your search or filters."
+                        unfilteredCount={models.length}
+                        hasActiveFilters={hasActiveFilters}
+                        onClearFilters={clearAllFilters}
+                        search={{
+                          label: "Search",
+                          value: searchQuery,
+                          onChange: setSearchQuery,
+                          placeholder: "Search by model name...",
+                          fields: ["model_name", "name"],
+                        }}
+                        filterDefs={[
+                          {
+                            id: "status",
+                            label: "Status",
+                            type: "select",
+                            param: "version_status",
+                            value: filterVersionStatus,
+                            onChange: setFilterVersionStatus,
+                            options: [
+                              { label: "All", value: MODEL_VERSION.FILTER.ALL },
+                              ...MODEL_VERSION_FILTER_LIST.map((s) => ({
+                                label: formatModelVersionFilterLabel(s),
+                                value: s,
+                              })),
+                            ],
+                          },
+                          {
+                            id: "taskType",
+                            label: "Task type",
+                            type: "select",
+                            param: "model_task_type",
+                            value: filterTaskType,
+                            onChange: setFilterTaskType,
+                            options: [
+                              ...(showTaskTypeAllOption
+                                ? [{ label: "All", value: "" }]
+                                : []),
+                              ...taskTypeNames.map((t) => ({
+                                label: formatModelTaskTypeLabel(t),
+                                value: t,
+                              })),
+                            ],
+                          },
+                        ]}
+                      />
                 )}
-              </TabPanels>
-            </Tabs>
-     </VStack>
       </ContentLayout>
 
       {!isRegistryReadOnly && (

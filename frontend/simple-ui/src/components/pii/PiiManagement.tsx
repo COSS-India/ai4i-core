@@ -14,7 +14,6 @@ import {
   GridItem,
   Heading,
   HStack,
-  IconButton,
   Input,
   Select,
   SimpleGrid,
@@ -26,16 +25,15 @@ import {
   Tabs,
   Text,
   Textarea,
-  Tooltip,
   useColorModeValue,
   useDisclosure,
   VStack,
 } from "@chakra-ui/react";
 import { showToast } from "../../utils/toast";
 import { INSTITUTION, INSTITUTIONS } from "../../config/constants";
-import { DeleteIcon, EditIcon } from "@chakra-ui/icons";
 import { piiService } from "../../services/piiService";
 import DataTable, {
+  DataTableActions,
   useAdminTableSurface,
   DEFAULT_PAGE_SIZE_OPTIONS,
   type DataTableColumn,
@@ -410,20 +408,15 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
         thProps: { textAlign: "right" },
         tdProps: { textAlign: "right" },
         cell: (r) => (
-          <Tooltip label="Remove rule" hasArrow>
-            <IconButton
-              aria-label="Remove rule"
-              icon={<DeleteIcon />}
-              size="sm"
-              variant="ghost"
-              colorScheme="red"
-              _hover={{ bg: "red.50" }}
-              onClick={(e) => {
-                e.stopPropagation();
-                removeRuleForRow(r);
-              }}
-            />
-          </Tooltip>
+          <DataTableActions
+            actions={[
+              {
+                id: "delete",
+                label: "Remove rule",
+                onClick: () => removeRuleForRow(r),
+              },
+            ]}
+          />
         ),
       },
     ],
@@ -470,20 +463,15 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
         thProps: { textAlign: "right" },
         tdProps: { textAlign: "right" },
         cell: (row) => (
-          <Tooltip label="Remove mapping" hasArrow>
-            <IconButton
-              aria-label="Remove mapping"
-              icon={<DeleteIcon />}
-              size="sm"
-              variant="ghost"
-              colorScheme="red"
-              _hover={{ bg: "red.50" }}
-              onClick={(e) => {
-                e.stopPropagation();
-                void handleDeleteTenantMapping(row.tenant_id);
-              }}
-            />
-          </Tooltip>
+          <DataTableActions
+            actions={[
+              {
+                id: "delete",
+                label: "Remove mapping",
+                onClick: () => void handleDeleteTenantMapping(row.tenant_id),
+              },
+            ]}
+          />
         ),
       },
     ],
@@ -679,17 +667,16 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
                           </Text>
                         </HStack>
                         <Box onClick={(e) => e.stopPropagation()}>
-                          <Tooltip label="Edit policy rules" hasArrow placement="top">
-                            <IconButton
-                              aria-label="Edit policy rules for domain"
-                              icon={<EditIcon />}
-                              size="sm"
-                              variant="ghost"
-                              colorScheme="blue"
-                              _hover={{ bg: "blue.50" }}
-                              onClick={() => void loadDomainConfig(d.domain_id)}
-                            />
-                          </Tooltip>
+                          <DataTableActions
+                            actions={[
+                              {
+                                id: "edit",
+                                label: "Edit policy rules",
+                                "aria-label": "Edit policy rules for domain",
+                                onClick: () => void loadDomainConfig(d.domain_id),
+                              },
+                            ]}
+                          />
                         </Box>
                       </HStack>
                     ))}

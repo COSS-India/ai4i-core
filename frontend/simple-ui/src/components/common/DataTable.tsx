@@ -598,7 +598,7 @@ function CardLayoutDataTable<T>({
   showFooter = false,
   variant = "default",
   borderRadius = variant === "compact" ? "10px" : "14px",
-  theadBg = "#FAFBFD",
+  theadBg = "ink.50",
   cellPy = variant === "compact" ? 3 : 4,
   tableMinWidth,
   containerMt = variant === "compact" ? 0 : 1,
@@ -909,7 +909,7 @@ function AdminLayoutDataTable<T>({
         canPrev={pagination.canPrev}
         canNext={pagination.canNext}
         borderColor="ink.200"
-        bg="#FAFBFD"
+        bg="ink.50"
         variant="attached"
         placement={paginationPosition}
       />
@@ -943,7 +943,7 @@ function AdminLayoutDataTable<T>({
         w="100%"
         sx={{ "th, td": { verticalAlign: "middle" } }}
       >
-        <Thead bg="#FAFBFD" position="sticky" top={0} zIndex={1}>
+        <Thead bg="ink.50" position="sticky" top={0} zIndex={1}>
           <Tr>
             {columns.map((col) => {
               const truncate = shouldAutoTruncateColumn(col);
