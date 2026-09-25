@@ -220,6 +220,12 @@ class CoreSettings(BaseSettings):
         description='Metering request-count KPI source: "prometheus" | "dual" | "opensearch"',
     )
 
+    # SAME value auth-service's own PII_ENCRYPTION_KEY uses — needed here to
+    # decrypt users.email when resolving a notification's recipients
+    # (ai4i_core.kafka.recipients), since auth-service is the only writer of
+    # that column but every producer of a notification now decrypts it.
+    pii_encryption_key: Optional[str] = Field(default=None, description="Must match auth-service's PII_ENCRYPTION_KEY.")
+
     # ── Derived helpers ──
 
     def get_database_url(self) -> str:

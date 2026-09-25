@@ -10,11 +10,10 @@ receivers, routing-rules, history) and is not touched here.
 
 Reading either catalog is the single ``GET /notification-alerts/catalog?type=``
 endpoint in app.routes.notification. This module's PATCH updates
-channels/recipient_roles for any catalog row, plus thresholds for the 2
-ALERT-type rows (QUOTA_THRESHOLD, BUDGET_THRESHOLD) — thresholds only exist
-on those, so the service rejects them for a NOTIFICATION-type row. The
-row's own stored ``type`` decides what's valid, never something the caller
-asserts.
+channels/scope for any catalog row, plus thresholds for the 2 ALERT-type
+rows (QUOTA_THRESHOLD, BUDGET_THRESHOLD) — thresholds only exist on those,
+so the service rejects them for a NOTIFICATION-type row. The row's own
+stored ``type`` decides what's valid, never something the caller asserts.
 """
 
 from fastapi import APIRouter, Depends, Request

@@ -38,6 +38,7 @@ from ai4i_core.kafka import (
     refresh_notification_settings_cache,
     start_notification_settings_listener,
     stop_notification_settings_listener,
+    configure_recipient_decryption,
 )
 from app.routes import api_router, versioning
 from app.services.role_permission_cache import role_permission_cache
@@ -83,6 +84,10 @@ async def _configure_notification_settings_cache():
         logger.warning("Notification settings cache skipped: platform-core DB not configured.")
         return
     try:
+        # Producer-side recipient resolution (ai4i_core.kafka.recipients)
+        # decrypts users.email itself now, rather than leaving that to
+        # notifications_consumer — hand it this service's own decrypt fn.
+        configure_recipient_decryption(lambda token: pii_crypto.decrypt(token, pii_crypto.EMAIL_CONTEXT))
         async with session_factory() as db:
             await refresh_notification_settings_cache(db)
         start_notification_settings_listener(get_redis_client())
