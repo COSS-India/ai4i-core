@@ -37,7 +37,7 @@ const MeteringChartPanel: React.FC<MeteringChartPanelProps> = ({
   return (
     <Box ref={containerRef} w="100%" h={`${height}px`} minW={`${minWidth}px`} minH={`${height}px`}>
       {!mounted || size.width === 0 ? (
-        <Center h="full"><Spinner size="md" color="orange.400" /></Center>
+        <Center h="full"><Spinner size="md" /></Center>
       ) : (
         children(size)
       )}

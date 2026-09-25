@@ -38,7 +38,7 @@ const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
   if (isLoading && !detail) {
     body = (
       <Center py={12}>
-        <Spinner color="blue.500" />
+        <Spinner />
       </Center>
     );
   } else if (detail) {

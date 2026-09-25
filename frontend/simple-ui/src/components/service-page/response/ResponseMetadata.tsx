@@ -23,13 +23,13 @@ const ResponseMetadata: React.FC<ResponseMetadataProps> = ({ items }) => {
       spacing={{ base: 4, md: 8 }}
       w="full"
       p="1rem"
-      bg="orange.100"
-      borderRadius="15px"
+      bg="ink.50"
+      borderRadius="md"
     >
       {items.map((item) => (
         <Stat key={item.label} textAlign="center">
           <StatLabel>{item.label}</StatLabel>
-          <StatNumber color="orange.600">{item.value}</StatNumber>
+          <StatNumber color="ink.800">{item.value}</StatNumber>
           {item.helpText && <StatHelpText>{item.helpText}</StatHelpText>}
         </Stat>
       ))}
