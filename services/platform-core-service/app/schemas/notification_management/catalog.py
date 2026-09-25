@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, StrictBool, field_validator
 
@@ -35,7 +35,13 @@ class CatalogItem(BaseModel):
 
     ``scope`` is GLOBAL (applies platform-wide, no per-institution
     opt-out) or INSTITUTION (available for an institution to subscribe to
-    — see app.routes.notification_subscription)."""
+    — see app.routes.notification_subscription). ``recipient_roles`` is
+    kept (not dropped) so the producer-side caches that still raw-SELECT it
+    keep working until they move onto scope — see catalog_service.
+    _apply_admin_recipient_scope_invariant for how its ``"ADMIN"`` key
+    (the Adopter Admin's own recipient toggle) is tied to ``scope``: True
+    by default and overridable while GLOBAL, always False while
+    INSTITUTION."""
 
     id: int
     name: str
@@ -44,6 +50,7 @@ class CatalogItem(BaseModel):
     type: NotificationType
     module: NotificationModule
     channels: List[NotificationChannel]
+    recipient_roles: Dict[str, bool]
     scope: NotificationScope
     thresholds: Optional[List[ThresholdBand]] = None
 
@@ -54,9 +61,14 @@ class CatalogResponse(BaseModel):
 
 class CatalogUpdate(BaseModel):
     """PATCH /notification-alerts/catalog/{name} body. Every field optional — only the fields
-    present are changed; scope/thresholds each replace their own
-    column/config-key wholesale (the mockup's checkbox group sends its whole
-    current state) without disturbing the other, unset one.
+    present are changed; recipient_roles/scope/thresholds each replace
+    their own column/config-key wholesale (the mockup's checkbox group
+    sends its whole current state) without disturbing the other, unset
+    one.
+
+    ``recipient_roles["ADMIN"]`` (the Adopter Admin's own recipient toggle)
+    is enforced against the row's effective ``scope`` regardless of what's
+    sent here — see catalog_service._apply_admin_recipient_scope_invariant.
 
     ``thresholds``, when present, must be the complete set of exactly
     THRESHOLD_BAND_COUNT bands — there is no partial/per-band PATCH, since a
@@ -66,6 +78,11 @@ class CatalogUpdate(BaseModel):
     whole list back."""
 
     channels: Optional[List[NotificationChannel]] = None
+    # Strict: a plain `bool` here would let pydantic's default lax mode
+    # coerce a string like "true"/"false" (or "1"/"yes"/"on"/...) into a
+    # real bool instead of 422ing — silently masking a loosely-typed
+    # caller's bug instead of failing fast (per this endpoint's spec).
+    recipient_roles: Optional[Dict[str, StrictBool]] = None
     scope: Optional[NotificationScope] = None
     thresholds: Optional[List[ThresholdBand]] = None
 

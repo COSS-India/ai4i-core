@@ -14,6 +14,11 @@ no unsubscribe option to change while a row is GLOBAL.
 an id that doesn't resolve to an active user of this same institution must
 be rejected, not silently accepted.
 
+**Getting-or-creating a subscription row is race-safe**: it's an
+INSERT ... ON CONFLICT DO NOTHING followed by a SELECT, not a
+SELECT-then-conditionally-INSERT — the fake session below simulates the
+INSERT as an upsert-if-absent so a pre-existing row is never duplicated.
+
 No database — both sessions (primary + auth) are faked.
 """
 
@@ -27,6 +32,7 @@ from app.core.exceptions import AppError, EntityNotFoundError, ValidationError
 from app.models.notification_management.tenant_notification_subscription import (
     TenantNotificationSubscription,
 )
+from app.services.notification_management import catalog_service
 from app.services.notification_management import subscription_service as svc
 
 
@@ -67,6 +73,28 @@ class _Session:
         if "id_1" in params:
             match = next((r for r in self.catalog_rows if r.id == params["id_1"]), None)
             result.scalar_one_or_none.return_value = match
+        elif {"subscribed", "recipients", "notification_id", "tenant_id"} <= params.keys():
+            # The INSERT ... ON CONFLICT DO NOTHING from
+            # _get_or_create_subscription_row — its own bound params have no
+            # `_1` suffix (a single-row VALUES clause), unlike a `select()
+            # .where()`'s. Simulated as an upsert-if-absent: a pre-existing
+            # row is left alone (ON CONFLICT DO NOTHING), never duplicated.
+            match = next(
+                (
+                    r for r in self.sub_rows
+                    if r.notification_id == params["notification_id"] and r.tenant_id == params["tenant_id"]
+                ),
+                None,
+            )
+            if match is None:
+                row = TenantNotificationSubscription(
+                    notification_id=params["notification_id"],
+                    tenant_id=params["tenant_id"],
+                    subscribed=params["subscribed"],
+                    recipients=list(params["recipients"]),
+                )
+                self.sub_rows.append(row)
+                self.added.append(row)
         elif "tenant_id_1" in params and "notification_id_1" in params:
             match = next(
                 (
@@ -75,6 +103,7 @@ class _Session:
                 ),
                 None,
             )
+            result.scalar_one.return_value = match
             result.scalar_one_or_none.return_value = match
         elif "tenant_id_1" in params:
             result.scalars.return_value.all.return_value = [
@@ -87,10 +116,6 @@ class _Session:
         else:
             result.scalars.return_value.all.return_value = list(self.catalog_rows)
         return result
-
-    def add(self, row):
-        self.added.append(row)
-        self.sub_rows.append(row)
 
     async def commit(self):
         self.commits += 1
@@ -234,3 +259,54 @@ class TestUpdateSubscriptionRecipients:
             session, tenant_id="7", notification_id=1, recipients=["u1"], auth_db=auth_db,
         )
         assert item.recipients == ["u1"]
+
+
+@pytest.mark.asyncio
+class TestGetOrCreateSubscriptionRowIsRaceSafe:
+    """_get_or_create_subscription_row: INSERT ... ON CONFLICT DO NOTHING
+    then SELECT — not SELECT-then-conditionally-INSERT — so two concurrent
+    first writes for the same (notification_id, tenant_id) never race on
+    uq_tenant_notification_subscription_identity."""
+
+    async def test_first_call_creates_exactly_one_row(self):
+        session = _Session(sub_rows=[])
+        row = await svc._get_or_create_subscription_row(session, notification_id=1, tenant_id="7")
+        assert row.tenant_id == "7"
+        assert len(session.sub_rows) == 1
+
+    async def test_second_call_for_the_same_key_does_not_duplicate(self):
+        # Simulates the race the reviewer flagged: whichever call the fake
+        # "wins", the second must find the first's row via ON CONFLICT DO
+        # NOTHING, not attempt (and fail) its own insert.
+        session = _Session(sub_rows=[])
+        first = await svc._get_or_create_subscription_row(session, notification_id=1, tenant_id="7")
+        second = await svc._get_or_create_subscription_row(session, notification_id=1, tenant_id="7")
+        assert len(session.sub_rows) == 1
+        assert first is second
+
+    async def test_a_pre_existing_row_is_returned_not_replaced(self):
+        existing = _sub_row(notification_id=1, tenant_id="7", subscribed=True, recipients=["u1"])
+        session = _Session(sub_rows=[existing])
+        row = await svc._get_or_create_subscription_row(session, notification_id=1, tenant_id="7")
+        assert row is existing
+        assert row.subscribed is True
+        assert row.recipients == ["u1"]
+        assert len(session.sub_rows) == 1
+
+
+class TestNotificationChannelIsImportedNotDuplicated:
+    """A rename of the channel constant only has to happen in
+    catalog_service — subscription_service must import it, not redefine
+    its own copy that could silently drift out of sync."""
+
+    def test_same_channel_value_as_catalog_service(self):
+        assert svc.NOTIFICATION_ALERT_UPDATES_CHANNEL == catalog_service.NOTIFICATION_ALERT_UPDATES_CHANNEL
+
+    def test_is_the_same_module_attribute_not_a_copy(self):
+        import inspect
+
+        source = inspect.getsource(svc)
+        assert '"notification_alert_updates"' not in source, (
+            "the channel string must not be re-declared in subscription_service — "
+            "import NOTIFICATION_ALERT_UPDATES_CHANNEL from catalog_service instead"
+        )

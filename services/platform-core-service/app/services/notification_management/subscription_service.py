@@ -20,6 +20,7 @@ import logging
 from typing import List, Optional
 
 from sqlalchemy import select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AppError, EntityNotFoundError, ValidationError
@@ -31,13 +32,11 @@ from app.models.notification_management.tenant_notification_subscription import 
 from app.schemas.enums.notification_management import NotificationScope, NotificationType
 from app.schemas.notification_management.subscription import SubscriptionItem
 from app.services.notification_management.catalog_metadata import NOTIFICATION_METADATA
+from app.services.notification_management.catalog_service import (
+    NOTIFICATION_ALERT_UPDATES_CHANNEL,
+)
 
 logger = logging.getLogger(__name__)
-
-# Same channel catalog_service.update_catalog publishes to — a scope change
-# matters to a subscription reader too (it flips whether the stored bit is
-# even consulted), so this reuses rather than duplicates the wiring.
-NOTIFICATION_ALERT_UPDATES_CHANNEL = "notification_alert_updates"
 
 
 def _to_subscription_item(
@@ -97,22 +96,33 @@ async def _get_catalog_row(session: AsyncSession, notification_id: int) -> Confi
 async def _get_or_create_subscription_row(
     session: AsyncSession, notification_id: int, tenant_id: str
 ) -> TenantNotificationSubscription:
+    """INSERT ... ON CONFLICT DO NOTHING before the SELECT, not a
+    SELECT-then-conditionally-INSERT — a tenant created after the seed
+    migration has no row yet, and two concurrent first writes for the same
+    (notification_id, tenant_id) would otherwise both see no row, both try
+    to insert, and the loser would 500 on
+    uq_tenant_notification_subscription_identity. The ON CONFLICT makes the
+    insert itself race-safe; the SELECT afterward is guaranteed to find a
+    row either way."""
+    await session.execute(
+        pg_insert(TenantNotificationSubscription)
+        .values(
+            notification_id=notification_id,
+            tenant_id=tenant_id,
+            subscribed=False,
+            recipients=[],
+        )
+        .on_conflict_do_nothing(
+            index_elements=["notification_id", "tenant_id"],
+        )
+    )
     result = await session.execute(
         select(TenantNotificationSubscription).where(
             TenantNotificationSubscription.notification_id == notification_id,
             TenantNotificationSubscription.tenant_id == tenant_id,
         )
     )
-    row = result.scalar_one_or_none()
-    if row is None:
-        row = TenantNotificationSubscription(
-            notification_id=notification_id,
-            tenant_id=tenant_id,
-            subscribed=False,
-            recipients=[],
-        )
-        session.add(row)
-    return row
+    return result.scalar_one()
 
 
 async def _notify_producers(name: str) -> None:

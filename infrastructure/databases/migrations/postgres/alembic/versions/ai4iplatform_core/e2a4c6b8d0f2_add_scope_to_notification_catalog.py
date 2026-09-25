@@ -1,4 +1,4 @@
-"""add_scope_drop_recipient_roles_notification_catalog
+"""add_scope_to_notification_catalog
 
 Adds configs_notification_alert.scope — GLOBAL (applies platform-wide, no
 per-institution opt-out) or INSTITUTION (available for an institution to
@@ -7,15 +7,13 @@ b5d7e9f1a3c5_create_tenant_notification_subscription_table). Per the
 Notifications & Alerts scope design: TIER_ASSIGNED and BUDGET_ASSIGNED
 default to INSTITUTION; every other catalog row defaults to GLOBAL.
 
-Drops recipient_roles: replaced by scope (who an event applies to) plus,
-for INSTITUTION-scope rows, tenant_notification_subscription.recipients
-(who at that institution receives it). Known follow-up, deliberately not
-done here: the shared producer-side cache
+Deliberately does NOT drop recipient_roles: the shared producer-side cache
 (libs/ai4i_core/ai4i_core/kafka/notification_settings_cache.py) and
-kafka-consumers' catalog_cache.py both still raw-SELECT recipient_roles —
-that read breaks until a later ticket moves them onto scope +
-tenant_notification_subscription. This migration only lands the schema/API
-side, per instruction.
+kafka-consumers' catalog_cache.py both still raw-SELECT recipient_roles in
+the same query as id/channels/config — dropping it here would fail that
+whole query (not just the recipient lookup), silently stopping every
+notification/alert send. recipient_roles is dropped only in the follow-up
+that moves those readers onto scope + tenant_notification_subscription.
 
 Revision ID: e2a4c6b8d0f2
 Revises: d2e4f6a8b0c2
@@ -60,25 +58,11 @@ def upgrade() -> None:
             f"UPDATE configs_notification_alert SET scope = 'INSTITUTION' WHERE name IN ({names});"
         )
 
-    if "recipient_roles" in existing_columns:
-        op.drop_column("configs_notification_alert", "recipient_roles")
-
 
 def downgrade() -> None:
     conn = op.get_bind()
     inspector = sa.inspect(conn)
     existing_columns = {col["name"] for col in inspector.get_columns("configs_notification_alert")}
-
-    if "recipient_roles" not in existing_columns:
-        op.add_column(
-            "configs_notification_alert",
-            sa.Column(
-                "recipient_roles",
-                postgresql.JSONB(astext_type=sa.Text()),
-                nullable=False,
-                server_default="{}",
-            ),
-        )
 
     if "scope" in existing_columns:
         op.drop_column("configs_notification_alert", "scope")

@@ -29,6 +29,17 @@ class ConfigNotificationAlert(Base):
     grouped by the catalog UI is a column: name, type, module, channels,
     scope. See catalog_metadata.py for the code-side display name,
     description and detail line that decorate these rows on read.
+
+    ``recipient_roles`` is kept (not dropped) alongside ``scope`` — the
+    shared producer-side cache (libs/ai4i_core/ai4i_core/kafka/
+    notification_settings_cache.py) and kafka-consumers' catalog_cache.py
+    both still raw-SELECT it in the same query as id/channels/config; a
+    missing column there fails that whole query (not just the recipient
+    lookup) and silently stops every notification/alert send. Drop it only
+    in the follow-up that moves those readers onto scope +
+    tenant_notification_subscription. Within this dict, the ``"ADMIN"`` key
+    is the Adopter Admin's own recipient toggle — see catalog_service.
+    _apply_admin_recipient_scope_invariant for how it's tied to ``scope``.
     """
 
     __tablename__ = "configs_notification_alert"
@@ -43,6 +54,7 @@ class ConfigNotificationAlert(Base):
     type = Column(_TYPE_ENUM, nullable=False)
     module = Column(_MODULE_ENUM, nullable=False)
     channels = Column(ARRAY(_CHANNEL_ENUM), nullable=False, server_default="{EMAIL}")
+    recipient_roles = Column(JSONB, nullable=False, server_default="{}")
     scope = Column(_SCOPE_ENUM, nullable=False, server_default="GLOBAL")
     config = Column(JSONB, nullable=False, server_default="{}")
     created_by = Column(String(255), nullable=True)
