@@ -163,6 +163,57 @@ def _validate_new_effective_to_not_in_past(budget_effective_to: datetime) -> Non
         )
 
 
+async def _seed_notification_subscriptions_for_new_tenant(
+    platform_core_db: Optional[AsyncSession], tenant_id: int, admin_user_id: str
+) -> None:
+    """One tenant_notification_subscription row per catalog notification for
+    a brand-new tenant, subscribed=false, recipients=[the new tenant admin's
+    own user id] — the same shape
+    c6e8f0a2b4d6_seed_tenant_notification_subscriptions.py backfilled for
+    every tenant that existed when that migration ran. That migration is a
+    one-time backfill; nothing else seeds a tenant created after it, so
+    this is that missing piece, run inline at tenant-creation time instead
+    of a periodic reconciliation job.
+
+    Best-effort, same framing as _assign_plan_to_tenant right below: this
+    must never fail tenant creation, and platform_core_db is Optional on
+    create_tenant (some deployments don't wire it up) — skip quietly rather
+    than raise. ON CONFLICT DO NOTHING makes this safe to re-run (e.g. a
+    retried request after a prior partial failure) without duplicating
+    rows.
+    """
+    if platform_core_db is None:
+        logger.warning(
+            "platform_core_db not configured; skipping notification-subscription "
+            "seeding for tenant %s", tenant_id,
+        )
+        return
+    try:
+        notification_ids = (
+            await platform_core_db.execute(text("SELECT id FROM configs_notification_alert"))
+        ).scalars().all()
+        for notification_id in notification_ids:
+            await platform_core_db.execute(
+                text(
+                    "INSERT INTO tenant_notification_subscription"
+                    "    (notification_id, tenant_id, subscribed, recipients)"
+                    " VALUES (:notification_id, :tenant_id, false, CAST(:recipients AS varchar[]))"
+                    " ON CONFLICT (notification_id, tenant_id) DO NOTHING"
+                ),
+                {
+                    "notification_id": notification_id,
+                    "tenant_id": str(tenant_id),
+                    "recipients": [admin_user_id],
+                },
+            )
+        await platform_core_db.commit()
+    except Exception as exc:
+        logger.exception(
+            "Seeding tenant_notification_subscription failed for tenant %s "
+            "(tenant was created): %s", tenant_id, exc,
+        )
+
+
 async def _assign_plan_to_tenant(
     tenant_id: int, plan_id: UUID, db: AsyncSession, created_by: Optional[UUID] = None
 ) -> None:
@@ -663,7 +714,7 @@ class TenantService:
         admin_username = await self._allocate_unique_username(
             self.derive_tenant_admin_username(body.email, body.organisation)
         )
-        await self.provision_user(
+        admin_user_id, _setup_token = await self.provision_user(
             email=body.email,
             username=admin_username,
             full_name=body.contact_name,
@@ -679,6 +730,10 @@ class TenantService:
         # provision_user committed; refresh to surface server-side defaults.
         await self._tenants.refresh(tenant)
         tenant_name_cache.set_name(tenant.id, tenant.organisation)
+
+        await _seed_notification_subscriptions_for_new_tenant(
+            platform_core_db, tenant.id, admin_user_id
+        )
 
         if body.plan_id:
             try:
