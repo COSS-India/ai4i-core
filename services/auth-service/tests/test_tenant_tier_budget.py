@@ -1386,6 +1386,7 @@ class TestTierBudgetNotificationPublishing:
             details=["Gold", "High-volume tier", ["ASR: 10,000 req/mo"]],
             actor_id=str(actor.id),
             occurred_at=ANY,
+            recipients=[],
         )
 
     @pytest.mark.asyncio
@@ -1473,6 +1474,7 @@ class TestTierBudgetNotificationPublishing:
             details=["Silver", "Platinum", "High-volume tier", ["ASR: 10,000 req/mo"]],
             actor_id=ANY,
             occurred_at=ANY,
+            recipients=[],
         )
 
     @pytest.mark.asyncio
@@ -1515,6 +1517,7 @@ class TestTierBudgetNotificationPublishing:
             details=[str(old_tier_id), "Platinum", "", []],
             actor_id=ANY,
             occurred_at=ANY,
+            recipients=[],
         )
 
     @pytest.mark.asyncio
@@ -1548,6 +1551,7 @@ class TestTierBudgetNotificationPublishing:
             details=["INR", "500"],
             actor_id=str(actor.id),
             occurred_at=ANY,
+            recipients=[],
         )
 
     @pytest.mark.asyncio
@@ -1579,6 +1583,7 @@ class TestTierBudgetNotificationPublishing:
             details=["INR", "1000", "1500", _VALID_EFFECTIVE_FROM.date().isoformat()],
             actor_id=ANY,
             occurred_at=ANY,
+            recipients=[],
         )
 
     @pytest.mark.asyncio
