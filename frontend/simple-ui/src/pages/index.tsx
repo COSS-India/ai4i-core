@@ -2,11 +2,10 @@ import {
   Alert,
   AlertDescription,
   AlertIcon,
+  Badge,
   Box,
   Button,
   Card,
-  CardBody,
-  CardHeader,
   Heading,
   HStack,
   Icon,
@@ -34,8 +33,8 @@ import {
 import ContentLayout from "../components/common/ContentLayout";
 import {
   getExploreServiceCardVisuals,
-  getServiceAccent,
   getServiceDescription,
+  getServiceShortCode,
   getServiceTitle,
   servicePath,
   type ServiceId,
@@ -117,12 +116,28 @@ const HomePage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <VStack spacing={5} w="full" align="stretch">
+        <VStack spacing={8} w="full" align="stretch">
           <Box w="full">
-            <Heading as="h1" size="lg" mb={1}>
+            <Text
+              fontSize="xs"
+              fontWeight="600"
+              color="ink.500"
+              letterSpacing="0.08em"
+              textTransform="uppercase"
+              mb={2}
+            >
+              Explore
+            </Text>
+            <Heading
+              as="h1"
+              fontSize={{ base: "2xl", md: "3xl" }}
+              fontWeight="700"
+              lineHeight="1.2"
+              mb={2}
+            >
               AI Accessibility Studio
             </Heading>
-            <Text fontSize="sm" color="ink.600" fontWeight="500" maxW="40rem" lineHeight="1.5">
+            <Text fontSize="md" color="ink.600" fontWeight="500" maxW="36rem" lineHeight="tall">
               {enabledServiceIds.size === 1 && enabledServiceIds.has("llm")
                 ? "Test and explore Large Language Models"
                 : "Test and explore NLP and LLM models"}
@@ -140,7 +155,7 @@ const HomePage: React.FC = () => {
             </Alert>
           )}
 
-          <SimpleGrid columns={{ base: 1, md: 2, xl: 3 }} spacing={4} w="full">
+          <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={5} w="full" alignItems="stretch">
             {services.map((service) => {
               const isDisabledForAnonymous =
                 !isAuthenticated &&
@@ -165,34 +180,38 @@ const HomePage: React.FC = () => {
                 service.id,
                 !isDisabledForAnonymous,
               );
+              const shortCode = getServiceShortCode(service.id);
 
               return (
                 <Card
                   key={service.id}
                   role="group"
                   bg={isDisabledForAnonymous ? unavailableCardBg : availableCardBg}
-                  border="1px"
+                  border="1px solid"
                   borderColor={cardBorder}
-                  borderLeftWidth="4px"
-                  borderLeftColor={visuals.accentBorder}
+                  borderTopWidth="3px"
+                  borderTopColor={visuals.accentBorder}
+                  borderRadius="md"
+                  boxShadow="xs"
                   overflow="hidden"
                   w="full"
-                  minH="196px"
+                  h="full"
                   display="flex"
                   flexDirection="column"
                   cursor="pointer"
+                  transition="border-color 0.15s ease, box-shadow 0.15s ease"
                   onClick={openService}
                   _hover={
                     isDisabledForAnonymous
                       ? undefined
                       : {
-                          borderColor: getServiceAccent(service.id, 300),
-                          borderLeftColor: visuals.accentBorder,
+                          borderColor: visuals.accentBorder,
+                          boxShadow: "sm",
                         }
                   }
                 >
-                  <CardHeader pb={1} pt={4} px={5}>
-                    <HStack spacing={3} align="center">
+                  <VStack align="stretch" spacing={4} p={5} flex={1}>
+                    <HStack spacing={3} align="flex-start">
                       <Box
                         boxSize={10}
                         borderRadius="md"
@@ -208,60 +227,72 @@ const HomePage: React.FC = () => {
                             : { bg: visuals.iconHoverBg }
                         }
                       >
-                        <Icon
-                          as={service.icon}
-                          boxSize={service.id === "pipeline" ? 6 : 5}
-                          color={visuals.iconColor}
-                        />
+                        <Icon as={service.icon} boxSize={5} color={visuals.iconColor} />
                       </Box>
                       <Heading
                         as="h2"
-                        size="sm"
-                        lineHeight="1.3"
+                        flex={1}
+                        minW={0}
+                        fontSize="md"
+                        fontWeight="700"
+                        lineHeight="1.35"
                         color={isDisabledForAnonymous ? unavailableTitle : "ink.800"}
                       >
                         {service.title}
                       </Heading>
+                      {shortCode && (
+                        <Badge
+                          bg={visuals.badgeBg}
+                          color={visuals.badgeColor}
+                          fontSize="xs"
+                          fontWeight="600"
+                          letterSpacing="0.04em"
+                          textTransform="uppercase"
+                          borderRadius="sm"
+                          px={2}
+                          py={0.5}
+                          flexShrink={0}
+                        >
+                          {shortCode}
+                        </Badge>
+                      )}
                     </HStack>
-                  </CardHeader>
-                  <CardBody pt={2} pb={4} px={5} flex={1} display="flex" flexDirection="column">
                     <Text
                       fontSize="sm"
                       color={isDisabledForAnonymous ? unavailableDescription : "ink.600"}
                       noOfLines={3}
                       flex={1}
-                      mb={4}
-                      lineHeight="1.5"
+                      lineHeight="tall"
                     >
                       {service.description}
                     </Text>
                     <Button
                       size="sm"
                       w="full"
-                      variant={isDisabledForAnonymous ? "outline" : "solid"}
+                      mt="auto"
+                      variant={isDisabledForAnonymous ? "outline" : "ghost"}
                       bg={visuals.ctaBg}
                       color={isDisabledForAnonymous ? unavailableTitle : visuals.ctaColor}
+                      fontWeight="600"
+                      borderRadius="md"
                       borderColor={
                         isDisabledForAnonymous ? unavailableCtaBorder : visuals.ctaBorder
                       }
                       _hover={
                         isDisabledForAnonymous
                           ? { bg: unavailableCtaHover }
-                          : {
-                              bg: visuals.ctaHoverBg,
-                              borderColor: visuals.ctaHoverBg,
-                            }
+                          : { bg: visuals.ctaHoverBg }
                       }
+                      _focusVisible={{ boxShadow: "outline" }}
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
                         openService();
                       }}
-                      mt="auto"
                     >
-                      {isDisabledForAnonymous ? "Sign in required" : "Try it now"}
+                      {isDisabledForAnonymous ? "Sign in required" : "Try it now →"}
                     </Button>
-                  </CardBody>
+                  </VStack>
                 </Card>
               );
             })}
