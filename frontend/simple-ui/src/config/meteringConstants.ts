@@ -348,13 +348,13 @@ export const METERING = {
           tooltip:
             "Total number of models that have received at least one request in the last 30 days.",
         },
-        // Hidden: "Model usage growth" card is not shown in the usage dashboard.
-        // {
-        //   key: "model_usage_growth_pct",
-        //   label: "Model usage growth",
-        //   helper: "vs last month",
-        //   tooltip: "Percentage change in overall model usage compared to the previous month.",
-        // },
+        {
+          key: "model_usage_growth_pct",
+          label: "Model usage growth",
+          helper: "Last 30 days vs Previous 30",
+          tooltip:
+            "Percentage change in overall model usage over the last 30 days compared to the 30 days before that.",
+        },
       ] as const,
     },
     TENANT_RANKING: {
