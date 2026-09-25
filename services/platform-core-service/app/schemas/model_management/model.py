@@ -18,6 +18,8 @@ from app.schemas.common import (
     LanguagePair,
     LanguagePairLenient,
     MessageMeta,
+    RESPONSE_KEY_RE,
+    SUPPORTED_OUTPUT_TRANSFORMS,
     SUPPORTED_TRITON_DTYPES,
     SuccessResponse,
     SuccessResponseWithMeta,
@@ -322,6 +324,23 @@ class ModelCreateRequest(BaseSchema):
         if ac is None:
             return self
 
+        task_type = self.task.type if self.task else None
+
+        # llm models never reach GenericTritonMapper — the OpenAI-compatible
+        # proxy (inference-service llm_service.py) reads only
+        # adapter_config.model_name — so the Triton version/tensor rules
+        # below don't apply to them.
+        if task_type == TaskTypeEnum.llm.value:
+            if not ac.get("model_name"):
+                raise ValueError(
+                    "adapterConfig.model_name is required for llm models when "
+                    "adapterConfig is provided — the OpenAI-compatible proxy "
+                    "uses it as the real upstream model name; without it, the "
+                    "client's raw service ID is sent upstream instead, which "
+                    "the real LLM server almost certainly rejects with a 404."
+                )
+            return self
+
         version = ac.get("version")
         if not isinstance(version, str) or not version.strip():
             raise ValueError(
@@ -376,8 +395,26 @@ class ModelCreateRequest(BaseSchema):
                 )
             if not entry.get("maps_to") or not str(entry.get("maps_to")).strip():
                 raise ValueError(f"adapterConfig.outputs[{i}].maps_to is required")
-
-        task_type = self.task.type if self.task else None
+            transform = entry.get("transform")
+            chain = [] if not transform else [transform] if isinstance(transform, str) else transform
+            if not isinstance(chain, list):
+                raise ValueError(
+                    f"adapterConfig.outputs[{i}].transform must be a string or a list of strings"
+                )
+            for t in chain:
+                if t not in SUPPORTED_OUTPUT_TRANSFORMS:
+                    raise ValueError(
+                        f"adapterConfig.outputs[{i}].transform '{t}' is not a "
+                        f"supported transform — one of {sorted(SUPPORTED_OUTPUT_TRANSFORMS)}"
+                    )
+            response_key = entry.get("response_key")
+            if response_key and (
+                not isinstance(response_key, str) or not RESPONSE_KEY_RE.fullmatch(response_key)
+            ):
+                raise ValueError(
+                    f"adapterConfig.outputs[{i}].response_key must be 'output[]' "
+                    f"or 'output[].<key>', got '{response_key}'"
+                )
 
         if task_type == TaskTypeEnum.tts.value:
             if not any(o.get("tensor") == "OUTPUT_GENERATED_AUDIO" for o in outputs):
@@ -403,15 +440,6 @@ class ModelCreateRequest(BaseSchema):
                     "be parsed JSON; without the transform, every real NER "
                     "call raises ValueError('model returned non-JSON output')."
                 )
-
-        if task_type == TaskTypeEnum.llm.value and not ac.get("model_name"):
-            raise ValueError(
-                "adapterConfig.model_name is required for llm models when "
-                "adapterConfig is provided — the OpenAI-compatible proxy "
-                "uses it as the real upstream model name; without it, the "
-                "client's raw service ID is sent upstream instead, which "
-                "the real LLM server almost certainly rejects with a 404."
-            )
 
         return self
 

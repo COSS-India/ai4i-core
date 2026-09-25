@@ -203,6 +203,14 @@ SUPPORTED_TRITON_DTYPES = {
     "UINT64",
 }
 
+# Mirrors inference-service's SUPPORTED_OUTPUT_TRANSFORMS and _RESPONSE_KEY_RE
+# (services/base/config_mapper.py) — GenericTritonMapper rejects an output
+# tensor whose `transform` (or any step of a transform chain) is outside this
+# set, or whose `response_key` isn't 'output[]' / 'output[].<key>', but only
+# at call time as a RuntimeError. Kept here so Model creation catches both.
+SUPPORTED_OUTPUT_TRANSFORMS = {"json_parse", "base64_encode", "unwrap_scalar", "wrap_list"}
+RESPONSE_KEY_RE = re.compile(r"output\[\](?:\.(\w+))?$")
+
 
 # Same equivalence used on both sides of a `taskType` comparison: a model's
 # own `task.type` (or a service's) vs. a `schema` entry's `taskType`. Shared

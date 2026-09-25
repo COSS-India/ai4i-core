@@ -259,6 +259,45 @@ def test_create_llm_adapter_config_requires_model_name():
         ModelCreateRequest(**_base_payload(task={"type": "llm"}, adapterConfig=adapter))
 
 
+def test_create_llm_adapter_config_skips_triton_tensor_checks():
+    """llm never reaches GenericTritonMapper — the proxy reads only
+    adapter_config.model_name — so empty inputs/outputs and no version must
+    still be accepted, as they were before these checks existed."""
+    adapter = {"model_name": "meta-llama/Llama-3-8B", "inputs": [], "outputs": []}
+    req = ModelCreateRequest(**_base_payload(task={"type": "llm"}, adapterConfig=adapter))
+    assert req.adapterConfig == adapter
+
+
+def _adapter_with_output(**output_fields):
+    return {
+        "version": "1.0",
+        "inputs": [{"tensor": "IN", "dtype": "BYTES", "shape": [-1, 1], "value_path": "input.source"}],
+        "outputs": [{"tensor": "OUT", "dtype": "BYTES", "maps_to": "text", **output_fields}],
+    }
+
+
+@pytest.mark.parametrize("transform", ["json_pars", ["json_parse", "not_a_transform"]])
+def test_create_adapter_config_unsupported_output_transform_rejected(transform):
+    with pytest.raises(ValidationError, match="transform"):
+        ModelCreateRequest(**_base_payload(adapterConfig=_adapter_with_output(transform=transform)))
+
+
+@pytest.mark.parametrize("transform", ["json_parse", ["json_parse", "wrap_list"]])
+def test_create_adapter_config_supported_output_transform_accepted(transform):
+    ModelCreateRequest(**_base_payload(adapterConfig=_adapter_with_output(transform=transform)))
+
+
+@pytest.mark.parametrize("response_key", ["output", "output[].", "result[].text", "output[].a.b"])
+def test_create_adapter_config_invalid_response_key_rejected(response_key):
+    with pytest.raises(ValidationError, match="response_key"):
+        ModelCreateRequest(**_base_payload(adapterConfig=_adapter_with_output(response_key=response_key)))
+
+
+@pytest.mark.parametrize("response_key", ["output[]", "output[].source"])
+def test_create_adapter_config_valid_response_key_accepted(response_key):
+    ModelCreateRequest(**_base_payload(adapterConfig=_adapter_with_output(response_key=response_key)))
+
+
 def test_create_schema_task_type_mismatch_rejected():
     schema = {
         "taskType": "nmt",
