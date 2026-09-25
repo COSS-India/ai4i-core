@@ -3,10 +3,8 @@ import {
   Alert,
   AlertIcon,
   Box,
-  Button,
   FormControl,
   FormErrorMessage,
-  FormLabel,
   HStack,
   Input,
   Select,
@@ -14,6 +12,8 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import StandardModal from "../common/StandardModal";
+import FormActions from "../common/FormActions";
+import FieldLabel from "../common/FieldLabel";
 import DataTable, { type DataTableColumn } from "../common/table";
 import InfoTip from "../common/InfoTip";
 import PercentageStepper, {
@@ -161,21 +161,24 @@ export default function ApiKeyBulkBudgetModal({
       isOpen={isOpen}
       onClose={onClose}
       title={title}
+      description="Adjust how much of the application budget each key can use."
       size="4xl"
+      scrollBehavior="inside"
+      modalProps={{ blockScrollOnMount: true }}
+      headerProps={{ px: 6, pt: 5, pb: 4 }}
+      bodyProps={{ px: 6, py: 5 }}
+      footerProps={{ px: 6, py: 4 }}
       footer={
-        <HStack spacing={3}>
-          <Button variant="ghost" onClick={onClose} isDisabled={isSaving}>
-            Cancel
-          </Button>
-          <Button
-            colorScheme="blue"
-            isLoading={isSaving}
-            isDisabled={!canSave}
-            onClick={() => void onSave()}
-          >
-            Save changes
-          </Button>
-        </HStack>
+        <FormActions
+          submitLabel="Save Changes"
+          onCancel={onClose}
+          onSubmit={() => void onSave()}
+          isLoading={isSaving}
+          isDisabled={!canSave}
+          loadingText="Saving..."
+          justify="space-between"
+          pt={0}
+        />
       }
     >
       <VStack align="stretch" spacing={4}>
@@ -183,10 +186,8 @@ export default function ApiKeyBulkBudgetModal({
           {FIELD_HINTS.apiKey.bulkBudgetEdit.intro}
         </Text>
 
-        <FormControl isRequired>
-          <FormLabel fontSize="sm" fontWeight="semibold">
-            Application
-          </FormLabel>
+        <FormControl>
+          <FieldLabel>Application</FieldLabel>
           <Select
             placeholder={FIELD_HINTS.apiKey.bulkBudgetEdit.selectApplicationPlaceholder}
             value={selectedApplicationId}

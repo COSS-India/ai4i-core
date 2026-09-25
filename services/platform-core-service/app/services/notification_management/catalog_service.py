@@ -68,10 +68,16 @@ def _apply_admin_recipient_scope_invariant(
     to ``scope``, per design: defaults to selected and can be overridden
     while GLOBAL; forced off while INSTITUTION — an Institution-scope row
     is never delivered to the Adopter Admin as such, delivery for it is
-    governed by tenant_notification_subscription instead. Applied on every
-    read and every write so a row can't drift out of this invariant (e.g.
-    a stale ``ADMIN: true`` left over from before a GLOBAL->INSTITUTION
-    scope change)."""
+    governed by tenant_notification_subscription instead.
+
+    Applied on every WRITE only (update_catalog), never re-derived on
+    read: the send path (notification_settings_cache.is_notification_enabled,
+    the kafka-consumers catalog cache) reads the stored recipient_roles
+    column directly, not scope. Deriving ADMIN on read would make the
+    catalog UI show a value the send path disagrees with until that row
+    happens to be PATCHed — every existing row is instead backfilled to
+    already be invariant-consistent by e2a4c6b8d0f2, so what's stored is
+    always what both sides see."""
     result = dict(recipient_roles)
     if scope == NotificationScope.INSTITUTION.value:
         result["ADMIN"] = False
@@ -91,7 +97,9 @@ def _to_catalog_item(row: ConfigNotificationAlert) -> CatalogItem:
         type=row.type,
         module=row.module,
         channels=list(row.channels or []),
-        recipient_roles=_apply_admin_recipient_scope_invariant(row.recipient_roles or {}, row.scope),
+        # The stored value, as-is — see _apply_admin_recipient_scope_invariant
+        # for why this must not re-derive ADMIN from scope on read.
+        recipient_roles=row.recipient_roles or {},
         scope=row.scope,
         # None (dropped from the response) on a NOTIFICATION row — that key
         # only ever exists in config for ALERT-type rows.

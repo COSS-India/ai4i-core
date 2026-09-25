@@ -67,8 +67,7 @@ import {
   LockIcon,
 } from "@chakra-ui/icons";
 import { INSTITUTION, isTenantStatus, TENANT } from "../../config/constants";
-import * as tenantService from "../../services/tenantService";
-import type { TenantView } from "../../types/tenant";
+import { useTenantsList } from "../../hooks/useTenantsList";
 import type { NotificationReceiver } from "../../types/alerting";
 import { useAlertDefinitions } from "./hooks/useAlertDefinitions";
 import { useNotificationReceivers } from "./hooks/useNotificationReceivers";
@@ -184,10 +183,10 @@ function OptionSelector({
             cursor="pointer"
             borderRadius="lg"
             borderWidth="2px"
-            borderColor={isActive ? "gray.900" : "gray.200"}
-            bg={isActive ? "gray.900" : "white"}
-            color={isActive ? "white" : "gray.500"}
-            _hover={{ bg: isActive ? "gray.800" : "gray.50", borderColor: isActive ? "gray.800" : "gray.300" }}
+            borderColor={isActive ? "ink.900" : "ink.200"}
+            bg={isActive ? "ink.900" : "white"}
+            color={isActive ? "white" : "ink.500"}
+            _hover={{ bg: isActive ? "ink.800" : "ink.50", borderColor: isActive ? "ink.800" : "ink.300" }}
             transition="all 0.15s"
             onClick={() => onChange(opt)}
             textTransform="capitalize"
@@ -213,8 +212,11 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
   const [createRuleScope, setCreateRuleScope] = useState<"" | "global" | "specific_tenant">("");
   const [createRuleTenant, setCreateRuleTenant] = useState("");
   const [createRuleErrors, setCreateRuleErrors] = useState<Record<string, string>>({});
-  const [tenants, setTenants] = useState<TenantView[]>([]);
-  const [isLoadingTenants, setIsLoadingTenants] = useState(false);
+  const tenantsQuery = useTenantsList({ enabled: isActive });
+  const tenants = (tenantsQuery.data?.tenants ?? []).filter((t) =>
+    isTenantStatus(t.status, TENANT.STATUS.ACTIVE)
+  );
+  const isLoadingTenants = tenantsQuery.isLoading;
 
   // Edit Routing Rule — extended form state (UI-only fields not in update API)
   const [editRuleCategory, setEditRuleCategory] = useState("");
@@ -252,21 +254,6 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     setEditRuleSeverity(sev ?? linkedDef?.severity ?? "");
     setEditRuleDef(linkedDef ? String(linkedDef.id) : "");
     setEditRuleScope(resolvedCat === "infrastructure" ? "global" : item.tenant ? "specific_tenant" : "global");
-  };
-
-  const fetchTenants = async () => {
-    if (tenants.length > 0) return;
-    setIsLoadingTenants(true);
-    try {
-      const res = await tenantService.listTenants();
-      setTenants(
-        (res.tenants || []).filter((t) => isTenantStatus(t.status, TENANT.STATUS.ACTIVE))
-      );
-    } catch {
-      // ignore
-    } finally {
-      setIsLoadingTenants(false);
-    }
   };
 
   const validateAndCreate = async () => {
@@ -592,7 +579,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             )}
           </Wrap>
         ) : (
-          <Text fontSize="sm" color="gray.500">—</Text>
+          <Text fontSize="sm" color="ink.500">—</Text>
         ),
     },
     {
@@ -633,12 +620,12 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       sortAccessor: (rule) => (rule.alert_names ?? []).join(", "),
       cell: (rule) =>
         rule.alert_names && rule.alert_names.length > 0 ? (
-          <Text fontSize="sm" color="gray.700">
+          <Text fontSize="sm" color="ink.700">
             {rule.alert_names.slice(0, 2).join(", ")}
             {rule.alert_names.length > 2 ? ` +${rule.alert_names.length - 2}` : ""}
           </Text>
         ) : (
-          <Text fontSize="sm" color="gray.500">All</Text>
+          <Text fontSize="sm" color="ink.500">All</Text>
         ),
     },
     {
@@ -650,7 +637,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
         rule.tenant ? (
           <Badge colorScheme="purple" variant="subtle" textTransform="none">{rule.tenant}</Badge>
         ) : (
-          <Text fontSize="sm" color="gray.500">Global</Text>
+          <Text fontSize="sm" color="ink.500">Global</Text>
         ),
     },
     {
@@ -679,7 +666,6 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
           icon: <EditIcon />,
           onClick: () => {
             defs.fetchDefinitions();
-            fetchTenants();
             resetEditRuleExtras();
             initEditRuleExtras(rule);
             rules.openUpdate(rule);
@@ -850,7 +836,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
         <DrawerOverlay />
         <DrawerContent>
           <DrawerCloseButton />
-          <DrawerHeader borderBottomWidth="1px" borderColor="gray.200">
+          <DrawerHeader borderBottomWidth="1px" borderColor="ink.200">
             <Text fontSize="lg" fontWeight="bold">Create Alert Definition</Text>
           </DrawerHeader>
           <DrawerBody py={6}>
@@ -977,11 +963,11 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   <Box
                     px={3}
                     py={2}
-                    bg="gray.100"
+                    bg="ink.100"
                     borderRadius="md"
                     borderWidth="1px"
-                    borderColor="gray.200"
-                    color="gray.600"
+                    borderColor="ink.200"
+                    color="ink.600"
                     fontSize="sm"
                   >
                     All services (infrastructure monitors the full stack)
@@ -993,29 +979,29 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       variant="outline"
                       w="100%"
                       bg="white"
-                      color="gray.700"
+                      color="ink.700"
                       borderWidth="1px"
-                      borderColor="gray.200"
+                      borderColor="ink.200"
                       borderRadius="md"
                       fontWeight="normal"
                       textAlign="left"
-                      _hover={{ borderColor: "gray.400" }}
+                      _hover={{ borderColor: "ink.400" }}
                       _active={{ bg: "white" }}
-                      rightIcon={<Text fontSize="xs" color="gray.500">▾</Text>}
+                      rightIcon={<Text fontSize="xs" color="ink.500">▾</Text>}
                     >
                       {(() => {
                         const sel = defs.createForm.service ?? [];
                         if (sel.length === 0) {
-                          return <Text color="gray.400">Select targets</Text>;
+                          return <Text color="ink.400">Select targets</Text>;
                         }
                         if (sel.length === TARGET_SERVICES.length) {
-                          return <Text color="gray.700">All services selected</Text>;
+                          return <Text color="ink.700">All services selected</Text>;
                         }
                         if (sel.length === 1) {
                           const v = sel[0];
-                          return <Text color="gray.700">{TARGET_SERVICES.find((t) => t.value === v)?.label ?? v}</Text>;
+                          return <Text color="ink.700">{TARGET_SERVICES.find((t) => t.value === v)?.label ?? v}</Text>;
                         }
-                        return <Text color="gray.700">{`${sel.length} services selected`}</Text>;
+                        return <Text color="ink.700">{`${sel.length} services selected`}</Text>;
                       })()}
                     </MenuButton>
                     <MenuList w="100%" maxH="300px" overflowY="auto">
@@ -1069,9 +1055,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   Condition + Threshold
                 </FormLabel>
                 <SimpleGrid columns={3} spacing={3} mb={1}>
-                  <Text fontSize="xs" color="gray.500" fontWeight="medium">Condition</Text>
-                  <Text fontSize="xs" color="gray.500" fontWeight="medium">Threshold</Text>
-                  <Text fontSize="xs" color="gray.500" fontWeight="medium">Unit</Text>
+                  <Text fontSize="xs" color="ink.500" fontWeight="medium">Condition</Text>
+                  <Text fontSize="xs" color="ink.500" fontWeight="medium">Threshold</Text>
+                  <Text fontSize="xs" color="ink.500" fontWeight="medium">Unit</Text>
                 </SimpleGrid>
                 <SimpleGrid columns={3} spacing={3}>
                   <Select
@@ -1118,13 +1104,13 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     <Box
                       px={3}
                       py={2}
-                      bg="gray.100"
+                      bg="ink.100"
                       borderRadius="md"
                       borderWidth="1px"
-                      borderColor="gray.200"
+                      borderColor="ink.200"
                       textAlign="center"
                       fontSize="sm"
-                      color={defs.createForm.signal ? "gray.700" : "gray.400"}
+                      color={defs.createForm.signal ? "ink.700" : "ink.400"}
                       fontWeight="medium"
                     >
                       {defs.createForm.signal ? PERCENTAGE_UNIT : "—"}
@@ -1164,9 +1150,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                         cursor="pointer"
                         borderRadius="full"
                         borderWidth="2px"
-                        borderColor={isActive ? colors.activeBorder : "gray.200"}
+                        borderColor={isActive ? colors.activeBorder : "ink.200"}
                         bg={isActive ? colors.activeBg : "white"}
-                        color={isActive ? colors.activeText : "gray.500"}
+                        color={isActive ? colors.activeText : "ink.500"}
                         _hover={{ bg: isActive ? colors.activeBg : colors.hoverBg, borderColor: colors.activeBorder }}
                         transition="all 0.15s"
                         onClick={() => defs.setCreateForm({ ...defs.createForm, severity: s })}
@@ -1198,7 +1184,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   >
                     {EVAL_INTERVALS.map((v) => (<option key={v} value={v}>{v}</option>))}
                   </Select>
-                  <Text fontSize="xs" color="gray.500" mt={1}>How often to check</Text>
+                  <Text fontSize="xs" color="ink.500" mt={1}>How often to check</Text>
                   <FormErrorMessage>{defs.createErrors?.evaluation_interval}</FormErrorMessage>
                 </FormControl>
 
@@ -1219,7 +1205,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       <option key={v} value={v}>{v}</option>
                     ))}
                   </Select>
-                  <Text fontSize="xs" color="gray.500" mt={1}>Alert fires only after the condition is met continuously for this duration.</Text>
+                  <Text fontSize="xs" color="ink.500" mt={1}>Alert fires only after the condition is met continuously for this duration.</Text>
                   <FormErrorMessage>{defs.createErrors?.for_duration}</FormErrorMessage>
                 </FormControl>
               </SimpleGrid>
@@ -1241,7 +1227,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               </FormControl>
             </VStack>
           </DrawerBody>
-          <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
+          <DrawerFooter borderTopWidth="1px" borderColor="ink.200">
             <Button variant="outline" mr={3} onClick={defs.closeCreate} isDisabled={defs.isCreating}>Cancel</Button>
             <Button colorScheme="orange" onClick={defs.handleCreate} isLoading={defs.isCreating} loadingText="Saving...">Save Alert Definition</Button>
           </DrawerFooter>
@@ -1253,7 +1239,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
         <DrawerOverlay />
         <DrawerContent>
           <DrawerCloseButton />
-          <DrawerHeader borderBottomWidth="1px" borderColor="gray.200">
+          <DrawerHeader borderBottomWidth="1px" borderColor="ink.200">
             <Text fontSize="lg" fontWeight="bold">Alert Definition Details</Text>
           </DrawerHeader>
           <DrawerBody py={6}>
@@ -1273,8 +1259,8 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 ? `${v.condition_operator} ${v.threshold_value} ${v.threshold_unit ?? ""}`.trim()
                 : formatThreshold(v);
               const DetailRow = ({ label, children }: { label: string; children: React.ReactNode }) => (
-                <Box borderBottomWidth="1px" borderColor="gray.100" pb={3}>
-                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>{label}</Text>
+                <Box borderBottomWidth="1px" borderColor="ink.100" pb={3}>
+                  <Text fontWeight="semibold" color="ink.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>{label}</Text>
                   {children}
                 </Box>
               );
@@ -1284,7 +1270,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     <Text fontWeight="semibold" fontSize="md">{v.name}</Text>
                   </DetailRow>
                   <DetailRow label="Description">
-                    <Text color={v.description ? "gray.800" : "gray.400"}>{v.description || "—"}</Text>
+                    <Text color={v.description ? "ink.800" : "ink.400"}>{v.description || "—"}</Text>
                   </DetailRow>
                   <DetailRow label="Category">
                     <Text>{titleCase(v.category)}</Text>
@@ -1326,7 +1312,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               );
             })()}
           </DrawerBody>
-          <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
+          <DrawerFooter borderTopWidth="1px" borderColor="ink.200">
             <Button variant="outline" mr={3} onClick={() => { defs.closeView(); if (defs.viewItem) defs.openUpdate(defs.viewItem); }}>Edit</Button>
             <Button onClick={defs.closeView}>Close</Button>
           </DrawerFooter>
@@ -1338,14 +1324,14 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
         <DrawerOverlay />
         <DrawerContent>
           <DrawerCloseButton />
-          <DrawerHeader borderBottomWidth="1px" borderColor="gray.200">
+          <DrawerHeader borderBottomWidth="1px" borderColor="ink.200">
             <Text fontSize="lg" fontWeight="bold">Update Alert Definition</Text>
           </DrawerHeader>
           <DrawerBody py={6}>
             <VStack spacing={5} align="stretch">
               <FormControl>
                 <FormLabel fontWeight="semibold" fontSize="sm">Name</FormLabel>
-                <Input value={defs.updateItem?.name ?? ""} isReadOnly bg="gray.50" cursor="not-allowed" />
+                <Input value={defs.updateItem?.name ?? ""} isReadOnly bg="ink.50" cursor="not-allowed" />
               </FormControl>
               <FormControl>
                 <FormLabel fontWeight="semibold" fontSize="sm">Description</FormLabel>
@@ -1450,11 +1436,11 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   <Box
                     px={3}
                     py={2}
-                    bg="gray.100"
+                    bg="ink.100"
                     borderRadius="md"
                     borderWidth="1px"
-                    borderColor="gray.200"
-                    color="gray.600"
+                    borderColor="ink.200"
+                    color="ink.600"
                     fontSize="sm"
                   >
                     All services (infrastructure monitors the full stack)
@@ -1466,26 +1452,26 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       variant="outline"
                       w="100%"
                       bg="white"
-                      color="gray.700"
+                      color="ink.700"
                       borderWidth="1px"
-                      borderColor="gray.200"
+                      borderColor="ink.200"
                       borderRadius="md"
                       fontWeight="normal"
                       textAlign="left"
-                      _hover={{ borderColor: "gray.400" }}
+                      _hover={{ borderColor: "ink.400" }}
                       _active={{ bg: "white" }}
-                      rightIcon={<Text fontSize="xs" color="gray.500">▾</Text>}
+                      rightIcon={<Text fontSize="xs" color="ink.500">▾</Text>}
                     >
                       {expandedUpdateServices.length === 0 ? (
-                        <Text color="gray.400">Select targets...</Text>
+                        <Text color="ink.400">Select targets...</Text>
                       ) : expandedUpdateServices.length === TARGET_SERVICES.length ? (
-                        <Text color="gray.700">All services selected</Text>
+                        <Text color="ink.700">All services selected</Text>
                       ) : expandedUpdateServices.length === 1 ? (
-                        <Text color="gray.700">
+                        <Text color="ink.700">
                           {TARGET_SERVICES.find((t) => t.value === expandedUpdateServices[0])?.label ?? expandedUpdateServices[0]}
                         </Text>
                       ) : (
-                        <Text color="gray.700">{`${expandedUpdateServices.length} services selected`}</Text>
+                        <Text color="ink.700">{`${expandedUpdateServices.length} services selected`}</Text>
                       )}
                     </MenuButton>
                     <MenuList w="100%" maxH="300px" overflowY="auto">
@@ -1540,9 +1526,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   Condition + Threshold
                 </FormLabel>
                 <SimpleGrid columns={3} spacing={3} mb={1}>
-                  <Text fontSize="xs" color="gray.500" fontWeight="medium">Condition</Text>
-                  <Text fontSize="xs" color="gray.500" fontWeight="medium">Threshold</Text>
-                  <Text fontSize="xs" color="gray.500" fontWeight="medium">Unit</Text>
+                  <Text fontSize="xs" color="ink.500" fontWeight="medium">Condition</Text>
+                  <Text fontSize="xs" color="ink.500" fontWeight="medium">Threshold</Text>
+                  <Text fontSize="xs" color="ink.500" fontWeight="medium">Unit</Text>
                 </SimpleGrid>
                 <SimpleGrid columns={3} spacing={3}>
                   <Select
@@ -1589,13 +1575,13 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     <Box
                       px={3}
                       py={2}
-                      bg="gray.100"
+                      bg="ink.100"
                       borderRadius="md"
                       borderWidth="1px"
-                      borderColor="gray.200"
+                      borderColor="ink.200"
                       textAlign="center"
                       fontSize="sm"
-                      color={defs.updateForm.signal ? "gray.700" : "gray.400"}
+                      color={defs.updateForm.signal ? "ink.700" : "ink.400"}
                       fontWeight="medium"
                     >
                       {defs.updateForm.signal ? PERCENTAGE_UNIT : "—"}
@@ -1632,9 +1618,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                         cursor="pointer"
                         borderRadius="full"
                         borderWidth="2px"
-                        borderColor={isActive ? colors.activeBorder : "gray.200"}
+                        borderColor={isActive ? colors.activeBorder : "ink.200"}
                         bg={isActive ? colors.activeBg : "white"}
-                        color={isActive ? colors.activeText : "gray.500"}
+                        color={isActive ? colors.activeText : "ink.500"}
                         _hover={{ bg: isActive ? colors.activeBg : colors.hoverBg, borderColor: colors.activeBorder }}
                         transition="all 0.15s"
                         onClick={() => defs.setUpdateForm({ ...defs.updateForm, severity: s })}
@@ -1700,7 +1686,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               </FormControl>
             </VStack>
           </DrawerBody>
-          <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
+          <DrawerFooter borderTopWidth="1px" borderColor="ink.200">
             <Button variant="outline" mr={3} onClick={defs.closeUpdate} isDisabled={defs.isUpdating}>Cancel</Button>
             <Button
               colorScheme="orange"
@@ -1739,7 +1725,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
         <CardHeader>
           <HStack justify="space-between">
-            <Heading size="md" color="gray.700" userSelect="none" cursor="default">
+            <Heading size="md" color="ink.700" userSelect="none" cursor="default">
               Notification Receivers
             </Heading>
             <HStack spacing={2}>
@@ -1893,10 +1879,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       >
         {recvs.viewItem && (
           <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>Receiver Name</Text><Text fontSize="sm">{recvs.viewItem.receiver_name}</Text></Box>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>Status</Text><Badge colorScheme={recvs.viewItem.enabled ? "green" : "red"} fontSize="sm" p={1}>{recvs.viewItem.enabled ? "Enabled" : "Disabled"}</Badge></Box>
+                <Box><Text fontWeight="semibold" color="ink.600" fontSize="sm" mb={1}>Receiver Name</Text><Text fontSize="sm">{recvs.viewItem.receiver_name}</Text></Box>
+                <Box><Text fontWeight="semibold" color="ink.600" fontSize="sm" mb={1}>Status</Text><Badge colorScheme={recvs.viewItem.enabled ? "green" : "red"} fontSize="sm" p={1}>{recvs.viewItem.enabled ? "Enabled" : "Disabled"}</Badge></Box>
                 <Box gridColumn={{ base: "span 1", md: "span 2" }}>
-                  <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>Recipient</Text>
+                  <Text fontWeight="semibold" color="ink.600" fontSize="sm" mb={1}>Recipient</Text>
                   {recvs.viewItem.rbac_role ? (
                     <Badge colorScheme="purple" fontSize="sm" p={1}>Role: {recvs.viewItem.rbac_role}</Badge>
                   ) : (
@@ -1904,13 +1890,13 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   )}
                 </Box>
                 {recvs.viewItem.email_subject_template && (
-                  <Box gridColumn={{ base: "span 1", md: "span 2" }}><Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>Subject Template</Text><Text fontSize="sm">{recvs.viewItem.email_subject_template}</Text></Box>
+                  <Box gridColumn={{ base: "span 1", md: "span 2" }}><Text fontWeight="semibold" color="ink.600" fontSize="sm" mb={1}>Subject Template</Text><Text fontSize="sm">{recvs.viewItem.email_subject_template}</Text></Box>
                 )}
                 {recvs.viewItem.email_body_template && (
-                  <Box gridColumn={{ base: "span 1", md: "span 2" }}><Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>Body Template</Text><Box bg="gray.50" p={3} borderRadius="md" fontSize="sm" whiteSpace="pre-wrap">{recvs.viewItem.email_body_template}</Box></Box>
+                  <Box gridColumn={{ base: "span 1", md: "span 2" }}><Text fontWeight="semibold" color="ink.600" fontSize="sm" mb={1}>Body Template</Text><Box bg="ink.50" p={3} borderRadius="md" fontSize="sm" whiteSpace="pre-wrap">{recvs.viewItem.email_body_template}</Box></Box>
                 )}
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>Created At</Text><Text fontSize="sm">{new Date(recvs.viewItem.created_at).toLocaleString()}</Text></Box>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>Updated At</Text><Text fontSize="sm">{new Date(recvs.viewItem.updated_at).toLocaleString()}</Text></Box>
+                <Box><Text fontWeight="semibold" color="ink.600" fontSize="sm" mb={1}>Created At</Text><Text fontSize="sm">{new Date(recvs.viewItem.created_at).toLocaleString()}</Text></Box>
+                <Box><Text fontWeight="semibold" color="ink.600" fontSize="sm" mb={1}>Updated At</Text><Text fontSize="sm">{new Date(recvs.viewItem.updated_at).toLocaleString()}</Text></Box>
           </SimpleGrid>
         )}
       </StandardModal>
@@ -2032,7 +2018,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               size="sm"
               colorScheme="orange"
               leftIcon={<AddIcon />}
-              onClick={() => { resetCreateRuleExtras(); defs.fetchDefinitions(); fetchTenants(); rules.openCreate(); }}
+              onClick={() => { resetCreateRuleExtras(); defs.fetchDefinitions(); rules.openCreate(); }}
             >
               Create Routing Rule
             </Button>
@@ -2067,7 +2053,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
         <DrawerOverlay />
         <DrawerContent>
           <DrawerCloseButton />
-          <DrawerHeader borderBottomWidth="1px" borderColor="gray.200">
+          <DrawerHeader borderBottomWidth="1px" borderColor="ink.200">
             <Text fontSize="lg" fontWeight="bold">Create Routing Rule</Text>
           </DrawerHeader>
           <DrawerBody py={6}>
@@ -2148,9 +2134,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                           cursor="pointer"
                           borderRadius="full"
                           borderWidth="2px"
-                          borderColor={isActive ? colors.activeBorder : "gray.200"}
+                          borderColor={isActive ? colors.activeBorder : "ink.200"}
                           bg={isActive ? colors.activeBg : "white"}
-                          color={isActive ? colors.activeText : "gray.500"}
+                          color={isActive ? colors.activeText : "ink.500"}
                           _hover={{ bg: isActive ? colors.activeBg : colors.hoverBg, borderColor: colors.activeBorder }}
                           transition="all 0.15s"
                           onClick={() => { rules.setCreateForm({ ...rules.createForm, severity: s }); setCreateRuleErrors((prev) => { const n = { ...prev }; delete n.severity; return n; }); }}
@@ -2200,7 +2186,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   </FormLabel>
                   {rules.createForm.category === "infrastructure" ? (
                     <>
-                      <Select value="global" isDisabled bg="gray.50">
+                      <Select value="global" isDisabled bg="ink.50">
                         <option value="global">Global</option>
                       </Select>
 
@@ -2257,26 +2243,26 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     Delivery Channel
                   </FormLabel>
                   <Box
-                    bg="gray.50"
+                    bg="ink.50"
                     border="1px solid"
-                    borderColor="gray.200"
+                    borderColor="ink.200"
                     borderRadius="md"
                     px={4}
                     py={3}
                     cursor="not-allowed"
                   >
                     <HStack spacing={2}>
-                      <LockIcon color="gray.400" boxSize={3} />
-                      <Text fontSize="sm" color="gray.400" fontWeight="medium">Email</Text>
+                      <LockIcon color="ink.400" boxSize={3} />
+                      <Text fontSize="sm" color="ink.400" fontWeight="medium">Email</Text>
                     </HStack>
                   </Box>
-                  <Text fontSize="xs" color="gray.500" mt={1}>Email delivery is automatically configured. Additional channels coming soon.</Text>
+                  <Text fontSize="xs" color="ink.500" mt={1}>Email delivery is automatically configured. Additional channels coming soon.</Text>
                 </FormControl>
               </VStack>
 
             </VStack>
           </DrawerBody>
-          <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
+          <DrawerFooter borderTopWidth="1px" borderColor="ink.200">
             <Button variant="outline" mr={3} onClick={() => { rules.closeCreate(); resetCreateRuleExtras(); }} isDisabled={rules.isCreating}>Cancel</Button>
             <Button colorScheme="orange" onClick={validateAndCreate} isLoading={rules.isCreating} loadingText="Saving...">Save Routing Rule</Button>
           </DrawerFooter>
@@ -2288,7 +2274,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
         <DrawerOverlay />
         <DrawerContent>
           <DrawerCloseButton />
-          <DrawerHeader borderBottomWidth="1px" borderColor="gray.200">
+          <DrawerHeader borderBottomWidth="1px" borderColor="ink.200">
             <Text fontSize="lg" fontWeight="bold">View Routing Rule</Text>
           </DrawerHeader>
           <DrawerBody py={6}>
@@ -2304,15 +2290,15 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 severity === "critical" ? { bg: "red.100", color: "red.700", border: "red.300" }
                 : severity === "warning" ? { bg: "yellow.100", color: "yellow.700", border: "yellow.300" }
                 : severity === "info" ? { bg: "blue.100", color: "blue.700", border: "blue.300" }
-                : { bg: "gray.100", color: "gray.600", border: "gray.300" };
+                : { bg: "ink.100", color: "ink.600", border: "ink.300" };
               const catColor = category === "application" ? "orange" : category === "infrastructure" ? "purple" : "gray";
               return (
                 <VStack spacing={0} align="stretch">
 
                   {/* Rule Name */}
                   <Box pb={5}>
-                    <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={1}>Rule Name</Text>
-                    <Text fontWeight="semibold" fontSize="sm" color="gray.800">{item.rule_name ?? item.receiver_name}</Text>
+                    <Text fontWeight="semibold" color="ink.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={1}>Rule Name</Text>
+                    <Text fontWeight="semibold" fontSize="sm" color="ink.800">{item.rule_name ?? item.receiver_name}</Text>
                   </Box>
 
                   <Divider mb={5} />
@@ -2320,15 +2306,15 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   {/* Category + Severity */}
                   <SimpleGrid columns={2} spacing={5} pb={5}>
                     <Box>
-                      <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Category</Text>
+                      <Text fontWeight="semibold" color="ink.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Category</Text>
                       {category ? (
                         <Badge colorScheme={catColor} variant="subtle" textTransform="capitalize" fontSize="xs" px={2} py={0.5} borderRadius="full">{category}</Badge>
                       ) : (
-                        <Text fontSize="sm" color="gray.400">—</Text>
+                        <Text fontSize="sm" color="ink.400">—</Text>
                       )}
                     </Box>
                     <Box>
-                      <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Severity</Text>
+                      <Text fontWeight="semibold" color="ink.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Severity</Text>
                       {severity ? (
                         <Box
                           display="inline-block"
@@ -2344,18 +2330,18 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                           borderColor={sevColors.border}
                         >{severity}</Box>
                       ) : (
-                        <Text fontSize="sm" color="gray.400">—</Text>
+                        <Text fontSize="sm" color="ink.400">—</Text>
                       )}
                     </Box>
                   </SimpleGrid>
 
                   {/* Alert Definition */}
                   <Box pb={5}>
-                    <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Alert Definition</Text>
+                    <Text fontWeight="semibold" color="ink.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Alert Definition</Text>
                     {item.alert_names && item.alert_names.length > 0 ? (
                       <VStack spacing={1} align="stretch">
                         {item.alert_names.map((name) => (
-                          <Text key={name} fontSize="sm" color="gray.700">{name}</Text>
+                          <Text key={name} fontSize="sm" color="ink.700">{name}</Text>
                         ))}
                       </VStack>
                     ) : (() => {
@@ -2365,7 +2351,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       const hasFilter = category || severity;
                       return (
                         <HStack spacing={2}>
-                          <Text fontSize="sm" color="gray.500">
+                          <Text fontSize="sm" color="ink.500">
                             {hasFilter
                               ? `All matching definitions`
                               : "All definitions"}
@@ -2382,17 +2368,17 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
 
                   {/* Scope */}
                   <Box pb={5}>
-                    <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Scope</Text>
+                    <Text fontWeight="semibold" color="ink.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Scope</Text>
                     {item.tenant ? (
                       <HStack spacing={1.5}>
-                        <Text fontSize="sm" color="gray.700" fontWeight="medium">Specific Tenant</Text>
-                        <Text fontSize="sm" color="gray.400">—</Text>
+                        <Text fontSize="sm" color="ink.700" fontWeight="medium">Specific Tenant</Text>
+                        <Text fontSize="sm" color="ink.400">—</Text>
                         <Badge colorScheme="purple" variant="subtle" textTransform="none" fontSize="xs">{item.tenant}</Badge>
                       </HStack>
                     ) : (
                       <HStack spacing={1.5}>
                         <Badge colorScheme="gray" variant="subtle" fontSize="xs" textTransform="none">Global</Badge>
-                        <Text fontSize="xs" color="gray.400">All tenants</Text>
+                        <Text fontSize="xs" color="ink.400">All tenants</Text>
                       </HStack>
                     )}
                   </Box>
@@ -2400,12 +2386,12 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   {/* Notify — only show when there is meaningful recipient info */}
                   {((item.rbac_role && item.tenant) || (item.email_to && item.email_to.length > 0)) && (
                     <Box pb={5}>
-                      <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Notify</Text>
+                      <Text fontWeight="semibold" color="ink.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Notify</Text>
                       {item.rbac_role && item.tenant ? (
                         <HStack spacing={1.5}>
                           <Badge colorScheme="blue" variant="subtle" fontSize="xs" textTransform="capitalize">{item.rbac_role}</Badge>
-                          <Text fontSize="sm" color="gray.400">—</Text>
-                          <Text fontSize="sm" color="gray.600" fontWeight="medium">{item.tenant}</Text>
+                          <Text fontSize="sm" color="ink.400">—</Text>
+                          <Text fontSize="sm" color="ink.600" fontWeight="medium">{item.tenant}</Text>
                         </HStack>
                       ) : (
                         <Wrap spacing={1}>
@@ -2421,16 +2407,16 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
 
                   {/* Delivery Channel */}
                   <Box pb={5}>
-                    <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Delivery Channel</Text>
+                    <Text fontWeight="semibold" color="ink.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Delivery Channel</Text>
                     <HStack spacing={2}>
-                      <LockIcon color="gray.400" boxSize={3} />
-                      <Text fontSize="sm" color="gray.700" fontWeight="medium">Email</Text>
+                      <LockIcon color="ink.400" boxSize={3} />
+                      <Text fontSize="sm" color="ink.700" fontWeight="medium">Email</Text>
                     </HStack>
                   </Box>
 
                   {/* Status */}
                   <Box>
-                    <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Status</Text>
+                    <Text fontWeight="semibold" color="ink.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Status</Text>
                     <Badge
                       colorScheme={item.enabled ? "green" : "gray"}
                       variant="subtle"
@@ -2445,12 +2431,11 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               );
             })()}
           </DrawerBody>
-          <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
+          <DrawerFooter borderTopWidth="1px" borderColor="ink.200">
             <Button variant="outline" mr={3} onClick={() => {
                 rules.closeView();
                 if (rules.viewItem) {
                   defs.fetchDefinitions();
-                  fetchTenants();
                   resetEditRuleExtras();
                   initEditRuleExtras(rules.viewItem);
                   rules.openUpdate(rules.viewItem);
@@ -2466,7 +2451,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
         <DrawerOverlay />
         <DrawerContent>
           <DrawerCloseButton />
-          <DrawerHeader borderBottomWidth="1px" borderColor="gray.200">
+          <DrawerHeader borderBottomWidth="1px" borderColor="ink.200">
             <Text fontSize="lg" fontWeight="bold">Edit Routing Rule</Text>
           </DrawerHeader>
           <DrawerBody py={6}>
@@ -2550,9 +2535,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                           cursor="pointer"
                           borderRadius="full"
                           borderWidth="2px"
-                          borderColor={isActive ? colors.activeBorder : "gray.200"}
+                          borderColor={isActive ? colors.activeBorder : "ink.200"}
                           bg={isActive ? colors.activeBg : "white"}
-                          color={isActive ? colors.activeText : "gray.500"}
+                          color={isActive ? colors.activeText : "ink.500"}
                           _hover={{ bg: isActive ? colors.activeBg : colors.hoverBg, borderColor: colors.activeBorder }}
                           transition="all 0.15s"
                           onClick={() => {
@@ -2599,7 +2584,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       </Select>
                     );
                   })()}
-                  <Text fontSize="xs" color="gray.500" mt={1}>Filter by category/severity, then select a specific definition (optional).</Text>
+                  <Text fontSize="xs" color="ink.500" mt={1}>Filter by category/severity, then select a specific definition (optional).</Text>
                 </FormControl>
               </VStack>
 
@@ -2613,7 +2598,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   </FormLabel>
                   {editRuleCategory === "infrastructure" ? (
                     <>
-                      <Select value="global" isDisabled bg="gray.50">
+                      <Select value="global" isDisabled bg="ink.50">
                         <option value="global">Global</option>
                       </Select>
 
@@ -2682,20 +2667,20 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 <FormControl>
                   <FormLabel fontWeight="semibold" fontSize="sm">Delivery Channel</FormLabel>
                   <Box
-                    bg="gray.50"
+                    bg="ink.50"
                     border="1px solid"
-                    borderColor="gray.200"
+                    borderColor="ink.200"
                     borderRadius="md"
                     px={4}
                     py={3}
                     cursor="not-allowed"
                   >
                     <HStack spacing={2}>
-                      <LockIcon color="gray.400" boxSize={3} />
-                      <Text fontSize="sm" color="gray.400" fontWeight="medium">Email</Text>
+                      <LockIcon color="ink.400" boxSize={3} />
+                      <Text fontSize="sm" color="ink.400" fontWeight="medium">Email</Text>
                     </HStack>
                   </Box>
-                  <Text fontSize="xs" color="gray.500" mt={1}>Email delivery is automatically configured. Additional channels coming soon.</Text>
+                  <Text fontSize="xs" color="ink.500" mt={1}>Email delivery is automatically configured. Additional channels coming soon.</Text>
                 </FormControl>
               </VStack>
 
@@ -2720,7 +2705,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
 
             </VStack>
           </DrawerBody>
-          <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
+          <DrawerFooter borderTopWidth="1px" borderColor="ink.200">
             <Button
               variant="outline"
               mr={3}
@@ -2876,15 +2861,15 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
           <>
             <Text fontSize="lg" fontWeight="bold">Alert event</Text>
             {history.viewItem ? (
-              <Text fontSize="sm" fontWeight="normal" color="gray.600" mt={1} noOfLines={2}>
+              <Text fontSize="sm" fontWeight="normal" color="ink.600" mt={1} noOfLines={2}>
                 {history.viewItem.alert_name}
               </Text>
             ) : null}
           </>
         }
-        headerProps={{ borderBottomWidth: "1px", borderColor: "gray.200" }}
+        headerProps={{ borderBottomWidth: "1px", borderColor: "ink.200" }}
         bodyProps={{ py: 6 }}
-        footerProps={{ borderTopWidth: "1px", borderColor: "gray.200" }}
+        footerProps={{ borderTopWidth: "1px", borderColor: "ink.200" }}
         footer={<Button onClick={history.closeView}>Close</Button>}
       >
         {history.viewItem ? (
@@ -2902,7 +2887,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   ["Id", String(history.viewItem.id)],
                 ].map(([label, val]) => (
                   <Box key={label}>
-                    <Text fontSize="xs" fontWeight="bold" color="gray.500" textTransform="uppercase" letterSpacing="wider">
+                    <Text fontSize="xs" fontWeight="bold" color="ink.500" textTransform="uppercase" letterSpacing="wider">
                       {label}
                     </Text>
                     <Text fontSize="sm" mt={1} wordBreak="break-word">{val}</Text>
@@ -2925,14 +2910,14 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
         onChange={setSubTabIndex}
         mb={6}
       >
-        <TabList borderBottom="2px solid" borderColor="gray.200">
+        <TabList borderBottom="2px solid" borderColor="ink.200">
           {["Alert Definitions", "Alert Routing", "Alert History"].map(
             (label, idx) => (
               <Tab
                 key={label}
                 fontWeight="semibold"
                 fontSize="md"
-                color={subTabIndex === idx ? "gray.800" : "gray.500"}
+                color={subTabIndex === idx ? "ink.800" : "ink.500"}
                 pb={3}
                 px={5}
                 position="relative"
@@ -2947,7 +2932,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   bg: subTabIndex === idx ? "orange.500" : "transparent",
                   transition: "background 0.2s",
                 }}
-                _hover={{ color: "gray.700" }}
+                _hover={{ color: "ink.700" }}
                 _focus={{ boxShadow: "none" }}
                 transition="color 0.2s"
               >
