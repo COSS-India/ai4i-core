@@ -1021,7 +1021,7 @@ function AdminLayoutDataTable<T>({
 
   return (
     <DataTableFilterContext.Provider value={filterContextValue}>
-      <VStack spacing={4} align="stretch" w="100%">
+      <VStack spacing={4} align="stretch" w="full" minW={0}>
         {hasFilterToolbar ? (
           <VStack spacing={4} align="stretch">
             {showFiltersHeading ? (
@@ -1054,6 +1054,8 @@ function AdminLayoutDataTable<T>({
           </Alert>
         ) : (
           <Box
+            w="full"
+            minW={0}
             borderWidth="1px"
             borderColor="ink.200"
             borderRadius="14px"
