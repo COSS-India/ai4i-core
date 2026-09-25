@@ -787,7 +787,6 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 param: "severity",
                 value: defs.filterSeverity,
                 onChange: defs.setFilterSeverity,
-                width: "130px",
                 options: [
                   { label: "Severity", value: "all" },
                   ...SEVERITIES.map((s) => ({
@@ -803,7 +802,6 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 param: "category",
                 value: defs.filterCategory,
                 onChange: defs.setFilterCategory,
-                width: "140px",
                 options: [
                   { label: "Category", value: "all" },
                   ...CATEGORIES.map((c) => ({
@@ -819,7 +817,6 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 param: "enabled",
                 value: defs.filterEnabled,
                 onChange: defs.setFilterEnabled,
-                width: "120px",
                 options: [
                   { label: "Status", value: "all" },
                   { label: "Active", value: "enabled" },
@@ -1772,7 +1769,6 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 param: "enabled",
                 value: recvs.filterEnabled,
                 onChange: recvs.setFilterEnabled,
-                width: "200px",
                 options: [
                   { label: "All", value: "all" },
                   { label: "Enabled", value: "enabled" },
@@ -2037,7 +2033,6 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               param: "enabled",
               value: rules.filterEnabled,
               onChange: rules.setFilterEnabled,
-              width: "120px",
               options: [
                 { label: "Status", value: "all" },
                 { label: "Active", value: "enabled" },
@@ -2803,7 +2798,6 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 param: "severity",
                 value: history.filterSeverity,
                 onChange: history.setFilterSeverity,
-                width: "130px",
                 options: [
                   { label: "Severity", value: "all" },
                   ...SEVERITIES.map((s) => ({
@@ -2819,7 +2813,6 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 param: "category",
                 value: history.filterCategory,
                 onChange: history.setFilterCategory,
-                width: "140px",
                 options: [
                   { label: "Category", value: "all" },
                   ...CATEGORIES.map((c) => ({
@@ -2836,7 +2829,6 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 value: history.dateFrom,
                 onChange: history.setDateFrom,
                 inputType: "date",
-                width: "140px",
               },
               {
                 id: "dateTo",
@@ -2846,7 +2838,6 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 value: history.dateTo,
                 onChange: history.setDateTo,
                 inputType: "date",
-                width: "140px",
               },
             ]}
           />

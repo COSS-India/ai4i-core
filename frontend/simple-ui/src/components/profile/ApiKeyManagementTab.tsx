@@ -14,7 +14,6 @@ import {
   Checkbox,
   CheckboxGroup,
   Tooltip,
-  IconButton,
   Badge,
 } from "@chakra-ui/react";
 import { useAuth } from "../../hooks/useAuth";
@@ -25,6 +24,7 @@ import { formatSpendMoney } from "../../utils/usageSpendHelpers";
 import { FiSlash } from "react-icons/fi";
 import { EditIcon } from "@chakra-ui/icons";
 import DataTable, {
+  DataTableActions,
   DEFAULT_PAGE_SIZE_OPTIONS,
   FieldLabel,
   type DataTableColumn,
@@ -221,48 +221,33 @@ export default function ApiKeyManagementTab({
         header: "Actions",
         tdProps: { onClick: (e) => e.stopPropagation() },
         cell: (key) => (
-          <HStack spacing={1}>
-            <Tooltip
-              hasArrow
-              label={
-                mgmt.isKeyEffectivelyActive(key)
+          <DataTableActions
+            actions={[
+              {
+                id: "edit",
+                label: "Update API key",
+                tooltip: mgmt.isKeyEffectivelyActive(key)
                   ? "Update key"
                   : mgmt.isKeyRevocable(key)
                     ? "Only effectively active API keys can be updated."
-                    : "This API key has been revoked and cannot be updated."
-              }
-            >
-              <IconButton
-                aria-label="Update API key"
-                icon={<EditIcon />}
-                size="sm"
-                variant="ghost"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  mgmt.handleOpenUpdateModal(key);
-                }}
-                isDisabled={!mgmt.isKeyEffectivelyActive(key)}
-              />
-            </Tooltip>
-            <Tooltip
-              hasArrow
-              label={mgmt.isKeyRevocable(key) ? "Revoke key" : "Already revoked"}
-            >
-              <IconButton
-                aria-label="Revoke API key"
-                icon={<FiSlash />}
-                size="sm"
-                variant="ghost"
-                colorScheme="red"
-                _hover={{ bg: "red.50" }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  mgmt.handleOpenRevokeModal(key);
-                }}
-                isDisabled={!mgmt.isKeyRevocable(key)}
-              />
-            </Tooltip>
-          </HStack>
+                    : "This API key has been revoked and cannot be updated.",
+                icon: <EditIcon />,
+                disabled: !mgmt.isKeyEffectivelyActive(key),
+                onClick: () => mgmt.handleOpenUpdateModal(key),
+              },
+              {
+                id: "revoke",
+                label: "Revoke API key",
+                tooltip: mgmt.isKeyRevocable(key) ? "Revoke key" : "Already revoked",
+                icon: <FiSlash />,
+                color: "red.500",
+                hoverColor: "red.600",
+                hoverBg: "red.50",
+                disabled: !mgmt.isKeyRevocable(key),
+                onClick: () => mgmt.handleOpenRevokeModal(key),
+              },
+            ]}
+          />
         ),
       },
     ];
@@ -280,27 +265,6 @@ export default function ApiKeyManagementTab({
 
   return (
     <>
-      <HStack spacing={2} justify="flex-end" mb={4}>
-        <Button
-          size="sm"
-          variant="outline"
-          colorScheme="blue"
-          onClick={() => budgetEdit.open()}
-          isDisabled={mgmt.applications.length === 0}
-        >
-          Edit Budget
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          colorScheme="blue"
-          onClick={() => void mgmt.handleFetchAllApiKeys()}
-          isLoading={mgmt.isLoadingAllApiKeys}
-          loadingText="Loading..."
-        >
-          Refresh
-        </Button>
-      </HStack>
       <DataTable
             layout="admin"
             items={sortedApiKeys}
@@ -321,6 +285,29 @@ export default function ApiKeyManagementTab({
             paginate="client"
             paginationPosition="bottom"
             pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
+            filterToolbarRightContent={
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  colorScheme="blue"
+                  onClick={() => budgetEdit.open()}
+                  isDisabled={mgmt.applications.length === 0}
+                >
+                  Edit Budget
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  colorScheme="blue"
+                  onClick={() => void mgmt.handleFetchAllApiKeys()}
+                  isLoading={mgmt.isLoadingAllApiKeys}
+                  loadingText="Loading..."
+                >
+                  Refresh
+                </Button>
+              </>
+            }
             search={{
               label: "Key Name",
               value: mgmt.keyNameSearch,
@@ -336,7 +323,6 @@ export default function ApiKeyManagementTab({
                 param: "application_id",
                 value: mgmt.filterApplication,
                 onChange: mgmt.setFilterApplication,
-                width: { base: "full", md: "280px" },
                 options: [
                   { label: "All Applications", value: "all" },
                   ...mgmt.applications.map((app) => ({
@@ -352,7 +338,6 @@ export default function ApiKeyManagementTab({
                 param: "permission",
                 value: mgmt.filterPermission,
                 onChange: mgmt.setFilterPermission,
-                width: { base: "full", md: "320px" },
                 options: [
                   { label: "All Permissions", value: "all" },
                   ...mgmt.permissionFilterOptions.map((perm) => ({
@@ -368,7 +353,6 @@ export default function ApiKeyManagementTab({
                 param: "status",
                 value: mgmt.filterActive,
                 onChange: mgmt.setFilterActive,
-                width: { base: "full", sm: "160px" },
                 options: [
                   { label: "All", value: API_KEY.FILTER_STATUS.ALL },
                   ...API_KEY_FILTER_STATUS_LIST.map((s) => ({

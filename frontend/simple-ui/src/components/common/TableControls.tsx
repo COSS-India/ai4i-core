@@ -204,8 +204,8 @@ export function TablePaginationBar({
   onLast,
   canPrev,
   canNext,
-  borderColor = "gray.300",
-  bg = "#FAFBFD",
+  borderColor = "ink.200",
+  bg = "ink.50",
   /**
    * - `attached` — flush footer/header inside the DataTable border shell (default for DataTable)
    * - `standalone` — spaced bar for rare external use

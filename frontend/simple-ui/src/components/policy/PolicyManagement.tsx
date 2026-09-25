@@ -12,7 +12,6 @@ import {
   FormControl,
   Heading,
   HStack,
-  IconButton,
   Input,
   Select,
   Spinner,
@@ -29,12 +28,8 @@ import {
   useDisclosure,
 } from "@chakra-ui/react";
 import { showToast } from "../../utils/toast";
-import {
-  DeleteIcon,
-  EditIcon,
-  ViewIcon,
-} from "@chakra-ui/icons";
 import StandardModal, { CreateModal } from "../common/StandardModal";
+import DataTableActions from "../common/DataTableActions";
 import ConfirmDialog from "../common/ConfirmDialog";
 import CreateButton from "../common/CreateButton";
 import FormActions from "../common/FormActions";
@@ -512,28 +507,20 @@ function PoliciesPanel({
       tdProps: { onClick: (e) => e.stopPropagation() },
       cell: (row) => (
         <HStack spacing={3} align="center">
-          <Tooltip label="Edit policy" hasArrow placement="top">
-            <IconButton
-              aria-label="Edit policy"
-              icon={<EditIcon />}
-              size="sm"
-              variant="ghost"
-              colorScheme="blue"
-              _hover={{ bg: "blue.50" }}
-              onClick={() => openEdit(row.policy_id)}
-            />
-          </Tooltip>
-          <Tooltip label="Delete policy" hasArrow placement="top">
-            <IconButton
-              aria-label="Delete policy"
-              icon={<DeleteIcon />}
-              size="sm"
-              variant="ghost"
-              colorScheme="red"
-              _hover={{ bg: "red.50" }}
-              onClick={() => requestDelete(row)}
-            />
-          </Tooltip>
+          <DataTableActions
+            actions={[
+              {
+                id: "edit",
+                label: "Edit policy",
+                onClick: () => openEdit(row.policy_id),
+              },
+              {
+                id: "delete",
+                label: "Delete policy",
+                onClick: () => requestDelete(row),
+              },
+            ]}
+          />
           <Tooltip
             label={row.is_active ? "Turn off to deactivate" : "Turn on to activate"}
             hasArrow
@@ -608,7 +595,6 @@ function PoliciesPanel({
                 param: "is_active",
                 value: filterActive,
                 onChange: setFilterActive,
-                width: { base: "full", sm: "140px" },
                 options: [
                   { label: "All", value: "" },
                   { label: "Active", value: "true" },
@@ -622,7 +608,6 @@ function PoliciesPanel({
                 param: "is_global",
                 value: filterGlobal,
                 onChange: setFilterGlobal,
-                width: { base: "full", sm: "160px" },
                 options: [
                   { label: "All", value: "" },
                   { label: "Global", value: "true" },
@@ -1438,30 +1423,20 @@ function PiiTypesPanel() {
       header: "Actions",
       tdProps: { onClick: (e) => e.stopPropagation() },
       cell: (row) => (
-        <HStack spacing={1}>
-          <Tooltip label="Edit PII type" hasArrow placement="top">
-            <IconButton
-              aria-label="Edit PII type"
-              icon={<EditIcon />}
-              size="sm"
-              variant="ghost"
-              colorScheme="blue"
-              _hover={{ bg: "blue.50" }}
-              onClick={() => openEdit(row)}
-            />
-          </Tooltip>
-          <Tooltip label="Delete PII type" hasArrow placement="top">
-            <IconButton
-              aria-label="Delete PII type"
-              icon={<DeleteIcon />}
-              size="sm"
-              variant="ghost"
-              colorScheme="red"
-              _hover={{ bg: "red.50" }}
-              onClick={() => requestDelete(row)}
-            />
-          </Tooltip>
-        </HStack>
+        <DataTableActions
+          actions={[
+            {
+              id: "edit",
+              label: "Edit PII type",
+              onClick: () => openEdit(row),
+            },
+            {
+              id: "delete",
+              label: "Delete PII type",
+              onClick: () => requestDelete(row),
+            },
+          ]}
+        />
       ),
     },
   ], [openEdit, requestDelete]);
@@ -1538,7 +1513,6 @@ function PiiTypesPanel() {
                 param: "mask_format",
                 value: filterMask,
                 onChange: setFilterMask,
-                width: { base: "full", sm: "160px" },
                 options: [
                   { label: "All", value: "" },
                   ...MASK_OPTIONS.map((m) => ({ label: m, value: m })),
@@ -1810,17 +1784,16 @@ function AuditPanel() {
       header: "Detail",
       tdProps: { onClick: (e) => e.stopPropagation() },
       cell: (row) => (
-        <Tooltip label="View JSON detail" hasArrow placement="top">
-          <IconButton
-            aria-label="View audit log JSON"
-            icon={<ViewIcon />}
-            size="sm"
-            variant="ghost"
-            colorScheme="blue"
-            _hover={{ bg: "blue.50" }}
-            onClick={() => void openDetail(row.pii_audit_id)}
-          />
-        </Tooltip>
+        <DataTableActions
+          actions={[
+            {
+              id: "view",
+              label: "View JSON detail",
+              "aria-label": "View audit log JSON",
+              onClick: () => void openDetail(row.pii_audit_id),
+            },
+          ]}
+        />
       ),
     },
   ], [openDetail]);
@@ -1880,7 +1853,6 @@ function AuditPanel() {
             value: minPii,
             onChange: setMinPii,
             inputType: "number",
-            width: { base: "full", sm: "140px" },
           },
         ]}
         hasActiveFilters={hasActiveFilters}
