@@ -30,7 +30,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.core.exceptions import EntityNotFoundError
+from app.core.exceptions import EntityNotFoundError, InsufficientPermissionsError
 from app.schemas.enums.notification_management import NotificationType
 from app.schemas.notification_management.catalog import CatalogItem, CatalogUpdate, ThresholdBand
 
@@ -49,7 +49,9 @@ sys.modules["app.routes.alert_catalog"] = _alert_catalog_routes
 _alert_catalog_spec.loader.exec_module(_alert_catalog_routes)
 
 
-def _item(id=1, name="TIER_ASSIGNED", type=NotificationType.NOTIFICATION, thresholds=None) -> CatalogItem:
+def _item(
+    id=1, name="TIER_ASSIGNED", type=NotificationType.NOTIFICATION, scope="INSTITUTION", thresholds=None
+) -> CatalogItem:
     return CatalogItem(
         id=id,
         name=name,
@@ -58,7 +60,7 @@ def _item(id=1, name="TIER_ASSIGNED", type=NotificationType.NOTIFICATION, thresh
         type=type,
         module="TIER",
         channels=["EMAIL"],
-        recipient_roles={},
+        scope=scope,
         thresholds=thresholds,
     )
 
@@ -66,9 +68,14 @@ def _item(id=1, name="TIER_ASSIGNED", type=NotificationType.NOTIFICATION, thresh
 _SESSION = MagicMock()
 
 
-def _request(user_id: str | None = "u1") -> MagicMock:
+def _request(user_id: str | None = "u1", *, is_admin: bool = True) -> MagicMock:
     request = MagicMock()
-    request.headers = {"X-User-Id": user_id} if user_id is not None else {}
+    headers = {}
+    if user_id is not None:
+        headers["X-User-Id"] = user_id
+    if is_admin:
+        headers["X-Permission-IDS"] = "1"  # ROLE_ADMIN
+    request.headers = headers
     return request
 
 
@@ -78,7 +85,7 @@ class TestListCatalogRoute:
         stub = AsyncMock(return_value=[_item()])
         monkeypatch.setattr(_notification_routes.catalog_service, "list_catalog", stub)
         resp = await _notification_routes.list_catalog(
-            catalog_type=NotificationType.NOTIFICATION, session=_SESSION
+            request=_request(), catalog_type=NotificationType.NOTIFICATION, session=_SESSION
         )
         assert resp.success is True
         assert [i.name for i in resp.data.items] == ["TIER_ASSIGNED"]
@@ -87,7 +94,7 @@ class TestListCatalogRoute:
         stub = AsyncMock(return_value=[])
         monkeypatch.setattr(_notification_routes.catalog_service, "list_catalog", stub)
         await _notification_routes.list_catalog(
-            catalog_type=NotificationType.ALERT, session=_SESSION
+            request=_request(), catalog_type=NotificationType.ALERT, session=_SESSION
         )
         assert stub.await_args.args[1] == NotificationType.ALERT
 
@@ -96,7 +103,7 @@ class TestListCatalogRoute:
             _notification_routes.catalog_service, "list_catalog", AsyncMock(return_value=[])
         )
         resp = await _notification_routes.list_catalog(
-            catalog_type=NotificationType.NOTIFICATION, session=_SESSION
+            request=_request(), catalog_type=NotificationType.NOTIFICATION, session=_SESSION
         )
         assert resp.data.items == []
 
@@ -106,7 +113,7 @@ class TestListCatalogRoute:
             AsyncMock(return_value=[_item(thresholds=None)]),
         )
         resp = await _notification_routes.list_catalog(
-            catalog_type=NotificationType.NOTIFICATION, session=_SESSION
+            request=_request(), catalog_type=NotificationType.NOTIFICATION, session=_SESSION
         )
         assert resp.data.items[0].thresholds is None
 
@@ -119,9 +126,18 @@ class TestListCatalogRoute:
             ]),
         )
         resp = await _notification_routes.list_catalog(
-            catalog_type=NotificationType.ALERT, session=_SESSION
+            request=_request(), catalog_type=NotificationType.ALERT, session=_SESSION
         )
         assert resp.data.items[0].thresholds == [ThresholdBand(percentage=50, active=False)]
+
+    async def test_non_admin_is_rejected(self, monkeypatch):
+        stub = AsyncMock(return_value=[])
+        monkeypatch.setattr(_notification_routes.catalog_service, "list_catalog", stub)
+        with pytest.raises(InsufficientPermissionsError):
+            await _notification_routes.list_catalog(
+                request=_request(is_admin=False), catalog_type=NotificationType.NOTIFICATION, session=_SESSION
+            )
+        stub.assert_not_awaited()
 
 
 class TestListCatalogRouteShape:
@@ -170,7 +186,7 @@ class TestUpdateCatalogRoute:
     async def test_forwards_name_and_payload(self, monkeypatch):
         stub = AsyncMock(return_value=_item(type=NotificationType.ALERT))
         monkeypatch.setattr(_alert_catalog_routes.catalog_service, "update_catalog", stub)
-        payload = CatalogUpdate(recipient_roles={"ADMIN": True})
+        payload = CatalogUpdate(scope="GLOBAL")
         await _alert_catalog_routes.update_catalog(
             name="QUOTA_THRESHOLD", payload=payload, request=_request(), session=_SESSION
         )
@@ -193,6 +209,16 @@ class TestUpdateCatalogRoute:
             await _alert_catalog_routes.update_catalog(
                 name="NOPE", payload=CatalogUpdate(), request=_request(), session=_SESSION
             )
+
+    async def test_non_admin_is_rejected(self, monkeypatch):
+        stub = AsyncMock(return_value=_item(type=NotificationType.ALERT))
+        monkeypatch.setattr(_alert_catalog_routes.catalog_service, "update_catalog", stub)
+        with pytest.raises(InsufficientPermissionsError):
+            await _alert_catalog_routes.update_catalog(
+                name="QUOTA_THRESHOLD", payload=CatalogUpdate(),
+                request=_request(is_admin=False), session=_SESSION,
+            )
+        stub.assert_not_awaited()
 
 
 class TestUpdateCatalogRouteShape:
@@ -222,18 +248,14 @@ class TestCatalogUpdateValidation:
     def test_omitted_channels_is_fine(self):
         assert CatalogUpdate().channels is None
 
-    def test_recipient_roles_string_true_is_rejected_not_coerced(self):
-        # pydantic's default lax bool mode would otherwise silently coerce
-        # "true"/"false" into a real bool instead of 422ing — StrictBool on
-        # this field closes that gap (a loosely-typed caller's bug must
-        # fail fast, not get masked).
-        with pytest.raises(Exception):
-            CatalogUpdate(recipient_roles={"ADMIN": "true"})
-
     def test_thresholds_string_true_is_rejected_not_coerced(self):
         with pytest.raises(Exception):
             CatalogUpdate(thresholds=[{"percentage": 50, "active": "true"}])
 
-    def test_recipient_roles_real_bool_still_accepted(self):
-        payload = CatalogUpdate(recipient_roles={"ADMIN": True})
-        assert payload.recipient_roles == {"ADMIN": True}
+    def test_scope_is_validated_against_the_enum(self):
+        with pytest.raises(Exception):
+            CatalogUpdate(scope="NOT_A_SCOPE")
+
+    def test_scope_real_value_accepted(self):
+        payload = CatalogUpdate(scope="GLOBAL")
+        assert payload.scope == "GLOBAL"

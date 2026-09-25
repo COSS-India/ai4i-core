@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, StrictBool, field_validator
 
@@ -6,6 +6,7 @@ from app.schemas.common import MessageMeta, SuccessResponse, SuccessResponseWith
 from app.schemas.enums.notification_management import (
     NotificationChannel,
     NotificationModule,
+    NotificationScope,
     NotificationType,
 )
 
@@ -21,8 +22,7 @@ class ThresholdBand(BaseModel):
 
     percentage: int
     # Strict: pydantic's default lax bool coercion would otherwise accept
-    # "true"/"false" (string) and silently coerce them instead of 422ing —
-    # see CatalogUpdate.recipient_roles for the same fix on that field.
+    # "true"/"false" (string) and silently coerce them instead of 422ing.
     active: StrictBool
 
 
@@ -31,7 +31,11 @@ class CatalogItem(BaseModel):
     code-side display metadata (see catalog_metadata.py). ``thresholds`` is
     omitted entirely on a NOTIFICATION row (``None``, dropped from the JSON
     response) rather than sent as an always-empty ``[]`` — that key only
-    ever exists in ``config`` for ALERT-type rows (design section 6.1)."""
+    ever exists in ``config`` for ALERT-type rows (design section 6.1).
+
+    ``scope`` is GLOBAL (applies platform-wide, no per-institution
+    opt-out) or INSTITUTION (available for an institution to subscribe to
+    — see app.routes.notification_subscription)."""
 
     id: int
     name: str
@@ -40,7 +44,7 @@ class CatalogItem(BaseModel):
     type: NotificationType
     module: NotificationModule
     channels: List[NotificationChannel]
-    recipient_roles: Dict[str, bool]
+    scope: NotificationScope
     thresholds: Optional[List[ThresholdBand]] = None
 
 
@@ -50,7 +54,7 @@ class CatalogResponse(BaseModel):
 
 class CatalogUpdate(BaseModel):
     """PATCH /notification-alerts/catalog/{name} body. Every field optional — only the fields
-    present are changed; recipient_roles/thresholds each replace their own
+    present are changed; scope/thresholds each replace their own
     column/config-key wholesale (the mockup's checkbox group sends its whole
     current state) without disturbing the other, unset one.
 
@@ -62,11 +66,7 @@ class CatalogUpdate(BaseModel):
     whole list back."""
 
     channels: Optional[List[NotificationChannel]] = None
-    # Strict: a plain `bool` here would let pydantic's default lax mode
-    # coerce a string like "true"/"false" (or "1"/"yes"/"on"/...) into a
-    # real bool instead of 422ing — silently masking a loosely-typed
-    # caller's bug instead of failing fast (per this endpoint's spec).
-    recipient_roles: Optional[Dict[str, StrictBool]] = None
+    scope: Optional[NotificationScope] = None
     thresholds: Optional[List[ThresholdBand]] = None
 
     @field_validator("channels")
