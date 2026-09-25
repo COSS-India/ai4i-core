@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Optional, Tuple
 
+from ai4i_core.kafka import DeliveryStatus
 from ai4i_core.logging import get_logger
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
@@ -71,12 +72,16 @@ async def claim_send(db: AsyncSession, *, row_id: int) -> bool:
     result = await db.execute(
         text(
             "UPDATE ledger_notification_alert"
-            " SET status = jsonb_set(status, '{delivery}', '\"sending\"'::jsonb),"
+            " SET status = jsonb_set(status, '{delivery}', to_jsonb(CAST(:new_delivery AS text))),"
             "     updated_at = now()"
-            " WHERE id = :row_id AND status->>'delivery' = 'in_progress'"
+            " WHERE id = :row_id AND status->>'delivery' = :expected_delivery"
             " RETURNING id"
         ),
-        {"row_id": row_id},
+        {
+            "row_id": row_id,
+            "new_delivery": DeliveryStatus.SENDING.value,
+            "expected_delivery": DeliveryStatus.IN_PROGRESS.value,
+        },
     )
     won = result.first() is not None
     await db.commit()

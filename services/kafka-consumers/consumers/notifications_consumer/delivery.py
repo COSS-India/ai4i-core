@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, List
 
+from ai4i_core.kafka import DeliveryStatus
 from ai4i_core.logging import get_logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,7 +31,7 @@ async def deliver(
             "No recipients for event_name=%s tenant_id=%s roles=%s",
             event_name, tenant_id, roles,
         )
-        return "no_recipients"
+        return DeliveryStatus.NO_RECIPIENTS
 
     # One lookup for the whole fan-out, not one per recipient — every
     # recipient of the same event gets the same institution_name.
@@ -60,4 +61,4 @@ async def deliver(
                 person.user_id, event_name, tenant_id, outcome, exc_info=outcome,
             )
     sent_ok = [o for o in outcomes if o is True]
-    return "sent" if sent_ok else "failed"
+    return DeliveryStatus.SENT if sent_ok else DeliveryStatus.FAILED

@@ -68,6 +68,7 @@ from sqlalchemy import text
 
 from .notification_settings_cache import get_channels, get_notification_id
 from .ledger_cache import matches_cached_status, set_cached_status
+from .delivery_status import DeliveryStatus
 
 logger = logging.getLogger(__name__)
 
@@ -156,20 +157,24 @@ async def _record(
 async def check_and_record_threshold(
     db, name: str, tenant_id: str, subject: Dict[str, Any], percent: int, actor: str = ""
 ) -> bool:
-    return await _record(db, name, tenant_id, subject, {"value": percent, "delivery": "in_progress"}, actor)
+    return await _record(
+        db, name, tenant_id, subject, {"value": percent, "delivery": DeliveryStatus.IN_PROGRESS.value}, actor
+    )
 
 
 async def check_and_record_exhaustion(
     db, name: str, tenant_id: str, subject: Dict[str, Any], actor: str = ""
 ) -> bool:
-    return await _record(db, name, tenant_id, subject, {"value": True, "delivery": "in_progress"}, actor)
+    return await _record(
+        db, name, tenant_id, subject, {"value": True, "delivery": DeliveryStatus.IN_PROGRESS.value}, actor
+    )
 
 
 async def check_and_record_action(
     db, name: str, tenant_id: str, subject: Dict[str, Any], occurred_at: str, actor: str = ""
 ) -> bool:
     return await _record(
-        db, name, tenant_id, subject, {"value": occurred_at, "delivery": "in_progress"}, actor
+        db, name, tenant_id, subject, {"value": occurred_at, "delivery": DeliveryStatus.IN_PROGRESS.value}, actor
     )
 
 
@@ -204,7 +209,7 @@ async def check_and_record_actions_bulk(
         )
         return []
 
-    status_json = json.dumps({"value": value, "delivery": "in_progress"})
+    status_json = json.dumps({"value": value, "delivery": DeliveryStatus.IN_PROGRESS.value})
     subject_jsons = [json.dumps(subject, sort_keys=True) for _, subject in tenant_subjects]
 
     rows_sql: List[str] = []

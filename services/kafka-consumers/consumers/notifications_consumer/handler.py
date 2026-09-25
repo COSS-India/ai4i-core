@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
+from ai4i_core.kafka import DeliveryStatus, NotificationChannel
 from ai4i_core.logging import get_logger
 from confluent_kafka import Message
 
@@ -40,7 +41,7 @@ logger = get_logger(__name__)
 
 # Terminal delivery states — a row already settled here needs nothing more
 # from a redelivered/duplicate message.
-_TERMINAL_DELIVERIES = {"sent", "failed", "skipped"}
+_TERMINAL_DELIVERIES = {DeliveryStatus.SENT, DeliveryStatus.FAILED, DeliveryStatus.SKIPPED}
 
 
 def _parse_envelope(msg: Message) -> Optional[Dict[str, Any]]:
@@ -135,17 +136,17 @@ async def _process_channel(
     if current_delivery in _TERMINAL_DELIVERIES:
         return  # already handled — a genuine redelivery of this exact occurrence
 
-    if current_delivery != "in_progress":
+    if current_delivery != DeliveryStatus.IN_PROGRESS:
         logger.warning(
             "Unexpected delivery state %r on ledger row %s — leaving it alone",
             current_delivery, row_id,
         )
         return
 
-    if channel != "EMAIL":
+    if channel != NotificationChannel.EMAIL:
         # Slack/WhatsApp sending isn't built yet — design doc §8's "Templates
         # folder" note and §12's open questions.
-        await ledger.mark_delivery(db, row_id=row_id, delivery="skipped")
+        await ledger.mark_delivery(db, row_id=row_id, delivery=DeliveryStatus.SKIPPED.value)
         return
 
     won = await ledger.claim_send(db, row_id=row_id)
@@ -170,7 +171,7 @@ async def _process_channel(
                 event_name=envelope["event_name"],
                 details=envelope["details"],
             )
-        delivery_status = "sent" if outcome == "sent" else "failed"
+        delivery_status = DeliveryStatus.SENT if outcome == DeliveryStatus.SENT else DeliveryStatus.FAILED
     except Exception:
         logger.exception(
             "Delivery raised — settling ledger row to failed | event_name=%s "
@@ -178,8 +179,8 @@ async def _process_channel(
             envelope["event_name"], envelope["tenant_id"], channel, row_id,
         )
         outcome = "error"
-        delivery_status = "failed"
-    await ledger.mark_delivery(db, row_id=row_id, delivery=delivery_status)
+        delivery_status = DeliveryStatus.FAILED
+    await ledger.mark_delivery(db, row_id=row_id, delivery=delivery_status.value)
     logger.info(
         "Notification delivery settled | event_name=%s tenant_id=%s channel=%s "
         "ledger_id=%s outcome=%s delivery=%s",
