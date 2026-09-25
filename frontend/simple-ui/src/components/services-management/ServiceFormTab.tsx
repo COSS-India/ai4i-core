@@ -682,7 +682,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   </Text>
                 </MenuButton>
                 <Portal>
-                  <MenuList maxH="320px" overflow="hidden" p={0}>
+                  <MenuList maxH="320px" overflow="hidden" p={0} zIndex={1500}>
                     <Box
                       px={3}
                       py={2}

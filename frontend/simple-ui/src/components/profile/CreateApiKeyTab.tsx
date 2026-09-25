@@ -196,6 +196,7 @@ export default function CreateApiKeyTab({
                           }
                         }}
                         colorScheme="blue"
+                        isRequired={false}
                       >
                         <Text fontSize="sm" fontWeight="semibold">
                           Select All
@@ -208,7 +209,7 @@ export default function CreateApiKeyTab({
                   </Box>
                   <SimpleGrid columns={2} spacing={3}>
                     {create.permissions.map((p) => (
-                      <Checkbox key={p.name} value={p.name} colorScheme="blue">
+                      <Checkbox key={p.name} value={p.name} colorScheme="blue" isRequired={false}>
                         <Text fontSize="sm">{formatPermissionLabel(p.label)}</Text>
                       </Checkbox>
                     ))}
