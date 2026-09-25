@@ -139,13 +139,16 @@ export default function CreateApiKeyTab({
               <FormLabel fontWeight="semibold">Application</FormLabel>
               <Select
                 value={create.apiKeyForm.application_id}
-                onChange={(e) =>
+                onChange={(e) => {
+                  setBudgetBoundHint(null);
+                  create.clearFieldError("application_id");
+                  create.clearFieldError("budget");
                   create.setApiKeyForm({
                     ...create.apiKeyForm,
                     application_id: e.target.value,
                     allocated_percentage: "",
-                  })
-                }
+                  });
+                }}
                 placeholder="Select Application"
                 bg="white"
               >
@@ -207,7 +210,7 @@ export default function CreateApiKeyTab({
               </Box>
             </FormControl>
 
-            <FormControl isInvalid={Boolean(budgetError)}>
+            <FormControl isRequired isInvalid={Boolean(budgetError)}>
               <FormLabel fontWeight="semibold">
                 Budget Allocation{" "}
                 <Text as="span" fontWeight="normal" color="gray.500" fontSize="sm">
@@ -218,6 +221,7 @@ export default function CreateApiKeyTab({
                 value={create.apiKeyForm.allocated_percentage}
                 onChange={(next) => {
                   setBudgetBoundHint(null);
+                  create.clearFieldError("budget");
                   create.setApiKeyForm({
                     ...create.apiKeyForm,
                     allocated_percentage: next,
@@ -231,7 +235,7 @@ export default function CreateApiKeyTab({
                 {create.apiKeyForm.application_id &&
                 create.selectedApplication?.allocated_budget != null
                   ? create.uncappedHoldsRemainder
-                    ? " An existing key without a percentage allocation is holding this Application's remaining Budget."
+                    ? " An existing key without a percentage allocation is holding this Application's remaining Budget — give that key an explicit Budget before creating another."
                     : ` Up to ${create.formatAvailablePct()}% available within this Application.`
                   : ""}
               </FieldHint>
