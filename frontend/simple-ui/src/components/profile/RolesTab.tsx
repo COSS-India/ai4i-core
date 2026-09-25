@@ -1,16 +1,11 @@
 import React from "react";
 import {
   Box,
-  Card,
-  CardBody,
-  CardHeader,
   FormControl,
-  FormLabel,
   Heading,
   HStack,
   Text,
   VStack,
-  useColorModeValue,
   Spinner,
   Center,
   Alert,
@@ -30,6 +25,7 @@ import { formatDefaultTenantAssignableRoleLabel } from "../../utils/defaultTenan
 import { INSTITUTION } from "../../config/constants";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import FieldHint from "../common/FieldHint";
+import FieldLabel from "../common/FieldLabel";
 
 export interface RolesTabProps {
   users: import("../../types/auth").User[];
@@ -40,33 +36,28 @@ export interface RolesTabProps {
 
 export default function RolesTab({ users, isLoadingUsers, defaultTenantId }: RolesTabProps) {
   const { user } = useAuth();
-  const cardBg = useColorModeValue("white", "gray.800");
-  const cardBorder = useColorModeValue("gray.200", "gray.700");
   const rt = useRolesTab({
     user: user ?? null,
     users,
     isLoadingUsers,
   });
   return (
-    <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
-      <CardHeader>
-        <HStack justify="space-between">
-          <Heading size="md" color="gray.700" userSelect="none" cursor="default">
-            Role-Based Access Control (RBAC)
-          </Heading>
-          {rt.isModeratorOnly && (
-            <Badge colorScheme="orange" fontSize="sm" p={2}>
-              View Only
-            </Badge>
-          )}
-        </HStack>
-      </CardHeader>
-      <CardBody>
-        <VStack spacing={6} align="stretch">
-          <HStack justify="space-between" align="flex-start">
-            <Text fontSize="sm" color="gray.600">
-              Manage user roles and permissions
-            </Text>
+    <Box>
+      <HStack justify="space-between" mb={4}>
+        <Heading size="md" color="ink.800" userSelect="none" cursor="default">
+          Role-Based Access Control (RBAC)
+        </Heading>
+        {rt.isModeratorOnly && (
+          <Badge colorScheme="orange" fontSize="sm" p={2}>
+            View Only
+          </Badge>
+        )}
+      </HStack>
+      <VStack spacing={6} align="stretch">
+        <HStack justify="space-between" align="flex-start">
+          <Text fontSize="sm" color="ink.600">
+            Manage user roles and permissions
+          </Text>
             <Button
               size="sm"
               colorScheme="blue"
@@ -80,7 +71,7 @@ export default function RolesTab({ users, isLoadingUsers, defaultTenantId }: Rol
           <Box>
 
             <FormControl>
-              <FormLabel fontWeight="semibold">User</FormLabel>
+              <FieldLabel>User</FieldLabel>
               <UserSearchableSelect
                 key={`${defaultTenantId ?? "pending"}-${users.length}`}
                 variant="pick"
@@ -106,12 +97,12 @@ export default function RolesTab({ users, isLoadingUsers, defaultTenantId }: Rol
 
           {rt.selectedUser && (
             <Box>
-              <Heading size="sm" mb={4} color="gray.700" userSelect="none" cursor="default">
+              <Heading size="sm" mb={4} color="ink.800" userSelect="none" cursor="default">
                 Current Role for {rt.selectedUser.username}
               </Heading>
               {rt.isLoadingUserRoles ? (
                 <Center py={4}>
-                  <Spinner size="md" color="blue.500" />
+                  <Spinner size="md" />
                 </Center>
               ) : rt.selectedUserRoles.length > 0 ? (
                 <Wrap spacing={2}>
@@ -139,7 +130,6 @@ export default function RolesTab({ users, isLoadingUsers, defaultTenantId }: Rol
             </AlertDescription>
           </Alert>
         </VStack>
-      </CardBody>
 
       <StandardModal
         isOpen={rt.isManageRolesOpen}
@@ -171,11 +161,11 @@ export default function RolesTab({ users, isLoadingUsers, defaultTenantId }: Rol
           </Alert>
         ) : (
           <VStack align="stretch" spacing={3}>
-            <Text fontSize="sm" color="gray.600">
+            <Text fontSize="sm" color="ink.600">
               Select a role to assign to this user.
             </Text>
             <FormControl>
-              <FormLabel fontWeight="semibold" fontSize="sm">Role</FormLabel>
+              <FieldLabel>Role</FieldLabel>
               <Select
                 value={rt.draftRole}
                 onChange={(e) => rt.setDraftRole(e.target.value)}
@@ -194,6 +184,6 @@ export default function RolesTab({ users, isLoadingUsers, defaultTenantId }: Rol
           </VStack>
         )}
       </StandardModal>
-    </Card>
+    </Box>
   );
 }

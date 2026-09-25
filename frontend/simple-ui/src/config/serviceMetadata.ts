@@ -81,6 +81,12 @@ export function getServiceDescription(id: ServiceId): string {
   return SERVICE_METADATA[id]?.description ?? "";
 }
 
+/** Parenthetical acronym already present in the service title, when one exists. */
+export function getServiceShortCode(id: ServiceId): string | undefined {
+  const match = getServiceTitle(id).match(/\(([A-Z]{2,6})\)$/);
+  return match?.[1];
+}
+
 /** Pastel identity palette for Explore cards. Not a global action colour. */
 export type ServiceAccentShade = 50 | 300 | 400 | 600;
 
@@ -118,17 +124,21 @@ export function getExploreServiceCardVisuals(id: ServiceId, available: boolean) 
       iconColor: accent[600],
       iconHoverBg: accent[300],
       accentBorder: accent[400],
-      ctaBg: accent[300],
-      ctaBorder: accent[300],
-      ctaHoverBg: accent[400],
-      ctaColor: "#141210",
+      badgeBg: accent[50],
+      badgeColor: accent[600],
+      ctaBg: accent[50],
+      ctaBorder: accent[50],
+      ctaHoverBg: accent[300],
+      ctaColor: "ink.800",
     };
   }
   return {
     iconBg: accent[50],
     iconColor: accent[300],
     iconHoverBg: accent[50],
-    accentBorder: accent[50],
+    accentBorder: accent[300],
+    badgeBg: accent[50],
+    badgeColor: accent[300],
     ctaBg: "transparent",
     ctaBorder: undefined,
     ctaHoverBg: undefined,

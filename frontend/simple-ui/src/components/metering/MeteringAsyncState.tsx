@@ -53,7 +53,7 @@ const MeteringAsyncState: React.FC<MeteringAsyncStateProps> = ({
   if (isLoading) {
     return (
       <Center h={height}>
-        <Spinner size="lg" color="orange.500" />
+        <Spinner size="lg" />
       </Center>
     );
   }

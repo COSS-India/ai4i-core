@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { METERING, type MeteringSubTab } from "../config/meteringConstants";
 import { useInferenceTypes } from "./useInferenceTypes";
 import { toMeteringKey } from "../utils/meteringTaskKey";
-import { listTenants } from "../services/tenantService";
+import { useTenantsList } from "./useTenantsList";
 import type {
   MeteringResponseMeta,
   MeteringTopN,
@@ -80,11 +80,8 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     setSubTab(raw);
   }, [router.isReady, router.query.tab, availableSubTabs]);
 
-  const tenantsQuery = useQuery({
-    queryKey: meteringQueryKey(METERING.QUERY.SCOPES.TENANT_DIRECTORY),
-    queryFn: () => listTenants(),
+  const tenantsQuery = useTenantsList({
     enabled: isAdopterView,
-    staleTime: METERING.QUERY.TENANT_DIRECTORY_STALE_MS,
   });
 
   const previewTenants: TenantPreviewOption[] = useMemo(

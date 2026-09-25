@@ -30,13 +30,7 @@ const ManagementPageHeader: React.FC<ManagementPageHeaderProps> = ({
       : crumbs ?? getPageBreadcrumbs(router.pathname, title, getHomePath(user?.roles));
 
   return (
-    <Box
-      w="full"
-      mb={4}
-      pb={4}
-      borderBottom="1px"
-      borderColor="ink.200"
-    >
+    <Box w="full" mb={6} pb={6} borderBottom="1px" borderColor="ink.200">
       {items ? <PageBreadcrumb items={items} /> : null}
       <Flex
         align={{ base: "flex-start", md: "center" }}
@@ -47,9 +41,11 @@ const ManagementPageHeader: React.FC<ManagementPageHeaderProps> = ({
         <Box textAlign="left" minW={0}>
           <Heading
             as="h1"
-            size="lg"
+            fontSize={{ base: "2xl", md: "3xl" }}
+            fontWeight="700"
+            lineHeight="1.2"
             color="ink.800"
-            mb={description ? 1 : 0}
+            mb={description ? 1.5 : 0}
             userSelect="none"
             cursor="default"
             tabIndex={-1}
@@ -57,7 +53,14 @@ const ManagementPageHeader: React.FC<ManagementPageHeaderProps> = ({
             {title}
           </Heading>
           {description ? (
-            <Text color="ink.600" fontSize="sm" fontWeight="500" maxW="46rem" lineHeight="1.5">
+            <Text
+              as="p"
+              color="ink.500"
+              fontSize="sm"
+              fontWeight="400"
+              maxW="40rem"
+              lineHeight="1.5"
+            >
               {description}
             </Text>
           ) : null}

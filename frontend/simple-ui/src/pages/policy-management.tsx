@@ -1,18 +1,22 @@
-import { Box, Center, Heading, Spinner, Text, VStack } from "@chakra-ui/react";
+import { Center } from "@chakra-ui/react";
 import Head from "next/head";
 import React from "react";
 import { useRouter } from "next/router";
 import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
+import LoadingSpinner from "../components/common/LoadingSpinner";
 import PolicyManagement from "../components/policy/PolicyManagement";
 import { useAuth } from "../hooks/useAuth";
 import { getPlatformName } from "../config/runtimeConfig";
+import { isPlatformAdminUser } from "../utils/rbac";
+import CreateButton from "../components/common/CreateButton";
 
 const PolicyManagementPage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
+  const openCreateRef = React.useRef<() => void>(() => {});
 
-  const canManagePolicies = Boolean(user?.roles?.includes("ADMIN"));
+  const canManagePolicies = isPlatformAdminUser(user?.roles);
 
   React.useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -24,7 +28,7 @@ const PolicyManagementPage: React.FC = () => {
     return (
       <ContentLayout>
         <Center h="400px">
-          <Spinner size="xl" color="orange.500" />
+          <LoadingSpinner size="xl" />
         </Center>
       </ContentLayout>
     );
@@ -34,10 +38,7 @@ const PolicyManagementPage: React.FC = () => {
     return (
       <ContentLayout>
         <Center h="400px">
-          <VStack spacing={4}>
-            <Spinner size="xl" color="orange.500" />
-            <Text color="gray.600">Redirecting to sign in…</Text>
-          </VStack>
+          <LoadingSpinner size="xl" label="Redirecting to sign in…" />
         </Center>
       </ContentLayout>
     );
@@ -54,16 +55,24 @@ const PolicyManagementPage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <VStack spacing={6} w="full">
-          <ManagementPageHeader
-            title="Policy Management"
-            description="Manage policy definitions and PII types"
-          />
+        <ManagementPageHeader
+          title="Policy Management"
+          description="Manage policy definitions and PII types"
+          actions={
+            canManagePolicies ? (
+              <CreateButton onClick={() => openCreateRef.current()}>
+                Create Policy
+              </CreateButton>
+            ) : undefined
+          }
+        />
 
-          <Box maxW="full" w="full" mx="auto" py={4} px={{ base: 2, md: 4 }}>
-            <PolicyManagement canManage={canManagePolicies} />
-          </Box>
-        </VStack>
+        <PolicyManagement
+          canManage={canManagePolicies}
+          onRegisterCreatePolicy={(open) => {
+            openCreateRef.current = open;
+          }}
+        />
       </ContentLayout>
     </>
   );

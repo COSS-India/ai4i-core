@@ -149,7 +149,7 @@ const NMTPage: React.FC = () => {
       {!anonymousRateLimitReached && (
         <Button
           size="sm"
-          colorScheme="orange"
+          colorScheme="ink"
           variant="outline"
           onClick={() => router.push("/auth")}
         >

@@ -485,28 +485,35 @@ export const getSupportedLanguagePairsForService = async (
   serviceId: string,
   services: NMTServiceDetailsResponse[]
 ): Promise<LanguagePair[]> => {
-  try {
-    const service = services.find(s => s.service_id === serviceId);
-    if (!service) {
-      return [];
-    }
-
-    // If service has explicit language pairs, use those
-    if (service.supported_language_pairs && service.supported_language_pairs.length > 0) {
-      return service.supported_language_pairs.map(pair => ({
-        sourceLanguage: pair.sourceLanguage,
-        targetLanguage: pair.targetLanguage,
-        sourceScriptCode: pair.sourceScriptCode,
-        targetScriptCode: pair.targetScriptCode,
-      }));
-    }
-
-    // Otherwise, get from model
-    return getSupportedLanguagePairs(service.model_id);
-  } catch (error) {
-    console.error('Failed to fetch supported language pairs for service:', error);
-    throw new Error('Failed to fetch supported language pairs for service');
+  const service = services.find(s => s.service_id === serviceId);
+  if (!service) {
+    return [];
   }
+
+  // Prefer pairs already on the service payload (from listNMTServices).
+  if (service.supported_language_pairs && service.supported_language_pairs.length > 0) {
+    return service.supported_language_pairs.map(pair => ({
+      sourceLanguage: pair.sourceLanguage,
+      targetLanguage: pair.targetLanguage,
+      sourceScriptCode: pair.sourceScriptCode,
+      targetScriptCode: pair.targetScriptCode,
+    }));
+  }
+
+  // Same catalog as listNMTServices — do not refetch GET /services.
+  const langs = service.supported_languages ?? [];
+  const languagePairs: LanguagePair[] = [];
+  for (let i = 0; i < langs.length; i++) {
+    for (let j = 0; j < langs.length; j++) {
+      if (i !== j) {
+        languagePairs.push({
+          sourceLanguage: langs[i],
+          targetLanguage: langs[j],
+        });
+      }
+    }
+  }
+  return languagePairs;
 };
 
 /**

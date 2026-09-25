@@ -12,6 +12,7 @@ import {
   CardBody,
   Container,
   FormControl,
+  FormErrorMessage,
   FormLabel,
   Heading,
   Input,
@@ -147,7 +148,7 @@ const ResetPasswordPage: React.FC = () => {
                   <form onSubmit={onSubmit}>
                     <Stack spacing={4}>
                       <FormControl isRequired>
-                        <FormLabel>New Password *</FormLabel>
+                        <FormLabel>New Password</FormLabel>
                         <InputGroup>
                           <Input
                             type={showPw ? "text" : "password"}
@@ -175,7 +176,7 @@ const ResetPasswordPage: React.FC = () => {
                       </FormControl>
 
                       <FormControl isRequired isInvalid={confirmPassword.length > 0 && confirmPassword !== newPassword}>
-                        <FormLabel>Confirm Password *</FormLabel>
+                        <FormLabel>Confirm Password</FormLabel>
                         <Input
                           type={showPw ? "text" : "password"}
                           value={confirmPassword}
@@ -188,14 +189,14 @@ const ResetPasswordPage: React.FC = () => {
                           maxLength={PASSWORD_POLICY.MAX_LENGTH}
                         />
                         {confirmPassword.length > 0 && confirmPassword !== newPassword && (
-                          <Text color="red.500" fontSize="sm" mt={1}>
+                          <FormErrorMessage>
                             Passwords do not match.
-                          </Text>
+                          </FormErrorMessage>
                         )}
                         {pwErr && pwErr !== "Passwords do not match." && (
-                          <Text color="red.500" fontSize="sm" mt={1}>
+                          <FormErrorMessage>
                             {pwErr}
-                          </Text>
+                          </FormErrorMessage>
                         )}
                       </FormControl>
 
