@@ -108,12 +108,12 @@ const OAuthCallback = () => {
       display="flex"
       alignItems="center"
       justifyContent="center"
-      bg="gray.50"
+      bg="light.100"
     >
       <VStack spacing={4} maxW="md" w="full" p={8}>
         {isProcessing ? (
           <>
-            <Spinner size="xl" color="blue.500" thickness="4px" />
+            <Spinner size="xl" thickness="4px" />
             <Text fontSize="lg" color="gray.700">
               Completing authentication...
             </Text>

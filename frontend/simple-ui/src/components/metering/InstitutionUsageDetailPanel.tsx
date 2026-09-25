@@ -57,7 +57,7 @@ export const InstitutionUsageDetailContent: React.FC<InstitutionUsageDetailConte
         </Flex>
         {isLoading ? (
           <Center minH="72px">
-            <Spinner color="blue.500" size="sm" />
+            <Spinner size="sm" />
           </Center>
         ) : budget ? (
           <BudgetCell

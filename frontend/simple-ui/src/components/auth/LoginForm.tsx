@@ -231,7 +231,7 @@ const LoginForm: React.FC<LoginFormProps> = ({
           {/* Forgot Password — navigates to /auth/forgot-password (per security spec) */}
           <Box textAlign="right" mt={-2}>
             <NextLink href="/auth/forgot-password" passHref legacyBehavior>
-              <Link fontSize="sm" color="blue.500">
+              <Link fontSize="sm">
                 Forgot Password?
               </Link>
             </NextLink>
@@ -250,9 +250,12 @@ const LoginForm: React.FC<LoginFormProps> = ({
 
           <Button
             type="submit"
-            colorScheme="blue"
             size="md"
             width="full"
+            bg="#3182CE"
+            color="white"
+            _hover={{ bg: "#2B6CB0", _disabled: { bg: "#3182CE" } }}
+            _active={{ bg: "#2C5282" }}
             isLoading={isLoginLoading}
             loadingText="Signing in..."
             disabled={isLoading}
@@ -355,7 +358,6 @@ const LoginForm: React.FC<LoginFormProps> = ({
         <Text fontSize="sm" color="gray.600">
           Don&apos;t have an account?{" "}
           <Link
-            color="blue.500"
             fontWeight="medium"
             onClick={onSwitchToRegister}
             _hover={{ textDecoration: "underline" }}

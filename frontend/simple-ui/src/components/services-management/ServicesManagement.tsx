@@ -340,6 +340,7 @@ const ServicesManagement: React.FC = () => {
         />
 
             <Tabs
+              w="full"
               colorScheme="blue"
               variant="enclosed"
               index={activeTab}
@@ -354,7 +355,7 @@ const ServicesManagement: React.FC = () => {
 
               <TabPanels>
                 {/* Service Registry Tab */}
-                <TabPanel px={0} pt={6}>
+                <TabPanel>
                   <ServiceRegistryTab
                     items={registryTableItems}
                     columns={serviceColumns}
@@ -385,7 +386,7 @@ const ServicesManagement: React.FC = () => {
 
                 {/* View Service Tab */}
                 {isViewingService && selectedService ? (
-                  <TabPanel px={0} pt={6}>
+                  <TabPanel>
                     <ServiceDetailTab
                       cardBg={cardBg}
                       cardBorder={cardBorder}

@@ -1,22 +1,15 @@
 import React, { useMemo, useState } from "react";
 import {
   Box,
-  Button,
-  Card,
-  CardBody,
-  CardHeader,
   FormControl,
   FormErrorMessage,
-  FormLabel,
   Heading,
-  HStack,
   Input,
   InputGroup,
   InputRightElement,
   IconButton,
   Text,
   VStack,
-  useColorModeValue,
 } from "@chakra-ui/react";
 import { ViewIcon, ViewOffIcon } from "@chakra-ui/icons";
 import { useAuth } from "../../hooks/useAuth";
@@ -28,6 +21,8 @@ import PasswordRequirements, {
 } from "../auth/password/PasswordRequirements";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import FieldHint from "../common/FieldHint";
+import FieldLabel from "../common/FieldLabel";
+import FormActions from "../common/FormActions";
 
 const CLIENT_MESSAGES = {
   CURRENT_REQUIRED: "Current password is required.",
@@ -43,8 +38,6 @@ interface ChangePasswordTabProps {
 
 export default function ChangePasswordTab({ onCancel }: ChangePasswordTabProps) {
   const { changePassword, isLoading } = useAuth();
-  const cardBg = useColorModeValue("white", "gray.800");
-  const cardBorder = useColorModeValue("gray.200", "gray.700");
 
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -177,20 +170,17 @@ export default function ChangePasswordTab({ onCancel }: ChangePasswordTabProps) 
     newPassword === confirmPassword;
 
   return (
-    <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
-      <CardHeader pb={3}>
-        <Heading size="md" color="gray.700">
-          Change Password
-        </Heading>
-        <Text fontSize="sm" color="gray.500" mt={1}>
-          Update your account password. Must meet all security requirements below.
-        </Text>
-      </CardHeader>
-      <CardBody pt={2}>
-        <Box as="form" onSubmit={handleSubmit}>
+    <Box>
+      <Heading size="md" color="ink.800" mb={1}>
+        Change Password
+      </Heading>
+      <Text fontSize="sm" color="ink.600" mb={4}>
+        Update your account password. Must meet all security requirements below.
+      </Text>
+      <Box as="form" onSubmit={handleSubmit}>
           <VStack spacing={4} align="stretch">
             <FormControl isRequired isInvalid={!!errors.current_password}>
-              <FormLabel>Current Password</FormLabel>
+              <FieldLabel>Current Password</FieldLabel>
               <InputGroup>
                 <Input
                   type={showCurrent ? "text" : "password"}
@@ -224,7 +214,7 @@ export default function ChangePasswordTab({ onCancel }: ChangePasswordTabProps) 
             </FormControl>
 
             <FormControl isRequired isInvalid={!!errors.new_password}>
-              <FormLabel>New Password</FormLabel>
+              <FieldLabel>New Password</FieldLabel>
               <InputGroup>
                 <Input
                   type={showNew ? "text" : "password"}
@@ -258,7 +248,7 @@ export default function ChangePasswordTab({ onCancel }: ChangePasswordTabProps) 
             </FormControl>
 
             <FormControl isRequired isInvalid={!!errors.confirm_password}>
-              <FormLabel>Confirm New Password</FormLabel>
+              <FieldLabel>Confirm New Password</FieldLabel>
               <InputGroup>
                 <Input
                   type={showConfirm ? "text" : "password"}
@@ -292,28 +282,18 @@ export default function ChangePasswordTab({ onCancel }: ChangePasswordTabProps) 
               )}
             </FormControl>
 
-            <HStack spacing={3}>
-              <Button
-                type="submit"
-                colorScheme="blue"
-                isLoading={isLoading}
-                loadingText="Updating…"
-                isDisabled={!canSubmit}
-              >
-                Update Password
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleCancel}
-                isDisabled={isLoading}
-              >
-                Cancel
-              </Button>
-            </HStack>
+            <FormActions
+              submitLabel="Update Password"
+              onCancel={handleCancel}
+              submitType="submit"
+              isLoading={isLoading}
+              loadingText="Updating…"
+              isDisabled={!canSubmit}
+              justify="flex-end"
+              pt={0}
+            />
           </VStack>
         </Box>
-      </CardBody>
-    </Card>
+    </Box>
   );
 }

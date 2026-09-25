@@ -1,14 +1,13 @@
-// pages/index.tsx  (or wherever your HomePage lives)
 import {
   Alert,
   AlertDescription,
   AlertIcon,
+  Badge,
   Box,
   Button,
   Card,
-  CardBody,
-  CardHeader,
   Heading,
+  HStack,
   Icon,
   SimpleGrid,
   Text,
@@ -32,121 +31,20 @@ import {
   IoPricetagOutline,
 } from "react-icons/io5";
 import ContentLayout from "../components/common/ContentLayout";
-import AdopterLogo from "../components/common/AdopterLogo";
-import { getServiceDescription, getServiceTitle, type ServiceId } from "../config/serviceMetadata";
+import ManagementPageHeader from "../components/common/ManagementPageHeader";
+import {
+  getExploreServiceCardVisuals,
+  getServiceDescription,
+  getServiceShortCode,
+  getServiceTitle,
+  servicePath,
+  type ServiceId,
+} from "../config/serviceMetadata";
 import { useAuth } from "../hooks/useAuth";
 import DoubleMicrophoneIcon from "../components/common/DoubleMicrophoneIcon";
 import { useGuestServices } from "../hooks/useGuestServices";
 import { useInferenceTypes } from "../hooks/useInferenceTypes";
 import { getPlatformName } from "../config/runtimeConfig";
-
-const safeColorMap:any = {
-  asr: { // Coral → Pastel Coral
-    50:  "#FFE9E2",
-    300: "#FFB8A4",
-    400: "#FF9C86",
-    600: "#FF7A61",
-  },
-
-  tts: { // Royal Blue → Pastel Blue
-    50:  "#EAF0FF",
-    300: "#B3C7FF",
-    400: "#8CAEFF",
-    600: "#668FFF",
-  },
-
-  nmt: { // Emerald → Pastel Mint
-    50:  "#E7FAF1",
-    300: "#B3EFD4",
-    400: "#90E6C0",
-    600: "#6AD2A7",
-  },
-
-  llm: { // Magenta → Pastel Pink/Magenta
-    50:  "#FFE6FA",
-    300: "#FFB3EB",
-    400: "#FF8CDE",
-    600: "#F061C8",
-  },
-
-  pipeline: { // Purple → Pastel Lilac
-    50:  "#F8F0FA",
-    300: "#E4C9EE",
-    400: "#D8AFE8",
-    600: "#C08BD8",
-  },
-
-  ocr: { // Teal → Pastel Aqua
-    50:  "#E5F7F7",
-    300: "#B5E8E8",
-    400: "#90DDDD",
-    600: "#6BC7C7",
-  },
-
-  transliteration: { // Turquoise → Pastel Turquoise
-    50:  "#E8FCFA",
-    300: "#B5F3EC",
-    400: "#8DEBDD",
-    600: "#6BD2C1",
-  },
-
-  "language-detection": { // Crimson → Pastel Red
-    50:  "#FFE9EE",
-    300: "#FFBBC8",
-    400: "#FF9EAF",
-    600: "#FF7A8F",
-  },
-
-  "speaker-diarization": { // Amber → Pastel Yellow/Amber
-    50:  "#FFF9E6",
-    300: "#FEE5A8",
-    400: "#FFDA7A",
-    600: "#F5C554",
-  },
-
-  "language-diarization": { // Lime → Pastel Lime Green
-    50:  "#F3FFE8",
-    300: "#D4FFAA",
-    400: "#C0FF85",
-    600: "#99F45A",
-  },
-
-  "audio-language-detection": { // Replace gray → Pastel Electric Blue
-    50:  "#E7F7FF",
-    300: "#B3E4FF",
-    400: "#89D6FF",
-    600: "#63C5FF",
-  },
-
-  ner: { // Indigo → Pastel Indigo/Violet
-    50:  "#F1E8FF",
-    300: "#D0BBFF",
-    400: "#BA9AFF",
-    600: "#9D72FF",
-  },
-};
-
-
-
-
-const getColor = (service: { id?: string; color?: string }, shade: 50 | 300 | 400 | 600) => {
-  if (!service) return undefined;
-  const id = service.id ?? "";
-  const base = service.color ?? "";
-
-  // prefer safeColorMap hex values (most robust)
-  if (safeColorMap[id] && safeColorMap[id][shade]) {
-    return safeColorMap[id][shade];
-  }
-
-  // fallback to Chakra token string if you have that in your theme (e.g. "blue.400")
-  if (base) {
-    return `${base}.${shade}`;
-  }
-
-  // final fallback to sensible neutral
-  return shade === 50 ? "#F7FAFC" : shade === 300 ? "#CBD5E1" : shade === 400 ? "#A0AEC0" : "#1A202C";
-};
 
 /** Anonymous users may try LLM without signing in. */
 const ANONYMOUS_ALLOWED_SERVICE_IDS = new Set<ServiceId>(["llm"]);
@@ -156,8 +54,13 @@ const HomePage: React.FC = () => {
   const { isAuthenticated, isLoading } = useAuth();
   const { isGuest, isLoading: guestServicesLoading, allowedServiceIds } = useGuestServices();
   const { enabledServiceIds, isLoading: inferenceTypesLoading } = useInferenceTypes();
-  const cardBg = useColorModeValue("white", "gray.800");
-  const cardBorder = useColorModeValue("gray.200", "gray.700");
+  const availableCardBg = useColorModeValue("white", "ink.800");
+  const unavailableCardBg = useColorModeValue("ink.50", "ink.700");
+  const cardBorder = useColorModeValue("ink.200", "ink.600");
+  const unavailableTitle = useColorModeValue("ink.600", "ink.300");
+  const unavailableDescription = useColorModeValue("ink.500", "ink.400");
+  const unavailableCtaBorder = useColorModeValue("ink.300", "ink.500");
+  const unavailableCtaHover = useColorModeValue("ink.100", "whiteAlpha.100");
 
   const handleServiceClick = async (path: string) => {
     if (isLoading) return;
@@ -167,29 +70,24 @@ const HomePage: React.FC = () => {
   const services = useMemo(
     () =>
       [
-        { id: "nmt" as ServiceId, icon: IoLanguageOutline, path: "/nmt", color: "green" },
-        { id: "asr" as ServiceId, icon: FaMicrophone, path: "/asr", color: "orange" },
-        { id: "tts" as ServiceId, icon: IoVolumeHighOutline, path: "/tts", color: "blue" },
-        { id: "llm" as ServiceId, icon: IoSparklesOutline, path: "/llm", color: "pink" },
-        { id: "pipeline" as ServiceId, icon: DoubleMicrophoneIcon, path: "/pipeline", color: "purple" },
-        { id: "ocr" as ServiceId, icon: IoDocumentTextOutline, path: "/ocr", color: "indigo" },
-        { id: "transliteration" as ServiceId, icon: IoSwapHorizontalOutline, path: "/transliteration", color: "cyan" },
-        { id: "language-detection" as ServiceId, icon: IoGlobeOutline, path: "/language-detection", color: "teal" },
-        { id: "speaker-diarization" as ServiceId, icon: IoPeopleOutline, path: "/speaker-diarization", color: "red" },
-        { id: "language-diarization" as ServiceId, icon: IoLanguageOutline, path: "/language-diarization", color: "yellow" },
-        { id: "audio-language-detection" as ServiceId, icon: IoRadioOutline, path: "/audio-language-detection", color: "gray" },
-        { id: "ner" as ServiceId, icon: IoPricetagOutline, path: "/ner", color: "rose" },
+        { id: "nmt" as ServiceId, icon: IoLanguageOutline, path: servicePath("nmt") },
+        { id: "asr" as ServiceId, icon: FaMicrophone, path: servicePath("asr") },
+        { id: "tts" as ServiceId, icon: IoVolumeHighOutline, path: servicePath("tts") },
+        { id: "llm" as ServiceId, icon: IoSparklesOutline, path: servicePath("llm") },
+        { id: "pipeline" as ServiceId, icon: DoubleMicrophoneIcon, path: servicePath("pipeline") },
+        { id: "ocr" as ServiceId, icon: IoDocumentTextOutline, path: servicePath("ocr") },
+        { id: "transliteration" as ServiceId, icon: IoSwapHorizontalOutline, path: servicePath("transliteration") },
+        { id: "language-detection" as ServiceId, icon: IoGlobeOutline, path: servicePath("language-detection") },
+        { id: "speaker-diarization" as ServiceId, icon: IoPeopleOutline, path: servicePath("speaker-diarization") },
+        { id: "language-diarization" as ServiceId, icon: IoLanguageOutline, path: servicePath("language-diarization") },
+        { id: "audio-language-detection" as ServiceId, icon: IoRadioOutline, path: servicePath("audio-language-detection") },
+        { id: "ner" as ServiceId, icon: IoPricetagOutline, path: servicePath("ner") },
       ]
         .filter((service) => {
-          // Guest allowlist — guests only.
           if (isGuest) {
             if (guestServicesLoading) return false;
             if (!(allowedServiceIds?.has(service.id) ?? false)) return false;
           }
-
-          // Deployment gate (ENABLED_TASK_TYPES). Env allowlist is available
-          // immediately via useInferenceTypes even before the catalog loads /
-          // for anonymous users who cannot call inference-types.
           if (inferenceTypesLoading && enabledServiceIds.size === 0) return false;
           if (!enabledServiceIds.has(service.id)) return false;
           return true;
@@ -208,7 +106,6 @@ const HomePage: React.FC = () => {
     ],
   );
 
-
   return (
     <>
       <Head>
@@ -220,30 +117,19 @@ const HomePage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <VStack spacing={10} w="full" align="center" alignSelf="stretch">
-          {/* Hero Section */}
-          <Box textAlign="center" w="full">
-            <AdopterLogo maxH="72px" maxW="280px" mx="auto" mb={4} />
-            <Heading size="lg" fontWeight="bold" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              AI Accessibility Studio
-            </Heading>
-            <Text fontSize="sm" color="gray.600" maxW="600px" mx="auto" userSelect="none" cursor="default">
-              {enabledServiceIds.size === 1 && enabledServiceIds.has("llm")
+        <VStack spacing={0} w="full" align="stretch">
+          <ManagementPageHeader
+            title="AI Accessibility Studio"
+            description={
+              enabledServiceIds.size === 1 && enabledServiceIds.has("llm")
                 ? "Test and explore Large Language Models"
-                : "Test and explore NLP and LLM models"}
-            </Text>
-          </Box>
+                : "Test and explore NLP and LLM models"
+            }
+          />
+          <VStack spacing={5} w="full" align="stretch">
 
-          {/* Anonymous User Info Alert */}
           {!isLoading && !isAuthenticated && (
-            <Alert
-              status="info"
-              variant="left-accent"
-              borderRadius="md"
-              maxW="1800px"
-              w="full"
-              mx="auto"
-            >
+            <Alert status="info" variant="left-accent" w="full">
               <AlertIcon />
               <AlertDescription fontSize="sm">
                 Try <strong>Large Language Model (LLM)</strong> without signing in!
@@ -253,166 +139,149 @@ const HomePage: React.FC = () => {
             </Alert>
           )}
 
-          {/* Service Cards Grid */}
-          <SimpleGrid
-            columns={{ base: 1, sm: 2, md: 3, lg: 4, xl: 6 }}
-            spacing={6}
-            w="full"
-            maxW="1800px"
-            mx="auto"
-            justifyItems="center"
-          >
+          <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={5} w="full" alignItems="stretch">
             {services.map((service) => {
               const isDisabledForAnonymous =
                 !isAuthenticated &&
                 !ANONYMOUS_ALLOWED_SERVICE_IDS.has(service.id) &&
                 !isLoading;
 
-              return (
-              <Card
-                key={service.id}
-                bg={cardBg}
-                border="1px"
-                borderColor={cardBorder}
-                borderRadius="xl"
-                boxShadow="lg"
-                overflow="hidden"
-                opacity={isDisabledForAnonymous ? 0.5 : 1}
-                _hover={{
-                  transform: "translateY(-6px)",
-                  boxShadow: "2xl",
-                  borderColor: getColor(service, 300),
-                }}
-                transition="all 0.3s ease"
-                w={{ base: "100%", sm: "100%", md: "100%", lg: "100%", xl: "100%" }}
-                h="260px"
-                position="relative"
-                display="flex"
-                flexDirection="column"
-                cursor="pointer"
-              >
-                {/* Colored top border accent */}
-                <Box
-                  position="absolute"
-                  top={0}
-                  left={0}
-                  right={0}
-                  h="4px"
-                  bgGradient={`linear(to-r, ${getColor(service, 400)}, ${getColor(service, 600)})`}
-                  opacity={isDisabledForAnonymous ? 0.3 : 1}
-                />
+              const openService = () => {
+                if (isDisabledForAnonymous) {
+                  showToast({
+                    type: "warning",
+                    message: "Please login to access other services.",
+                  });
+                  setTimeout(() => {
+                    router.push("/auth?redirect=" + encodeURIComponent(service.path));
+                  }, 500);
+                  return;
+                }
+                handleServiceClick(service.path);
+              };
 
-                <CardHeader textAlign="center" pb={1} pt={4} px={4} flexShrink={0}>
-                  <VStack spacing={2} align="center" w="full">
-                    <Box position="relative">
+              const visuals = getExploreServiceCardVisuals(
+                service.id,
+                !isDisabledForAnonymous,
+              );
+              const shortCode = getServiceShortCode(service.id);
+
+              return (
+                <Card
+                  key={service.id}
+                  role="group"
+                  bg={isDisabledForAnonymous ? unavailableCardBg : availableCardBg}
+                  border="1px solid"
+                  borderColor={cardBorder}
+                  borderTopWidth="3px"
+                  borderTopColor={visuals.accentBorder}
+                  borderRadius="md"
+                  boxShadow="xs"
+                  overflow="hidden"
+                  w="full"
+                  h="full"
+                  display="flex"
+                  flexDirection="column"
+                  cursor="pointer"
+                  transition="border-color 0.15s ease, box-shadow 0.15s ease"
+                  onClick={openService}
+                  _hover={
+                    isDisabledForAnonymous
+                      ? undefined
+                      : {
+                          borderColor: visuals.accentBorder,
+                          boxShadow: "sm",
+                        }
+                  }
+                >
+                  <VStack align="stretch" spacing={4} p={5} flex={1}>
+                    <HStack spacing={3} align="flex-start">
                       <Box
-                      // p={3}
-                        boxSize={14}
-                        borderRadius="full"
-                        bg={getColor(service, 50)}
-                        _dark={{ bg: getColor(service, 600) }}
+                        boxSize={10}
+                        borderRadius="md"
+                        bg={visuals.iconBg}
                         display="flex"
                         alignItems="center"
                         justifyContent="center"
                         flexShrink={0}
-                        overflow="hidden"
+                        transition="background-color 0.15s ease"
+                        _groupHover={
+                          isDisabledForAnonymous
+                            ? undefined
+                            : { bg: visuals.iconHoverBg }
+                        }
                       >
-                        <Icon
-                          as={service.icon}
-                          boxSize={service.id === "pipeline" ? 8 : 7}
-                          color={getColor(service, 600)}
-                          opacity={isDisabledForAnonymous ? 0.4 : 1}
-                        />
+                        <Icon as={service.icon} boxSize={5} color={visuals.iconColor} />
                       </Box>
-                    </Box>
-                    <Heading
-                      size="sm"
-                      color={isDisabledForAnonymous ? "gray.500" : "gray.800"}
-                      fontWeight="semibold"
-                      textAlign="center"
+                      <Heading
+                        as="h2"
+                        flex={1}
+                        minW={0}
+                        fontSize="md"
+                        fontWeight="700"
+                        lineHeight="1.35"
+                        color={isDisabledForAnonymous ? unavailableTitle : "ink.800"}
+                      >
+                        {service.title}
+                      </Heading>
+                      {shortCode && (
+                        <Badge
+                          bg={visuals.badgeBg}
+                          color={visuals.badgeColor}
+                          fontSize="xs"
+                          fontWeight="600"
+                          letterSpacing="0.04em"
+                          textTransform="uppercase"
+                          borderRadius="sm"
+                          px={2}
+                          py={0.5}
+                          flexShrink={0}
+                        >
+                          {shortCode}
+                        </Badge>
+                      )}
+                    </HStack>
+                    <Text
+                      fontSize="sm"
+                      color={isDisabledForAnonymous ? unavailableDescription : "ink.600"}
                       noOfLines={3}
-                      wordBreak="break-word"
-                      whiteSpace="pre-line"
-                      userSelect="none"
-                      cursor="default"
+                      flex={1}
+                      lineHeight="tall"
                     >
-                      {service.title}
-                    </Heading>
-                  </VStack>
-                </CardHeader>
-                <CardBody
-                  pt={2}
-                  pb={4}
-                  px={4}
-                  flex={1}
-                  display="flex"
-                  flexDirection="column"
-                  minH={0}
-                  overflow="hidden"
-                >
-                  <Text
-                    color={isDisabledForAnonymous ? "gray.400" : "gray.600"}
-                    textAlign="center"
-                    lineHeight="1"
-                    fontSize="sm"
-                    flex={1}
-                    wordBreak="break-word"
-                    overflowWrap="break-word"
-                    overflowY="auto"
-                    px={1}
-                    mb={3}
-                    display="flex"
-                    alignItems="flex-start"
-                    justifyContent="center"
-                  >
-                    {service.description}
-                  </Text>
-
-                  {/* Auth-aware navigation button */}
-                  <Button
-                    size="md"
-                    w="full"
-                    fontWeight="semibold"
-                    bg={isDisabledForAnonymous ? "gray.200" : getColor(service, 300)}
-                    borderColor={isDisabledForAnonymous ? "gray.300" : getColor(service, 300)}
-                    borderWidth="1px"
-                    color={isDisabledForAnonymous ? "gray.500" : "black"}
-                    _hover={{
-                      transform: "translateY(-2px)",
-                      boxShadow: "md",
-                      bg: isDisabledForAnonymous ? "gray.300" : getColor(service, 400),
-                      color: isDisabledForAnonymous ? "gray.600" : "black",
-                      borderColor: isDisabledForAnonymous ? "gray.400" : getColor(service, 400),
-                    }}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      if (isDisabledForAnonymous) {
-                        showToast({
-                          type: "warning",
-                          message: "Please login to access other services.",
-                        });
-                        setTimeout(() => {
-                          router.push(
-                            "/auth?redirect=" +
-                              encodeURIComponent(service.path)
-                          );
-                        }, 500);
-                      } else {
-                        handleServiceClick(service.path);
+                      {service.description}
+                    </Text>
+                    <Button
+                      size="sm"
+                      w="full"
+                      mt="auto"
+                      variant={isDisabledForAnonymous ? "outline" : "ghost"}
+                      bg={visuals.ctaBg}
+                      color={isDisabledForAnonymous ? unavailableTitle : visuals.ctaColor}
+                      fontWeight="600"
+                      borderRadius="md"
+                      borderColor={
+                        isDisabledForAnonymous ? unavailableCtaBorder : visuals.ctaBorder
                       }
-                    }}
-                    transition="all 0.2s"
-                    flexShrink={0}
-                    mt="auto"
-                    cursor="pointer"
-                  >
-                    {isDisabledForAnonymous ? "Sign in required" : "Try it now"}
-                  </Button>
-                </CardBody>
-              </Card>
+                      _hover={
+                        isDisabledForAnonymous
+                          ? { bg: unavailableCtaHover }
+                          : { bg: visuals.ctaHoverBg }
+                      }
+                      _focusVisible={{ boxShadow: "outline" }}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        openService();
+                      }}
+                    >
+                      {isDisabledForAnonymous ? "Sign in required" : "Try it now →"}
+                    </Button>
+                  </VStack>
+                </Card>
               );
             })}
           </SimpleGrid>
+          </VStack>
         </VStack>
       </ContentLayout>
     </>

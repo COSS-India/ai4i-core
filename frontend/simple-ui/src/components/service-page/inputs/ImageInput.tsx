@@ -130,7 +130,7 @@ const ImageInput: React.FC<ServiceImageInputProps> = ({
             </Text>
             <Button
               size="sm"
-              colorScheme="orange"
+              colorScheme="ink"
               leftIcon={<FaUpload />}
               isDisabled={disabled}
               onClick={(e) => {

@@ -256,7 +256,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
         <Button
           leftIcon={isPlaying ? <FaPause /> : <FaPlay />}
           onClick={handlePlayPause}
-          colorScheme="orange"
+          colorScheme="ink"
           size="sm"
         >
           {isPlaying ? 'Pause' : 'Play'}
@@ -280,7 +280,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
           max={duration || 0}
           onChange={handleSeek}
           isDisabled={!duration}
-          colorScheme="orange"
+          colorScheme="ink"
         >
           <SliderTrack>
             <SliderFilledTrack />
@@ -303,7 +303,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
           max={1}
           step={0.1}
           onChange={handleVolumeChange}
-          colorScheme="orange"
+          colorScheme="ink"
           flex={1}
         >
           <SliderTrack>

@@ -51,12 +51,19 @@ class _SubRow:
     subscribed: bool
 
 
+@dataclass
+class _TenantIdRow:
+    tenant_id: str
+
+
 class _FakeDb:
-    """Answers both queries this module ever issues against `db`: the
-    catalog SELECT (refresh_all) and, for an INSTITUTION-scope row, the
-    tenant_notification_subscription point query (is_notification_enabled).
-    Distinguished by a substring check on the statement text — good enough
-    for a fake, real dispatch is SQLAlchemy's job."""
+    """Answers every query this module ever issues against `db`: the
+    catalog SELECT (refresh_all), the tenant_notification_subscription point
+    query (is_notification_enabled), and its bulk sibling's ANY(:tenant_ids)
+    query (is_notification_enabled_bulk). Distinguished by a substring check
+    on the statement text and by whether params carries "tenant_id" or
+    "tenant_ids" — good enough for a fake, real dispatch is SQLAlchemy's
+    job."""
 
     def __init__(self, rows: List[_Row], subscriptions: Optional[Dict[tuple, bool]] = None):
         self._rows = rows
@@ -65,6 +72,13 @@ class _FakeDb:
     async def execute(self, stmt, params: Optional[dict] = None):
         text = str(stmt)
         if "tenant_notification_subscription" in text:
+            if "tenant_ids" in params:
+                enabled = [
+                    tenant_id
+                    for tenant_id in params["tenant_ids"]
+                    if self._subscriptions.get((params["notification_id"], tenant_id))
+                ]
+                return _Result([_TenantIdRow(tenant_id=t) for t in enabled])
             key = (params["notification_id"], params["tenant_id"])
             if key not in self._subscriptions:
                 return _Result([])
@@ -197,3 +211,41 @@ class TestIsNotificationEnabled:
             _Row(id=1, name="TIER_ASSIGNED", scope="INSTITUTION", channels=["EMAIL"], config={}),
         ]
         assert await cache.is_notification_enabled(_FakeDb(rows), "NOT_A_REAL_NAME") is False
+
+
+@pytest.mark.asyncio
+class TestIsNotificationEnabledBulk:
+    async def test_global_scope_enables_every_tenant_with_no_query(self):
+        rows = [
+            _Row(id=1, name="QUOTA_LIMIT_UPDATED", scope="GLOBAL", channels=["EMAIL"], config={}),
+        ]
+        # No subscriptions configured at all — a GLOBAL row must still
+        # enable every tenant, proving it never even queries the
+        # subscription table for this scope.
+        db = _FakeDb(rows, subscriptions={})
+        result = await cache.is_notification_enabled_bulk(db, "QUOTA_LIMIT_UPDATED", ["1", "2", "3"])
+        assert result == {"1", "2", "3"}
+
+    async def test_institution_scope_returns_only_subscribed_tenants(self):
+        rows = [
+            _Row(id=1, name="QUOTA_LIMIT_UPDATED", scope="INSTITUTION", channels=["EMAIL"], config={}),
+        ]
+        db = _FakeDb(rows, subscriptions={(1, "79"): True, (1, "80"): False})
+        result = await cache.is_notification_enabled_bulk(db, "QUOTA_LIMIT_UPDATED", ["79", "80", "81"])
+        # 80 is unsubscribed and 81 has no subscription row at all — both
+        # excluded, same as is_notification_enabled's own "absence reads as
+        # unsubscribed" rule.
+        assert result == {"79"}
+
+    async def test_empty_tenant_ids_returns_empty_set(self):
+        rows = [
+            _Row(id=1, name="QUOTA_LIMIT_UPDATED", scope="GLOBAL", channels=["EMAIL"], config={}),
+        ]
+        assert await cache.is_notification_enabled_bulk(_FakeDb(rows), "QUOTA_LIMIT_UPDATED", []) == set()
+
+    async def test_false_for_unknown_name(self):
+        rows = [
+            _Row(id=1, name="QUOTA_LIMIT_UPDATED", scope="GLOBAL", channels=["EMAIL"], config={}),
+        ]
+        result = await cache.is_notification_enabled_bulk(_FakeDb(rows), "NOT_A_REAL_NAME", ["79"])
+        assert result == set()

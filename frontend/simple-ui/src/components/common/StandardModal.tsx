@@ -98,10 +98,11 @@ export default function StandardModal({
       onClose={onClose}
       size={size}
       isCentered={isCentered}
-      closeOnOverlayClick={lockDismiss ? false : closeOnOverlayClick}
-      closeOnEsc={lockDismiss ? false : closeOnEsc}
       {...modalProps}
-      {...(lockDismiss ? { closeOnOverlayClick: false, closeOnEsc: false } : {})}
+      closeOnOverlayClick={
+        lockDismiss ? false : (modalProps?.closeOnOverlayClick ?? closeOnOverlayClick)
+      }
+      closeOnEsc={lockDismiss ? false : (modalProps?.closeOnEsc ?? closeOnEsc)}
       scrollBehavior={scrollBehavior ?? modalProps?.scrollBehavior}
     >
       <ModalOverlay {...overlayProps} />

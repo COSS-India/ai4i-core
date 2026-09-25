@@ -47,7 +47,7 @@ partial-refresh optimisation that isn't needed at this scale.
 import asyncio
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from sqlalchemy import text
 
@@ -153,6 +153,32 @@ async def is_notification_enabled(db, name: str, tenant_id: Optional[str] = None
     )
     row = result.first()
     return bool(row and row.subscribed)
+
+
+async def is_notification_enabled_bulk(db, name: str, tenant_ids: List[str]) -> Set[str]:
+    """Bulk sibling of is_notification_enabled for many tenants in one round
+    trip — the subset of tenant_ids for which name currently fires. Used by
+    a fan-out (e.g. every tenant on a tier) that would otherwise call
+    is_notification_enabled once per tenant. A GLOBAL row fires for every
+    given tenant_id with no query, matching is_notification_enabled's own
+    GLOBAL-always-True rule; an unknown name or an empty tenant_ids fires
+    for none."""
+    await _ensure_fresh(db)
+    entry = _rows.get(name)
+    if entry is None or not tenant_ids:
+        return set()
+    if entry["scope"] == "GLOBAL":
+        return {str(t) for t in tenant_ids}
+    result = await db.execute(
+        text(
+            "SELECT tenant_id FROM tenant_notification_subscription"
+            " WHERE notification_id = :notification_id"
+            "   AND tenant_id = ANY(:tenant_ids)"
+            "   AND subscribed IS TRUE"
+        ),
+        {"notification_id": entry["id"], "tenant_ids": [str(t) for t in tenant_ids]},
+    )
+    return {row.tenant_id for row in result.all()}
 
 
 async def get_threshold_bands(db, name: str) -> List[int]:

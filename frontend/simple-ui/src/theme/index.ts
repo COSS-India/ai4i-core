@@ -182,6 +182,37 @@ const customTheme = extendTheme({
       defaultProps: {
         colorScheme: "blue",
       },
+      variants: {
+        enclosed: {
+          root: {
+            width: "100%",
+          },
+          tablist: {
+            width: "100%",
+            mb: 0,
+            borderBottom: "1px solid",
+            borderColor: "ink.200",
+          },
+          tab: {
+            mb: 0,
+            border: "1px solid",
+            borderColor: "transparent",
+            borderBottom: "none",
+            borderTopRadius: "md",
+            _selected: {
+              color: "blue.600",
+              bg: "white",
+              borderColor: "ink.200",
+              borderBottomColor: "white",
+              mb: "-1px",
+            },
+          },
+          tabpanel: {
+            p: 0,
+            pt: 6,
+          },
+        },
+      },
     },
     Checkbox: {
       defaultProps: {

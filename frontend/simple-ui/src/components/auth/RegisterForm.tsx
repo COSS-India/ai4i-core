@@ -502,9 +502,12 @@ const RegisterForm: React.FC<RegisterFormProps> = ({
 
           <Button
             type="submit"
-            colorScheme="blue"
             size="md"
             width="full"
+            bg="#3182CE"
+            color="white"
+            _hover={{ bg: "#2B6CB0", _disabled: { bg: "#3182CE" } }}
+            _active={{ bg: "#2C5282" }}
             isLoading={isLoading}
             loadingText="Signing up..."
             disabled={
@@ -524,7 +527,6 @@ const RegisterForm: React.FC<RegisterFormProps> = ({
         <Text fontSize="sm" color="gray.600">
           Already have an account?{" "}
           <Link
-            color="blue.500"
             fontWeight="medium"
             onClick={onSwitchToLogin}
             _hover={{ textDecoration: "underline" }}

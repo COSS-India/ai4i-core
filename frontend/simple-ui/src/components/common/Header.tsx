@@ -14,10 +14,9 @@ import {
 } from "@chakra-ui/react";
 import { useRouter } from "next/router";
 import React, { useEffect, useState } from "react";
-import { getServiceTitle, PATH_TO_SERVICE_ID } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
-import { INSTITUTION } from "../../config/constants";
+import { getPlatformName } from "../../config/runtimeConfig";
 import {
   canSeeOnboardingGuide,
   getOnboardingGuideHref,
@@ -37,7 +36,6 @@ const Header: React.FC = () => {
   const { checkSessionExpiry } = useSessionExpiry();
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [title, setTitle] = useState("");
 
   const showUserMenu =
     !isAuthLoading && isUserAuthenticated && !!user;
@@ -69,59 +67,6 @@ const Header: React.FC = () => {
     return () => clearInterval(intervalId);
   }, [isUserAuthenticated, isAuthLoading, checkSessionExpiry]);
 
-  useEffect(() => {
-    const pathname = router.pathname;
-    const serviceId = PATH_TO_SERVICE_ID[pathname];
-    if (serviceId) {
-      setTitle(getServiceTitle(serviceId));
-      return;
-    }
-    switch (pathname) {
-      case "/pipeline-builder":
-        setTitle("Pipeline Builder");
-        break;
-      case "/profile":
-        setTitle("Profile");
-        break;
-      case "/model-management":
-        setTitle("Model Management");
-        break;
-      case "/notifications-alerts":
-        setTitle("Platform Settings");
-        break;
-      case "/logs":
-        setTitle("Logs");
-        break;
-      case "/usage-dashboard":
-        setTitle("Usage Dashboard");
-        break;
-      case "/traces":
-        setTitle("Traces");
-        break;
-      case "/policy-management":
-        setTitle("Policy Management");
-        break;
-      case "/auth":
-        setTitle("Sign In");
-        break;
-      case "/":
-        setTitle("Explore");
-        break;
-      default:
-        if (pathname.startsWith("/services-management")) {
-          setTitle("Services Management");
-        } else if (pathname.startsWith("/institution-management")) {
-          setTitle(`${INSTITUTION} Management`);
-        } else if (pathname.startsWith("/tier-management")) {
-          setTitle("Tier Management");
-        } else if (pathname.startsWith("/api-key-management")) {
-          setTitle("API Keys");
-        } else {
-          setTitle("");
-        }
-    }
-  }, [router.pathname]);
-
   const bgColor = useColorModeValue("white", "gray.800");
   const borderColor = useColorModeValue("ink.200", "gray.700");
   const homePath = getHomePath(user?.roles);
@@ -144,8 +89,8 @@ const Header: React.FC = () => {
         zIndex={50}
       >
         <HStack justify="space-between" h="full" spacing={4}>
-          <Text fontSize="sm" fontWeight="500" color="ink.500" noOfLines={1} letterSpacing="-0.01em">
-            {title}
+          <Text fontSize="sm" fontWeight="600" color="ink.800" noOfLines={1} letterSpacing="-0.01em">
+            {getPlatformName()}
           </Text>
 
           <HStack spacing={3}>

@@ -80,6 +80,19 @@ def _cipher() -> AESSIV:
     return AESSIV(key)
 
 
+def validate_key() -> None:
+    """Eagerly build the cipher so a missing or malformed
+    PII_ENCRYPTION_KEY fails fast at service startup rather than on the
+    first recipient-resolution lookup. Mirrors auth-service's own
+    app.core.pii_crypto.validate_key() — call this right after
+    configure_key() in every service that resolves recipients.
+
+    Raises:
+        PIIEncryptionError: if the key is missing or cannot be decoded.
+    """
+    _cipher()
+
+
 def is_encrypted(value: Optional[str]) -> bool:
     return isinstance(value, str) and value.startswith(_PREFIX)
 

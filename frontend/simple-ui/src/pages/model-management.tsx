@@ -835,6 +835,7 @@ const ModelManagementPage: React.FC = () => {
                   />
 
                     <Tabs
+              w="full"
               colorScheme="blue"
               variant="enclosed"
               index={activeTab}
@@ -859,7 +860,7 @@ const ModelManagementPage: React.FC = () => {
 
               <TabPanels>
                 {/* Model Registry Tab */}
-                <TabPanel px={0} pt={6}>
+                <TabPanel>
                       <DataTable
                         layout="admin"
                         key={`${filterTaskType}-${filterVersionStatus}`}
@@ -927,7 +928,7 @@ const ModelManagementPage: React.FC = () => {
 
                 {/* View Model Tab */}
                 {isViewingModel && selectedModel && (
-                  <TabPanel px={0} pt={6}>
+                  <TabPanel>
                     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                       <CardHeader>
                         <HStack justify="space-between" align="center">

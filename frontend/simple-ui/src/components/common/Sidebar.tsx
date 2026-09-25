@@ -286,59 +286,71 @@ const Sidebar: React.FC<SidebarProps> = ({ pinned, onTogglePin }) => {
   const borderColor = useColorModeValue("ink.200", "gray.700");
   const hoverBgColor = useColorModeValue("ink.50", "gray.900");
   const activeBg = useColorModeValue("brand.50", "whiteAlpha.200");
-  const activeColor = useColorModeValue("ink.800", "ink.100");
-  const iconColor = useColorModeValue("ink.500", "gray.300");
+  const inactiveIconColor = useColorModeValue("ink.500", "gray.300");
   const overlaying = isHovered && !pinned;
+
+  const focusReset = { boxShadow: "none", outline: "none" } as const;
+  const focusVisible = {
+    boxShadow: "none",
+    outline: "2px solid",
+    outlineColor: "blue.500",
+    outlineOffset: "2px",
+  } as const;
 
   const renderNavButton = (item: NavItem) => {
     const isActive =
       router.pathname === item.path || router.pathname.startsWith(`${item.path}/`);
     const requiresAuth = item.requiresAuth ?? false;
     const label = item.label;
-    const itemIconColor = isActive ? "brand.700" : iconColor;
 
     const button = (
       <Button
         variant="ghost"
         size="sm"
-        h="2.375rem"
-        minH="2.375rem"
+        h="9"
+        minH="9"
         w="full"
         position="relative"
         justifyContent={isExpanded ? "flex-start" : "center"}
-        leftIcon={
-          isExpanded ? (
-            <Icon as={item.icon} boxSize={4} color={itemIconColor} />
-          ) : undefined
-        }
+        gap={2.5}
+        px={isExpanded ? 2.5 : 0}
+        borderRadius="md"
         bg={isActive ? activeBg : "transparent"}
-        color={isActive ? activeColor : "ink.700"}
+        color={isActive ? "ink.800" : "ink.700"}
+        fontWeight={isActive ? "600" : "500"}
         aria-current={isActive ? "page" : undefined}
+        aria-label={isExpanded ? undefined : label}
         onClick={(e) => onTopNavClick(e, item.path, requiresAuth, item.id)}
         _hover={{
           bg: isActive ? activeBg : hoverBgColor,
         }}
+        _active={{
+          bg: isActive ? activeBg : "ink.100",
+        }}
+        _focus={focusReset}
+        _focusVisible={focusVisible}
         _before={{
           content: '""',
           position: "absolute",
           left: 0,
-          top: "6px",
-          bottom: "6px",
-          width: "3px",
+          top: "7px",
+          bottom: "7px",
+          width: "2px",
           borderRadius: "full",
-          bg: isActive ? "brand.600" : "transparent",
+          bg: isActive ? "blue.600" : "transparent",
         }}
-        px={isExpanded ? 3 : 0}
-        borderRadius="md"
-        fontWeight={isActive ? "semibold" : "medium"}
       >
+        <Icon
+          as={item.icon}
+          boxSize={4}
+          color={isActive ? "blue.600" : inactiveIconColor}
+          flexShrink={0}
+        />
         {isExpanded ? (
-          <Text fontSize="sm" color="inherit" fontWeight="inherit" noOfLines={1}>
+          <Text fontSize="sm" color="inherit" fontWeight="inherit" noOfLines={1} textAlign="left">
             {label}
           </Text>
-        ) : (
-          <Icon as={item.icon} boxSize={4} color={itemIconColor} />
-        )}
+        ) : null}
       </Button>
     );
 
@@ -366,7 +378,7 @@ const Sidebar: React.FC<SidebarProps> = ({ pinned, onTogglePin }) => {
       onMouseLeave={() => setIsHovered(false)}
       borderRight="1px"
       borderColor={borderColor}
-      boxShadow={overlaying ? "lg" : "none"}
+      boxShadow={overlaying ? "sm" : "none"}
       sx={{
         minHeight: "100svh",
         height: "100svh",
@@ -374,6 +386,9 @@ const Sidebar: React.FC<SidebarProps> = ({ pinned, onTogglePin }) => {
     >
       <VStack spacing={0} h="full" align="stretch">
         <Flex
+          as="button"
+          type="button"
+          aria-label="Home"
           h="3.5rem"
           align="center"
           justify="center"
@@ -383,6 +398,8 @@ const Sidebar: React.FC<SidebarProps> = ({ pinned, onTogglePin }) => {
           cursor="pointer"
           onClick={goHome}
           _hover={{ bg: "ink.50" }}
+          _focus={focusReset}
+          _focusVisible={focusVisible}
           px={3}
         >
           <AdopterLogo
@@ -400,21 +417,27 @@ const Sidebar: React.FC<SidebarProps> = ({ pinned, onTogglePin }) => {
           minH={0}
           align="stretch"
         >
-          {NAV_SECTIONS.map((section) => {
+          {NAV_SECTIONS.map((section, sectionIndex) => {
             const items = topItems.filter((item) => item.section === section.id);
             if (items.length === 0) return null;
             return (
-              <VStack key={section.id} spacing={0.5} w="full" align="stretch">
+              <VStack
+                key={section.id}
+                spacing={1}
+                w="full"
+                align="stretch"
+                pt={sectionIndex === 0 ? 0 : 2}
+              >
                 {isExpanded ? (
                   <Text
-                    px={3}
-                    pt={2}
+                    px={2.5}
+                    pt={1}
                     pb={1}
-                    fontSize="11px"
-                    fontWeight="semibold"
-                    color="ink.500"
+                    fontSize="xs"
+                    fontWeight="600"
+                    color="ink.400"
                     textTransform="uppercase"
-                    letterSpacing="0.06em"
+                    letterSpacing="0.08em"
                   >
                     {section.label}
                   </Text>
@@ -437,26 +460,35 @@ const Sidebar: React.FC<SidebarProps> = ({ pinned, onTogglePin }) => {
             <Button
               variant="ghost"
               size="sm"
-              h="2.5rem"
+              h="9"
+              minH="9"
               w="full"
               justifyContent={isExpanded ? "flex-start" : "center"}
-              leftIcon={
-                isExpanded ? (
-                  <Icon as={MdPushPin} boxSize={4} transform={pinned ? undefined : "rotate(45deg)"} />
-                ) : undefined
-              }
+              gap={2.5}
+              px={isExpanded ? 2.5 : 0}
+              borderRadius="md"
               onClick={onTogglePin}
               aria-pressed={pinned}
               aria-label={pinned ? "Collapse menu" : "Keep menu open"}
-              color={pinned ? "ink.800" : "ink.500"}
+              color={pinned ? "ink.800" : "ink.600"}
               bg={pinned ? "ink.50" : "transparent"}
-              px={isExpanded ? 3 : 0}
+              fontWeight="500"
+              _hover={{ bg: "ink.50" }}
+              _focus={focusReset}
+              _focusVisible={focusVisible}
             >
+              <Icon
+                as={MdPushPin}
+                boxSize={4}
+                color={inactiveIconColor}
+                flexShrink={0}
+                transform={pinned ? undefined : "rotate(45deg)"}
+              />
               {isExpanded ? (
-                <Text fontSize="sm">{pinned ? "Menu pinned" : "Keep open"}</Text>
-              ) : (
-                <Icon as={MdPushPin} boxSize={4} transform={pinned ? undefined : "rotate(45deg)"} />
-              )}
+                <Text fontSize="sm" color="inherit" fontWeight="inherit" noOfLines={1}>
+                  {pinned ? "Menu pinned" : "Keep open"}
+                </Text>
+              ) : null}
             </Button>
           </Tooltip>
         </Box>
