@@ -161,6 +161,11 @@ async def lifespan(app: FastAPI):
     # that column, so it needs the SAME key auth-service does, configured
     # separately here (see app.core.config.settings.pii_encryption_key).
     pii_crypto.configure_key(settings.pii_encryption_key)
+    # Fail fast on a missing/malformed key: without this, a bad
+    # PII_ENCRYPTION_KEY only surfaces on the first QUOTA_LIMIT_UPDATED
+    # recipient lookup, not at boot — mirrors auth-service's own
+    # pii_crypto.validate_key() call in its lifespan.
+    pii_crypto.validate_key()
     configure_recipient_decryption(pii_crypto.decrypt_email)
     async with _get_pii_session_factory()() as _notif_db:
         await refresh_notification_settings_cache(_notif_db)

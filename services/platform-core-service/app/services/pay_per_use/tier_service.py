@@ -15,10 +15,10 @@ from app.core.constants import TierStatus
 from app.core.exceptions import ValidationError
 from ai4i_core.kafka import (
     publish_admin_event as publish_notification_event,
-    is_notification_enabled,
+    is_notification_enabled_bulk,
     get_notification_id,
     check_and_record_actions_bulk,
-    resolve_recipients,
+    resolve_recipients_bulk,
 )
 from app.models.pay_per_use.tier import Tier, TierQuota
 from app.repositories.pay_per_use.usage_repository import update_tier_cache
@@ -380,12 +380,25 @@ async def _publish_quota_limit_updated(
     commit, not one per pair (a tier with 200 tenants and 3 changed quotas
     would otherwise be 600 commits before this PATCH can respond). All
     pairs share the identical occurred_at, since they're all the same
-    admin action; publishing happens only after that one commit succeeds."""
-    if not await is_notification_enabled(session, "QUOTA_LIMIT_UPDATED"):
-        return
+    admin action; publishing happens only after that one commit succeeds.
+
+    QUOTA_LIMIT_UPDATED can be either GLOBAL or INSTITUTION scope (catalog-
+    configurable, AI4IDS-3201), so enablement is checked per tenant via
+    is_notification_enabled_bulk — a single query covering every tenant on
+    this tier, in the same spirit as check_and_record_actions_bulk below —
+    rather than once with no tenant_id, which would fail closed for every
+    tenant the moment this row is switched to INSTITUTION scope."""
     try:
         notification_id = await get_notification_id(session, "QUOTA_LIMIT_UPDATED")
-        tenant_ids = await _fetch_tenant_ids_for_tier(tier.id, auth_db)
+        all_tenant_ids = await _fetch_tenant_ids_for_tier(tier.id, auth_db)
+        if not all_tenant_ids:
+            return
+        enabled_tenant_ids = await is_notification_enabled_bulk(
+            session, "QUOTA_LIMIT_UPDATED", [str(tid) for tid in all_tenant_ids]
+        )
+        tenant_ids = [tid for tid in all_tenant_ids if str(tid) in enabled_tenant_ids]
+        if not tenant_ids:
+            return
         occurred_at_dt = datetime.now(timezone.utc)
         occurred_at = occurred_at_dt.isoformat()
         effective_date = _first_of_next_month(occurred_at_dt)
@@ -398,18 +411,20 @@ async def _publish_quota_limit_updated(
             session, "QUOTA_LIMIT_UPDATED", tenant_subjects, occurred_at, str(updated_by or "")
         )
         fired_set = {(tenant_id, subject["model_task_type"]) for tenant_id, subject in fired_pairs}
+        fired_tenant_ids = {tenant_id for tenant_id, _ in fired_set}
         # Recipients depend only on tenant_id, not on which task type
-        # changed — resolved once per tenant (not once per fired pair) so a
-        # tenant with 3 changed quotas doesn't trigger 3 identical lookups.
+        # changed — resolved once for the whole fired batch (ADMIN list and
+        # each per-tenant query run once, not once per tenant) so a tier
+        # with 200 tenants doesn't add ~600 sequential round trips here.
         recipients_by_tenant: dict = {}
+        if notification_id is not None and fired_tenant_ids:
+            recipients_by_tenant = await resolve_recipients_bulk(
+                session, auth_db, notification_id=notification_id, tenant_ids=list(fired_tenant_ids)
+            )
         for tenant_id in tenant_ids:
             for change in quota_changes:
                 if (str(tenant_id), change["inference_name"]) not in fired_set:
                     continue
-                if str(tenant_id) not in recipients_by_tenant and notification_id is not None:
-                    recipients_by_tenant[str(tenant_id)] = await resolve_recipients(
-                        session, auth_db, notification_id=notification_id, tenant_id=str(tenant_id)
-                    )
                 # Positional array per design doc §9.5, not the old
                 # {"inference_name", "previous", "current"} dict — emailer.py
                 # now indexes into it. changes is an array (one line per
