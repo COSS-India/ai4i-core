@@ -670,7 +670,7 @@ function PoliciesPanel({
         onClose={modal.onClose}
         policyId={editingId}
         piiOptions={piiOptions}
-        refreshPiiOptions={ensurePiiOptions}
+        refreshPiiOptions={loadPiiOptions}
         onSaved={() => {
           modal.onClose();
           void reloadPolicies();
