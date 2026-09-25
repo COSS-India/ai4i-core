@@ -68,13 +68,13 @@ const ApiKeyManagementPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>{`Manage API - ${getPlatformName()}`}</title>
+        <title>{`API Key Management - ${getPlatformName()}`}</title>
         <meta name="description" content="Create and manage API keys" />
       </Head>
 
       <ContentLayout>
         <ManagementPageHeader
-          title="API Keys"
+          title="API Key Management"
           description="Create keys, set permissions, and allocate a required budget as a percentage of the application"
           actions={
             <CreateButton onClick={onCreateOpen}>Create API Key</CreateButton>

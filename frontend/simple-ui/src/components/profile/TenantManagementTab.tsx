@@ -10,11 +10,8 @@ import {
   Button,
   Card,
   CardBody,
-  CardHeader,
   Center,
   HStack,
-  Heading,
-  IconButton,
   SimpleGrid,
   Tab,
   TabList,
@@ -41,7 +38,6 @@ import {
 import * as tenantService from "../../services/tenantService";
 import { fetchAllServicesMatchingFilters } from "../../services/servicesManagementService";
 import {
-  FiArrowLeft,
   FiEdit2,
   FiMail,
 } from "react-icons/fi";
@@ -78,6 +74,9 @@ import {
 } from "../../utils/rbac";
 import { useDeferredColumnSort } from "../../utils/tableSort";
 import CreateButton from "../common/CreateButton";
+import ManagementPageHeader from "../common/ManagementPageHeader";
+import { buildManageCrumbs } from "../common/PageBreadcrumb";
+import { getHomePath } from "../../utils/navigation";
 import FormActions from "../common/FormActions";
 import { CreateModal } from "../common/StandardModal";
 import CreateInstitutionForm, {
@@ -1262,45 +1261,29 @@ export default function TenantManagementTab({
         (a) => String(a.tenant_id) === String(t.tenant_id),
       ) ?? null;
     return (
-      <Card mt={4}>
-        <CardHeader>
-          <HStack justify="space-between" align="center" flexWrap="wrap">
-            <HStack flex="1" minW={0}>
-              <IconButton
-                aria-label="Back"
-                icon={<FiArrowLeft />}
-                size="sm"
-                variant="ghost"
-                onClick={tm.closeTenantDetailView}
-                flexShrink={0}
-              />
-              <Tooltip
-                label={t.organisation}
-                placement="top"
-                hasArrow
-                openDelay={300}
-              >
-                <Heading size="md" isTruncated minW={0}>
-                  {t.organisation}
-                </Heading>
-              </Tooltip>
+      <>
+        <ManagementPageHeader
+          title={t.organisation}
+          description="Institution details."
+          crumbs={buildManageCrumbs(
+            {
+              label: `${INSTITUTION} Management`,
+              href: "/institution-management",
+              onNavigate: tm.closeTenantDetailView,
+            },
+            t.organisation,
+            getHomePath(user?.roles),
+          )}
+          actions={
+            <HStack spacing={2} flexShrink={0} flexWrap="wrap">
               {isDefaultTenant(t) && (
-                <Badge
-                  colorScheme="purple"
-                  flexShrink={0}
-                  textTransform="none"
-                >
+                <Badge colorScheme="purple" textTransform="none">
                   Default
                 </Badge>
               )}
-              <Badge
-                colorScheme={getTenantStatusColorScheme(t.status)}
-                flexShrink={0}
-              >
+              <Badge colorScheme={getTenantStatusColorScheme(t.status)}>
                 {formatTenantStatusLabel(t.status)}
               </Badge>
-            </HStack>
-            <HStack flexShrink={0}>
               {isTenantStatus(t.status, TENANT.STATUS.PENDING) && (
                 <Button
                   leftIcon={<FiMail />}
@@ -1322,9 +1305,8 @@ export default function TenantManagementTab({
                 Edit
               </Button>
             </HStack>
-          </HStack>
-        </CardHeader>
-        <CardBody>
+          }
+        />
           <Tabs
             colorScheme="blue"
             variant="enclosed"
@@ -1460,8 +1442,7 @@ export default function TenantManagementTab({
               </TabPanel>
             </TabPanels>
           </Tabs>
-        </CardBody>
-      </Card>
+      </>
     );
   }
 

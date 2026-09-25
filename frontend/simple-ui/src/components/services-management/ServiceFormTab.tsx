@@ -4,8 +4,6 @@ import {
   Badge,
   Box,
   Button,
-  Card,
-  CardBody,
   Checkbox,
   FormControl,
   FormErrorMessage,
@@ -34,6 +32,7 @@ import FieldHint from "../common/FieldHint";
 import FieldLabel from "../common/FieldLabel";
 import FormActions from "../common/FormActions";
 import FormSection from "../common/FormSection";
+import ReadOnlyField from "../common/ReadOnlyField";
 import type { Service } from "../../services/servicesManagementService";
 import type { ModelDetails } from "../../types/platform";
 import type { Tier } from "../../types/tierManagement";
@@ -56,8 +55,6 @@ export const UNIT_SIZE_OPTIONS = ["1000", "1000000"] as const;
 export const CURRENCY_OPTIONS = ["INR"] as const;
 
 interface ServiceFormTabProps {
-  cardBg: string;
-  cardBorder: string;
   editingService: Service | null;
   formData: Partial<Service>;
   onInputChange: (field: keyof Service, value: string) => void;
@@ -93,8 +90,6 @@ interface ServiceFormTabProps {
   isSubmitting: boolean;
   onSubmit: (e: React.FormEvent) => void;
   onCancel: () => void;
-  /** False when hosted in Create/Edit modals (no nested card). */
-  embedded?: boolean;
   /** View reuses this form read-only. Create and edit stay the default. */
   mode?: "create" | "edit" | "view";
   hideActions?: boolean;
@@ -114,8 +109,6 @@ const formatSubmissionDateDisplay = (value?: string): string => {
 };
 
 const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
-  cardBg,
-  cardBorder,
   editingService,
   formData,
   onInputChange,
@@ -150,7 +143,6 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
   isSubmitting,
   onSubmit,
   onCancel,
-  embedded = true,
   hideActions = false,
   formId,
   mode,
@@ -259,24 +251,27 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
 
   const showServiceName = !isLlmTaskType;
 
-  const form = (
-        <form id={formId} onSubmit={onSubmit}>
+  const sections = (
           <VStack spacing={0} align="stretch">
             <FormSection title="Select Model">
             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-              <FormControl isRequired>
-                <FieldLabel>Model Task Type</FieldLabel>
-                {isView ? (
+              {isView ? (
+                <ReadOnlyField label="Model Task Type">
                   <Badge
                     colorScheme={getTaskColorScheme(formData.task_type)}
                     fontSize="sm"
-                    p={2}
+                    px={2}
+                    py={0.5}
                   >
                     {formData.task_type
                       ? formatModelTaskTypeLabel(formData.task_type)
                       : "N/A"}
                   </Badge>
-                ) : editingService ? (
+                </ReadOnlyField>
+              ) : (
+              <FormControl isRequired>
+                <FieldLabel>Model Task Type</FieldLabel>
+                {editingService ? (
                   <Input
                     value={formatModelTaskTypeLabel(formData.task_type || "")}
                     isReadOnly
@@ -297,7 +292,13 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   </Select>
                 )}
               </FormControl>
+              )}
 
+              {isView ? (
+                <ReadOnlyField label="Model Name">
+                  {formData.modelName || formData.modelId || "—"}
+                </ReadOnlyField>
+              ) : (
               <FormControl isRequired>
                 <FieldLabel>Model Name</FieldLabel>
                 {editingService ? (
@@ -331,10 +332,16 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   </Select>
                 )}
               </FormControl>
+              )}
             </SimpleGrid>
 
             {/* 3. Model ID + Model Submission Date — FYI plain text (not disabled inputs) */}
             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+              {isView ? (
+                <ReadOnlyField label="Model ID">
+                  {formData.modelId || "—"}
+                </ReadOnlyField>
+              ) : (
               <FormControl>
                 <FieldLabel>Model ID</FieldLabel>
                 <Text
@@ -345,6 +352,14 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 </Text>
                 <FieldHint>{FIELD_HINTS.service.modelId.helper}</FieldHint>
               </FormControl>
+              )}
+              {isView ? (
+                <ReadOnlyField label="Model Submission Date">
+                  {formatSubmissionDateDisplay(
+                    formData.modelSubmissionDate as string | undefined,
+                  )}
+                </ReadOnlyField>
+              ) : (
               <FormControl>
                 <FieldLabel>Model Submission Date</FieldLabel>
                 <Text
@@ -353,11 +368,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                     formData.modelSubmissionDate ? "ink.800" : "ink.500"
                   }
                 >
-                  {isView
-                    ? formatSubmissionDateDisplay(
-                        formData.modelSubmissionDate as string | undefined,
-                      )
-                    : isCreateFormModelSelected
+                  {isCreateFormModelSelected
                     ? formatSubmissionDateDisplay(
                         formData.modelSubmissionDate as string | undefined,
                       )
@@ -365,11 +376,15 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 </Text>
                 <FieldHint>{FIELD_HINTS.service.submissionDate.helper}</FieldHint>
               </FormControl>
+              )}
             </SimpleGrid>
             </FormSection>
 
             <FormSection title="Service Details">
-            {showServiceName && (
+            {showServiceName && isView ? (
+              <ReadOnlyField label="Service Name">{formData.name || "—"}</ReadOnlyField>
+            ) : null}
+            {showServiceName && !isView && (
               <FormControl isRequired isInvalid={!!nameError}>
                 <FieldLabel>Service Name</FieldLabel>
                 <Input
@@ -393,6 +408,9 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
               </FormControl>
             )}
 
+            {isView ? (
+              <ReadOnlyField label="Service ID">{formData.serviceId || "—"}</ReadOnlyField>
+            ) : (
             <FormControl isRequired isInvalid={!!idError}>
               <FieldLabel>Service ID</FieldLabel>
               <Input
@@ -423,8 +441,13 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 </FieldHint>
               )}
             </FormControl>
+            )}
 
-            {/* Service Description */}
+            {isView ? (
+              <ReadOnlyField label="Service Description" fullWidth>
+                {formData.serviceDescription || "—"}
+              </ReadOnlyField>
+            ) : (
             <FormControl
               isRequired={!editingService}
               isInvalid={!!descriptionError}
@@ -437,8 +460,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 }
                 onBlur={() => markBlurred("serviceDescription")}
                 placeholder={FIELD_HINTS.service.description.placeholder}
-                bg={isView ? "ink.50" : "white"}
-                isReadOnly={isView}
+                bg="white"
                 rows={4}
                 maxLength={SERVICE_DESCRIPTION_MAX_LEN}
               />
@@ -454,11 +476,16 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 </FieldHint>
               )}
             </FormControl>
+            )}
 
             </FormSection>
 
             <FormSection title="Deployment">
-            {/* Endpoint */}
+            {isView ? (
+              <ReadOnlyField label="Endpoint" fullWidth>
+                {formData.endpoint || "—"}
+              </ReadOnlyField>
+            ) : (
             <FormControl isRequired>
               <FieldLabel>Endpoint</FieldLabel>
               <Input
@@ -469,8 +496,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                     ? FIELD_HINTS.service.endpoint.llmPlaceholder
                     : FIELD_HINTS.service.endpoint.placeholder
                 }
-                bg={isView ? "ink.50" : "white"}
-                isReadOnly={isView}
+                bg="white"
               />
               <FieldHint>
                 {isLlmTaskType
@@ -478,14 +504,16 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   : FIELD_HINTS.service.endpoint.helper}
               </FieldHint>
             </FormControl>
+            )}
 
-
-            {isLlmTaskType && (
+            {isLlmTaskType && isView ? (
+              <ReadOnlyField label="Authentication Token">
+                {hasAuthToken ? "Configured" : "Not configured"}
+              </ReadOnlyField>
+            ) : null}
+            {isLlmTaskType && !isView && (
               <FormControl>
-                <FieldLabel variant={isView ? "inline" : undefined}>Authentication Token</FieldLabel>
-                {isView ? (
-                  <Text fontSize="md">{hasAuthToken ? "Configured" : "Not configured"}</Text>
-                ) : (
+                <FieldLabel>Authentication Token</FieldLabel>
                 <InputGroup>
                   <Input
                     type={
@@ -519,8 +547,6 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                     </InputRightElement>
                   )}
                 </InputGroup>
-                )}
-                {!isView && (
                 <FieldHint>
                   {editingService
                     ? hasAuthToken
@@ -528,11 +554,14 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                       : FIELD_HINTS.service.authToken.editEmptyHelper
                     : FIELD_HINTS.service.authToken.helper}
                 </FieldHint>
-                )}
               </FormControl>
             )}
 
-            {/* Hardware Description → inferenceEndPoint.infraDescription */}
+            {isView ? (
+              <ReadOnlyField label="Hardware Description">
+                {formData.hardwareDescription || "—"}
+              </ReadOnlyField>
+            ) : (
             <FormControl isRequired={!editingService} isInvalid={!!infraError}>
               <FieldLabel>Hardware Description</FieldLabel>
               <Input
@@ -557,10 +586,14 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 </FieldHint>
               )}
             </FormControl>
+            )}
             </FormSection>
 
             <FormSection title="Pricing & Access">
             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                {isView ? (
+                  <ReadOnlyField label="Unit Type">{unitType || "—"}</ReadOnlyField>
+                ) : (
                 <FormControl>
                   <FieldLabel>Unit Type</FieldLabel>
                   <Input
@@ -575,12 +608,15 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   />
                   <FieldHint>{FIELD_HINTS.service.unitType.helper}</FieldHint>
                 </FormControl>
+                )}
 
+                {isView ? (
+                  <ReadOnlyField label="Unit Size">
+                    {unitSize ? Number(unitSize).toLocaleString() : "N/A"}
+                  </ReadOnlyField>
+                ) : (
                 <FormControl isRequired>
                   <FieldLabel>Unit Size</FieldLabel>
-                  {isView ? (
-                    <Input value={unitSize || "N/A"} isReadOnly bg="ink.50" />
-                  ) : (
                   <Select
                     value={unitSize}
                     onChange={(e) => onUnitSizeChange(e.target.value)}
@@ -593,12 +629,17 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                       </option>
                     ))}
                   </Select>
-                  )}
                   <FieldHint>{FIELD_HINTS.service.unitSize.helper}</FieldHint>
                 </FormControl>
+                )}
               </SimpleGrid>
 
             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                {isView ? (
+                  <ReadOnlyField label="Price per unit size">
+                    {pricePerUnit || "—"}
+                  </ReadOnlyField>
+                ) : (
                 <FormControl isRequired isInvalid={!!priceError}>
                   <FieldLabel>Price per unit size</FieldLabel>
                   <Input
@@ -609,8 +650,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                     type="number"
                     min={0}
                     max={PRICE_PER_UNIT_MAX}
-                    bg={isView ? "ink.50" : "white"}
-                    isReadOnly={isView}
+                    bg="white"
                   />
                   {priceError ? (
                     <FormErrorMessage>{priceError}</FormErrorMessage>
@@ -618,12 +658,13 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                     <FieldHint>{FIELD_HINTS.service.price.helper}</FieldHint>
                   )}
                 </FormControl>
+                )}
 
+                {isView ? (
+                  <ReadOnlyField label="Currency">{currency || "INR"}</ReadOnlyField>
+                ) : (
                 <FormControl isRequired>
                   <FieldLabel>Currency</FieldLabel>
-                  {isView ? (
-                    <Input value={currency || "INR"} isReadOnly bg="ink.50" />
-                  ) : (
                   <Select
                     value={currency}
                     onChange={(e) => onCurrencyChange(e.target.value)}
@@ -635,13 +676,12 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                       </option>
                     ))}
                   </Select>
-                  )}
                 </FormControl>
+                )}
               </SimpleGrid>
-            <FormControl isRequired>
-              <FieldLabel>Tier</FieldLabel>
-              {isView ? (
-                selectedTierNames.length > 0 ? (
+            {isView ? (
+              <ReadOnlyField label="Tier">
+                {selectedTierNames.length > 0 ? (
                   <HStack spacing={1} flexWrap="wrap">
                     {selectedTierNames.map((name) => (
                       <Badge key={name} colorScheme="gray" fontSize="xs" px={2} py={0.5}>
@@ -650,9 +690,12 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                     ))}
                   </HStack>
                 ) : (
-                  <Text fontSize="md">N/A</Text>
-                )
-              ) : (
+                  "N/A"
+                )}
+              </ReadOnlyField>
+            ) : (
+            <FormControl isRequired>
+              <FieldLabel>Tier</FieldLabel>
               <Menu
                 closeOnSelect={false}
                 matchWidth
@@ -759,15 +802,15 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   </MenuList>
                 </Portal>
               </Menu>
-              )}
               <FieldHint>{FIELD_HINTS.service.tier.helper}</FieldHint>
             </FormControl>
+            )}
             </FormSection>
 
             {!hideActions && (
             <FormActions
               submitLabel={editingService ? "Save Changes" : "Create Service"}
-              cancelLabel={editingService ? "Cancel" : "Reset"}
+              cancelLabel="Cancel"
               onCancel={onCancel}
               submitType="submit"
               isLoading={isSubmitting}
@@ -776,21 +819,20 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
             />
             )}
           </VStack>
-        </form>
   );
 
-  if (!embedded) return form;
+  if (isView) {
+    return (
+      <Box borderTopWidth="1px" borderColor="ink.200" mt={1} pt={5}>
+        {sections}
+      </Box>
+    );
+  }
 
   return (
-    <Card
-      bg={cardBg}
-      borderColor={cardBorder}
-      borderWidth="1px"
-      boxShadow="none"
-      maxW="3xl"
-    >
-      <CardBody>{form}</CardBody>
-    </Card>
+    <form id={formId} onSubmit={onSubmit}>
+      {sections}
+    </form>
   );
 };
 
