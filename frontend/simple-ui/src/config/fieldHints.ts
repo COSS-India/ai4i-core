@@ -181,9 +181,9 @@ export const FIELD_HINTS = {
       helper: "Required. Keys are scoped to one Application.",
     },
     budget: {
-      placeholder: "0",
+      placeholder: "e.g. 25",
       helper:
-        "Optional. Percentage of the parent Application's Budget. Leave blank to use the Application's remaining Budget as this key's ceiling. If the Application has no Budget, the key has no ceiling.",
+        "Required. Percentage of the parent Application's Budget, greater than 0 and within what the Application still has unallocated.",
     },
     search: {
       placeholder: "Search by key name",
