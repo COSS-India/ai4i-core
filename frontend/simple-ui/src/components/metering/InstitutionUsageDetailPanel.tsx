@@ -79,7 +79,7 @@ export const InstitutionUsageDetailContent: React.FC<InstitutionUsageDetailConte
 
       <Box {...cardSx} opacity={isLoading ? 0.6 : 1}>
         <Flex justify="space-between" align="center" gap={3} mb={4} flexWrap="wrap">
-          <Text {...sectionLabelSx}>{METERING.USAGE_SPEND.USAGE_BY_TASK_TYPE_ALL_TIME}</Text>
+          <Text {...sectionLabelSx}>{METERING.USAGE_SPEND.USAGE_BY_TASK_TYPE}</Text>
           {billingPeriod && onBillingPeriodChange ? (
             <BillingMonthSelect value={billingPeriod} onChange={onBillingPeriodChange} />
           ) : null}
