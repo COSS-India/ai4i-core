@@ -1,4 +1,5 @@
 import {
+  Box,
   Center,
   Heading,
   Spinner,
@@ -12,7 +13,8 @@ import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import CreateButton from "../components/common/CreateButton";
 import FormActions from "../components/common/FormActions";
-import { CreateModal } from "../components/common/StandardModal";
+import FormPage from "../components/common/FormPage";
+import FormSection from "../components/common/FormSection";
 import { useAuth } from "../hooks/useAuth";
 import CreateApiKeyTab from "../components/profile/CreateApiKeyTab";
 import ApiKeyManagementTab from "../components/profile/ApiKeyManagementTab";
@@ -25,12 +27,13 @@ const ApiKeyManagementPage: React.FC = () => {
   const { isOpen: isCreateOpen, onOpen: onCreateOpen, onClose: closeCreate } =
     useDisclosure();
   const [isCreatingKey, setIsCreatingKey] = useState(false);
-  const [hasCreatedToken, setHasCreatedToken] = useState(false);
   const onCreateClose = () => {
-    setHasCreatedToken(false);
     closeCreate();
   };
   const refreshManagedKeysRef = useRef<(() => Promise<void>) | null>(null);
+  const [viewOpen, setViewOpen] = useState(false);
+  const [formHost, setFormHost] = useState<HTMLDivElement | null>(null);
+  const showList = !isCreateOpen && !viewOpen;
 
   const showApiKeyManagement = userMayManageApiKeys(user?.roles);
 
@@ -73,52 +76,61 @@ const ApiKeyManagementPage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <ManagementPageHeader
-          title="API Key Management"
-          description="Create keys, set permissions, and allocate a required budget as a percentage of the application"
-          actions={
-            <CreateButton onClick={onCreateOpen}>Create API Key</CreateButton>
-          }
-        />
-
-        <ApiKeyManagementTab
-          isActive
-          onRegisterRefresh={(refresh) => {
-            refreshManagedKeysRef.current = refresh;
-          }}
-        />
-      </ContentLayout>
-
-      <CreateModal
-        isOpen={isCreateOpen}
-        onClose={onCreateClose}
-        lockDismiss={isCreatingKey || hasCreatedToken}
-        size="lg"
-        title="Create API Key"
-        description="Create a key, set permissions, and allocate a required budget as a percentage of the application."
-        footer={
-          <FormActions
-            submitLabel="Create API Key"
-            onCancel={onCreateClose}
-            submitType="submit"
-            form="create-api-key-form"
-            isLoading={isCreatingKey}
-            loadingText="Creating..."
-            justify="space-between"
-            pt={0}
+        <Box ref={setFormHost} />
+        {isCreateOpen ? (
+          <FormPage
+            title="Create API Key"
+            description="Create a key, set permissions, and allocate a required budget as a percentage of the application."
+            parent={{
+              label: "API Key Management",
+              href: "/api-key-management",
+              onNavigate: onCreateClose,
+            }}
+            onLeave={onCreateClose}
+            footer={({ leave }) => (
+              <FormActions
+                cancelLabel="Cancel"
+                submitLabel="Create API Key"
+                onCancel={leave}
+                submitType="submit"
+                form="create-api-key-form"
+                isLoading={isCreatingKey}
+                loadingText="Creating..."
+                justify="space-between"
+                pt={0}
+              />
+            )}
+          >
+            <FormSection title="API Key">
+              <CreateApiKeyTab
+                key={isCreateOpen ? "open" : "closed"}
+                tenantId={user.tenant_id}
+                onApiKeyCreated={() => void refreshManagedKeysRef.current?.()}
+                hideActions
+                formId="create-api-key-form"
+                onCreatingChange={setIsCreatingKey}
+              />
+            </FormSection>
+          </FormPage>
+        ) : null}
+        <Box hidden={!showList}>
+          <ManagementPageHeader
+            title="API Key Management"
+            description="Create keys, set permissions, and allocate a required budget as a percentage of the application"
+            actions={
+              <CreateButton onClick={onCreateOpen}>Create API Key</CreateButton>
+            }
           />
-        }
-      >
-        <CreateApiKeyTab
-          key={isCreateOpen ? "open" : "closed"}
-          tenantId={user.tenant_id}
-          onApiKeyCreated={() => void refreshManagedKeysRef.current?.()}
-          hideActions
-          formId="create-api-key-form"
-          onCreatingChange={setIsCreatingKey}
-          onCreatedTokenChange={setHasCreatedToken}
-        />
-      </CreateModal>
+          <ApiKeyManagementTab
+            isActive
+            formHost={formHost}
+            onViewOpenChange={setViewOpen}
+            onRegisterRefresh={(refresh) => {
+              refreshManagedKeysRef.current = refresh;
+            }}
+          />
+        </Box>
+      </ContentLayout>
     </>
   );
 };

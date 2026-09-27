@@ -1,4 +1,5 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Alert,
   AlertIcon,
@@ -11,34 +12,33 @@ import {
   FormErrorMessage,
   HStack,
   IconButton,
-  Input,
   SimpleGrid,
   Text,
-  Textarea,
   Tooltip,
   VStack,
 } from "@chakra-ui/react";
 import { EditIcon } from "@chakra-ui/icons";
-import { FiRefreshCw, FiSliders } from "react-icons/fi";
+import { FiEdit2, FiRefreshCw, FiSliders } from "react-icons/fi";
 import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
   FieldLabel,
   type DataTableColumn,
 } from "../common/table";
-import StandardModal, { CreateModal } from "../common/StandardModal";
+import StandardModal from "../common/StandardModal";
 import CreateButton from "../common/CreateButton";
 import FormActions from "../common/FormActions";
+import FormPage from "../common/FormPage";
+import FormSection from "../common/FormSection";
+import ReadOnlyField from "../common/ReadOnlyField";
 import ApplicationBulkBudgetModal from "./ApplicationBulkBudgetModal";
+import ApplicationIdentityFields from "./ApplicationIdentityFields";
 import FieldHint from "../common/FieldHint";
 import PercentageStepper from "../common/PercentageStepper";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import { percentageBoundMessage } from "../../config/budgetMessages";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
 import type { Application } from "../../types/application";
-import {
-  useApplicationManagement,
-  type ApplicationForm,
-} from "./hooks/useApplicationManagement";
+import { useApplicationManagement } from "./hooks/useApplicationManagement";
 import { useDeferredColumnSort } from "../../utils/tableSort";
 
 function formatPct(value: number | null | undefined): string {
@@ -108,16 +108,45 @@ function avatarGradient(name: string): string {
   return `linear-gradient(135deg, ${from}, ${to})`;
 }
 
+const APPLICATION_LIST_HREF = "/institution-management";
+
 export default function ApplicationManagementTab({
   tenantId,
   institutionBudget,
   currency = "INR",
+  formHost = null,
+  onFormOpenChange,
 }: {
   tenantId: string;
   institutionBudget: number | null;
   currency?: string;
+  /** Renders Create/Edit/View outside the institution page chrome. */
+  formHost?: HTMLElement | null;
+  onFormOpenChange?: (open: boolean) => void;
 }) {
   const mgr = useApplicationManagement(tenantId, institutionBudget);
+  const [boundHint, setBoundHint] = useState<string | null>(null);
+
+  const formOpen = mgr.createOpen || mgr.editOpen || mgr.viewOpen;
+  useEffect(() => {
+    onFormOpenChange?.(formOpen);
+    return () => onFormOpenChange?.(false);
+  }, [formOpen, onFormOpenChange]);
+  useEffect(() => {
+    if (!mgr.createOpen) setBoundHint(null);
+  }, [mgr.createOpen]);
+
+  const closeForms = () => {
+    mgr.setCreateOpen(false);
+    mgr.setEditOpen(false);
+    mgr.setViewOpen(false);
+  };
+
+  const listParent = {
+    label: "Application Management",
+    href: APPLICATION_LIST_HREF,
+    onNavigate: closeForms,
+  };
 
   const appSortAccessors = useMemo(
     () => ({
@@ -267,8 +296,147 @@ export default function ApplicationManagementTab({
     mgr.form.allocated_percentage.trim() === "" || !Number.isFinite(createPct)
       ? null
       : (createPct / 100) * mgr.tenantBudget;
+  const createBudgetError = mgr.formErrors.allocated_percentage || boundHint;
+
+  const formPage = mgr.editOpen ? (
+    <FormPage
+      title={mgr.form.name || mgr.selected?.name || "Edit Application"}
+      description={
+        mgr.selected
+          ? `Update details for ${mgr.selected.name}.`
+          : "Update the application details."
+      }
+      parent={listParent}
+      onLeave={() => mgr.setEditOpen(false)}
+      footer={({ leave }) => (
+        <FormActions
+          cancelLabel="Cancel"
+          submitLabel="Save Changes"
+          onCancel={leave}
+          onSubmit={() => void mgr.handleEdit()}
+          isLoading={mgr.isSaving}
+          loadingText="Saving..."
+          justify="space-between"
+          pt={0}
+        />
+      )}
+    >
+      <ApplicationIdentityFields
+        mode="edit"
+        form={mgr.form}
+        setForm={mgr.setForm}
+        errors={mgr.formErrors}
+        banner={mgr.formBanner}
+      />
+      <Text fontSize="sm" color="ink.500" mt={4}>
+        Budget is managed separately — use Edit Budget on the row or above the list.
+      </Text>
+    </FormPage>
+  ) : mgr.createOpen ? (
+    <FormPage
+      title="Create Application"
+      description="Add an application and set how much of the institution budget it can use."
+      parent={listParent}
+      onLeave={() => mgr.setCreateOpen(false)}
+      footer={({ leave }) => (
+        <FormActions
+          cancelLabel="Cancel"
+          submitLabel="Create Application"
+          onCancel={leave}
+          onSubmit={() => void mgr.handleCreate()}
+          isLoading={mgr.isSaving}
+          loadingText="Creating..."
+          justify="space-between"
+          pt={0}
+        />
+      )}
+    >
+      <ApplicationIdentityFields
+        mode="create"
+        form={mgr.form}
+        setForm={mgr.setForm}
+        errors={mgr.formErrors}
+        banner={mgr.formBanner}
+      />
+      <FormSection title="Budget">
+        <FormControl isInvalid={Boolean(createBudgetError)}>
+          <FieldLabel>Budget allocation</FieldLabel>
+          <PercentageStepper
+            value={mgr.form.allocated_percentage}
+            onChange={(next) => {
+              setBoundHint(null);
+              mgr.setForm((prev) => ({ ...prev, allocated_percentage: next }));
+            }}
+            onBoundHit={(bound) => setBoundHint(percentageBoundMessage(bound))}
+          />
+          <FormErrorMessage>{createBudgetError}</FormErrorMessage>
+          <FieldHint show={!createBudgetError}>
+            {FIELD_HINTS.application.budget.helper} {mgr.remainingPct.toFixed(2)}% remaining.
+            {createPreview != null ? ` ≈ ${formatSpendMoney(createPreview, currency)}` : ""}
+          </FieldHint>
+        </FormControl>
+      </FormSection>
+    </FormPage>
+  ) : mgr.viewOpen && mgr.selected ? (
+    <FormPage
+      title={mgr.selected.name}
+      description="Application details."
+      parent={listParent}
+      onLeave={() => mgr.setViewOpen(false)}
+      actions={
+        <HStack spacing={2} flexShrink={0}>
+          <Badge colorScheme={mgr.selected.status === "ACTIVE" ? "green" : "gray"}>
+            {mgr.selected.status === "ACTIVE" ? "Active" : "Inactive"}
+          </Badge>
+          <Button
+            leftIcon={<FiEdit2 />}
+            size="sm"
+            onClick={() => mgr.openEdit(mgr.selected!)}
+          >
+            Edit
+          </Button>
+        </HStack>
+      }
+      footer={({ leave }) => (
+        <FormActions hideSubmit cancelLabel="Back" onCancel={leave} pt={0} />
+      )}
+    >
+      <ApplicationIdentityFields
+        mode="view"
+        form={{
+          name: mgr.selected.name,
+          description: mgr.selected.description ?? "",
+          domain: mgr.selected.domain ?? "",
+          allocated_percentage: "",
+        }}
+        setForm={() => undefined}
+        errors={{}}
+        banner={null}
+      />
+      <FormSection title="Record">
+        <ReadOnlyField label="Status">
+          <Badge colorScheme={mgr.selected.status === "ACTIVE" ? "green" : "gray"}>
+            {mgr.selected.status === "ACTIVE" ? "Active" : "Inactive"}
+          </Badge>
+        </ReadOnlyField>
+        <ReadOnlyField label="Budget allocation">
+          {formatPct(mgr.selected.allocated_percentage)}
+        </ReadOnlyField>
+        {mgr.selected.allocated_budget != null ? (
+          <ReadOnlyField label="Budget amount">
+            {rupees(mgr.selected.allocated_budget, currency)}
+          </ReadOnlyField>
+        ) : null}
+      </FormSection>
+    </FormPage>
+  ) : null;
+
+  const page = formPage && formHost ? createPortal(formPage, formHost) : formPage;
 
   return (
+    <>
+      {page}
+      {formPage ? null : (
     <VStack align="stretch" spacing={6}>
       <HStack justify="space-between" align="flex-start" spacing={4} flexWrap="wrap">
         <Text fontSize="13.5px" color="ink.600" maxW="540px" lineHeight="1.5">
@@ -358,143 +526,6 @@ export default function ApplicationManagementTab({
           fields: ["name", "domain"],
         }}
       />
-
-      <CreateModal
-        isOpen={mgr.createOpen}
-        onClose={() => mgr.setCreateOpen(false)}
-        title="Create Application"
-        description="Add an application and set how much of the institution budget it can use."
-        size="lg"
-        footer={
-          <FormActions
-            submitLabel="Create Application"
-            onCancel={() => mgr.setCreateOpen(false)}
-            onSubmit={() => void mgr.handleCreate()}
-            isLoading={mgr.isSaving}
-            loadingText="Creating..."
-            justify="space-between"
-            pt={0}
-          />
-        }
-      >
-        <ApplicationIdentityFields
-          mode="create"
-          form={mgr.form}
-          setForm={mgr.setForm}
-          errors={mgr.formErrors}
-          banner={mgr.formBanner}
-          showBudget
-          remainingPct={mgr.remainingPct}
-          budgetPreview={createPreview}
-          currency={currency}
-        />
-      </CreateModal>
-
-      <StandardModal
-        isOpen={mgr.editOpen}
-        onClose={() => mgr.setEditOpen(false)}
-        title="Edit Application"
-        description={
-          mgr.selected
-            ? `Update details for ${mgr.selected.name}.`
-            : "Update the application details."
-        }
-        size="lg"
-        scrollBehavior="inside"
-        modalProps={{ blockScrollOnMount: true }}
-        headerProps={{ px: 6, pt: 5, pb: 4 }}
-        bodyProps={{ px: 6, py: 5 }}
-        footerProps={{ px: 6, py: 4 }}
-        footer={
-          <FormActions
-            submitLabel="Save Changes"
-            onCancel={() => mgr.setEditOpen(false)}
-            onSubmit={() => void mgr.handleEdit()}
-            isLoading={mgr.isSaving}
-            loadingText="Saving..."
-            justify="space-between"
-            pt={0}
-          />
-        }
-      >
-        <ApplicationIdentityFields
-          mode="edit"
-          form={mgr.form}
-          setForm={mgr.setForm}
-          errors={mgr.formErrors}
-          banner={mgr.formBanner}
-          showBudget={false}
-        />
-      </StandardModal>
-
-      <StandardModal
-        isOpen={mgr.viewOpen}
-        onClose={() => mgr.setViewOpen(false)}
-        title="Application Details"
-        description="View the application's information."
-        size="lg"
-        scrollBehavior="inside"
-        modalProps={{ blockScrollOnMount: true }}
-        headerProps={{ px: 6, pt: 5, pb: 4 }}
-        bodyProps={{ px: 6, py: 5 }}
-        footerProps={{ px: 6, py: 4 }}
-        footer={
-          mgr.selected ? (
-            <FormActions
-              cancelLabel="Close"
-              submitLabel="Edit"
-              onCancel={() => mgr.setViewOpen(false)}
-              onSubmit={() => {
-                mgr.setViewOpen(false);
-                mgr.openEdit(mgr.selected!);
-              }}
-              justify="space-between"
-              pt={0}
-            />
-          ) : (
-            <FormActions
-              submitLabel="Close"
-              hideCancel
-              onSubmit={() => mgr.setViewOpen(false)}
-              pt={0}
-            />
-          )
-        }
-      >
-        {mgr.selected && (
-          <VStack align="stretch" spacing={4}>
-            <HStack spacing={2}>
-              <Badge colorScheme={mgr.selected.status === "ACTIVE" ? "green" : "gray"}>
-                {mgr.selected.status === "ACTIVE" ? "Active" : "Inactive"}
-              </Badge>
-            </HStack>
-            <ApplicationIdentityFields
-              mode="view"
-              form={{
-                name: mgr.selected.name,
-                description: mgr.selected.description ?? "",
-                domain: mgr.selected.domain ?? "",
-                allocated_percentage:
-                  mgr.selected.allocated_percentage == null
-                    ? ""
-                    : String(mgr.selected.allocated_percentage),
-              }}
-              setForm={() => undefined}
-              errors={{}}
-              banner={null}
-              showBudget
-            />
-            {mgr.selected.allocated_budget != null ? (
-              <HStack justify="space-between">
-                <FieldLabel variant="inline">Budget amount</FieldLabel>
-                <Text fontWeight="semibold">
-                  {rupees(mgr.selected.allocated_budget, currency)}
-                </Text>
-              </HStack>
-            ) : null}
-          </VStack>
-        )}
-      </StandardModal>
 
       <StandardModal
         isOpen={mgr.budgetOpen}
@@ -621,118 +652,7 @@ export default function ApplicationManagementTab({
         canSave={mgr.bulkCanSave}
       />
     </VStack>
-  );
-}
-
-function ApplicationIdentityFields({
-  mode,
-  form,
-  setForm,
-  errors,
-  banner,
-  showBudget,
-  remainingPct = 0,
-  budgetPreview,
-  currency = "INR",
-}: {
-  mode: "create" | "edit" | "view";
-  form: ApplicationForm;
-  setForm: React.Dispatch<React.SetStateAction<ApplicationForm>>;
-  errors: Record<string, string>;
-  banner: string | null;
-  showBudget: boolean;
-  remainingPct?: number;
-  budgetPreview?: number | null;
-  currency?: string;
-}) {
-  const isView = mode === "view";
-  const [boundHint, setBoundHint] = React.useState<string | null>(null);
-  const budgetError = errors.allocated_percentage || boundHint;
-  return (
-    <VStack align="stretch" spacing={4}>
-      {banner && (
-        <Alert status="error" borderRadius="md">
-          <AlertIcon />
-          {banner}
-        </Alert>
       )}
-      <FormControl isRequired={!isView} isInvalid={!isView && Boolean(errors.name)}>
-        <FieldLabel variant={isView ? "inline" : undefined}>Application name</FieldLabel>
-        {isView ? (
-          <Text fontSize="md">{form.name || "—"}</Text>
-        ) : (
-          <>
-            <Input
-              value={form.name}
-              onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-              placeholder={FIELD_HINTS.application.name.placeholder}
-            />
-            <FormErrorMessage>{errors.name}</FormErrorMessage>
-            <FieldHint show={!errors.name}>{FIELD_HINTS.application.name.helper}</FieldHint>
-          </>
-        )}
-      </FormControl>
-      <FormControl>
-        <FieldLabel variant={isView ? "inline" : undefined}>Description</FieldLabel>
-        {isView ? (
-          <Text fontSize="md">{form.description || "—"}</Text>
-        ) : (
-          <>
-            <Textarea
-              value={form.description}
-              onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
-              placeholder={FIELD_HINTS.application.description.placeholder}
-              rows={3}
-            />
-            <FieldHint>{FIELD_HINTS.application.description.helper}</FieldHint>
-          </>
-        )}
-      </FormControl>
-      <FormControl>
-        <FieldLabel variant={isView ? "inline" : undefined}>Domain</FieldLabel>
-        {isView ? (
-          <Text fontSize="md">{form.domain || "—"}</Text>
-        ) : (
-          <>
-            <Input
-              value={form.domain}
-              onChange={(e) => setForm((prev) => ({ ...prev, domain: e.target.value }))}
-              placeholder={FIELD_HINTS.application.domain.placeholder}
-            />
-            <FieldHint>{FIELD_HINTS.application.domain.helper}</FieldHint>
-          </>
-        )}
-      </FormControl>
-      {showBudget && isView ? (
-        <FormControl>
-          <FieldLabel variant="inline">Budget allocation</FieldLabel>
-          <Text fontSize="md" fontWeight="semibold">
-            {form.allocated_percentage === "" ? "—" : formatPct(Number(form.allocated_percentage))}
-          </Text>
-        </FormControl>
-      ) : null}
-      {showBudget && !isView ? (
-        <FormControl isInvalid={Boolean(budgetError)}>
-          <FieldLabel>Budget allocation</FieldLabel>
-          <PercentageStepper
-            value={form.allocated_percentage}
-            onChange={(next) => {
-              setBoundHint(null);
-              setForm((prev) => ({ ...prev, allocated_percentage: next }));
-            }}
-            onBoundHit={(bound) => setBoundHint(percentageBoundMessage(bound))}
-          />
-          <FormErrorMessage>{budgetError}</FormErrorMessage>
-          <FieldHint show={!budgetError}>
-            {FIELD_HINTS.application.budget.helper} {remainingPct.toFixed(2)}% remaining.
-            {budgetPreview != null ? ` ≈ ${formatSpendMoney(budgetPreview, currency)}` : ""}
-          </FieldHint>
-        </FormControl>
-      ) : (
-        <Text fontSize="sm" color="ink.500">
-          Budget is managed separately — use Edit Budget on the row or above the list.
-        </Text>
-      )}
-    </VStack>
+    </>
   );
 }

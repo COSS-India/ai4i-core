@@ -85,14 +85,14 @@ export default function FormPage({
   const footerNode = typeof footer === "function" ? footer({ leave }) : footer;
 
   return (
-    <Box w="full">
+    <Box w="full" maxW="4xl">
       <ManagementPageHeader
         title={title}
         description={description}
         actions={actions}
         crumbs={crumbs}
       />
-      <VStack align="stretch" spacing={0} w="full" maxW="4xl">
+      <VStack align="stretch" spacing={0} w="full">
         {children}
         {footerNode ? (
           <Box mt={6} pt={4} borderTopWidth="1px" borderColor="ink.200">

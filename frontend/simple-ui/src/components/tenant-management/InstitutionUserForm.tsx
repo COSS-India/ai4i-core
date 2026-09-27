@@ -14,6 +14,8 @@ import {
 } from "../../config/constants";
 import FieldHint from "../common/FieldHint";
 import FieldLabel from "../common/FieldLabel";
+import FormSection from "../common/FormSection";
+import ReadOnlyField from "../common/ReadOnlyField";
 import TenantUserRoleBadges from "../common/TenantUserRoleBadges";
 import { dash } from "../../utils/valueFormatters";
 import { useAuth } from "../../hooks/useAuth";
@@ -32,14 +34,6 @@ type InstitutionUserFormProps = {
   mode: InstitutionUserFormMode;
   tm: ReturnType<typeof useTenantManagement>;
 };
-
-function ReadOnlyValue({ children }: { children: React.ReactNode }) {
-  return (
-    <Text fontSize="md" color="ink.700" py={1}>
-      {children}
-    </Text>
-  );
-}
 
 /**
  * Shared Institution User fields.
@@ -96,72 +90,63 @@ export default function InstitutionUserForm({ mode, tm }: InstitutionUserFormPro
   ]);
 
   return (
-    <VStack spacing={4} align="stretch">
-      {isCreate && isAdmin && tm.lockedUserFormTenantId && (
-        <FormControl isRequired isInvalid={Boolean(tm.userFormErrors.tenant_id)}>
-          <FieldLabel>{INSTITUTION}</FieldLabel>
-          <Input
-            value={tm.getLockedUserFormTenantLabel()}
-            isReadOnly
-            bg="ink.50"
-            _dark={{ bg: "whiteAlpha.100" }}
-            cursor="not-allowed"
-          />
-          <FormErrorMessage>{tm.userFormErrors.tenant_id}</FormErrorMessage>
-          <FieldHint>{FIELD_HINTS.tenantUser.tenant.helper}</FieldHint>
-        </FormControl>
-      )}
-      {isCreate && isAdmin && !tm.lockedUserFormTenantId && (
-        <FormControl isRequired isInvalid={Boolean(tm.userFormErrors.tenant_id)}>
-          <FieldLabel>{INSTITUTION}</FieldLabel>
-          <Select
-            value={tm.userForm.tenant_id}
-            onChange={(e) => tm.setUserFormTenantId(e.target.value)}
-          >
-            <option value="">
-              Select {INSTITUTION_ARTICLE} {INSTITUTION.toLowerCase()}…
-            </option>
-            {tm.tenants.map((t) => (
-              <option key={t.tenant_id} value={t.tenant_id}>
-                {t.organisation}
+    <FormSection title="User">
+      <VStack spacing={4} align="stretch">
+        {isCreate && isAdmin && tm.lockedUserFormTenantId && (
+          <FormControl isRequired isInvalid={Boolean(tm.userFormErrors.tenant_id)}>
+            <FieldLabel>{INSTITUTION}</FieldLabel>
+            <Input
+              value={tm.getLockedUserFormTenantLabel()}
+              isReadOnly
+              bg="ink.50"
+              _dark={{ bg: "whiteAlpha.100" }}
+              cursor="not-allowed"
+            />
+            <FormErrorMessage>{tm.userFormErrors.tenant_id}</FormErrorMessage>
+            <FieldHint>{FIELD_HINTS.tenantUser.tenant.helper}</FieldHint>
+          </FormControl>
+        )}
+        {isCreate && isAdmin && !tm.lockedUserFormTenantId && (
+          <FormControl isRequired isInvalid={Boolean(tm.userFormErrors.tenant_id)}>
+            <FieldLabel>{INSTITUTION}</FieldLabel>
+            <Select
+              value={tm.userForm.tenant_id}
+              onChange={(e) => tm.setUserFormTenantId(e.target.value)}
+            >
+              <option value="">
+                Select {INSTITUTION_ARTICLE} {INSTITUTION.toLowerCase()}…
               </option>
-            ))}
-          </Select>
-          <FormErrorMessage>{tm.userFormErrors.tenant_id}</FormErrorMessage>
-        </FormControl>
-      )}
+              {tm.tenants.map((t) => (
+                <option key={t.tenant_id} value={t.tenant_id}>
+                  {t.organisation}
+                </option>
+              ))}
+            </Select>
+            <FormErrorMessage>{tm.userFormErrors.tenant_id}</FormErrorMessage>
+          </FormControl>
+        )}
 
-      {!isCreate && (
-        <FormControl
-          isRequired={mode === "edit"}
-          isInvalid={mode === "edit" && Boolean(tm.editUserFormErrors.username)}
-        >
-          <FieldLabel variant={isView ? "inline" : undefined}>Username</FieldLabel>
-          {isView ? (
-            <ReadOnlyValue>{dash(viewUser?.username)}</ReadOnlyValue>
-          ) : (
-            <>
-              <Input
-                value={tm.editUserForm.username ?? ""}
-                onChange={(e) => tm.handleEditUserUsernameChange(e.target.value)}
-                maxLength={100}
-              />
-              <FormErrorMessage>{tm.editUserFormErrors.username}</FormErrorMessage>
-              <FieldHint show={!tm.editUserFormErrors.username}>
-                {FIELD_HINTS.tenantUser.username.helper}
-              </FieldHint>
-            </>
-          )}
-        </FormControl>
-      )}
+        {isView ? (
+          <ReadOnlyField label="Username">{dash(viewUser?.username)}</ReadOnlyField>
+        ) : null}
+        {mode === "edit" ? (
+          <FormControl isRequired isInvalid={Boolean(tm.editUserFormErrors.username)}>
+            <FieldLabel>Username</FieldLabel>
+            <Input
+              value={tm.editUserForm.username ?? ""}
+              onChange={(e) => tm.handleEditUserUsernameChange(e.target.value)}
+              maxLength={100}
+            />
+            <FormErrorMessage>{tm.editUserFormErrors.username}</FormErrorMessage>
+            <FieldHint show={!tm.editUserFormErrors.username}>
+              {FIELD_HINTS.tenantUser.username.helper}
+            </FieldHint>
+          </FormControl>
+        ) : null}
 
-      <FormControl
-        isRequired={isCreate}
-        isInvalid={isCreate && Boolean(tm.userFormErrors.email)}
-      >
-        <FieldLabel variant={isView ? "inline" : undefined}>Email</FieldLabel>
         {isCreate ? (
-          <>
+          <FormControl isRequired isInvalid={Boolean(tm.userFormErrors.email)}>
+            <FieldLabel>Email</FieldLabel>
             <Input
               type="email"
               value={tm.userForm.email}
@@ -180,32 +165,21 @@ export default function InstitutionUserForm({ mode, tm }: InstitutionUserFormPro
                   ? FIELD_HINTS.tenant.emailAvailable
                   : FIELD_HINTS.tenantUser.email.helper}
             </FieldHint>
-          </>
+          </FormControl>
+        ) : isView ? (
+          <ReadOnlyField label="Email">{dash(viewUser?.email)}</ReadOnlyField>
         ) : (
-          <>
-            <ReadOnlyValue>
-              {dash(isView ? viewUser?.email : tm.editUserRow?.email)}
-            </ReadOnlyValue>
-            {mode === "edit" ? (
-              <FieldHint>{FIELD_HINTS.tenantUser.emailLocked}</FieldHint>
-            ) : null}
-          </>
+          <FormControl>
+            <ReadOnlyField label="Email">{dash(tm.editUserRow?.email)}</ReadOnlyField>
+            <FieldHint>{FIELD_HINTS.tenantUser.emailLocked}</FieldHint>
+          </FormControl>
         )}
-      </FormControl>
 
-      <FormControl
-        isRequired={isCreate}
-        isInvalid={
-          isCreate
-            ? Boolean(tm.userFormErrors.full_name)
-            : mode === "edit" && Boolean(tm.editUserFormErrors.full_name)
-        }
-      >
-        <FieldLabel variant={isView ? "inline" : undefined}>Full Name</FieldLabel>
         {isView ? (
-          <ReadOnlyValue>{dash(viewUser?.full_name)}</ReadOnlyValue>
+          <ReadOnlyField label="Full Name">{dash(viewUser?.full_name)}</ReadOnlyField>
         ) : isCreate ? (
-          <>
+          <FormControl isRequired isInvalid={Boolean(tm.userFormErrors.full_name)}>
+            <FieldLabel>Full Name</FieldLabel>
             <Input
               value={tm.userForm.full_name}
               onChange={(e) => tm.handleUserFullNameChange(e.target.value)}
@@ -216,9 +190,10 @@ export default function InstitutionUserForm({ mode, tm }: InstitutionUserFormPro
             <FieldHint show={!tm.userFormErrors.full_name}>
               {FIELD_HINTS.tenantUser.fullName.helper}
             </FieldHint>
-          </>
+          </FormControl>
         ) : (
-          <>
+          <FormControl isInvalid={Boolean(tm.editUserFormErrors.full_name)}>
+            <FieldLabel>Full Name</FieldLabel>
             <Input
               value={tm.editUserForm.full_name ?? ""}
               onChange={(e) => tm.handleEditUserFullNameChange(e.target.value)}
@@ -227,22 +202,20 @@ export default function InstitutionUserForm({ mode, tm }: InstitutionUserFormPro
             <FieldHint show={!tm.editUserFormErrors.full_name}>
               {FIELD_HINTS.tenantUser.fullName.helper}
             </FieldHint>
-          </>
+          </FormControl>
         )}
-      </FormControl>
 
-      <FormControl isRequired={isCreate}>
-        <FieldLabel variant={isView ? "inline" : undefined} required={mode === "edit"}>
-          {isView ? "Roles" : "Role"}
-        </FieldLabel>
         {isView && viewUser ? (
-          <TenantUserRoleBadges
-            role={viewUser.role}
-            roles={viewUser.roles}
-            badgeFontSize="sm"
-          />
+          <ReadOnlyField label="Roles">
+            <TenantUserRoleBadges
+              role={viewUser.role}
+              roles={viewUser.roles}
+              badgeFontSize="sm"
+            />
+          </ReadOnlyField>
         ) : isCreate ? (
-          <>
+          <FormControl isRequired>
+            <FieldLabel>Role</FieldLabel>
             <Select
               value={tm.userForm.role}
               onChange={(e) =>
@@ -259,9 +232,10 @@ export default function InstitutionUserForm({ mode, tm }: InstitutionUserFormPro
               ))}
             </Select>
             <FieldHint>{FIELD_HINTS.tenantUser.role.helper}</FieldHint>
-          </>
+          </FormControl>
         ) : (
-          <>
+          <FormControl>
+            <FieldLabel required>Role</FieldLabel>
             <Select
               value={tm.editUserForm.role}
               isDisabled={!tm.editUserRolesLoaded || tm.isEditUserOnlyAdmin}
@@ -287,22 +261,14 @@ export default function InstitutionUserForm({ mode, tm }: InstitutionUserFormPro
             {!tm.isEditUserOnlyAdmin && tm.editUserRolesLoaded && (
               <FieldHint>{FIELD_HINTS.tenantUser.role.helper}</FieldHint>
             )}
-          </>
+          </FormControl>
         )}
-      </FormControl>
 
-      <FormControl
-        isInvalid={
-          isCreate
-            ? Boolean(tm.userFormErrors.phone_number)
-            : mode === "edit" && Boolean(tm.editUserFormErrors.phone_number)
-        }
-      >
-        <FieldLabel variant={isView ? "inline" : undefined}>Phone Number</FieldLabel>
         {isView ? (
-          <ReadOnlyValue>{dash(viewUser?.phone_number)}</ReadOnlyValue>
+          <ReadOnlyField label="Phone Number">{dash(viewUser?.phone_number)}</ReadOnlyField>
         ) : isCreate ? (
-          <>
+          <FormControl isInvalid={Boolean(tm.userFormErrors.phone_number)}>
+            <FieldLabel>Phone Number</FieldLabel>
             <Input
               value={tm.userForm.phone_number}
               onChange={(e) => tm.handleUserPhoneChange(e.target.value)}
@@ -312,9 +278,10 @@ export default function InstitutionUserForm({ mode, tm }: InstitutionUserFormPro
             <FieldHint show={!tm.userFormErrors.phone_number}>
               {FIELD_HINTS.tenantUser.phone.helper}
             </FieldHint>
-          </>
+          </FormControl>
         ) : (
-          <>
+          <FormControl isInvalid={Boolean(tm.editUserFormErrors.phone_number)}>
+            <FieldLabel>Phone Number</FieldLabel>
             <Input
               value={tm.editUserForm.phone_number ?? ""}
               onChange={(e) => tm.handleEditUserPhoneChange(e.target.value)}
@@ -323,9 +290,9 @@ export default function InstitutionUserForm({ mode, tm }: InstitutionUserFormPro
             <FieldHint show={!tm.editUserFormErrors.phone_number}>
               {FIELD_HINTS.tenantUser.phone.helper}
             </FieldHint>
-          </>
+          </FormControl>
         )}
-      </FormControl>
-    </VStack>
+      </VStack>
+    </FormSection>
   );
 }

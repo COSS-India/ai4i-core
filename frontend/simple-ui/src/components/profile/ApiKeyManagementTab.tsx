@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Box,
   Button,
@@ -33,6 +34,8 @@ import { useDeferredColumnSort } from "../../utils/tableSort";
 import StandardModal from "../common/StandardModal";
 import ConfirmDialog from "../common/ConfirmDialog";
 import FormActions from "../common/FormActions";
+import FormPage from "../common/FormPage";
+import FormSection from "../common/FormSection";
 import ReadOnlyField from "../common/ReadOnlyField";
 import FieldHint from "../common/FieldHint";
 import {
@@ -49,11 +52,16 @@ export interface ApiKeyManagementTabProps {
   isActive?: boolean;
   /** Parent can trigger refresh after keys are created on another tab */
   onRegisterRefresh?: (refresh: () => Promise<void>) => void;
+  /** Renders the view page outside the list chrome. */
+  formHost?: HTMLElement | null;
+  onViewOpenChange?: (open: boolean) => void;
 }
 
 export default function ApiKeyManagementTab({
   isActive = false,
   onRegisterRefresh,
+  formHost = null,
+  onViewOpenChange,
 }: ApiKeyManagementTabProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
   const { user } = useAuth();
@@ -264,8 +272,106 @@ export default function ApiKeyManagementTab({
     }
   }, [isActive, mgmt.handleFetchAllApiKeys]);
 
+  useEffect(() => {
+    onViewOpenChange?.(mgmt.isViewModalOpen);
+    return () => onViewOpenChange?.(false);
+  }, [mgmt.isViewModalOpen, onViewOpenChange]);
+
+  const viewKey = mgmt.selectedKeyForView;
+  const viewPage = mgmt.isViewModalOpen && viewKey ? (
+    <FormPage
+      title={viewKey.key_name || "API Key"}
+      description="View this key's application, budget, and permissions."
+      parent={{
+        label: "API Key Management",
+        href: "/api-key-management",
+        onNavigate: mgmt.handleCloseViewModal,
+      }}
+      onLeave={mgmt.handleCloseViewModal}
+      footer={({ leave }) => (
+        <FormActions hideSubmit cancelLabel="Back" onCancel={leave} pt={0} />
+      )}
+    >
+      <FormSection title="API Key">
+        <ReadOnlyField label="Key Name">{viewKey.key_name}</ReadOnlyField>
+        <ReadOnlyField label="Key ID">
+          <Text fontSize="sm" fontFamily="mono" color="ink.700" wordBreak="break-all">
+            {mgmt.formatKeyId(viewKey)}
+          </Text>
+        </ReadOnlyField>
+        <ReadOnlyField label="Application">
+          {viewKey.application_name ?? viewKey.application_id ?? "—"}
+        </ReadOnlyField>
+        <ReadOnlyField label="Permissions" fullWidth>
+          {(() => {
+            const visiblePerms = mgmt.visiblePermissionsForKey(viewKey);
+            return visiblePerms.length > 0 ? (
+              <HStack flexWrap="wrap" spacing={2}>
+                {visiblePerms.map((perm) => (
+                  <Badge key={String(perm)} colorScheme="blue" fontSize="sm" p={2}>
+                    {mgmt.formatPermission(perm)}
+                  </Badge>
+                ))}
+              </HStack>
+            ) : (
+              <Text fontSize="sm" color="ink.500">
+                No permissions assigned
+              </Text>
+            );
+          })()}
+        </ReadOnlyField>
+      </FormSection>
+      <FormSection title="Record">
+        <ReadOnlyField label="Budget">
+          <Text fontSize="sm" color="ink.800">
+            {mgmt.formatBudgetPct(viewKey)}
+          </Text>
+          {viewKey.allocated_budget != null &&
+            mgmt.formatBudgetPct(viewKey) !== "—" && (
+              <Text fontSize="sm" color="ink.500">
+                {formatSpendMoney(viewKey.allocated_budget, "INR")}
+              </Text>
+            )}
+        </ReadOnlyField>
+        <ReadOnlyField label="Status">
+          <Badge
+            colorScheme={getApiKeyDisplayStatusColorScheme(
+              mgmt.resolveKeyDisplayStatus(viewKey)
+            )}
+            fontSize="sm"
+            p={2}
+          >
+            {formatApiKeyDisplayStatusLabel(mgmt.resolveKeyDisplayStatus(viewKey))}
+          </Badge>
+          {(mgmt.getKeyInactiveReason(viewKey) ?? mgmt.getKeyRevokedReason(viewKey)) && (
+            <Text fontSize="xs" color="ink.500" mt={2}>
+              {mgmt.getKeyInactiveReason(viewKey) ?? mgmt.getKeyRevokedReason(viewKey)}
+            </Text>
+          )}
+        </ReadOnlyField>
+        <ReadOnlyField label="Created At">
+          {viewKey.created_at
+            ? new Date(viewKey.created_at).toLocaleString()
+            : "—"}
+        </ReadOnlyField>
+        {viewKey.expires_at ? (
+          <ReadOnlyField label="Expires At">
+            {new Date(viewKey.expires_at).toLocaleString()}
+          </ReadOnlyField>
+        ) : null}
+        {viewKey.last_used ? (
+          <ReadOnlyField label="Last Used">
+            {new Date(viewKey.last_used).toLocaleString()}
+          </ReadOnlyField>
+        ) : null}
+      </FormSection>
+    </FormPage>
+  ) : null;
+
   return (
     <>
+      {viewPage && formHost ? createPortal(viewPage, formHost) : viewPage}
+      {viewPage ? null : (
       <DataTable
             layout="admin"
             items={sortedApiKeys}
@@ -364,113 +470,7 @@ export default function ApiKeyManagementTab({
               },
             ]}
           />
-
-      {/* View API Key Modal */}
-      <StandardModal
-        isOpen={mgmt.isViewModalOpen}
-        onClose={mgmt.handleCloseViewModal}
-        size="2xl"
-        scrollBehavior="inside"
-        title="API Key Details"
-        description="View this key's application, budget, and permissions."
-        modalProps={{ blockScrollOnMount: true }}
-        headerProps={{ px: 6, pt: 5, pb: 4 }}
-        bodyProps={{ px: 6, py: 5 }}
-        footerProps={{ px: 6, py: 4 }}
-        footer={
-          <FormActions
-            cancelLabel="Close"
-            onCancel={mgmt.handleCloseViewModal}
-            hideSubmit
-            justify="flex-end"
-            pt={0}
-          />
-        }
-      >
-            {mgmt.selectedKeyForView && (
-              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                <ReadOnlyField label="Key Name">
-                  {mgmt.selectedKeyForView.key_name}
-                </ReadOnlyField>
-                <ReadOnlyField label="Key ID">
-                  <Text fontSize="sm" fontFamily="mono" color="ink.700" wordBreak="break-all">
-                    {mgmt.formatKeyId(mgmt.selectedKeyForView)}
-                  </Text>
-                </ReadOnlyField>
-                <ReadOnlyField label="Application">
-                  {mgmt.selectedKeyForView.application_name ??
-                    mgmt.selectedKeyForView.application_id ??
-                    "—"}
-                </ReadOnlyField>
-                <ReadOnlyField label="Budget">
-                  <Text fontSize="sm" color="ink.800">
-                    {mgmt.formatBudgetPct(mgmt.selectedKeyForView)}
-                  </Text>
-                  {mgmt.selectedKeyForView.allocated_budget != null &&
-                    mgmt.formatBudgetPct(mgmt.selectedKeyForView) !== "—" && (
-                      <Text fontSize="sm" color="ink.500">
-                        {formatSpendMoney(mgmt.selectedKeyForView.allocated_budget, "INR")}
-                      </Text>
-                    )}
-                </ReadOnlyField>
-                <ReadOnlyField label="Permissions" fullWidth>
-                  {(() => {
-                    const visiblePerms = mgmt.visiblePermissionsForKey(
-                      mgmt.selectedKeyForView,
-                    );
-                    return visiblePerms.length > 0 ? (
-                      <HStack flexWrap="wrap" spacing={2}>
-                        {visiblePerms.map((perm) => (
-                          <Badge key={String(perm)} colorScheme="blue" fontSize="sm" p={2}>
-                            {mgmt.formatPermission(perm)}
-                          </Badge>
-                        ))}
-                      </HStack>
-                    ) : (
-                      <Text fontSize="sm" color="ink.500">
-                        No permissions assigned
-                      </Text>
-                    );
-                  })()}
-                </ReadOnlyField>
-                <ReadOnlyField label="Status">
-                  <Badge
-                    colorScheme={getApiKeyDisplayStatusColorScheme(
-                      mgmt.resolveKeyDisplayStatus(mgmt.selectedKeyForView)
-                    )}
-                    fontSize="sm"
-                    p={2}
-                  >
-                    {formatApiKeyDisplayStatusLabel(
-                      mgmt.resolveKeyDisplayStatus(mgmt.selectedKeyForView)
-                    )}
-                  </Badge>
-                  {(mgmt.getKeyInactiveReason(mgmt.selectedKeyForView) ??
-                    mgmt.getKeyRevokedReason(mgmt.selectedKeyForView)) && (
-                    <Text fontSize="xs" color="ink.500" mt={2}>
-                      {mgmt.getKeyInactiveReason(mgmt.selectedKeyForView) ??
-                        mgmt.getKeyRevokedReason(mgmt.selectedKeyForView)}
-                    </Text>
-                  )}
-                </ReadOnlyField>
-                <ReadOnlyField label="Created At">
-                  {mgmt.selectedKeyForView.created_at
-                    ? new Date(mgmt.selectedKeyForView.created_at).toLocaleString()
-                    : "—"}
-                </ReadOnlyField>
-                {mgmt.selectedKeyForView.expires_at ? (
-                  <ReadOnlyField label="Expires At">
-                    {new Date(mgmt.selectedKeyForView.expires_at).toLocaleString()}
-                  </ReadOnlyField>
-                ) : null}
-                {mgmt.selectedKeyForView.last_used ? (
-                  <ReadOnlyField label="Last Used">
-                    {new Date(mgmt.selectedKeyForView.last_used).toLocaleString()}
-                  </ReadOnlyField>
-                ) : null}
-              </SimpleGrid>
-            )}
-      </StandardModal>
+      )}
 
       {/* Update API Key Modal */}
       <StandardModal

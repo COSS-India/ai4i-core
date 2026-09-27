@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Alert,
   AlertDescription,
@@ -33,6 +34,9 @@ import DataTableActions from "../common/DataTableActions";
 import ConfirmDialog from "../common/ConfirmDialog";
 import CreateButton from "../common/CreateButton";
 import FormActions from "../common/FormActions";
+import FormPage from "../common/FormPage";
+import FormSection from "../common/FormSection";
+import ReadOnlyField from "../common/ReadOnlyField";
 import FieldLabel from "../common/FieldLabel";
 import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
@@ -137,11 +141,16 @@ export interface PolicyManagementProps {
   /** Platform admin (ADMIN role or superuser); required to call policy APIs. */
   canManage: boolean;
   onRegisterCreatePolicy?: (open: () => void) => void;
+  /** Renders Create/Edit/View outside the list chrome. */
+  formHost?: HTMLElement | null;
+  onFormOpenChange?: (open: boolean) => void;
 }
 
 export default function PolicyManagement({
   canManage,
   onRegisterCreatePolicy,
+  formHost = null,
+  onFormOpenChange,
 }: PolicyManagementProps) {
   const [tab, setTab] = useState<PolicySectionId>("pii");
 
@@ -188,7 +197,11 @@ export default function PolicyManagement({
               <PiiTypesPanel />
             </TabPanel>
             <TabPanel px={0} pt={6}>
-              <PoliciesPanel onRegisterCreate={onRegisterCreatePolicy} />
+              <PoliciesPanel
+                onRegisterCreate={onRegisterCreatePolicy}
+                formHost={formHost}
+                onFormOpenChange={onFormOpenChange}
+              />
             </TabPanel>
             {SHOW_POLICY_AUDIT_TAB ? (
               <TabPanel px={0} pt={6}>
@@ -202,8 +215,12 @@ export default function PolicyManagement({
 
 function PoliciesPanel({
   onRegisterCreate,
+  formHost = null,
+  onFormOpenChange,
 }: {
   onRegisterCreate?: (open: () => void) => void;
+  formHost?: HTMLElement | null;
+  onFormOpenChange?: (open: boolean) => void;
 }) {
   const [allPolicies, setAllPolicies] = useState<PolicyOut[]>([]);
   const [loading, setLoading] = useState(true);
@@ -563,8 +580,64 @@ function PoliciesPanel({
     handleToggleActive,
   ]);
 
+  const policyFormOpen = modal.isOpen || viewModal.isOpen;
+  useEffect(() => {
+    onFormOpenChange?.(policyFormOpen);
+    return () => onFormOpenChange?.(false);
+  }, [policyFormOpen, onFormOpenChange]);
+
+  const closePolicyForms = () => {
+    modal.onClose();
+    setEditingId(null);
+    closePolicyView();
+  };
+
+  const policyForm = modal.isOpen ? (
+    <PolicyFormModal
+      isOpen
+      onClose={() => {
+        modal.onClose();
+        setEditingId(null);
+      }}
+      onLeaveToList={closePolicyForms}
+      policyId={editingId}
+      piiOptions={piiOptions}
+      refreshPiiOptions={loadPiiOptions}
+      onSaved={() => {
+        modal.onClose();
+        setEditingId(null);
+        closePolicyView();
+        void reloadPolicies();
+        void loadPiiOptions();
+        showToast({ type: "success", message: "Saved" });
+      }}
+      onError={(msg) => showToast({ type: "error", message: msg })}
+    />
+  ) : viewModal.isOpen ? (
+    <PolicyFormModal
+      mode="view"
+      isOpen
+      onClose={closePolicyView}
+      onLeaveToList={closePolicyForms}
+      policyId={viewPolicyId}
+      piiOptions={piiOptions}
+      refreshPiiOptions={ensurePiiOptions}
+      onSaved={() => undefined}
+      onViewEdit={(id) => {
+        openEdit(id);
+      }}
+      onViewDelete={(policy) => {
+        requestDelete(policy);
+      }}
+      onError={(msg) => showToast({ type: "error", message: msg })}
+    />
+  ) : null;
+
   return (
     <Box>
+      {policyForm && formHost ? createPortal(policyForm, formHost) : policyForm}
+      {policyForm ? null : (
+      <>
       {error && (
         <Alert status="error" mb={4} borderRadius="md">
           <AlertIcon />
@@ -628,44 +701,8 @@ function PoliciesPanel({
             pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
             tableContainerProps={{ overflowX: "auto" }}
           />
-
-      <PolicyFormModal
-        mode="view"
-        isOpen={viewModal.isOpen}
-        onClose={closePolicyView}
-        policyId={viewPolicyId}
-        piiOptions={piiOptions}
-        refreshPiiOptions={ensurePiiOptions}
-        onSaved={() => undefined}
-        onViewEdit={(id) => {
-          closePolicyView();
-          openEdit(id);
-        }}
-        onViewDelete={(policy) => {
-          closePolicyView();
-          requestDelete(policy);
-        }}
-        onError={(msg) =>
-          showToast({ type: "error", message: msg })
-        }
-      />
-
-      <PolicyFormModal
-        isOpen={modal.isOpen}
-        onClose={modal.onClose}
-        policyId={editingId}
-        piiOptions={piiOptions}
-        refreshPiiOptions={loadPiiOptions}
-        onSaved={() => {
-          modal.onClose();
-          void reloadPolicies();
-          void loadPiiOptions();
-          showToast({ type: "success", message: "Saved" });
-        }}
-        onError={(msg) =>
-          showToast({ type: "error", message: msg })
-        }
-      />
+      </>
+      )}
 
       <ConfirmDialog
         isOpen={confirmDeleteModal.isOpen}
@@ -693,6 +730,7 @@ function PoliciesPanel({
 function PolicyFormModal({
   isOpen,
   onClose,
+  onLeaveToList,
   policyId,
   piiOptions,
   refreshPiiOptions,
@@ -704,6 +742,8 @@ function PolicyFormModal({
 }: {
   isOpen: boolean;
   onClose: () => void;
+  /** Policy Management crumb. Closes every open policy form. */
+  onLeaveToList?: () => void;
   policyId: string | null;
   piiOptions: PiiTypeOut[];
   refreshPiiOptions: () => Promise<void> | void;
@@ -859,49 +899,41 @@ function PolicyFormModal({
         </Flex>
       ) : (
         <Stack spacing={4}>
-          {readOnly && loadedPolicy ? (
-            <Stack spacing={2}>
-              <Text fontSize="xs" color="gray.500" fontFamily="mono">
-                {loadedPolicy.policy_id}
-              </Text>
-              <HStack spacing={2} flexWrap="wrap">
-                <Badge colorScheme={loadedPolicy.is_active ? "green" : "gray"}>
-                  {loadedPolicy.is_active ? "Active" : "Inactive"}
-                </Badge>
-                <Badge colorScheme={loadedPolicy.is_global ? "blue" : "purple"}>
-                  {loadedPolicy.is_global ? "Global" : `${INSTITUTION}-scoped`}
-                </Badge>
-              </HStack>
-              <Text fontSize="sm" color="gray.600">
-                Created {formatDt(loadedPolicy.created_at)}
-              </Text>
-            </Stack>
-          ) : null}
-          <FormControl isRequired={!readOnly}>
-            <FieldLabel variant={readOnly ? "inline" : undefined}>Name</FieldLabel>
-            {readOnly ? (
-              <Text fontSize="md">{name || "—"}</Text>
-            ) : (
+          {readOnly ? (
+            <ReadOnlyField label="Name">{name || "—"}</ReadOnlyField>
+          ) : (
+            <FormControl isRequired>
+              <FieldLabel>Name</FieldLabel>
               <Input value={name} onChange={(e) => setName(e.target.value)} />
-            )}
-          </FormControl>
-          <FormControl>
-            <FieldLabel variant={readOnly ? "inline" : undefined}>Description</FieldLabel>
-            {readOnly ? (
-              <Text fontSize="md">{description || "No description"}</Text>
-            ) : (
+            </FormControl>
+          )}
+          {readOnly ? (
+            <ReadOnlyField label="Description">{description || "No description"}</ReadOnlyField>
+          ) : (
+            <FormControl>
+              <FieldLabel>Description</FieldLabel>
               <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} />
-            )}
-          </FormControl>
-          <FormControl display="flex" alignItems="center">
-            <FieldLabel formLabelProps={{ mb: 0 }}>Global policy</FieldLabel>
-            <Switch
-              isChecked={isGlobal}
-              isDisabled={readOnly}
-              onChange={(e) => setIsGlobal(e.target.checked)}
-            />
-          </FormControl>
-          {!isGlobal && (
+            </FormControl>
+          )}
+          {readOnly ? (
+            <ReadOnlyField label="Global policy">{isGlobal ? "Yes" : "No"}</ReadOnlyField>
+          ) : (
+            <FormControl display="flex" alignItems="center">
+              <FieldLabel formLabelProps={{ mb: 0 }}>Global policy</FieldLabel>
+              <Switch isChecked={isGlobal} onChange={(e) => setIsGlobal(e.target.checked)} />
+            </FormControl>
+          )}
+          {!isGlobal && readOnly ? (
+            <ReadOnlyField label={INSTITUTIONS}>
+              {(tenantsError || tenants.length === 0
+                ? parseDelimitedValues(tenantInput)
+                : tenantIds
+              )
+                .map((id) => tenantById.get(id)?.organisation || id)
+                .join(", ") || "—"}
+            </ReadOnlyField>
+          ) : null}
+          {!isGlobal && !readOnly && (
             <FormControl isRequired>
               <FieldLabel>{INSTITUTIONS}</FieldLabel>
               {tenantsLoading ? (
@@ -946,12 +978,12 @@ function PolicyFormModal({
                         {tenantIds
                           .filter((id) => !tenantById.has(id))
                           .map((id) => (
-                            <Checkbox key={id} value={id} isDisabled={readOnly}>
+                            <Checkbox key={id} value={id} isRequired={false} isDisabled={readOnly}>
                               Current assignment - {id}
                             </Checkbox>
                           ))}
                         {tenants.map((t) => (
-                          <Checkbox key={t.tenant_id} value={t.tenant_id} isDisabled={readOnly}>
+                          <Checkbox key={t.tenant_id} value={t.tenant_id} isRequired={false} isDisabled={readOnly}>
                             {t.organisation || "(Unnamed)"}{" "}
                             <Text as="span" color="gray.500" fontSize="sm">
                               ({t.tenant_id})
@@ -966,18 +998,29 @@ function PolicyFormModal({
               )}
             </FormControl>
           )}
+          {readOnly ? (
+            <ReadOnlyField label="Supported languages">{langs.join(", ") || "—"}</ReadOnlyField>
+          ) : (
           <FormControl>
             <FieldLabel>Supported languages</FieldLabel>
             <CheckboxGroup value={langs} onChange={(v) => setLangs(v as string[])}>
               <HStack spacing={4}>
                 {LANGUAGE_OPTIONS.map((code) => (
-                  <Checkbox key={code} value={code} isDisabled={readOnly}>
+                  <Checkbox key={code} value={code} isRequired={false} isDisabled={readOnly}>
                     {code}
                   </Checkbox>
                 ))}
               </HStack>
             </CheckboxGroup>
           </FormControl>
+          )}
+          {readOnly ? (
+            <ReadOnlyField label="PII types (policy configuration)">
+              {selectedPii.length
+                ? selectedPii.map((id) => piiById.get(id)?.pii_type_label || id).join(", ")
+                : "—"}
+            </ReadOnlyField>
+          ) : (
           <FormControl isRequired>
             <FieldLabel>PII types (policy configuration)</FieldLabel>
             <Box
@@ -992,7 +1035,7 @@ function PolicyFormModal({
               >
                 <Stack spacing={2}>
                   {piiOptions.map((p) => (
-                    <Checkbox key={p.pii_type_id} value={p.pii_type_id} isDisabled={readOnly}>
+                    <Checkbox key={p.pii_type_id} value={p.pii_type_id} isRequired={false} isDisabled={readOnly}>
                       {p.pii_type_label}{" "}
                       <Text as="span" color="gray.500" fontSize="sm">
                         ({p.mask_format})
@@ -1012,78 +1055,83 @@ function PolicyFormModal({
               {selectedPii.some((id) => !piiById.has(id)) ? " (includes types not in current list)" : ""}
             </Text>
           </FormControl>
+          )}
         </Stack>
       );
 
-  const footer = readOnly ? (
-        <HStack justify="space-between" w="full">
-          <Button variant="outline" onClick={onClose}>
-            Close
-          </Button>
-          {policyId ? (
-            <HStack spacing={3}>
-              {loadedPolicy && onViewDelete ? (
-                <Button
-                  colorScheme="red"
-                  variant="outline"
-                  onClick={() => onViewDelete(loadedPolicy)}
-                >
-                  Delete
-                </Button>
-              ) : null}
-              {onViewEdit ? (
-                <Button onClick={() => onViewEdit(policyId)}>Edit</Button>
-              ) : null}
-            </HStack>
-          ) : null}
-        </HStack>
-      ) : (
-        <FormActions
-          submitLabel={policyId ? "Save Changes" : "Create Policy"}
-          onCancel={onClose}
-          onSubmit={() => void handleSubmit()}
-          isLoading={saving}
-          loadingText={policyId ? "Saving..." : "Creating..."}
-          justify="space-between"
-          pt={0}
-        />
-  );
+  if (!isOpen) return null;
 
-  if (!policyId) {
-    return (
-      <CreateModal
-        isOpen={isOpen}
-        onClose={onClose}
-        title="Create Policy"
-        description="Define a policy and choose which PII types it covers."
-        size="lg"
-        footer={footer}
-      >
-        {formBody}
-      </CreateModal>
-    );
-  }
+  const pageTitle = resolvedMode === "create" ? "Create Policy" : name || "Policy";
+  const pageDescription =
+    resolvedMode === "create"
+      ? "Define a policy and choose which PII types it covers."
+      : resolvedMode === "view"
+        ? "View this policy's scope and PII coverage."
+        : "Update who this policy applies to and which PII types it covers.";
 
   return (
-    <StandardModal
-      isOpen={isOpen}
-      onClose={onClose}
-      title={readOnly ? "Policy Details" : "Edit Policy"}
-      description={
-        readOnly
-          ? "View this policy's scope and PII coverage."
-          : "Update who this policy applies to and which PII types it covers."
+    <FormPage
+      title={pageTitle}
+      description={pageDescription}
+      parent={{
+        label: "Policy Management",
+        href: "/policy-management",
+        onNavigate: onLeaveToList ?? onClose,
+      }}
+      onLeave={onClose}
+      actions={
+        readOnly && policyId ? (
+          <HStack spacing={2} flexShrink={0}>
+            {loadedPolicy ? (
+              <Badge colorScheme={loadedPolicy.is_active ? "green" : "gray"}>
+                {loadedPolicy.is_active ? "Active" : "Inactive"}
+              </Badge>
+            ) : null}
+            {loadedPolicy && onViewDelete ? (
+              <Button
+                size="sm"
+                colorScheme="red"
+                variant="outline"
+                onClick={() => onViewDelete(loadedPolicy)}
+              >
+                Delete
+              </Button>
+            ) : null}
+            {onViewEdit ? (
+              <Button size="sm" onClick={() => onViewEdit(policyId)}>
+                Edit
+              </Button>
+            ) : null}
+          </HStack>
+        ) : undefined
       }
-      size="xl"
-      scrollBehavior="inside"
-      modalProps={{ blockScrollOnMount: true }}
-      headerProps={{ px: 6, pt: 5, pb: 4 }}
-      bodyProps={{ px: 6, py: 5 }}
-      footerProps={{ px: 6, py: 4 }}
-      footer={footer}
+      footer={({ leave }) =>
+        readOnly ? (
+          <FormActions hideSubmit cancelLabel="Back" onCancel={leave} pt={0} />
+        ) : (
+          <FormActions
+            cancelLabel="Cancel"
+            submitLabel={policyId ? "Save Changes" : "Create Policy"}
+            onCancel={leave}
+            onSubmit={() => void handleSubmit()}
+            isLoading={saving}
+            loadingText={policyId ? "Saving..." : "Creating..."}
+            justify="space-between"
+            pt={0}
+          />
+        )
+      }
     >
-      {formBody}
-    </StandardModal>
+      {loadingDetail ? formBody : <FormSection title="Policy">{formBody}</FormSection>}
+      {readOnly && loadedPolicy && !loadingDetail ? (
+        <FormSection title="Record">
+          <ReadOnlyField label="Policy ID">
+            <Text fontFamily="mono" fontSize="sm">{loadedPolicy.policy_id}</Text>
+          </ReadOnlyField>
+          <ReadOnlyField label="Created">{formatDt(loadedPolicy.created_at)}</ReadOnlyField>
+        </FormSection>
+      ) : null}
+    </FormPage>
   );
 }
 

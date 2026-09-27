@@ -184,6 +184,7 @@ export default function CreateApiKeyTab({
                   <Box mb={3} pb={3} borderBottomWidth="1px">
                     <HStack justify="space-between" align="center">
                       <Checkbox
+                        isRequired={false}
                         isChecked={
                           create.selectedPermissions.length === create.permissions.length &&
                           create.permissions.length > 0
