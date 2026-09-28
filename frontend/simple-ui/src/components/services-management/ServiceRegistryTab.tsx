@@ -89,7 +89,6 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
           param: "status",
           value: filterStatus,
           onChange: onFilterStatusChange,
-          width: { base: "full", sm: "140px" },
           options: [
             { label: "All", value: "" },
             { label: "Published", value: "published" },
@@ -103,7 +102,6 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
           param: "model_task_type",
           value: filterTaskType,
           onChange: onFilterTaskTypeChange,
-          width: { base: "full", sm: "160px" },
           options: [
             ...(taskTypeNames.length > 1 ? [{ label: "All", value: "" }] : []),
             ...taskTypeNames.map((t) => ({
@@ -120,7 +118,6 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
           type: "select",
           value: filterTier,
           onChange: onFilterTierChange,
-          width: { base: "full", sm: "180px" },
           options: [
             { label: "All", value: SERVICE_TIER.FILTER.ALL },
             ...tierFilterOptions.map((tier) => ({

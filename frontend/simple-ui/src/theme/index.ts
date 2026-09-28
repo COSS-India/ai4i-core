@@ -5,9 +5,9 @@ import { extendTheme } from "@chakra-ui/react";
  * Service/task-type colours stay independent of the action colour.
  */
 const ink = {
-  50: "#F4F6FB",
-  100: "#E8EEF6",
-  200: "#D5DEEA",
+  50: "#F8FAFC",
+  100: "#F0F4F9",
+  200: "#E3EAF2",
   300: "#B3C0D0",
   400: "#7C8BA0",
   500: "#5A6A80",
@@ -65,10 +65,10 @@ function buttonSolid(colorScheme?: string) {
     };
   }
   return {
-    bg: "blue.500",
+    bg: "blue.400",
     color: "white",
-    _hover: { bg: "blue.600", _disabled: { bg: "blue.500" } },
-    _active: { bg: "blue.700" },
+    _hover: { bg: "blue.500", _disabled: { bg: "blue.400" } },
+    _active: { bg: "blue.600" },
   };
 }
 
@@ -99,7 +99,7 @@ const customTheme = extendTheme({
     brand,
     primary: ink,
     light: {
-      100: "#F4F6FB",
+      100: "#F8FAFC",
       200: "#FFFFFF",
     },
     dark: {
@@ -108,9 +108,9 @@ const customTheme = extendTheme({
     },
     /** Kept for existing create-toolbar call sites. */
     create: {
-      50: "#F4F6FB",
-      100: "#E8EEF6",
-      200: "#D5DEEA",
+      50: "#F8FAFC",
+      100: "#F0F4F9",
+      200: "#E3EAF2",
       300: "#B3C0D0",
       400: "#7C8BA0",
       500: "#1E293B",
@@ -200,7 +200,7 @@ const customTheme = extendTheme({
             borderBottom: "none",
             borderTopRadius: "md",
             _selected: {
-              color: "blue.600",
+              color: "blue.500",
               bg: "white",
               borderColor: "ink.200",
               borderBottomColor: "white",
@@ -523,7 +523,7 @@ const customTheme = extendTheme({
         fontFeatureSettings: '"ss01"',
       },
       a: {
-        color: "blue.600",
+        color: "blue.500",
         _hover: {
           textDecoration: "underline",
         },

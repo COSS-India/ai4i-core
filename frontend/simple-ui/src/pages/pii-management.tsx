@@ -1,4 +1,4 @@
-import { Box, Center } from "@chakra-ui/react";
+import { Center } from "@chakra-ui/react";
 import Head from "next/head";
 import React from "react";
 import { useRouter } from "next/router";
@@ -70,13 +70,11 @@ const PiiManagementPage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <Box maxW="full" mx="auto" py={4} px={{ base: 2, md: 4 }}>
-          <ManagementPageHeader
-            title="PII Guardrail"
-            description="Manage PII detection and guardrail rules"
-          />
-          <PiiManagement isAdmin={isAdmin} />
-        </Box>
+        <ManagementPageHeader
+          title="PII Guardrail"
+          description="Manage PII detection and guardrail rules"
+        />
+        <PiiManagement isAdmin={isAdmin} />
       </ContentLayout>
     </>
   );

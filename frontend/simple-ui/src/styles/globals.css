@@ -37,8 +37,8 @@ body {
   --app-viewport-height-dynamic: 100dvh;
   --ink: #1e293b;
   --ink-muted: #5a6a80;
-  --line: #d5deea;
-  --canvas: #f4f6fb;
+  --line: #e3eaf2;
+  --canvas: #f8fafc;
 }
 
 /* Utility Classes */
