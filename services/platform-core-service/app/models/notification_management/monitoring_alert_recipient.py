@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.sql import func
 
 from app.models import Base
@@ -24,6 +24,7 @@ class MonitoringAlertRecipient(Base):
     __table_args__ = (
         UniqueConstraint("notification_id", "user_id", name="uq_monitoring_alert_recipient_identity"),
         Index("ix_monitoring_alert_recipient_notification_id", "notification_id"),
+        CheckConstraint("role IN ('ADMIN', 'MODERATOR')", name="ck_monitoring_alert_recipient_role"),
     )
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)

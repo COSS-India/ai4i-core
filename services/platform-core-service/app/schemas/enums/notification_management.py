@@ -1,91 +1,48 @@
-"""Notification-catalog enums (name, type, module, channel).
+"""Notification-catalog enums (name, type, module, channel, scope, unit,
+severity).
 
-Canonical sets for the ``configs_notification_alert`` table, mirroring the
-column-level Postgres enums created in
-b72ca7d83df6_create_notification_catalog_table. Kept as the schemas/enums
-source of truth per this codebase's existing pattern (see
-alert_management.py) — request/response schemas validate against these.
+The canonical members live in the shared ai4i_core.kafka constants, so every
+producer and this service use the same values; request/response schemas
+validate against them. They mirror the column-level Postgres enums of the
+configs_notification_alert and notification_alert_threshold tables.
 """
 
-from enum import Enum
+from ai4i_core.kafka import (
+    NotificationChannel,
+    NotificationModule,
+    NotificationName,
+    NotificationScope,
+    NotificationType,
+    Severity,
+    ThresholdUnit,
+)
 
+#: Unit of a MONITORING row's threshold band: error rates are a percentage
+#: of requests, latencies are seconds.
+MonitoringThresholdUnit = ThresholdUnit
 
-class NotificationName(str, Enum):
-    """The 9 names seeded across 1d3f8e77bac4_seed_notification_catalog (the
-    7 NOTIFICATION-type rows) and add_alert_types_to_notification_catalog /
-    seed_alert_catalog_types (the 2 ALERT-type rows: QUOTA_THRESHOLD,
-    BUDGET_THRESHOLD — the standard alert catalog from the "Define Alerts"
-    ticket)."""
-
-    TIER_ASSIGNED = "TIER_ASSIGNED"
-    TIER_CHANGED = "TIER_CHANGED"
-    BUDGET_ASSIGNED = "BUDGET_ASSIGNED"
-    BUDGET_UPDATED = "BUDGET_UPDATED"
-    QUOTA_LIMIT_UPDATED = "QUOTA_LIMIT_UPDATED"
-    QUOTA_EXHAUSTED = "QUOTA_EXHAUSTED"
-    BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
-    QUOTA_THRESHOLD = "QUOTA_THRESHOLD"
-    BUDGET_THRESHOLD = "BUDGET_THRESHOLD"
-    # MONITORING-type rows (f1a3c5e7b9d1 / a2b4d6f8c0e3 — the "Define
-    # Monitoring Alerts" ticket).
-    ERROR_RATE_4XX = "ERROR_RATE_4XX"
-    ERROR_RATE_5XX = "ERROR_RATE_5XX"
-    LATENCY_P50 = "LATENCY_P50"
-    LATENCY_P95 = "LATENCY_P95"
-    LATENCY_P99 = "LATENCY_P99"
-
-
-class NotificationType(str, Enum):
-    """The family a catalog row belongs to: the 7 notification-management
-    rows are NOTIFICATION, the 2 alert-catalog rows (QUOTA_THRESHOLD,
-    BUDGET_THRESHOLD) are ALERT, the 5 infrastructure-monitoring rows
-    (error rate / latency) are MONITORING. What the catalog screens filter
-    on."""
-
-    NOTIFICATION = "NOTIFICATION"
-    ALERT = "ALERT"
-    MONITORING = "MONITORING"
-
-
-class NotificationModule(str, Enum):
-    """Grouping and counting only — nothing reads this to decide behavior."""
-
-    TIER = "TIER"
-    BUDGET = "BUDGET"
-    QUOTA = "QUOTA"
-    MONITORING = "MONITORING"
-
-
-class NotificationChannel(str, Enum):
-    """All four declared now so enabling one later is a seed update, not a
-    schema change. Only EMAIL is used in v1."""
-
-    EMAIL = "EMAIL"
-    SMS = "SMS"
-    SLACK = "SLACK"
-    WHATSAPP = "WHATSAPP"
-
-
-class NotificationScope(str, Enum):
-    """Who a catalog row applies to: GLOBAL fires platform-wide for every
-    institution with no per-institution opt-out; INSTITUTION is available
-    for an institution to subscribe to via tenant_notification_subscription.
-    """
-
-    GLOBAL = "GLOBAL"
-    INSTITUTION = "INSTITUTION"
-
-
-class MonitoringThresholdUnit(str, Enum):
-    """Unit of a MONITORING row's threshold band: error rates are a
-    percentage of requests, latencies are seconds."""
-
-    PERCENT = "PERCENT"
-    SECONDS = "SECONDS"
-
+__all__ = [
+    "NotificationName",
+    "NotificationType",
+    "NotificationModule",
+    "NotificationChannel",
+    "NotificationScope",
+    "ThresholdUnit",
+    "MonitoringThresholdUnit",
+    "Severity",
+    "VALID_NOTIFICATION_NAMES",
+    "VALID_NOTIFICATION_TYPES",
+    "VALID_NOTIFICATION_MODULES",
+    "VALID_NOTIFICATION_CHANNELS",
+    "VALID_NOTIFICATION_SCOPES",
+    "VALID_THRESHOLD_UNITS",
+    "VALID_SEVERITIES",
+]
 
 VALID_NOTIFICATION_NAMES = {member.value for member in NotificationName}
 VALID_NOTIFICATION_TYPES = {member.value for member in NotificationType}
 VALID_NOTIFICATION_MODULES = {member.value for member in NotificationModule}
 VALID_NOTIFICATION_CHANNELS = {member.value for member in NotificationChannel}
 VALID_NOTIFICATION_SCOPES = {member.value for member in NotificationScope}
+VALID_THRESHOLD_UNITS = {member.value for member in ThresholdUnit}
+VALID_SEVERITIES = {member.value for member in Severity}
