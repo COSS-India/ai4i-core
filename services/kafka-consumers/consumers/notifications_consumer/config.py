@@ -10,16 +10,16 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Optional
 
+from ai4i_core.kafka.constants import REDIS_KEY_PREFIX
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
 class Constants:
-    # Design doc §8: "read from an in-memory cache that refreshes from the
-    # database once an hour." Settings change rarely (an Adopter Admin PATCH),
-    # so this trades a bounded staleness window for not hitting Postgres on
-    # every single Kafka message.
-    CONFIG_CACHE_TTL_SECONDS = 3600
+    # One claim per delivered event_id (SET NX) — catches a Kafka
+    # redelivery of an event this consumer already handled.
+    DELIVERY_CLAIM_KEY_PREFIX = f"{REDIS_KEY_PREFIX}delivered:"
+    DELIVERY_CLAIM_TTL_SECONDS = 7 * 24 * 3600
 
 
 class Settings(BaseSettings):
