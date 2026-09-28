@@ -14,18 +14,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException
 
-# internal.py pulls in tier_service.py, which needs ai4i_core.kafka —
-# not stubbed by conftest.py since no prior test loaded this module.
-if "ai4i_core.kafka" not in sys.modules:
-    _kafka_stub = types.ModuleType("ai4i_core.kafka")
-    _kafka_stub.publish_admin_event = MagicMock()
-    _kafka_stub.is_notification_enabled = MagicMock()
-    _kafka_stub.is_notification_enabled_bulk = MagicMock()
-    _kafka_stub.check_and_record_actions_bulk = MagicMock()
-    _kafka_stub.get_notification_id = MagicMock()
-    _kafka_stub.resolve_recipients = MagicMock()
-    _kafka_stub.resolve_recipients_bulk = MagicMock()
-    sys.modules["ai4i_core.kafka"] = _kafka_stub
+# internal.py pulls in tier_service.py, which needs ai4i_core.kafka.
+import ai4i_core.kafka  # noqa: E402,F401
 
 _spec = importlib.util.spec_from_file_location(
     "app.routes.internal", "app/routes/internal.py"
