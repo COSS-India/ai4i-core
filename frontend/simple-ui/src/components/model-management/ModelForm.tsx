@@ -15,7 +15,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { CopyIcon } from "@chakra-ui/icons";
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import FieldHint from "../common/FieldHint";
 import FieldLabel from "../common/FieldLabel";
@@ -58,26 +58,91 @@ export default function ModelForm({
   createdModel,
   onCopyCreated,
 }: ModelFormProps) {
+  const [fileName, setFileName] = useState("");
+  const isBusy = isUploading || isValidating;
+
+  useEffect(() => {
+    if (createdModel) setFileName("");
+  }, [createdModel]);
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setFileName(event.target.files?.[0]?.name ?? "");
+    onFileChange?.(event);
+  };
+
+  const handleClear = () => {
+    setFileName("");
+    onClearUpload?.();
+  };
+
   return (
     <VStack spacing={0} align="stretch">
       {mode === "create" ? (
         <FormSection title="Upload Model Definition">
           <FormControl>
             <HStack justify="space-between" mb={2} align="center">
-              <FieldLabel formLabelProps={{ mb: 0 }}>Upload JSON File</FieldLabel>
+              <FieldLabel formLabelProps={{ mb: 0, htmlFor: "model-json-file" }}>
+                Upload JSON File
+              </FieldLabel>
               <Button size="sm" variant="outline" onClick={onDownloadSample}>
                 Download Sample JSON
               </Button>
             </HStack>
-            <Input
-              ref={fileInputRef}
-              type="file"
-              accept=".json"
-              onChange={onFileChange}
-              disabled={isUploading || isValidating}
+            <Box
+              position="relative"
+              h="40px"
+              borderWidth="1px"
+              borderColor="ink.200"
+              borderRadius="md"
               bg="white"
-              p={2}
-            />
+              opacity={isBusy ? 0.6 : 1}
+              _focusWithin={{
+                borderColor: "blue.500",
+                boxShadow: "0 0 0 1px var(--chakra-colors-blue-500)",
+              }}
+            >
+              <Input
+                id="model-json-file"
+                ref={fileInputRef}
+                type="file"
+                accept=".json"
+                onChange={handleFileChange}
+                disabled={isBusy}
+                position="absolute"
+                top={0}
+                left={0}
+                w="full"
+                h="full"
+                opacity={0}
+                p={0}
+                m={0}
+                cursor={isBusy ? "not-allowed" : "pointer"}
+                zIndex={1}
+                sx={{ "&::file-selector-button": { display: "none" } }}
+              />
+              <HStack h="full" px={2} spacing={3} pointerEvents="none">
+                <Text
+                  as="span"
+                  px={3}
+                  h="28px"
+                  display="inline-flex"
+                  alignItems="center"
+                  flexShrink={0}
+                  borderWidth="1px"
+                  borderColor="ink.200"
+                  borderRadius="md"
+                  bg="ink.50"
+                  fontSize="sm"
+                  fontWeight="600"
+                  color="ink.800"
+                >
+                  Browse
+                </Text>
+                <Text fontSize="sm" color={fileName ? "ink.800" : "ink.500"} noOfLines={1}>
+                  {fileName || "Select a .json file"}
+                </Text>
+              </HStack>
+            </Box>
             <FieldHint mt={2}>{FIELD_HINTS.model.jsonUpload.helper}</FieldHint>
             <Text mt={2} fontSize="xs" color="ink.500" lineHeight="1.5">
               Required (ULCA): name (5–100 chars, no spaces), version, description
@@ -126,7 +191,7 @@ export default function ModelForm({
                   ))}
                 </Box>
               </Box>
-              <Button size="sm" variant="outline" onClick={onClearUpload} alignSelf="flex-start">
+              <Button size="sm" variant="outline" onClick={handleClear} alignSelf="flex-start">
                 Clear & Upload New File
               </Button>
             </VStack>
@@ -143,7 +208,7 @@ export default function ModelForm({
                 <Text fontWeight="semibold" mb={2}>Error</Text>
                 <Text>{uploadError}</Text>
               </Box>
-              <Button size="sm" variant="outline" onClick={onClearUpload} alignSelf="flex-start">
+              <Button size="sm" variant="outline" onClick={handleClear} alignSelf="flex-start">
                 Clear & Upload New File
               </Button>
             </VStack>
@@ -196,7 +261,7 @@ export default function ModelForm({
               {JSON.stringify(createdModel, null, 2)}
             </Code>
           </Box>
-          <Button mt={4} variant="outline" onClick={onClearUpload}>
+          <Button mt={4} variant="outline" onClick={handleClear}>
             Upload Another Model
           </Button>
         </Box>
