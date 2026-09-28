@@ -79,6 +79,15 @@ class CoreSettings(BaseSettings):
     default_receiver_emails: Optional[str] = None
     prometheus_url: Optional[str] = None
     prometheus_timeout: float = 10.0
+    # ── Monitoring alerts evaluator (ERROR_RATE_* / LATENCY_*) ──
+    # One tick per interval; only the pod that wins the evaluator lock runs it.
+    monitoring_eval_enabled: bool = True
+    monitoring_eval_interval_s: int = 60
+    # Services with fewer requests than this in the window are left out.
+    monitoring_min_requests: int = 20
+    monitoring_window: str = "5m"
+    # ── Daily notification cleanup (failure log retention, past quota ledger rows) ──
+    notification_cleanup_interval_s: int = 86400
     # Label carrying the HTTP path on telemetry_obsv_requests_total (and related
     # metrics). Scraped via a K8s Prometheus Operator ServiceMonitor, the target's
     # own "endpoint" label collides with the ServiceMonitor's port-name label of
