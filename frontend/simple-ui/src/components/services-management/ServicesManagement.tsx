@@ -3,14 +3,7 @@ import {
   Badge,
   Box,
   HStack,
-  IconButton,
-  Tab,
-  TabList,
-  TabPanel,
-  TabPanels,
-  Tabs,
   Text,
-  Tooltip,
   VStack,
 } from "@chakra-ui/react";
 import { DeleteIcon, EditIcon } from "@chakra-ui/icons";
@@ -19,7 +12,7 @@ import React, { useMemo } from "react";
 import ManagementPageHeader from "../common/ManagementPageHeader";
 import CreateButton from "../common/CreateButton";
 import FormActions from "../common/FormActions";
-import { useAdminTableSurface, type DataTableColumn } from "../common/table";
+import { createActionsColumn, useAdminTableSurface, type DataTableColumn } from "../common/table";
 import type { Service } from "../../services/servicesManagementService";
 import ConfirmDialog from "../common/ConfirmDialog";
 import { useServicesManagement } from "../../hooks/useServicesManagement";
@@ -52,7 +45,6 @@ const ServicesManagement: React.FC = () => {
   const { cardBg, borderColor: cardBorder } = useAdminTableSurface();
   const {
     isRegistryReadOnly,
-    activeTab,
     handleTabChange,
     registryTableItems,
     totalServicesCount,
@@ -222,92 +214,60 @@ const ServicesManagement: React.FC = () => {
           </Text>
         ),
       },
-      {
-        id: "actions",
-        header: "Actions",
-        tdProps: { onClick: (e) => e.stopPropagation() },
-        cell: (service) => (
-          <HStack spacing={1}>
-            {!isRegistryReadOnly && (
-              <Tooltip label="Edit" placement="top" hasArrow>
-                <IconButton
-                  aria-label="Edit"
-                  icon={<EditIcon />}
-                  size="sm"
-                  variant="ghost"
-                  onClick={() =>
-                    handleEditService(
-                      service.serviceId || service.service_id || "",
-                    )
-                  }
-                />
-              </Tooltip>
-            )}
-            {!isRegistryReadOnly &&
-              (service.isPublished === true ? (
-                <Tooltip label="Unpublish" placement="top" hasArrow>
-                  <IconButton
-                    aria-label="Unpublish"
-                    icon={<MdOutlineUnpublished />}
-                    size="sm"
-                    variant="ghost"
-                    colorScheme="red"
-                    _hover={{ bg: "red.50" }}
-                    onClick={() => requestUnpublish(service)}
-                    isLoading={unpublishingServiceUuid === service.serviceId}
-                    isDisabled={
-                      unpublishingServiceUuid !== null ||
-                      publishingServiceUuid !== null
-                    }
-                  />
-                </Tooltip>
-              ) : (
-                <Tooltip
-                  label={
-                    isServiceModelDeprecated(service)
-                      ? "This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing."
-                      : "Publish"
-                  }
-                  hasArrow
-                  placement="top"
-                >
-                  <Box as="span" display="inline-block">
-                    <IconButton
-                      aria-label="Publish"
-                      icon={<MdOutlineCheckCircle />}
-                      size="sm"
-                      variant="ghost"
-                      colorScheme="green"
-                      _hover={{ bg: "green.50" }}
-                      onClick={() => requestPublish(service)}
-                      isLoading={publishingServiceUuid === service.serviceId}
-                      isDisabled={
-                        unpublishingServiceUuid !== null ||
-                        publishingServiceUuid !== null ||
-                        isServiceModelDeprecated(service)
-                      }
-                    />
-                  </Box>
-                </Tooltip>
-              ))}
-            {!isRegistryReadOnly && (
-              <Tooltip label="Delete" placement="top" hasArrow>
-                <IconButton
-                  aria-label="Delete"
-                  icon={<DeleteIcon />}
-                  size="sm"
-                  variant="ghost"
-                  colorScheme="red"
-                  _hover={{ bg: "red.50" }}
-                  onClick={() => handleDeleteClick(service)}
-                  isLoading={deletingServiceUuid === service.serviceId}
-                  isDisabled={deletingServiceUuid !== null}
-                />
-              </Tooltip>
-            )}
-          </HStack>
-        ),
-      },
+      createActionsColumn<Service>({
+        getActions: (service) => {
+          const publishBlocked = isServiceModelDeprecated(service);
+          const publishBusy =
+            unpublishingServiceUuid !== null || publishingServiceUuid !== null;
+          return [
+            {
+              id: "edit",
+              label: "Edit",
+              icon: <EditIcon />,
+              visible: !isRegistryReadOnly,
+              onClick: () =>
+                handleEditService(service.serviceId || service.service_id || ""),
+            },
+            service.isPublished === true
+              ? {
+                  id: "unpublish",
+                  label: "Unpublish",
+                  icon: <MdOutlineUnpublished />,
+                  visible: !isRegistryReadOnly,
+                  color: "red.500",
+                  hoverColor: "red.600",
+                  hoverBg: "red.50",
+                  onClick: () => requestUnpublish(service),
+                  isLoading: unpublishingServiceUuid === service.serviceId,
+                  disabled: publishBusy,
+                }
+              : {
+                  id: "publish",
+                  label: "Publish",
+                  tooltip: publishBlocked
+                    ? "This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing."
+                    : "Publish",
+                  icon: <MdOutlineCheckCircle />,
+                  visible: !isRegistryReadOnly,
+                  color: "green.500",
+                  hoverColor: "green.600",
+                  hoverBg: "green.50",
+                  onClick: () => requestPublish(service),
+                  isLoading: publishingServiceUuid === service.serviceId,
+                  disabled: publishBusy || publishBlocked,
+                },
+            {
+              id: "delete",
+              label: "Delete",
+              icon: <DeleteIcon />,
+              visible: !isRegistryReadOnly,
+              onClick: () => handleDeleteClick(service),
+              isLoading: deletingServiceUuid === service.serviceId,
+              disabled: deletingServiceUuid !== null,
+            },
+          ];
+        },
+      }),
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -320,7 +280,6 @@ const ServicesManagement: React.FC = () => {
 
   return (
     <>
-      <VStack spacing={6} w="full">
         <ManagementPageHeader
           title="Services Management"
           description={
@@ -339,23 +298,26 @@ const ServicesManagement: React.FC = () => {
           }
         />
 
-            <Tabs
-              w="full"
-              colorScheme="blue"
-              variant="enclosed"
-              index={activeTab}
-              onChange={handleTabChange}
-            >
-              <TabList>
-                <Tab fontWeight="semibold">Service Registry</Tab>
-                {isViewingService && (
-                  <Tab fontWeight="semibold">View Service</Tab>
+                {isViewingService && selectedService && (
+                    <ServiceDetailTab
+                      cardBg={cardBg}
+                      cardBorder={cardBorder}
+                      selectedService={selectedService}
+                      isRegistryReadOnly={isRegistryReadOnly}
+                      getTaskColor={getTaskColorScheme}
+                      isServiceModelDeprecated={isServiceModelDeprecated}
+                      selectedServiceModelDeprecated={
+                        selectedServiceModelDeprecated
+                      }
+                      viewServiceUnitType={viewServiceUnitType}
+                      unpublishingServiceUuid={unpublishingServiceUuid}
+                      publishingServiceUuid={publishingServiceUuid}
+                      onRequestUnpublish={requestUnpublish}
+                      onRequestPublish={requestPublish}
+                      onBack={() => handleTabChange(0)}
+                    />
                 )}
-              </TabList>
-
-              <TabPanels>
-                {/* Service Registry Tab */}
-                <TabPanel>
+                <Box hidden={isViewingService}>
                   <ServiceRegistryTab
                     items={registryTableItems}
                     columns={serviceColumns}
@@ -382,32 +344,7 @@ const ServicesManagement: React.FC = () => {
                     hasActiveFilters={hasActiveFilters}
                     onClearFilters={clearAllFilters}
                   />
-                </TabPanel>
-
-                {/* View Service Tab */}
-                {isViewingService && selectedService ? (
-                  <TabPanel>
-                    <ServiceDetailTab
-                      cardBg={cardBg}
-                      cardBorder={cardBorder}
-                      selectedService={selectedService}
-                      isRegistryReadOnly={isRegistryReadOnly}
-                      getTaskColor={getTaskColorScheme}
-                      isServiceModelDeprecated={isServiceModelDeprecated}
-                      selectedServiceModelDeprecated={
-                        selectedServiceModelDeprecated
-                      }
-                      viewServiceUnitType={viewServiceUnitType}
-                      unpublishingServiceUuid={unpublishingServiceUuid}
-                      publishingServiceUuid={publishingServiceUuid}
-                      onRequestUnpublish={requestUnpublish}
-                      onRequestPublish={requestPublish}
-                    />
-                  </TabPanel>
-                ) : null}
-              </TabPanels>
-            </Tabs>
-      </VStack>
+                </Box>
 
       <CreateModal
         isOpen={isCreateOpen}

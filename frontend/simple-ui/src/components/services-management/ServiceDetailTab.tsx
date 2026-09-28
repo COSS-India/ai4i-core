@@ -13,6 +13,7 @@ import {
   Tooltip,
   VStack,
 } from "@chakra-ui/react";
+import { ArrowBackIcon } from "@chakra-ui/icons";
 import { MdOutlineCheckCircle, MdOutlineUnpublished } from "react-icons/md";
 import React from "react";
 import {
@@ -35,6 +36,7 @@ interface ServiceDetailTabProps {
   publishingServiceUuid: string | null;
   onRequestUnpublish: (service: Service) => void;
   onRequestPublish: (service: Service) => void;
+  onBack: () => void;
 }
 
 const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
@@ -49,6 +51,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
   publishingServiceUuid,
   onRequestUnpublish,
   onRequestPublish,
+  onBack,
 }) => {
   const taskType = resolveTaskType(selectedService);
   const modelId = selectedService.modelId || selectedService.model_id || "";
@@ -63,11 +66,21 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
       boxShadow="none"
     >
       <CardHeader>
-        <Heading size="md" color="ink.800" userSelect="none" cursor="default">
-          {selectedService.name ||
-            selectedService.serviceId ||
-            selectedService.service_id}
-        </Heading>
+        <HStack spacing={2} minW={0}>
+          <IconButton
+            aria-label="Back"
+            icon={<ArrowBackIcon />}
+            size="sm"
+            variant="ghost"
+            onClick={onBack}
+            flexShrink={0}
+          />
+          <Heading size="md" color="ink.800" userSelect="none" cursor="default" isTruncated>
+            {selectedService.name ||
+              selectedService.serviceId ||
+              selectedService.service_id}
+          </Heading>
+        </HStack>
       </CardHeader>
       <CardBody>
         {/* View Mode - Display service details */}

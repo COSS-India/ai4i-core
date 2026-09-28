@@ -1,4 +1,4 @@
-import { Box, Center } from "@chakra-ui/react";
+import { Center } from "@chakra-ui/react";
 import Head from "next/head";
 import React from "react";
 import { useRouter } from "next/router";
@@ -70,14 +70,12 @@ const AlertsManagementPage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <Box maxW="7xl" mx="auto" py={8} px={4}>
-          <ManagementPageHeader
-            title="Alerts Management"
-            description="Define alert policies and configure notification routing"
-          />
+        <ManagementPageHeader
+          title="Alerts Management"
+          description="Define alert policies and configure notification routing"
+        />
 
-          <AlertingTab isActive={true} />
-        </Box>
+        <AlertingTab isActive={true} />
       </ContentLayout>
     </>
   );

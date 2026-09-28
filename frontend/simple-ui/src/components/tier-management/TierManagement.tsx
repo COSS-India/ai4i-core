@@ -1051,7 +1051,6 @@ const TierManagement: React.FC<{
             type: "select",
             value: filterStatus,
             onChange: setFilterStatus,
-            width: { base: "full", sm: "180px" },
             options: [
               { label: "All", value: "" },
               // Labels from the badge map, so dropdown and column agree.
