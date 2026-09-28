@@ -3,10 +3,10 @@ AI4I-Orchestrate
 
 Dear {{ recipient_name }},
 
-{{ alert_name }} has reached {{ threshold }}% for {{ institution_name }} as of
-{{ alert_datetime }}.
+{{ event_name }} has reached {{ field_1 }}% for {{ tenant_name }} as of
+{{ field_2 }}.
 
-Current value: {{ current_value }}
+Current value: {{ field_3 }}
 
 {% if portal_url -%}
 Log in to the AI4I-Orchestrate Portal to view full details: {{ portal_url }}

@@ -1,9 +1,10 @@
-"""consumers/notifications_consumer/email_templates.py — ported from
-services/platform-core-service/app/services/notification_alert_email_templates.py
-(PR #1557). This suite mirrors that module's own test file
-(test_notification_alert_email_templates.py) closely on purpose: same
-renderers, same enums, same templates — pinning that the port didn't
-silently change behaviour along the way.
+"""consumers/notifications_consumer/email_templates.py — the one generic
+render_email function every event_name goes through.
+
+No per-event renderers left to pin (see module docstring): this suite
+covers the subject format, the blind positional mapping (details[0] ->
+field_1, details[1] -> field_2, ...), that a short details array leaves the
+remaining fields blank without erroring, and the portal-link fallback.
 """
 from __future__ import annotations
 
@@ -20,136 +21,86 @@ def _no_portal_url(monkeypatch):
     monkeypatch.setattr(get_settings(), "PORTAL_URL", None)
 
 
-# Each entry: (render fn, kwargs, substrings expected in BOTH html_body and text_body)
-CASES = [
-    (
-        templates.render_notification_email,
-        dict(
-            to="a@b.com", recipient_name="Priya", notification_name="Budget Assigned",
-            institution_name="Acme Bank", notification_headline="A Budget has been assigned to Acme Bank.",
-            notification_details=["Budget: INR 50,000"],
-        ),
-        ["Priya", "Acme Bank", "A Budget has been assigned to Acme Bank.", "Budget: INR 50,000"],
-    ),
-    (
-        templates.render_alert_email,
-        dict(
-            to="a@b.com", recipient_name="Priya", alert_name="Quota Usage",
-            institution_name="Acme Bank", alert_datetime="2026-09-10 14:30 UTC",
-            threshold="80", current_value="82.4",
-        ),
-        ["Priya", "Acme Bank", "80%", "82.4"],
-    ),
-    (
-        templates.render_tier_assigned_email,
-        dict(
-            to="a@b.com", recipient_name="Priya", institution_name="Acme Bank",
-            tier_name="Gold", tier_description="High-volume tier",
-            quota_lines=["ASR: 10,000 req/mo", "MT: 5,000 req/mo"],
-        ),
-        ["Gold", "High-volume tier", "ASR: 10,000 req/mo", "MT: 5,000 req/mo"],
-    ),
-    (
-        templates.render_budget_assigned_email,
-        dict(to="a@b.com", recipient_name="Priya", institution_name="Acme Bank", currency="INR", budget_amount="500000"),
-        ["Acme Bank", "INR", "500000"],
-    ),
-    (
-        templates.render_tier_reassigned_email,
-        dict(
-            to="a@b.com", recipient_name="Priya", institution_name="Acme Bank",
-            current_tier_name="Gold", new_tier_name="Platinum", new_tier_description="Premium tier",
-            quota_lines=["ASR: 20,000 req/mo"],
-        ),
-        ["Gold", "Platinum", "Premium tier", "ASR: 20,000 req/mo"],
-    ),
-    (
-        templates.render_quota_limit_updated_email,
-        dict(
-            to="a@b.com", recipient_name="Priya", institution_name="Acme Bank",
-            tier_name="Gold", changes=["ASR: changed from 10,000 to 15,000"], effective_date="2026-09-10",
-        ),
-        ["Gold", "ASR: changed from 10,000 to 15,000", "2026-09-10"],
-    ),
-    (
-        templates.render_budget_revised_email,
-        dict(
-            to="a@b.com", recipient_name="Priya", institution_name="Acme Bank",
-            currency="INR", previous_value="500000", new_value="750000", effective_date="2026-09-10",
-        ),
-        ["INR 500000", "INR 750000", "2026-09-10"],
-    ),
-    (
-        templates.render_quota_exhausted_email,
-        dict(
-            to="a@b.com", recipient_name="Priya", institution_name="Acme Bank",
-            tier_name="Gold", exhausted_lines=["ASR: Quota Limit 10,000, Resets on 2026-10-01"],
-        ),
-        ["Gold", "ASR: Quota Limit 10,000, Resets on 2026-10-01"],
-    ),
-    (
-        templates.render_budget_exhausted_email,
-        dict(to="a@b.com", recipient_name="Priya", institution_name="Acme Bank", currency="INR", budget_amount="500000"),
-        ["Acme Bank", "INR", "500000"],
-    ),
-    (
-        templates.render_quota_threshold_alert_email,
-        dict(
-            to="a@b.com", recipient_name="Priya", institution_name="Acme Bank",
-            threshold="80", alert_datetime="2026-09-10 14:30 UTC", current_value="81",
-        ),
-        ["Acme Bank", "80%", "81"],
-    ),
-    (
-        templates.render_budget_threshold_alert_email,
-        dict(
-            to="a@b.com", recipient_name="Priya", institution_name="Acme Bank",
-            threshold="80", alert_datetime="2026-09-10 14:30 UTC", current_value="81",
-        ),
-        ["Acme Bank", "80%", "81"],
-    ),
-]
-
-
-@pytest.mark.parametrize("render_fn,kwargs,expected_substrings", CASES, ids=[c[0].__name__ for c in CASES])
-def test_render_produces_populated_email(render_fn, kwargs, expected_substrings):
-    message = render_fn(**kwargs)
+def test_render_produces_populated_email():
+    message = templates.render_email(
+        to="a@b.com", recipient_name="Priya", event_name="TIER_CHANGED",
+        tenant_name="Acme Bank", details=["Silver", "Gold", "Premium tier"],
+    )
 
     assert message.to == "a@b.com"
-    assert message.subject.strip()
+    assert message.subject == "TIER_CHANGED — Acme Bank"
     assert message.html_body.strip()
     assert message.text_body.strip()
-
-    for substring in expected_substrings:
+    for substring in ["Priya", "Silver", "Gold", "Premium tier"]:
         assert substring in message.html_body, f"{substring!r} missing from html_body"
         assert substring in message.text_body, f"{substring!r} missing from text_body"
 
 
-@pytest.mark.parametrize("notification_name", [n.value for n in templates.NotificationName])
-def test_notification_subject_uses_enum_value(notification_name):
-    """Renaming a NotificationName member should be the only place a subject-line
-    change is needed — this pins the subject format to the enum's current values."""
-    message = templates.render_notification_email(
-        to="a@b.com", recipient_name="Priya", notification_name=notification_name,
-        institution_name="Acme Bank", notification_headline="Headline.", notification_details=["Detail."],
+def test_details_map_positionally_in_order_without_interpretation():
+    """Blind mapping: details[0] -> field_1, details[1] -> field_2, etc. —
+    whatever order the producer sends details in is the order they show up
+    in the body, no relabeling or reordering."""
+    message = templates.render_email(
+        to="a@b.com", recipient_name="Priya", event_name="QUOTA_LIMIT_UPDATED",
+        tenant_name="Acme Bank", details=["first", "second", "third"],
     )
-    assert message.subject == f"{notification_name} — Acme Bank"
+
+    html = message.html_body
+    assert html.index("first") < html.index("second") < html.index("third")
 
 
-@pytest.mark.parametrize("alert_name", [a.value for a in templates.AlertName])
-def test_alert_subject_uses_enum_value(alert_name):
-    message = templates.render_alert_email(
-        to="a@b.com", recipient_name="Priya", alert_name=alert_name,
-        institution_name="Acme Bank", alert_datetime="2026-09-10", threshold="80", current_value="81",
+def test_fewer_details_than_field_slots_leaves_the_rest_blank():
+    """An event_name that only ever sends 2 values must not render 4 empty
+    paragraphs for the unused trailing slots."""
+    message = templates.render_email(
+        to="a@b.com", recipient_name="Priya", event_name="BUDGET_ASSIGNED",
+        tenant_name="Acme Bank", details=["INR", "500000"],
     )
-    assert message.subject == f"{alert_name} at 80% — Acme Bank"
+
+    assert "INR" in message.html_body
+    assert "500000" in message.html_body
+    # No empty <p> line left over from an unfilled field slot.
+    assert '<p style="margin:0 0 4px 0;"></p>' not in message.html_body
+
+
+def test_more_details_than_field_slots_are_silently_dropped():
+    """Only _FIELD_COUNT positions exist — extra values past that are not
+    rendered anywhere (and don't raise); this module doesn't verify count."""
+    details = [f"value-{i}" for i in range(templates._FIELD_COUNT + 2)]
+    message = templates.render_email(
+        to="a@b.com", recipient_name="Priya", event_name="TIER_CHANGED",
+        tenant_name="Acme Bank", details=details,
+    )
+
+    for i in range(templates._FIELD_COUNT):
+        assert f"value-{i}" in message.html_body
+    for i in range(templates._FIELD_COUNT, len(details)):
+        assert f"value-{i}" not in message.html_body
+
+
+def test_empty_details_renders_without_error():
+    message = templates.render_email(
+        to="a@b.com", recipient_name="Priya", event_name="BUDGET_EXHAUSTED",
+        tenant_name="Acme Bank", details=[],
+    )
+    assert message.subject == "BUDGET_EXHAUSTED — Acme Bank"
+    assert message.html_body.strip()
+
+
+def test_subject_uses_event_name_and_tenant_name_verbatim():
+    message = templates.render_email(
+        to="a@b.com", recipient_name="Priya", event_name="anything_at_all",
+        tenant_name="Some Tenant", details=[],
+    )
+    assert message.subject == "anything_at_all — Some Tenant"
 
 
 def test_portal_link_uses_configured_url(monkeypatch):
     monkeypatch.setattr(get_settings(), "PORTAL_URL", "https://portal.example.com")
 
-    message = templates.render_budget_assigned_email(
-        to="a@b.com", recipient_name="Priya", institution_name="Acme Bank", currency="INR", budget_amount="500000",
+    message = templates.render_email(
+        to="a@b.com", recipient_name="Priya", event_name="BUDGET_ASSIGNED",
+        tenant_name="Acme Bank", details=["INR 500000"],
     )
 
     assert 'href="https://portal.example.com"' in message.html_body
@@ -157,9 +108,44 @@ def test_portal_link_uses_configured_url(monkeypatch):
 
 
 def test_portal_link_falls_back_to_plain_text_when_unset():
-    message = templates.render_budget_assigned_email(
-        to="a@b.com", recipient_name="Priya", institution_name="Acme Bank", currency="INR", budget_amount="500000",
+    message = templates.render_email(
+        to="a@b.com", recipient_name="Priya", event_name="BUDGET_ASSIGNED",
+        tenant_name="Acme Bank", details=["INR 500000"],
     )
 
     assert "Log in to the AI4I-Orchestrate Portal to view full details." in message.text_body
     assert "href=" not in message.text_body
+
+
+@pytest.mark.parametrize("event_name", sorted(templates._ALERT_EVENTS))
+class TestAlertEventsUseTheAlertTemplate:
+    """QUOTA_THRESHOLD/BUDGET_THRESHOLD are the only two events that render
+    through alert.html/.txt instead of notification.html/.txt — same split
+    as the original design. field_1/field_2/field_3 are still a blind
+    positional mapping (threshold/alert_datetime/current_value, in that
+    order), not a named/validated one."""
+
+    def test_subject_includes_percent_sign(self, event_name):
+        message = templates.render_email(
+            to="a@b.com", recipient_name="Priya", event_name=event_name,
+            tenant_name="Acme Bank", details=["80", "2026-09-10 14:30 UTC", "82.4"],
+        )
+        assert message.subject == f"{event_name} at 80% — Acme Bank"
+
+    def test_body_contains_threshold_datetime_and_current_value_in_order(self, event_name):
+        message = templates.render_email(
+            to="a@b.com", recipient_name="Priya", event_name=event_name,
+            tenant_name="Acme Bank", details=["80", "2026-09-10 14:30 UTC", "82.4"],
+        )
+        for substring in ["Priya", "Acme Bank", "80%", "2026-09-10 14:30 UTC", "82.4"]:
+            assert substring in message.html_body, f"{substring!r} missing from html_body"
+            assert substring in message.text_body, f"{substring!r} missing from text_body"
+
+
+def test_non_alert_event_does_not_use_percent_subject_format():
+    message = templates.render_email(
+        to="a@b.com", recipient_name="Priya", event_name="TIER_CHANGED",
+        tenant_name="Acme Bank", details=["80", "2026-09-10", "82.4"],
+    )
+    assert message.subject == "TIER_CHANGED — Acme Bank"
+    assert "%" not in message.subject

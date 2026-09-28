@@ -1,13 +1,15 @@
 {% extends "_base.html" %}
-{% block title %}{{ notification_name }} — {{ institution_name }}{% endblock %}
-{% block preheader %}{{ notification_headline }}{% endblock %}
-{% block heading %}{{ notification_name }} — {{ institution_name }}{% endblock %}
+{% block title %}{{ event_name }} — {{ tenant_name }}{% endblock %}
+{% block preheader %}{{ event_name }} — {{ tenant_name }}{% endblock %}
+{% block heading %}{{ event_name }} — {{ tenant_name }}{% endblock %}
 {% block body %}
   <p style="margin:0 0 4px 0;">Dear {{ recipient_name }},</p>
-  <p style="margin:0 0 16px 0;">{{ notification_headline }}</p>
-  {% for line in notification_details %}
-  <p style="margin:0 0 4px 0;">{{ line }}</p>
-  {% endfor %}
+  {% if field_1 %}<p style="margin:0 0 4px 0;">{{ field_1 }}</p>{% endif %}
+  {% if field_2 %}<p style="margin:0 0 4px 0;">{{ field_2 }}</p>{% endif %}
+  {% if field_3 %}<p style="margin:0 0 4px 0;">{{ field_3 }}</p>{% endif %}
+  {% if field_4 %}<p style="margin:0 0 4px 0;">{{ field_4 }}</p>{% endif %}
+  {% if field_5 %}<p style="margin:0 0 4px 0;">{{ field_5 }}</p>{% endif %}
+  {% if field_6 %}<p style="margin:0 0 4px 0;">{{ field_6 }}</p>{% endif %}
   <div style="margin-top:16px;">
     {% include "_portal_line.html" %}
   </div>

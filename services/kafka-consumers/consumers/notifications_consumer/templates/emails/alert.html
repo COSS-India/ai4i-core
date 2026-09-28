@@ -1,14 +1,14 @@
 {% extends "_base.html" %}
-{% block title %}{{ alert_name }} at {{ threshold }}% — {{ institution_name }}{% endblock %}
-{% block preheader %}{{ alert_name }} has reached {{ threshold }}% for {{ institution_name }}.{% endblock %}
-{% block heading %}{{ alert_name }} at {{ threshold }}% — {{ institution_name }}{% endblock %}
+{% block title %}{{ event_name }} at {{ field_1 }}% — {{ tenant_name }}{% endblock %}
+{% block preheader %}{{ event_name }} has reached {{ field_1 }}% for {{ tenant_name }}.{% endblock %}
+{% block heading %}{{ event_name }} at {{ field_1 }}% — {{ tenant_name }}{% endblock %}
 {% block body %}
   <p style="margin:0 0 4px 0;">Dear {{ recipient_name }},</p>
   <p style="margin:0 0 8px 0;">
-    <strong>{{ alert_name }}</strong> has reached <strong>{{ threshold }}%</strong> for
-    <strong>{{ institution_name }}</strong> as of {{ alert_datetime }}.
+    <strong>{{ event_name }}</strong> has reached <strong>{{ field_1 }}%</strong> for
+    <strong>{{ tenant_name }}</strong> as of {{ field_2 }}.
   </p>
-  <p style="margin:0 0 20px 0;">Current value: {{ current_value }}</p>
+  <p style="margin:0 0 20px 0;">Current value: {{ field_3 }}</p>
   {% include "_portal_line.html" %}
   <p style="margin:20px 0 0 0;">
     Regards,<br>

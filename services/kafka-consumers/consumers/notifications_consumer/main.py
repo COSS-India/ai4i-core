@@ -1,14 +1,24 @@
 """notifications_consumer — Kafka Consumer Notification.
 
 Implements skills/notification-kafka-design/notification-kafka-design.md:
-reads notification/alert events off TOPIC_NOTIFICATION, resolves recipients
-and sends the email directly (no auth-service call). The producer already
-decided "is this new" and claimed the ledger row (libs/ai4i_core/ai4i_core/
-kafka/ledger.py) before publishing — this consumer only claims and settles
-the delivery half. See catalog_cache.py, ledger.py, recipients.py,
-emailer.py, delivery.py and handler.py for the pieces; this file is just
-the consume loop wiring, plus opening the second (auth) database connection
-recipients.py depends on.
+reads notification/alert events off TOPIC_NOTIFICATION and sends the email
+directly (no auth-service call, no DB lookups of any kind). Everything this
+consumer needs — who receives it, what tenant it's for, what goes in the
+body — is resolved producer-side and travels with the message; this
+consumer only maps that onto a template and triggers the send. See
+emailer.py, delivery.py, failures.py and handler.py for the pieces; this
+file is just the consume loop wiring.
+
+This consumer deliberately does NOT open a connection to ai4iplatform_auth,
+does not read configs_notification_alert, and does not touch
+ledger_notification_alert — the only database access left is the default
+one (ai4iplatform_core), used solely to record notification_failures rows
+on a failed delivery (handler.py).
+
+Producer-facing callout: if channel selection (EMAIL vs Slack/WhatsApp) is
+ever needed, it has to come from the envelope too — this consumer hardcodes
+CHANNEL = "EMAIL" (handler.py) since that's the only channel it implements
+and it no longer reads configs_notification_alert.channels to decide.
 
 Consumer-side only — the producers (auth-service's admin-change endpoints,
 and payperuse_consumer's producer half) are separate work, not built here.
@@ -29,8 +39,8 @@ from confluent_kafka import KafkaError, KafkaException, Message
 
 from bootstrap.config import get_db_settings
 from bootstrap.consumers import CommitMode, ManagedConsumer
-from bootstrap.lifecycle import add_database, infra, shutdown_event
-from consumers.notifications_consumer import catalog_cache, config as cfg, pii_crypto
+from bootstrap.lifecycle import infra, shutdown_event
+from consumers.notifications_consumer import config as cfg
 from consumers.notifications_consumer.handler import handle_notification_event
 
 logger = get_logger(__name__)
@@ -75,27 +85,7 @@ async def run() -> None:
     db = get_db_settings()
     settings = cfg.get_settings()
 
-    # Hand the key to pii_crypto explicitly — pydantic-settings loads .env
-    # into `settings`, not into os.environ, so a bare os.getenv() inside
-    # pii_crypto would never see it. Mirrors auth-service's own
-    # config.py -> pii_crypto.configure_key() handoff exactly.
-    pii_crypto.configure_key(
-        settings.PII_ENCRYPTION_KEY.get_secret_value() if settings.PII_ENCRYPTION_KEY else None
-    )
-
     async with infra(db_name=db.PLATFORM_CORE_DB):
-        # Second connection, named "auth" — recipients.py resolves who holds
-        # which role for a tenant by reading ai4iplatform_auth directly.
-        # Opened once here, not per-message; infra()'s own teardown closes
-        # every named connection alongside the default one.
-        await add_database("auth", db_name=settings.AUTH_SERVICE_DB)
-
-        # Live cache invalidation — see catalog_cache.py's module docstring.
-        # Opens its own dedicated Redis connection (not the shared one from
-        # infra() — that one's socket_timeout is wrong for a blocking
-        # pub/sub read).
-        catalog_cache.start_listener()
-
         consumer = ManagedConsumer.build_bulk_message_consumer(
             group_id=GROUP_ID,
             topic=settings.TOPIC_NOTIFICATION,
@@ -147,4 +137,3 @@ async def run() -> None:
                     await consumer.record_processed(msg)
         finally:
             consumer.shutdown()
-            await catalog_cache.stop_listener()
