@@ -32,7 +32,6 @@ from app.services.application_service import ApplicationService
 from app.services.auth_service import AuthService
 from app.services.cache_service import CacheService
 from app.services.oauth_service import OAuthService
-from app.services.quota_notification_service import QuotaNotificationService
 from app.services.role_service import RoleService
 from app.services.tenant_service import TenantService
 from app.services.token_service import TokenService
@@ -172,16 +171,6 @@ def get_tenant_service(
         api_key_service=api_key_service,
         refresh_token_repo=RefreshTokenRepository(db),
         allocation_service=allocation_service,
-    )
-
-
-def get_quota_notification_service(
-    db: AsyncSession = Depends(get_db),
-    email_client: EmailClient = Depends(get_email_client),
-) -> QuotaNotificationService:
-    return QuotaNotificationService(
-        role_repo=RoleRepository(db),
-        email_client=email_client,
     )
 
 
