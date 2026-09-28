@@ -102,6 +102,9 @@ export const apiEndpoints = {
     catalog: `${API_V1}/notification-alerts/catalog`,
     catalogByName: (name: string) =>
       `${API_V1}/notification-alerts/catalog/${encodeURIComponent(name)}`,
+    subscriptions: `${API_V1}/notification-alerts/subscriptions`,
+    subscriptionById: (notificationId: number) =>
+      `${API_V1}/notification-alerts/subscriptions/${notificationId}`,
   },
 
   platform: {
