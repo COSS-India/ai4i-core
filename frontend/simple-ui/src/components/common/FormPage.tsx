@@ -9,8 +9,11 @@ import { buildManageCrumbs } from "./PageBreadcrumb";
 type FormPageParent = {
   label: string;
   href: string;
-  /** Clears in-memory workflow state. The crumb still navigates to `href`. */
-  onNavigate?: () => void;
+  /**
+   * Clears in-memory workflow state. The crumb still navigates to `href`
+   * unless this calls `preventDefault`.
+   */
+  onNavigate?: (event: React.MouseEvent) => void;
 };
 
 /** Explicit Cancel/Back destination. Never used to build breadcrumbs. */

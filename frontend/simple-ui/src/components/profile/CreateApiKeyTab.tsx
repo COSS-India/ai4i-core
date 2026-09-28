@@ -37,6 +37,8 @@ export interface CreateApiKeyTabProps {
   hideActions?: boolean;
   formId?: string;
   onCreatingChange?: (creating: boolean) => void;
+  /** True while the one-time API key token is on screen. */
+  onCreatedTokenChange?: (visible: boolean) => void;
 }
 
 export default function CreateApiKeyTab({
@@ -46,6 +48,7 @@ export default function CreateApiKeyTab({
   hideActions = false,
   formId,
   onCreatingChange,
+  onCreatedTokenChange,
 }: CreateApiKeyTabProps) {
   const create = useCreateApiKeyTab({ tenantId, onApiKeyCreated });
   const { copy } = useCopyToClipboard();
@@ -54,6 +57,10 @@ export default function CreateApiKeyTab({
   React.useEffect(() => {
     onCreatingChange?.(create.isCreating);
   }, [create.isCreating, onCreatingChange]);
+
+  React.useEffect(() => {
+    onCreatedTokenChange?.(Boolean(create.createdApiKeyToken));
+  }, [create.createdApiKeyToken, onCreatedTokenChange]);
 
   const isLoading = create.isLoadingPermissions || create.isLoadingApplications;
   const budgetError = create.fieldErrors.budget || budgetBoundHint;
@@ -96,7 +103,7 @@ export default function CreateApiKeyTab({
                     />
                   </HStack>
                   <Text fontSize="xs" color="ink.600" mb={2}>
-                    This token will not be shown again. Store it securely. The modal stays open until you close it.
+                    This token will not be shown again. Store it securely before you leave this page.
                   </Text>
                   <HStack align="stretch" spacing={2}>
                     <Input

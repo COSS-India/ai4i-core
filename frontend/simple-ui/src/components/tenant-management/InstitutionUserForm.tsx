@@ -3,7 +3,6 @@ import {
   FormErrorMessage,
   Input,
   Select,
-  Text,
   VStack,
 } from "@chakra-ui/react";
 import React, { useMemo } from "react";

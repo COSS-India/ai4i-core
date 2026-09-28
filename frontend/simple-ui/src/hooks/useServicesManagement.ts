@@ -483,13 +483,14 @@ export function useServicesManagement() {
     if (isCreateDeepLink && !isRegistryReadOnly) {
       if (isCreateServiceTabDisabled) {
         setActiveTab(0);
+        showToast({ type: "warning", message: "No tiers configured" });
         const rawReturn = router.query.returnTo;
         const dest =
           typeof rawReturn === "string" ? safeFormReturnHref(rawReturn) : null;
         if (dest) {
           createRouteGenRef.current += 1;
           setCreateReturnTo(null);
-          void router.push(dest);
+          void router.replace(dest);
           return;
         }
         if (router.query.tab || router.query.modelId) {

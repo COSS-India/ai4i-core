@@ -27,9 +27,50 @@ const ApiKeyManagementPage: React.FC = () => {
   const { isOpen: isCreateOpen, onOpen: onCreateOpen, onClose: closeCreate } =
     useDisclosure();
   const [isCreatingKey, setIsCreatingKey] = useState(false);
+  const [hasCreatedToken, setHasCreatedToken] = useState(false);
+  const isCreatingKeyRef = useRef(isCreatingKey);
+  const hasCreatedTokenRef = useRef(hasCreatedToken);
+  const allowRouteLeaveRef = useRef(false);
+  isCreatingKeyRef.current = isCreatingKey;
+  hasCreatedTokenRef.current = hasCreatedToken;
+
+  const confirmDiscardApiKey = () => {
+    const creating = isCreatingKeyRef.current;
+    const hasToken = hasCreatedTokenRef.current;
+    if (!creating && !hasToken) return true;
+    if (allowRouteLeaveRef.current) return true;
+    const ok = window.confirm(
+      creating
+        ? "This API key is still being created. Leaving now will not show its token. Leave anyway?"
+        : "This API key token will not be shown again. Leave this page?",
+    );
+    if (ok) allowRouteLeaveRef.current = true;
+    return ok;
+  };
+
   const onCreateClose = () => {
+    setHasCreatedToken(false);
     closeCreate();
   };
+
+  useEffect(() => {
+    if (!isCreatingKey && !hasCreatedToken) {
+      allowRouteLeaveRef.current = false;
+    }
+  }, [isCreatingKey, hasCreatedToken]);
+
+  useEffect(() => {
+    const onRouteChangeStart = () => {
+      if (!isCreatingKeyRef.current && !hasCreatedTokenRef.current) return;
+      if (confirmDiscardApiKey()) return;
+      router.events.emit("routeChangeError");
+      throw "Route change aborted.";
+    };
+    router.events.on("routeChangeStart", onRouteChangeStart);
+    return () => {
+      router.events.off("routeChangeStart", onRouteChangeStart);
+    };
+  }, [router.events]);
   const refreshManagedKeysRef = useRef<(() => Promise<void>) | null>(null);
   const showList = !isCreateOpen;
 
@@ -81,9 +122,18 @@ const ApiKeyManagementPage: React.FC = () => {
             parent={{
               label: "API Key Management",
               href: "/api-key-management",
-              onNavigate: onCreateClose,
+              onNavigate: (event) => {
+                if (!confirmDiscardApiKey()) {
+                  event.preventDefault();
+                  return;
+                }
+                onCreateClose();
+              },
             }}
-            onLeave={onCreateClose}
+            onLeave={() => {
+              if (!confirmDiscardApiKey()) return;
+              onCreateClose();
+            }}
             footer={({ leave }) => (
               <FormActions
                 cancelLabel="Cancel"
@@ -100,12 +150,12 @@ const ApiKeyManagementPage: React.FC = () => {
           >
             <FormSection title="API Key">
               <CreateApiKeyTab
-                key={isCreateOpen ? "open" : "closed"}
                 tenantId={user.tenant_id}
                 onApiKeyCreated={() => void refreshManagedKeysRef.current?.()}
                 hideActions
                 formId="create-api-key-form"
                 onCreatingChange={setIsCreatingKey}
+                onCreatedTokenChange={setHasCreatedToken}
               />
             </FormSection>
           </FormPage>

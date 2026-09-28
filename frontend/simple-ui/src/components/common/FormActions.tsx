@@ -36,7 +36,7 @@ export default function FormActions({
   form,
   hideCancel = false,
   hideSubmit = false,
-  justify = "space-between",
+  justify = "flex-end",
   pt = 2,
   extraLabel,
   onExtra,

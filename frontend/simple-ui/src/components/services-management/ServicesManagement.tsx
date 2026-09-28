@@ -302,7 +302,6 @@ const ServicesManagement: React.FC = () => {
       onToggleTier={toggleTier}
       availableTiers={availableTiers}
       isCreateFormModelSelected={isCreateFormModelSelected}
-      canCreateService={canCreateService}
       isLlmTaskType={isLlmTaskType}
       authToken={authToken}
       onAuthTokenChange={setAuthToken}
@@ -313,10 +312,7 @@ const ServicesManagement: React.FC = () => {
       serviceDescriptionError={serviceDescriptionError}
       serviceNameError={serviceNameError}
       hardwareDescriptionError={hardwareDescriptionError}
-      isSubmitting={isSubmitting}
       onSubmit={handleSubmit}
-      onCancel={editingService ? handleCancelForm : closeCreateModal}
-      hideActions
       formId={editingService ? EDIT_SERVICE_FORM_ID : CREATE_SERVICE_FORM_ID}
     />
   );
@@ -333,7 +329,6 @@ const ServicesManagement: React.FC = () => {
       onRequestUnpublish={requestUnpublish}
       onRequestPublish={requestPublish}
       onBack={() => handleTabChange(0)}
-      onNavigateToList={() => handleTabChange(0)}
     />
   ) : editingService && !isRegistryReadOnly ? (
     <FormPage
@@ -358,6 +353,7 @@ const ServicesManagement: React.FC = () => {
           isLoading={isSubmitting}
           loadingText="Saving..."
           isDisabled={!canCreateService || isSubmitting}
+          justify="space-between"
           pt={0}
         />
       }
@@ -385,6 +381,7 @@ const ServicesManagement: React.FC = () => {
           isLoading={isSubmitting}
           loadingText="Creating..."
           isDisabled={!canCreateService || isSubmitting}
+          justify="space-between"
           pt={0}
         />
       )}

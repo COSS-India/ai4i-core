@@ -9,7 +9,6 @@ import {
   Box,
   Button,
   Card,
-  CardBody,
   Center,
   HStack,
   Tab,
@@ -1031,6 +1030,7 @@ export default function TenantManagementTab({
               isLoading={tm.isSubmittingEditTenant}
               isDisabled={!tm.canSubmitEditTenantForm}
               loadingText="Saving..."
+              justify="space-between"
               pt={0}
             />
           ) : (
@@ -1043,6 +1043,7 @@ export default function TenantManagementTab({
               isLoading={tm.isSubmittingTenant}
               loadingText="Creating..."
               isDisabled={!tm.canSubmitTenantForm || !tenantConsentAccepted}
+              justify="space-between"
               pt={0}
             />
           )
@@ -1068,7 +1069,6 @@ export default function TenantManagementTab({
           />
         ) : tm.isTenantModalOpen ? (
           <CreateInstitutionForm
-            key={tm.isTenantModalOpen ? "open" : "closed"}
             tm={tm}
             hideActions
             formId={CREATE_INSTITUTION_FORM_ID}

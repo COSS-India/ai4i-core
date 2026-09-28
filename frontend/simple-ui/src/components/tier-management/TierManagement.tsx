@@ -967,6 +967,7 @@ const TierManagement: React.FC = () => {
           isLoading={isSubmitting}
           loadingText="Saving..."
           onSubmit={handleEditSubmit}
+          justify="space-between"
           pt={0}
         />
       }
@@ -992,6 +993,7 @@ const TierManagement: React.FC = () => {
           onSubmit={() => {
             void handleCreateSubmit();
           }}
+          justify="space-between"
           pt={0}
         />
       }
@@ -1069,8 +1071,8 @@ const TierManagement: React.FC = () => {
 
   return (
     <Box>
-      {formPage ?? (
-        <>
+      {formPage}
+      <Box hidden={Boolean(formPage)}>
           <ManagementPageHeader
             title="Tier Management"
             description={`Configure tiers for ${INSTITUTION.toLowerCase()} access`}
@@ -1139,8 +1141,7 @@ const TierManagement: React.FC = () => {
           },
         ]}
       />
-        </>
-      )}
+      </Box>
 
       {/* Lifecycle status confirmation (activate / deactivate) */}
       <ConfirmDialog

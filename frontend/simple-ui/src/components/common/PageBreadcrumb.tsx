@@ -17,7 +17,8 @@ export type Crumb = {
    * Runs on click in addition to `href`. Manage detail pages use this to
    * clear in-memory create/view state when the list route is already current.
    */
-  onClick?: () => void;
+  /** Return path is skipped when this calls `preventDefault`. */
+  onClick?: (event: React.MouseEvent) => void;
 };
 
 function homeCrumb(homePath: string): Crumb {
@@ -65,7 +66,8 @@ export function getPageBreadcrumbs(
 type ManageParent = {
   label: string;
   href: string;
-  onNavigate?: () => void;
+  /** Call `preventDefault` to keep the crumb from navigating. */
+  onNavigate?: (event: React.MouseEvent) => void;
 };
 
 /**
@@ -121,7 +123,7 @@ export default function PageBreadcrumb({ items, ...rest }: PageBreadcrumbProps) 
                   color="ink.500"
                   fontWeight="500"
                   _hover={{ color: "ink.800", textDecoration: "none" }}
-                  onClick={() => item.onClick?.()}
+                  onClick={(event) => item.onClick?.(event)}
                 >
                   {item.label}
                 </BreadcrumbLink>

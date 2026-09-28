@@ -30,7 +30,6 @@ interface ServiceDetailTabProps {
   onRequestUnpublish: (service: Service) => void;
   onRequestPublish: (service: Service) => void;
   onBack: () => void;
-  onNavigateToList?: () => void;
 }
 
 const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
@@ -44,7 +43,6 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
   onRequestUnpublish,
   onRequestPublish,
   onBack,
-  onNavigateToList,
 }) => {
   const taskType = resolveTaskType(selectedService);
   const modelId = selectedService.modelId || selectedService.model_id || "";
@@ -67,7 +65,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
       parent={{
         label: "Services Management",
         href: "/services-management",
-        onNavigate: onNavigateToList ?? onBack,
+        onNavigate: onBack,
       }}
       actions={
         !isRegistryReadOnly ? (
@@ -140,7 +138,6 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
 
       <ServiceFormTab
         mode="view"
-        hideActions
         editingService={selectedService}
         formData={{
           name: selectedService.name || "",
@@ -173,14 +170,11 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
         onToggleTier={() => undefined}
         availableTiers={[]}
         isCreateFormModelSelected={Boolean(modelId)}
-        canCreateService={false}
         isLlmTaskType={taskType.trim().toLowerCase() === "llm"}
         authToken=""
         onAuthTokenChange={() => undefined}
         hasAuthToken={resolveHasAuthToken(selectedService)}
-        isSubmitting={false}
         onSubmit={(e) => e.preventDefault()}
-        onCancel={onBack}
       />
 
       <FormSection title="Record">

@@ -30,7 +30,6 @@ import { formatModelTaskTypeLabel, getTaskColorScheme } from "../../config/const
 import { FIELD_HINTS } from "../../config/fieldHints";
 import FieldHint from "../common/FieldHint";
 import FieldLabel from "../common/FieldLabel";
-import FormActions from "../common/FormActions";
 import FormSection from "../common/FormSection";
 import ReadOnlyField from "../common/ReadOnlyField";
 import type { Service } from "../../services/servicesManagementService";
@@ -75,7 +74,6 @@ interface ServiceFormTabProps {
   onToggleTier: (tierId: string) => void;
   availableTiers: Tier[];
   isCreateFormModelSelected: boolean;
-  canCreateService: boolean;
   isLlmTaskType: boolean;
   authToken: string;
   onAuthTokenChange: (value: string) => void;
@@ -87,12 +85,9 @@ interface ServiceFormTabProps {
   serviceDescriptionError?: string | null;
   serviceNameError?: string | null;
   hardwareDescriptionError?: string | null;
-  isSubmitting: boolean;
   onSubmit: (e: React.FormEvent) => void;
-  onCancel: () => void;
   /** View reuses this form read-only. Create and edit stay the default. */
   mode?: "create" | "edit" | "view";
-  hideActions?: boolean;
   formId?: string;
 }
 
@@ -129,7 +124,6 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
   onToggleTier,
   availableTiers,
   isCreateFormModelSelected,
-  canCreateService,
   isLlmTaskType,
   authToken,
   onAuthTokenChange,
@@ -140,10 +134,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
   serviceDescriptionError,
   serviceNameError,
   hardwareDescriptionError,
-  isSubmitting,
   onSubmit,
-  onCancel,
-  hideActions = false,
   formId,
   mode,
 }) => {
@@ -806,18 +797,6 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
             </FormControl>
             )}
             </FormSection>
-
-            {!hideActions && (
-            <FormActions
-              submitLabel={editingService ? "Save Changes" : "Create Service"}
-              cancelLabel="Cancel"
-              onCancel={onCancel}
-              submitType="submit"
-              isLoading={isSubmitting}
-              loadingText={editingService ? "Saving..." : "Creating..."}
-              isDisabled={!canCreateService || isSubmitting}
-            />
-            )}
           </VStack>
   );
 

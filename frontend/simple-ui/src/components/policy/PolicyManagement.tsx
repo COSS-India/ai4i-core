@@ -637,8 +637,7 @@ function PoliciesPanel({
           onError={(msg) => showToast({ type: "error", message: msg })}
         />
       ) : null}
-      {editForm ? null : (
-      <>
+      <Box hidden={Boolean(editForm)}>
       {error && (
         <Alert status="error" mb={4} borderRadius="md">
           <AlertIcon />
@@ -702,8 +701,7 @@ function PoliciesPanel({
             pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
             tableContainerProps={{ overflowX: "auto" }}
           />
-      </>
-      )}
+      </Box>
 
       <ConfirmDialog
         isOpen={confirmDeleteModal.isOpen}
@@ -889,10 +887,7 @@ function PolicyFormModal({
     () => new Map(tenants.map((tenant) => [tenant.tenant_id, tenant])),
     [tenants]
   );
-  // CreateModal already scrolls; keep a nested cap only on Edit StandardModal.
-  const optionListScroll = policyId
-    ? { maxH: "220px" as const, overflowY: "auto" as const }
-    : {};
+  const optionListScroll = { maxH: "220px" as const, overflowY: "auto" as const };
 
   const formBody = loadingDetail ? (
         <Flex justify="center" py={8}>

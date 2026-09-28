@@ -283,6 +283,7 @@ const ModelManagementPage: React.FC = () => {
   };
 
   const openCreateModal = () => {
+    modelReturnGenRef.current += 1;
     handleClearUpload();
     onCreateOpen();
   };
@@ -936,6 +937,7 @@ const ModelManagementPage: React.FC = () => {
                           isLoading={isUploading}
                           loadingText="Creating..."
                           isDisabled={!parsedModelData}
+                          justify="space-between"
                           pt={0}
                         />
                       }
