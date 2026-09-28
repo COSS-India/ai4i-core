@@ -50,6 +50,7 @@
     { "endpoint": "GET:/api/v1/services",                                  "permissionRequired": 51, "description": "List all services (service.read)" },
     { "endpoint": "GET:/api/v1/services/{service_id}",                     "permissionRequired": 51, "description": "Get service by ID (service.read)" },
     { "endpoint": "POST:/api/v1/services",                                 "permissionRequired": 50, "description": "Create service (service.create)" },
+    { "endpoint": "POST:/api/v1/services/test-connection",                 "permissionRequired": 50, "description": "Try-it connection test from the service-creation form (service.create); makes outbound probes, must never be public" },
     { "endpoint": "PATCH:/api/v1/services",                                "permissionRequired": 52, "description": "Update service (service.update)" },
     { "endpoint": "DELETE:/api/v1/services/{service_id}",                  "permissionRequired": 53, "description": "Delete service (service.delete)" },
     { "endpoint": "GET:/api/v1/models",                                    "permissionRequired": 55, "description": "List models OpenAI-compatible (model.read)" },

@@ -41,6 +41,7 @@ from app.schemas.enums.model_management import (
     resolve_task_type,
 )
 from app.schemas.model_management.model import ModelResponse
+from app.utils.connection_tester import ConnectionTestOutcome
 
 
 # ── Health sub-schema ──
@@ -994,6 +995,42 @@ class DeleteServiceData(BaseSchema):
     serviceId: str
 
 
+# ── "Try it" connection test (POST /services/test-connection) ──
+
+
+class ServiceConnectionTestRequest(BaseSchema):
+    """Optional pre-create check from the service-creation form. Nothing
+    is persisted; the result explains whether a failure comes from the
+    model JSON, the endpoint, the request payload or the credentials."""
+
+    modelId: str = Field(..., min_length=1)
+    modelVersion: str = Field(..., min_length=1)
+    endpoint: str = Field(..., min_length=1, max_length=500)
+    requestPayload: Optional[Dict[str, Any] | str] = Field(
+        default=None,
+        description=(
+            "Optional request body to send, as a JSON object or the raw JSON "
+            "text the admin typed (syntax errors are reported by line/column). "
+            "When omitted, the payload is built from the model JSON's "
+            "schema.request exactly as the create-time probe builds it."
+        ),
+        json_schema_extra={"example": {"input": [{"source": "Hello"}], "config": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}}}},
+    )
+    authToken: Optional[str] = Field(
+        default=None,
+        max_length=4096,
+        description="Optional bearer token sent as `Authorization: Bearer <token>`.",
+    )
+    expectedResponseSchema: Optional[Dict[str, Any]] = Field(
+        default=None, description=_EXPECTED_RESPONSE_SCHEMA_DESCRIPTION
+    )
+
+    @field_validator("expectedResponseSchema")
+    @classmethod
+    def _validate_expected_response_schema(cls, v):
+        return validate_expected_response_schema(v)
+
+
 # ── Route response envelopes — ``{"success": true, "data": ..., "meta": ...}`` ──
 
 
@@ -1043,3 +1080,11 @@ class DeleteServiceResponse(SuccessResponseWithMeta):
 
     data: DeleteServiceData
     meta: MessageMeta
+
+
+class ServiceConnectionTestResponse(SuccessResponse):
+    """POST /services/test-connection. ``success`` is the API call's own
+    outcome (always true when the test ran); the probe verdict is
+    ``data.success``."""
+
+    data: ConnectionTestOutcome

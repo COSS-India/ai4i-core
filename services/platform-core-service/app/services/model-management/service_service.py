@@ -44,6 +44,7 @@ from app.repositories.model_management.model_repository import ModelRepository
 from app.repositories.model_management.service_repository import ServiceRepository
 from app.schemas.model_management.service import (
     DESCRIPTION_MAX_LEN,
+    ServiceConnectionTestRequest,
     ServiceCreateRequest,
     ServiceEndpointUpdateItem,
     ServiceUpdateRequest,
@@ -54,6 +55,14 @@ from app.services.cache_service import CacheService
 from .serializers import (
     service_detail_dict,
     service_to_dict,
+)
+from app.utils.connection_tester import (
+    CheckName,
+    CheckStatus,
+    ConnectionCheck,
+    ConnectionTestOutcome,
+    FailureCategory,
+    run_connection_test,
 )
 from app.utils.endpoint_validator import ValidationStatus, validate_endpoint
 from app.utils.security import sanitize_url_for_log
@@ -236,6 +245,44 @@ class ServiceService:
         else:
             total = len(items)
         return items, total
+
+    # ── "Try it" connection test ──
+
+    async def test_connection(
+        self, payload: ServiceConnectionTestRequest
+    ) -> ConnectionTestOutcome:
+        """Probe a not-yet-created service's endpoint against its model.
+
+        Never raises for a failing probe: the verdict, and which of model
+        JSON / endpoint / payload / auth is to blame, is in the result.
+        """
+        model = await self._models.get_by_id_version(payload.modelId, payload.modelVersion)
+        if model is None:
+            reason = (
+                f"Model with ID '{payload.modelId}' version "
+                f"'{payload.modelVersion}' not found."
+            )
+            return ConnectionTestOutcome(
+                success=False,
+                message="Connection test failed: problem with the model JSON.",
+                failureCategory=FailureCategory.MODEL_JSON,
+                failureReason=reason,
+                hint="Select a registered model and version.",
+                checks=[ConnectionCheck(name=CheckName.MODEL_JSON, status=CheckStatus.FAILED, message=reason)],
+            )
+
+        return await run_connection_test(
+            endpoint=payload.endpoint,
+            task_type=(model.task or {}).get("type"),
+            model_params=_extract_validation_params(model.inference_endpoint or {}),
+            custom_payload=payload.requestPayload,
+            api_key=payload.authToken or None,
+            expected_response_schema=payload.expectedResponseSchema,
+            timeout=settings.endpoint_validation_timeout_seconds,
+            skip_tls_verify=settings.endpoint_validation_skip_tls_verify,
+            max_poll_attempts=settings.endpoint_validation_max_poll_attempts,
+            max_poll_wait_seconds=settings.endpoint_validation_max_poll_wait_seconds,
+        )
 
     # ── Writes ──
 

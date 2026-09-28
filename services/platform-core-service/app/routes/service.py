@@ -26,6 +26,8 @@ from app.schemas.model_management.service import (
     ListServicesResponse,
     ListTryItServicesResponse,
     ServiceBulkEndpointUpdateRequest,
+    ServiceConnectionTestRequest,
+    ServiceConnectionTestResponse,
     ServiceCreateRequest,
     ServiceListMeta,
     ServicesData,
@@ -261,6 +263,23 @@ async def create_service(
         data=CreateServiceData(serviceId=service_id, name=payload.name),
         meta=MessageMeta(message=f"Service '{payload.name}' created successfully."),
     )
+
+
+@router.post("/test-connection", summary="Test Service Connection (Try it)")
+async def test_service_connection(
+    payload: ServiceConnectionTestRequest,
+    svc: ServiceService = Depends(get_service_service),
+) -> ServiceConnectionTestResponse:
+    """Optionally probe an endpoint from the service-creation form before
+    the service exists. Returns 200 whether or not the probe passed; see
+    ``data.success``, ``data.failureCategory`` (MODEL_JSON / ENDPOINT /
+    PAYLOAD / AUTH / RESPONSE_FORMAT) and ``data.responseBody``.
+
+    Gated by service.create in auth-service's api_permissions.json: this
+    makes outbound requests, so it must never be public.
+    """
+    result = await svc.test_connection(payload)
+    return ServiceConnectionTestResponse(success=True, data=result)
 
 
 @router.patch("", responses=error_responses(400, 404, 409))
