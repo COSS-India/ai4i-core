@@ -121,6 +121,10 @@ const ModelManagementPage: React.FC = () => {
   const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure();
   const cancelConfirmRef = React.useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  /** Model id already applied from `?modelId=` (Create Service Cancel). */
+  const loadedReturnModelIdRef = useRef<string | null>(null);
+  /** Bumped when the user leaves or opens a row, so a late return fetch cannot reopen. */
+  const modelReturnGenRef = useRef(0);
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const isRegistryReadOnly = isRegistryReadOnlyUser(user?.roles);
@@ -156,32 +160,52 @@ const ModelManagementPage: React.FC = () => {
     }
   }, [router.query.tab, isRegistryReadOnly, router, onCreateOpen]);
 
-  // Explicit return from another workflow (Create Service). Not history back.
+  // Explicit return from another workflow (Create Service Cancel). Not history back.
+  // modelId stays in the URL so refresh reopens this model. Row-open views do not use it.
   useEffect(() => {
     const raw = router.query.modelId;
     if (typeof raw !== "string" || !raw) return;
+    if (loadedReturnModelIdRef.current === raw) return;
+    if (!checkSessionExpiry()) return;
+
+    const gen = modelReturnGenRef.current;
+    const queryAtStart = { ...router.query } as Record<string, string>;
+    loadedReturnModelIdRef.current = raw;
+    let settled = false;
     let cancelled = false;
     (async () => {
-      if (!checkSessionExpiry()) return;
       try {
         const model = await getModelById(raw);
-        if (cancelled) return;
+        if (cancelled || gen !== modelReturnGenRef.current) return;
+        settled = true;
         setSelectedModel(model as unknown as Model);
         setIsViewingModel(true);
-        const q = { ...router.query } as Record<string, string>;
-        delete q.modelId;
-        q.tab = "2";
-        router.replace({ pathname: "/model-management", query: q }, undefined, { shallow: true });
+        if (queryAtStart.tab === "2") return;
+        router.replace(
+          {
+            pathname: "/model-management",
+            query: { ...queryAtStart, modelId: raw, tab: "2" },
+          },
+          undefined,
+          { shallow: true },
+        );
       } catch (error) {
-        if (cancelled) return;
+        if (cancelled || gen !== modelReturnGenRef.current) return;
+        settled = true;
+        loadedReturnModelIdRef.current = null;
         const { message } = parseError(error);
         showToast({ type: "error", message });
       }
     })();
     return () => {
       cancelled = true;
+      if (!settled && loadedReturnModelIdRef.current === raw) {
+        loadedReturnModelIdRef.current = null;
+      }
     };
-  }, [router.query.modelId, checkSessionExpiry, router]);
+    // Re-run only when the return id changes. `router` identity must not refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router.query.modelId]);
 
   // Fetch all models for current task/status filters (paginated API walk) for client search + pagination
   const fetchModels = useCallback(async () => {
@@ -567,11 +591,16 @@ const ModelManagementPage: React.FC = () => {
     // Check session expiry before viewing model
     if (!checkSessionExpiry()) return;
 
+    modelReturnGenRef.current += 1;
+    loadedReturnModelIdRef.current = null;
     try {
       const model = await getModelById(modelId);
       setSelectedModel(model as unknown as Model);
       setIsViewingModel(true);
-      router.replace({ pathname: "/model-management", query: { ...router.query, tab: "2" } }, undefined, { shallow: true });
+      const q = { ...router.query } as Record<string, string>;
+      delete q.modelId;
+      q.tab = "2";
+      router.replace({ pathname: "/model-management", query: q }, undefined, { shallow: true });
     } catch (error) {
       const { message } = parseError(error);
       showToast({
@@ -582,10 +611,13 @@ const ModelManagementPage: React.FC = () => {
   };
 
   const closeModelView = () => {
+    modelReturnGenRef.current += 1;
+    loadedReturnModelIdRef.current = null;
     setIsViewingModel(false);
     setSelectedModel(null);
     const q = { ...router.query } as Record<string, string>;
     delete q.tab;
+    delete q.modelId;
     router.replace({ pathname: "/model-management", query: q }, undefined, { shallow: true });
   };
 

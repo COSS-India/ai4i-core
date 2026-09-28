@@ -31,9 +31,7 @@ const ApiKeyManagementPage: React.FC = () => {
     closeCreate();
   };
   const refreshManagedKeysRef = useRef<(() => Promise<void>) | null>(null);
-  const [viewOpen, setViewOpen] = useState(false);
-  const [formHost, setFormHost] = useState<HTMLDivElement | null>(null);
-  const showList = !isCreateOpen && !viewOpen;
+  const showList = !isCreateOpen;
 
   const showApiKeyManagement = userMayManageApiKeys(user?.roles);
 
@@ -76,7 +74,6 @@ const ApiKeyManagementPage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <Box ref={setFormHost} />
         {isCreateOpen ? (
           <FormPage
             title="Create API Key"
@@ -123,8 +120,6 @@ const ApiKeyManagementPage: React.FC = () => {
           />
           <ApiKeyManagementTab
             isActive
-            formHost={formHost}
-            onViewOpenChange={setViewOpen}
             onRegisterRefresh={(refresh) => {
               refreshManagedKeysRef.current = refresh;
             }}

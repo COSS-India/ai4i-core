@@ -1,4 +1,4 @@
-import { Box, VStack } from "@chakra-ui/react";
+import { Box, VStack, type BoxProps } from "@chakra-ui/react";
 import { useRouter } from "next/router";
 import React, { useCallback } from "react";
 import { useAuth } from "../../hooks/useAuth";
@@ -61,6 +61,8 @@ type FormPageProps = {
   actions?: React.ReactNode;
   children: React.ReactNode;
   footer?: React.ReactNode | ((controls: FormPageControls) => React.ReactNode);
+  /** Form measure. The institution detail workspace opts out. */
+  maxW?: BoxProps["maxW"];
 };
 
 /**
@@ -77,6 +79,7 @@ export default function FormPage({
   actions,
   children,
   footer,
+  maxW = "4xl",
 }: FormPageProps) {
   const { user } = useAuth();
   const leave = useFormPageLeave(returnTo, onLeave);
@@ -85,7 +88,7 @@ export default function FormPage({
   const footerNode = typeof footer === "function" ? footer({ leave }) : footer;
 
   return (
-    <Box w="full" maxW="4xl">
+    <Box w="full" maxW={maxW}>
       <ManagementPageHeader
         title={title}
         description={description}

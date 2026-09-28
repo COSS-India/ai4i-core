@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
 import {
   Alert,
   AlertIcon,
@@ -27,7 +26,7 @@ import DataTable, {
 import StandardModal from "../common/StandardModal";
 import CreateButton from "../common/CreateButton";
 import FormActions from "../common/FormActions";
-import FormPage from "../common/FormPage";
+import FormDrawer from "../common/FormDrawer";
 import FormSection from "../common/FormSection";
 import ReadOnlyField from "../common/ReadOnlyField";
 import ApplicationBulkBudgetModal from "./ApplicationBulkBudgetModal";
@@ -108,45 +107,21 @@ function avatarGradient(name: string): string {
   return `linear-gradient(135deg, ${from}, ${to})`;
 }
 
-const APPLICATION_LIST_HREF = "/institution-management";
-
 export default function ApplicationManagementTab({
   tenantId,
   institutionBudget,
   currency = "INR",
-  formHost = null,
-  onFormOpenChange,
 }: {
   tenantId: string;
   institutionBudget: number | null;
   currency?: string;
-  /** Renders Create/Edit/View outside the institution page chrome. */
-  formHost?: HTMLElement | null;
-  onFormOpenChange?: (open: boolean) => void;
 }) {
   const mgr = useApplicationManagement(tenantId, institutionBudget);
   const [boundHint, setBoundHint] = useState<string | null>(null);
 
-  const formOpen = mgr.createOpen || mgr.editOpen || mgr.viewOpen;
-  useEffect(() => {
-    onFormOpenChange?.(formOpen);
-    return () => onFormOpenChange?.(false);
-  }, [formOpen, onFormOpenChange]);
   useEffect(() => {
     if (!mgr.createOpen) setBoundHint(null);
   }, [mgr.createOpen]);
-
-  const closeForms = () => {
-    mgr.setCreateOpen(false);
-    mgr.setEditOpen(false);
-    mgr.setViewOpen(false);
-  };
-
-  const listParent = {
-    label: "Application Management",
-    href: APPLICATION_LIST_HREF,
-    onNavigate: closeForms,
-  };
 
   const appSortAccessors = useMemo(
     () => ({
@@ -298,145 +273,152 @@ export default function ApplicationManagementTab({
       : (createPct / 100) * mgr.tenantBudget;
   const createBudgetError = mgr.formErrors.allocated_percentage || boundHint;
 
-  const formPage = mgr.editOpen ? (
-    <FormPage
-      title={mgr.form.name || mgr.selected?.name || "Edit Application"}
-      description={
-        mgr.selected
-          ? `Update details for ${mgr.selected.name}.`
-          : "Update the application details."
-      }
-      parent={listParent}
-      onLeave={() => mgr.setEditOpen(false)}
-      footer={({ leave }) => (
-        <FormActions
-          cancelLabel="Cancel"
-          submitLabel="Save Changes"
-          onCancel={leave}
-          onSubmit={() => void mgr.handleEdit()}
-          isLoading={mgr.isSaving}
-          loadingText="Saving..."
-          justify="space-between"
-          pt={0}
-        />
-      )}
-    >
-      <ApplicationIdentityFields
-        mode="edit"
-        form={mgr.form}
-        setForm={mgr.setForm}
-        errors={mgr.formErrors}
-        banner={mgr.formBanner}
-      />
-      <Text fontSize="sm" color="ink.500" mt={4}>
-        Budget is managed separately — use Edit Budget on the row or above the list.
-      </Text>
-    </FormPage>
-  ) : mgr.createOpen ? (
-    <FormPage
-      title="Create Application"
-      description="Add an application and set how much of the institution budget it can use."
-      parent={listParent}
-      onLeave={() => mgr.setCreateOpen(false)}
-      footer={({ leave }) => (
-        <FormActions
-          cancelLabel="Cancel"
-          submitLabel="Create Application"
-          onCancel={leave}
-          onSubmit={() => void mgr.handleCreate()}
-          isLoading={mgr.isSaving}
-          loadingText="Creating..."
-          justify="space-between"
-          pt={0}
-        />
-      )}
-    >
-      <ApplicationIdentityFields
-        mode="create"
-        form={mgr.form}
-        setForm={mgr.setForm}
-        errors={mgr.formErrors}
-        banner={mgr.formBanner}
-      />
-      <FormSection title="Budget">
-        <FormControl isInvalid={Boolean(createBudgetError)}>
-          <FieldLabel>Budget allocation</FieldLabel>
-          <PercentageStepper
-            value={mgr.form.allocated_percentage}
-            onChange={(next) => {
-              setBoundHint(null);
-              mgr.setForm((prev) => ({ ...prev, allocated_percentage: next }));
-            }}
-            onBoundHit={(bound) => setBoundHint(percentageBoundMessage(bound))}
-          />
-          <FormErrorMessage>{createBudgetError}</FormErrorMessage>
-          <FieldHint show={!createBudgetError}>
-            {FIELD_HINTS.application.budget.helper} {mgr.remainingPct.toFixed(2)}% remaining.
-            {createPreview != null ? ` ≈ ${formatSpendMoney(createPreview, currency)}` : ""}
-          </FieldHint>
-        </FormControl>
-      </FormSection>
-    </FormPage>
-  ) : mgr.viewOpen && mgr.selected ? (
-    <FormPage
-      title={mgr.selected.name}
-      description="Application details."
-      parent={listParent}
-      onLeave={() => mgr.setViewOpen(false)}
-      actions={
-        <HStack spacing={2} flexShrink={0}>
-          <Badge colorScheme={mgr.selected.status === "ACTIVE" ? "green" : "gray"}>
-            {mgr.selected.status === "ACTIVE" ? "Active" : "Inactive"}
-          </Badge>
-          <Button
-            leftIcon={<FiEdit2 />}
-            size="sm"
-            onClick={() => mgr.openEdit(mgr.selected!)}
-          >
-            Edit
-          </Button>
-        </HStack>
-      }
-      footer={({ leave }) => (
-        <FormActions hideSubmit cancelLabel="Back" onCancel={leave} pt={0} />
-      )}
-    >
-      <ApplicationIdentityFields
-        mode="view"
-        form={{
-          name: mgr.selected.name,
-          description: mgr.selected.description ?? "",
-          domain: mgr.selected.domain ?? "",
-          allocated_percentage: "",
-        }}
-        setForm={() => undefined}
-        errors={{}}
-        banner={null}
-      />
-      <FormSection title="Record">
-        <ReadOnlyField label="Status">
-          <Badge colorScheme={mgr.selected.status === "ACTIVE" ? "green" : "gray"}>
-            {mgr.selected.status === "ACTIVE" ? "Active" : "Inactive"}
-          </Badge>
-        </ReadOnlyField>
-        <ReadOnlyField label="Budget allocation">
-          {formatPct(mgr.selected.allocated_percentage)}
-        </ReadOnlyField>
-        {mgr.selected.allocated_budget != null ? (
-          <ReadOnlyField label="Budget amount">
-            {rupees(mgr.selected.allocated_budget, currency)}
-          </ReadOnlyField>
-        ) : null}
-      </FormSection>
-    </FormPage>
-  ) : null;
-
-  const page = formPage && formHost ? createPortal(formPage, formHost) : formPage;
+  const isEditing = mgr.editOpen;
+  const isCreating = mgr.createOpen;
+  const viewApp = mgr.viewOpen ? mgr.selected : null;
+  const closeDrawer = () => {
+    if ((isEditing || isCreating) && mgr.isSaving) return;
+    if (isEditing) {
+      mgr.setEditOpen(false);
+      return;
+    }
+    if (isCreating) {
+      mgr.setCreateOpen(false);
+      return;
+    }
+    mgr.setViewOpen(false);
+  };
 
   return (
     <>
-      {page}
-      {formPage ? null : (
+      <FormDrawer
+        isOpen={isEditing || isCreating || Boolean(viewApp)}
+        onClose={closeDrawer}
+        title={
+          isEditing
+            ? mgr.form.name || mgr.selected?.name || "Edit Application"
+            : isCreating
+              ? "Create Application"
+              : viewApp?.name || "Application"
+        }
+        description={
+          isEditing
+            ? mgr.selected
+              ? `Update details for ${mgr.selected.name}.`
+              : "Update the application details."
+            : isCreating
+              ? "Add an application and set how much of the institution budget it can use."
+              : "Application details."
+        }
+        footer={
+          isEditing ? (
+            <FormActions
+              cancelLabel="Cancel"
+              submitLabel="Save Changes"
+              onCancel={closeDrawer}
+              onSubmit={() => void mgr.handleEdit()}
+              isLoading={mgr.isSaving}
+              loadingText="Saving..."
+              justify="space-between"
+              pt={0}
+            />
+          ) : isCreating ? (
+            <FormActions
+              cancelLabel="Cancel"
+              submitLabel="Create Application"
+              onCancel={closeDrawer}
+              onSubmit={() => void mgr.handleCreate()}
+              isLoading={mgr.isSaving}
+              loadingText="Creating..."
+              justify="space-between"
+              pt={0}
+            />
+          ) : (
+            <FormActions hideSubmit cancelLabel="Back" onCancel={closeDrawer} pt={0} />
+          )
+        }
+      >
+        {isEditing ? (
+          <>
+            <ApplicationIdentityFields
+              mode="edit"
+              form={mgr.form}
+              setForm={mgr.setForm}
+              errors={mgr.formErrors}
+              banner={mgr.formBanner}
+            />
+            <Text fontSize="sm" color="ink.500" mt={4}>
+              Budget is managed separately — use Edit Budget on the row or above the list.
+            </Text>
+          </>
+        ) : isCreating ? (
+          <>
+            <ApplicationIdentityFields
+              mode="create"
+              form={mgr.form}
+              setForm={mgr.setForm}
+              errors={mgr.formErrors}
+              banner={mgr.formBanner}
+            />
+            <FormSection title="Budget">
+              <FormControl isInvalid={Boolean(createBudgetError)}>
+                <FieldLabel>Budget allocation</FieldLabel>
+                <PercentageStepper
+                  value={mgr.form.allocated_percentage}
+                  onChange={(next) => {
+                    setBoundHint(null);
+                    mgr.setForm((prev) => ({ ...prev, allocated_percentage: next }));
+                  }}
+                  onBoundHit={(bound) => setBoundHint(percentageBoundMessage(bound))}
+                />
+                <FormErrorMessage>{createBudgetError}</FormErrorMessage>
+                <FieldHint show={!createBudgetError}>
+                  {FIELD_HINTS.application.budget.helper} {mgr.remainingPct.toFixed(2)}% remaining.
+                  {createPreview != null ? ` ≈ ${formatSpendMoney(createPreview, currency)}` : ""}
+                </FieldHint>
+              </FormControl>
+            </FormSection>
+          </>
+        ) : viewApp ? (
+          <>
+            <Button
+              leftIcon={<FiEdit2 />}
+              size="sm"
+              mb={4}
+              onClick={() => mgr.openEdit(viewApp)}
+            >
+              Edit
+            </Button>
+            <ApplicationIdentityFields
+              mode="view"
+              form={{
+                name: viewApp.name,
+                description: viewApp.description ?? "",
+                domain: viewApp.domain ?? "",
+                allocated_percentage: "",
+              }}
+              setForm={() => undefined}
+              errors={{}}
+              banner={null}
+            />
+            <FormSection title="Record">
+              <ReadOnlyField label="Status">
+                <Badge colorScheme={viewApp.status === "ACTIVE" ? "green" : "gray"}>
+                  {viewApp.status === "ACTIVE" ? "Active" : "Inactive"}
+                </Badge>
+              </ReadOnlyField>
+              <ReadOnlyField label="Budget allocation">
+                {formatPct(viewApp.allocated_percentage)}
+              </ReadOnlyField>
+              {viewApp.allocated_budget != null ? (
+                <ReadOnlyField label="Budget amount">
+                  {rupees(viewApp.allocated_budget, currency)}
+                </ReadOnlyField>
+              ) : null}
+            </FormSection>
+          </>
+        ) : null}
+      </FormDrawer>
     <VStack align="stretch" spacing={6}>
       <HStack justify="space-between" align="flex-start" spacing={4} flexWrap="wrap">
         <Text fontSize="13.5px" color="ink.600" maxW="540px" lineHeight="1.5">
@@ -652,7 +634,6 @@ export default function ApplicationManagementTab({
         canSave={mgr.bulkCanSave}
       />
     </VStack>
-      )}
     </>
   );
 }

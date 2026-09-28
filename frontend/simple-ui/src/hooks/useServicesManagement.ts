@@ -291,6 +291,12 @@ export function useServicesManagement() {
   };
 
   const router = useRouter();
+  const routerRef = useRef(router);
+  routerRef.current = router;
+  const routerQueryRef = useRef(router.query);
+  routerQueryRef.current = router.query;
+  /** Invalidates in-flight create-entry URL writes after Cancel, breadcrumb, or success. */
+  const createRouteGenRef = useRef(0);
   const queryClient = useQueryClient();
 
   const { checkSessionExpiry } = useSessionExpiry();
@@ -483,11 +489,13 @@ export function useServicesManagement() {
             ? rawReturn
             : null;
         if (dest) {
+          createRouteGenRef.current += 1;
           setCreateReturnTo(null);
           void router.push(dest);
           return;
         }
         if (router.query.tab || router.query.modelId) {
+          createRouteGenRef.current += 1;
           const q = { ...router.query } as Record<string, string>;
           delete q.tab;
           delete q.modelId;
@@ -514,6 +522,7 @@ export function useServicesManagement() {
     }
 
     if (isRegistryReadOnly && (t === "1" || t === "create")) {
+      createRouteGenRef.current += 1;
       setActiveTab(0);
       if (
         router.query.tab ||
@@ -547,65 +556,72 @@ export function useServicesManagement() {
     onCreateOpen,
   ]);
 
-  // Handle query parameters for pre-selecting model from model-management page
+  // Handle query parameters for pre-selecting model from model-management page.
+  // Only `modelId` is removed. `returnTo` and `editServiceId` stay so Cancel and edit deep links survive.
   useEffect(() => {
     if (isRegistryReadOnly) return;
     const { modelId, tab } = router.query;
     if (!modelId || typeof modelId !== "string") return;
+    if ((tab === "create" || tab === "1") && isCreateServiceTabDisabled) return;
+
+    const gen = createRouteGenRef.current;
+    let cancelled = false;
+
+    const stripModelIdFromUrl = () => {
+      if (cancelled || gen !== createRouteGenRef.current) return;
+      if (routerRef.current.pathname !== "/services-management") return;
+      const current = routerQueryRef.current;
+      if (typeof current.modelId !== "string") return;
+      const nextQuery: Record<string, string> = {};
+      for (const [key, value] of Object.entries(current)) {
+        if (key === "modelId" || typeof value !== "string") continue;
+        if (key === "returnTo" && !isFormReturnHref(value)) continue;
+        nextQuery[key] = value;
+      }
+      routerRef.current.replace(
+        { pathname: "/services-management", query: nextQuery },
+        undefined,
+        { shallow: true },
+      );
+    };
 
     const runPreselect = async () => {
-      if (tab === "create" && isCreateServiceTabDisabled) {
-        setActiveTab(0);
-      }
-
-      const stripModelIdFromUrl = () => {
-        const nextQuery: Record<string, string> = {};
-        const currentTab = router.query.tab;
-        const currentReturn = router.query.returnTo;
-        if (typeof currentTab === "string") {
-          nextQuery.tab = currentTab;
-        }
-        if (typeof currentReturn === "string" && isFormReturnHref(currentReturn)) {
-          nextQuery.returnTo = currentReturn;
-        }
-        router.replace(
-          { pathname: "/services-management", query: nextQuery },
-          undefined,
-          { shallow: true },
-        );
-      };
-
       const inActiveList = models.some(
         (m) => (m.modelId || m.model_id) === modelId,
       );
-      if (inActiveList && formData.modelId !== modelId) {
-        handleModelNameChange(modelId);
+      if (inActiveList) {
+        if (formData.modelId !== modelId) {
+          handleModelNameChange(modelId);
+        }
         stripModelIdFromUrl();
         return;
       }
 
       // Model not in active list - only add to dropdown if not deprecated (deprecated models must not appear in Create Service)
-      if (!inActiveList) {
-        try {
-          const modelDetails = await getModelById(modelId);
-          const isDeprecated =
-            modelDetails?.versionStatus?.toLowerCase() === "deprecated";
-          if (modelDetails && !isDeprecated) {
-            setPreselectedModelFromQuery(modelDetails);
-            if (formData.modelId !== modelId) {
-              handleModelNameChange(modelId);
-            }
+      try {
+        const modelDetails = await getModelById(modelId);
+        if (cancelled || gen !== createRouteGenRef.current) return;
+        const isDeprecated =
+          modelDetails?.versionStatus?.toLowerCase() === "deprecated";
+        if (modelDetails && !isDeprecated) {
+          setPreselectedModelFromQuery(modelDetails);
+          if (formData.modelId !== modelId) {
+            handleModelNameChange(modelId);
           }
-        } catch (e) {
-          console.error("Failed to load preselected model:", e);
         }
-        stripModelIdFromUrl();
+      } catch (e) {
+        if (cancelled || gen !== createRouteGenRef.current) return;
+        console.error("Failed to load preselected model:", e);
       }
+      stripModelIdFromUrl();
     };
 
     if (models.length > 0) {
-      runPreselect();
+      void runPreselect();
     }
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router.query, models, isCreateServiceTabDisabled]);
 
@@ -786,6 +802,7 @@ export function useServicesManagement() {
 
   const openCreateModal = () => {
     if (isRegistryReadOnly || isCreateServiceTabDisabled) return;
+    createRouteGenRef.current += 1;
     setCreateReturnTo(null);
     setEditingService(null);
     resetCreateForm();
@@ -804,6 +821,7 @@ export function useServicesManagement() {
   }, [router]);
 
   const releaseCreateForm = () => {
+    createRouteGenRef.current += 1;
     setCreateReturnTo(null);
     resetCreateForm();
     onCreateClose();
@@ -931,6 +949,7 @@ export function useServicesManagement() {
       }
 
       invalidateServiceQueries();
+      createRouteGenRef.current += 1;
       setEditingService(null);
       resetCreateForm();
       setCreateReturnTo(null);
