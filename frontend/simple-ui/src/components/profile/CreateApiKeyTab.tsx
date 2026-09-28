@@ -37,8 +37,6 @@ export interface CreateApiKeyTabProps {
   hideActions?: boolean;
   formId?: string;
   onCreatingChange?: (creating: boolean) => void;
-  /** True while the one-time API key token is on screen. */
-  onCreatedTokenChange?: (visible: boolean) => void;
 }
 
 export default function CreateApiKeyTab({
@@ -48,7 +46,6 @@ export default function CreateApiKeyTab({
   hideActions = false,
   formId,
   onCreatingChange,
-  onCreatedTokenChange,
 }: CreateApiKeyTabProps) {
   const create = useCreateApiKeyTab({ tenantId, onApiKeyCreated });
   const { copy } = useCopyToClipboard();
@@ -57,10 +54,6 @@ export default function CreateApiKeyTab({
   React.useEffect(() => {
     onCreatingChange?.(create.isCreating);
   }, [create.isCreating, onCreatingChange]);
-
-  React.useEffect(() => {
-    onCreatedTokenChange?.(Boolean(create.createdApiKeyToken));
-  }, [create.createdApiKeyToken, onCreatedTokenChange]);
 
   const isLoading = create.isLoadingPermissions || create.isLoadingApplications;
   const budgetError = create.fieldErrors.budget || budgetBoundHint;
@@ -184,7 +177,6 @@ export default function CreateApiKeyTab({
                   <Box mb={3} pb={3} borderBottomWidth="1px">
                     <HStack justify="space-between" align="center">
                       <Checkbox
-                        isRequired={false}
                         isChecked={
                           create.selectedPermissions.length === create.permissions.length &&
                           create.permissions.length > 0

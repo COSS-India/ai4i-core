@@ -2,7 +2,7 @@
 // (Service Registry / Create-Edit Service / View Service tabs).
 import { useDisclosure } from "@chakra-ui/react";
 import { useRouter } from "next/router";
-import { isFormReturnHref } from "../components/common/FormPage";
+import { safeFormReturnHref } from "../components/common/FormPage";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDeferredColumnSort } from "../utils/tableSort";
@@ -485,9 +485,7 @@ export function useServicesManagement() {
         setActiveTab(0);
         const rawReturn = router.query.returnTo;
         const dest =
-          typeof rawReturn === "string" && isFormReturnHref(rawReturn)
-            ? rawReturn
-            : null;
+          typeof rawReturn === "string" ? safeFormReturnHref(rawReturn) : null;
         if (dest) {
           createRouteGenRef.current += 1;
           setCreateReturnTo(null);
@@ -575,7 +573,12 @@ export function useServicesManagement() {
       const nextQuery: Record<string, string> = {};
       for (const [key, value] of Object.entries(current)) {
         if (key === "modelId" || typeof value !== "string") continue;
-        if (key === "returnTo" && !isFormReturnHref(value)) continue;
+        if (key === "returnTo") {
+          const path = safeFormReturnHref(value);
+          if (!path) continue;
+          nextQuery[key] = path;
+          continue;
+        }
         nextQuery[key] = value;
       }
       routerRef.current.replace(
@@ -834,8 +837,10 @@ export function useServicesManagement() {
 
   useEffect(() => {
     const raw = router.query.returnTo;
-    if (typeof raw !== "string" || !isFormReturnHref(raw)) return;
-    setCreateReturnTo(raw);
+    if (typeof raw !== "string") return;
+    const path = safeFormReturnHref(raw);
+    if (!path) return;
+    setCreateReturnTo(path);
   }, [router.query.returnTo]);
 
   const handleSubmit = async (e: React.FormEvent) => {

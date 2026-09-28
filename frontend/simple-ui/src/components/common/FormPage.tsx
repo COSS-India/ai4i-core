@@ -18,9 +18,20 @@ export type FormPageReturnTo = {
   href: string;
 };
 
-/** In-app path only. Rejects protocol-relative and absolute URLs. */
-export function isFormReturnHref(href: string): boolean {
-  return href.startsWith("/") && !href.startsWith("//") && !href.includes("://");
+/**
+ * Same-origin path for Cancel/Back (`pathname + search + hash`).
+ * Resolves against this origin so control characters and protocol-relative
+ * values cannot leave the app. Returns null when the target is external.
+ */
+export function safeFormReturnHref(href: string): string | null {
+  if (typeof window === "undefined" || !href.trim()) return null;
+  try {
+    const url = new URL(href, window.location.origin);
+    if (url.origin !== window.location.origin) return null;
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -35,8 +46,9 @@ export function useFormPageLeave(
   return useCallback(() => {
     const href = returnTo?.href;
     onLeave?.();
-    if (href && isFormReturnHref(href)) {
-      void router.push(href);
+    const path = href ? safeFormReturnHref(href) : null;
+    if (path) {
+      void router.push(path);
     }
   }, [onLeave, returnTo?.href, router]);
 }
