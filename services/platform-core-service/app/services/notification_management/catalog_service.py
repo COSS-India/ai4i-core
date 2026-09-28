@@ -12,13 +12,16 @@ environments).
 import logging
 from typing import Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import EntityNotFoundError, ValidationError
 from app.core.redis import get_redis_client
 from app.models.notification_management.config_notification_alert import (
     ConfigNotificationAlert,
+)
+from app.models.notification_management.tenant_notification_subscription import (
+    TenantNotificationSubscription,
 )
 from app.schemas.enums.notification_management import (
     NotificationName,
@@ -194,7 +197,14 @@ async def update_catalog(
     is different — it's a wholesale replacement of the whole
     THRESHOLD_BAND_COUNT-length list, since a band's ``percentage`` is
     itself editable and bands have no other stable key to merge a partial
-    update against."""
+    update against.
+
+    A ``scope`` PATCH that transitions GLOBAL -> INSTITUTION also resets
+    every tenant's stored ``tenant_notification_subscription.subscribed``
+    to False, unconditionally — an institution must actively re-subscribe
+    after that flip, regardless of what its stored bit was before (per the
+    design's Scenario 1/3). Recipients are left untouched. A no-op PATCH
+    that resends the row's current scope does not trigger this."""
     # Validate against the enum in Python before it ever reaches the query:
     # `name` is arbitrary path-param text, and comparing a non-member string
     # to a Postgres ENUM column raises an invalid-input-value DB error (a
@@ -217,8 +227,30 @@ async def update_catalog(
             code="INVALID_THRESHOLDS",
         )
 
+    previous_scope = row.scope
     if payload.scope is not None:
         row.scope = payload.scope.value
+
+    # Entering INSTITUTION scope (from GLOBAL) always resets every tenant
+    # back to Unsubscribed, unconditionally — regardless of what any
+    # tenant's stored bit was before (including from an earlier stint as
+    # GLOBAL, or the original seed). Recipients are untouched: nothing
+    # about this transition clears who an institution had already added.
+    # A no-op PATCH that merely resends the row's current scope (old ==
+    # new) does NOT reset anything — this only fires on an actual flip.
+    if (
+        payload.scope is not None
+        and payload.scope.value == NotificationScope.INSTITUTION.value
+        and previous_scope != NotificationScope.INSTITUTION.value
+    ):
+        reset_values = {"subscribed": False}
+        if updated_by is not None:
+            reset_values["updated_by"] = updated_by
+        await session.execute(
+            update(TenantNotificationSubscription)
+            .where(TenantNotificationSubscription.notification_id == row.id)
+            .values(**reset_values)
+        )
 
     if payload.recipient_roles is not None:
         merged = _merged_bool_dict(row.recipient_roles or {}, payload.recipient_roles)
