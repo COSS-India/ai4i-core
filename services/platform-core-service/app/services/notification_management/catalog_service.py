@@ -25,7 +25,12 @@ from app.schemas.enums.notification_management import (
     NotificationScope,
     NotificationType,
 )
-from app.schemas.notification_management.catalog import CatalogItem, CatalogUpdate, ThresholdBand
+from app.schemas.notification_management.catalog import (
+    CatalogItem,
+    CatalogUpdate,
+    MonitoringThresholdBand,
+    ThresholdBand,
+)
 from app.services.notification_management.catalog_metadata import (
     LEGAL_RECIPIENT_ROLES,
     MAX_THRESHOLD_PERCENT,
@@ -61,6 +66,10 @@ def _parse_thresholds(raw) -> List[ThresholdBand]:
     return [ThresholdBand(**band) for band in raw]
 
 
+def _parse_monitoring_thresholds(raw) -> List[MonitoringThresholdBand]:
+    return [MonitoringThresholdBand(**band) for band in raw or []]
+
+
 def _apply_admin_recipient_scope_invariant(
     recipient_roles: Dict[str, bool], scope: str
 ) -> Dict[str, bool]:
@@ -89,6 +98,7 @@ def _apply_admin_recipient_scope_invariant(
 def _to_catalog_item(row: ConfigNotificationAlert) -> CatalogItem:
     meta = NOTIFICATION_METADATA.get(row.name)
     is_alert = row.type == NotificationType.ALERT.value
+    is_monitoring = row.type == NotificationType.MONITORING.value
     return CatalogItem(
         id=row.id,
         name=row.name,
@@ -106,6 +116,11 @@ def _to_catalog_item(row: ConfigNotificationAlert) -> CatalogItem:
         thresholds=(
             _parse_thresholds((row.config or {}).get("thresholds"))
             if is_alert
+            else None
+        ),
+        monitoring_thresholds=(
+            _parse_monitoring_thresholds((row.config or {}).get("monitoring_thresholds"))
+            if is_monitoring
             else None
         ),
     )
@@ -131,8 +146,8 @@ def _merged_bool_dict(existing: Dict[str, bool], incoming: Dict[str, bool]) -> D
 
 
 def _validate_recipient_roles(name: str, recipient_roles: Dict[str, bool]) -> None:
-    # All 9 catalog rows — NOTIFICATION and ALERT alike — are restricted to
-    # ADMIN / TENANT ADMIN (design 6.1).
+    # NOTIFICATION and ALERT rows are restricted to ADMIN / TENANT ADMIN
+    # (design 6.1); MONITORING rows to ADMIN / MODERATOR.
     legal_roles = LEGAL_RECIPIENT_ROLES[NotificationName(name)]
     illegal = set(recipient_roles) - legal_roles
     if illegal:

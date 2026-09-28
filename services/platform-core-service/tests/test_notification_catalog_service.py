@@ -459,3 +459,55 @@ class TestUpdateCatalogAdminScopeInvariant:
         item = await svc.update_catalog(session, row.name, CatalogUpdate(channels=["EMAIL"]))
         assert row.recipient_roles["ADMIN"] is True
         assert item.recipient_roles["ADMIN"] is True
+
+
+# ── MONITORING rows ──────────────────────────────────────────────────────────
+
+
+def _monitoring_row(name="LATENCY_P95", bands=((2, False), (5, True), (10, False)), unit="SECONDS"):
+    return _row(
+        id=10, name=name, type="MONITORING", module="MONITORING", scope="GLOBAL",
+        recipient_roles={"ADMIN": True, "MODERATOR": False},
+        config={"monitoring_thresholds": [
+            {"value": v, "unit": unit, "active": a} for v, a in bands
+        ]},
+    )
+
+
+def test_non_monitoring_rows_omit_monitoring_thresholds():
+    item = svc._to_catalog_item(_row(type="ALERT", config={"thresholds": []}))
+    assert item.monitoring_thresholds is None
+
+
+@pytest.mark.asyncio
+class TestMonitoringCatalog:
+    async def test_monitoring_filter_returns_only_monitoring_rows(self):
+        rows = [
+            _row(id=1, name="QUOTA_THRESHOLD", type="ALERT", config={"thresholds": []}),
+            _monitoring_row(),
+        ]
+        items = await svc.list_catalog(_Session(rows=rows), NotificationType.MONITORING)
+        assert [i.name for i in items] == ["LATENCY_P95"]
+
+    async def test_monitoring_row_carries_monitoring_thresholds_not_thresholds(self):
+        item = (await svc.list_catalog(_Session(rows=[_monitoring_row()]), NotificationType.MONITORING))[0]
+        assert item.thresholds is None
+        assert [(b.value, b.unit.value, b.active) for b in item.monitoring_thresholds] == [
+            (2, "SECONDS", False), (5, "SECONDS", True), (10, "SECONDS", False),
+        ]
+        assert item.display_name == "P95 Latency"
+        assert item.recipient_roles == {"ADMIN": True, "MODERATOR": False}
+
+    async def test_moderator_is_a_legal_recipient_for_a_monitoring_row(self):
+        row = _monitoring_row(name="ERROR_RATE_4XX", bands=((1, False),), unit="PERCENT")
+        item = await svc.update_catalog(
+            _Session(found=row), row.name, CatalogUpdate(recipient_roles={"MODERATOR": True})
+        )
+        assert item.recipient_roles == {"ADMIN": True, "MODERATOR": True}
+
+    async def test_tenant_admin_is_rejected_for_a_monitoring_row(self):
+        row = _monitoring_row()
+        with pytest.raises(ValidationError):
+            await svc.update_catalog(
+                _Session(found=row), row.name, CatalogUpdate(recipient_roles={"TENANT ADMIN": True})
+            )

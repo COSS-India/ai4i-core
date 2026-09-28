@@ -1,9 +1,10 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
-from pydantic import BaseModel, StrictBool, field_validator
+from pydantic import BaseModel, StrictBool, StrictFloat, StrictInt, field_validator
 
 from app.schemas.common import MessageMeta, SuccessResponse, SuccessResponseWithMeta
 from app.schemas.enums.notification_management import (
+    MonitoringThresholdUnit,
     NotificationChannel,
     NotificationModule,
     NotificationScope,
@@ -23,6 +24,21 @@ class ThresholdBand(BaseModel):
     percentage: int
     # Strict: pydantic's default lax bool coercion would otherwise accept
     # "true"/"false" (string) and silently coerce them instead of 422ing.
+    active: StrictBool
+
+
+class MonitoringThresholdBand(BaseModel):
+    """One configurable band on a MONITORING row: the value it fires at
+    (``>=``), its unit (PERCENT for error rates, SECONDS for latencies) and
+    whether it's currently turned on. Stored under
+    ``config.monitoring_thresholds`` — kept off ``config.thresholds`` so
+    readers of the metering band shape never see it (see
+    a2b4d6f8c0e3_seed_monitoring_alert_catalog)."""
+
+    # Strict so a string ("5") or a bool (True is an int) 422s instead of
+    # being silently coerced — same reasoning as ``active`` below.
+    value: Union[StrictInt, StrictFloat]
+    unit: MonitoringThresholdUnit
     active: StrictBool
 
 
@@ -56,6 +72,8 @@ class CatalogItem(BaseModel):
     recipient_roles: Dict[str, bool]
     scope: NotificationScope
     thresholds: Optional[List[ThresholdBand]] = None
+    # MONITORING rows only; None (dropped from the response) otherwise.
+    monitoring_thresholds: Optional[List[MonitoringThresholdBand]] = None
 
 
 class CatalogResponse(BaseModel):
@@ -100,11 +118,35 @@ class CatalogUpdate(BaseModel):
         return v
 
 
+class MonitoringCatalogUpdate(BaseModel):
+    """PATCH /notification-alerts/monitoring-catalog/{name} body. Every field
+    optional — only the fields present are changed. No ``scope`` (monitoring
+    alerts are platform-level, never per-institution) and no ``channels``
+    (Email is the only delivery channel).
+
+    ``recipient_roles`` is a partial-update dict over ADMIN / MODERATOR —
+    only the key(s) that changed need sending. Whenever it's present the
+    row's resolved recipients (monitoring_alert_recipient) are rebuilt from
+    every user currently holding a selected role.
+
+    ``monitoring_thresholds``, when present, must be the complete set of
+    bands, same wholesale-replace semantics as CatalogUpdate.thresholds."""
+
+    recipient_roles: Optional[Dict[str, StrictBool]] = None
+    monitoring_thresholds: Optional[List[MonitoringThresholdBand]] = None
+
+
+class MonitoringCatalogItem(CatalogItem):
+    """A MONITORING catalog row plus its resolved recipient user ids."""
+
+    recipients: List[str]
+
+
 # ── Route response envelopes — ``{"success": true, "data": ...}`` ──
 
 
 class ListCatalogResponse(SuccessResponse):
-    """GET /notification-alerts/catalog?type=NOTIFICATION|ALERT"""
+    """GET /notification-alerts/catalog?type=NOTIFICATION|ALERT|MONITORING"""
 
     data: CatalogResponse
 
@@ -113,4 +155,11 @@ class UpdateCatalogResponse(SuccessResponseWithMeta):
     """PATCH /notification-alerts/catalog/{name}"""
 
     data: CatalogItem
+    meta: MessageMeta
+
+
+class UpdateMonitoringCatalogResponse(SuccessResponseWithMeta):
+    """PATCH /notification-alerts/monitoring-catalog/{name}"""
+
+    data: MonitoringCatalogItem
     meta: MessageMeta

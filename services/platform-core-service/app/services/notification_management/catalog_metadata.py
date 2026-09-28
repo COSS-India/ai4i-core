@@ -11,7 +11,8 @@ Notifications" ticket: description from its Trigger column, detail_line
 from its Notification Details column (placeholders renamed to the field
 names the payload/context actually uses). Copy for the 2 ALERT-type rows
 (QUOTA_THRESHOLD, BUDGET_THRESHOLD) follows the "Define Alerts" ticket and
-the design's section 6.3 payload-keys table the same way.
+the design's section 6.3 payload-keys table the same way. Copy for the 5
+MONITORING-type rows follows the "Define Monitoring Alerts" ticket / design.
 
 Not shared via libs/ai4i_core: that package is pulled from PyPI in both
 services' requirements.txt (not an editable/local install), so landing this
@@ -102,20 +103,63 @@ NOTIFICATION_METADATA: dict[NotificationName, NotificationMetadata] = {
         module=NotificationModule.BUDGET,
         detail_line="Budget at {percent}% ({observed} of {limit})",
     ),
+    # ── MONITORING-type rows (the monitoring alert catalog) ──
+    NotificationName.ERROR_RATE_4XX: NotificationMetadata(
+        display_name="4xx Error Rate",
+        description="Fires when 4xx error rate crosses the configured threshold.",
+        module=NotificationModule.MONITORING,
+        detail_line="4xx Error Rate at {observed}% (threshold {threshold}%)",
+    ),
+    NotificationName.ERROR_RATE_5XX: NotificationMetadata(
+        display_name="5xx Error Rate",
+        description="Fires when 5xx error rate crosses the configured threshold.",
+        module=NotificationModule.MONITORING,
+        detail_line="5xx Error Rate at {observed}% (threshold {threshold}%)",
+    ),
+    NotificationName.LATENCY_P50: NotificationMetadata(
+        display_name="P50 Latency",
+        description="Fires when P50 latency crosses the configured threshold.",
+        module=NotificationModule.MONITORING,
+        detail_line="P50 Latency at {observed}s (threshold {threshold}s)",
+    ),
+    NotificationName.LATENCY_P95: NotificationMetadata(
+        display_name="P95 Latency",
+        description="Fires when P95 latency crosses the configured threshold.",
+        module=NotificationModule.MONITORING,
+        detail_line="P95 Latency at {observed}s (threshold {threshold}s)",
+    ),
+    NotificationName.LATENCY_P99: NotificationMetadata(
+        display_name="P99 Latency",
+        description="Fires when P99 latency crosses the configured threshold.",
+        module=NotificationModule.MONITORING,
+        detail_line="P99 Latency at {observed}s (threshold {threshold}s)",
+    ),
 }
 
 
 # ── Catalog PATCH validation (code-side, per the design's 6.1 "Legal
 # recipient roles per notification" table) ──
 
-#: Legal ``recipient_roles`` keys per catalog name — NOTIFICATION and ALERT
-#: rows alike, all 9 restricted to ADMIN / TENANT ADMIN. Gate 4 of the send
+#: Legal ``recipient_roles`` keys per catalog name. The 9 NOTIFICATION and
+#: ALERT rows are restricted to ADMIN / TENANT ADMIN. Gate 4 of the send
 #: gate validates against this at runtime; the catalog PATCH enforces the
-#: same set on write, per the design ("Enforced by the API").
+#: same set on write, per the design ("Enforced by the API"). The 5
+#: MONITORING rows follow their own recipient model: Adopter Admin and/or
+#: Moderator ("Define Monitoring Alerts" ticket).
 _ADMIN_AND_TENANT_ADMIN = frozenset({"TENANT ADMIN", "ADMIN"})
+_ADMIN_AND_MODERATOR = frozenset({"ADMIN", "MODERATOR"})
+
+MONITORING_ALERT_NAMES = frozenset({
+    NotificationName.ERROR_RATE_4XX,
+    NotificationName.ERROR_RATE_5XX,
+    NotificationName.LATENCY_P50,
+    NotificationName.LATENCY_P95,
+    NotificationName.LATENCY_P99,
+})
 
 LEGAL_RECIPIENT_ROLES: dict[NotificationName, frozenset[str]] = {
-    name: _ADMIN_AND_TENANT_ADMIN for name in NotificationName
+    name: _ADMIN_AND_MODERATOR if name in MONITORING_ALERT_NAMES else _ADMIN_AND_TENANT_ADMIN
+    for name in NotificationName
 }
 
 #: ``thresholds`` bands: whole percents 1-99, exactly 3 bands (no more, no
