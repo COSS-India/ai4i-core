@@ -74,6 +74,10 @@ class _Session:
         self.found = found
         self.commits = 0
         self.refreshed = []
+        # Each entry: {"notification_id": ..., "subscribed": ..., "updated_by": ...}
+        # — the bulk tenant_notification_subscription reset UPDATE issued on
+        # a GLOBAL -> INSTITUTION scope flip.
+        self.subscription_resets = []
 
     async def execute(self, stmt):
         # Honour the statement's actual WHERE value rather than always
@@ -90,6 +94,12 @@ class _Session:
         elif "name_1" in params:
             found = self.found if self.found is not None and self.found.name == params["name_1"] else None
             result.scalar_one_or_none.return_value = found
+        elif "subscribed" in params:
+            self.subscription_resets.append({
+                "notification_id": params.get("notification_id_1"),
+                "subscribed": params["subscribed"],
+                "updated_by": params.get("updated_by"),
+            })
         else:
             raise AssertionError(f"fake _Session.execute doesn't recognize this query: {stmt}")
         return result
@@ -459,3 +469,92 @@ class TestUpdateCatalogAdminScopeInvariant:
         item = await svc.update_catalog(session, row.name, CatalogUpdate(channels=["EMAIL"]))
         assert row.recipient_roles["ADMIN"] is True
         assert item.recipient_roles["ADMIN"] is True
+
+
+# ── update_catalog: GLOBAL -> INSTITUTION resets every tenant's subscription ──
+
+
+@pytest.mark.asyncio
+class TestScopeTransitionResetsTenantSubscriptions:
+    """Scenario 1 (Global -> Institution) and Scenario 3 (Institution ->
+    Global -> reverted back to Institution) from the design doc: entering
+    INSTITUTION scope must force every tenant back to Unsubscribed,
+    unconditionally — regardless of whatever a tenant's stored
+    tenant_notification_subscription.subscribed bit already was (including
+    a stale `true` left over from before an earlier stint as GLOBAL, or
+    the original seed). Recipients are never touched by this."""
+
+    async def test_scenario_1_global_to_institution_resets_every_tenant(self):
+        row = _row(id=7, name="TIER_ASSIGNED", type="NOTIFICATION", scope="GLOBAL")
+        session = _Session(found=row)
+
+        await svc.update_catalog(session, row.name, CatalogUpdate(scope="INSTITUTION"))
+
+        assert len(session.subscription_resets) == 1
+        reset = session.subscription_resets[0]
+        assert reset["notification_id"] == 7
+        assert reset["subscribed"] is False
+        # Only `subscribed` is touched — recipients survive untouched, per
+        # the design ("Any recipients they'd added stay intact").
+        assert set(reset.keys()) - {"notification_id"} == {"subscribed", "updated_by"}
+
+    async def test_scenario_3_institution_global_reverted_resets_regardless_of_prior_state(self):
+        # The row is currently GLOBAL (Scenario 2 already happened) — its
+        # stored bit could be anything at this point (Scenario 2 doesn't
+        # touch it either); reverting to INSTITUTION must reset to
+        # Unsubscribed regardless of what that stored value is.
+        row = _row(id=7, name="TIER_ASSIGNED", type="NOTIFICATION", scope="GLOBAL")
+        session = _Session(found=row)
+
+        await svc.update_catalog(session, row.name, CatalogUpdate(scope="INSTITUTION"))
+
+        assert len(session.subscription_resets) == 1
+        assert session.subscription_resets[0]["subscribed"] is False
+
+    async def test_institution_to_global_does_not_reset(self):
+        # The opposite direction — Institution -> Global — must NOT reset
+        # anything: Scenario 2 requires the institution's prior state
+        # (including any recipients) to survive untouched underneath the
+        # GLOBAL override.
+        row = _row(id=7, name="TIER_ASSIGNED", type="NOTIFICATION", scope="INSTITUTION")
+        session = _Session(found=row)
+
+        await svc.update_catalog(session, row.name, CatalogUpdate(scope="GLOBAL"))
+
+        assert session.subscription_resets == []
+
+    async def test_resending_the_same_institution_scope_does_not_reset(self):
+        # A no-op PATCH that merely re-affirms the row's current scope is
+        # not a transition — must not silently unsubscribe every tenant.
+        row = _row(id=7, name="TIER_ASSIGNED", type="NOTIFICATION", scope="INSTITUTION")
+        session = _Session(found=row)
+
+        await svc.update_catalog(session, row.name, CatalogUpdate(scope="INSTITUTION"))
+
+        assert session.subscription_resets == []
+
+    async def test_a_patch_that_does_not_touch_scope_does_not_reset(self):
+        row = _row(id=7, name="TIER_ASSIGNED", type="NOTIFICATION", scope="INSTITUTION")
+        session = _Session(found=row)
+
+        await svc.update_catalog(session, row.name, CatalogUpdate(channels=["EMAIL"]))
+
+        assert session.subscription_resets == []
+
+    async def test_reset_is_scoped_to_this_notification_id_only(self):
+        row = _row(id=42, name="BUDGET_ASSIGNED", type="NOTIFICATION", scope="GLOBAL")
+        session = _Session(found=row)
+
+        await svc.update_catalog(session, row.name, CatalogUpdate(scope="INSTITUTION"))
+
+        assert session.subscription_resets[0]["notification_id"] == 42
+
+    async def test_updated_by_is_recorded_on_the_reset_when_given(self):
+        row = _row(id=7, name="TIER_ASSIGNED", type="NOTIFICATION", scope="GLOBAL")
+        session = _Session(found=row)
+
+        await svc.update_catalog(
+            session, row.name, CatalogUpdate(scope="INSTITUTION"), updated_by="adopter-admin-1"
+        )
+
+        assert session.subscription_resets[0]["updated_by"] == "adopter-admin-1"
