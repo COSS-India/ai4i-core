@@ -131,7 +131,7 @@ async def test_prometheus_failure_writes_a_throttled_source_row(monkeypatch):
     assert runtime.failures.record.await_args.kwargs["throttle_s"] == ev.SOURCE_FAILURE_THROTTLE_S
 
 
-def test_details_are_the_positional_monitoring_values():
+def test_details_follow_the_consumer_template_contract():
     from datetime import datetime, timezone
 
     context = SimpleNamespace(
@@ -140,7 +140,7 @@ def test_details_are_the_positional_monitoring_values():
         band=SimpleNamespace(value=Decimal("5"), severity=SimpleNamespace(value="WARNING")),
         occurred_at=datetime(2026, 9, 28, 10, 15, tzinfo=timezone.utc),
     )
-    assert ev._details(context) == ["svc-a", "6.25%", "5%", "WARNING", "5m", "28 Sep 2026, 03:45 PM IST"]
+    assert ev._details(context) == ["5", "28 Sep 2026, 03:45 PM IST", "6.25"]
 
 
 @pytest.mark.asyncio
@@ -170,3 +170,9 @@ async def test_source_rows_name_the_promql(monkeypatch):
         await ev.run_tick(c)
 
     assert runtime.failures.record.await_args.kwargs["message"].startswith("L-0.99: ")
+
+
+def test_lock_expires_just_before_the_next_tick():
+    assert ev.lock_ttl_ms(60) == 55000
+    assert ev.lock_ttl_ms(20) == 15000
+    assert ev.lock_ttl_ms(3) == 1000

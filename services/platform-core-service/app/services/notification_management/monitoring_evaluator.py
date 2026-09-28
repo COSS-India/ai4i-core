@@ -49,8 +49,14 @@ logger = logging.getLogger(__name__)
 
 #: K5 — held by the pod that runs the current tick.
 MONITOR_EVAL_LOCK_KEY = f"{ntf.REDIS_KEY_PREFIX}lock:monitor-eval"
-#: Just under the 60 s tick, so the next tick is free.
-MONITOR_EVAL_LOCK_TTL_MS = 55000
+#: The lock expires this long before the next tick, so the next tick is free
+#: (55 s for the default 60 s interval).
+MONITOR_EVAL_LOCK_MARGIN_MS = 5000
+MONITOR_EVAL_LOCK_MIN_TTL_MS = 1000
+
+
+def lock_ttl_ms(interval_s: int) -> int:
+    return max(interval_s * 1000 - MONITOR_EVAL_LOCK_MARGIN_MS, MONITOR_EVAL_LOCK_MIN_TTL_MS)
 #: At most this long for the whole tick; each Prometheus call gets QUERY_TIMEOUT_S.
 TICK_BUDGET_S = 45
 QUERY_TIMEOUT_S = 10
@@ -114,22 +120,20 @@ PROMQL_NAMES = {
 }
 
 
-def _display(value, unit: ThresholdUnit) -> str:
-    number = float(value)
-    text = f"{number:.2f}".rstrip("0").rstrip(".")
-    return f"{text}%" if unit is ThresholdUnit.PERCENT else f"{text}s"
+def _bare(value) -> str:
+    """A display number without unit: the template appends % or s."""
+    text = f"{float(value):.2f}".rstrip("0").rstrip(".")
+    return text or "0"
 
 
 def _details(context: FireContext) -> List[str]:
-    """[service_id, observed_display, threshold_display, severity, window, evaluated_at_ist]"""
-    unit = context.observed.unit
+    """The consumer's monitoring template contract, same shape as the usage
+    alerts: [threshold, alert_datetime_ist, current_value]. The service id
+    and severity travel in the envelope's subject and severity."""
     return [
-        context.subject["service_id"],
-        _display(context.observed.value, unit),
-        _display(context.band.value, unit),
-        context.band.severity.value,
-        settings.monitoring_window,
+        _bare(context.band.value),
         context.occurred_at.astimezone(IST).strftime("%d %b %Y, %I:%M %p IST"),
+        _bare(context.observed.value),
     ]
 
 
@@ -169,7 +173,9 @@ async def _query(client: httpx.AsyncClient, promql: str) -> Dict[str, float]:
 
 async def _try_lock(redis) -> bool:
     token = f"{get_notification_runtime().origin}:{uuid.uuid4()}"
-    return bool(await redis.set(MONITOR_EVAL_LOCK_KEY, token, nx=True, px=MONITOR_EVAL_LOCK_TTL_MS))
+    return bool(
+        await redis.set(MONITOR_EVAL_LOCK_KEY, token, nx=True, px=lock_ttl_ms(settings.monitoring_eval_interval_s))
+    )
 
 
 async def run_tick(client: httpx.AsyncClient) -> List[uuid.UUID]:
