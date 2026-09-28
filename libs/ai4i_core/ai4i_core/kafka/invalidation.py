@@ -123,8 +123,14 @@ class InvalidationListener:
                 self._on_drop_all()
                 backoff = c.LISTENER_RECONNECT_MIN_S
                 logger.info("Notification invalidation listener subscribed to %s", c.INVALIDATION_CHANNEL)
-                async for item in pubsub.listen():
-                    if item.get("type") == "message":
+                # Short polls, not listen(): a shared client's socket_timeout
+                # would end a blocking read on a quiet channel and force a
+                # reconnect (and an L1 drop) every few seconds.
+                while True:
+                    item = await pubsub.get_message(
+                        ignore_subscribe_messages=True, timeout=c.LISTENER_POLL_TIMEOUT_S
+                    )
+                    if item is not None and item.get("type") == "message":
                         self.handle(item.get("data"))
             except asyncio.CancelledError:
                 raise

@@ -270,6 +270,8 @@ STALE_SETTINGS_MAX_AGE_S = 3600
 
 LISTENER_RECONNECT_MIN_S = 1
 LISTENER_RECONNECT_MAX_S = 30
+#: Pub/Sub poll timeout; must stay below any Redis client socket_timeout.
+LISTENER_POLL_TIMEOUT_S = 1.0
 
 #: Deletes the lock only if the token still matches.
 LOCK_RELEASE_SCRIPT = """
