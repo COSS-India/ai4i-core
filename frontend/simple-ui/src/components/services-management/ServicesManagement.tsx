@@ -1,6 +1,7 @@
 // Services Management: Registry and View Service tabs. Create and Edit use modals.
 import {
   Badge,
+  Box,
   HStack,
   Text,
   VStack,
@@ -297,7 +298,7 @@ const ServicesManagement: React.FC = () => {
           }
         />
 
-                {isViewingService && selectedService ? (
+                {isViewingService && selectedService && (
                     <ServiceDetailTab
                       cardBg={cardBg}
                       cardBorder={cardBorder}
@@ -315,7 +316,8 @@ const ServicesManagement: React.FC = () => {
                       onRequestPublish={requestPublish}
                       onBack={() => handleTabChange(0)}
                     />
-                ) : (
+                )}
+                <Box hidden={isViewingService}>
                   <ServiceRegistryTab
                     items={registryTableItems}
                     columns={serviceColumns}
@@ -342,7 +344,7 @@ const ServicesManagement: React.FC = () => {
                     hasActiveFilters={hasActiveFilters}
                     onClearFilters={clearAllFilters}
                   />
-                )}
+                </Box>
 
       <CreateModal
         isOpen={isCreateOpen}

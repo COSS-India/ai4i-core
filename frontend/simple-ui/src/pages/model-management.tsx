@@ -828,7 +828,7 @@ const ModelManagementPage: React.FC = () => {
                     }
                   />
 
-                {isViewingModel && selectedModel ? (
+                {isViewingModel && selectedModel && (
                     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                       <CardHeader>
                         <HStack justify="space-between" align="center">
@@ -904,7 +904,8 @@ const ModelManagementPage: React.FC = () => {
                           </VStack>
                       </CardBody>
                     </Card>
-                ) : (
+                )}
+                <Box hidden={isViewingModel}>
                       <DataTable
                         layout="admin"
                         key={`${filterTaskType}-${filterVersionStatus}`}
@@ -966,7 +967,7 @@ const ModelManagementPage: React.FC = () => {
                           },
                         ]}
                       />
-                )}
+                </Box>
       </ContentLayout>
 
       {!isRegistryReadOnly && (
