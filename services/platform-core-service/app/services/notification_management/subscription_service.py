@@ -11,9 +11,13 @@ the seed migration, say) reads as "unsubscribed, no recipients" rather than
 docstring).
 
 Changing a catalog row's own ``scope`` (app.services.notification_management.
-catalog_service.update_catalog) never touches this table — the stored
-``subscribed``/``recipients`` simply carry through underneath whichever
-scope is currently in effect.
+catalog_service.update_catalog) touches this table in exactly one
+direction: entering INSTITUTION scope from GLOBAL resets every tenant's
+``subscribed`` to False, unconditionally (an institution must always
+actively re-subscribe after that flip). Going the other way (INSTITUTION
+-> GLOBAL) touches nothing — the stored ``subscribed`` simply carries
+through underneath, unread while GLOBAL is in effect. ``recipients`` is
+never touched by a scope change in either direction.
 """
 
 import logging

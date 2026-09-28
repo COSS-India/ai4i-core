@@ -22,12 +22,17 @@ class TenantNotificationSubscription(Base):
     notification with ``subscribed=false`` so every read has a row to join
     against, but nothing in the API relies on a row necessarily existing.
 
-    ``subscribed`` is never mutated by a catalog row's own ``scope``
-    changing — a GLOBAL-scope row's effective subscription is always "on"
-    regardless of what's stored here, and reverting it back to INSTITUTION
-    scope restores whatever this column still holds. ``recipients`` (the
-    institution's additional recipients, alongside its own tenant admin) is
-    likewise untouched by scope changes.
+    ``subscribed`` is mutated by a catalog row's own ``scope`` changing in
+    exactly one direction: entering INSTITUTION scope from GLOBAL resets
+    every tenant's ``subscribed`` back to False, unconditionally — an
+    institution must always actively re-subscribe after that flip,
+    regardless of whatever this column already held (see
+    catalog_service.update_catalog). The reverse direction (INSTITUTION ->
+    GLOBAL) touches nothing here: a GLOBAL-scope row's effective
+    subscription is always "on" regardless of what's stored, computed at
+    read time, not written. ``recipients`` (the institution's additional
+    recipients, alongside its own tenant admin) is untouched by scope
+    changes in either direction.
 
     ``tenant_id`` is a plain string, not a real FK — tenants live in
     auth-service's own database (ai4iplatform_auth), a different Postgres
