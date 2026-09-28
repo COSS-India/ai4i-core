@@ -28,7 +28,6 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AppError, EntityNotFoundError, ValidationError
-from app.core.redis import get_redis_client
 from app.models.notification_management.config_notification_alert import ConfigNotificationAlert
 from app.models.notification_management.tenant_notification_subscription import (
     TenantNotificationSubscription,
@@ -36,9 +35,7 @@ from app.models.notification_management.tenant_notification_subscription import 
 from app.schemas.enums.notification_management import NotificationScope, NotificationType
 from app.schemas.notification_management.subscription import SubscriptionItem
 from app.services.notification_management.catalog_metadata import NOTIFICATION_METADATA
-from app.services.notification_management.catalog_service import (
-    NOTIFICATION_ALERT_UPDATES_CHANNEL,
-)
+from app.services.notification_management.cache_refresh import after_subscription_write
 
 logger = logging.getLogger(__name__)
 
@@ -129,19 +126,6 @@ async def _get_or_create_subscription_row(
     return result.scalar_one()
 
 
-async def _notify_producers(name: str) -> None:
-    # Best-effort, same framing as catalog_service.update_catalog's own
-    # publish: a cache falls back to its last known value if this fails.
-    try:
-        redis = get_redis_client()
-        await redis.publish(NOTIFICATION_ALERT_UPDATES_CHANNEL, name)
-    except Exception as exc:
-        logger.warning(
-            "Failed to publish %s update to '%s': %s",
-            NOTIFICATION_ALERT_UPDATES_CHANNEL, name, exc,
-        )
-
-
 async def update_subscription_state(
     session: AsyncSession,
     *,
@@ -172,7 +156,7 @@ async def update_subscription_state(
 
     await session.commit()
     await session.refresh(sub_row)
-    await _notify_producers(catalog_row.name)
+    await after_subscription_write([tenant_id])
     return _to_subscription_item(catalog_row, sub_row)
 
 
@@ -235,4 +219,5 @@ async def update_subscription_recipients(
 
     await session.commit()
     await session.refresh(sub_row)
+    await after_subscription_write([tenant_id])
     return _to_subscription_item(catalog_row, sub_row)

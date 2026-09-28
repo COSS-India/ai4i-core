@@ -24,7 +24,7 @@ No database — both sessions (primary + auth) are faked.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -294,19 +294,31 @@ class TestGetOrCreateSubscriptionRowIsRaceSafe:
         assert len(session.sub_rows) == 1
 
 
-class TestNotificationChannelIsImportedNotDuplicated:
-    """A rename of the channel constant only has to happen in
-    catalog_service — subscription_service must import it, not redefine
-    its own copy that could silently drift out of sync."""
+class TestSubscriptionWritesRefreshTheSharedCache:
+    """Every subscription write rebuilds that tenant's value in Redis and
+    publishes SUBSCRIPTION (cache_refresh.after_subscription_write), so
+    every producer sees the change at once."""
 
-    def test_same_channel_value_as_catalog_service(self):
-        assert svc.NOTIFICATION_ALERT_UPDATES_CHANNEL == catalog_service.NOTIFICATION_ALERT_UPDATES_CHANNEL
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("write", ["state", "recipients"])
+    async def test_both_writes_refresh_the_tenant_after_commit(self, monkeypatch, write):
+        refresh = AsyncMock()
+        monkeypatch.setattr(svc, "after_subscription_write", refresh)
+        session = _Session(catalog_rows=[_catalog_row(id=1, scope="INSTITUTION")], sub_rows=[])
+        if write == "state":
+            await svc.update_subscription_state(session, tenant_id="7", notification_id=1, subscribed=True)
+        else:
+            await svc.update_subscription_recipients(
+                session, tenant_id="7", notification_id=1, recipients=["u1"],
+                auth_db=_AuthSession(active_user_ids=["u1"]),
+            )
+        refresh.assert_awaited_once_with(["7"])
+        assert session.commits == 1
 
-    def test_is_the_same_module_attribute_not_a_copy(self):
+    def test_uses_the_shared_refresh_not_its_own_channel(self):
         import inspect
 
         source = inspect.getsource(svc)
-        assert '"notification_alert_updates"' not in source, (
-            "the channel string must not be re-declared in subscription_service — "
-            "import NOTIFICATION_ALERT_UPDATES_CHANNEL from catalog_service instead"
-        )
+        assert "after_subscription_write" in source
+        assert "notification_alert_updates" not in source
+

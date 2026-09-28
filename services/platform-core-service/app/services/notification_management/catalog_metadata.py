@@ -162,11 +162,11 @@ LEGAL_RECIPIENT_ROLES: dict[NotificationName, frozenset[str]] = {
     for name in NotificationName
 }
 
-#: ``thresholds`` bands: whole percents 1-99, exactly 3 bands (no more, no
-#: fewer) — e.g. a "low"/"warning"/"critical" style set an Adopter Admin
-#: names and sets a percentage/active flag for, without the band itself
-#: carrying a name. Not expressible as a column CHECK (a count across a
-#: JSONB array is not one) — service-enforced, per the design.
+#: Threshold bands: a notification holds 1 to 10 bands with unique values.
+#: Metering (ALERT) bands are whole percents 1-99; monitoring bands are
+#: greater than 0, and at most 100 when the unit is PERCENT. The count is
+#: service-enforced; the value limits are also DB checks.
 MIN_THRESHOLD_PERCENT = 1
 MAX_THRESHOLD_PERCENT = 99
-THRESHOLD_BAND_COUNT = 3
+MIN_THRESHOLD_BANDS = 1
+MAX_THRESHOLD_BANDS = 10

@@ -2,23 +2,32 @@
 
 The catalog GET is a join in code, not a serialiser over the table: each DB
 row is decorated with its display name/description/detail line from
-catalog_metadata.py, which the API never exposes for editing. One function
-serves both NOTIFICATION and ALERT rows, filtered by ``type``; PATCH updates
-one row by ``name`` — unique, stable and meaningful, unlike the bigserial
-``id`` (whose values depend on seed history and can differ across
-environments).
+catalog_metadata.py, which the API never exposes for editing, and with its
+threshold bands from notification_alert_threshold. One function serves every
+catalog type, filtered by ``type``; PATCH updates one row by ``name`` —
+unique, stable and meaningful, unlike the bigserial ``id`` (whose values
+depend on seed history and can differ across environments).
+
+After every write commits, the shared settings snapshot is rebuilt in Redis
+and an invalidation is published (cache_refresh), so every producer sees
+the change at once.
 """
 
 import logging
-from typing import Dict, List, Optional
+from decimal import Decimal
+from typing import Dict, List, Optional, Sequence
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai4i_core.kafka import RecipientRole
+
 from app.core.exceptions import EntityNotFoundError, ValidationError
-from app.core.redis import get_redis_client
 from app.models.notification_management.config_notification_alert import (
     ConfigNotificationAlert,
+)
+from app.models.notification_management.notification_alert_threshold import (
+    NotificationAlertThreshold,
 )
 from app.models.notification_management.tenant_notification_subscription import (
     TenantNotificationSubscription,
@@ -27,6 +36,7 @@ from app.schemas.enums.notification_management import (
     NotificationName,
     NotificationScope,
     NotificationType,
+    ThresholdUnit,
 )
 from app.schemas.notification_management.catalog import (
     CatalogItem,
@@ -34,71 +44,48 @@ from app.schemas.notification_management.catalog import (
     MonitoringThresholdBand,
     ThresholdBand,
 )
+from app.services.notification_management.cache_refresh import (
+    after_settings_write,
+    after_subscription_write,
+)
 from app.services.notification_management.catalog_metadata import (
     LEGAL_RECIPIENT_ROLES,
+    MAX_THRESHOLD_BANDS,
     MAX_THRESHOLD_PERCENT,
+    MIN_THRESHOLD_BANDS,
     MIN_THRESHOLD_PERCENT,
     NOTIFICATION_METADATA,
-    THRESHOLD_BAND_COUNT,
 )
+from app.services.notification_management.thresholds import load_bands, replace_bands
 
 logger = logging.getLogger(__name__)
 
-# payperuse_consumer's in-memory threshold-bands cache subscribes to this
-# channel and refreshes the one row named in the message — see
-# services/kafka-consumers/consumers/payperuse_consumer/_thresholds.py.
-# Mirrors this service's own pii "policy_updates" channel (app/routes/pii.py).
-NOTIFICATION_ALERT_UPDATES_CHANNEL = "notification_alert_updates"
 
-
-def _parse_thresholds(raw) -> List[ThresholdBand]:
-    """Accepts either shape config.thresholds has ever been stored in:
-    the current list of {percentage, active} bands, or the pre-migration
-    dict keyed by percent-as-string ({"70": false, ...}). ai4iplatform_core
-    has multiple outstanding Alembic heads on release-2.7 at the time this
-    was written, so `alembic upgrade head` cannot be relied on to have run
-    a3f5c7e9b1d3 — a row still holding the old shape must degrade to a
-    correct read, not 500."""
-    if raw is None:
-        return []
-    if isinstance(raw, dict):
-        return [
-            ThresholdBand(percentage=int(percent), active=bool(active))
-            for percent, active in raw.items()
-        ]
-    return [ThresholdBand(**band) for band in raw]
-
-
-def _parse_monitoring_thresholds(raw) -> List[MonitoringThresholdBand]:
-    return [MonitoringThresholdBand(**band) for band in raw or []]
+def _number(value: Decimal):
+    """80.0000 -> 80, 1.5000 -> 1.5 for the API's band values."""
+    return int(value) if value == value.to_integral_value() else float(value)
 
 
 def _apply_admin_recipient_scope_invariant(
     recipient_roles: Dict[str, bool], scope: str
 ) -> Dict[str, bool]:
     """Ties the ``"ADMIN"`` key (the Adopter Admin's own recipient toggle)
-    to ``scope``, per design: defaults to selected and can be overridden
-    while GLOBAL; forced off while INSTITUTION — an Institution-scope row
-    is never delivered to the Adopter Admin as such, delivery for it is
-    governed by tenant_notification_subscription instead.
-
-    Applied on every WRITE only (update_catalog), never re-derived on
-    read: the send path (notification_settings_cache.is_notification_enabled,
-    the kafka-consumers catalog cache) reads the stored recipient_roles
-    column directly, not scope. Deriving ADMIN on read would make the
-    catalog UI show a value the send path disagrees with until that row
-    happens to be PATCHed — every existing row is instead backfilled to
-    already be invariant-consistent by e2a4c6b8d0f2, so what's stored is
-    always what both sides see."""
+    to ``scope``: overridable while GLOBAL, forced off while INSTITUTION —
+    an Institution-scope row is never delivered to the Adopter Admin as
+    such, delivery for it is governed by tenant_notification_subscription
+    instead. Applied on every write, never re-derived on read: the send
+    path reads the stored recipient_roles column directly."""
     result = dict(recipient_roles)
     if scope == NotificationScope.INSTITUTION.value:
-        result["ADMIN"] = False
+        result[RecipientRole.ADMIN.value] = False
     else:
-        result.setdefault("ADMIN", True)
+        result.setdefault(RecipientRole.ADMIN.value, False)
     return result
 
 
-def _to_catalog_item(row: ConfigNotificationAlert) -> CatalogItem:
+def _to_catalog_item(
+    row: ConfigNotificationAlert, bands: Sequence[NotificationAlertThreshold] = ()
+) -> CatalogItem:
     meta = NOTIFICATION_METADATA.get(row.name)
     is_alert = row.type == NotificationType.ALERT.value
     is_monitoring = row.type == NotificationType.MONITORING.value
@@ -110,19 +97,22 @@ def _to_catalog_item(row: ConfigNotificationAlert) -> CatalogItem:
         type=row.type,
         module=row.module,
         channels=list(row.channels or []),
-        # The stored value, as-is — see _apply_admin_recipient_scope_invariant
-        # for why this must not re-derive ADMIN from scope on read.
+        # The stored value, as-is — see _apply_admin_recipient_scope_invariant.
         recipient_roles=row.recipient_roles or {},
         scope=row.scope,
-        # None (dropped from the response) on a NOTIFICATION row — that key
-        # only ever exists in config for ALERT-type rows.
+        # None (dropped from the response) unless the row is ALERT /
+        # MONITORING. The fixed band of the EXHAUSTED rows is not editable
+        # and not shown.
         thresholds=(
-            _parse_thresholds((row.config or {}).get("thresholds"))
+            [ThresholdBand(percentage=int(band.band_value), active=band.active) for band in bands]
             if is_alert
             else None
         ),
         monitoring_thresholds=(
-            _parse_monitoring_thresholds((row.config or {}).get("monitoring_thresholds"))
+            [
+                MonitoringThresholdBand(value=_number(band.band_value), unit=band.unit, active=band.active)
+                for band in bands
+            ]
             if is_monitoring
             else None
         ),
@@ -136,21 +126,13 @@ async def list_catalog(session: AsyncSession, catalog_type: NotificationType) ->
         .order_by(ConfigNotificationAlert.id)
     )
     rows = result.scalars().all()
-    return [_to_catalog_item(row) for row in rows]
-
-
-def _merged_bool_dict(existing: Dict[str, bool], incoming: Dict[str, bool]) -> Dict[str, bool]:
-    """PATCH semantics for recipient_roles: the payload only needs to carry
-    the key(s) that changed. Every key already on the row keeps its current
-    value unless the payload names it, in which case it's set to exactly
-    what the payload says — no key is ever dropped or reset to False just
-    for being omitted. (thresholds does not use this — see update_catalog.)"""
-    return {**existing, **incoming}
+    bands = await load_bands(session, [row.id for row in rows])
+    return [_to_catalog_item(row, bands.get(row.id, [])) for row in rows]
 
 
 def _validate_recipient_roles(name: str, recipient_roles: Dict[str, bool]) -> None:
-    # NOTIFICATION and ALERT rows are restricted to ADMIN / TENANT ADMIN
-    # (design 6.1); MONITORING rows to ADMIN / MODERATOR.
+    # NOTIFICATION and ALERT rows are restricted to ADMIN / TENANT ADMIN;
+    # MONITORING rows to ADMIN / MODERATOR.
     legal_roles = LEGAL_RECIPIENT_ROLES[NotificationName(name)]
     illegal = set(recipient_roles) - legal_roles
     if illegal:
@@ -163,15 +145,19 @@ def _validate_recipient_roles(name: str, recipient_roles: Dict[str, bool]) -> No
         )
 
 
-def _validate_thresholds(name: str, thresholds: List[ThresholdBand]) -> None:
-    if len(thresholds) != THRESHOLD_BAND_COUNT:
+def _validate_band_count(name: str, count: int) -> None:
+    if not MIN_THRESHOLD_BANDS <= count <= MAX_THRESHOLD_BANDS:
         raise ValidationError(
             message=(
-                f"Exactly {THRESHOLD_BAND_COUNT} threshold band(s) are required for '{name}' "
-                f"(got {len(thresholds)})."
+                f"'{name}' holds {MIN_THRESHOLD_BANDS} to {MAX_THRESHOLD_BANDS} threshold band(s) "
+                f"(got {count})."
             ),
             code="INVALID_THRESHOLDS",
         )
+
+
+def _validate_thresholds(name: str, thresholds: List[ThresholdBand]) -> None:
+    _validate_band_count(name, len(thresholds))
     percentages = [band.percentage for band in thresholds]
     if len(set(percentages)) != len(percentages):
         raise ValidationError(
@@ -199,31 +185,22 @@ async def update_catalog(
     """Update one catalog row, looked up by its own ``name`` — the row's
     type is whatever is already stored, not something the caller asserts.
 
-    ``thresholds`` is ALERT-only (the key only ever exists in ``config`` for
-    ALERT-type rows); sending it for a NOTIFICATION row is a validation
-    error. channels/recipient_roles/scope are accepted for both types.
+    ``thresholds`` is ALERT-only; sending it for any other row is a
+    validation error. It replaces the row's whole band list (1 to 10 bands)
+    and severities are recounted from the top. channels/recipient_roles/scope
+    are accepted for every type.
 
-    recipient_roles is a partial-update dict, not a wholesale replacement:
-    every key already stored on the row keeps its current value unless the
-    payload names it, in which case it's set to exactly what the payload
-    says — except ``"ADMIN"``, which is always re-derived from the row's
-    effective scope afterward (see _apply_admin_recipient_scope_invariant),
-    overriding whatever the payload sent for that one key. ``thresholds``
-    is different — it's a wholesale replacement of the whole
-    THRESHOLD_BAND_COUNT-length list, since a band's ``percentage`` is
-    itself editable and bands have no other stable key to merge a partial
-    update against.
+    recipient_roles is a partial-update dict: every key already stored keeps
+    its value unless the payload names it — except ``"ADMIN"``, which is
+    re-derived from the row's effective scope afterward.
 
     A ``scope`` PATCH that transitions GLOBAL -> INSTITUTION also resets
-    every tenant's stored ``tenant_notification_subscription.subscribed``
-    to False, unconditionally — an institution must actively re-subscribe
-    after that flip, regardless of what its stored bit was before (per the
-    design's Scenario 1/3). Recipients are left untouched. A no-op PATCH
-    that resends the row's current scope does not trigger this."""
+    every tenant's ``tenant_notification_subscription.subscribed`` to False,
+    unconditionally. Recipients are left untouched. A no-op PATCH that
+    resends the row's current scope does not trigger this."""
     # Validate against the enum in Python before it ever reaches the query:
-    # `name` is arbitrary path-param text, and comparing a non-member string
-    # to a Postgres ENUM column raises an invalid-input-value DB error (a
-    # 500) rather than the clean 404 an unknown catalog name should be.
+    # comparing a non-member string to a Postgres ENUM column raises a DB
+    # error (a 500) rather than the clean 404 an unknown name should be.
     try:
         NotificationName(name)
     except ValueError:
@@ -236,9 +213,20 @@ async def update_catalog(
     if row is None:
         raise EntityNotFoundError(f"Catalog entry '{name}'")
 
+    if row.type == NotificationType.MONITORING.value:
+        # Monitoring rows have their own endpoint: it also rebuilds
+        # monitoring_alert_recipient, and their scope is always GLOBAL.
+        raise ValidationError(
+            message=(
+                f"'{row.name}' is a MONITORING entry; update it with "
+                f"PATCH /notification-alerts/monitoring-catalog/{row.name}."
+            ),
+            code="USE_MONITORING_CATALOG",
+        )
+
     if payload.thresholds is not None and row.type != NotificationType.ALERT.value:
         raise ValidationError(
-            message=f"'{row.name}' is a NOTIFICATION-type entry; thresholds do not apply to it.",
+            message=f"'{row.name}' is a {row.type}-type entry; thresholds do not apply to it.",
             code="INVALID_THRESHOLDS",
         )
 
@@ -246,13 +234,7 @@ async def update_catalog(
     if payload.scope is not None:
         row.scope = payload.scope.value
 
-    # Entering INSTITUTION scope (from GLOBAL) always resets every tenant
-    # back to Unsubscribed, unconditionally — regardless of what any
-    # tenant's stored bit was before (including from an earlier stint as
-    # GLOBAL, or the original seed). Recipients are untouched: nothing
-    # about this transition clears who an institution had already added.
-    # A no-op PATCH that merely resends the row's current scope (old ==
-    # new) does NOT reset anything — this only fires on an actual flip.
+    reset_tenant_ids: List[str] = []
     if (
         payload.scope is not None
         and payload.scope.value == NotificationScope.INSTITUTION.value
@@ -261,30 +243,32 @@ async def update_catalog(
         reset_values = {"subscribed": False}
         if updated_by is not None:
             reset_values["updated_by"] = updated_by
-        await session.execute(
+        reset = await session.execute(
             update(TenantNotificationSubscription)
             .where(TenantNotificationSubscription.notification_id == row.id)
             .values(**reset_values)
+            .returning(TenantNotificationSubscription.tenant_id)
         )
+        reset_tenant_ids = [str(tenant_id) for tenant_id in reset.scalars().all()]
 
     if payload.recipient_roles is not None:
-        merged = _merged_bool_dict(row.recipient_roles or {}, payload.recipient_roles)
+        merged = {**(row.recipient_roles or {}), **payload.recipient_roles}
         _validate_recipient_roles(row.name, merged)
         row.recipient_roles = merged
 
-    # Re-applied unconditionally (not just when payload touched
-    # recipient_roles) — a scope-only PATCH into INSTITUTION must still
-    # clear a previously-true ADMIN flag, and a row's ADMIN key must never
-    # drift out of sync with its current scope.
-    row.recipient_roles = _apply_admin_recipient_scope_invariant(
-        row.recipient_roles or {}, row.scope
-    )
+    # Re-applied unconditionally — a scope-only PATCH into INSTITUTION must
+    # still clear a previously-true ADMIN flag.
+    row.recipient_roles = _apply_admin_recipient_scope_invariant(row.recipient_roles or {}, row.scope)
 
     if payload.thresholds is not None:
         _validate_thresholds(row.name, payload.thresholds)
-        config = dict(row.config or {})
-        config["thresholds"] = [band.model_dump() for band in payload.thresholds]
-        row.config = config
+        await replace_bands(
+            session,
+            row.id,
+            [(Decimal(band.percentage), band.active) for band in payload.thresholds],
+            ThresholdUnit.PERCENT.value,
+            updated_by,
+        )
 
     if payload.channels is not None:
         row.channels = [channel.value for channel in payload.channels]
@@ -295,27 +279,9 @@ async def update_catalog(
     await session.commit()
     await session.refresh(row)
 
-    if (
-        payload.thresholds is not None
-        or payload.scope is not None
-        or payload.recipient_roles is not None
-    ):
-        # Every producer's in-memory settings cache (ai4i_core.kafka.
-        # notification_settings_cache) subscribes to this channel and does a
-        # full reload on any message — scope/recipient_roles changes matter
-        # there too (a notification with no roles selected is treated as
-        # "off", and scope decides whether an event fires platform-wide or
-        # is gated by a tenant's subscription), not just thresholds.
-        # Best-effort: a cache falls back to its last known value (and its
-        # own DB reload on next restart) if this fails, same framing as
-        # every other pub/sub-notify call in this codebase.
-        try:
-            redis = get_redis_client()
-            await redis.publish(NOTIFICATION_ALERT_UPDATES_CHANNEL, row.name)
-        except Exception as exc:
-            logger.warning(
-                "Failed to publish %s update to '%s': %s",
-                NOTIFICATION_ALERT_UPDATES_CHANNEL, row.name, exc,
-            )
+    await after_settings_write([row.name])
+    if reset_tenant_ids:
+        await after_subscription_write(reset_tenant_ids)
 
-    return _to_catalog_item(row)
+    bands = await load_bands(session, [row.id])
+    return _to_catalog_item(row, bands.get(row.id, []))

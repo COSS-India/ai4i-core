@@ -4,8 +4,8 @@ configs_notification_alert (error rate / latency).
 Separate from catalog_service.update_catalog because monitoring alerts
 follow their own configuration and recipient model: no scope (always
 platform-level), Email only, recipients are ADMIN (Adopter Admin) and/or
-MODERATOR, and thresholds are value + unit bands under
-config.monitoring_thresholds rather than metering percentages.
+MODERATOR, and thresholds are value + unit bands (PERCENT or SECONDS) in
+notification_alert_threshold rather than metering percentages.
 
 Selecting a role stores it in recipient_roles AND resolves it to concrete
 user ids in monitoring_alert_recipient — every active, non-deleted user
@@ -15,13 +15,13 @@ recipient_roles PATCH.
 """
 
 import logging
+from decimal import Decimal
 from typing import Dict, List, Optional, Set
 
 from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AppError, EntityNotFoundError, ValidationError
-from app.core.redis import get_redis_client
 from app.models.notification_management.config_notification_alert import (
     ConfigNotificationAlert,
 )
@@ -38,15 +38,16 @@ from app.schemas.notification_management.catalog import (
     MonitoringCatalogUpdate,
     MonitoringThresholdBand,
 )
+from app.services.notification_management.cache_refresh import after_settings_write
 from app.services.notification_management.catalog_metadata import (
     LEGAL_RECIPIENT_ROLES,
     MONITORING_ALERT_NAMES,
-    THRESHOLD_BAND_COUNT,
 )
 from app.services.notification_management.catalog_service import (
-    NOTIFICATION_ALERT_UPDATES_CHANNEL,
     _to_catalog_item,
+    _validate_band_count,
 )
+from app.services.notification_management.thresholds import load_bands, replace_bands
 
 logger = logging.getLogger(__name__)
 
@@ -66,25 +67,15 @@ def _validate_recipient_roles(name: str, recipient_roles: Dict[str, bool]) -> No
         )
 
 
-def _stored_unit(row: ConfigNotificationAlert) -> Optional[str]:
-    bands = (row.config or {}).get("monitoring_thresholds") or []
-    return bands[0].get("unit") if bands else None
-
-
 def _validate_thresholds(
-    row: ConfigNotificationAlert, bands: List[MonitoringThresholdBand]
+    row: ConfigNotificationAlert, bands: List[MonitoringThresholdBand], expected_unit: Optional[str]
 ) -> None:
     def invalid(message: str) -> ValidationError:
         return ValidationError(message=message, code="INVALID_THRESHOLDS")
 
-    if len(bands) != THRESHOLD_BAND_COUNT:
-        raise invalid(
-            f"Exactly {THRESHOLD_BAND_COUNT} threshold band(s) are required for '{row.name}' "
-            f"(got {len(bands)})."
-        )
+    _validate_band_count(row.name, len(bands))
     # The unit is fixed per alert (error rates are %, latencies seconds) —
     # an Adopter Admin edits values, never what they measure.
-    expected_unit = _stored_unit(row)
     if expected_unit is not None and any(band.unit.value != expected_unit for band in bands):
         raise invalid(f"Threshold unit for '{row.name}' must be {expected_unit}.")
     values = [band.value for band in bands]
@@ -189,14 +180,29 @@ async def update_monitoring_catalog(
         user_roles = await _resolve_role_user_ids(auth_db, selected)
         row.recipient_roles = merged
         await _replace_recipients(session, row.id, user_roles, updated_by)
+    else:
+        # Every save re-resolves the selected roles, so a user who got
+        # ADMIN or MODERATOR since the last save is included. Best effort:
+        # without the auth DB the stored recipients stay as they are.
+        selected = {role for role, on in (row.recipient_roles or {}).items() if on}
+        try:
+            user_roles = await _resolve_role_user_ids(auth_db, selected)
+        except Exception as exc:
+            logger.warning("Monitoring recipients not refreshed for %s: %s", row.name, exc)
+        else:
+            await _replace_recipients(session, row.id, user_roles, updated_by)
 
     if payload.monitoring_thresholds is not None:
-        _validate_thresholds(row, payload.monitoring_thresholds)
-        config = dict(row.config or {})
-        config["monitoring_thresholds"] = [
-            band.model_dump(mode="json") for band in payload.monitoring_thresholds
-        ]
-        row.config = config
+        stored = (await load_bands(session, [row.id])).get(row.id, [])
+        expected_unit = stored[0].unit if stored else None
+        _validate_thresholds(row, payload.monitoring_thresholds, expected_unit)
+        await replace_bands(
+            session,
+            row.id,
+            [(Decimal(str(band.value)), band.active) for band in payload.monitoring_thresholds],
+            expected_unit or payload.monitoring_thresholds[0].unit.value,
+            updated_by,
+        )
 
     if updated_by is not None:
         row.updated_by = updated_by
@@ -204,18 +210,11 @@ async def update_monitoring_catalog(
     await session.commit()
     await session.refresh(row)
 
-    if payload.recipient_roles is not None or payload.monitoring_thresholds is not None:
-        # Same best-effort cache invalidation as catalog_service.update_catalog.
-        try:
-            redis = get_redis_client()
-            await redis.publish(NOTIFICATION_ALERT_UPDATES_CHANNEL, row.name)
-        except Exception as exc:
-            logger.warning(
-                "Failed to publish %s update to '%s': %s",
-                NOTIFICATION_ALERT_UPDATES_CHANNEL, row.name, exc,
-            )
+    # The snapshot carries the resolved recipient ids and the active bands.
+    await after_settings_write([row.name])
 
-    item = _to_catalog_item(row)
+    bands = await load_bands(session, [row.id])
+    item = _to_catalog_item(row, bands.get(row.id, []))
     return MonitoringCatalogItem(
         **item.model_dump(), recipients=await _list_recipient_ids(session, row.id)
     )
