@@ -139,13 +139,15 @@ class CoreSettings(BaseSettings):
     # flat 60-day lookback, rather than silently computing from whatever
     # partial data survives retention. Also the earliest `from` the Usage
     # Dashboard's custom date range accepts (routes/metering.py
-    # _parse_from_to). Defaults to 90, matching
-    # --storage.tsdb.retention.time=90d in docker-compose-local.yml. (The
-    # repo's 90-day OpenSearch ISM policy covers logs-* only, not the
-    # traces-* index metering reads.) Set PROMETHEUS_RETENTION_DAYS lower on
-    # a deployment whose Prometheus retains less — a value above the real
-    # retention lets custom ranges read pruned data.
-    prometheus_retention_days: int = 90
+    # _parse_from_to). Defaults to 15, Prometheus's own default retention,
+    # so a deployment that never sets PROMETHEUS_RETENTION_DAYS can't claim
+    # more history than it keeps. Set it explicitly per environment once its
+    # Prometheus is confirmed to retain longer (env.template sets 90 for
+    # local, matching --storage.tsdb.retention.time=90d in
+    # docker-compose-local.yml). A value above the real retention lets custom
+    # ranges read pruned data (each series' whole cumulative counter counted
+    # as usage) and lets model_usage_growth_pct compute from partial data.
+    prometheus_retention_days: int = 15
 
     # ── Model management business rules ──
     max_active_versions_per_model: int = 5
