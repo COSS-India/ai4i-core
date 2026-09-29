@@ -71,7 +71,8 @@ type ManageParent = {
 };
 
 /**
- * Explore → Manage list (link) → current record/page (not a link).
+ * Home (Usage Dashboard when the role can open it) → Manage list (link) →
+ * current record/page (not a link).
  * The parent always targets the list route, never history back.
  */
 export function buildManageCrumbs(

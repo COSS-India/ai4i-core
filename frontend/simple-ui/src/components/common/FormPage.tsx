@@ -2,7 +2,7 @@ import { Box, VStack, type BoxProps } from "@chakra-ui/react";
 import { useRouter } from "next/router";
 import React, { useCallback } from "react";
 import { useAuth } from "../../hooks/useAuth";
-import { getHomePath } from "../../utils/navigation";
+import { getDefaultLandingPath } from "../../utils/navigation";
 import ManagementPageHeader from "./ManagementPageHeader";
 import { buildManageCrumbs } from "./PageBreadcrumb";
 
@@ -99,7 +99,7 @@ export default function FormPage({
   const { user } = useAuth();
   const leave = useFormPageLeave(returnTo, onLeave);
   // Breadcrumbs follow the resource (`parent`), never the entry point.
-  const crumbs = buildManageCrumbs(parent, title, getHomePath(user?.roles));
+  const crumbs = buildManageCrumbs(parent, title, getDefaultLandingPath(user?.roles));
   const footerNode = typeof footer === "function" ? footer({ leave }) : footer;
 
   return (
