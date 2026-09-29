@@ -50,3 +50,13 @@ FULL_NAME_MAX_LENGTH = 255
 PHONE_NUMBER_MAX_LENGTH = 20
 TIMEZONE_MAX_LENGTH = 50
 ORGANISATION_MAX_LENGTH = 255
+
+# ── API-key cache: tier ──────────────────────────────────────────────
+# Cached tier_id written onto every key of a tenant whose tier was removed
+# (DELETE /auth/tenants/{id}/tier). Deliberately distinct from the field
+# being ABSENT (legacy keys issued before tiers existed, still served on
+# budget alone): present-and-empty means "tier explicitly removed", and
+# /auth/validate rejects it with NO_ACTIVE_TIER. Empty rather than a
+# non-UUID word so nothing downstream that CASTs X-Tier-ID to uuid can
+# ever see a malformed value.
+UNASSIGNED_TIER_ID = ""

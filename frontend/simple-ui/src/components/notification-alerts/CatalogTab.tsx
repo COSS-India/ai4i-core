@@ -3,15 +3,19 @@ import {
   AlertDescription,
   AlertIcon,
   Box,
-  Flex,
+  ListItem,
   Select,
   Text,
+  UnorderedList,
+  useDisclosure,
   VStack,
 } from "@chakra-ui/react";
 import React, { useMemo } from "react";
 import { useNotificationCatalog } from "../../hooks/useNotificationCatalog";
 import {
+  SCOPE_LABELS,
   toThresholdDrafts,
+  type CatalogScopeFilter,
   type NotificationAlertCatalogItem,
   type NotificationAlertType,
 } from "../../types/notificationAlerts";
@@ -21,8 +25,9 @@ import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
   type DataTableColumn,
 } from "../common/table";
+import ConfirmDialog from "../common/ConfirmDialog";
 import FormActions from "../common/FormActions";
-import { RecipientRoleCheckboxes } from "./CatalogToolbar";
+import { AdopterAdminCheckbox, ScopeToggle } from "./CatalogToolbar";
 import ThresholdBandsCell from "./ThresholdBandsCell";
 
 interface CatalogTabProps {
@@ -34,6 +39,12 @@ interface CatalogTabProps {
   showThresholds?: boolean;
 }
 
+const SCOPE_FILTER_OPTIONS: { label: string; value: CatalogScopeFilter }[] = [
+  { label: "All scopes", value: "all" },
+  { label: SCOPE_LABELS.GLOBAL, value: "GLOBAL" },
+  { label: SCOPE_LABELS.INSTITUTION, value: "INSTITUTION" },
+];
+
 const CatalogTab: React.FC<CatalogTabProps> = ({
   type,
   hint,
@@ -43,18 +54,24 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
   showThresholds = false,
 }) => {
   const toast = useToastWithDeduplication();
+  const confirmFlip = useDisclosure();
   const {
     items,
     filteredItems,
     search,
     setSearch,
+    scopeFilter,
+    setScopeFilter,
     isLoading,
     isSubmitting,
     error,
     getDraft,
-    setRecipientRole,
+    setScope,
+    setAdminRecipient,
     setThresholds,
+    discard,
     dirtyCount,
+    pendingInstitutionFlips,
     submit,
   } = useNotificationCatalog(type);
 
@@ -82,11 +99,9 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
         tdProps: { verticalAlign: "top" },
         cell: (item) => (
           <VStack align="start" spacing={1}>
-            <Flex align="center" gap={2} flexWrap="wrap">
-              <Text fontWeight="medium" fontSize="sm">
-                {item.display_name}
-              </Text>
-            </Flex>
+            <Text fontWeight="medium" fontSize="sm">
+              {item.display_name}
+            </Text>
             <Text fontSize="sm" color="ink.600" noOfLines={2}>
               {item.description}
             </Text>
@@ -94,75 +109,82 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
         ),
       },
       {
-        id: "recipientRole",
-        header: "Recipient Role",
+        id: "scope",
+        header: "Scope",
+        truncate: false,
+        tdProps: { verticalAlign: "top" },
+        cell: (item) => (
+          <ScopeToggle
+            value={getDraft(item).scope}
+            rowLabel={item.display_name}
+            onChange={(scope) => setScope(item.name, scope)}
+          />
+        ),
+      },
+      {
+        id: "recipient",
+        header: "Recipient",
         truncate: false,
         tdProps: { verticalAlign: "top" },
         cell: (item) => {
           const draft = getDraft(item);
           return (
-            <RecipientRoleCheckboxes
-              tenantChecked={draft.recipient_roles["TENANT ADMIN"]}
-              adopterChecked={draft.recipient_roles.ADMIN}
-              onTenantChange={(checked) =>
-                setRecipientRole(item.name, "TENANT ADMIN", checked)
-              }
-              onAdopterChange={(checked) =>
-                setRecipientRole(item.name, "ADMIN", checked)
-              }
+            <AdopterAdminCheckbox
+              isChecked={draft.adminRecipient}
+              isDisabled={draft.scope === "INSTITUTION"}
+              onChange={(checked) => setAdminRecipient(item.name, checked)}
             />
           );
         },
-      },
-      {
-        id: "channel",
-        header: "Delivery Channel",
-        truncate: false,
-        tdProps: { verticalAlign: "top" },
-        cell: (item) => (
-          <Select
-            value={item.channels[0] ?? "EMAIL"}
-            isDisabled
-            maxW="140px"
-            size="sm"
-            bg="ink.50"
-          >
-            <option value="EMAIL">Email</option>
-          </Select>
-        ),
       },
     ];
 
     if (showThresholds) {
       cols.push({
         id: "thresholds",
-        header: "Thresholds",
+        header: "Threshold Values",
         truncate: false,
-        minWidth: "200px",
+        minWidth: "280px",
         tdProps: { verticalAlign: "top" },
-        cell: (item) => {
-          const draft = getDraft(item);
-          return (
-            <ThresholdBandsCell
-              bands={draft.thresholds ?? toThresholdDrafts(item.thresholds)}
-              rowLabel={item.display_name}
-              onApply={(bands) => setThresholds(item.name, bands)}
-            />
-          );
-        },
+        cell: (item) => (
+          <ThresholdBandsCell
+            bands={getDraft(item).thresholds ?? toThresholdDrafts(item.thresholds)}
+            rowLabel={item.display_name}
+            onApply={(bands) => setThresholds(item.name, bands)}
+          />
+        ),
       });
     }
+
+    cols.push({
+      id: "channel",
+      header: "Delivery Channel",
+      truncate: false,
+      tdProps: { verticalAlign: "top" },
+      cell: (item) => (
+        <Select
+          value={item.channels[0] ?? "EMAIL"}
+          isDisabled
+          maxW="140px"
+          size="sm"
+          bg="ink.50"
+        >
+          <option value="EMAIL">Email</option>
+        </Select>
+      ),
+    });
 
     return cols;
   }, [
     getDraft,
     nameColumnHeader,
-    setRecipientRole,
+    setAdminRecipient,
+    setScope,
     setThresholds,
     showThresholds,
   ]);
 
-  const handleSubmit = async () => {
+  const runSubmit = async () => {
     const result = await submit();
     const saved = result.succeeded.length;
 
@@ -193,6 +215,21 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
     });
   };
 
+  const handleSubmit = () => {
+    if (pendingInstitutionFlips.length > 0) {
+      confirmFlip.onOpen();
+      return;
+    }
+    void runSubmit();
+  };
+
+  const handleConfirmFlip = async () => {
+    confirmFlip.onClose();
+    await runSubmit();
+  };
+
+  const hasActiveFilters = search.trim() !== "" || scopeFilter !== "all";
+
   return (
     <Box>
       {error ? (
@@ -221,23 +258,68 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
         emptyMessage={emptyMessage}
         noResultsMessage={emptyMessage}
         unfilteredCount={items.length}
-        hasActiveFilters={search.trim() !== ""}
-        onClearFilters={() => setSearch("")}
+        hasActiveFilters={hasActiveFilters}
+        onClearFilters={() => {
+          setSearch("");
+          setScopeFilter("all");
+        }}
         search={{
           value: search,
           onChange: setSearch,
           placeholder: "Search by name",
           fields: ["display_name", "name", "description"],
         }}
+        filterDefs={[
+          {
+            id: "scope",
+            label: "Scope",
+            type: "select",
+            value: scopeFilter,
+            onChange: (value) => setScopeFilter(value as CatalogScopeFilter),
+            options: SCOPE_FILTER_OPTIONS,
+            width: { base: "full", sm: "160px" },
+          },
+        ]}
+        filterToolbarRightContent={
+          isLoading ? null : (
+            <Text fontSize="sm" color="ink.600" whiteSpace="nowrap">
+              {filteredItems.length} of {items.length} shown
+            </Text>
+          )
+        }
       />
 
       <FormActions
         submitLabel={dirtyCount > 0 ? `Submit (${dirtyCount})` : "Submit"}
-        hideCancel
-        onSubmit={() => void handleSubmit()}
+        cancelLabel="Discard changes"
+        onCancel={dirtyCount > 0 ? discard : undefined}
+        onSubmit={handleSubmit}
         isLoading={isSubmitting}
         justify="flex-end"
         pt={4}
+      />
+
+      <ConfirmDialog
+        isOpen={confirmFlip.isOpen}
+        onClose={confirmFlip.onClose}
+        onConfirm={handleConfirmFlip}
+        title="Move to Institution scope?"
+        confirmLabel="Submit"
+        confirmColorScheme="orange"
+        isConfirmLoading={isSubmitting}
+        body={
+          <VStack align="start" spacing={3}>
+            <Text fontSize="sm">
+              Every institution will be unsubscribed from the following and
+              must opt in again to keep receiving them:
+            </Text>
+            <UnorderedList fontSize="sm" pl={2}>
+              {pendingInstitutionFlips.map((item) => (
+                <ListItem key={item.name}>{item.display_name}</ListItem>
+              ))}
+            </UnorderedList>
+          </VStack>
+        }
       />
     </Box>
   );

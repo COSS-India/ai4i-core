@@ -38,6 +38,7 @@ import { getTenantIdFromToken } from "../../utils/helpers";
 import { getHomePath, getUsageDashboardOverviewPath } from "../../utils/navigation";
 import {
   canAccessInstitutionManagement,
+  canAccessNotificationsAlerts,
   canAccessServicesManagement,
   canAccessUsageDashboard,
   isPlatformAdminUser,
@@ -208,7 +209,7 @@ function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean 
     case TABS.usageDashboard:
       return canAccessUsageDashboard(ctx.userRoles);
     case TABS.notificationsAlerts:
-      return ctx.isAdmin;
+      return canAccessNotificationsAlerts(ctx.userRoles);
     case TABS.tierManagement:
       return ctx.isAdmin;
     default:
