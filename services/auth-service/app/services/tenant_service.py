@@ -1604,6 +1604,7 @@ class TenantService:
                 current_budget,
                 new_budget,
                 new_effective_from.date() if new_effective_from is not None else None,
+                revised_at=tenant.updated_at,
             )
 
         snapshot_write_failed = not await write_budget_snapshot(snapshot_writes, platform_core_db)

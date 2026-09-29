@@ -11,7 +11,7 @@ event.
 
 import json
 import logging
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Dict, List, Optional
 from uuid import UUID
@@ -104,14 +104,26 @@ def publish_budget_event(
     old_budget: Decimal,
     new_budget: Decimal,
     effective_from: Optional[date],
+    revised_at: Optional[datetime] = None,
 ) -> None:
-    """BUDGET_ASSIGNED when the budget was 0, else BUDGET_UPDATED."""
+    """BUDGET_ASSIGNED when the budget was 0, else BUDGET_UPDATED.
+
+    ``revised_at`` is the committed tenants.updated_at. It goes into the
+    BUDGET_ASSIGNED fingerprint because effective_from is locked once a
+    window exists: without it, a tenant topped down to 0 and given the same
+    amount again would hash to the stored state and the email would be
+    dropped as a duplicate. A retry of the same commit keeps the same value,
+    so it is still deduplicated."""
     if not notifications_configured():
         return
     effective = effective_from.isoformat() if effective_from is not None else None
     if old_budget == 0:
         name = NotificationName.BUDGET_ASSIGNED
-        new_state = {"amount": format_amount(new_budget), "effective_from": effective}
+        new_state = {
+            "amount": format_amount(new_budget),
+            "effective_from": effective,
+            "revised_at": revised_at.isoformat() if revised_at is not None else None,
+        }
         details = [BUDGET_CURRENCY, str(new_budget)]
     else:
         name = NotificationName.BUDGET_UPDATED

@@ -1373,7 +1373,7 @@ class TestTierBudgetNotificationPublishing:
     async def test_first_budget_hands_over_zero_previous_budget(self) -> None:
         svc = _svc()
         svc._tenants.get_by_id_for_update = AsyncMock(
-            return_value=_tenant(allocated_budget=Decimal("0"))
+            return_value=(tenant := _tenant(allocated_budget=Decimal("0")))
         )
         svc._tenants.update = AsyncMock()
         svc._api_keys.list_key_ids_for_tenant = AsyncMock(return_value=[])
@@ -1385,13 +1385,15 @@ class TestTierBudgetNotificationPublishing:
                 _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db,
             )
 
-        mock_publish.assert_called_once_with(1, Decimal("0"), Decimal("500"), _VALID_EFFECTIVE_FROM.date())
+        mock_publish.assert_called_once_with(
+            1, Decimal("0"), Decimal("500"), _VALID_EFFECTIVE_FROM.date(), revised_at=tenant.updated_at,
+        )
 
     @pytest.mark.asyncio
     async def test_revision_hands_over_previous_and_new_budget(self) -> None:
         svc = _svc()
         svc._tenants.get_by_id_for_update = AsyncMock(
-            return_value=_tenant(allocated_budget=Decimal("1000"))
+            return_value=(tenant := _tenant(allocated_budget=Decimal("1000")))
         )
         svc._tenants.update = AsyncMock()
         svc._api_keys.list_key_ids_for_tenant = AsyncMock(return_value=[])
@@ -1403,7 +1405,9 @@ class TestTierBudgetNotificationPublishing:
                 _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db,
             )
 
-        mock_publish.assert_called_once_with(1, Decimal("1000"), Decimal("1500"), _VALID_EFFECTIVE_FROM.date())
+        mock_publish.assert_called_once_with(
+            1, Decimal("1000"), Decimal("1500"), _VALID_EFFECTIVE_FROM.date(), revised_at=tenant.updated_at,
+        )
 
     @pytest.mark.asyncio
     async def test_budget_is_handed_over_even_without_a_request_platform_core_session(self) -> None:
