@@ -381,6 +381,20 @@ class TenantTierAssignData(BaseSchema):
     updated_by: Optional[UUID] = None
 
 
+class TenantTierUnassignData(BaseSchema):
+    tenant_id: int
+    # Always null after a successful unassign — present so the response
+    # shape matches TenantTierAssignData's and the caller reads the new
+    # state directly instead of inferring it.
+    tier_id: Optional[UUID] = None
+    # The tier the tenant was removed from, so the caller knows whose
+    # assigned-tenant count changed. null when the tenant was already
+    # unassigned (idempotent no-op).
+    previous_tier_id: Optional[UUID] = None
+    updated_at: Optional[datetime] = None
+    updated_by: Optional[UUID] = None
+
+
 _TENANT_BUDGET_REQUEST_EXAMPLE = {
     "action": "top-up",
     "amount": 5000.00,
@@ -556,6 +570,12 @@ class TenantTierAssignResponse(SuccessResponse):
     """PATCH /auth/tenants/{tenant_id}/tier"""
 
     data: TenantTierAssignData
+
+
+class TenantTierUnassignResponse(SuccessResponse):
+    """DELETE /auth/tenants/{tenant_id}/tier"""
+
+    data: TenantTierUnassignData
 
 
 class ListTenantTiersResponse(SuccessResponse):
