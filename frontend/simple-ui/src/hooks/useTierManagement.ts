@@ -108,6 +108,22 @@ function withoutKeys(map: StagedTierTargets, keys: string[]): StagedTierTargets 
   return next;
 }
 
+/** Shown when the tier write succeeded and a later staged change did not. */
+function partialSaveDescription(
+  tierName: string,
+  applied: number,
+  pending: number,
+  errorMessage: string,
+): string {
+  const appliedText =
+    applied === 1
+      ? "1 staged change was applied"
+      : `${applied} staged changes were applied`;
+  const pendingText =
+    pending === 1 ? "1 is still pending" : `${pending} are still pending`;
+  return `"${tierName}" was saved. ${appliedText} and ${pendingText}. ${errorMessage}`;
+}
+
 function listServicesOnTier(
   items: Service[] | undefined,
   tier: Pick<Tier, "id" | "name"> | null,
@@ -797,6 +813,13 @@ export function useTierManagement() {
       }
 
       for (const tenantId of Object.keys(stagedInstitutionRemovals)) {
+        const assignment = assignments.find(
+          (row) => String(row.tenant_id) === tenantId,
+        );
+        const currentTierId = assignment ? String(assignment.tier_id) : "";
+        if (currentTierId !== String(editingTier.id)) {
+          throw new Error(`${INSTITUTION} ${tenantId} is no longer on this tier.`);
+        }
         await removeTenantFromTier(tenantId);
         appliedRemovalIds.push(tenantId);
       }
@@ -836,13 +859,39 @@ export function useTierManagement() {
         message: errMsg,
         showOnlyMessage,
       } = extractErrorInfo(error);
-      toast({
-        title: showOnlyMessage ? undefined : errTitle,
-        description: errMsg,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      const appliedCount =
+        appliedServiceIds.length +
+        appliedTenantIds.length +
+        appliedRemovalIds.length;
+      const pendingCount = Math.max(
+        0,
+        Object.keys(stagedServiceTiers).length +
+          Object.keys(stagedInstitutionTiers).length +
+          Object.keys(stagedInstitutionRemovals).length -
+          appliedCount,
+      );
+      toast(
+        tierSaved
+          ? {
+              title: "Tier saved",
+              description: partialSaveDescription(
+                formData.name.trim(),
+                appliedCount,
+                pendingCount,
+                errMsg,
+              ),
+              status: "error",
+              duration: 8000,
+              isClosable: true,
+            }
+          : {
+              title: showOnlyMessage ? undefined : errTitle,
+              description: errMsg,
+              status: "error",
+              duration: 5000,
+              isClosable: true,
+            },
+      );
     } finally {
       setIsSubmitting(false);
     }

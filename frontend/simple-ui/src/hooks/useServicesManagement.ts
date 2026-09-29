@@ -9,6 +9,7 @@ import { useDeferredColumnSort } from "../utils/tableSort";
 import { resolveTaskType } from "../utils/platformService";
 import {
   fetchAllServicesMatchingFilters,
+  fetchExistingServiceIds,
   createService,
   getServiceById,
   updateService,
@@ -325,10 +326,22 @@ export function useServicesManagement() {
 
   /**
    * Service ids from the last registry fetch that was not narrowed by the
-   * table's task-type or publish filter. Create reuses this for the
-   * duplicate-id check instead of a second unfiltered `listServices` call.
+   * table's task-type or publish filter. That fetch is still limited to task
+   * types enabled in the UI.
    */
   const [fullServiceIds, setFullServiceIds] = useState<string[] | null>(null);
+
+  /**
+   * Unfiltered ids for the create-form duplicate check. An id registered under
+   * a task type the registry does not list would otherwise pass here and only
+   * fail as a 409 on submit.
+   */
+  const allServiceIdsQuery = useQuery({
+    queryKey: ["all-service-ids"],
+    queryFn: fetchExistingServiceIds,
+    enabled: isCreateOpen && !editingService,
+    staleTime: 30 * 1000,
+  });
 
   const modelsQuery = useQuery({
     queryKey: MODELS_ALL_QUERY_KEY,
@@ -1053,12 +1066,17 @@ export function useServicesManagement() {
    */
   const pricePerUnitError = validatePricePerUnit(pricePerUnit);
 
-  // Duplicate serviceId check — only in create mode (serviceId is read-only when editing)
-  const existingServiceIds = fullServiceIds ?? [];
+  // Duplicate serviceId check — only in create mode (serviceId is read-only when editing).
+  // Union the registry ids so a clash still shows while the unfiltered list loads.
+  const existingServiceIds = useMemo(() => {
+    const ids = new Set(fullServiceIds ?? []);
+    for (const id of allServiceIdsQuery.data ?? []) ids.add(id);
+    return ids;
+  }, [fullServiceIds, allServiceIdsQuery.data]);
   const serviceIdExists =
     !editingService &&
     !!formData.serviceId?.trim() &&
-    existingServiceIds.includes(formData.serviceId.trim());
+    existingServiceIds.has(formData.serviceId.trim());
 
   /**
    * ULCA length rules — create only. PATCH does not carry them, so an edit
