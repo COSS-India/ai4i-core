@@ -278,3 +278,71 @@ async def resolve_recipients_bulk(
                 emails.append(email)
         result[tenant_id] = sorted(emails)
     return result
+
+
+#: The only roles a MONITORING row can name (platform-core's
+#: catalog_metadata.LEGAL_RECIPIENT_ROLES for those rows). Anything else in
+#: recipient_roles is ignored rather than widening the audience.
+MONITORING_RECIPIENT_ROLES = ("ADMIN", "MODERATOR")
+
+
+async def resolve_monitoring_recipients(core_db, auth_db, *, notification_id: int) -> List[str]:
+    """The deduplicated, decrypted email list for one MONITORING catalog row,
+    resolved NOW from its configs_notification_alert.recipient_roles — every
+    active, non-deleted user currently holding a selected role (ADMIN and/or
+    MODERATOR). Platform-level: no tenant filter, unlike resolve_recipients.
+
+    Resolved on every send, not stored, so a user granted the role after the
+    row was last saved is included and a revoked / deactivated / deleted one
+    is dropped with no re-save in between.
+
+    A non-MONITORING or unknown notification_id resolves to nobody.
+    Best-effort, same contract as resolve_recipients: a lookup failure
+    returns [] rather than raising."""
+    try:
+        row = (
+            await core_db.execute(
+                text(
+                    "SELECT recipient_roles FROM configs_notification_alert"
+                    " WHERE id = :notification_id AND type::text = 'MONITORING'"
+                ),
+                {"notification_id": notification_id},
+            )
+        ).first()
+        stored = (row.recipient_roles or {}) if row is not None else {}
+        roles = [role for role in MONITORING_RECIPIENT_ROLES if stored.get(role) is True]
+        if not roles:
+            return []
+        result = await auth_db.execute(
+            text(
+                "SELECT DISTINCT u.email"
+                "  FROM users u"
+                "  JOIN user_role ur ON ur.user_id = u.id"
+                "  JOIN roles r ON r.id = ur.role_id"
+                " WHERE r.name = ANY(:roles)"
+                "   AND u.is_delete IS NOT TRUE"
+                "   AND u.is_active IS TRUE"
+            ),
+            {"roles": roles},
+        )
+        encrypted = {row.email for row in result.all()}
+    except Exception as exc:
+        logger.warning(
+            "Monitoring recipient resolution failed for notification_id=%s: %s",
+            notification_id, exc,
+        )
+        return []
+
+    emails = set()
+    for token in encrypted:
+        try:
+            email = _decrypt(token)
+        except Exception as exc:
+            logger.warning(
+                "Skipping monitoring recipient that failed to decrypt (notification_id=%s): %s",
+                notification_id, exc,
+            )
+            continue
+        if email:
+            emails.add(email)
+    return sorted(emails)

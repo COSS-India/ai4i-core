@@ -8,12 +8,10 @@ value + unit bands. Reading the monitoring catalog is the shared
 app.routes.notification.
 """
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_auth_db_optional, get_db
+from app.core.database import get_db
 from app.core.exceptions import InsufficientPermissionsError
 from app.core.permissions import is_admin
 from app.schemas.common import MessageMeta, error_responses
@@ -29,23 +27,22 @@ router = APIRouter(
 )
 
 
-@router.patch("/monitoring-catalog/{name}", responses=error_responses(404, 503))
+@router.patch("/monitoring-catalog/{name}", responses=error_responses(404))
 async def update_monitoring_catalog(
     name: str,
     payload: MonitoringCatalogUpdate,
     request: Request,
     session: AsyncSession = Depends(get_db),
-    auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ) -> UpdateMonitoringCatalogResponse:
     """Update one monitoring alert by name: recipient roles (ADMIN /
-    MODERATOR — every user holding a selected role is saved as a recipient)
+    MODERATOR — the users holding them are resolved when an alert is sent)
     and/or threshold bands. Only the fields present in the body are
     changed. Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     updated_by = request.headers.get("X-User-Id")
     item = await monitoring_catalog_service.update_monitoring_catalog(
-        session, name, payload, auth_db=auth_db, updated_by=updated_by
+        session, name, payload, updated_by=updated_by
     )
     return UpdateMonitoringCatalogResponse(
         success=True, data=item, meta=MessageMeta(message=f"'{item.name}' updated.")

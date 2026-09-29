@@ -47,9 +47,6 @@ from app.models.notification_management.config_notification_alert import (  # no
 from app.models.notification_management.tenant_notification_subscription import (  # noqa: E402
     TenantNotificationSubscription,
 )
-from app.models.notification_management.monitoring_alert_recipient import (  # noqa: E402
-    MonitoringAlertRecipient,
-)
 
 # Pay-per-use tables (Tier before TierQuota FK)
 # Pay-per-use tables (InferenceType before the tables that FK to it;
@@ -79,7 +76,6 @@ __all__ = [
     # notification-management
     "ConfigNotificationAlert",
     "TenantNotificationSubscription",
-    "MonitoringAlertRecipient",
     # pay-per-use
     "InferenceType",
     "Tier",

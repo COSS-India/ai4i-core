@@ -8,15 +8,11 @@ RoutingRule, ...).
 from app.models.notification_management.config_notification_alert import (
     ConfigNotificationAlert,
 )
-from app.models.notification_management.monitoring_alert_recipient import (
-    MonitoringAlertRecipient,
-)
 from app.models.notification_management.tenant_notification_subscription import (
     TenantNotificationSubscription,
 )
 
 __all__ = [
     "ConfigNotificationAlert",
-    "MonitoringAlertRecipient",
     "TenantNotificationSubscription",
 ]
