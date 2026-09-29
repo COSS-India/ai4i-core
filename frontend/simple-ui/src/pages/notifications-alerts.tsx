@@ -6,6 +6,7 @@ import { useToastWithDeduplication } from "../utils/toast";
 import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import LoadingSpinner from "../components/common/LoadingSpinner";
+import MonitoringCatalogTab from "../components/notification-alerts/MonitoringCatalogTab";
 import NotificationAlertsManagement from "../components/notification-alerts/NotificationAlertsManagement";
 import { useAuth } from "../hooks/useAuth";
 import { getPlatformName } from "../config/runtimeConfig";
@@ -99,9 +100,9 @@ const NotificationsAlertsPage: React.FC = () => {
               <TabPanel px={0} py={0}>
                 <NotificationAlertsManagement view="adopter" />
               </TabPanel>
-              {/* Monitoring notifications & alerts aren't built yet — the tab
-                  is a placeholder so the navigation is in place. */}
-              <TabPanel px={0} py={0} />
+              <TabPanel px={0} py={0}>
+                <MonitoringCatalogTab />
+              </TabPanel>
             </TabPanels>
           </Tabs>
         ) : (
