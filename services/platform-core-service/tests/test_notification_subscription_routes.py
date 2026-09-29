@@ -130,14 +130,32 @@ class TestUpdateSubscriptionRecipients:
 
 
 class TestRouteShape:
+    """The mounted path and exclude_none behavior are part of the public
+    contract — same reasoning as app.routes.notification's own pinned test:
+    without response_model_exclude_none=True, a NOTIFICATION row's
+    thresholds:null comes back in the JSON even though the Python object is
+    None (see subscription_service tests)."""
+
     def test_get_path(self):
         route = next(r for r in _routes.router.routes if "GET" in r.methods)
         assert route.path == "/notification-alerts/subscriptions"
+
+    def test_get_excludes_none_fields(self):
+        route = next(r for r in _routes.router.routes if "GET" in r.methods)
+        assert route.response_model_exclude_none is True
 
     def test_patch_path(self):
         route = next(r for r in _routes.router.routes if "PATCH" in r.methods)
         assert route.path == "/notification-alerts/subscriptions/{notification_id}"
 
+    def test_patch_excludes_none_fields(self):
+        route = next(r for r in _routes.router.routes if "PATCH" in r.methods)
+        assert route.response_model_exclude_none is True
+
     def test_put_path(self):
         route = next(r for r in _routes.router.routes if "PUT" in r.methods)
         assert route.path == "/notification-alerts/subscriptions/{notification_id}"
+
+    def test_put_excludes_none_fields(self):
+        route = next(r for r in _routes.router.routes if "PUT" in r.methods)
+        assert route.response_model_exclude_none is True

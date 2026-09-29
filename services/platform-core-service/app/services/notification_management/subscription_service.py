@@ -38,6 +38,7 @@ from app.schemas.notification_management.subscription import SubscriptionItem
 from app.services.notification_management.catalog_metadata import NOTIFICATION_METADATA
 from app.services.notification_management.catalog_service import (
     NOTIFICATION_ALERT_UPDATES_CHANNEL,
+    _parse_thresholds,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,7 @@ def _to_subscription_item(
 ) -> SubscriptionItem:
     meta = NOTIFICATION_METADATA.get(catalog_row.name)
     is_global = catalog_row.scope == NotificationScope.GLOBAL.value
+    is_alert = catalog_row.type == NotificationType.ALERT.value
     stored_subscribed = bool(sub_row.subscribed) if sub_row is not None else False
     recipients = list(sub_row.recipients or []) if sub_row is not None else []
     return SubscriptionItem(
@@ -60,6 +62,14 @@ def _to_subscription_item(
         subscribed=True if is_global else stored_subscribed,
         locked=is_global,
         recipients=recipients,
+        # Same catalog-row-derived value as CatalogItem.thresholds — None
+        # (dropped from the response) on a NOTIFICATION row, see catalog_
+        # service._to_catalog_item.
+        thresholds=(
+            _parse_thresholds((catalog_row.config or {}).get("thresholds"))
+            if is_alert
+            else None
+        ),
     )
 
 

@@ -37,13 +37,17 @@ from app.services.notification_management import catalog_service
 from app.services.notification_management import subscription_service as svc
 
 
-def _catalog_row(id=1, name="TIER_ASSIGNED", type="NOTIFICATION", scope="INSTITUTION", channels=("EMAIL",)):
+def _catalog_row(
+    id=1, name="TIER_ASSIGNED", type="NOTIFICATION", scope="INSTITUTION", channels=("EMAIL",),
+    config=None,
+):
     r = MagicMock()
     r.id = id
     r.name = name
     r.type = type
     r.scope = scope
     r.channels = list(channels)
+    r.config = config or {}
     return r
 
 
@@ -183,6 +187,45 @@ class TestListSubscriptions:
         )
         items = await svc.list_subscriptions(session, tenant_id="7")
         assert items[0].subscribed is False
+
+    async def test_alert_row_includes_configured_thresholds(self):
+        # Same shape/parsing as CatalogItem.thresholds (catalog_service.
+        # _parse_thresholds) — subscription GET must not drop this for
+        # ALERT-type rows just because it's the institution's own view.
+        session = _Session(
+            catalog_rows=[
+                _catalog_row(
+                    id=1, type="ALERT", scope="INSTITUTION",
+                    config={"thresholds": [{"percentage": 70, "active": True}, {"percentage": 90, "active": False}]},
+                )
+            ],
+            sub_rows=[],
+        )
+        items = await svc.list_subscriptions(session, tenant_id="7")
+        assert items[0].thresholds == [
+            catalog_service.ThresholdBand(percentage=70, active=True),
+            catalog_service.ThresholdBand(percentage=90, active=False),
+        ]
+
+    async def test_alert_row_with_legacy_dict_shaped_thresholds_still_parses(self):
+        # Pre-migration shape (percent-as-string keys) — same degrade-not-500
+        # behavior catalog_service._parse_thresholds already guarantees.
+        session = _Session(
+            catalog_rows=[
+                _catalog_row(id=1, type="ALERT", config={"thresholds": {"70": True, "90": False}})
+            ],
+            sub_rows=[],
+        )
+        items = await svc.list_subscriptions(session, tenant_id="7")
+        assert {(b.percentage, b.active) for b in items[0].thresholds} == {(70, True), (90, False)}
+
+    async def test_notification_row_thresholds_is_none(self):
+        session = _Session(
+            catalog_rows=[_catalog_row(id=1, type="NOTIFICATION", config={"thresholds": [{"percentage": 70, "active": True}]})],
+            sub_rows=[],
+        )
+        items = await svc.list_subscriptions(session, tenant_id="7")
+        assert items[0].thresholds is None
 
 
 @pytest.mark.asyncio
