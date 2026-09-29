@@ -20,13 +20,48 @@ from app.utils.metering_promql_builder import (
     PROMETHEUS_API_PATH_LABEL,
     SERVICE_BREAKDOWN_CONFIG,
     WINDOW_STEP,
+    AbsoluteRange,
     api_key_auth_type_selector,
     apply_time_range,
     build_base_selectors,
     escape_label_value,
+    previous_window_offset,
+    step_for_duration,
     sum_over_window,
     sum_over_window_by,
+    window_duration,
+    window_offset,
 )
+from app.utils import metering_promql_builder as _builder_mod
+
+from datetime import datetime as _datetime, timedelta as _timedelta, timezone as _timezone
+
+# Fixed "now" for AbsoluteRange offset math — see the frozen_builder_now fixture.
+_NOW = _datetime(2026, 9, 29, 12, 0, 0, tzinfo=_timezone.utc)
+
+
+@pytest.fixture
+def frozen_builder_now(monkeypatch):
+    """Pin metering_promql_builder's datetime.now() to _NOW so the
+    `offset <now-end>s` part of an AbsoluteRange query is deterministic."""
+
+    class _Frozen(_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return _NOW
+
+    monkeypatch.setattr(_builder_mod, "datetime", _Frozen)
+    # metering_service's retention guard (_previous_window_retained) reads the
+    # clock too.
+    import app.services.metering_service as _service_mod
+    monkeypatch.setattr(_service_mod, "datetime", _Frozen)
+    return _NOW
+
+
+def _abs_range(days_ago_start: float, days_ago_end: float) -> AbsoluteRange:
+    return AbsoluteRange(
+        start=_NOW - _timedelta(days=days_ago_start), end=_NOW - _timedelta(days=days_ago_end),
+    )
 
 
 class TestEscapeLabelValue:
@@ -175,6 +210,68 @@ class TestApplyTimeRange:
     def test_no_window_returns_raw(self):
         expr = apply_time_range("metric{}", None)
         assert expr == "metric{}"
+
+
+@pytest.mark.usefixtures("frozen_builder_now")
+class TestAbsoluteRangeWindow:
+    """An AbsoluteRange is rendered as `[<duration>s] offset <now-end>s` —
+    a 3-day range ending 2 days ago is `[259200s] offset 172800s`."""
+
+    def test_duration_and_offset(self):
+        r = _abs_range(5, 2)
+        assert window_duration(r) == "259200s"
+        assert window_offset(r) == " offset 172800s"
+
+    def test_range_ending_now_has_no_offset(self):
+        assert window_offset(_abs_range(1, 0)) == ""
+
+    def test_preset_has_no_end_offset(self):
+        assert window_offset("7d") == ""
+        assert window_duration("7d") == "7d"
+
+    def test_previous_window_offset_shifts_back_by_start(self):
+        # Previous period = the 3 days before start → ends at start (5 days ago).
+        assert previous_window_offset(_abs_range(5, 2)) == " offset 432000s"
+        assert previous_window_offset("24h") == " offset 24h"
+        assert previous_window_offset(None) == ""
+
+    def test_apply_time_range_absolute(self):
+        assert apply_time_range("metric{}", _abs_range(5, 2)) == "increase(metric{}[259200s] offset 172800s)"
+
+    def test_sum_over_window_absolute_shifts_both_arms(self):
+        expr = sum_over_window("metric{}", _abs_range(5, 2))
+        assert expr == (
+            "sum((metric{} offset 172800s unless metric{} offset 432000s)"
+            " or (increase(metric{}[259200s] offset 172800s) > 0))"
+        )
+
+    def test_sum_over_window_by_absolute(self):
+        expr = sum_over_window_by("metric{}", "model", _abs_range(5, 2))
+        assert expr.startswith("sum by(model) (")
+        assert "increase(metric{}[259200s] offset 172800s)" in expr
+
+    def test_preset_output_unchanged(self):
+        """The preset path must render exactly what it did before
+        AbsoluteRange existed."""
+        assert sum_over_window("metric{}", "7d") == (
+            "sum((metric{} unless metric{} offset 7d) or (increase(metric{}[7d]) > 0))"
+        )
+
+
+class TestStepForDuration:
+    @pytest.mark.parametrize("seconds,expected", [
+        (1_800, "10m"), (3_600, "10m"),
+        (3_601, "4h"), (86_400, "4h"),
+        (86_401, "1d"), (3 * 86_400, "1d"), (604_800, "1d"), (10 * 86_400, "1d"),
+        (31 * 86_400, "1d"), (31 * 86_400 + 1, "7d"), (90 * 86_400, "7d"),
+    ])
+    def test_thresholds(self, seconds, expected):
+        assert step_for_duration(seconds) == expected
+
+    def test_only_emits_steps_the_frontend_knows(self):
+        known = set(WINDOW_STEP.values())
+        for secs in (60, 7_200, 200_000, 10**7):
+            assert step_for_duration(secs) in known
 
 
 class TestServiceBreakdownConfig:
@@ -2603,3 +2700,96 @@ class TestFormatCount:
 
     def test_exact_thousand(self):
         assert MeteringService._format_count(1_000) == "1K"
+
+
+# ── Custom (AbsoluteRange) time windows on the service layer ────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("frozen_builder_now")
+class TestAbsoluteRangeQueries:
+    async def test_request_total_shifts_current_and_previous_queries(self):
+        svc = _make_service(scalar_return=10.0)
+        await svc.request_total(
+            inference_only=True, tenant=None, service_id=None, time_range=_abs_range(5, 2),
+        )
+        queries = [c.args[0] for c in svc._client.scalar.call_args_list]
+        assert len(queries) == 6
+        assert "increase(" in queries[0] and "[259200s] offset 172800s" in queries[0]
+        assert queries[2].startswith("sum(rate(") and "[259200s] offset 172800s" in queries[2]
+        # previous = equal-length window ending at `start`
+        for q in queries[3:]:
+            assert "[259200s] offset 432000s" in q
+
+    async def test_request_total_skips_previous_window_past_retention(self, monkeypatch):
+        """Previous window [now-20d, now-11d) reaches past a 15d retention —
+        the vs-previous figures are None instead of an undercount."""
+        monkeypatch.setattr("app.services.metering_service.settings.prometheus_retention_days", 15)
+        svc = _make_service(scalar_return=10.0)
+        result = await svc.request_total(
+            inference_only=True, tenant=None, service_id=None, time_range=_abs_range(11, 2),
+        )
+        assert svc._client.scalar.call_count == 3
+        assert result["total_requests"]["previous_count"] is None
+        assert result["total_requests"]["vs_previous_pct"] is None
+
+    async def test_request_volume_chart_whole_steps_start_at_from(self):
+        """A 3-day range: 3 daily buckets whose eval points are from+1d ..
+        end, so no bucket covers time before `from`; no tail query."""
+        svc = _make_service(range_return=[{"values": [[1, "1"]]}])
+        r = _abs_range(5, 2)
+        chart = await svc.request_volume_chart(r, tenant=None)
+        kwargs = svc._client.query_range.call_args.kwargs
+        assert kwargs["step"] == "1d"
+        assert kwargs["start"] == r.start.timestamp() + 86_400
+        assert kwargs["end"] == r.end.timestamp()
+        svc._client.scalar.assert_not_called()
+        assert chart.step == "1d"
+
+    async def test_request_volume_chart_ten_days_uses_daily_bars(self):
+        svc = _make_service(range_return=[])
+        await svc.request_volume_chart(_abs_range(12, 2), tenant=None)
+        kwargs = svc._client.query_range.call_args.kwargs
+        assert kwargs["step"] == "1d"
+        assert kwargs["start"] == (_NOW - _timedelta(days=11)).timestamp()
+
+    async def test_request_volume_chart_partial_tail_bucket(self):
+        """A 36h range ending now: one full daily bucket from `from`, then a
+        12h tail bucket ending at `to` — nothing before `from` is counted."""
+        svc = _make_service(range_return=[{"values": [[1, "4"]]}], scalar_return=3.0)
+        r = AbsoluteRange(start=_NOW - _timedelta(hours=36), end=_NOW)
+        chart = await svc.request_volume_chart(r, tenant=None)
+        kwargs = svc._client.query_range.call_args.kwargs
+        assert kwargs["start"] == kwargs["end"] == r.start.timestamp() + 86_400
+        tail_queries = [c.args[0] for c in svc._client.scalar.call_args_list]
+        assert len(tail_queries) == 2
+        for q in tail_queries:
+            assert "[43200s]" in q and " offset" not in q.split("unless")[0]
+        points = chart.series[0].points
+        assert points[-1].ts == int(_NOW.timestamp()) and points[-1].value == 3
+
+    async def test_request_volume_chart_shorter_than_one_step_is_tail_only(self):
+        svc = _make_service(scalar_return=2.0)
+        r = AbsoluteRange(start=_NOW - _timedelta(minutes=5), end=_NOW)
+        chart = await svc.request_volume_chart(r, tenant=None)
+        svc._client.query_range.assert_not_called()
+        assert [p.value for p in chart.series[0].points] == [2]
+
+    async def test_usage_concentration_uses_range(self):
+        svc = _make_service(query_return=[])
+        await svc.usage_concentration(limit=5, time_range=_abs_range(5, 2))
+        promql = svc._client.query.call_args.args[0]
+        assert "[259200s] offset 172800s" in promql
+        assert promql.endswith("> 0")
+
+    async def test_model_breakdown_uses_range_for_counts_and_native_units(self):
+        svc = _make_service(query_return=[])
+        with patch(
+            "app.services.metering_service.inference_type_cache.get_unit_map_standalone",
+            AsyncMock(return_value={}),
+        ):
+            await svc.model_breakdown(tenant=None, time_range=_abs_range(5, 2), task_types=["llm"])
+        queries = [c.args[0] for c in svc._client.query.call_args_list]
+        assert len(queries) == 3  # total, success, llm native units
+        for q in queries:
+            assert "[259200s] offset 172800s" in q

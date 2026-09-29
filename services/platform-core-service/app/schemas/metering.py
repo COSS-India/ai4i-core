@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Cell(BaseModel):
@@ -33,11 +33,21 @@ class Graph(BaseModel):
 
 
 class Scope(BaseModel):
+    # `from` is a Python keyword, hence the from_ field + alias. FastAPI's
+    # response_model serializes by alias, and the routes cache with
+    # model_dump(by_alias=True), so both the wire and cached key is `from`.
+    # populate_by_name lets the routes build it as Scope(from_=...).
+    model_config = ConfigDict(populate_by_name=True)
+
     role: str
     tenant_id: Optional[str] = None
     organisation: Optional[str] = None
-    window: str
+    window: str                         # preset key, or "custom" when from/to was applied
     task_types: Optional[list[str]] = None
+    # Effective custom range (UTC ISO-8601, same format as generated_at) —
+    # only set when the request's from/to was applied instead of `window`.
+    from_: Optional[str] = Field(None, alias="from")
+    to: Optional[str] = None
 
 
 class ServiceRow(BaseModel):
@@ -179,6 +189,14 @@ class OverviewResponse(BaseModel):
     platform_adoption: Optional[PlatformAdoption] = None
     usage_concentration: Optional[UsageConcentration] = None
     request_volume: Optional[Graph] = None
+    # Earliest billed usage for the scoped tenant (platform-wide for an
+    # unscoped admin view), UTC ISO-8601 — lets the date picker disable days
+    # before any data exists. None when there's no usage or the lookup failed.
+    first_usage_at: Optional[str] = None
+    # Earliest `from` a custom range accepts (UTC ISO-8601, an IST midnight):
+    # the metering retention limit. The date picker's floor is the later of
+    # this and first_usage_at.
+    earliest_from: Optional[str] = None
     degraded: bool = False
     generated_at: str
 

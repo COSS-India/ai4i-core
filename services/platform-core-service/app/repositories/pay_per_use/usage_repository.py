@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +15,10 @@ from app.models.pay_per_use.inference_type import InferenceType
 from app.models.pay_per_use.quota_usage import QuotaUsage
 from app.models.pay_per_use.tier import Tier
 from app.utils.billing_month import shift_billing_month
+
+
+# The payperuse consumer assigns billing months in IST.
+_IST = ZoneInfo("Asia/Kolkata")
 
 
 def _end_of_month(billing_month: str) -> datetime:
@@ -384,3 +389,36 @@ class UsageRepository:
         )
         result = await self._db.execute(stmt)
         return result.all()
+
+    async def get_first_usage_at(self, tenant_id: Optional[str]) -> Optional[datetime]:
+        """Earliest billed usage for a tenant (or across all tenants when
+        ``tenant_id`` is None), in UTC — the Usage Dashboard's calendar floor.
+
+        Read from ppu_quota_usage rather than the metering source, whose
+        history is capped by Prometheus/OpenSearch retention. The consumer's
+        quota upsert never touches created_at on conflict, so it stays the
+        first usage for each (tenant, inference type, month, tier) row.
+
+        MIN(billing_month) is the month-accurate cross-check: a created_at
+        later than the end of that month can only be a migration backfill,
+        so the month's start (IST midnight, matching how the consumer assigns
+        billing months) is returned instead. None when there are no rows.
+        """
+        stmt = select(func.min(QuotaUsage.created_at), func.min(QuotaUsage.billing_month))
+        if tenant_id is not None:
+            stmt = stmt.where(QuotaUsage.tenant_id == tenant_id)
+        result = await self._db.execute(stmt)
+        first_created, first_month = result.one()
+
+        if first_created is not None and first_created.tzinfo is None:
+            first_created = first_created.replace(tzinfo=timezone.utc)
+        if not first_month:
+            return first_created.astimezone(timezone.utc) if first_created else None
+
+        year, month = (int(p) for p in first_month.split("-"))
+        month_start = datetime(year, month, 1, tzinfo=_IST)
+        next_year, next_month = shift_billing_month(first_month, 1)
+        month_end = datetime(next_year, next_month, 1, tzinfo=_IST)
+        if first_created is not None and first_created < month_end:
+            return first_created.astimezone(timezone.utc)
+        return month_start.astimezone(timezone.utc)
