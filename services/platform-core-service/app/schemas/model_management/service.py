@@ -31,6 +31,7 @@ from app.schemas.common import (
     TaskSpecLenient,
     TotalMeta,
     is_recognized_schema_task_type,
+    schema_matches_task_type,
     validate_entity_name,
 )
 from app.schemas.enums.model_management import (
@@ -85,20 +86,6 @@ class SupportedFormats(BaseSchema):
     )
 
 
-# Same nmt/translation and language-detection/txt-lang-detection equivalence
-# as common.INFERENCE_SCHEMA_TASK_TYPES, but keyed so both spellings of a
-# pair resolve to the same equivalence set — used to check a `schema` entry
-# actually describes the service's own task, not just *some* recognized
-# task (without this, a TTS service could ship an `asr` schema entry and
-# nothing would catch it).
-_TASK_TYPE_SCHEMA_EQUIVALENTS: Dict[str, set] = {
-    "nmt": {"nmt", "translation"},
-    "translation": {"nmt", "translation"},
-    "language-detection": {"language-detection", "txt-lang-detection"},
-    "txt-lang-detection": {"language-detection", "txt-lang-detection"},
-}
-
-
 def validate_inference_schema_entries(v: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Shape check for ULCA's `schema` (InferenceSchemaArray): non-empty,
     each entry names a recognized taskType and carries `request`/`response`
@@ -130,20 +117,6 @@ def validate_inference_schema_entries(v: List[Dict[str, Any]]) -> List[Dict[str,
         if missing:
             raise ValueError(f"schema[{i}] is missing {missing}")
     return v
-
-
-def schema_matches_task_type(
-    task_type: Optional[str], schema_entries: Optional[List[Dict[str, Any]]]
-) -> bool:
-    """True if at least one `schema` entry's taskType is ULCA-equivalent to
-    `task_type`. With nothing to compare (`task_type`/`schema_entries` not
-    yet known) this returns True — callers decide separately whether either
-    side is required at all; this only catches an outright mismatch when
-    both are present."""
-    if not task_type or not schema_entries:
-        return True
-    equivalents = _TASK_TYPE_SCHEMA_EQUIVALENTS.get(task_type, {task_type})
-    return any(entry.get("taskType") in equivalents for entry in schema_entries)
 
 
 class InferenceAPIEndPoint(BaseSchema):
@@ -223,6 +196,14 @@ class InferenceAPIEndPoint(BaseSchema):
         min_length=5,
         max_length=100,
         description="Optional. Model identifier used to test the inference API key.",
+    )
+    authenticationToken: Optional[str] = Field(
+        None,
+        description=(
+            "Optional, LLM task type only. Sent as `Authorization: Bearer "
+            "<value>` to the model endpoint. Stored encrypted; masked in "
+            "API responses. Send an empty string to clear it."
+        ),
     )
 
     @field_validator("endpoint_schema")
@@ -566,6 +547,12 @@ class ServiceCreateRequest(BaseSchema):
         self.endpoint = callback_url
         self.hardwareDescription = infra_description
         self.api_key = inference_api_key.value if inference_api_key else self.api_key
+
+        if self.inferenceEndPoint.authenticationToken and self.taskType != "llm":
+            raise ValueError(
+                "inferenceEndPoint.authenticationToken is only supported for "
+                "LLM task type services."
+            )
         return self
 
 
@@ -772,6 +759,20 @@ class ServiceUpdateRequest(BaseSchema):
                 f"whose taskType matches this service's task ('{self.taskType}'); "
                 f"got: {[e.get('taskType') for e in self.inferenceEndPoint.endpoint_schema]}"
             )
+
+        # No "taskType omitted" fallback needed here (unlike the schema
+        # cross-check above): touching inferenceEndPoint always requires
+        # taskType too, via _require_billing_fields_on_substantive_edit.
+        if (
+            self.inferenceEndPoint is not None
+            and self.inferenceEndPoint.authenticationToken
+            and self.taskType is not None
+            and self.taskType != "llm"
+        ):
+            raise ValueError(
+                "inferenceEndPoint.authenticationToken is only supported for "
+                "LLM task type services."
+            )
         return self
 
     @model_validator(mode="after")
@@ -856,6 +857,7 @@ class ServiceInferenceEndpoint(BaseSchema):
 
     callbackUrl: Optional[str] = None
     inferenceApiKey: Optional[InferenceApiKey] = None
+    authenticationToken: Optional[str] = None
     isMultilingualEnabled: Optional[bool] = None
     supportedInputFormats: Optional[SupportedFormats] = None
     supportedOutputFormats: Optional[SupportedFormats] = None

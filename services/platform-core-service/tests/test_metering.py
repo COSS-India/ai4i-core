@@ -469,60 +469,43 @@ class TestTenantCount:
         auth_db.rollback.assert_awaited_once()
 
 
-import datetime as _dt_module
-
-
-class _FixedDatetime(_dt_module.datetime):
-    """Freezes datetime.now() for model_usage_growth_pct's month-boundary math."""
-
-    _fixed: _dt_module.datetime = _dt_module.datetime(2026, 8, 27, 10, 30, 0, tzinfo=_dt_module.timezone.utc)
-
-    @classmethod
-    def now(cls, tz=None):
-        return cls._fixed if tz is None else cls._fixed.astimezone(tz)
-
-
 @pytest.mark.asyncio
 class TestModelUsageGrowthPct:
-    async def test_returns_none_when_too_early_in_month(self):
-        svc = _make_service()
-        with patch("app.services.metering_service.datetime") as mock_dt:
-            mock_dt.now.return_value = _dt_module.datetime(2026, 8, 1, 0, 0, 30, tzinfo=_dt_module.timezone.utc)
-            result = await svc.model_usage_growth_pct()
-        assert result is None
-        svc._client.scalar.assert_not_called()
-
-    async def test_computes_growth_pct_from_calendar_month_windows(self):
+    async def test_computes_growth_pct_from_rolling_30d_windows(self):
+        """Ticket example (AI4IDS-2870): last 30 days vs the 30 days before
+        that, not calendar month vs calendar month. 4200 requests in the
+        last 30 days vs 3000 in the prior 30 days -> +40.0%."""
         client = MagicMock()
-        client.scalar = AsyncMock(side_effect=[150.0, 100.0])  # current MTD, previous month
+        client.scalar = AsyncMock(side_effect=[4200.0, 3000.0])  # last 30d, prior 30d
         svc = MeteringService(client=client, auth_db=None)
-        with patch("app.services.metering_service.datetime", _FixedDatetime), \
-             patch("app.services.metering_service.settings.prometheus_retention_days", 90):
+        with patch("app.services.metering_service.settings.prometheus_retention_days", 90):
             result = await svc.model_usage_growth_pct()
-        assert result == 50.0
+        assert result == 40.0
         cur_q, prev_q = client.scalar.call_args_list[0][0][0], client.scalar.call_args_list[1][0][0]
         # cur_q must go through the reset-aware sum_over_window() hybrid (an
         # "unless ... offset" guard against increase() extrapolating a young
-        # series over a long month-to-date window) — its own internal offset
-        # is not the same thing as prev_q's outer offset into a past month.
-        assert "unless" in cur_q and "increase(" in cur_q
-        assert "unless" not in prev_q and "offset" in prev_q
-        # prev_q's window must be the SAME width as cur_q's elapsed-so-far
-        # (comparable days-into-month on both sides), not the previous
-        # month's full length — else e.g. 5 partial August days would be
-        # compared against all 31 July days and report a bogus ~-84% drop
-        # even with flat traffic. _FixedDatetime = 2026-08-27T10:30:00Z ->
-        # elapsed_s = 26d10h30m = 2284200s since Aug 1; prev_month_len_s =
-        # Jul 1 -> Aug 1 = 2678400s (the offset, not the window here).
-        assert "[2284200s]" in prev_q
-        assert "offset 2678400s" in prev_q
+        # series) over exactly the last 30 days.
+        assert "unless" in cur_q and "increase(" in cur_q and "[30d]" in cur_q
+        # prev_q is a plain increase() over the SAME 30d width, shifted back
+        # by another 30d -> [now-60d, now-30d], not the calendar-month-length
+        # windows the old implementation used.
+        assert "unless" not in prev_q
+        assert "increase(" in prev_q and "[30d]" in prev_q and "offset 30d" in prev_q
 
-    async def test_returns_none_when_previous_month_had_no_traffic(self):
+    async def test_computes_negative_growth_pct(self):
+        """Usage declining: 2100 in the last 30d vs 3000 before -> -30.0%."""
+        client = MagicMock()
+        client.scalar = AsyncMock(side_effect=[2100.0, 3000.0])
+        svc = MeteringService(client=client, auth_db=None)
+        with patch("app.services.metering_service.settings.prometheus_retention_days", 90):
+            result = await svc.model_usage_growth_pct()
+        assert result == -30.0
+
+    async def test_returns_none_when_previous_window_had_no_traffic(self):
         client = MagicMock()
         client.scalar = AsyncMock(side_effect=[80.0, 0.0])
         svc = MeteringService(client=client, auth_db=None)
-        with patch("app.services.metering_service.datetime", _FixedDatetime), \
-             patch("app.services.metering_service.settings.prometheus_retention_days", 90):
+        with patch("app.services.metering_service.settings.prometheus_retention_days", 90):
             result = await svc.model_usage_growth_pct()
         assert result is None
 
@@ -530,27 +513,31 @@ class TestModelUsageGrowthPct:
         client = MagicMock()
         client.scalar = AsyncMock(side_effect=Exception("boom"))
         svc = MeteringService(client=client, auth_db=None)
-        with patch("app.services.metering_service.datetime", _FixedDatetime), \
-             patch("app.services.metering_service.settings.prometheus_retention_days", 90):
+        with patch("app.services.metering_service.settings.prometheus_retention_days", 90):
             result = await svc.model_usage_growth_pct()
         assert result is None
 
     async def test_returns_none_when_declared_retention_cannot_cover_lookback(self):
-        """The repo ships no production Prometheus config, so this guard —
-        not a docker-compose retention bump — is the actual fix for
-        'silently wrong instead of None if retention is too short': it
-        refuses the query outright rather than trusting whatever partial
-        data Prometheus has left after its own retention pruning."""
+        """The rolling comparison needs a flat 60 days of history (30 + 30).
+        This guard is the actual fix for 'silently wrong instead of None if
+        retention is too short': it refuses the query outright rather than
+        trusting whatever partial data Prometheus has left after its own
+        retention pruning."""
         client = MagicMock()
         client.scalar = AsyncMock(side_effect=[150.0, 100.0])
         svc = MeteringService(client=client, auth_db=None)
-        with patch("app.services.metering_service.datetime", _FixedDatetime), \
-             patch("app.services.metering_service.settings.prometheus_retention_days", 15):
-            # needs ~57.4d (elapsed_s + prev_month_len_s), default/low
-            # retention of 15d can't cover it
+        with patch("app.services.metering_service.settings.prometheus_retention_days", 15):
             result = await svc.model_usage_growth_pct()
         assert result is None
         client.scalar.assert_not_called()
+
+    async def test_proceeds_when_retention_exactly_covers_60d_lookback(self):
+        client = MagicMock()
+        client.scalar = AsyncMock(side_effect=[150.0, 100.0])
+        svc = MeteringService(client=client, auth_db=None)
+        with patch("app.services.metering_service.settings.prometheus_retention_days", 60):
+            result = await svc.model_usage_growth_pct()
+        assert result == 50.0
 
 
 @pytest.mark.asyncio

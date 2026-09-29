@@ -32,7 +32,7 @@ const ResponseContainer: React.FC<ResponseContainerProps> = ({
             <Text mb={2} fontSize="sm" color="gray.600">
               {fetchingLabel}
             </Text>
-            <Progress size="xs" isIndeterminate colorScheme="orange" />
+            <Progress size="xs" isIndeterminate />
           </Box>
         )}
 

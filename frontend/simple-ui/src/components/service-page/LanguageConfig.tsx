@@ -43,7 +43,7 @@ const LanguageConfig: React.FC<LanguageConfigProps> = ({
   if (loading) {
     return (
       <Stack spacing={4} align="center" py={4}>
-        <Spinner size="lg" color="orange.500" />
+        <Spinner size="lg" />
         <Text color="gray.600" fontSize="sm">
           Loading languages...
         </Text>
@@ -112,7 +112,7 @@ const LanguageConfig: React.FC<LanguageConfigProps> = ({
             isDisabled={disabled || swapDisabled || !isSwapAvailable}
             variant="outline"
             size="md"
-            colorScheme="orange"
+            colorScheme="ink"
           />
         </HStack>
         <Text fontSize="sm" color="gray.600" textAlign="center">
@@ -186,7 +186,7 @@ const LanguageConfig: React.FC<LanguageConfigProps> = ({
             isDisabled={disabled || swapDisabled}
             variant="outline"
             size="md"
-            colorScheme="orange"
+            colorScheme="ink"
           />
           <FormControl flex={1}>
             <FormLabel

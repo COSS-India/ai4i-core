@@ -18,6 +18,9 @@ def _base_create(**overrides):
         domain=["general"],
         submitter={"name": "Test User"},
         trainingDataset={"description": "test training dataset"},
+        # Required for every task type except llm/pipeline — see
+        # ModelCreateRequest._validate_class_instance_required. Default task above is "nmt".
+        classInstance="NMTTaskService",
     )
     defaults.update(overrides)
     return defaults

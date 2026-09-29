@@ -62,7 +62,7 @@ function ErrorFallbackUI({
             application should remain available.
           </Text>
           <VStack spacing={2} align="stretch" pt={2}>
-            <Button leftIcon={<FiRotateCcw />} colorScheme="orange" onClick={onRetry}>
+            <Button leftIcon={<FiRotateCcw />} onClick={onRetry}>
               Try Again
             </Button>
             <Button leftIcon={<FiRefreshCw />} variant="outline" onClick={onRefresh}>

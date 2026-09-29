@@ -140,7 +140,7 @@ function buildDraftFromUsageKey(
   applicationBudget: number,
 ): KeyBudgetDraft {
   const pct =
-    applicationBudget > 0
+    applicationBudget > 0 && key.allocatedBudget.amount > 0
       ? roundPct((key.allocatedBudget.amount / applicationBudget) * 100)
       : key.allocatedBudget.percentage;
   const consumedPct =

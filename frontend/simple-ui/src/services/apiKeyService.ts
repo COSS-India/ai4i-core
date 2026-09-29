@@ -86,12 +86,21 @@ function normalizeGroupedList(payload: unknown): ApiKeyGroupedListResult {
 
 export function getApiKeyErrorCode(error: unknown): string | null {
   const err = error as {
-    response?: { data?: { detail?: { error?: string } | string; code?: string; error?: string } };
+    response?: {
+      data?: {
+        detail?: { error?: string; code?: string } | string;
+        code?: string;
+        error?: string;
+      };
+    };
   };
   const data = err.response?.data;
   if (!data) return null;
   const detail = data.detail;
-  if (typeof detail === "object" && detail?.error) return detail.error;
+  if (typeof detail === "object" && detail !== null) {
+    const code = detail.error ?? detail.code;
+    if (code) return code;
+  }
   if (typeof detail === "string") return detail;
   return data.code ?? data.error ?? null;
 }
@@ -117,10 +126,8 @@ export async function createScopedApiKey(
     permissions: payload.permissions,
     expires_days: payload.expires_days,
     application_id: String(applicationId),
+    allocated_percentage: payload.allocated_percentage,
   };
-  if (payload.allocated_percentage != null) {
-    body.allocated_percentage = payload.allocated_percentage;
-  }
   const created = await authService.createApiKey(body);
   return normalizeKey(created);
 }

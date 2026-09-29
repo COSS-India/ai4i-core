@@ -62,6 +62,11 @@ class Settings(BaseSettings):
     MODEL_MANAGEMENT_SERVICE_TIMEOUT: int = Field(
         30, description="Model management service timeout in seconds"
     )
+    # Sent as X-Internal-Service-Token when resolving a service — must match
+    # platform-core-service's INTERNAL_SERVICE_SHARED_SECRET. Never log this.
+    MODEL_MANAGEMENT_SERVICE_INTERNAL_TOKEN: Optional[str] = Field(
+        None, description="Shared secret for the internal service-resolution call"
+    )
 
     # Triton configuration
     DEFAULT_TRITON_TIMEOUT: int = Field(300, description="Triton inference HTTP timeout in seconds")

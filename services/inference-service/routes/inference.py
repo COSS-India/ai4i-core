@@ -3,7 +3,7 @@ Main inference router with unified /inference endpoint.
 Handles all inference requests regardless of task type.
 Integrates orchestration, factory, and telemetry.
 """
-
+import json
 import logging
 from typing import Any, Dict, Optional, Tuple
 
@@ -649,6 +649,7 @@ async def chat_completions(
     payload: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
 ) -> Response:
     """OpenAI-compatible chat completions, proxied verbatim to the upstream LLM."""
+    logger.info(f"In routes method chat/completions payload={json.dumps(payload)}")
     return await _run_llm_chat(request, payload, path="/v1/chat/completions")
 
 

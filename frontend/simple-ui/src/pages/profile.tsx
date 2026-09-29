@@ -3,31 +3,28 @@
 
 import {
   Box,
-  Card,
   Center,
-  Heading,
-  Spinner,
   Tabs,
   TabList,
   TabPanels,
   Tab,
   TabPanel,
-  useColorModeValue,
-  VStack,
-  Text,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/router";
 import ContentLayout from "../components/common/ContentLayout";
+import ManagementPageHeader from "../components/common/ManagementPageHeader";
+import LoadingSpinner from "../components/common/LoadingSpinner";
 import { useAuth } from "../hooks/useAuth";
-import type { User } from "../types/auth";
+import { useTenantsList } from "../hooks/useTenantsList";
 import UserDetailsTab from "../components/profile/UserDetailsTab";
 import ChangePasswordTab from "../components/profile/ChangePasswordTab";
 import RolesTab from "../components/profile/RolesTab";
-import { listTenants, listUsers } from "../services/tenantService";
+import { listUsers } from "../services/tenantService";
 import { resolveDefaultTenantId, tenantUsersToAuthUsers } from "../utils/defaultTenant";
-import { canChangeOwnPassword } from "../utils/rbac";
+import { canChangeOwnPassword, isPlatformAdminUser } from "../utils/rbac";
 import { getPlatformName } from "../config/runtimeConfig";
 
 const ProfilePage: React.FC = () => {
@@ -35,9 +32,7 @@ const ProfilePage: React.FC = () => {
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
 
   const [activeTabIndex, setActiveTabIndex] = useState(0);
-  const [users, setUsers] = useState<User[]>([]);
-  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
-  const [defaultTenantId, setDefaultTenantId] = useState<string | null>(null);
+  const isAdmin = isPlatformAdminUser(user?.roles);
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -45,43 +40,25 @@ const ProfilePage: React.FC = () => {
     }
   }, [isAuthenticated, authLoading, router]);
 
-  useEffect(() => {
-    if (!isAuthenticated || authLoading || !user) return;
-    const isPlatformAdmin = user?.roles?.includes("ADMIN");
-    if (!isPlatformAdmin) return;
+  const tenantsQuery = useTenantsList({
+    enabled: isAuthenticated && !authLoading && isAdmin,
+  });
+  const defaultTenantId = useMemo(
+    () => resolveDefaultTenantId(tenantsQuery.data?.tenants ?? []),
+    [tenantsQuery.data?.tenants],
+  );
+  const usersQuery = useQuery({
+    queryKey: ["profile-tenant-users", defaultTenantId],
+    queryFn: async () => {
+      const { users: tenantUsers } = await listUsers(defaultTenantId!);
+      return tenantUsersToAuthUsers(tenantUsers);
+    },
+    enabled: Boolean(defaultTenantId),
+    staleTime: 5 * 60 * 1000,
+  });
+  const users = usersQuery.data ?? [];
+  const isLoadingUsers = tenantsQuery.isLoading || usersQuery.isLoading;
 
-    let cancelled = false;
-    setIsLoadingUsers(true);
-
-    (async () => {
-      try {
-        const { tenants } = await listTenants();
-        const tenantId = resolveDefaultTenantId(tenants);
-        if (cancelled) return;
-        setDefaultTenantId(tenantId);
-        if (!tenantId) {
-          setUsers([]);
-          return;
-        }
-        const { users: tenantUsers } = await listUsers(tenantId);
-        if (!cancelled) setUsers(tenantUsersToAuthUsers(tenantUsers));
-      } catch (error) {
-        console.error("Failed to fetch users for role assignment:", error);
-        if (!cancelled) setUsers([]);
-      } finally {
-        if (!cancelled) setIsLoadingUsers(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isAuthenticated, authLoading, user]);
-
-  const cardBg = useColorModeValue("white", "gray.800");
-  const cardBorder = useColorModeValue("gray.200", "gray.700");
-
-  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
   const showChangePassword = canChangeOwnPassword(user?.roles);
   const tabConfig = React.useMemo(() => {
     const tabs: { id: string; label: string; show: boolean }[] = [
@@ -96,7 +73,7 @@ const ProfilePage: React.FC = () => {
     return (
       <ContentLayout>
         <Center h="400px">
-          <Spinner size="xl" color="orange.500" />
+          <LoadingSpinner size="xl" />
         </Center>
       </ContentLayout>
     );
@@ -106,10 +83,7 @@ const ProfilePage: React.FC = () => {
     return (
       <ContentLayout>
         <Center h="400px">
-          <VStack spacing={4}>
-            <Spinner size="xl" color="orange.500" />
-            <Text color="gray.600">Redirecting to sign in...</Text>
-          </VStack>
+          <LoadingSpinner size="xl" label="Redirecting to sign in..." />
         </Center>
       </ContentLayout>
     );
@@ -133,57 +107,49 @@ const ProfilePage: React.FC = () => {
           py={8}
           px={4}
         >
-          <Heading
-            size="xl"
-            mb={8}
-            color="gray.800"
-            userSelect="none"
-            cursor="default"
-            tabIndex={-1}
+          <ManagementPageHeader
+            title="Profile"
+            description="Your account details, password, and role settings"
+          />
+
+          <Tabs
+            colorScheme="blue"
+            variant="enclosed"
+            index={activeTabIndex}
+            onChange={setActiveTabIndex}
           >
-            Profile
-          </Heading>
+            <TabList>
+              {tabConfig.map((t) => (
+                <Tab key={t.id} fontWeight="semibold">
+                  {t.label}
+                </Tab>
+              ))}
+            </TabList>
 
-          <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px">
-            <Tabs
-              colorScheme="blue"
-              variant="enclosed"
-              index={activeTabIndex}
-              onChange={setActiveTabIndex}
-            >
-              <TabList>
-                {tabConfig.map((t) => (
-                  <Tab key={t.id} fontWeight="semibold">
-                    {t.label}
-                  </Tab>
-                ))}
-              </TabList>
-
-              <TabPanels>
-                {tabConfig.map((t) => (
-                  <TabPanel key={t.id} px={0} pt={6}>
-                    {t.id === "user-details" && <UserDetailsTab />}
-                    {t.id === "change-password" && (
-                      <ChangePasswordTab
-                        onCancel={() =>
-                          setActiveTabIndex(
-                            tabConfig.findIndex((tab) => tab.id === "user-details")
-                          )
-                        }
-                      />
-                    )}
-                    {t.id === "roles" && (
-                      <RolesTab
-                        users={users}
-                        isLoadingUsers={isLoadingUsers}
-                        defaultTenantId={defaultTenantId}
-                      />
-                    )}
-                  </TabPanel>
-                ))}
-              </TabPanels>
-            </Tabs>
-          </Card>
+            <TabPanels>
+              {tabConfig.map((t) => (
+                <TabPanel key={t.id} px={0} pt={6}>
+                  {t.id === "user-details" && <UserDetailsTab />}
+                  {t.id === "change-password" && (
+                    <ChangePasswordTab
+                      onCancel={() =>
+                        setActiveTabIndex(
+                          tabConfig.findIndex((tab) => tab.id === "user-details")
+                        )
+                      }
+                    />
+                  )}
+                  {t.id === "roles" && (
+                    <RolesTab
+                      users={users}
+                      isLoadingUsers={isLoadingUsers}
+                      defaultTenantId={defaultTenantId}
+                    />
+                  )}
+                </TabPanel>
+              ))}
+            </TabPanels>
+          </Tabs>
         </Box>
       </ContentLayout>
     </>

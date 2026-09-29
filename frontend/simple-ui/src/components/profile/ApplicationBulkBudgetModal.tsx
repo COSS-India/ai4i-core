@@ -4,7 +4,6 @@ import {
   AlertIcon,
   Badge,
   Box,
-  Button,
   FormControl,
   FormErrorMessage,
   HStack,
@@ -12,6 +11,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import StandardModal from "../common/StandardModal";
+import FormActions from "../common/FormActions";
 import DataTable, { type DataTableColumn } from "../common/table";
 import InfoTip from "../common/InfoTip";
 import PercentageStepper, {
@@ -101,7 +101,7 @@ export default function ApplicationBulkBudgetModal({
             return (
               <>
                 <Text fontSize="sm">{formatPct(row.consumed_percentage)}</Text>
-                <Text fontSize="xs" color="gray.500">
+                <Text fontSize="xs" color="ink.500">
                   {formatSpendMoney(row.consumed_budget ?? 0, currency)}
                 </Text>
               </>
@@ -115,7 +115,7 @@ export default function ApplicationBulkBudgetModal({
             );
           }
           return (
-            <Text fontSize="sm" color="gray.400">
+            <Text fontSize="sm" color="ink.400">
               {row.keysLoading ? "Loading…" : "Focus row to load keys"}
             </Text>
           );
@@ -153,14 +153,14 @@ export default function ApplicationBulkBudgetModal({
         cell: (row) => {
           if (row.keysLoading) {
             return (
-              <Text fontSize="xs" color="gray.500">
+              <Text fontSize="xs" color="ink.500">
                 Loading keys…
               </Text>
             );
           }
           if (row.keyPreviews.length === 0) {
             return (
-              <Text fontSize="xs" color="gray.400">
+              <Text fontSize="xs" color="ink.400">
                 —
               </Text>
             );
@@ -171,7 +171,7 @@ export default function ApplicationBulkBudgetModal({
                 <Text
                   key={key.id}
                   fontSize="xs"
-                  color={key.floorViolation ? "red.500" : "gray.600"}
+                  color={key.floorViolation ? "red.500" : "ink.600"}
                 >
                   {key.key_name}: {formatPct(key.allocated_percentage)} ·{" "}
                   {formatSpendMoney(key.allocated_budget, currency)}
@@ -190,25 +190,28 @@ export default function ApplicationBulkBudgetModal({
       isOpen={isOpen}
       onClose={onClose}
       title="Edit Budget"
+      description="Adjust budget allocation across applications."
       size="6xl"
+      scrollBehavior="inside"
+      modalProps={{ blockScrollOnMount: true }}
+      headerProps={{ px: 6, pt: 5, pb: 4 }}
+      bodyProps={{ px: 6, py: 5 }}
+      footerProps={{ px: 6, py: 4 }}
       footer={
-        <HStack spacing={3}>
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            colorScheme="blue"
-            isLoading={isSaving}
-            isDisabled={!canSave}
-            onClick={() => void onSave()}
-          >
-            Save changes
-          </Button>
-        </HStack>
+        <FormActions
+          submitLabel="Save Changes"
+          onCancel={onClose}
+          onSubmit={() => void onSave()}
+          isLoading={isSaving}
+          isDisabled={!canSave}
+          loadingText="Saving..."
+          justify="space-between"
+          pt={0}
+        />
       }
     >
       <VStack align="stretch" spacing={4}>
-        <Text fontSize="sm" color="gray.600">
+        <Text fontSize="sm" color="ink.600">
           {FIELD_HINTS.application.bulkBudgetEdit.intro}
         </Text>
 
@@ -218,7 +221,7 @@ export default function ApplicationBulkBudgetModal({
               <Text
                 fontSize="xs"
                 fontWeight="bold"
-                color="gray.500"
+                color="ink.500"
                 textTransform="uppercase"
               >
                 {FIELD_HINTS.application.bulkBudgetEdit.institutionBudgetAllocatedLabel}
@@ -231,14 +234,14 @@ export default function ApplicationBulkBudgetModal({
               {formatPct(liveTotalPct)}
             </Text>
           </HStack>
-          <Box h="8px" bg="gray.200" borderRadius="full" overflow="hidden">
+          <Box h="8px" bg="ink.200" borderRadius="full" overflow="hidden">
             <Box
               h="100%"
               bg={totalOver ? "red.500" : "blue.500"}
               width={`${Math.min(liveTotalPct, 100)}%`}
             />
           </Box>
-          <Text fontSize="xs" color="gray.500" mt={2}>
+          <Text fontSize="xs" color="ink.500" mt={2}>
             {FIELD_HINTS.application.bulkBudgetEdit.institutionTotalPrefix}{" "}
             {formatSpendMoney(tenantBudget, currency)}
           </Text>
@@ -276,7 +279,7 @@ export default function ApplicationBulkBudgetModal({
           emptyMessage="No Applications to edit."
           asyncStateHeight="160px"
           borderRadius="md"
-          theadBg="gray.50"
+          theadBg="ink.50"
           cellPy={2}
           containerMt={0}
         />

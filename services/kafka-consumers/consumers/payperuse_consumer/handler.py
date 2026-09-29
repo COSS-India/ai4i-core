@@ -28,8 +28,10 @@ from ai4i_core.kafka import (
     publish_event as publish_notification_event,
     is_notification_enabled,
     get_threshold_bands,
+    get_notification_id,
     check_and_record_threshold,
     check_and_record_exhaustion,
+    resolve_recipients,
 )
 from consumers.payperuse_consumer._thresholds import (
     crossed_bands,
@@ -307,18 +309,55 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
     )
 
 
+async def _resolve_recipients(db, auth_db, name: str, tenant_id) -> list[str]:
+    """Shared helper for every event in _publish_usage_crossing_events —
+    db is this consumer's own session (ai4iplatform_core, where
+    configs_notification_alert/tenant_notification_subscription live);
+    auth_db is the second, named connection opened for the same reason
+    fetch_tenant_budget_status needs it (ai4iplatform_auth, where
+    users/roles live)."""
+    notification_id = await get_notification_id(db, name)
+    if notification_id is None or auth_db is None:
+        return []
+    return await resolve_recipients(db, auth_db, notification_id=notification_id, tenant_id=str(tenant_id))
+
+
 async def _publish_usage_crossing_events(
     db, auth_db, ctx: BillingContext, write: BillingWriteResult, cost: Decimal, billed_units: Decimal,
     inference_name: str, budget_threshold_enabled: bool, budget_exhausted_enabled: bool,
 ) -> None:
     """QUOTA_THRESHOLD/BUDGET_THRESHOLD/QUOTA_EXHAUSTED/BUDGET_EXHAUSTED —
-    fired post-commit, per-message. Deductions are incremental and this
-    consumer processes one message at a time per partition, so
-    pre = post - this_debit is exact without a second query. Best-effort:
-    every failure is caught inside publish(); this function itself is not
-    wrapped so a bug here surfaces in logs rather than being silently eaten,
-    but it must never be allowed to affect billing correctness (called only
-    after the commit above).
+    fired post-commit, per-message. Best-effort: every failure is caught
+    inside publish(); this function itself is not wrapped so a bug here
+    surfaces in logs rather than being silently eaten, but it must never be
+    allowed to affect billing correctness (called only after the commit
+    above).
+
+    pre = post - this_debit (for the BUDGET side; see below) is exact
+    without a second query ONLY because this consumer group runs a single
+    replica — ARCHITECTURE.md §8 pins it there. That is a platform-wide
+    deployment constraint, not a per-partition one: tenant_budget.used is a
+    fresh SUM over every API key under the tenant (see
+    fetch_tenant_budget_status), pooled across whichever Kafka partitions
+    those keys' spans landed on (spans carry no tenant-aware partition key
+    — see trace/setup.py's exporter, which sends with no `key=` at all — so
+    two keys under the same tenant can and do land on different
+    partitions). "This consumer processes one message at a time per
+    partition" is true, but it only ever made the OLD, per-key version of
+    this read exact (a single API key's own budget_usage row can only be
+    touched by whichever one partition its spans are on). It says nothing
+    about a tenant-pooled read: with more than one replica, a sibling
+    instance's commit for a *different* key under the *same* tenant can
+    land in between this instance's own commit and this SUM, inflating
+    pre_pct and silently skipping whichever threshold band falls between
+    the true and the overstated pre_pct — the ledger only remembers the
+    highest band reached, so a skipped band is never recovered by a later
+    message. See ARCHITECTURE.md §8/§11 for why this is a *second*,
+    independent prerequisite for raising replicas — the write-time guard
+    and reconciliation job §11 already lists guard against a different
+    hazard (duplicate billing from a repeated span) and do not cover this
+    one (a notification that was never published, for two distinct spans
+    each billed exactly once).
 
     ledger_notification_alert (design doc §5-7) is checked/updated with
     check_and_record_threshold/check_and_record_exhaustion before each
@@ -375,6 +414,7 @@ async def _publish_usage_crossing_events(
                         )
                         if fired:
                             alert_at = datetime.now(timezone.utc)
+                            recipients = await _resolve_recipients(db, auth_db, "BUDGET_THRESHOLD", ctx.tenant_id)
                             publish_notification_event(
                                 event_name="BUDGET_THRESHOLD",
                                 tenant_id=str(ctx.tenant_id),
@@ -385,6 +425,7 @@ async def _publish_usage_crossing_events(
                                     f"{_display_pct(post_pct):.0f}%",
                                 ],
                                 occurred_at=alert_at.isoformat(),
+                                recipients=recipients,
                             )
                 if budget_exhausted_enabled and crossed_exhaustion(pre_pct, post_pct):
                     # budget_snap (the ceiling) in the exhaustion subject too:
@@ -402,11 +443,13 @@ async def _publish_usage_crossing_events(
                         db, "BUDGET_EXHAUSTED", str(ctx.tenant_id), budget_exhaustion_subject
                     )
                     if fired:
+                        recipients = await _resolve_recipients(db, auth_db, "BUDGET_EXHAUSTED", ctx.tenant_id)
                         publish_notification_event(
                             event_name="BUDGET_EXHAUSTED",
                             tenant_id=str(ctx.tenant_id),
                             subject=budget_exhaustion_subject,
                             details=["INR", str(tenant_budget.snap)],
+                            recipients=recipients,
                         )
 
     if write.quota_recorded and write.quota_used is not None and write.quota_snap is not None:
@@ -414,7 +457,7 @@ async def _publish_usage_crossing_events(
         pre_pct = percent(write.quota_used - billed_units, write.quota_snap)
         if post_pct is not None and pre_pct is not None:
             subject = {"model_task_type": inference_name}
-            if await is_notification_enabled(db, "QUOTA_THRESHOLD"):
+            if await is_notification_enabled(db, "QUOTA_THRESHOLD", str(ctx.tenant_id)):
                 bands = await get_threshold_bands(db, "QUOTA_THRESHOLD")
                 # Same "highest band only" fix as BUDGET_THRESHOLD above —
                 # see that block's comment for why.
@@ -424,6 +467,7 @@ async def _publish_usage_crossing_events(
                     fired = await check_and_record_threshold(db, "QUOTA_THRESHOLD", str(ctx.tenant_id), subject, band)
                     if fired:
                         alert_at = datetime.now(timezone.utc)
+                        recipients = await _resolve_recipients(db, auth_db, "QUOTA_THRESHOLD", ctx.tenant_id)
                         publish_notification_event(
                             event_name="QUOTA_THRESHOLD",
                             tenant_id=str(ctx.tenant_id),
@@ -434,8 +478,11 @@ async def _publish_usage_crossing_events(
                                 f"{_display_pct(post_pct):.0f}% ({inference_name.upper()})",
                             ],
                             occurred_at=alert_at.isoformat(),
+                            recipients=recipients,
                         )
-            if crossed_exhaustion(pre_pct, post_pct) and await is_notification_enabled(db, "QUOTA_EXHAUSTED"):
+            if crossed_exhaustion(pre_pct, post_pct) and await is_notification_enabled(
+                db, "QUOTA_EXHAUSTED", str(ctx.tenant_id)
+            ):
                 # billing_month in the exhaustion subject: quota resets at
                 # the start of each month (design doc §6.4's epoch
                 # semantics for quota rows), so October's exhaustion must
@@ -449,6 +496,7 @@ async def _publish_usage_crossing_events(
                 if fired:
                     tier_name = await _fetch_tier_name(db, write.tier_id)
                     reset_date = _first_of_next_month(ctx.billing_month)
+                    recipients = await _resolve_recipients(db, auth_db, "QUOTA_EXHAUSTED", ctx.tenant_id)
                     publish_notification_event(
                         event_name="QUOTA_EXHAUSTED",
                         tenant_id=str(ctx.tenant_id),
@@ -457,6 +505,7 @@ async def _publish_usage_crossing_events(
                             tier_name,
                             [f"{inference_name.upper()}: Quota Limit {write.quota_snap:,.0f}, Resets on {reset_date}"],
                         ],
+                        recipients=recipients,
                     )
 
 
@@ -579,14 +628,17 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
     logger.debug("DB commit successful | tenant=%s offset=%d", ctx.tenant_id, ctx.offset)
 
     # Both are in-memory cache reads (notification_settings_cache) — cheap
-    # to check before deciding whether the BUDGET side needs the second,
-    # named "auth" connection at all (fetch_tenant_budget_status reads
+    # to check before deciding whether the second, named "auth" connection
+    # is worth opening at all. fetch_tenant_budget_status reads
     # tenants.allocated_budget and this tenant's api_key ids from
-    # ai4iplatform_auth; the connection is otherwise unused for the billing
-    # write above, and neither event ever fires without one of these set).
-    budget_threshold_enabled = await is_notification_enabled(db, "BUDGET_THRESHOLD")
-    budget_exhausted_enabled = await is_notification_enabled(db, "BUDGET_EXHAUSTED")
-    if budget_threshold_enabled or budget_exhausted_enabled:
+    # ai4iplatform_auth for the BUDGET side; recipient resolution
+    # (ai4i_core.kafka.recipients — this tenant's ADMIN/TENANT ADMIN users)
+    # needs it for EVERY event now, including QUOTA_THRESHOLD/QUOTA_EXHAUSTED,
+    # so it's also opened whenever a quota row was even written, not just
+    # when a BUDGET flag is on.
+    budget_threshold_enabled = await is_notification_enabled(db, "BUDGET_THRESHOLD", str(ctx.tenant_id))
+    budget_exhausted_enabled = await is_notification_enabled(db, "BUDGET_EXHAUSTED", str(ctx.tenant_id))
+    if budget_threshold_enabled or budget_exhausted_enabled or write.quota_recorded:
         async with session_scope(name="auth") as auth_db:
             await _publish_usage_crossing_events(
                 db, auth_db, ctx, write, cost, billed_units, pricing.task_type,

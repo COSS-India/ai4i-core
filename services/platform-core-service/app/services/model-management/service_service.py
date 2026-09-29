@@ -32,6 +32,7 @@ from uuid import UUID
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
+from app.core import service_credentials_crypto as crypto
 from app.core.config import settings
 from app.core.exceptions import (
     AppError,
@@ -256,7 +257,7 @@ class ServiceService:
         # 2. Validate the endpoint (live probe + SSRF guard + response shape)
         await self._validate_endpoint_for_model(
             endpoint=payload.endpoint,
-            api_key=payload.api_key,
+            api_key=payload.inferenceEndPoint.authenticationToken or payload.api_key,
             model_inference_endpoint=model.inference_endpoint or {},
             task_type=(model.task or {}).get("type"),
             expected_response_schema=payload.expectedResponseSchema,
@@ -313,6 +314,7 @@ class ServiceService:
             ssl_verify=payload.sslVerify,
             api_key=payload.api_key,
             inference_api_key=jsonable_encoder(ep.inferenceApiKey) if ep.inferenceApiKey else None,
+            llm_auth_token=crypto.encrypt(ep.authenticationToken or None),
             inference_schema=jsonable_encoder(effective_schema),
             is_sync_api=ep.isSyncApi,
             async_api_details=jsonable_encoder(ep.asyncApiDetails) if ep.asyncApiDetails else None,
@@ -419,7 +421,12 @@ class ServiceService:
                 raise EntityNotFoundError(
                     f"Model '{instance.model_id}' v{instance.model_version}"
                 )
-            api_key = payload.api_key or instance.api_key
+            api_key = (
+                (payload.inferenceEndPoint.authenticationToken if payload.inferenceEndPoint else None)
+                or crypto.decrypt(instance.llm_auth_token)
+                or payload.api_key
+                or instance.api_key
+            )
             expected_response_schema = (
                 payload.expectedResponseSchema
                 if payload.expectedResponseSchema is not None
@@ -464,6 +471,8 @@ class ServiceService:
             ep = payload.inferenceEndPoint
             if ep.inferenceApiKey is not None:
                 update_data["inference_api_key"] = jsonable_encoder(ep.inferenceApiKey)
+            if ep.authenticationToken is not None:
+                update_data["llm_auth_token"] = crypto.encrypt(ep.authenticationToken or None)
             if ep.isMultilingualEnabled is not None:
                 update_data["is_multilingual_enabled"] = ep.isMultilingualEnabled
             if ep.supportedInputFormats is not None:
@@ -637,7 +646,7 @@ class ServiceService:
         """
         await self._validate_endpoint_for_model(
             endpoint=item.endpoint,
-            api_key=instance.api_key,
+            api_key=crypto.decrypt(instance.llm_auth_token) or instance.api_key,
             model_inference_endpoint=model.inference_endpoint or {},
             task_type=(model.task or {}).get("type"),
             expected_response_schema=instance.expected_response_schema,

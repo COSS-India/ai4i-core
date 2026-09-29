@@ -1,9 +1,10 @@
 // Standard two-column layout shell for AI service try-it pages
 
 import React from "react";
-import { Box, Flex, Grid, Heading, Text, VStack } from "@chakra-ui/react";
+import { Box, Grid, VStack } from "@chakra-ui/react";
 import Head from "next/head";
 import ContentLayout from "../common/ContentLayout";
+import ManagementPageHeader from "../common/ManagementPageHeader";
 import {
   getServiceDescription,
   getServiceTitle,
@@ -18,7 +19,6 @@ const ServicePageLayout: React.FC<ServicePageLayoutProps> = ({
   pageDescription,
   headTitle,
   headDescription,
-  headingSize = "xl",
   headerExtra,
   banner,
   requestPanel,
@@ -28,7 +28,6 @@ const ServicePageLayout: React.FC<ServicePageLayoutProps> = ({
   const title = pageTitle ?? getServiceTitle(serviceId as ServiceId);
   const description = pageDescription ?? getServiceDescription(serviceId as ServiceId);
   const metaTitle = headTitle ?? `${title} | ${getPlatformName()}`;
-  const descFontSize = headingSize === "lg" ? "sm" : "lg";
 
   return (
     <>
@@ -38,37 +37,13 @@ const ServicePageLayout: React.FC<ServicePageLayoutProps> = ({
       </Head>
 
       <ContentLayout>
-        <VStack spacing={8} w="full">
+        <VStack spacing={6} w="full">
           <Box w="full" maxW={maxWidth} mx="auto">
-            <Flex
-              direction="row"
-              justify={headerExtra ? "space-between" : "center"}
-              align="center"
-              mb={headerExtra ? 4 : 0}
-              w="full"
-            >
-              <Box flex={1} textAlign="center">
-                <Heading
-                  size={headingSize}
-                  color="gray.800"
-                  mb={headingSize === "lg" ? 1 : 2}
-                  userSelect="none"
-                  cursor="default"
-                  tabIndex={-1}
-                >
-                  {title}
-                </Heading>
-                <Text
-                  color="gray.600"
-                  fontSize={descFontSize}
-                  userSelect="none"
-                  cursor="default"
-                >
-                  {description}
-                </Text>
-              </Box>
-              {headerExtra}
-            </Flex>
+            <ManagementPageHeader
+              title={title}
+              description={description}
+              actions={headerExtra}
+            />
           </Box>
 
           {banner}

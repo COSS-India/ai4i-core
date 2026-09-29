@@ -981,6 +981,14 @@ export const TENANT = {
     PENDING_ACTIVATION: "PENDING_ACTIVATION",
     SUSPENDED: "SUSPENDED",
   },
+  /**
+   * Tier filter sentinels for the Institutions table; every other value is a
+   * tier UUID. ALL is "all", not "", to match the Status filter beside it.
+   */
+  TIER_FILTER: {
+    ALL: "all",
+    NONE: "none",
+  },
 } as const;
 
 export type TenantStatusValue = (typeof TENANT.STATUS)[keyof typeof TENANT.STATUS];
@@ -1416,6 +1424,27 @@ export function formatModelTaskTypeLabel(taskType: string): string {
   return taskType.trim().toUpperCase();
 }
 
+/**
+ * Chakra badge `colorScheme` for model/service identity.
+ * Only the four mapped types have colours; every other task type is gray.
+ */
+const MODEL_TASK_TYPE_COLOR_SCHEME = {
+  asr: "orange",
+  nmt: "green",
+  tts: "blue",
+  llm: "purple",
+} as const satisfies Partial<Record<ModelTaskTypeValue, string>>;
+
+export function getTaskColorScheme(taskType?: string | null): string {
+  if (!taskType) return "gray";
+  const key = taskType.toLowerCase();
+  return (
+    MODEL_TASK_TYPE_COLOR_SCHEME[
+      key as keyof typeof MODEL_TASK_TYPE_COLOR_SCHEME
+    ] ?? "gray"
+  );
+}
+
 /** Sentinel returned by GET for inferenceApiKey.value — never echo back on PATCH. */
 export const MODEL_API_KEY_REDACTED = "[REDACTED]";
 
@@ -1434,6 +1463,17 @@ export const MODEL_FIELD_LIMITS = {
   SUBMITTER_NAME_MAX: 50,
   TEAM_NAME_MIN: 5,
   TEAM_NAME_MAX: 50,
+} as const;
+
+/**
+ * Tier filter sentinels for the Service Registry; every other value is a tier
+ * UUID. ALL is "", matching the Status / Model Task Type filters beside it.
+ */
+export const SERVICE_TIER = {
+  FILTER: {
+    ALL: "",
+    NONE: "none",
+  },
 } as const;
 
 /** Service publish state (services-management). */

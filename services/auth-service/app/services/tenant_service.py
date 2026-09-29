@@ -45,7 +45,9 @@ from app.core.responses import to_response
 from ai4i_core.kafka import (
     publish_admin_event as publish_notification_event,
     is_notification_enabled,
+    get_notification_id,
     check_and_record_action,
+    resolve_recipients,
 )
 from app.schemas.tenant import (
     TenantCreate,
@@ -158,6 +160,63 @@ def _validate_new_effective_to_not_in_past(budget_effective_to: datetime) -> Non
                     f"today ({today_utc.isoformat()}) UTC when reactivating a lapsed window."
                 ),
             },
+        )
+
+
+async def _seed_notification_subscriptions_for_new_tenant(
+    platform_core_db: Optional[AsyncSession], tenant_id: int, admin_user_id: str
+) -> None:
+    """One tenant_notification_subscription row per catalog notification for
+    a brand-new tenant, subscribed=false, recipients=[the new tenant admin's
+    own user id] — the same shape
+    c6e8f0a2b4d6_seed_tenant_notification_subscriptions.py backfilled for
+    every tenant that existed when that migration ran. That migration is a
+    one-time backfill; nothing else seeds a tenant created after it, so
+    this is that missing piece, run inline at tenant-creation time instead
+    of a periodic reconciliation job.
+
+    Best-effort, same framing as _assign_plan_to_tenant right below: this
+    must never fail tenant creation, and platform_core_db is Optional on
+    create_tenant (some deployments don't wire it up) — skip quietly rather
+    than raise. ON CONFLICT DO NOTHING makes this safe to re-run (e.g. a
+    retried request after a prior partial failure) without duplicating
+    rows.
+    """
+    if platform_core_db is None:
+        logger.warning(
+            "platform_core_db not configured; skipping notification-subscription "
+            "seeding for tenant %s", tenant_id,
+        )
+        return
+    try:
+        notification_ids = (
+            # MONITORING rows are platform-level — no tenant, no subscription.
+            # ::text so this still runs on a DB whose enum predates MONITORING
+            # (an unknown enum label errors, and the except below would then
+            # skip seeding every row, not just these).
+            await platform_core_db.execute(text(
+                "SELECT id FROM configs_notification_alert WHERE type::text <> 'MONITORING'"
+            ))
+        ).scalars().all()
+        for notification_id in notification_ids:
+            await platform_core_db.execute(
+                text(
+                    "INSERT INTO tenant_notification_subscription"
+                    "    (notification_id, tenant_id, subscribed, recipients)"
+                    " VALUES (:notification_id, :tenant_id, false, CAST(:recipients AS varchar[]))"
+                    " ON CONFLICT (notification_id, tenant_id) DO NOTHING"
+                ),
+                {
+                    "notification_id": notification_id,
+                    "tenant_id": str(tenant_id),
+                    "recipients": [admin_user_id],
+                },
+            )
+        await platform_core_db.commit()
+    except Exception as exc:
+        logger.exception(
+            "Seeding tenant_notification_subscription failed for tenant %s "
+            "(tenant was created): %s", tenant_id, exc,
         )
 
 
@@ -661,7 +720,7 @@ class TenantService:
         admin_username = await self._allocate_unique_username(
             self.derive_tenant_admin_username(body.email, body.organisation)
         )
-        await self.provision_user(
+        admin_user_id, _setup_token = await self.provision_user(
             email=body.email,
             username=admin_username,
             full_name=body.contact_name,
@@ -677,6 +736,10 @@ class TenantService:
         # provision_user committed; refresh to surface server-side defaults.
         await self._tenants.refresh(tenant)
         tenant_name_cache.set_name(tenant.id, tenant.organisation)
+
+        await _seed_notification_subscriptions_for_new_tenant(
+            platform_core_db, tenant.id, admin_user_id
+        )
 
         if body.plan_id:
             try:
@@ -1069,12 +1132,15 @@ class TenantService:
         positionally."""
         occurred_at = datetime.now(timezone.utc).isoformat()
         if old_tier_id is None:
-            if platform_core_db is not None and await is_notification_enabled(platform_core_db, "TIER_ASSIGNED"):
+            if platform_core_db is not None and await is_notification_enabled(
+                platform_core_db, "TIER_ASSIGNED", str(tenant_id)
+            ):
                 fired = await check_and_record_action(
                     platform_core_db, "TIER_ASSIGNED", str(tenant_id), {}, occurred_at, str(actor_id)
                 )
                 if fired:
                     description, quota_lines = await self._fetch_tier_email_fields(new_tier_id, platform_core_db)
+                    recipients = await self._resolve_recipients(platform_core_db, "TIER_ASSIGNED", tenant_id)
                     publish_notification_event(
                         event_name="TIER_ASSIGNED",
                         tenant_id=str(tenant_id),
@@ -1082,9 +1148,12 @@ class TenantService:
                         details=[new_tier_name, description, quota_lines],
                         actor_id=str(actor_id),
                         occurred_at=occurred_at,
+                        recipients=recipients,
                     )
             return
-        if platform_core_db is None or not await is_notification_enabled(platform_core_db, "TIER_CHANGED"):
+        if platform_core_db is None or not await is_notification_enabled(
+            platform_core_db, "TIER_CHANGED", str(tenant_id)
+        ):
             return
         old_tier_name = old_tier_id
         try:
@@ -1102,14 +1171,32 @@ class TenantService:
         )
         if fired:
             description, quota_lines = await self._fetch_tier_email_fields(new_tier_id, platform_core_db)
+            recipients = await self._resolve_recipients(platform_core_db, "TIER_CHANGED", tenant_id)
             publish_notification_event(
                 event_name="TIER_CHANGED",
                 tenant_id=str(tenant_id),
                 subject={},
                 details=[str(old_tier_name), new_tier_name, description, quota_lines],
                 actor_id=str(actor_id),
+                recipients=recipients,
                 occurred_at=occurred_at,
             )
+
+    async def _resolve_recipients(
+        self, platform_core_db: AsyncSession, name: str, tenant_id: int
+    ) -> list[str]:
+        """Shared helper — every producer call site needs the same
+        (notification_id, tenant_id) -> resolved email list lookup. auth_db
+        is this service's own default session (the repos' shared
+        AsyncSession, already against ai4iplatform_auth where users/roles
+        live); platform_core_db is the cross-service session already open
+        at every call site for is_notification_enabled/the ledger."""
+        notification_id = await get_notification_id(platform_core_db, name)
+        if notification_id is None:
+            return []
+        return await resolve_recipients(
+            platform_core_db, self._tenants._db, notification_id=notification_id, tenant_id=str(tenant_id)
+        )
 
     async def assign_tenant_tier(
         self,
@@ -1624,7 +1711,7 @@ class TenantService:
             )
         applications_recomputed, keys_recomputed, snapshot_writes = (
             await self._allocations.cascade_tenant_budget_revision(
-                tenant_id, new_budget, current_user, platform_core_db
+                tenant_id, new_budget, current_user, platform_core_db, tenant_name=tenant.name
             )
         )
 
@@ -1652,7 +1739,7 @@ class TenantService:
         if (
             action is not None
             and platform_core_db is not None
-            and await is_notification_enabled(platform_core_db, budget_event_name)
+            and await is_notification_enabled(platform_core_db, budget_event_name, str(tenant_id))
         ):
             occurred_at_dt = datetime.now(timezone.utc)
             occurred_at = occurred_at_dt.isoformat()
@@ -1670,6 +1757,7 @@ class TenantService:
                     if current_budget == 0
                     else [_BUDGET_CURRENCY, str(current_budget), str(new_budget), effective_date]
                 )
+                recipients = await self._resolve_recipients(platform_core_db, budget_event_name, tenant_id)
                 publish_notification_event(
                     event_name=budget_event_name,
                     tenant_id=str(tenant_id),
@@ -1677,6 +1765,7 @@ class TenantService:
                     details=details,
                     actor_id=str(current_user.id),
                     occurred_at=occurred_at,
+                    recipients=recipients,
                 )
 
         snapshot_write_failed = not await write_budget_snapshot(snapshot_writes, platform_core_db)

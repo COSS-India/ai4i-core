@@ -74,7 +74,7 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
           icon={<FaExchangeAlt />}
           onClick={handleSwapLanguages}
           size="md"
-          colorScheme="orange"
+          colorScheme="ink"
           variant="outline"
           isDisabled={disabled}
         />

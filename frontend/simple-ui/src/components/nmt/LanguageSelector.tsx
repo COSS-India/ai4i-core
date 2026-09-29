@@ -40,7 +40,7 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
 
     // Check if swapped pair is available
     const isSwappedPairAvailable = availableLanguagePairs.some(
-      pair => 
+      pair =>
         pair.sourceLanguage === swappedPair.sourceLanguage &&
         pair.targetLanguage === swappedPair.targetLanguage
     );
@@ -57,7 +57,7 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
   };
 
   const isSwapAvailable = availableLanguagePairs.some(
-    pair => 
+    pair =>
       pair.sourceLanguage === languagePair.targetLanguage &&
       pair.targetLanguage === languagePair.sourceLanguage
   );
@@ -65,7 +65,7 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
   if (loading) {
     return (
       <Stack spacing={4} align="center" py={8}>
-        <Spinner size="lg" color="orange.500" />
+        <Spinner size="lg" />
         <Text color="gray.600">Loading language pairs...</Text>
       </Stack>
     );
@@ -100,7 +100,7 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
           isDisabled={!isSwapAvailable}
           variant="outline"
           size="md"
-          colorScheme="orange"
+          colorScheme="ink"
         />
       </HStack>
 

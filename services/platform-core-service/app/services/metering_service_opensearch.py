@@ -663,32 +663,28 @@ class OpenSearchMeteringService(MeteringService):
         }
 
     async def model_usage_growth_pct(self) -> Optional[float]:
-        """Overall LLM request volume, current calendar month-to-date vs the
-        previous calendar month — same KPI #7 semantics as the Prometheus
-        version, exact counts instead of increase() extrapolation, and no
+        """Overall LLM request volume, rolling last 30 days vs the 30 days
+        before that — same KPI #7 semantics as the Prometheus version
+        (rolling windows, not calendar month vs calendar month), exact
+        counts instead of increase() extrapolation, and no
         PROMETHEUS_RETENTION_DAYS-style guard needed: the ISM policy
         (infrastructure/opensearch/ism-policy-logs.json, 90-day floor) is
-        logs-*'s retention control and already covers this ~60-day lookback.
+        logs-*'s retention control and already covers this 60-day lookback.
         """
         now = datetime.now(timezone.utc)
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        elapsed_s = int((now - month_start).total_seconds())
-        if elapsed_s < 60:
-            return None
-
-        prev_month_start = (month_start - timedelta(days=1)).replace(day=1)
-        prev_month_end = prev_month_start + timedelta(seconds=elapsed_s)
+        cur_start = now - timedelta(days=30)
+        prev_start = now - timedelta(days=60)
 
         filters = self._base_filters(auth_type=API_KEY_AUTH_TYPE, inference_only=True)
         filters.append({"terms": {"path": _LLM_CHAT_PATHS}})
 
         cur_query = {"bool": {"filter": [
-            {"range": {"@timestamp": {"gte": month_start.isoformat(), "lte": now.isoformat()}}},
+            {"range": {"@timestamp": {"gte": cur_start.isoformat(), "lte": now.isoformat()}}},
             *filters,
         ]}}
         prev_query = {"bool": {"filter": [
             {"range": {"@timestamp": {
-                "gte": prev_month_start.isoformat(), "lt": prev_month_end.isoformat(),
+                "gte": prev_start.isoformat(), "lt": cur_start.isoformat(),
             }}},
             *filters,
         ]}}

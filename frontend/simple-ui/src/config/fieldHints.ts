@@ -105,6 +105,15 @@ export const FIELD_HINTS = {
       llmHelper: "Enter the model host URL (host:port only).",
       llmPlaceholder: "e.g. http://host:port",
     },
+    authToken: {
+      placeholder: "Enter authentication token",
+      helper:
+        "Optional. Sent as Authorization: Bearer when the vLLM endpoint requires authentication.",
+      editHelper:
+        "A token is already saved. Leave blank to keep it, or enter a new token to replace it.",
+      editEmptyHelper:
+        "Optional. Leave blank if the endpoint does not require authentication.",
+    },
     hardware: {
       placeholder: "e.g. Auto-scalable deployment, using T4 GPUs",
       helper: (min: number, max: number) =>
@@ -172,9 +181,9 @@ export const FIELD_HINTS = {
       helper: "Required. Keys are scoped to one Application.",
     },
     budget: {
-      placeholder: "0",
+      placeholder: "e.g. 25",
       helper:
-        "Optional. Percentage of the parent Application's Budget. Leave blank to use the Application's remaining Budget as this key's ceiling. If the Application has no Budget, the key has no ceiling.",
+        "Required. Percentage of the parent Application's Budget, greater than 0 and within what the Application still has unallocated.",
     },
     search: {
       placeholder: "Search by key name",

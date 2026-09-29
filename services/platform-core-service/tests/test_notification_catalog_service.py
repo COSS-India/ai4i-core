@@ -1,6 +1,6 @@
 """app/services/notification_management/catalog_service.py
 
-Three things here are load-bearing and would fail quietly if broken:
+Four things here are load-bearing and would fail quietly if broken:
 
 **Column separation.** recipient_roles is its own jsonb column, config is
 thresholds-only. A regression that writes recipient_roles back into config
@@ -12,9 +12,14 @@ response_model_exclude_none=True specifically so this key disappears from
 the wire for notifications; if the service ever returns {} instead of None
 here, thresholds re-appears on every notification response.
 
-**PATCH validation** (legal recipient roles per ALERT name, threshold key
-range/count) runs before any write — a bad payload must not partially
-commit.
+**scope is read straight off the column**, not derived — a regression that
+hardcodes or drops it would silently mis-scope every notification.
+
+**The ADMIN/scope invariant** (_apply_admin_recipient_scope_invariant):
+recipient_roles["ADMIN"] — the Adopter Admin's own recipient toggle —
+defaults to selected and is overridable while GLOBAL, but is always forced
+off while INSTITUTION, on both read and write, regardless of what a
+payload or a stale stored value says.
 
 No database — the session is faked.
 """
@@ -45,6 +50,7 @@ def _row(
     type="NOTIFICATION",
     module="TIER",
     channels=("EMAIL",),
+    scope="INSTITUTION",
     recipient_roles=None,
     config=None,
 ):
@@ -54,6 +60,7 @@ def _row(
     r.type = type
     r.module = module
     r.channels = list(channels)
+    r.scope = scope
     r.recipient_roles = recipient_roles if recipient_roles is not None else {}
     r.config = config if config is not None else {}
     return r
@@ -67,6 +74,16 @@ class _Session:
         self.found = found
         self.commits = 0
         self.refreshed = []
+        # Each entry is the FULL raw bound-param dict of one bulk
+        # tenant_notification_subscription reset UPDATE issued on a
+        # GLOBAL -> INSTITUTION scope flip — stored verbatim (not
+        # cherry-picked), so a regression that also sets e.g. recipients=[]
+        # in that same UPDATE actually shows up as an extra key here,
+        # rather than being silently dropped before a test ever sees it.
+        # Keys: "subscribed", "updated_by" (only if update_catalog was
+        # given one), "notification_id_1" (the WHERE clause's own
+        # SQLAlchemy-auto-named bind param).
+        self.subscription_resets = []
 
     async def execute(self, stmt):
         # Honour the statement's actual WHERE value rather than always
@@ -83,6 +100,8 @@ class _Session:
         elif "name_1" in params:
             found = self.found if self.found is not None and self.found.name == params["name_1"] else None
             result.scalar_one_or_none.return_value = found
+        elif "subscribed" in params:
+            self.subscription_resets.append(dict(params))
         else:
             raise AssertionError(f"fake _Session.execute doesn't recognize this query: {stmt}")
         return result
@@ -113,7 +132,7 @@ class TestToCatalogItem:
     def test_thresholds_is_populated_for_an_alert_row(self):
         item = svc._to_catalog_item(
             _row(
-                name="QUOTA_THRESHOLD", type="ALERT", module="QUOTA",
+                name="QUOTA_THRESHOLD", type="ALERT", module="QUOTA", scope="GLOBAL",
                 config={"thresholds": [
                     {"percentage": 70, "active": False},
                     {"percentage": 80, "active": False},
@@ -143,18 +162,46 @@ class TestToCatalogItem:
     def test_recipient_roles_reads_the_column_not_config(self):
         item = svc._to_catalog_item(
             _row(
-                recipient_roles={"TENANT ADMIN": True},
+                recipient_roles={"TENANT ADMIN": True, "ADMIN": False},
                 config={"recipient_roles": {"ADMIN": True}},  # stale shape, must be ignored
             )
         )
-        assert item.recipient_roles == {"TENANT ADMIN": True}
+        assert item.recipient_roles == {"TENANT ADMIN": True, "ADMIN": False}
+
+    def test_scope_reads_the_column(self):
+        item = svc._to_catalog_item(_row(scope="GLOBAL"))
+        assert item.scope == "GLOBAL"
 
     def test_unknown_name_falls_back_to_the_raw_enum_value(self):
         # A name not in NOTIFICATION_METADATA (shouldn't happen in practice)
         # must not 500 the whole catalog read.
-        item = svc._to_catalog_item(_row(name="SOME_FUTURE_TYPE"))
+        item = svc._to_catalog_item(_row(name="SOME_FUTURE_TYPE", scope="GLOBAL"))
         assert item.display_name == "SOME_FUTURE_TYPE"
         assert item.description == ""
+
+
+# ── the ADMIN/scope invariant must NOT be re-derived on read ──────────────────
+
+
+class TestToCatalogItemDoesNotDeriveAdminFromScope:
+    """The send path (notification_settings_cache.is_notification_enabled,
+    the kafka-consumers catalog cache) reads recipient_roles directly, not
+    scope — _to_catalog_item deriving ADMIN from scope on every GET would
+    let the catalog UI show a value the send path disagrees with. The
+    stored column is made scope-consistent once, by update_catalog on
+    write and by e2a4c6b8d0f2's backfill for pre-existing rows — a read
+    must return exactly what's stored, even a stale/inconsistent value,
+    rather than silently paper over it."""
+
+    def test_global_scope_with_empty_recipient_roles_is_returned_empty(self):
+        # No derived {"ADMIN": True} default — an un-backfilled or
+        # otherwise inconsistent row must be visible as what it is.
+        item = svc._to_catalog_item(_row(scope="GLOBAL", recipient_roles={}))
+        assert item.recipient_roles == {}
+
+    def test_institution_scope_with_a_stale_true_admin_is_returned_as_stored(self):
+        item = svc._to_catalog_item(_row(scope="INSTITUTION", recipient_roles={"ADMIN": True}))
+        assert item.recipient_roles == {"ADMIN": True}
 
 
 # ── list_catalog ─────────────────────────────────────────────────────────────
@@ -163,7 +210,7 @@ class TestToCatalogItem:
 @pytest.mark.asyncio
 class TestListCatalog:
     async def test_returns_projected_items_in_query_order(self):
-        rows = [_row(id=1, name="TIER_ASSIGNED"), _row(id=2, name="TIER_CHANGED")]
+        rows = [_row(id=1, name="TIER_ASSIGNED"), _row(id=2, name="TIER_CHANGED", scope="GLOBAL")]
         items = await svc.list_catalog(_Session(rows=rows), NotificationType.NOTIFICATION)
         assert [i.name for i in items] == ["TIER_ASSIGNED", "TIER_CHANGED"]
 
@@ -173,7 +220,7 @@ class TestListCatalog:
 
     async def test_alert_type_rows_carry_thresholds(self):
         rows = [_row(
-            name="QUOTA_THRESHOLD", type="ALERT",
+            name="QUOTA_THRESHOLD", type="ALERT", scope="GLOBAL",
             config={"thresholds": [{"percentage": 50, "active": True}]},
         )]
         items = await svc.list_catalog(_Session(rows=rows), NotificationType.ALERT)
@@ -202,13 +249,22 @@ class TestUpdateCatalog:
                 _Session(found=row), row.name, CatalogUpdate(thresholds=_bands((50, True)))
             )
 
+    async def test_scope_is_updated(self):
+        row = _row(id=1, name="TIER_ASSIGNED", type="NOTIFICATION", scope="INSTITUTION")
+        session = _Session(found=row)
+        item = await svc.update_catalog(
+            session, row.name, CatalogUpdate(scope="GLOBAL")
+        )
+        assert row.scope == "GLOBAL"
+        assert item.scope == "GLOBAL"
+
     async def test_legal_recipient_role_allowed_for_a_notification_row(self):
-        row = _row(id=1, name="TIER_ASSIGNED", type="NOTIFICATION")
+        row = _row(id=1, name="TIER_ASSIGNED", type="NOTIFICATION", scope="GLOBAL")
         session = _Session(found=row)
         item = await svc.update_catalog(
             session, row.name, CatalogUpdate(recipient_roles={"TENANT ADMIN": True})
         )
-        assert row.recipient_roles == {"TENANT ADMIN": True}
+        assert row.recipient_roles["TENANT ADMIN"] is True
         assert item.thresholds is None
 
     async def test_illegal_recipient_role_is_rejected_for_a_notification_row(self):
@@ -223,14 +279,14 @@ class TestUpdateCatalog:
 
     async def test_recipient_roles_write_to_the_column_not_config(self):
         row = _row(
-            id=2, name="QUOTA_THRESHOLD", type="ALERT",
+            id=2, name="QUOTA_THRESHOLD", type="ALERT", scope="GLOBAL",
             config={"thresholds": [{"percentage": 50, "active": False}]},
         )
         session = _Session(found=row)
         await svc.update_catalog(
             session, row.name, CatalogUpdate(recipient_roles={"TENANT ADMIN": True})
         )
-        assert row.recipient_roles == {"TENANT ADMIN": True}
+        assert row.recipient_roles["TENANT ADMIN"] is True
         assert row.config == {
             "thresholds": [{"percentage": 50, "active": False}]
         }, "thresholds must survive untouched"
@@ -244,10 +300,10 @@ class TestUpdateCatalog:
                 _Session(found=row), row.name, CatalogUpdate(recipient_roles={"MODERATOR": True})
             )
 
-    async def test_thresholds_write_into_config_without_touching_recipient_roles(self):
+    async def test_thresholds_write_into_config_without_touching_scope_or_other_roles(self):
         row = _row(
-            id=3, name="BUDGET_THRESHOLD", type="ALERT",
-            recipient_roles={"ADMIN": True},
+            id=3, name="BUDGET_THRESHOLD", type="ALERT", scope="GLOBAL",
+            recipient_roles={"ADMIN": True, "TENANT ADMIN": True},
             config={"thresholds": [
                 {"percentage": 70, "active": False},
                 {"percentage": 80, "active": False},
@@ -263,28 +319,31 @@ class TestUpdateCatalog:
             {"percentage": 80, "active": True},
             {"percentage": 90, "active": False},
         ]}
-        assert row.recipient_roles == {"ADMIN": True}, "recipient_roles must survive untouched"
+        assert row.scope == "GLOBAL", "scope must survive untouched"
+        assert row.recipient_roles == {
+            "ADMIN": True, "TENANT ADMIN": True,
+        }, "recipient_roles must survive untouched (already invariant-consistent for GLOBAL)"
 
     async def test_partial_recipient_roles_update_keeps_other_keys_at_their_current_value(self):
         # Existing row already has both legal roles set true. A PATCH naming
         # only one of them must not touch the other — it stays True, it
         # isn't reset to False just for being omitted.
         row = _row(
-            id=2, name="QUOTA_THRESHOLD", type="ALERT",
+            id=2, name="QUOTA_THRESHOLD", type="ALERT", scope="GLOBAL",
             recipient_roles={"TENANT ADMIN": True, "ADMIN": True},
         )
         session = _Session(found=row)
         await svc.update_catalog(
-            session, row.name, CatalogUpdate(recipient_roles={"ADMIN": False})
+            session, row.name, CatalogUpdate(recipient_roles={"TENANT ADMIN": False})
         )
-        assert row.recipient_roles == {"TENANT ADMIN": True, "ADMIN": False}
+        assert row.recipient_roles == {"TENANT ADMIN": False, "ADMIN": True}
 
     async def test_thresholds_is_a_wholesale_replacement_not_a_merge(self):
         # No stable key to merge a partial update against once percentage
         # itself is editable — a PATCH always sends and stores exactly the
         # 3 bands it names, in full.
         row = _row(
-            id=2, name="QUOTA_THRESHOLD", type="ALERT",
+            id=2, name="QUOTA_THRESHOLD", type="ALERT", scope="GLOBAL",
             config={"thresholds": [
                 {"percentage": 50, "active": True},
                 {"percentage": 75, "active": True},
@@ -333,19 +392,20 @@ class TestUpdateCatalog:
 
     async def test_omitted_fields_are_left_alone(self):
         row = _row(
-            id=2, name="QUOTA_THRESHOLD", type="ALERT",
+            id=2, name="QUOTA_THRESHOLD", type="ALERT", scope="GLOBAL",
             recipient_roles={"ADMIN": True},
             config={"thresholds": [{"percentage": 50, "active": True}]},
         )
         session = _Session(found=row)
         await svc.update_catalog(session, row.name, CatalogUpdate())
+        assert row.scope == "GLOBAL"
         assert row.recipient_roles == {"ADMIN": True}
         assert row.config == {"thresholds": [{"percentage": 50, "active": True}]}
 
     async def test_commits_and_refreshes_on_success(self):
         row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT")
         session = _Session(found=row)
-        await svc.update_catalog(session, row.name, CatalogUpdate(recipient_roles={"ADMIN": True}))
+        await svc.update_catalog(session, row.name, CatalogUpdate(channels=["EMAIL"]))
         assert session.commits == 1
         assert session.refreshed == [row]
 
@@ -353,7 +413,7 @@ class TestUpdateCatalog:
         row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT")
         session = _Session(found=row)
         await svc.update_catalog(
-            session, row.name, CatalogUpdate(recipient_roles={"ADMIN": True}), updated_by="u42"
+            session, row.name, CatalogUpdate(channels=["EMAIL"]), updated_by="u42"
         )
         assert row.updated_by == "u42"
 
@@ -361,18 +421,228 @@ class TestUpdateCatalog:
         row = _row(id=2, name="QUOTA_THRESHOLD", type="ALERT")
         row.updated_by = "someone-else"
         session = _Session(found=row)
-        await svc.update_catalog(session, row.name, CatalogUpdate(recipient_roles={"ADMIN": True}))
+        await svc.update_catalog(session, row.name, CatalogUpdate(channels=["EMAIL"]))
         assert row.updated_by == "someone-else"
 
     async def test_returns_the_updated_item(self):
         row = _row(
-            id=2, name="QUOTA_THRESHOLD", type="ALERT",
+            id=2, name="QUOTA_THRESHOLD", type="ALERT", scope="GLOBAL",
             config={"thresholds": [{"percentage": 50, "active": True}]},
         )
         session = _Session(found=row)
         item = await svc.update_catalog(
-            session, row.name, CatalogUpdate(recipient_roles={"ADMIN": True})
+            session, row.name, CatalogUpdate(scope="GLOBAL")
         )
-        assert item.recipient_roles == {"ADMIN": True}
+        assert item.scope == "GLOBAL"
         assert item.thresholds == _bands((50, True))
         assert item.id == 2
+
+
+# ── update_catalog: the ADMIN/scope invariant on write ────────────────────────
+
+
+@pytest.mark.asyncio
+class TestUpdateCatalogAdminScopeInvariant:
+    async def test_scope_change_to_institution_clears_a_previously_true_admin_flag(self):
+        row = _row(
+            id=1, name="TIER_ASSIGNED", type="NOTIFICATION", scope="GLOBAL",
+            recipient_roles={"ADMIN": True},
+        )
+        session = _Session(found=row)
+        item = await svc.update_catalog(session, row.name, CatalogUpdate(scope="INSTITUTION"))
+        assert row.recipient_roles["ADMIN"] is False
+        assert item.recipient_roles["ADMIN"] is False
+
+    async def test_payload_cannot_force_admin_true_while_institution_scope(self):
+        row = _row(id=1, name="TIER_ASSIGNED", type="NOTIFICATION", scope="INSTITUTION")
+        session = _Session(found=row)
+        item = await svc.update_catalog(
+            session, row.name, CatalogUpdate(recipient_roles={"ADMIN": True})
+        )
+        assert row.recipient_roles["ADMIN"] is False
+        assert item.recipient_roles["ADMIN"] is False
+
+    async def test_global_scope_row_gets_admin_defaulted_true_on_any_patch(self):
+        # Self-healing: a row that predates this invariant (empty
+        # recipient_roles) must not need its own dedicated PATCH just to
+        # pick up the default.
+        row = _row(id=1, name="TIER_CHANGED", type="NOTIFICATION", scope="GLOBAL", recipient_roles={})
+        session = _Session(found=row)
+        item = await svc.update_catalog(session, row.name, CatalogUpdate(channels=["EMAIL"]))
+        assert row.recipient_roles["ADMIN"] is True
+        assert item.recipient_roles["ADMIN"] is True
+
+
+# ── update_catalog: GLOBAL -> INSTITUTION resets every tenant's subscription ──
+
+
+@pytest.mark.asyncio
+class TestScopeTransitionResetsTenantSubscriptions:
+    """Scenario 1 (Global -> Institution) and Scenario 3 (Institution ->
+    Global -> reverted back to Institution) from the design doc: entering
+    INSTITUTION scope must force every tenant back to Unsubscribed,
+    unconditionally — regardless of whatever a tenant's stored
+    tenant_notification_subscription.subscribed bit already was (including
+    a stale `true` left over from before an earlier stint as GLOBAL, or
+    the original seed). Recipients are never touched by this."""
+
+    async def test_scenario_1_global_to_institution_resets_every_tenant(self):
+        row = _row(id=7, name="TIER_ASSIGNED", type="NOTIFICATION", scope="GLOBAL")
+        session = _Session(found=row)
+
+        await svc.update_catalog(session, row.name, CatalogUpdate(scope="INSTITUTION"))
+
+        assert len(session.subscription_resets) == 1
+        reset = session.subscription_resets[0]
+        assert reset["notification_id_1"] == 7
+        assert reset["subscribed"] is False
+        # recipients must never appear in this UPDATE's own params — per
+        # the design ("Any recipients they'd added stay intact"). Checked
+        # against the full raw param dict (not a cherry-picked copy), so a
+        # regression that also sets recipients=[] here actually fails this.
+        assert "recipients" not in reset
+
+    async def test_scenario_3_institution_global_reverted_resets_regardless_of_prior_state(self):
+        # Drives the actual sequence the name describes, through ONE
+        # session against the SAME row: Institution (institution had
+        # unsubscribed) -> Global (Scenario 2 — no reset, stored bit
+        # untouched) -> Institution again (Scenario 3 — undoing Scenario
+        # 2). The second PATCH must reset regardless of whatever the
+        # stored bit still is, which this row never even lets us see —
+        # exactly the point: previous_scope must reflect the row's CURRENT
+        # scope after the first PATCH mutated it, not some stale value
+        # captured once at the start.
+        row = _row(id=7, name="TIER_ASSIGNED", type="NOTIFICATION", scope="INSTITUTION")
+        session = _Session(found=row)
+
+        # Scenario 2: Institution -> Global. No reset — the institution's
+        # prior (unsubscribed) state must survive untouched underneath.
+        await svc.update_catalog(session, row.name, CatalogUpdate(scope="GLOBAL"))
+        assert session.subscription_resets == []
+        assert row.scope == "GLOBAL"
+
+        # Scenario 3: Global -> Institution (undoing Scenario 2). Must
+        # reset now, regardless of the untouched-since-Scenario-2 stored
+        # bit.
+        await svc.update_catalog(session, row.name, CatalogUpdate(scope="INSTITUTION"))
+        assert len(session.subscription_resets) == 1
+        assert session.subscription_resets[0]["subscribed"] is False
+
+    async def test_institution_to_global_does_not_reset(self):
+        # The opposite direction — Institution -> Global — must NOT reset
+        # anything: Scenario 2 requires the institution's prior state
+        # (including any recipients) to survive untouched underneath the
+        # GLOBAL override.
+        row = _row(id=7, name="TIER_ASSIGNED", type="NOTIFICATION", scope="INSTITUTION")
+        session = _Session(found=row)
+
+        await svc.update_catalog(session, row.name, CatalogUpdate(scope="GLOBAL"))
+
+        assert session.subscription_resets == []
+
+    async def test_resending_the_same_institution_scope_does_not_reset(self):
+        # A no-op PATCH that merely re-affirms the row's current scope is
+        # not a transition — must not silently unsubscribe every tenant.
+        row = _row(id=7, name="TIER_ASSIGNED", type="NOTIFICATION", scope="INSTITUTION")
+        session = _Session(found=row)
+
+        await svc.update_catalog(session, row.name, CatalogUpdate(scope="INSTITUTION"))
+
+        assert session.subscription_resets == []
+
+    async def test_a_patch_that_does_not_touch_scope_does_not_reset(self):
+        row = _row(id=7, name="TIER_ASSIGNED", type="NOTIFICATION", scope="INSTITUTION")
+        session = _Session(found=row)
+
+        await svc.update_catalog(session, row.name, CatalogUpdate(channels=["EMAIL"]))
+
+        assert session.subscription_resets == []
+
+    async def test_reset_is_scoped_to_this_notification_id_only(self):
+        row = _row(id=42, name="BUDGET_ASSIGNED", type="NOTIFICATION", scope="GLOBAL")
+        session = _Session(found=row)
+
+        await svc.update_catalog(session, row.name, CatalogUpdate(scope="INSTITUTION"))
+
+        assert session.subscription_resets[0]["notification_id_1"] == 42
+
+    async def test_updated_by_is_recorded_on_the_reset_when_given(self):
+        row = _row(id=7, name="TIER_ASSIGNED", type="NOTIFICATION", scope="GLOBAL")
+        session = _Session(found=row)
+
+        await svc.update_catalog(
+            session, row.name, CatalogUpdate(scope="INSTITUTION"), updated_by="adopter-admin-1"
+        )
+
+        assert session.subscription_resets[0]["updated_by"] == "adopter-admin-1"
+
+
+# ── MONITORING rows ──────────────────────────────────────────────────────────
+
+
+def _monitoring_row(name="LATENCY_P95", bands=((2, False), (5, True), (10, False)), unit="SECONDS"):
+    return _row(
+        id=10, name=name, type="MONITORING", module="MONITORING", scope="GLOBAL",
+        recipient_roles={"ADMIN": True, "MODERATOR": False},
+        config={"monitoring_thresholds": [
+            {"value": v, "unit": unit, "active": a} for v, a in bands
+        ]},
+    )
+
+
+def test_non_monitoring_rows_omit_monitoring_thresholds():
+    item = svc._to_catalog_item(_row(type="ALERT", config={"thresholds": []}))
+    assert item.monitoring_thresholds is None
+
+
+@pytest.mark.asyncio
+class TestMonitoringCatalog:
+    async def test_monitoring_filter_returns_only_monitoring_rows(self):
+        rows = [
+            _row(id=1, name="QUOTA_THRESHOLD", type="ALERT", config={"thresholds": []}),
+            _monitoring_row(),
+        ]
+        items = await svc.list_catalog(_Session(rows=rows), NotificationType.MONITORING)
+        assert [i.name for i in items] == ["LATENCY_P95"]
+
+    async def test_monitoring_row_carries_monitoring_thresholds_not_thresholds(self):
+        item = (await svc.list_catalog(_Session(rows=[_monitoring_row()]), NotificationType.MONITORING))[0]
+        assert item.thresholds is None
+        assert [(b.value, b.unit.value, b.active) for b in item.monitoring_thresholds] == [
+            (2, "SECONDS", False), (5, "SECONDS", True), (10, "SECONDS", False),
+        ]
+        assert item.display_name == "P95 Latency"
+        assert item.recipient_roles == {"ADMIN": True, "MODERATOR": False}
+
+    async def test_metering_patch_404s_a_monitoring_row_and_saves_nothing(self):
+        # Review scenario: PATCH /catalog/LATENCY_P95 {"recipient_roles":
+        # {"MODERATOR": true}} used to 200 and save the role WITHOUT
+        # rebuilding monitoring_alert_recipient. Monitoring rows are written
+        # only through PATCH /monitoring-catalog/{name}.
+        row = _monitoring_row()
+        session = _Session(found=row)
+        with pytest.raises(EntityNotFoundError):
+            await svc.update_catalog(
+                session, row.name, CatalogUpdate(recipient_roles={"MODERATOR": True})
+            )
+        assert row.recipient_roles == {"ADMIN": True, "MODERATOR": False}
+        assert session.commits == 0
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            # Fields the monitoring model says a monitoring row doesn't have.
+            CatalogUpdate(scope="INSTITUTION"),
+            CatalogUpdate(channels=["EMAIL", "SMS"]),
+        ],
+        ids=["scope", "channels"],
+    )
+    async def test_metering_patch_cannot_change_scope_or_channels_of_a_monitoring_row(self, payload):
+        row = _monitoring_row()
+        session = _Session(found=row)
+        with pytest.raises(EntityNotFoundError):
+            await svc.update_catalog(session, row.name, payload)
+        assert row.scope == "GLOBAL"
+        assert row.channels == ["EMAIL"]
+        assert session.subscription_resets == []
+        assert session.commits == 0

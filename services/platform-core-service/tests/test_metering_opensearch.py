@@ -489,24 +489,39 @@ class TestModelBreakdown:
 
 @pytest.mark.asyncio
 class TestModelUsageGrowthPct:
-    async def test_none_when_too_early_in_month(self):
-        svc, _ = _make_os_service()
-        with patch("app.services.metering_service_opensearch.datetime") as mock_dt:
-            from datetime import datetime, timezone
-            mock_dt.now.return_value = datetime(2026, 3, 1, 0, 0, 30, tzinfo=timezone.utc)
-            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-            assert await svc.model_usage_growth_pct() is None
-
-    async def test_none_when_no_previous_month_traffic(self):
+    async def test_none_when_no_previous_window_traffic(self):
         svc, os_client = _make_os_service()
         os_client.count = AsyncMock(side_effect=[10, 0])
         assert await svc.model_usage_growth_pct() is None
 
-    async def test_computes_growth_pct(self):
+    async def test_computes_growth_pct_from_rolling_30d_windows(self):
+        """Same rolling-window semantics as the Prometheus version
+        (metering_service.py): last 30 days vs the 30 days before that,
+        not calendar month vs calendar month."""
         svc, os_client = _make_os_service()
         os_client.count = AsyncMock(side_effect=[150, 100])
         result = await svc.model_usage_growth_pct()
         assert result == 50.0
+
+        cur_query, prev_query = (
+            os_client.count.call_args_list[0][0][0],
+            os_client.count.call_args_list[1][0][0],
+        )
+        cur_range = next(
+            f["range"]["@timestamp"] for f in cur_query["bool"]["filter"] if "range" in f
+        )
+        prev_range = next(
+            f["range"]["@timestamp"] for f in prev_query["bool"]["filter"] if "range" in f
+        )
+        # cur covers [now-30d, now]; prev covers [now-60d, now-30d) —
+        # back-to-back, fixed-width, not calendar-month boundaries.
+        assert cur_range["gte"] == prev_range["lt"]
+
+    async def test_computes_negative_growth_pct(self):
+        svc, os_client = _make_os_service()
+        os_client.count = AsyncMock(side_effect=[70, 100])
+        result = await svc.model_usage_growth_pct()
+        assert result == -30.0
 
     async def test_query_failure_returns_none(self):
         svc, os_client = _make_os_service()

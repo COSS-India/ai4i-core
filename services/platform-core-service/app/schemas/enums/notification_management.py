@@ -26,15 +26,25 @@ class NotificationName(str, Enum):
     BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
     QUOTA_THRESHOLD = "QUOTA_THRESHOLD"
     BUDGET_THRESHOLD = "BUDGET_THRESHOLD"
+    # MONITORING-type rows (f1a3c5e7b9d1 / a2b4d6f8c0e3 — the "Define
+    # Monitoring Alerts" ticket).
+    ERROR_RATE_4XX = "ERROR_RATE_4XX"
+    ERROR_RATE_5XX = "ERROR_RATE_5XX"
+    LATENCY_P50 = "LATENCY_P50"
+    LATENCY_P95 = "LATENCY_P95"
+    LATENCY_P99 = "LATENCY_P99"
 
 
 class NotificationType(str, Enum):
     """The family a catalog row belongs to: the 7 notification-management
     rows are NOTIFICATION, the 2 alert-catalog rows (QUOTA_THRESHOLD,
-    BUDGET_THRESHOLD) are ALERT. What the two catalog screens filter on."""
+    BUDGET_THRESHOLD) are ALERT, the 5 infrastructure-monitoring rows
+    (error rate / latency) are MONITORING. What the catalog screens filter
+    on."""
 
     NOTIFICATION = "NOTIFICATION"
     ALERT = "ALERT"
+    MONITORING = "MONITORING"
 
 
 class NotificationModule(str, Enum):
@@ -43,6 +53,7 @@ class NotificationModule(str, Enum):
     TIER = "TIER"
     BUDGET = "BUDGET"
     QUOTA = "QUOTA"
+    MONITORING = "MONITORING"
 
 
 class NotificationChannel(str, Enum):
@@ -55,7 +66,26 @@ class NotificationChannel(str, Enum):
     WHATSAPP = "WHATSAPP"
 
 
+class NotificationScope(str, Enum):
+    """Who a catalog row applies to: GLOBAL fires platform-wide for every
+    institution with no per-institution opt-out; INSTITUTION is available
+    for an institution to subscribe to via tenant_notification_subscription.
+    """
+
+    GLOBAL = "GLOBAL"
+    INSTITUTION = "INSTITUTION"
+
+
+class MonitoringThresholdUnit(str, Enum):
+    """Unit of a MONITORING row's threshold band: error rates are a
+    percentage of requests, latencies are seconds."""
+
+    PERCENT = "PERCENT"
+    SECONDS = "SECONDS"
+
+
 VALID_NOTIFICATION_NAMES = {member.value for member in NotificationName}
 VALID_NOTIFICATION_TYPES = {member.value for member in NotificationType}
 VALID_NOTIFICATION_MODULES = {member.value for member in NotificationModule}
 VALID_NOTIFICATION_CHANNELS = {member.value for member in NotificationChannel}
+VALID_NOTIFICATION_SCOPES = {member.value for member in NotificationScope}

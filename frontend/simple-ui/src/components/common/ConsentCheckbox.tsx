@@ -24,7 +24,6 @@ const ConsentCheckbox: React.FC<ConsentCheckboxProps> = ({ isChecked, onChange, 
       <Link
         href="https://github.com/COSS-India/ai4i-core/blob/master/docs/legal/terms-of-service.md"
         isExternal
-        color="blue.500"
       >
         Terms of Service
       </Link>{" "}
@@ -32,7 +31,6 @@ const ConsentCheckbox: React.FC<ConsentCheckboxProps> = ({ isChecked, onChange, 
       <Link
         href="https://github.com/COSS-India/ai4i-core/blob/master/docs/legal/privacy-policy.md"
         isExternal
-        color="blue.500"
       >
         Privacy Policy
       </Link>

@@ -79,6 +79,7 @@ def publish_event(
     actor_id: str = "",
     topic: Optional[str] = None,
     occurred_at: Optional[str] = None,
+    recipients: Optional[List[str]] = None,
 ) -> None:
     """Build the standard notification envelope and send it. Returns
     immediately from the caller's point of view — the actual send() call
@@ -93,7 +94,14 @@ def publish_event(
     occurred_at: pass explicitly when the caller already computed it (e.g.
     to pass the identical timestamp into the ledger_notification_alert
     dedup check before deciding to publish at all). Defaults to now() when
-    omitted."""
+    omitted.
+
+    recipients: the resolved email addresses this notification should go
+    to (ai4i_core.kafka.recipients.resolve_recipients) — the producer
+    already knows who should get it (this tenant's ADMIN/TENANT ADMIN plus
+    any additional tenant_notification_subscription recipients), so the
+    consumer no longer resolves roles itself, it just sends to this list.
+    Defaults to [] rather than None so every envelope has a stable shape."""
     if _producer is None:
         return
     envelope = {
@@ -103,6 +111,7 @@ def publish_event(
         "actor_id": actor_id,
         "subject": subject,
         "details": details,
+        "recipients": recipients or [],
     }
     target_topic = topic or _default_topic
     try:
@@ -135,6 +144,7 @@ def publish_admin_event(
     actor_id: str,
     topic: Optional[str] = None,
     occurred_at: Optional[str] = None,
+    recipients: Optional[List[str]] = None,
 ) -> None:
     """Convenience wrapper over publish_event for the 5 "admin changed
     something" events (design doc §2.1/§9). occurred_at is the only
@@ -150,6 +160,7 @@ def publish_admin_event(
         actor_id=actor_id,
         topic=topic,
         occurred_at=occurred_at,
+        recipients=recipients,
     )
 
 

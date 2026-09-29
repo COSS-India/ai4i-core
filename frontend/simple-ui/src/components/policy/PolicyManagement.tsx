@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Alert,
   AlertDescription,
@@ -6,16 +7,12 @@ import {
   Badge,
   Box,
   Button,
-  Card,
-  CardBody,
   Checkbox,
   CheckboxGroup,
   Flex,
   FormControl,
-  FormLabel,
   Heading,
   HStack,
-  IconButton,
   Input,
   Select,
   Spinner,
@@ -30,18 +27,20 @@ import {
   Textarea,
   Tooltip,
   useDisclosure,
-  VStack,
 } from "@chakra-ui/react";
 import { showToast } from "../../utils/toast";
-import {
-  AddIcon,
-  DeleteIcon,
-  EditIcon,
-  ViewIcon,
-} from "@chakra-ui/icons";
-import StandardModal from "../common/StandardModal";
+import StandardModal, { CreateModal } from "../common/StandardModal";
+import DataTableActions from "../common/DataTableActions";
 import ConfirmDialog from "../common/ConfirmDialog";
+import CreateButton from "../common/CreateButton";
+import FormActions from "../common/FormActions";
+import FormDrawer from "../common/FormDrawer";
+import FormPage from "../common/FormPage";
+import FormSection from "../common/FormSection";
+import ReadOnlyField from "../common/ReadOnlyField";
+import FieldLabel from "../common/FieldLabel";
 import DataTable, {
+  DEFAULT_PAGE_SIZE_OPTIONS,
   useAdminTableSurface,
   type DataTableColumn,
 } from "../common/table";
@@ -56,8 +55,7 @@ import {
 import { INSTITUTION, INSTITUTION_ARTICLE, INSTITUTIONS, isTenantStatus, TENANT } from "../../config/constants";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import FieldHint from "../common/FieldHint";
-import { listTenants } from "../../services/tenantService";
-import type { TenantView } from "../../types/tenant";
+import { useTenantsList } from "../../hooks/useTenantsList";
 
 const AUDIT_PAGE_SIZE_OPTIONS = [25, 50, 100, 200] as const;
 
@@ -143,9 +141,18 @@ function parseDelimitedValues(value: string): string[] {
 export interface PolicyManagementProps {
   /** Platform admin (ADMIN role or superuser); required to call policy APIs. */
   canManage: boolean;
+  onRegisterCreatePolicy?: (open: () => void) => void;
+  /** Renders Create/Edit outside the list chrome. */
+  formHost?: HTMLElement | null;
+  onFormOpenChange?: (open: boolean) => void;
 }
 
-export default function PolicyManagement({ canManage }: PolicyManagementProps) {
+export default function PolicyManagement({
+  canManage,
+  onRegisterCreatePolicy,
+  formHost = null,
+  onFormOpenChange,
+}: PolicyManagementProps) {
   const [tab, setTab] = useState<PolicySectionId>("pii");
 
   useEffect(() => {
@@ -170,42 +177,18 @@ export default function PolicyManagement({ canManage }: PolicyManagementProps) {
   );
 
   return (
-    <VStack align="stretch" spacing={6}>
-      <Box>
-        <Tabs
-          variant="unstyled"
+    <Tabs
+          variant="enclosed"
+          colorScheme="blue"
           index={policySubTabIndex}
           onChange={(idx) => {
             const next = POLICY_TAB_CONFIG[idx];
             if (next) setTab(next.id);
           }}
-          mb={6}
         >
-          <TabList borderBottom="2px solid" borderColor="gray.200" aria-label="Policy Management sections">
-            {POLICY_TAB_CONFIG.map(({ id, label }, idx) => (
-              <Tab
-                key={id}
-                fontWeight="semibold"
-                fontSize="md"
-                color={policySubTabIndex === idx ? "gray.800" : "gray.500"}
-                pb={3}
-                px={5}
-                position="relative"
-                _after={{
-                  content: '""',
-                  position: "absolute",
-                  bottom: "-2px",
-                  left: 0,
-                  right: 0,
-                  height: "3px",
-                  borderRadius: "3px 3px 0 0",
-                  bg: policySubTabIndex === idx ? "orange.500" : "transparent",
-                  transition: "background 0.2s",
-                }}
-                _hover={{ color: "gray.700" }}
-                _focus={{ boxShadow: "none" }}
-                transition="color 0.2s"
-              >
+          <TabList aria-label="Policy Management sections">
+            {POLICY_TAB_CONFIG.map(({ id, label }) => (
+              <Tab key={id} fontWeight="semibold">
                 {label}
               </Tab>
             ))}
@@ -215,7 +198,11 @@ export default function PolicyManagement({ canManage }: PolicyManagementProps) {
               <PiiTypesPanel />
             </TabPanel>
             <TabPanel px={0} pt={6}>
-              <PoliciesPanel />
+              <PoliciesPanel
+                onRegisterCreate={onRegisterCreatePolicy}
+                formHost={formHost}
+                onFormOpenChange={onFormOpenChange}
+              />
             </TabPanel>
             {SHOW_POLICY_AUDIT_TAB ? (
               <TabPanel px={0} pt={6}>
@@ -224,12 +211,18 @@ export default function PolicyManagement({ canManage }: PolicyManagementProps) {
             ) : null}
           </TabPanels>
         </Tabs>
-      </Box>
-    </VStack>
   );
 }
 
-function PoliciesPanel() {
+function PoliciesPanel({
+  onRegisterCreate,
+  formHost = null,
+  onFormOpenChange,
+}: {
+  onRegisterCreate?: (open: () => void) => void;
+  formHost?: HTMLElement | null;
+  onFormOpenChange?: (open: boolean) => void;
+}) {
   const [allPolicies, setAllPolicies] = useState<PolicyOut[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -260,14 +253,16 @@ function PoliciesPanel() {
   const [deleteTarget, setDeleteTarget] = useState<PolicyOut | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [piiOptions, setPiiOptions] = useState<PiiTypeOut[]>([]);
+  const [piiCatalogReady, setPiiCatalogReady] = useState(false);
+  const [piiOptionsLoading, setPiiOptionsLoading] = useState(false);
   const [policyStatusBusyId, setPolicyStatusBusyId] = useState<string | null>(null);
   const [activeStatusTooltipId, setActiveStatusTooltipId] = useState<string | null>(null);
   const statusTooltipTimeoutRef = useRef<number | null>(null);
 
-  const { cardBg, borderColor } = useAdminTableSurface();
   const bumpTablePage = useCallback(() => setTableEpoch((n) => n + 1), []);
 
   const loadPiiOptions = useCallback(async () => {
+    setPiiOptionsLoading(true);
     try {
       const acc: PiiTypeOut[] = [];
       let page = 1;
@@ -279,14 +274,23 @@ function PoliciesPanel() {
         page += 1;
       }
       setPiiOptions(acc);
+      setPiiCatalogReady(true);
     } catch (e: unknown) {
       setPiiOptions([]);
+      setPiiCatalogReady(false);
       showToast({
         type: "error",
         message: getPolicyApiErrorMessage(e, "Failed to load PII types for the policy form"),
       });
+    } finally {
+      setPiiOptionsLoading(false);
     }
   }, []);
+
+  const ensurePiiOptions = useCallback(async () => {
+    if (piiCatalogReady || piiOptionsLoading) return;
+    await loadPiiOptions();
+  }, [loadPiiOptions, piiCatalogReady, piiOptionsLoading]);
 
   const reloadPolicies = useCallback(async () => {
     setLoading(true);
@@ -352,6 +356,10 @@ function PoliciesPanel() {
     setEditingId(null);
     modal.onOpen();
   };
+
+  useEffect(() => {
+    onRegisterCreate?.(openCreate);
+  }, [onRegisterCreate, modal]);
 
   const openEdit = (id: string) => {
     setEditingId(id);
@@ -450,7 +458,7 @@ function PoliciesPanel() {
       header: "Name",
       sortable: true,
       sortAccessor: (row) => row.name ?? "",
-      cell: (row) => <Text fontWeight="medium">{row.name}</Text>,
+      cell: (row) => <Text fontWeight="medium" fontSize="sm">{row.name}</Text>,
     },
     {
       id: "piiTypes",
@@ -514,32 +522,23 @@ function PoliciesPanel() {
     {
       id: "actions",
       header: "Actions",
-      thProps: { textAlign: "right" },
-      tdProps: { textAlign: "right", onClick: (e) => e.stopPropagation() },
+      tdProps: { onClick: (e) => e.stopPropagation() },
       cell: (row) => (
-        <HStack spacing={3} justify="flex-end" align="center">
-          <Tooltip label="Edit policy" hasArrow placement="top">
-            <IconButton
-              aria-label="Edit policy"
-              icon={<EditIcon />}
-              size="sm"
-              variant="ghost"
-              colorScheme="blue"
-              _hover={{ bg: "blue.50" }}
-              onClick={() => openEdit(row.policy_id)}
-            />
-          </Tooltip>
-          <Tooltip label="Delete policy" hasArrow placement="top">
-            <IconButton
-              aria-label="Delete policy"
-              icon={<DeleteIcon />}
-              size="sm"
-              variant="ghost"
-              colorScheme="red"
-              _hover={{ bg: "red.50" }}
-              onClick={() => requestDelete(row)}
-            />
-          </Tooltip>
+        <HStack spacing={3} align="center">
+          <DataTableActions
+            actions={[
+              {
+                id: "edit",
+                label: "Edit policy",
+                onClick: () => openEdit(row.policy_id),
+              },
+              {
+                id: "delete",
+                label: "Delete policy",
+                onClick: () => requestDelete(row),
+              },
+            ]}
+          />
           <Tooltip
             label={row.is_active ? "Turn off to deactivate" : "Turn on to activate"}
             hasArrow
@@ -582,8 +581,63 @@ function PoliciesPanel() {
     handleToggleActive,
   ]);
 
+  const policyFormOpen = modal.isOpen;
+  useEffect(() => {
+    onFormOpenChange?.(policyFormOpen);
+    return () => onFormOpenChange?.(false);
+  }, [policyFormOpen, onFormOpenChange]);
+
+  const closePolicyForms = () => {
+    modal.onClose();
+    setEditingId(null);
+    closePolicyView();
+  };
+
+  const editForm = modal.isOpen ? (
+    <PolicyFormModal
+      isOpen
+      onClose={() => {
+        modal.onClose();
+        setEditingId(null);
+      }}
+      onLeaveToList={closePolicyForms}
+      policyId={editingId}
+      piiOptions={piiOptions}
+      refreshPiiOptions={loadPiiOptions}
+      onSaved={() => {
+        modal.onClose();
+        setEditingId(null);
+        closePolicyView();
+        void reloadPolicies();
+        void loadPiiOptions();
+        showToast({ type: "success", message: "Saved" });
+      }}
+      onError={(msg) => showToast({ type: "error", message: msg })}
+    />
+  ) : null;
+
   return (
     <Box>
+      {editForm && formHost ? createPortal(editForm, formHost) : editForm}
+      {viewModal.isOpen && !modal.isOpen ? (
+        <PolicyFormModal
+          mode="view"
+          isOpen
+          onClose={closePolicyView}
+          policyId={viewPolicyId}
+          piiOptions={piiOptions}
+          refreshPiiOptions={ensurePiiOptions}
+          onSaved={() => undefined}
+          onViewEdit={(id) => {
+            openEdit(id);
+          }}
+          onViewDelete={(policy) => {
+            requestDelete(policy);
+          }}
+          onError={(msg) => showToast({ type: "error", message: msg })}
+        />
+      ) : null}
+      <Box hidden={Boolean(editForm)}>
       {error && (
         <Alert status="error" mb={4} borderRadius="md">
           <AlertIcon />
@@ -591,15 +645,7 @@ function PoliciesPanel() {
         </Alert>
       )}
 
-      <Card
-        bg={cardBg}
-        borderWidth="1px"
-        borderColor={borderColor}
-        borderRadius="lg"
-        boxShadow="none"
-      >
-        <CardBody>
-          <DataTable<PolicyOut>
+      <DataTable<PolicyOut>
             layout="admin"
             key={tableEpoch}
             items={filteredPolicies}
@@ -622,7 +668,6 @@ function PoliciesPanel() {
                 param: "is_active",
                 value: filterActive,
                 onChange: setFilterActive,
-                width: { base: "full", sm: "140px" },
                 options: [
                   { label: "All", value: "" },
                   { label: "Active", value: "true" },
@@ -636,7 +681,6 @@ function PoliciesPanel() {
                 param: "is_global",
                 value: filterGlobal,
                 onChange: setFilterGlobal,
-                width: { base: "full", sm: "160px" },
                 options: [
                   { label: "All", value: "" },
                   { label: "Global", value: "true" },
@@ -646,11 +690,6 @@ function PoliciesPanel() {
             ]}
             hasActiveFilters={hasActiveFilters}
             onClearFilters={clearAllFilters}
-            filterToolbarRightContent={
-              <Button size="sm" colorScheme="orange" leftIcon={<AddIcon />} onClick={openCreate}>
-                Create policy
-              </Button>
-            }
             isLoading={loading}
             loadingMessage="Loading policies…"
             emptyMessage='No policies yet. Click "Create policy" to add one.'
@@ -658,44 +697,11 @@ function PoliciesPanel() {
             unfilteredCount={allPolicies.length}
             onRowClick={(row) => openPolicyView(row.policy_id)}
             paginate="client"
+            paginationPosition="bottom"
+            pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
             tableContainerProps={{ overflowX: "auto" }}
           />
-        </CardBody>
-      </Card>
-
-      <PolicyDetailModal
-        isOpen={viewModal.isOpen}
-        onClose={closePolicyView}
-        policyId={viewPolicyId}
-        onEdit={(id) => {
-          closePolicyView();
-          openEdit(id);
-        }}
-        onDelete={(policy) => {
-          closePolicyView();
-          requestDelete(policy);
-        }}
-        onError={(msg) =>
-          showToast({ type: "error", message: msg })
-        }
-      />
-
-      <PolicyFormModal
-        isOpen={modal.isOpen}
-        onClose={modal.onClose}
-        policyId={editingId}
-        piiOptions={piiOptions}
-        refreshPiiOptions={loadPiiOptions}
-        onSaved={() => {
-          modal.onClose();
-          void reloadPolicies();
-          void loadPiiOptions();
-          showToast({ type: "success", message: "Saved" });
-        }}
-        onError={(msg) =>
-          showToast({ type: "error", message: msg })
-        }
-      />
+      </Box>
 
       <ConfirmDialog
         isOpen={confirmDeleteModal.isOpen}
@@ -720,168 +726,31 @@ function PoliciesPanel() {
   );
 }
 
-function PolicyDetailModal({
-  isOpen,
-  onClose,
-  policyId,
-  onEdit,
-  onDelete,
-  onError,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  policyId: string | null;
-  onEdit: (id: string) => void;
-  onDelete: (policy: PolicyOut) => void;
-  onError: (msg: string) => void;
-}) {
-  const [policy, setPolicy] = useState<PolicyOut | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!isOpen || !policyId) {
-      setPolicy(null);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    const run = async () => {
-      try {
-        const res = await policyService.getPolicy(policyId);
-        if (!cancelled) setPolicy(res.data);
-      } catch (e: unknown) {
-        if (!cancelled) onError(getPolicyApiErrorMessage(e, "Failed to load policy"));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [isOpen, policyId, onError]);
-
-  return (
-    <StandardModal
-      isOpen={isOpen}
-      onClose={onClose}
-      title="Policy details"
-      size="lg"
-      footer={
-        <HStack justify="flex-end" w="full">
-          <Button variant="ghost" onClick={onClose}>
-            Close
-          </Button>
-          {policyId ? (
-            <>
-              {policy ? (
-                <Button colorScheme="red" variant="outline" onClick={() => onDelete(policy)}>
-                  Delete
-                </Button>
-              ) : null}
-              <Button
-                colorScheme="blue"
-                onClick={() => {
-                  onEdit(policyId);
-                }}
-              >
-                Edit
-              </Button>
-            </>
-          ) : null}
-        </HStack>
-      }
-    >
-      {loading ? (
-        <Flex justify="center" py={8}>
-          <Spinner />
-        </Flex>
-      ) : policy ? (
-        <Stack spacing={4}>
-          <Text fontSize="xs" color="gray.500" fontFamily="mono">
-            {policy.policy_id}
-          </Text>
-          <Heading size="md">{policy.name}</Heading>
-          {policy.description ? (
-            <Text fontSize="sm" color="gray.700">
-              {policy.description}
-            </Text>
-          ) : (
-            <Text fontSize="sm" color="gray.500">
-              No description
-            </Text>
-          )}
-          <HStack spacing={2} flexWrap="wrap">
-            <Badge colorScheme={policy.is_active ? "green" : "gray"}>
-              {policy.is_active ? "Active" : "Inactive"}
-            </Badge>
-            <Badge colorScheme={policy.is_global ? "blue" : "purple"}>
-              {policy.is_global ? "Global" : `${INSTITUTION}-scoped`}
-            </Badge>
-          </HStack>
-          <Box>
-            <Text fontSize="sm" fontWeight="semibold" mb={1}>
-              {INSTITUTIONS}
-            </Text>
-            <Text fontSize="sm">
-              {policy.is_global
-                ? `All ${INSTITUTIONS.toLowerCase()}`
-                : (policy.tenant_ids?.length ?? 0) > 0
-                  ? policy.tenant_ids!.join(", ")
-                  : "—"}
-            </Text>
-          </Box>
-          <Box>
-            <Text fontSize="sm" fontWeight="semibold" mb={1}>
-              PII types ({policy.pii_types?.length ?? 0})
-            </Text>
-            <Stack spacing={1}>
-              {(policy.pii_types ?? []).map((p) => (
-                <Text key={p.pii_type_id} fontSize="sm">
-                  {p.pii_type_label}{" "}
-                  <Text as="span" color="gray.500">
-                    ({p.mask_format})
-                  </Text>
-                </Text>
-              ))}
-              {!policy.pii_types?.length && (
-                <Text fontSize="sm" color="gray.500">
-                  None linked
-                </Text>
-              )}
-            </Stack>
-          </Box>
-          <Box>
-            <Text fontSize="sm" fontWeight="semibold" mb={1}>
-              Languages
-            </Text>
-            <Text fontSize="sm">{policy.supported_languages?.join(", ") || "—"}</Text>
-          </Box>
-          <Text fontSize="sm" color="gray.600">
-            Created {formatDt(policy.created_at)}
-          </Text>
-        </Stack>
-      ) : null}
-    </StandardModal>
-  );
-}
-
 function PolicyFormModal({
   isOpen,
   onClose,
+  onLeaveToList,
   policyId,
   piiOptions,
   refreshPiiOptions,
   onSaved,
   onError,
+  mode,
+  onViewEdit,
+  onViewDelete,
 }: {
   isOpen: boolean;
   onClose: () => void;
+  /** Policy Management crumb. Closes every open policy form. */
+  onLeaveToList?: () => void;
   policyId: string | null;
   piiOptions: PiiTypeOut[];
   refreshPiiOptions: () => Promise<void> | void;
   onSaved: () => void;
   onError: (msg: string) => void;
+  mode?: "create" | "edit" | "view";
+  onViewEdit?: (id: string) => void;
+  onViewDelete?: (policy: PolicyOut) => void;
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -892,52 +761,31 @@ function PolicyFormModal({
   const [selectedPii, setSelectedPii] = useState<string[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [tenants, setTenants] = useState<TenantView[]>([]);
-  const [tenantsLoading, setTenantsLoading] = useState(false);
-  const [tenantsError, setTenantsError] = useState<string | null>(null);
-
-  const didFetchPiiOptionsForThisOpen = useRef(false);
-  useEffect(() => {
-    if (!isOpen) {
-      didFetchPiiOptionsForThisOpen.current = false;
-      return;
-    }
-
-    // Only fetch PII options once when the modal is opened, to avoid background load.
-    if (didFetchPiiOptionsForThisOpen.current) return;
-    didFetchPiiOptionsForThisOpen.current = true;
-    void refreshPiiOptions();
-  }, [isOpen, refreshPiiOptions]);
+  const [loadedPolicy, setLoadedPolicy] = useState<PolicyOut | null>(null);
+  const resolvedMode = mode ?? (policyId ? "edit" : "create");
+  const readOnly = resolvedMode === "view";
+  const tenantsQuery = useTenantsList({ enabled: isOpen });
+  const tenantsError = tenantsQuery.isError
+    ? `Could not load ${INSTITUTIONS.toLowerCase()}. You can enter ${INSTITUTION_ARTICLE} ${INSTITUTION.toLowerCase()} ID below.`
+    : null;
+  const tenantsLoading = tenantsQuery.isLoading;
+  const tenants = useMemo(() => {
+    const list = (tenantsQuery.data?.tenants ?? []).filter((tenant) =>
+      isTenantStatus(tenant.status, TENANT.STATUS.ACTIVE)
+    );
+    return [...list].sort((a, b) =>
+      (a.organisation ?? "").localeCompare(b.organisation ?? "", undefined, {
+        sensitivity: "base",
+      })
+    );
+  }, [tenantsQuery.data]);
 
   useEffect(() => {
     if (!isOpen) return;
-    let cancelled = false;
-    setTenantsLoading(true);
-    setTenantsError(null);
-    void listTenants()
-      .then((res) => {
-        if (cancelled) return;
-        const list = (res.tenants ?? []).filter((tenant) =>
-          isTenantStatus(tenant.status, TENANT.STATUS.ACTIVE)
-        );
-        setTenants(
-          [...list].sort((a, b) =>
-            (a.organisation ?? "").localeCompare(b.organisation ?? "", undefined, {
-              sensitivity: "base",
-            })
-          )
-        );
-      })
-      .catch(() => {
-        if (!cancelled) setTenantsError(`Could not load ${INSTITUTIONS.toLowerCase()}. You can enter ${INSTITUTION_ARTICLE} ${INSTITUTION.toLowerCase()} ID below.`);
-      })
-      .finally(() => {
-        if (!cancelled) setTenantsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isOpen]);
+    // Reuse the page catalog when it is already loaded; fetch only if mount
+    // load failed or has not produced a result yet.
+    void refreshPiiOptions();
+  }, [isOpen, refreshPiiOptions]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -949,6 +797,7 @@ function PolicyFormModal({
       setTenantInput("");
       setLangs(["en"]);
       setSelectedPii([]);
+      setLoadedPolicy(null);
       return;
     }
     let cancelled = false;
@@ -966,6 +815,7 @@ function PolicyFormModal({
         setTenantInput(tids.join(", "));
         setLangs(p.supported_languages?.length ? p.supported_languages : ["en"]);
         setSelectedPii((p.pii_types || []).map((x: { pii_type_id: string }) => x.pii_type_id));
+        setLoadedPolicy(p);
       } catch (e: unknown) {
         if (!cancelled) onError(getPolicyApiErrorMessage(e, "Failed to load policy"));
       } finally {
@@ -1037,45 +887,51 @@ function PolicyFormModal({
     () => new Map(tenants.map((tenant) => [tenant.tenant_id, tenant])),
     [tenants]
   );
+  const optionListScroll = { maxH: "220px" as const, overflowY: "auto" as const };
 
-  return (
-    <StandardModal
-      isOpen={isOpen}
-      onClose={onClose}
-      title={policyId ? "Edit policy definition" : "New policy definition"}
-      size="xl"
-      footer={
-        <HStack justify="flex-end" w="full">
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button colorScheme="blue" onClick={() => void handleSubmit()} isLoading={saving}>
-            Save
-          </Button>
-        </HStack>
-      }
-    >
-      {loadingDetail ? (
+  const formBody = loadingDetail ? (
         <Flex justify="center" py={8}>
           <Spinner />
         </Flex>
       ) : (
         <Stack spacing={4}>
-          <FormControl isRequired>
-            <FormLabel>Name</FormLabel>
-            <Input value={name} onChange={(e) => setName(e.target.value)} />
-          </FormControl>
-          <FormControl>
-            <FormLabel>Description</FormLabel>
-            <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} />
-          </FormControl>
-          <FormControl display="flex" alignItems="center">
-            <FormLabel mb={0}>Global policy</FormLabel>
-            <Switch isChecked={isGlobal} onChange={(e) => setIsGlobal(e.target.checked)} />
-          </FormControl>
-          {!isGlobal && (
+          {readOnly ? (
+            <ReadOnlyField label="Name">{name || "—"}</ReadOnlyField>
+          ) : (
             <FormControl isRequired>
-              <FormLabel>{INSTITUTIONS}</FormLabel>
+              <FieldLabel>Name</FieldLabel>
+              <Input value={name} onChange={(e) => setName(e.target.value)} />
+            </FormControl>
+          )}
+          {readOnly ? (
+            <ReadOnlyField label="Description">{description || "No description"}</ReadOnlyField>
+          ) : (
+            <FormControl>
+              <FieldLabel>Description</FieldLabel>
+              <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} />
+            </FormControl>
+          )}
+          {readOnly ? (
+            <ReadOnlyField label="Global policy">{isGlobal ? "Yes" : "No"}</ReadOnlyField>
+          ) : (
+            <FormControl display="flex" alignItems="center">
+              <FieldLabel formLabelProps={{ mb: 0 }}>Global policy</FieldLabel>
+              <Switch isChecked={isGlobal} onChange={(e) => setIsGlobal(e.target.checked)} />
+            </FormControl>
+          )}
+          {!isGlobal && readOnly ? (
+            <ReadOnlyField label={INSTITUTIONS}>
+              {(tenantsError || tenants.length === 0
+                ? parseDelimitedValues(tenantInput)
+                : tenantIds
+              )
+                .map((id) => tenantById.get(id)?.organisation || id)
+                .join(", ") || "—"}
+            </ReadOnlyField>
+          ) : null}
+          {!isGlobal && !readOnly && (
+            <FormControl isRequired>
+              <FieldLabel>{INSTITUTIONS}</FieldLabel>
               {tenantsLoading ? (
                 <HStack spacing={2} py={2}>
                   <Spinner size="sm" />
@@ -1098,6 +954,7 @@ function PolicyFormModal({
                     placeholder={`${INSTITUTION} IDs separated by comma or newline`}
                     value={tenantInput}
                     onChange={(e) => setTenantInput(e.target.value)}
+                    isReadOnly={readOnly}
                     fontFamily="mono"
                     fontSize="sm"
                     rows={3}
@@ -1106,18 +963,23 @@ function PolicyFormModal({
                 </>
               ) : (
                 <>
-                  <Box maxH="220px" overflowY="auto" borderWidth="1px" borderRadius="md" p={3}>
+                  <Box
+                    borderWidth="1px"
+                    borderRadius="md"
+                    p={3}
+                    {...optionListScroll}
+                  >
                     <CheckboxGroup value={tenantIds} onChange={(v) => setTenantIds(v as string[])}>
                       <Stack spacing={2}>
                         {tenantIds
                           .filter((id) => !tenantById.has(id))
                           .map((id) => (
-                            <Checkbox key={id} value={id}>
+                            <Checkbox key={id} value={id} isRequired={false} isDisabled={readOnly}>
                               Current assignment - {id}
                             </Checkbox>
                           ))}
                         {tenants.map((t) => (
-                          <Checkbox key={t.tenant_id} value={t.tenant_id}>
+                          <Checkbox key={t.tenant_id} value={t.tenant_id} isRequired={false} isDisabled={readOnly}>
                             {t.organisation || "(Unnamed)"}{" "}
                             <Text as="span" color="gray.500" fontSize="sm">
                               ({t.tenant_id})
@@ -1132,28 +994,44 @@ function PolicyFormModal({
               )}
             </FormControl>
           )}
+          {readOnly ? (
+            <ReadOnlyField label="Supported languages">{langs.join(", ") || "—"}</ReadOnlyField>
+          ) : (
           <FormControl>
-            <FormLabel>Supported languages</FormLabel>
+            <FieldLabel>Supported languages</FieldLabel>
             <CheckboxGroup value={langs} onChange={(v) => setLangs(v as string[])}>
               <HStack spacing={4}>
                 {LANGUAGE_OPTIONS.map((code) => (
-                  <Checkbox key={code} value={code}>
+                  <Checkbox key={code} value={code} isRequired={false} isDisabled={readOnly}>
                     {code}
                   </Checkbox>
                 ))}
               </HStack>
             </CheckboxGroup>
           </FormControl>
+          )}
+          {readOnly ? (
+            <ReadOnlyField label="PII types (policy configuration)">
+              {selectedPii.length
+                ? selectedPii.map((id) => piiById.get(id)?.pii_type_label || id).join(", ")
+                : "—"}
+            </ReadOnlyField>
+          ) : (
           <FormControl isRequired>
-            <FormLabel>PII types (policy configuration)</FormLabel>
-            <Box maxH="220px" overflowY="auto" borderWidth="1px" borderRadius="md" p={3}>
+            <FieldLabel>PII types (policy configuration)</FieldLabel>
+            <Box
+              borderWidth="1px"
+              borderRadius="md"
+              p={3}
+              {...optionListScroll}
+            >
               <CheckboxGroup
                 value={selectedPii}
                 onChange={(v) => setSelectedPii(v as string[])}
               >
                 <Stack spacing={2}>
                   {piiOptions.map((p) => (
-                    <Checkbox key={p.pii_type_id} value={p.pii_type_id}>
+                    <Checkbox key={p.pii_type_id} value={p.pii_type_id} isRequired={false} isDisabled={readOnly}>
                       {p.pii_type_label}{" "}
                       <Text as="span" color="gray.500" fontSize="sm">
                         ({p.mask_format})
@@ -1173,9 +1051,93 @@ function PolicyFormModal({
               {selectedPii.some((id) => !piiById.has(id)) ? " (includes types not in current list)" : ""}
             </Text>
           </FormControl>
+          )}
         </Stack>
+      );
+
+  if (!isOpen) return null;
+
+  const pageTitle = resolvedMode === "create" ? "Create Policy" : name || "Policy";
+  const pageDescription =
+    resolvedMode === "create"
+      ? "Define a policy and choose which PII types it covers."
+      : resolvedMode === "view"
+        ? "View this policy's scope and PII coverage."
+        : "Update who this policy applies to and which PII types it covers.";
+
+  if (readOnly) {
+    return (
+      <FormDrawer
+        isOpen={isOpen}
+        onClose={onClose}
+        title={pageTitle}
+        description={pageDescription}
+        footer={
+          <FormActions hideSubmit cancelLabel="Back" onCancel={onClose} pt={0} />
+        }
+      >
+        {policyId ? (
+          <HStack spacing={2} mb={4}>
+            {loadedPolicy ? (
+              <Badge colorScheme={loadedPolicy.is_active ? "green" : "gray"}>
+                {loadedPolicy.is_active ? "Active" : "Inactive"}
+              </Badge>
+            ) : null}
+            {loadedPolicy && onViewDelete ? (
+              <Button
+                size="sm"
+                colorScheme="red"
+                variant="outline"
+                onClick={() => onViewDelete(loadedPolicy)}
+              >
+                Delete
+              </Button>
+            ) : null}
+            {onViewEdit ? (
+              <Button size="sm" onClick={() => onViewEdit(policyId)}>
+                Edit
+              </Button>
+            ) : null}
+          </HStack>
+        ) : null}
+        {loadingDetail ? formBody : <FormSection title="Policy">{formBody}</FormSection>}
+        {loadedPolicy && !loadingDetail ? (
+          <FormSection title="Record">
+            <ReadOnlyField label="Policy ID">
+              <Text fontFamily="mono" fontSize="sm">{loadedPolicy.policy_id}</Text>
+            </ReadOnlyField>
+            <ReadOnlyField label="Created">{formatDt(loadedPolicy.created_at)}</ReadOnlyField>
+          </FormSection>
+        ) : null}
+      </FormDrawer>
+    );
+  }
+
+  return (
+    <FormPage
+      title={pageTitle}
+      description={pageDescription}
+      parent={{
+        label: "Policy Management",
+        href: "/policy-management",
+        onNavigate: onLeaveToList ?? onClose,
+      }}
+      onLeave={onClose}
+      footer={({ leave }) => (
+        <FormActions
+          cancelLabel="Cancel"
+          submitLabel={policyId ? "Save Changes" : "Create Policy"}
+          onCancel={leave}
+          onSubmit={() => void handleSubmit()}
+          isLoading={saving}
+          loadingText={policyId ? "Saving..." : "Creating..."}
+          justify="space-between"
+          pt={0}
+        />
       )}
-    </StandardModal>
+    >
+      {loadingDetail ? formBody : <FormSection title="Policy">{formBody}</FormSection>}
+    </FormPage>
   );
 }
 
@@ -1225,21 +1187,24 @@ function PiiTypeDetailModal({
       title="PII type details"
       size="lg"
       footer={
-        <HStack justify="flex-end" w="full">
-          <Button variant="ghost" onClick={onClose}>
-            Close
-          </Button>
-          {detail ? (
-            <Button
-              colorScheme="blue"
-              onClick={() => {
-                onEdit(detail);
-              }}
-            >
-              Edit
-            </Button>
-          ) : null}
-        </HStack>
+        detail ? (
+          <FormActions
+            cancelLabel="Close"
+            submitLabel="Edit"
+            onCancel={onClose}
+            onSubmit={() => onEdit(detail)}
+            justify="space-between"
+            pt={0}
+          />
+        ) : (
+          <FormActions
+            cancelLabel="Close"
+            onCancel={onClose}
+            hideSubmit
+            justify="flex-end"
+            pt={0}
+          />
+        )
       }
     >
       {loading ? (
@@ -1259,7 +1224,7 @@ function PiiTypeDetailModal({
             <Badge>{detail.mask_format}</Badge>
           </Box>
           <FormControl>
-            <FormLabel fontSize="sm">Regex pattern</FormLabel>
+            <FieldLabel formLabelProps={{ fontSize: "sm" }}>Regex pattern</FieldLabel>
             <Textarea value={detail.regex_pattern} readOnly fontFamily="mono" rows={4} />
           </FormControl>
           <Text fontSize="sm" color="gray.600">
@@ -1303,7 +1268,6 @@ function PiiTypesPanel() {
   const [saving, setSaving] = useState(false);
   const [piiDetailLoading, setPiiDetailLoading] = useState(false);
 
-  const { cardBg, borderColor } = useAdminTableSurface();
   const bumpTablePage = useCallback(() => setTableEpoch((n) => n + 1), []);
 
   const reloadPiiTypes = useCallback(async () => {
@@ -1480,7 +1444,7 @@ function PiiTypesPanel() {
       header: "Label",
       sortable: true,
       sortAccessor: (row) => row.pii_type_label ?? "",
-      cell: (row) => <Text fontWeight="medium">{row.pii_type_label}</Text>,
+      cell: (row) => <Text fontWeight="medium" fontSize="sm">{row.pii_type_label}</Text>,
     },
     {
       id: "mask",
@@ -1511,36 +1475,65 @@ function PiiTypesPanel() {
     {
       id: "actions",
       header: "Actions",
-      thProps: { textAlign: "right" },
-      tdProps: { textAlign: "right", onClick: (e) => e.stopPropagation() },
+      tdProps: { onClick: (e) => e.stopPropagation() },
       cell: (row) => (
-        <HStack justify="flex-end" spacing={1}>
-          <Tooltip label="Edit PII type" hasArrow placement="top">
-            <IconButton
-              aria-label="Edit PII type"
-              icon={<EditIcon />}
-              size="sm"
-              variant="ghost"
-              colorScheme="blue"
-              _hover={{ bg: "blue.50" }}
-              onClick={() => openEdit(row)}
-            />
-          </Tooltip>
-          <Tooltip label="Delete PII type" hasArrow placement="top">
-            <IconButton
-              aria-label="Delete PII type"
-              icon={<DeleteIcon />}
-              size="sm"
-              variant="ghost"
-              colorScheme="red"
-              _hover={{ bg: "red.50" }}
-              onClick={() => requestDelete(row)}
-            />
-          </Tooltip>
-        </HStack>
+        <DataTableActions
+          actions={[
+            {
+              id: "edit",
+              label: "Edit PII type",
+              onClick: () => openEdit(row),
+            },
+            {
+              id: "delete",
+              label: "Delete PII type",
+              onClick: () => requestDelete(row),
+            },
+          ]}
+        />
       ),
     },
   ], [openEdit, requestDelete]);
+
+  const piiTypeForm = editing && piiDetailLoading ? (
+          <Flex justify="center" py={8}>
+            <Spinner />
+          </Flex>
+        ) : (
+        <Stack spacing={4}>
+          <FormControl isRequired>
+            <FieldLabel>Label</FieldLabel>
+            <Input value={label} onChange={(e) => setLabel(e.target.value)} />
+          </FormControl>
+          <FormControl isRequired>
+            <FieldLabel>Regex pattern</FieldLabel>
+            <Textarea value={regex} onChange={(e) => setRegex(e.target.value)} fontFamily="mono" rows={3} />
+          </FormControl>
+          <FormControl isRequired={!editing}>
+            <FieldLabel>
+              {editing
+                ? "Example values (comma or newline, optional validation)"
+                : "Example values (comma or newline, min 3)"}
+            </FieldLabel>
+            <Textarea
+              value={examples}
+              onChange={(e) => setExamples(e.target.value)}
+              placeholder="a@b.com, test@example.org, user@mail.co"
+              rows={3}
+            />
+          </FormControl>
+          <FormControl>
+            <FieldLabel>Mask format</FieldLabel>
+            <Select value={mask} onChange={(e) => setMask(e.target.value as MaskFormat)}>
+              {MASK_OPTIONS.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </Select>
+          </FormControl>
+        </Stack>
+        );
 
   return (
     <Box>
@@ -1551,15 +1544,7 @@ function PiiTypesPanel() {
         </Alert>
       )}
 
-      <Card
-        bg={cardBg}
-        borderWidth="1px"
-        borderColor={borderColor}
-        borderRadius="lg"
-        boxShadow="none"
-      >
-        <CardBody>
-          <DataTable<PiiTypeOut>
+      <DataTable<PiiTypeOut>
             layout="admin"
             key={tableEpoch}
             items={filteredPiiTypes}
@@ -1582,7 +1567,6 @@ function PiiTypesPanel() {
                 param: "mask_format",
                 value: filterMask,
                 onChange: setFilterMask,
-                width: { base: "full", sm: "160px" },
                 options: [
                   { label: "All", value: "" },
                   ...MASK_OPTIONS.map((m) => ({ label: m, value: m })),
@@ -1592,9 +1576,7 @@ function PiiTypesPanel() {
             hasActiveFilters={hasActiveFilters}
             onClearFilters={clearAllFilters}
             filterToolbarRightContent={
-              <Button size="sm" colorScheme="orange" leftIcon={<AddIcon />} onClick={openCreate}>
-                Create PII type
-              </Button>
+              <CreateButton onClick={openCreate}>Create PII Type</CreateButton>
             }
             isLoading={loading}
             loadingMessage="Loading PII types…"
@@ -1603,10 +1585,10 @@ function PiiTypesPanel() {
             unfilteredCount={allTypes.length}
             onRowClick={openPiiView}
             paginate="client"
+            paginationPosition="bottom"
+            pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
             tableContainerProps={{ overflowX: "auto" }}
           />
-        </CardBody>
-      </Card>
 
       <PiiTypeDetailModal
         isOpen={viewModal.isOpen}
@@ -1621,66 +1603,45 @@ function PiiTypesPanel() {
         }
       />
 
-      <StandardModal
-        isOpen={modal.isOpen}
+      <CreateModal
+        isOpen={modal.isOpen && !editing}
         onClose={modal.onClose}
-        title={editing ? "PII type configuration" : "New PII type (library)"}
-        size="lg"
+        title="Create PII Type"
+        description="Add a PII type to the library for use in policies."
+        size="md"
         footer={
-          <HStack justify="flex-end" w="full">
-            <Button variant="ghost" onClick={modal.onClose}>
-              Cancel
-            </Button>
-            <Button
-              colorScheme="blue"
-              onClick={() => void save()}
-              isLoading={saving}
-              isDisabled={Boolean(editing) && piiDetailLoading}
-            >
-              Save
-            </Button>
-          </HStack>
+          <FormActions
+            submitLabel="Create PII Type"
+            onCancel={modal.onClose}
+            onSubmit={() => void save()}
+            isLoading={saving}
+            loadingText="Creating..."
+            justify="space-between"
+            pt={0}
+          />
         }
       >
-        {editing && piiDetailLoading ? (
-          <Flex justify="center" py={8}>
-            <Spinner />
-          </Flex>
-        ) : (
-        <Stack spacing={4}>
-          <FormControl isRequired>
-            <FormLabel>Label</FormLabel>
-            <Input value={label} onChange={(e) => setLabel(e.target.value)} />
-          </FormControl>
-          <FormControl isRequired>
-            <FormLabel>Regex pattern</FormLabel>
-            <Textarea value={regex} onChange={(e) => setRegex(e.target.value)} fontFamily="mono" rows={3} />
-          </FormControl>
-          <FormControl isRequired={!editing}>
-            <FormLabel>
-              {editing
-                ? "Example values (comma or newline, optional validation)"
-                : "Example values (comma or newline, min 3)"}
-            </FormLabel>
-            <Textarea
-              value={examples}
-              onChange={(e) => setExamples(e.target.value)}
-              placeholder="a@b.com, test@example.org, user@mail.co"
-              rows={3}
-            />
-          </FormControl>
-          <FormControl>
-            <FormLabel>Mask format</FormLabel>
-            <Select value={mask} onChange={(e) => setMask(e.target.value as MaskFormat)}>
-              {MASK_OPTIONS.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </Select>
-          </FormControl>
-        </Stack>
-        )}
+        {piiTypeForm}
+      </CreateModal>
+
+      <StandardModal
+        isOpen={modal.isOpen && Boolean(editing)}
+        onClose={modal.onClose}
+        title="Edit PII Type"
+        description="Update how this PII type is detected and labelled."
+        size="lg"
+        footer={
+          <FormActions
+            submitLabel="Save Changes"
+            onCancel={modal.onClose}
+            onSubmit={() => void save()}
+            isLoading={saving}
+            isDisabled={piiDetailLoading}
+            loadingText="Saving..."
+          />
+        }
+      >
+        {piiTypeForm}
       </StandardModal>
 
       <ConfirmDialog
@@ -1875,20 +1836,18 @@ function AuditPanel() {
     {
       id: "detail",
       header: "Detail",
-      thProps: { textAlign: "right" },
-      tdProps: { textAlign: "right", onClick: (e) => e.stopPropagation() },
+      tdProps: { onClick: (e) => e.stopPropagation() },
       cell: (row) => (
-        <Tooltip label="View JSON detail" hasArrow placement="top">
-          <IconButton
-            aria-label="View audit log JSON"
-            icon={<ViewIcon />}
-            size="sm"
-            variant="ghost"
-            colorScheme="blue"
-            _hover={{ bg: "blue.50" }}
-            onClick={() => void openDetail(row.pii_audit_id)}
-          />
-        </Tooltip>
+        <DataTableActions
+          actions={[
+            {
+              id: "view",
+              label: "View JSON detail",
+              "aria-label": "View audit log JSON",
+              onClick: () => void openDetail(row.pii_audit_id),
+            },
+          ]}
+        />
       ),
     },
   ], [openDetail]);
@@ -1948,7 +1907,6 @@ function AuditPanel() {
             value: minPii,
             onChange: setMinPii,
             inputType: "number",
-            width: { base: "full", sm: "140px" },
           },
         ]}
         hasActiveFilters={hasActiveFilters}
@@ -1959,6 +1917,7 @@ function AuditPanel() {
         noResultsMessage="No results found. Try adjusting your filters or pagination."
         onRowClick={(row) => void openDetail(row.pii_audit_id)}
         paginate="server"
+        paginationPosition="bottom"
         initialPageSize={50}
         pageSizeOptions={AUDIT_PAGE_SIZE_OPTIONS}
         serverPagination={{

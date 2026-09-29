@@ -9,6 +9,8 @@ from typing import Any, Dict, Optional, Union
 from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import importlib as _importlib
+
 from app.core.database import get_db
 from app.core.exceptions import AppError, ValidationError
 from app.dependencies.services import ServiceService, get_service_service
@@ -34,6 +36,12 @@ from app.schemas.model_management.service import (
     UpdateServiceResponse,
     validate_service_id,
 )
+
+# services/model-management/ is hyphenated; importlib is the only way to pull
+# symbols out (mirrors app/main.py and app/dependencies/services.py).
+mask_service_secrets = _importlib.import_module(
+    "app.services.model-management.serializers"
+).mask_service_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -201,7 +209,11 @@ async def list_services(
         offset=offset,
         limit=limit,
     )
-    if not _is_platform_admin(request):
+    # Non-admin already loses api_key/inferenceEndPoint entirely below, so
+    # masking them first would be wasted work — only admins need it.
+    if _is_platform_admin(request):
+        items = [mask_service_secrets(i) for i in items]
+    else:
         items = [_filter_service_fields(i) for i in items]
     response.headers["X-Total-Count"] = str(total)
     return ListServicesResponse(
@@ -228,7 +240,9 @@ async def view_service(
     except ValueError as exc:
         raise ValidationError(message=str(exc), code="INVALID_SERVICE_ID")
     data = await svc.get_service_detail(service_id)
-    if not _is_platform_admin(request):
+    if _is_platform_admin(request):
+        data = mask_service_secrets(data)
+    else:
         data = _filter_service_fields(data)
     return GetServiceResponse(success=True, data=data)
 

@@ -324,7 +324,7 @@ class TestBillUsageThreadsInferenceTypeId:
             # budget block is a no-op, same as this class's tests intend.
             return None
 
-        async def _disabled(db, event_name):
+        async def _disabled(db, event_name, tenant_id=None):
             # Not under test here — _bill_usage now checks this (in-memory
             # cache read) *before* deciding whether to open the "auth"
             # session at all (see handler.py). False means it never does,
@@ -480,7 +480,7 @@ class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
         async def _tenant_budget(auth_db, core_db, tenant_id):
             return tenant_budget
 
-        async def _enabled(db, event_name):
+        async def _enabled(db, event_name, tenant_id=None):
             return True
 
         async def _bands(db, event_name):
@@ -494,16 +494,27 @@ class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
             calls["exhaustion"].append((event_name, tenant_id, dict(subject)))
             return True  # "fired" — 0 -> 1 transition
 
-        def _publish(*, event_name, tenant_id, subject, details, **kwargs):
+        async def _notification_id(db, event_name):
+            return 1
+
+        async def _resolve_recipients(core_db, auth_db, *, notification_id, tenant_id):
+            return ["admin@example.com"]
+
+        def _publish(*, event_name, tenant_id, subject, details, recipients=None, **kwargs):
             calls["published"].append(
-                {"event_name": event_name, "tenant_id": tenant_id, "subject": dict(subject), "details": details}
+                {
+                    "event_name": event_name, "tenant_id": tenant_id, "subject": dict(subject),
+                    "details": details, "recipients": recipients,
+                }
             )
 
         monkeypatch.setattr(h, "fetch_tenant_budget_status", _tenant_budget)
         monkeypatch.setattr(h, "is_notification_enabled", _enabled)
         monkeypatch.setattr(h, "get_threshold_bands", _bands)
+        monkeypatch.setattr(h, "get_notification_id", _notification_id)
         monkeypatch.setattr(h, "check_and_record_threshold", _record_threshold)
         monkeypatch.setattr(h, "check_and_record_exhaustion", _record_exhaustion)
+        monkeypatch.setattr(h, "resolve_recipients", _resolve_recipients)
         monkeypatch.setattr(h, "publish_notification_event", _publish)
         return calls
 
@@ -530,6 +541,10 @@ class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
             assert "api_key_id" not in subject
         for event_name, tenant_id, subject in calls["exhaustion"]:
             assert "api_key_id" not in subject
+        # The resolved recipients must actually reach publish_notification_event
+        # — _publish's old fake silently dropped **kwargs, so a call that
+        # omitted recipients entirely still passed this suite.
+        assert calls["published"][0]["recipients"] == ["admin@example.com"]
 
     async def test_only_the_highest_crossed_band_fires_not_every_one(self, monkeypatch):
         """A single debit that jumps straight past more than one configured
@@ -728,3 +743,78 @@ class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
             f"expected exactly one QUOTA_THRESHOLD call, got {calls['threshold']!r}"
         )
         assert calls["threshold"][0][3] == 90, "must report the highest band crossed (90), not 75"
+
+
+class TestResolveRecipientsHelper:
+    """_resolve_recipients — the two fail-safe paths that make it return []
+    without ever calling ai4i_core.kafka.recipients.resolve_recipients: an
+    unknown event_name (no catalog row -> no notification_id), and a
+    missing auth_db (the second, named connection recipient resolution
+    reads ai4iplatform_auth through). Both must degrade to an empty list,
+    not raise — _publish_usage_crossing_events still publishes with
+    whatever this returns (see resolve_recipients's own module docstring:
+    an empty list is what makes the consumer settle the ledger row to
+    "failed" instead of leaving it wedged, not something this helper
+    should hide by raising)."""
+
+    async def test_unknown_notification_id_returns_empty_list_without_calling_resolve(self, monkeypatch):
+        from consumers.payperuse_consumer import handler as h
+
+        called = {"resolve": False}
+
+        async def _no_id(db, event_name):
+            return None
+
+        async def _resolve(core_db, auth_db, *, notification_id, tenant_id):
+            called["resolve"] = True
+            return ["should-not-be-reached@example.com"]
+
+        monkeypatch.setattr(h, "get_notification_id", _no_id)
+        monkeypatch.setattr(h, "resolve_recipients", _resolve)
+
+        result = await h._resolve_recipients(object(), object(), "SOME_EVENT", "1")
+
+        assert result == []
+        assert called["resolve"] is False
+
+    async def test_missing_auth_db_returns_empty_list_without_calling_resolve(self, monkeypatch):
+        from consumers.payperuse_consumer import handler as h
+
+        called = {"resolve": False}
+
+        async def _has_id(db, event_name):
+            return 7
+
+        async def _resolve(core_db, auth_db, *, notification_id, tenant_id):
+            called["resolve"] = True
+            return ["should-not-be-reached@example.com"]
+
+        monkeypatch.setattr(h, "get_notification_id", _has_id)
+        monkeypatch.setattr(h, "resolve_recipients", _resolve)
+
+        result = await h._resolve_recipients(object(), None, "SOME_EVENT", "1")
+
+        assert result == []
+        assert called["resolve"] is False
+
+    async def test_happy_path_forwards_notification_id_and_tenant_id(self, monkeypatch):
+        from consumers.payperuse_consumer import handler as h
+
+        captured = {}
+
+        async def _has_id(db, event_name):
+            return 7
+
+        async def _resolve(core_db, auth_db, *, notification_id, tenant_id):
+            captured["notification_id"] = notification_id
+            captured["tenant_id"] = tenant_id
+            return ["admin@example.com"]
+
+        monkeypatch.setattr(h, "get_notification_id", _has_id)
+        monkeypatch.setattr(h, "resolve_recipients", _resolve)
+
+        result = await h._resolve_recipients(object(), object(), "QUOTA_THRESHOLD", 42)
+
+        assert result == ["admin@example.com"]
+        assert captured["notification_id"] == 7
+        assert captured["tenant_id"] == "42"  # coerced to str, per the call site

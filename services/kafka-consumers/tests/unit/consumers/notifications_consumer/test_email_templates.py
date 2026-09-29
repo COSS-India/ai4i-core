@@ -95,6 +95,59 @@ def test_subject_uses_event_name_and_tenant_name_verbatim():
     assert message.subject == "anything_at_all — Some Tenant"
 
 
+@pytest.mark.parametrize("event_name", sorted(templates._MONITORING_ALERTS))
+def test_monitoring_alert_subject_uses_display_name_and_unit(event_name):
+    """Every MONITORING event_name has a fixed display name and unit, and
+    the subject carries the alert's own unit — never the metering "%" by
+    default, never a tenant_name (platform-level, no institution)."""
+    display_name, unit = templates._MONITORING_ALERTS[event_name]
+    message = templates.render_email(
+        to="a@b.com", recipient_name="Priya", event_name=event_name,
+        tenant_name="Some Tenant", details=["10", "2026-09-28", "11"],
+    )
+    assert message.subject == f"{display_name} at 10{unit}"
+    assert unit == ("%" if event_name.startswith("ERROR_RATE") else "s")
+    assert "—" not in message.subject
+    # tenant_name is passed through but must never appear — monitoring
+    # alerts are platform-level, unlike every other event.
+    assert "Some Tenant" not in message.subject
+
+
+def test_monitoring_alert_body_contains_threshold_datetime_and_current_value():
+    message = templates.render_email(
+        to="a@b.com", recipient_name="Priya", event_name="ERROR_RATE_4XX",
+        tenant_name="Acme Bank", details=["5", "2026-09-28 10:00 UTC", "6.2"],
+    )
+    for substring in ["Priya", "4xx Error Rate", "5%", "6.2%", "2026-09-28 10:00 UTC"]:
+        assert substring in message.html_body, f"{substring!r} missing from html_body"
+        assert substring in message.text_body, f"{substring!r} missing from text_body"
+    assert "Acme Bank" not in message.html_body
+
+
+def test_monitoring_alert_uses_seconds_not_percent_for_latency():
+    message = templates.render_email(
+        to="a@b.com", recipient_name="Priya", event_name="LATENCY_P95",
+        tenant_name="Acme Bank", details=["5", "2026-09-28 10:00 UTC", "7.3"],
+    )
+    assert message.subject == "P95 Latency at 5s"
+    for body in (message.html_body, message.text_body):
+        assert "5s" in body
+        assert "Current value: 7.3s" in body
+        assert "5%" not in body and "7.3%" not in body
+
+
+def test_monitoring_alert_portal_link_uses_configured_url(monkeypatch):
+    monkeypatch.setattr(get_settings(), "PORTAL_URL", "https://portal.example.com")
+
+    message = templates.render_email(
+        to="a@b.com", recipient_name="Priya", event_name="LATENCY_P50",
+        tenant_name="Acme Bank", details=["1", "2026-09-28", "1.4"],
+    )
+
+    assert 'href="https://portal.example.com"' in message.html_body
+    assert "https://portal.example.com" in message.text_body
+
+
 def test_portal_link_uses_configured_url(monkeypatch):
     monkeypatch.setattr(get_settings(), "PORTAL_URL", "https://portal.example.com")
 

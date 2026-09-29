@@ -83,7 +83,7 @@ export default function TierSelect({
         variant="outline"
         bg="white"
         borderColor={isInvalid ? "red.500" : "inherit"}
-        _hover={{ borderColor: "gray.300" }}
+        _hover={{ borderColor: "ink.300" }}
         fontSize="sm"
         justifyContent="space-between"
         size="sm"
@@ -96,10 +96,10 @@ export default function TierSelect({
       </MenuButton>
       <Portal>
         <MenuList maxH="320px" overflow="hidden" p={0} zIndex={1500}>
-          <Box px={3} py={2} borderBottomWidth="1px" borderColor="gray.100">
+          <Box px={3} py={2} borderBottomWidth="1px" borderColor="ink.100">
             <InputGroup size="sm">
               <InputLeftElement pointerEvents="none">
-                <SearchIcon color="gray.400" />
+                <SearchIcon color="ink.400" />
               </InputLeftElement>
               <Input
                 placeholder="Search tiers..."
@@ -117,7 +117,7 @@ export default function TierSelect({
           </Box>
           <Box maxH="240px" overflowY="auto" py={1} role="listbox" aria-label="Tiers">
             {filtered.length === 0 ? (
-              <Text px={3} py={2} fontSize="sm" color="gray.500">
+              <Text px={3} py={2} fontSize="sm" color="ink.500">
                 {tierOptions.length === 0 ? "No tiers available" : "No tiers match your search"}
               </Text>
             ) : (

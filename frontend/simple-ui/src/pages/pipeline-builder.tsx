@@ -24,9 +24,8 @@ import {
   Code,
   Badge,
 } from '@chakra-ui/react';
-import { useRouter } from 'next/router';
-import { ArrowBackIcon } from '@chakra-ui/icons';
 import ContentLayout from '../components/common/ContentLayout';
+import ManagementPageHeader from '../components/common/ManagementPageHeader';
 import AccessibleAudio from '../components/common/AccessibleAudio';
 import { PipelineInferenceRequest } from '../types/pipeline';
 import { runPipelineInference } from '../services/pipelineService';
@@ -45,7 +44,6 @@ type BuilderResult = {
 };
 
 const PipelineBuilderPage: React.FC = () => {
-  const router = useRouter();
   const builderAudioUrlRef = useRef<string | null>(null);
 
   // Pipeline configuration
@@ -193,25 +191,11 @@ const PipelineBuilderPage: React.FC = () => {
 
       <ContentLayout>
         <VStack spacing={8} w="full">
-          {/* Header with Back Button */}
           <Box w="full">
-            <Button
-              leftIcon={<ArrowBackIcon />}
-              variant="outline"
-              colorScheme="gray"
-              onClick={() => router.back()}
-              mb={4}
-            >
-              Back
-            </Button>
-            <Box textAlign="center">
-              <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-                Customize Pipeline
-              </Heading>
-              <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-                Configure and test custom AI pipelines
-              </Text>
-            </Box>
+            <ManagementPageHeader
+              title="Customize Pipeline"
+              description="Configure and test custom AI pipelines"
+            />
           </Box>
 
           <Grid

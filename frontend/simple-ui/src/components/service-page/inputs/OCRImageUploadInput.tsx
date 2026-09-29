@@ -79,7 +79,7 @@ const OCRDropZone: React.FC<DropZoneProps> = ({
         </Text>
         <Button
           size="sm"
-          colorScheme="teal"
+          colorScheme="ink"
           leftIcon={<FaUpload />}
           isDisabled={blockMediaInput}
           onClick={(e) => {

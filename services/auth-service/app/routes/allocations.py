@@ -49,10 +49,12 @@ async def update_tenant_budget_allocation(
     is — resizing one Application never moves another. An explicit row is
     checked against whatever's genuinely unallocated and rejected
     (422 ALLOCATION_TOTAL_EXCEEDED) rather than made to fit by shrinking a
-    sibling. A listed Application's own un-listed Keys DO react, though:
-    that Application's own total is what's actually changing, so its Keys
-    are unconditionally re-fit to track it — a parent/child relationship,
-    not a sibling one. Returns every Application under the Tenant that has
+    sibling. A resized Application's own Keys never move to fit it either:
+    each Key keeps its exact ₹, so an Application can't be reduced below
+    what its active Keys already hold (including to ₹0 while it still has
+    funded Keys) — 422 ALLOCATION_TOTAL_EXCEEDED. Reduce Keys first (nested
+    ``api_keys`` in the same call, or separately) or revoke them. Returns
+    every Application under the Tenant that has
     an allocation, not just the ones listed — see
     AllocationService.update_tenant_application_allocations.
     """
@@ -112,5 +114,11 @@ async def update_api_key_budget_allocation(
     Application object — including every sibling Key, merged back in from
     its current (untouched) values — not just the one Key updated. See
     AllocationService.update_single_api_key_allocation.
+
+    The allocation must resolve to a positive ceiling (422
+    BUDGET_TOO_SMALL for 0), and the Application must have a positive
+    Budget (422 APPLICATION_BUDGET_NOT_SET) — same rules as creating a Key.
+    The same applies to every Key row sent to the Application- and
+    Tenant-level endpoints.
     """
     return await svc.update_single_api_key_allocation(key_id, body, current_user, platform_core_db)

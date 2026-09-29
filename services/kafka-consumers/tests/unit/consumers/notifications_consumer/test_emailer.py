@@ -83,3 +83,25 @@ class TestSendOne:
             to="a@b.com", recipient_name="Priya", event_name="BUDGET_ASSIGNED",
             tenant_name="Acme Bank", details=["INR", "500000"],
         )
+
+    async def test_monitoring_event_is_sent_not_reported_as_false(self):
+        # Real render (not a stubbed render_email) — pins that send_one
+        # actually reaches email_templates.render_email's monitoring-alert
+        # branch for one of the 5 MONITORING event_names, not just that a
+        # mocked render gets called.
+        sent = []
+
+        class _FakeClient:
+            async def send_safe(self, message):
+                sent.append(message)
+                return True
+
+        with patch.object(emailer, "_client", return_value=_FakeClient()), patch.object(
+            emailer, "_send_deadline_s", return_value=5.0
+        ):
+            ok = await emailer.send_one(
+                recipient=_recipient(), event_name="LATENCY_P95", tenant_name="Acme Bank",
+                details=["5", "2026-09-28 10:00 IST", "7.3"],
+            )
+        assert ok is True
+        assert [m.subject for m in sent] == ["P95 Latency at 5s"]

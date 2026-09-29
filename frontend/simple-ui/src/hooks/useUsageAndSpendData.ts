@@ -1,21 +1,14 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  fetchUsageSummary,
   fetchTenantUsageList,
   fetchTenantUsageById,
 } from "../services/usageSpendService";
 import { fetchTiers } from "../services/tierManagementService";
 import { parseError } from "../utils/errorHandler";
 import { INSTITUTION } from "../config/constants";
-import {
-  USAGE_SPEND_STALE_MS,
-  summaryFromDetail,
-} from "../utils/usageSpendHelpers";
-import type {
-  TenantUsageItem,
-  UsageSummaryResponse,
-} from "../types/usageSpend";
+import { USAGE_SPEND_STALE_MS } from "../utils/usageSpendHelpers";
+import type { TenantUsageItem } from "../types/usageSpend";
 
 interface UseUsageAndSpendDataArgs {
   scopeTenantId: string | null;
@@ -40,19 +33,6 @@ export function useUsageAndSpendData({
   const isScoped = Boolean(scopedId);
 
   const enabledParam = taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
-
-  const summaryQuery = useQuery({
-    queryKey: ["usage-summary", billingPeriod, filterTierId, enabledParam, refreshNonce],
-    queryFn: () =>
-      fetchUsageSummary({
-        billingPeriod,
-        tierId: filterTierId || undefined,
-        taskTypes: enabledParam,
-      }),
-    enabled: !isScoped,
-    staleTime: USAGE_SPEND_STALE_MS,
-    retry: 1,
-  });
 
   const scopedQuery = useQuery({
     queryKey: ["usage-tenant", scopedId, billingPeriod, enabledParam, refreshNonce],
@@ -99,41 +79,6 @@ export function useUsageAndSpendData({
     return tenantsQuery.data?.data ?? [];
   }, [isScoped, scopedQuery.data, tenantsQuery.data?.data]);
 
-  const summaryData: UsageSummaryResponse | undefined = useMemo(() => {
-    if (isScoped) {
-      return scopedQuery.data
-        ? summaryFromDetail(scopedQuery.data, billingPeriod)
-        : undefined;
-    }
-    const summary = summaryQuery.data;
-    if (!summary) return undefined;
-
-    let next: UsageSummaryResponse = summary;
-
-    if (next.activeTenants == null || next.budgetExceededTenants == null) {
-      const rows = tenantsQuery.data?.data ?? [];
-      next = {
-        ...next,
-        activeTenants: next.activeTenants ?? (tenantsQuery.data?.total ?? rows.length),
-        budgetExceededTenants:
-          next.budgetExceededTenants ??
-          rows.filter(
-            (r) =>
-              (r.budget?.percentageUsed ?? 0) > 100 || (r.budget?.remaining ?? 0) < 0,
-          ).length,
-      };
-    }
-
-    return next;
-  }, [
-    isScoped,
-    scopedQuery.data,
-    billingPeriod,
-    summaryQuery.data,
-    tenantsQuery.data?.data,
-    tenantsQuery.data?.total,
-  ]);
-
   const errMsg = (e: unknown) => (e ? parseError(e).message : null);
 
   const hasNoTierAssigned = isScoped && scopedQuery.data?.tierId === "unassigned";
@@ -142,13 +87,9 @@ export function useUsageAndSpendData({
     billingPeriod,
     isScoped,
     tenants,
-    summaryData,
     tiers: tiersQuery.data?.data ?? [],
     hasNoTierAssigned,
-    summaryError: isScoped ? errMsg(scopedQuery.error) : errMsg(summaryQuery.error),
     tenantsError: isScoped ? errMsg(scopedQuery.error) : errMsg(tenantsQuery.error),
-    isSummaryLoading: isScoped ? scopedQuery.isLoading : summaryQuery.isLoading,
     isTenantsLoading: isScoped ? scopedQuery.isLoading : tenantsQuery.isLoading,
-    currency: summaryData?.currency || tenants[0]?.currency || "INR",
   };
 }

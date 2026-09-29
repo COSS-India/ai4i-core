@@ -29,7 +29,9 @@ from ai4i_core.kafka import (
     refresh_notification_settings_cache,
     start_notification_settings_listener,
     stop_notification_settings_listener,
+    configure_recipient_decryption,
 )
+from ai4i_core import pii_crypto
 from app.routes import api_router, versioning
 # services/model-management/ is hyphenated; importlib is the only way to pull symbols out.
 import importlib as _importlib
@@ -49,6 +51,13 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting %s v%s", settings.service_name, settings.service_version)
+
+    # Fail fast on a missing/malformed encryption key rather than at the
+    # first request that writes/reads mm_services.llm_auth_token.
+    from app.core import service_credentials_crypto
+
+    service_credentials_crypto.configure_key(settings.service_credentials_encryption_key)
+    service_credentials_crypto.validate_key()
 
     # Shared HTTP client — connection pool reused across all Prometheus queries.
     app.state.http_client = httpx.AsyncClient()
@@ -146,6 +155,18 @@ async def lifespan(app: FastAPI):
     # configs_notification_alert lives in this service's own primary DB —
     # is_notification_enabled()/get_threshold_bands() back the "should this
     # even be published" check before QUOTA_LIMIT_UPDATED.
+    #
+    # Recipient resolution (ai4i_core.kafka.recipients) decrypts
+    # ai4iplatform_auth.users.email itself now — this service never wrote
+    # that column, so it needs the SAME key auth-service does, configured
+    # separately here (see app.core.config.settings.pii_encryption_key).
+    pii_crypto.configure_key(settings.pii_encryption_key)
+    # Fail fast on a missing/malformed key: without this, a bad
+    # PII_ENCRYPTION_KEY only surfaces on the first QUOTA_LIMIT_UPDATED
+    # recipient lookup, not at boot — mirrors auth-service's own
+    # pii_crypto.validate_key() call in its lifespan.
+    pii_crypto.validate_key()
+    configure_recipient_decryption(pii_crypto.decrypt_email)
     async with _get_pii_session_factory()() as _notif_db:
         await refresh_notification_settings_cache(_notif_db)
     start_notification_settings_listener(app.state.redis_client)

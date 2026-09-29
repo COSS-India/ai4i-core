@@ -69,7 +69,7 @@ export type {
 export const DATA_TABLE_HEADER_SX = {
   fontSize: "11.5px",
   letterSpacing: "0.05em",
-  color: "gray.500",
+  color: "ink.400",
   textTransform: "uppercase" as const,
 } as const;
 
@@ -598,7 +598,7 @@ function CardLayoutDataTable<T>({
   showFooter = false,
   variant = "default",
   borderRadius = variant === "compact" ? "10px" : "14px",
-  theadBg = "#FAFBFD",
+  theadBg = "ink.50",
   cellPy = variant === "compact" ? 3 : 4,
   tableMinWidth,
   containerMt = variant === "compact" ? 0 : 1,
@@ -637,7 +637,7 @@ function CardLayoutDataTable<T>({
       overflowX="auto"
       mt={containerMt}
       borderWidth="1px"
-      borderColor="gray.300"
+      borderColor="ink.200"
       borderRadius={borderRadius}
       bg="white"
     >
@@ -695,7 +695,7 @@ function CardLayoutDataTable<T>({
                   cursor: "pointer" as const,
                   _hover: {
                     bg: "#FAFBFE",
-                    "& .data-table-chevron": { color: "blue.500" },
+                    "& .data-table-chevron": { color: "ink.600" },
                   },
                   onClick: () => onRowClick?.(row),
                   onKeyDown: (e: React.KeyboardEvent) => {
@@ -750,7 +750,7 @@ function CardLayoutDataTable<T>({
   if (isLoading) {
     return (
       <Center h={asyncStateHeight}>
-        <Spinner size="lg" color="orange.500" />
+        <Spinner size="lg" color="ink.600" />
       </Center>
     );
   }
@@ -767,7 +767,7 @@ function CardLayoutDataTable<T>({
   if (isEmpty) {
     return (
       <Center h={asyncStateHeight}>
-        <Text color="gray.500">{emptyMessage}</Text>
+        <Text color="ink.500">{emptyMessage}</Text>
       </Center>
     );
   }
@@ -908,8 +908,8 @@ function AdminLayoutDataTable<T>({
         onLast={pagination.onLast}
         canPrev={pagination.canPrev}
         canNext={pagination.canNext}
-        borderColor="gray.300"
-        bg="#FAFBFD"
+        borderColor="ink.200"
+        bg="ink.50"
         variant="attached"
         placement={paginationPosition}
       />
@@ -943,7 +943,7 @@ function AdminLayoutDataTable<T>({
         w="100%"
         sx={{ "th, td": { verticalAlign: "middle" } }}
       >
-        <Thead bg="#FAFBFD" position="sticky" top={0} zIndex={1}>
+        <Thead bg="ink.50" position="sticky" top={0} zIndex={1}>
           <Tr>
             {columns.map((col) => {
               const truncate = shouldAutoTruncateColumn(col);
@@ -979,7 +979,7 @@ function AdminLayoutDataTable<T>({
               cursor={onRowClick ? "pointer" : undefined}
               _hover={{
                 bg: "#FAFBFE",
-                ...(rowChevron ? { "& .data-table-chevron": { color: "blue.500" } } : {}),
+                ...(rowChevron ? { "& .data-table-chevron": { color: "ink.600" } } : {}),
               }}
               transition="background 0.15s"
             >
@@ -1021,7 +1021,7 @@ function AdminLayoutDataTable<T>({
 
   return (
     <DataTableFilterContext.Provider value={filterContextValue}>
-      <VStack spacing={4} align="stretch" w="100%">
+      <VStack spacing={4} align="stretch" w="full" minW={0}>
         {hasFilterToolbar ? (
           <VStack spacing={4} align="stretch">
             {showFiltersHeading ? (
@@ -1043,7 +1043,7 @@ function AdminLayoutDataTable<T>({
         {isLoading ? (
           <Center py={8}>
             <VStack spacing={4}>
-              <Spinner size="lg" color="blue.500" />
+              <Spinner size="lg" color="ink.600" />
               <Text color="gray.600">{loadingMessage}</Text>
             </VStack>
           </Center>
@@ -1054,8 +1054,10 @@ function AdminLayoutDataTable<T>({
           </Alert>
         ) : (
           <Box
+            w="full"
+            minW={0}
             borderWidth="1px"
-            borderColor="gray.300"
+            borderColor="ink.200"
             borderRadius="14px"
             bg="white"
             overflow="hidden"

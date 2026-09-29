@@ -9,6 +9,7 @@ the deprecated model-management-service for backwards compatibility.
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from app.core import service_credentials_crypto as crypto
 from app.models.model_management.model import Model
 from app.models.model_management.service import Service
 
@@ -77,14 +78,15 @@ def model_to_dict(model: Model) -> Dict[str, Any]:
 
 
 def _service_inference_api_key(service: Service) -> Optional[Dict[str, Any]]:
-    """Resolve the {name, value} auth-header object for a service's
-    response, masked — preferring the new structured `inference_api_key`
-    column and falling back to synthesizing one from the deprecated flat
-    `api_key` string so old rows still return a shape-correct object."""
+    """Resolve the {name, value} auth-header object for a service, raw —
+    preferring the new structured `inference_api_key` column and falling
+    back to synthesizing one from the deprecated flat `api_key` string.
+
+    Not masked here — see mask_service_secrets() below."""
     if service.inference_api_key:
-        return _mask_api_key(service.inference_api_key)
+        return dict(service.inference_api_key)
     if service.api_key:
-        return _mask_api_key({"name": "Authorization", "value": service.api_key})
+        return {"name": "Authorization", "value": service.api_key}
     return None
 
 
@@ -95,6 +97,7 @@ def _service_inference_endpoint(service: Service) -> Dict[str, Any]:
     return {
         "callbackUrl": service.endpoint,
         "inferenceApiKey": _service_inference_api_key(service),
+        "authenticationToken": crypto.decrypt(service.llm_auth_token),
         "isMultilingualEnabled": bool(service.is_multilingual_enabled),
         "supportedInputFormats": service.supported_input_formats,
         "supportedOutputFormats": service.supported_output_formats,
@@ -135,15 +138,9 @@ def service_to_dict(
         "endpoint": service.endpoint,
         "inferenceServerType": service.inference_server_type or "triton",
         "sslVerify": bool(service.ssl_verify),
-        # Deprecated — use `inferenceEndPoint.inferenceApiKey` (masked, see
-        # _service_inference_api_key). This flat field is deliberately left
-        # UNMASKED, unlike Model's equivalent field: inference-service reads
-        # this exact key off this exact response
-        # (services/inference-service/services/base/task_service.py) to
-        # build the outbound `Authorization: Bearer` header for the real
-        # Triton call — masking it here breaks every auth-protected Triton
-        # backend platform-wide (see test_triton_url_redaction.py for the
-        # regression test guarding this).
+        # Deprecated — use `inferenceEndPoint.inferenceApiKey`. Raw here, not
+        # masked — see mask_service_secrets() below for why, and for where
+        # masking actually happens now.
         "api_key": service.api_key,
         "healthStatus": _normalize_health_status(service.health_status),
         "benchmarks": service.benchmarks,
@@ -189,4 +186,27 @@ def service_detail_dict(
     """Full service-detail response, embedding the model card."""
     out = service_to_dict(service, model=model, tier_names=tier_names)
     out["model"] = model_to_dict(model) if model else None
+    return out
+
+
+def mask_service_secrets(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Replace real credential values with "***" before a service dict
+    leaves the process as an HTTP response.
+
+    service_to_dict() returns real values (it backs both the cache and the
+    internal resolution route) — every other caller-facing route must call
+    this first, admins included."""
+    out = dict(data)
+    if out.get("api_key"):
+        out["api_key"] = "***"
+
+    ep = out.get("inferenceEndPoint")
+    if isinstance(ep, dict):
+        ep = dict(ep)
+        if ep.get("inferenceApiKey"):
+            ep["inferenceApiKey"] = {**ep["inferenceApiKey"], "value": "***"}
+        if ep.get("authenticationToken"):
+            ep["authenticationToken"] = "***"
+        out["inferenceEndPoint"] = ep
+
     return out

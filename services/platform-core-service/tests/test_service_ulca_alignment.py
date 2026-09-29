@@ -371,6 +371,71 @@ class TestSchemaTaskTypeCrossCheck:
         assert req.taskType == "tts"
 
 
+class TestAuthenticationTokenTaskTypeGate:
+    """inferenceEndPoint.authenticationToken is only meaningful for LLM
+    task type services."""
+
+    _LLM_SCHEMA = [{"taskType": "llm", "request": {}, "response": {}}]
+
+    def test_rejected_on_create_for_non_llm_task_type(self) -> None:
+        base = {**_ULCA_BASE, "inferenceEndPoint": {
+            **_ULCA_BASE["inferenceEndPoint"],
+            "authenticationToken": "sk-vllm-secret",
+        }}
+        with pytest.raises(PydanticValidationError, match="only supported for LLM task type"):
+            ServiceCreateRequest(serviceId="svc-1", **base)
+
+    def test_accepted_on_create_for_llm_task_type(self) -> None:
+        base = {
+            **_ULCA_BASE,
+            "task": {"type": "llm"},
+            "inferenceEndPoint": {
+                **_ULCA_BASE["inferenceEndPoint"],
+                "schema": self._LLM_SCHEMA,
+                "authenticationToken": "sk-vllm-secret",
+            },
+        }
+        req = ServiceCreateRequest(serviceId="svc-1", **base)
+        assert req.inferenceEndPoint.authenticationToken == "sk-vllm-secret"
+
+    def test_rejected_on_update_when_task_type_present_and_not_llm(self) -> None:
+        with pytest.raises(PydanticValidationError, match="only supported for LLM task type"):
+            ServiceUpdateRequest(
+                serviceId="svc-1",
+                taskType="asr",
+                inferenceEndPoint={"authenticationToken": "sk-vllm-secret"},
+                costPerUnit=1.0,
+                unitSize=1,
+                tierIds=["tier-1"],
+            )
+
+    def test_accepted_on_update_for_llm_task_type(self) -> None:
+        req = ServiceUpdateRequest(
+            serviceId="svc-1",
+            taskType="llm",
+            inferenceEndPoint={
+                "schema": self._LLM_SCHEMA,
+                "authenticationToken": "sk-vllm-secret",
+            },
+            costPerUnit=1.0,
+            unitSize=1,
+            tierIds=["tier-1"],
+        )
+        assert req.inferenceEndPoint.authenticationToken == "sk-vllm-secret"
+
+    def test_update_touching_token_always_requires_task_type_too(self) -> None:
+        """Touching inferenceEndPoint at all requires taskType in the same
+        request, so there's no "left unchanged" case to worry about here."""
+        with pytest.raises(PydanticValidationError, match="taskType.*must be provided together"):
+            ServiceUpdateRequest(
+                serviceId="svc-1",
+                inferenceEndPoint={"authenticationToken": "sk-vllm-secret"},
+                costPerUnit=1.0,
+                unitSize=1,
+                tierIds=["tier-1"],
+            )
+
+
 # ── serviceId minimum length on create only ─────────────────────────────────
 
 
@@ -492,6 +557,7 @@ class TestServiceToDictUlcaShape:
         svc.ssl_verify = True
         svc.api_key = "super-secret"
         svc.inference_api_key = None
+        svc.llm_auth_token = None
         svc.is_multilingual_enabled = False
         svc.supported_input_formats = None
         svc.supported_output_formats = None
@@ -540,15 +606,42 @@ class TestServiceToDictUlcaShape:
 
         assert out["api_key"] == "super-secret"
 
-    def test_nested_inference_api_key_is_masked(self) -> None:
-        """The NEW nested `inferenceEndPoint.inferenceApiKey` object is
-        masked, matching Model's existing inferenceApiKey handling — safe
-        because inference-service never reads this nested field today."""
+    def test_nested_inference_api_key_is_raw_here_masked_at_route_layer(self) -> None:
+        """service_to_dict() returns every credential raw now — it backs the
+        cache and the internal resolution route. Masking moved to
+        mask_service_secrets(), applied by every caller-facing route."""
         serializers = importlib.import_module("app.services.model-management.serializers")
         out = serializers.service_to_dict(self._make_service_orm())
 
-        assert out["inferenceEndPoint"]["inferenceApiKey"]["value"] == "***"
+        assert out["inferenceEndPoint"]["inferenceApiKey"]["value"] == "super-secret"
         assert out["inferenceEndPoint"]["inferenceApiKey"]["name"] == "Authorization"
+
+    def test_mask_service_secrets_masks_api_key_and_nested_credentials(self) -> None:
+        serializers = importlib.import_module("app.services.model-management.serializers")
+        orm = self._make_service_orm()
+        orm.llm_auth_token = "vllm-token-value"
+        raw = serializers.service_to_dict(orm)
+
+        masked = serializers.mask_service_secrets(raw)
+
+        assert masked["api_key"] == "***"
+        assert masked["inferenceEndPoint"]["inferenceApiKey"]["value"] == "***"
+        assert masked["inferenceEndPoint"]["authenticationToken"] == "***"
+        # Masking must not mutate the cached raw dict in place.
+        assert raw["api_key"] == "super-secret"
+        assert raw["inferenceEndPoint"]["authenticationToken"] == "vllm-token-value"
+
+    def test_mask_service_secrets_is_noop_without_credentials(self) -> None:
+        serializers = importlib.import_module("app.services.model-management.serializers")
+        orm = self._make_service_orm()
+        orm.api_key = None
+        raw = serializers.service_to_dict(orm)
+
+        masked = serializers.mask_service_secrets(raw)
+
+        assert masked["api_key"] is None
+        assert masked["inferenceEndPoint"]["inferenceApiKey"] is None
+        assert masked["inferenceEndPoint"]["authenticationToken"] is None
 
     def test_no_api_key_at_all_yields_none_in_nested_shape_only(self) -> None:
         serializers = importlib.import_module("app.services.model-management.serializers")

@@ -102,7 +102,7 @@ function usageDetailToKeyRows(
       id: key.keyId,
       key_name: key.keyName,
       allocated_percentage:
-        appAllocatedAmount > 0
+        appAllocatedAmount > 0 && key.allocatedBudget.amount > 0
           ? roundPct((key.allocatedBudget.amount / appAllocatedAmount) * 100)
           : key.allocatedBudget.percentage,
       allocated_budget: key.allocatedBudget.amount,
@@ -771,6 +771,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
       });
       toast({ title: "Application updated.", status: "success", duration: 3000, isClosable: true });
       setEditOpen(false);
+      setViewOpen(false);
       await reload();
     } catch (error) {
       const code = getApplicationErrorCode(error);

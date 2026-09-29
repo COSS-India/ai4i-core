@@ -38,7 +38,6 @@ from ai4i_core.logging import get_logger
 from confluent_kafka import KafkaError, KafkaException, Message
 
 from bootstrap.config import get_db_settings
-from bootstrap.consumers import CommitMode, ManagedConsumer
 from bootstrap.lifecycle import infra, shutdown_event
 from consumers.notifications_consumer import config as cfg
 from consumers.notifications_consumer.handler import handle_notification_event

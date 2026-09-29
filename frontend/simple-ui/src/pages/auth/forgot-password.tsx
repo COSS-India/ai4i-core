@@ -12,6 +12,7 @@ import {
   CardBody,
   Container,
   FormControl,
+  FormErrorMessage,
   FormLabel,
   Heading,
   Input,
@@ -93,7 +94,7 @@ const ForgotPasswordPage: React.FC = () => {
                 <form onSubmit={onSubmit} noValidate>
                   <Stack spacing={4}>
                     <FormControl isRequired isInvalid={!!emailError}>
-                      <FormLabel>Email *</FormLabel>
+                      <FormLabel>Email</FormLabel>
                       <Input
                         type="email"
                         value={email}
@@ -105,11 +106,9 @@ const ForgotPasswordPage: React.FC = () => {
                         autoComplete="email"
                         isDisabled={phase.kind === "sent"}
                       />
-                      {emailError && (
-                        <Text color="red.500" fontSize="sm" mt={1}>
-                          {emailError}
-                        </Text>
-                      )}
+                      <FormErrorMessage>
+                        {emailError}
+                      </FormErrorMessage>
                     </FormControl>
 
                     <Button

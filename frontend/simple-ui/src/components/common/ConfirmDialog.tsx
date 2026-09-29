@@ -63,7 +63,11 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
     <AlertDialog
       isOpen={isOpen}
       leastDestructiveRef={leastDestructiveRef}
-      onClose={onClose}
+      onClose={() => {
+        if (!isConfirmLoading) onClose();
+      }}
+      closeOnOverlayClick={!isConfirmLoading}
+      closeOnEsc={!isConfirmLoading}
     >
       <AlertDialogOverlay>
         <AlertDialogContent bg={dialogBg}>
@@ -77,6 +81,7 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
               onClick={onClose}
               mr={3}
               variant="outline"
+              isDisabled={isConfirmLoading}
             >
               {cancelLabel}
             </Button>

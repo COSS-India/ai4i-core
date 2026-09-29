@@ -39,9 +39,13 @@ from app.models.pii_management.domain_policy import DomainPolicy  # noqa: E402
 from app.models.pii_management.pattern import GeoLibrary, PatternLibrary  # noqa: E402
 from app.models.pii_management.tenant_map import TenantPiiDomainMap  # noqa: E402
 
-# Notification-management tables (no cross-domain FKs)
+# Notification-management tables (no cross-domain FKs; subscription after
+# catalog for its FK)
 from app.models.notification_management.config_notification_alert import (  # noqa: E402
     ConfigNotificationAlert,
+)
+from app.models.notification_management.tenant_notification_subscription import (  # noqa: E402
+    TenantNotificationSubscription,
 )
 
 # Pay-per-use tables (Tier before TierQuota FK)
@@ -71,6 +75,7 @@ __all__ = [
     "TenantPiiDomainMap",
     # notification-management
     "ConfigNotificationAlert",
+    "TenantNotificationSubscription",
     # pay-per-use
     "InferenceType",
     "Tier",

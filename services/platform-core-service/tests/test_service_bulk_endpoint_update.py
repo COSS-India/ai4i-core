@@ -52,6 +52,7 @@ def _make_service_orm(service_id: str, expected_response_schema: dict = None) ->
     instance.model_id = "model-1"
     instance.model_version = "1.0"
     instance.api_key = None
+    instance.llm_auth_token = None
     instance.tier_ids = []
     instance.expected_response_schema = expected_response_schema
     return instance
