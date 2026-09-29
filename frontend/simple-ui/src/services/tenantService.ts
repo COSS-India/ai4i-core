@@ -208,6 +208,28 @@ export async function listUsers(
   return { count: users.length, users };
 }
 
+/** BE max page size for GET /tenants/{id}/users (`limit` le=500). */
+const LIST_USERS_PAGE_SIZE = 500;
+
+/**
+ * Every user in the tenant — walks `offset` until a short page, since
+ * `listUsers` only returns the BE's default first page (100).
+ */
+export async function listAllUsers(tenant_id: string): Promise<ListUsersResponse> {
+  const users: ListUsersResponse['users'] = [];
+  for (let offset = 0; ; offset += LIST_USERS_PAGE_SIZE) {
+    const response = await apiService.get(`${BASE}/${tenant_id}/users`, {
+      params: { offset, limit: LIST_USERS_PAGE_SIZE },
+      suppressErrorAlert: true,
+      responseSchema: tenantSuccessEnvelopeSchema(z.array(tenantUserViewSchema)),
+    });
+    const batch = response.data.data ?? [];
+    users.push(...batch);
+    if (batch.length < LIST_USERS_PAGE_SIZE) break;
+  }
+  return { count: users.length, users };
+}
+
 export async function registerUser(
   payload: UserRegisterRequest & { tenant_id: string }
 ): Promise<UserRegisterResponse> {

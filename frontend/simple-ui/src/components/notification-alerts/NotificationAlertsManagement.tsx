@@ -72,7 +72,7 @@ const NotificationAlertsManagement: React.FC<NotificationAlertsManagementProps> 
           {activeTab.description}
         </Text>
       </Box>
-      <Tabs colorScheme="blue" isLazy index={tabIndex} onChange={setTabIndex}>
+      <Tabs colorScheme="blue" isLazy lazyBehavior="keepMounted" index={tabIndex} onChange={setTabIndex}>
         <TabList px={6}>
           {tabs.map((tab) => (
             <Tab key={tab.id} fontWeight="semibold">

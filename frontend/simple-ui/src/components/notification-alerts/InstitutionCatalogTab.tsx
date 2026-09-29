@@ -13,7 +13,7 @@ import { INSTITUTION, INSTITUTION_ARTICLE } from "../../config/constants";
 import { useAuth } from "../../hooks/useAuth";
 import { catalogErrorMessage } from "../../hooks/useNotificationCatalog";
 import { useNotificationSubscriptions } from "../../hooks/useNotificationSubscriptions";
-import { listUsers } from "../../services/tenantService";
+import { listAllUsers } from "../../services/tenantService";
 import type {
   NotificationAlertType,
   NotificationSubscriptionItem,
@@ -85,7 +85,7 @@ const InstitutionCatalogTab: React.FC<InstitutionCatalogTabProps> = ({
 
   const usersQuery = useQuery({
     queryKey: ["tenant-users", tenantId],
-    queryFn: () => listUsers(tenantId as string),
+    queryFn: () => listAllUsers(tenantId as string),
     enabled: Boolean(tenantId),
     staleTime: 60_000,
   });
