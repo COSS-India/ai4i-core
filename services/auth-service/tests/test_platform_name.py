@@ -1,6 +1,7 @@
 """Platform branding resolution for auth email copy (AI4IDS-2809 / AI4IDS-3043)."""
 
 from app.core.config import AuthSettings
+from app.core.constants import DEFAULT_PLATFORM_NAME
 
 
 def _settings(**kwargs: str) -> AuthSettings:
@@ -13,8 +14,8 @@ class TestPlatformNameSettings:
         monkeypatch.delenv("EMAIL_FROM_NAME", raising=False)
         monkeypatch.delenv("ADOPTER_LOGO_URL", raising=False)
         settings = AuthSettings(_env_file=None)
-        assert settings.platform_name == "AI Switch"
-        assert settings.get_platform_name() == "AI Switch"
+        assert settings.platform_name == DEFAULT_PLATFORM_NAME
+        assert settings.get_platform_name() == DEFAULT_PLATFORM_NAME
 
     def test_reads_platform_name_env(self, monkeypatch):
         monkeypatch.setenv("PLATFORM_NAME", "Custom Brand")
@@ -24,7 +25,7 @@ class TestPlatformNameSettings:
 
     def test_falls_back_when_blank(self):
         settings = _settings(platform_name="   ")
-        assert settings.get_platform_name() == "AI Switch"
+        assert settings.get_platform_name() == DEFAULT_PLATFORM_NAME
 
     def test_get_platform_name_ignores_email_from_name(self, monkeypatch):
         monkeypatch.setenv("PLATFORM_NAME", "AI4I Orchestrate")
@@ -84,4 +85,4 @@ class TestResolveSmtpFromName:
 
     def test_falls_back_when_both_blank(self):
         settings = _settings(platform_name="")
-        assert settings.resolve_smtp_from_name("") == "AI Switch"
+        assert settings.resolve_smtp_from_name("") == DEFAULT_PLATFORM_NAME

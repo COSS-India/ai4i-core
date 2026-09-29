@@ -15,6 +15,10 @@ from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
+#: Product name used when PLATFORM_NAME is unset or blank (email copy + SMTP From name).
+DEFAULT_PLATFORM_NAME = "AI Switch"
+
+
 class Constants:
     # One claim per delivered event_id (SET NX) — catches a Kafka
     # redelivery of an event this consumer already handled.
@@ -45,7 +49,7 @@ class Settings(BaseSettings):
     # Independent of the SMTP From display name (EMAIL_FROM_NAME, read by
     # ai4i_core EmailSettings) — see resolve_smtp_from_name.
     PLATFORM_NAME: str = Field(
-        default="AI Switch",
+        default=DEFAULT_PLATFORM_NAME,
         description="Product name in every rendered email's title, header, footer, "
         "portal line and sign-off.",
     )
@@ -56,8 +60,8 @@ class Settings(BaseSettings):
     )
 
     def get_platform_name(self) -> str:
-        """Product name for email copy. Falls back to AI Switch when blank."""
-        return (self.PLATFORM_NAME or "").strip() or "AI Switch"
+        """Product name for email copy. Falls back to DEFAULT_PLATFORM_NAME when blank."""
+        return (self.PLATFORM_NAME or "").strip() or DEFAULT_PLATFORM_NAME
 
     def get_adopter_logo_url(self) -> Optional[str]:
         """Absolute http(s) logo for email headers; None when unset/invalid."""

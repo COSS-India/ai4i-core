@@ -28,7 +28,7 @@ def _display_name(user: User) -> str:
 
 
 def _platform_name() -> str:
-    """Adopter-configurable product name (PLATFORM_NAME / default AI Switch)."""
+    """Adopter-configurable product name (PLATFORM_NAME / default DEFAULT_PLATFORM_NAME)."""
     return settings.get_platform_name()
 
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from consumers.notifications_consumer import email_templates as templates
-from consumers.notifications_consumer.config import get_settings
+from consumers.notifications_consumer.config import DEFAULT_PLATFORM_NAME, get_settings
 
 
 @pytest.fixture(autouse=True)
@@ -24,7 +24,7 @@ def _no_portal_url(monkeypatch):
 def _default_branding(monkeypatch):
     """Pin the default brand so a local .env's PLATFORM_NAME / ADOPTER_LOGO_URL
     can't change what these tests assert; the branding tests below override it."""
-    monkeypatch.setattr(get_settings(), "PLATFORM_NAME", "AI Switch")
+    monkeypatch.setattr(get_settings(), "PLATFORM_NAME", DEFAULT_PLATFORM_NAME)
     monkeypatch.setattr(get_settings(), "ADOPTER_LOGO_URL", None)
 
 
@@ -211,7 +211,7 @@ def test_portal_link_falls_back_to_plain_text_when_unset():
         to="a@b.com", recipient_name="Priya", institution_name="Acme Bank", currency="INR", budget_amount="500000",
     )
 
-    assert "Log in to the AI Switch Portal to view full details." in message.text_body
+    assert f"Log in to the {DEFAULT_PLATFORM_NAME} Portal to view full details." in message.text_body
     assert "href=" not in message.text_body
 
 
@@ -241,7 +241,7 @@ def test_platform_name_comes_from_settings(monkeypatch, render):
     for body in (message.html_body, message.text_body):
         assert "Log in to the Custom Brand Portal to view full details." in body
         assert "Custom Brand Team" in body
-        assert "AI Switch" not in body
+        assert DEFAULT_PLATFORM_NAME not in body
     assert "&copy; Custom Brand" in message.html_body
 
 
@@ -250,7 +250,7 @@ def test_blank_platform_name_falls_back_to_default(monkeypatch):
 
     message = _BRANDING_RENDERERS[2]()
 
-    assert "AI Switch Team" in message.text_body
+    assert f"{DEFAULT_PLATFORM_NAME} Team" in message.text_body
 
 
 def test_logo_url_replaces_text_brand_mark_in_header(monkeypatch):
@@ -258,7 +258,7 @@ def test_logo_url_replaces_text_brand_mark_in_header(monkeypatch):
 
     message = _BRANDING_RENDERERS[2]()
 
-    assert '<img src="https://cdn.example.com/logo.png" alt="AI Switch"' in message.html_body
+    assert f'<img src="https://cdn.example.com/logo.png" alt="{DEFAULT_PLATFORM_NAME}"' in message.html_body
 
 
 def test_relative_logo_url_is_ignored(monkeypatch):
@@ -273,7 +273,7 @@ class TestResolveSmtpFromName:
     """EMAIL_FROM_NAME stays independent of PLATFORM_NAME; it only inherits it when blank."""
 
     def test_keeps_explicit_from_name(self, monkeypatch):
-        monkeypatch.setattr(get_settings(), "PLATFORM_NAME", "AI Switch")
+        monkeypatch.setattr(get_settings(), "PLATFORM_NAME", DEFAULT_PLATFORM_NAME)
         assert get_settings().resolve_smtp_from_name("COSS Support") == "COSS Support"
 
     def test_inherits_platform_name_when_blank(self, monkeypatch):
