@@ -12,7 +12,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from ai4i_core.email.exceptions import EmailDeliveryError
 from ai4i_core.kafka import FailureCode, Operation
+from jinja2 import UndefinedError
 
 from consumers.notifications_consumer import handler as h
 from consumers.notifications_consumer.config import Constants
@@ -60,8 +62,18 @@ class _Redis:
         return self.won
 
 
-async def _handle(payload, *, sent=(True, True), send_error=None, redis=None):
-    send = AsyncMock(side_effect=send_error or list(sent))
+def _outcomes(values):
+    """emailer.send results in order: None = sent, an exception = why not.
+    Returned, not raised — AsyncMock(side_effect=[exc]) would raise it."""
+    remaining = iter(values)
+
+    async def _send(**kwargs):
+        return next(remaining)
+    return _send
+
+
+async def _handle(payload, *, sent=(None, None), send_error=None, redis=None):
+    send = AsyncMock(side_effect=send_error or _outcomes(sent))
     record = AsyncMock()
     redis = redis or _Redis()
     with patch.object(h.emailer, "send", send), patch.object(h.failures, "record", record), patch.object(
@@ -83,17 +95,28 @@ async def test_each_recipient_gets_the_envelope_fields_verbatim():
 
 
 async def test_one_recipient_reached_counts_as_delivered():
-    _, record = await _handle(_payload(), sent=(False, True))
+    _, record = await _handle(_payload(), sent=(EmailDeliveryError("SMTP 554"), None))
     record.assert_not_awaited()
 
 
-async def test_no_recipient_reached_is_recorded():
+async def test_no_recipient_reached_records_the_first_error():
     payload = _payload()
-    _, record = await _handle(payload, sent=(False, False))
+    render_error = UndefinedError("list object has no element 3")
+    _, record = await _handle(payload, sent=(render_error, EmailDeliveryError("SMTP 554")))
 
     record.assert_awaited_once_with(
-        payload, FailureCode.EMAIL_SEND_FAILED, kafka_topic=TOPIC, message="email reached 0 of 2 recipient(s)",
+        payload, FailureCode.EMAIL_SEND_FAILED, kafka_topic=TOPIC,
+        message="email reached 0 of 2 recipient(s); first error: UndefinedError: list object has no element 3",
+        error=render_error,
     )
+
+
+async def test_an_error_without_text_is_named_by_type():
+    timeout = TimeoutError()
+    _, record = await _handle(_payload(), sent=(timeout, timeout))
+
+    assert record.await_args.kwargs["error"] is timeout
+    assert record.await_args.kwargs["message"] == "email reached 0 of 2 recipient(s); first error: TimeoutError"
 
 
 @pytest.mark.parametrize("recipients", [[], None])
@@ -103,6 +126,7 @@ async def test_no_recipients_is_recorded(recipients):
     send.assert_not_awaited()
     assert record.await_args.args[1] is FailureCode.EMAIL_SEND_FAILED
     assert record.await_args.kwargs["message"] == "email reached 0 of 0 recipient(s)"
+    assert record.await_args.kwargs["error"] is None
 
 
 @pytest.mark.parametrize("channels", [["SLACK"], [], None])
@@ -111,6 +135,7 @@ async def test_no_email_channel_is_recorded_without_sending(channels):
 
     send.assert_not_awaited()
     assert record.await_args.args[1] is FailureCode.NO_SUPPORTED_CHANNEL
+    assert record.await_args.kwargs["error"] is None
 
 
 async def test_missing_details_are_sent_as_an_empty_list():

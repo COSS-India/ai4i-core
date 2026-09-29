@@ -16,7 +16,9 @@ recipient. When it did not — malformed message, no channel this consumer
 sends on, or every send failed — one row goes to
 notification_alert_failure_log (failures.py). The message is then treated as
 handled (committed), not redelivered: the send-side retries are already
-bounded (emailer.py, EmailClient.send_safe).
+bounded (emailer.py). The row carries the first recipient's error, so a
+render failure (the producer sent too few details) reads differently from
+an SMTP outage.
 """
 from __future__ import annotations
 
@@ -54,14 +56,22 @@ async def _claim(event_id: Any) -> bool:
         return True
 
 
-async def _deliver(envelope: Mapping[str, Any]) -> Optional[Tuple[FailureCode, str]]:
-    """None when the email reached at least one recipient, else why not."""
+_Failure = Tuple[FailureCode, str, Optional[BaseException]]
+
+
+def _describe(error: BaseException) -> str:
+    return f"{type(error).__name__}: {error}" if str(error) else type(error).__name__
+
+
+async def _deliver(envelope: Mapping[str, Any]) -> Optional[_Failure]:
+    """None when the email reached at least one recipient, else why not:
+    (code, message, the first recipient's error)."""
     channels = envelope.get("channels") or []
     if EMAIL not in channels:
-        return FailureCode.NO_SUPPORTED_CHANNEL, f"no supported channel in {channels!r}; only {EMAIL} is sent"
+        return FailureCode.NO_SUPPORTED_CHANNEL, f"no supported channel in {channels!r}; only {EMAIL} is sent", None
 
     recipients = envelope.get("recipients") or []
-    sent = await asyncio.gather(
+    errors = await asyncio.gather(
         *(
             emailer.send(
                 recipient=recipient,
@@ -72,9 +82,12 @@ async def _deliver(envelope: Mapping[str, Any]) -> Optional[Tuple[FailureCode, s
             for recipient in recipients
         )
     )
-    if any(sent):
+    if any(error is None for error in errors):
         return None
-    return FailureCode.EMAIL_SEND_FAILED, f"email reached 0 of {len(recipients)} recipient(s)"
+    message = f"email reached 0 of {len(recipients)} recipient(s)"
+    if not errors:
+        return FailureCode.EMAIL_SEND_FAILED, message, None
+    return FailureCode.EMAIL_SEND_FAILED, f"{message}; first error: {_describe(errors[0])}", errors[0]
 
 
 async def handle_notification_event(msg: Message) -> None:
@@ -108,9 +121,9 @@ async def handle_notification_event(msg: Message) -> None:
         )
         return
 
-    code, message = failure
+    code, message, error = failure
     logger.error(
         "Notification not delivered | event_id=%s event_name=%s tenant_id=%s: %s",
         envelope.get("event_id"), envelope.get("event_name"), envelope.get("tenant_id"), message,
     )
-    await failures.record(envelope, code, kafka_topic=topic, message=message)
+    await failures.record(envelope, code, kafka_topic=topic, message=message, error=error)

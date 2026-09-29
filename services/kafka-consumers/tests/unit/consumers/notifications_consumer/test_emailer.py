@@ -1,5 +1,6 @@
 """consumers/notifications_consumer/emailer.py — send() renders through
-email_templates.render_email and reports the outcome; it never raises.
+email_templates.render_email and returns None on success, else the
+exception that stopped it; it never raises.
 
 The EmailClient is faked; nothing here reaches SMTP.
 """
@@ -8,6 +9,8 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from ai4i_core.email.exceptions import EmailDeliveryError
+from jinja2 import TemplateNotFound, UndefinedError
 
 from consumers.notifications_consumer import emailer
 
@@ -15,14 +18,17 @@ RECIPIENT = {"email": "a@b.com", "name": "Priya"}
 
 
 class _Client:
-    def __init__(self, result=True, delay_s=0.0):
-        self.result, self.delay_s, self.sent = result, delay_s, []
+    """EmailClient.send: returns on success, raises the provider's error."""
 
-    async def send_safe(self, message):
+    def __init__(self, error=None, delay_s=0.0):
+        self.error, self.delay_s, self.sent = error, delay_s, []
+
+    async def send(self, message):
         self.sent.append(message)
         if self.delay_s:
             await asyncio.sleep(self.delay_s)
-        return self.result
+        if self.error is not None:
+            raise self.error
 
 
 @pytest.fixture
@@ -37,8 +43,8 @@ async def _send(recipient=RECIPIENT, event_name="BUDGET_ASSIGNED", details=("INR
     return await emailer.send(recipient=recipient, event_name=event_name, tenant_name="IIT Madras", details=list(details))
 
 
-async def test_confirmed_send_returns_true(client):
-    assert await _send() is True
+async def test_confirmed_send_returns_none(client):
+    assert await _send() is None
     [message] = client.sent
     assert message.to == "a@b.com"
     assert message.subject == "Budget Assigned — IIT Madras"
@@ -46,7 +52,7 @@ async def test_confirmed_send_returns_true(client):
 
 
 async def test_monitoring_alert_send(client):
-    assert await _send(event_name="LATENCY_P95", details=["5", "2026-09-28 10:00 IST", "7.3"]) is True
+    assert await _send(event_name="LATENCY_P95", details=["5", "2026-09-28 10:00 IST", "7.3"]) is None
     [message] = client.sent
     assert message.subject == "P95 Latency — Threshold 5s"
     for body in (message.html_body, message.text_body):
@@ -54,28 +60,31 @@ async def test_monitoring_alert_send(client):
         assert "IIT Madras" not in body
 
 
-async def test_provider_failure_returns_false(client):
-    client.result = False
-    assert await _send() is False
+async def test_provider_failure_returns_the_provider_error(client):
+    client.error = EmailDeliveryError("SMTP 554 rejected")
+    assert await _send() is client.error
 
 
-async def test_render_failure_returns_false_without_sending(client):
-    assert await _send(details=["INR"]) is False
+async def test_render_failure_returns_undefined_error_without_sending(client):
+    error = await _send(details=["INR"])
+    assert isinstance(error, UndefinedError)
     assert client.sent == []
 
 
-async def test_unknown_event_returns_false_without_sending(client):
-    assert await _send(event_name="NOT_AN_EVENT") is False
+async def test_unknown_event_returns_template_not_found_without_sending(client):
+    assert isinstance(await _send(event_name="NOT_AN_EVENT"), TemplateNotFound)
     assert client.sent == []
 
 
-@pytest.mark.parametrize("recipient", [{"name": "No Email"}, "a@b.com", None])
-async def test_malformed_recipient_returns_false(client, recipient):
-    assert await _send(recipient=recipient) is False
+@pytest.mark.parametrize("recipient,error_type", [
+    ({"name": "No Email"}, KeyError), ("a@b.com", TypeError), (None, TypeError),
+])
+async def test_malformed_recipient_returns_the_error(client, recipient, error_type):
+    assert isinstance(await _send(recipient=recipient), error_type)
     assert client.sent == []
 
 
-async def test_send_past_the_deadline_returns_false(client, monkeypatch):
+async def test_send_past_the_deadline_returns_timeout_error(client, monkeypatch):
     client.delay_s = 1.0
     monkeypatch.setattr(emailer, "_send_deadline_s", lambda: 0.01)
-    assert await _send() is False
+    assert isinstance(await _send(), TimeoutError)

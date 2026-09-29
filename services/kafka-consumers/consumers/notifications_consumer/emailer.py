@@ -3,7 +3,7 @@
 The client is built once per process (module-level), not per message —
 EmailSettings reads the environment once. email_templates.render_email
 builds the message; this module only reports whether the send succeeded
-within its deadline.
+within its deadline, and if not, the exception that stopped it.
 """
 from __future__ import annotations
 
@@ -57,24 +57,26 @@ def _send_deadline_s() -> float:
 
 async def send(
     *, recipient: Any, event_name: str, tenant_name: Optional[str], details: List[Any],
-) -> bool:
-    """True on a confirmed send to one envelope recipient ({"email", "name"}).
-    Never raises and never blocks past _send_deadline_s(): a render error, a
-    provider failure or a hang is logged and reported as False, so one bad
-    recipient can't take the others (or the consumer) down with it."""
+) -> Optional[BaseException]:
+    """Send to one envelope recipient ({"email", "name"}): None on a confirmed
+    send, else the exception that stopped it — a render error (e.g. jinja2's
+    UndefinedError for a detail the producer didn't send), the provider's
+    EmailDeliveryError, or TimeoutError past _send_deadline_s(). Never raises,
+    so one bad recipient can't take the others (or the consumer) down with it."""
     deadline = _send_deadline_s()
     try:
         message = email_templates.render_email(
             to=recipient["email"], recipient_name=recipient.get("name"),
             event_name=event_name, tenant_name=tenant_name, details=details,
         )
-        return await asyncio.wait_for(_client().send_safe(message), timeout=deadline)
-    except asyncio.TimeoutError:
+        await asyncio.wait_for(_client().send(message), timeout=deadline)
+        return None
+    except asyncio.TimeoutError as exc:
         logger.error(
             "Email send timed out after %.0fs — treating as failed | to=%s event_name=%s",
             deadline, recipient.get("email"), event_name,
         )
-        return False
-    except Exception:
+        return exc
+    except Exception as exc:
         logger.exception("Email send failed | recipient=%r event_name=%s", recipient, event_name)
-        return False
+        return exc
