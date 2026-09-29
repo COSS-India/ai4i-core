@@ -11,12 +11,8 @@ from functools import lru_cache
 from typing import Optional
 
 from ai4i_core.kafka.constants import REDIS_KEY_PREFIX
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
-
-
-#: Product name used when PLATFORM_NAME is unset or blank (email copy + SMTP From name).
-DEFAULT_PLATFORM_NAME = "AI Switch"
 
 
 class Constants:
@@ -49,9 +45,10 @@ class Settings(BaseSettings):
     # Independent of the SMTP From display name (EMAIL_FROM_NAME, read by
     # ai4i_core EmailSettings) — see resolve_smtp_from_name.
     PLATFORM_NAME: str = Field(
-        default=DEFAULT_PLATFORM_NAME,
         description="Product name in every rendered email's title, header, footer, "
-        "portal line and sign-off.",
+        "portal line and sign-off. Required, no in-code default: a missing/blank "
+        "value fails startup (main.py loads settings first) instead of silently "
+        "sending emails under a baked-in name.",
     )
     ADOPTER_LOGO_URL: Optional[str] = Field(
         default=None,
@@ -60,8 +57,8 @@ class Settings(BaseSettings):
     )
 
     def get_platform_name(self) -> str:
-        """Product name for email copy. Falls back to DEFAULT_PLATFORM_NAME when blank."""
-        return (self.PLATFORM_NAME or "").strip() or DEFAULT_PLATFORM_NAME
+        """Product name for email copy (PLATFORM_NAME, validated non-blank)."""
+        return self.PLATFORM_NAME
 
     def get_adopter_logo_url(self) -> Optional[str]:
         """Absolute http(s) logo for email headers; None when unset/invalid."""
@@ -76,6 +73,14 @@ class Settings(BaseSettings):
         The provider is built from ai4i_core EmailSettings, so emailer.py passes
         that value in and applies this result when constructing the client."""
         return (email_from_name or "").strip() or self.get_platform_name()
+
+    @field_validator("PLATFORM_NAME")
+    @classmethod
+    def _platform_name_not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("PLATFORM_NAME must be set to the product name used in emails")
+        return v
 
     class Config:
         env_file = ".env"

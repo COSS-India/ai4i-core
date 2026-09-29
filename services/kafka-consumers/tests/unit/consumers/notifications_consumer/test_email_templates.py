@@ -10,7 +10,12 @@ from __future__ import annotations
 import pytest
 
 from consumers.notifications_consumer import email_templates as templates
-from consumers.notifications_consumer.config import DEFAULT_PLATFORM_NAME, get_settings
+from pydantic import ValidationError
+
+from consumers.notifications_consumer.config import Settings, get_settings
+
+# Supplied by tests/conftest.py as PLATFORM_NAME — the code itself has no default.
+BRAND = "Test Platform"
 
 
 @pytest.fixture(autouse=True)
@@ -22,9 +27,9 @@ def _no_portal_url(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _default_branding(monkeypatch):
-    """Pin the default brand so a local .env's PLATFORM_NAME / ADOPTER_LOGO_URL
-    can't change what these tests assert; the branding tests below override it."""
-    monkeypatch.setattr(get_settings(), "PLATFORM_NAME", DEFAULT_PLATFORM_NAME)
+    """Pin the brand so a local .env's PLATFORM_NAME / ADOPTER_LOGO_URL can't
+    change what these tests assert; the branding tests below override it."""
+    monkeypatch.setattr(get_settings(), "PLATFORM_NAME", BRAND)
     monkeypatch.setattr(get_settings(), "ADOPTER_LOGO_URL", None)
 
 
@@ -211,7 +216,7 @@ def test_portal_link_falls_back_to_plain_text_when_unset():
         to="a@b.com", recipient_name="Priya", institution_name="Acme Bank", currency="INR", budget_amount="500000",
     )
 
-    assert f"Log in to the {DEFAULT_PLATFORM_NAME} Portal to view full details." in message.text_body
+    assert f"Log in to the {BRAND} Portal to view full details." in message.text_body
     assert "href=" not in message.text_body
 
 
@@ -241,16 +246,41 @@ def test_platform_name_comes_from_settings(monkeypatch, render):
     for body in (message.html_body, message.text_body):
         assert "Log in to the Custom Brand Portal to view full details." in body
         assert "Custom Brand Team" in body
-        assert DEFAULT_PLATFORM_NAME not in body
+        assert BRAND not in body
+        assert "AI Switch" not in body
     assert "&copy; Custom Brand" in message.html_body
 
 
-def test_blank_platform_name_falls_back_to_default(monkeypatch):
-    monkeypatch.setattr(get_settings(), "PLATFORM_NAME", "   ")
+class TestPlatformNameRequired:
+    """No in-code default: a missing/blank PLATFORM_NAME must stop the consumer at
+    startup, not let it send emails under a baked-in name."""
 
-    message = _BRANDING_RENDERERS[2]()
+    def test_missing_platform_name_fails(self, monkeypatch):
+        monkeypatch.delenv("PLATFORM_NAME", raising=False)
+        with pytest.raises(ValidationError, match="PLATFORM_NAME"):
+            Settings(_env_file=None)
 
-    assert f"{DEFAULT_PLATFORM_NAME} Team" in message.text_body
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_blank_platform_name_fails(self, monkeypatch, blank):
+        # setup-env.sh writes PLATFORM_NAME= (empty) when the root .env leaves it blank.
+        monkeypatch.setenv("PLATFORM_NAME", blank)
+        with pytest.raises(ValidationError, match="PLATFORM_NAME must be set"):
+            Settings(_env_file=None)
+
+    def test_env_value_is_used_and_stripped(self, monkeypatch):
+        monkeypatch.setenv("PLATFORM_NAME", "  MahaVistaar  ")
+        assert Settings(_env_file=None).get_platform_name() == "MahaVistaar"
+
+    def test_consumer_startup_loads_settings_first(self):
+        """Fail-fast relies on main.run() calling get_settings() before any
+        Kafka/DB work — pin that so a refactor can't move it to send time,
+        where send_one() would swallow the error as a failed email."""
+        import inspect
+
+        from consumers.notifications_consumer import main
+
+        source = inspect.getsource(main.run)
+        assert source.index("cfg.get_settings()") < source.index("async with infra(")
 
 
 def test_logo_url_replaces_text_brand_mark_in_header(monkeypatch):
@@ -258,7 +288,7 @@ def test_logo_url_replaces_text_brand_mark_in_header(monkeypatch):
 
     message = _BRANDING_RENDERERS[2]()
 
-    assert f'<img src="https://cdn.example.com/logo.png" alt="{DEFAULT_PLATFORM_NAME}"' in message.html_body
+    assert f'<img src="https://cdn.example.com/logo.png" alt="{BRAND}"' in message.html_body
 
 
 def test_relative_logo_url_is_ignored(monkeypatch):
@@ -273,7 +303,7 @@ class TestResolveSmtpFromName:
     """EMAIL_FROM_NAME stays independent of PLATFORM_NAME; it only inherits it when blank."""
 
     def test_keeps_explicit_from_name(self, monkeypatch):
-        monkeypatch.setattr(get_settings(), "PLATFORM_NAME", DEFAULT_PLATFORM_NAME)
+        monkeypatch.setattr(get_settings(), "PLATFORM_NAME", BRAND)
         assert get_settings().resolve_smtp_from_name("COSS Support") == "COSS Support"
 
     def test_inherits_platform_name_when_blank(self, monkeypatch):

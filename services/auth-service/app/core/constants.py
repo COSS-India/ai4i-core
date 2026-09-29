@@ -29,9 +29,6 @@ class RoleName(str, enum.Enum):
 # email links, etc. This is the safer default — staging mirrors prod.
 ENV_DEVELOPMENT = "development"
 
-# Product name used when PLATFORM_NAME is unset or blank (email copy + SMTP From name).
-DEFAULT_PLATFORM_NAME = "AI Switch"
-
 
 class TokenType:
     ACCESS = "access_token"

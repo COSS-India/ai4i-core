@@ -10,7 +10,7 @@ from typing import Optional
 from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.core.constants import DEFAULT_PLATFORM_NAME, ENV_DEVELOPMENT
+from app.core.constants import ENV_DEVELOPMENT
 
 
 class AuthSettings(BaseSettings):
@@ -141,7 +141,7 @@ class AuthSettings(BaseSettings):
     # stays the single source of truth for which env vars this service expects.
     email_provider: str = "smtp"
     email_from: Optional[str] = None
-    email_from_name: str = DEFAULT_PLATFORM_NAME
+    email_from_name: str = ""
     email_reply_to: Optional[str] = None
     email_extra_headers: Optional[str] = None
     smtp_host: Optional[str] = None
@@ -155,7 +155,9 @@ class AuthSettings(BaseSettings):
     # Product name used in email subject/body copy. Independent of the SMTP
     # From display name (EMAIL_FROM_NAME, read by ai4i_core EmailSettings) so
     # EMAIL_FROM_NAME="COSS Support" does not become "Welcome to COSS Support".
-    platform_name: str = DEFAULT_PLATFORM_NAME
+    # Required, no in-code default: a missing/blank PLATFORM_NAME fails startup
+    # instead of silently sending emails under a baked-in name.
+    platform_name: str
     # Absolute http(s) logo URL for email headers. Relative paths are ignored
     # (email clients cannot resolve same-origin paths). Empty ⇒ text brand mark.
     adopter_logo_url: Optional[str] = None
@@ -212,8 +214,8 @@ class AuthSettings(BaseSettings):
         return Path(self.rs256_key_directory)
 
     def get_platform_name(self) -> str:
-        """Product name for email subject/body copy. Falls back to DEFAULT_PLATFORM_NAME."""
-        return (self.platform_name or "").strip() or DEFAULT_PLATFORM_NAME
+        """Product name for email subject/body copy (PLATFORM_NAME, validated non-blank)."""
+        return self.platform_name
 
     def get_adopter_logo_url(self) -> Optional[str]:
         """Absolute http(s) logo for email headers; None when unset/invalid."""
@@ -239,6 +241,14 @@ class AuthSettings(BaseSettings):
         in and apply this result when constructing the client.
         """
         return (email_from_name or "").strip() or self.get_platform_name()
+
+    @field_validator("platform_name")
+    @classmethod
+    def validate_platform_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("PLATFORM_NAME must be set to the product name used in emails")
+        return v
 
     @field_validator("access_token_expire_minutes", "reset_token_expire_minutes")
     @classmethod
