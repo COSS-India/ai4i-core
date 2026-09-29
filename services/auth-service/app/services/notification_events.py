@@ -71,14 +71,27 @@ async def _load_tier_details(new_tier_id: UUID, old_tier_id: Optional[UUID]) -> 
         return {row["tier_id"]: dict(row) for row in result.mappings()}
 
 
-def publish_tier_event(old_tier_id: Optional[UUID], new_tier_id: UUID, new_tier_name: str, tenant_id: int) -> None:
-    """TIER_ASSIGNED when the tenant had no tier, else TIER_CHANGED."""
+def publish_tier_event(
+    old_tier_id: Optional[UUID],
+    new_tier_id: UUID,
+    new_tier_name: str,
+    tenant_id: int,
+    revised_at: Optional[datetime] = None,
+) -> None:
+    """TIER_ASSIGNED when the tenant had no tier, else TIER_CHANGED.
+
+    ``revised_at`` is the committed tenants.updated_at, for the same reason
+    as in publish_budget_event: a tier can be unassigned, so assigned X,
+    unassigned, assigned X again repeats {from: None, to: X}, and would be
+    dropped as a duplicate without it. A retry of the same commit keeps the
+    same value, so it is still deduplicated."""
     if not notifications_configured():
         return
     name = NotificationName.TIER_ASSIGNED if old_tier_id is None else NotificationName.TIER_CHANGED
     new_state = {
         "from_tier_id": str(old_tier_id) if old_tier_id is not None else None,
         "to_tier_id": str(new_tier_id),
+        "revised_at": revised_at.isoformat() if revised_at is not None else None,
     }
 
     async def details() -> list:

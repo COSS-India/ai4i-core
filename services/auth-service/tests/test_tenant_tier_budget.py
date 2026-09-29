@@ -1348,7 +1348,7 @@ class TestTierBudgetNotificationPublishing:
         with patch("app.services.tenant_service.publish_tier_event") as mock_publish:
             await svc.assign_tenant_tier(_admin_user(), 1, str(new_tier_id), db)
 
-        mock_publish.assert_called_once_with(None, new_tier_id, "Gold", 1)
+        mock_publish.assert_called_once_with(None, new_tier_id, "Gold", 1, revised_at=tenant.updated_at)
         # Only the tier lookup ran on the request's session.
         assert db.execute.await_count == 1
 
@@ -1367,7 +1367,9 @@ class TestTierBudgetNotificationPublishing:
         with patch("app.services.tenant_service.publish_tier_event") as mock_publish:
             await svc.assign_tenant_tier(_admin_user(), 1, str(new_tier_id), db)
 
-        mock_publish.assert_called_once_with(old_tier_id, new_tier_id, "Platinum", 1)
+        mock_publish.assert_called_once_with(
+            old_tier_id, new_tier_id, "Platinum", 1, revised_at=tenant.updated_at,
+        )
 
     @pytest.mark.asyncio
     async def test_first_budget_hands_over_zero_previous_budget(self) -> None:

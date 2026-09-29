@@ -1139,7 +1139,7 @@ class TenantService:
         )
         await self._tenants.save_and_refresh(tenant)
 
-        publish_tier_event(old_tier_id, tier_uuid, row.name, tenant_id)
+        publish_tier_event(old_tier_id, tier_uuid, row.name, tenant_id, revised_at=tenant.updated_at)
 
         if self._api_keys is not None:
             # Quota is tier-scoped: flags earned under the old tier would

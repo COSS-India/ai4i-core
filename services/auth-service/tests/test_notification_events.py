@@ -27,18 +27,23 @@ async def test_tier_events(monkeypatch):
     monkeypatch.setattr(events, "run_in_background", pending.append)
 
     old_tier, new_tier = uuid4(), uuid4()
-    events.publish_tier_event(None, new_tier, "Gold", 7)
-    events.publish_tier_event(old_tier, new_tier, "Gold", 7)
+    revised = datetime(2026, 9, 29, 10, 0, tzinfo=timezone.utc)
+    events.publish_tier_event(None, new_tier, "Gold", 7, revised_at=revised)
+    events.publish_tier_event(old_tier, new_tier, "Gold", 7, revised_at=revised)
     for coroutine in pending:
         await coroutine
 
     assigned, changed = calls
     assert assigned["name"] is NotificationName.TIER_ASSIGNED
     assert assigned["tenant_id"] == "7"
-    assert assigned["new_state"] == {"from_tier_id": None, "to_tier_id": str(new_tier)}
+    assert assigned["new_state"] == {
+        "from_tier_id": None, "to_tier_id": str(new_tier), "revised_at": "2026-09-29T10:00:00+00:00",
+    }
     assert assigned["fallback_details"] == ["Gold", "", []]
     assert changed["name"] is NotificationName.TIER_CHANGED
-    assert changed["new_state"] == {"from_tier_id": str(old_tier), "to_tier_id": str(new_tier)}
+    assert changed["new_state"] == {
+        "from_tier_id": str(old_tier), "to_tier_id": str(new_tier), "revised_at": "2026-09-29T10:00:00+00:00",
+    }
 
     # The details loader runs Q-D1 once for both tiers.
     tiers = {
@@ -77,6 +82,34 @@ async def test_budget_events(monkeypatch):
     assert updated["name"] is NotificationName.BUDGET_UPDATED
     assert updated["new_state"] == {"from_amount": "500.00", "to_amount": "800.50", "effective_from": None}
     assert updated["details"][:3] == ["INR", "500", "800.5"]
+
+
+@pytest.mark.asyncio
+async def test_reassigning_the_same_tier_after_an_unassign_is_a_new_state(monkeypatch):
+    # Assigned X, unassigned, assigned X again repeats {from: None, to: X};
+    # the committed revision time keeps the second TIER_ASSIGNED from being
+    # dropped as a duplicate, while a retry of one commit still matches.
+    calls = []
+
+    async def fake_emit_state(name, tenant_id, new_state, **kwargs):
+        calls.append(new_state)
+
+    pending = []
+    monkeypatch.setattr(events, "notifications_configured", lambda: True)
+    monkeypatch.setattr(events, "emit_state", fake_emit_state)
+    monkeypatch.setattr(events, "run_in_background", pending.append)
+
+    tier = uuid4()
+    first = datetime(2026, 9, 29, 10, 0, tzinfo=timezone.utc)
+    second = datetime(2026, 9, 29, 11, 0, tzinfo=timezone.utc)
+    events.publish_tier_event(None, tier, "Gold", 7, revised_at=first)
+    events.publish_tier_event(None, tier, "Gold", 7, revised_at=first)
+    events.publish_tier_event(None, tier, "Gold", 7, revised_at=second)
+    for coroutine in pending:
+        await coroutine
+
+    assert calls[0] == calls[1]
+    assert calls[0] != calls[2]
 
 
 @pytest.mark.asyncio
