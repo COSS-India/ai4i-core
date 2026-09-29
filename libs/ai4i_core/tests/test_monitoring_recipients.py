@@ -156,6 +156,15 @@ async def test_undecryptable_recipient_is_skipped_for_tenant_others_still_resolv
     assert tenant_name == "Acme"
 
 
+def test_tenant_name_is_the_institution_not_the_contact():
+    """tenant_name fills every tenant email's subject and headline: it must be
+    tenants.organisation (the institution), never tenants.name (the contact)."""
+    from ai4i_core.kafka.recipients import _ONE_TENANT_SQL
+
+    assert "t.organisation FROM tenants t" in _ONE_TENANT_SQL.text
+    assert "t.name FROM tenants" not in _ONE_TENANT_SQL.text
+
+
 # ── for_tenants: per-tenant grouping (Q-R2) ──
 
 

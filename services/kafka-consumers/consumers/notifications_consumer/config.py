@@ -26,14 +26,6 @@ class Settings(BaseSettings):
     TOPIC_NOTIFICATION: str = Field(
         description="Kafka topic this consumer subscribes to — design doc §10."
     )
-    AUTH_SERVICE_DB: str = Field(
-        default="ai4iplatform_auth",
-        description="Database name for the second, named connection this consumer "
-        "opens (main.py, bootstrap.lifecycle.add_database) so recipients.py can "
-        "read tenants.organisation for the email body's institution name. Same "
-        "Postgres instance/credentials as PLATFORM_CORE_DB — only the database "
-        "name differs.",
-    )
     PORTAL_URL: Optional[str] = Field(
         default=None,
         description="Same setting as platform-core-service's settings.portal_url — "

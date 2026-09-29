@@ -3,9 +3,9 @@
 users.email in ai4iplatform_auth is encrypted at rest (AES-SIV / RFC 5297,
 deterministic) by a SQLAlchemy TypeDecorator that only auth-service's own
 ORM applies — any other service reading it via a raw cross-database SELECT
-gets back ciphertext, not plaintext. Every non-auth-service reader (
-notifications_consumer/recipients.py, ai4i_core.kafka.recipients for
-platform-core-service and payperuse_consumer) needs the SAME decrypt, so
+gets back ciphertext, not plaintext. Every non-auth-service reader
+(ai4i_core.kafka.recipients for platform-core-service and
+payperuse_consumer) needs the SAME decrypt, so
 it lives here once rather than as a per-service copy.
 
 Keep this in sync with auth-service's own pii_crypto.py — same key, same

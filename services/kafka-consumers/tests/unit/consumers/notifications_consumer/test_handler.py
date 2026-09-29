@@ -1,53 +1,54 @@
-"""consumers/notifications_consumer/handler.py — v2 envelope parsing, the
-event_id delivery claim, and the hand-off to delivery.deliver.
+"""consumers/notifications_consumer/handler.py — the event_id claim, then
+envelope -> emailer.send per recipient; one failure row when the email
+reached no one.
 
-Nothing here touches a real database, Kafka, Redis or SMTP — delivery,
-session_scope and the Redis client are faked.
+emailer.send, failures.record and the Redis client are faked; nothing here
+touches a real database, Kafka, Redis or SMTP.
 """
 from __future__ import annotations
 
 import json
-from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from ai4i_core.email.exceptions import EmailDeliveryError
+from ai4i_core.kafka import FailureCode, Operation
+from jinja2 import UndefinedError
 
 from consumers.notifications_consumer import handler as h
 from consumers.notifications_consumer.config import Constants
 
+TOPIC = "notification.events"
+
 
 def _payload(**overrides) -> dict:
-    base = dict(
-        schema_version=2,
-        event_id="6f1c0d52-4a36-4bb8-9a1c-2d4f7f0a8e11",
-        event_name="TIER_CHANGED",
-        notification_type="NOTIFICATION",
-        tenant_id="2",
-        tenant_name="acme",
-        subject={},
-        occurred_at="2026-09-11T00:00:00.000+00:00",
-        channels=["EMAIL"],
-        severity="INFO",
-        band=None,
-        observed=None,
-        details=["A", "B", "Some tier", ["NMT: 10,000 req/mo"], "1000", "2026-09-10", "2027-09-09"],
-        recipients=[{"email": "admin@example.com", "name": "Asha"}],
-    )
+    base = {
+        "schema_version": 2,
+        "event_id": "5f0c8a52-6c1e-4d1e-9a51-8f3d2a7e4b10",
+        "event_name": "QUOTA_THRESHOLD",
+        "notification_type": "ALERT",
+        "tenant_id": "42",
+        "tenant_name": "IIT Madras",
+        "subject": {"billing_month": "2026-09", "model_task_type": "asr"},
+        "occurred_at": "2026-09-28T10:15:00.000+00:00",
+        "channels": ["EMAIL"],
+        "severity": "WARNING",
+        "band": {"value": 80, "unit": "PERCENT"},
+        "observed": {"value": 81.42, "unit": "PERCENT"},
+        "details": ["80", "28 Sep 2026, 03:45 PM IST", "81% (ASR)"],
+        "recipients": [
+            {"email": "priya@iitm.example.org", "name": "Priya Raman"},
+            {"email": "ops@ai4i.example.org", "name": "Arun Kumar"},
+        ],
+    }
     base.update(overrides)
     return base
 
 
 def _msg(payload) -> SimpleNamespace:
     raw = payload if isinstance(payload, (bytes, str)) else json.dumps(payload)
-    return SimpleNamespace(value=lambda: raw, topic=lambda: "t", partition=lambda: 0, offset=lambda: 1)
-
-
-def _scope_stub(auth_db):
-    @asynccontextmanager
-    async def _scope(name=None):
-        yield auth_db
-    return _scope
+    return SimpleNamespace(value=lambda: raw, topic=lambda: TOPIC, partition=lambda: 0, offset=lambda: 1)
 
 
 class _Redis:
@@ -61,124 +62,138 @@ class _Redis:
         return self.won
 
 
-class TestParseEnvelope:
-    def test_v2_envelope_is_parsed(self):
-        envelope = h._parse_envelope(_msg(_payload()))
-        assert envelope["event_id"] == "6f1c0d52-4a36-4bb8-9a1c-2d4f7f0a8e11"
-        assert envelope["channels"] == ["EMAIL"]
-        assert envelope["recipients"] == [{"email": "admin@example.com", "name": "Asha"}]
+def _outcomes(values):
+    """emailer.send results in order: None = sent, an exception = why not.
+    Returned, not raised — AsyncMock(side_effect=[exc]) would raise it."""
+    remaining = iter(values)
 
-    @pytest.mark.parametrize("overrides", [
-        {"schema_version": 1},
-        {"schema_version": None},
-        {"event_id": None},
-        {"event_name": ""},
-        {"tenant_id": None},
-    ])
-    def test_unsupported_or_incomplete_envelopes_are_skipped(self, overrides):
-        assert h._parse_envelope(_msg(_payload(**overrides))) is None
-
-    def test_invalid_json_is_skipped(self):
-        assert h._parse_envelope(_msg(b"{not json")) is None
-
-    def test_recipients_without_email_are_dropped(self):
-        envelope = h._parse_envelope(_msg(_payload(recipients=[{"name": "x"}, "bad", {"email": "a@b.c"}])))
-        assert envelope["recipients"] == [{"email": "a@b.c"}]
+    async def _send(**kwargs):
+        return next(remaining)
+    return _send
 
 
-class TestHandleNotificationEvent:
-    async def _run(self, payload, redis):
-        auth_db = object()
-        deliver = AsyncMock(return_value="sent")
-        with patch.object(h, "get_redis_client", lambda: redis), patch.object(
-            h, "session_scope", _scope_stub(auth_db)
-        ), patch.object(h.delivery, "deliver", deliver):
-            await h.handle_notification_event(_msg(payload))
-        return deliver, auth_db
+async def _handle(payload, *, sent=(None, None), send_error=None, redis=None):
+    send = AsyncMock(side_effect=send_error or _outcomes(sent))
+    record = AsyncMock()
+    redis = redis or _Redis()
+    with patch.object(h.emailer, "send", send), patch.object(h.failures, "record", record), patch.object(
+        h, "get_redis_client", lambda: redis
+    ):
+        await h.handle_notification_event(_msg(payload))
+    return send, record
 
-    async def test_first_delivery_claims_the_event_id_and_delivers(self):
+
+async def test_each_recipient_gets_the_envelope_fields_verbatim():
+    payload = _payload()
+    send, record = await _handle(payload)
+
+    assert [call.kwargs for call in send.await_args_list] == [
+        dict(recipient=r, event_name="QUOTA_THRESHOLD", tenant_name="IIT Madras", details=payload["details"])
+        for r in payload["recipients"]
+    ]
+    record.assert_not_awaited()
+
+
+async def test_one_recipient_reached_counts_as_delivered():
+    _, record = await _handle(_payload(), sent=(EmailDeliveryError("SMTP 554"), None))
+    record.assert_not_awaited()
+
+
+async def test_no_recipient_reached_records_the_first_error():
+    payload = _payload()
+    render_error = UndefinedError("list object has no element 3")
+    _, record = await _handle(payload, sent=(render_error, EmailDeliveryError("SMTP 554")))
+
+    record.assert_awaited_once_with(
+        payload, FailureCode.EMAIL_SEND_FAILED, kafka_topic=TOPIC,
+        message="email reached 0 of 2 recipient(s); first error: UndefinedError: list object has no element 3",
+        error=render_error,
+    )
+
+
+async def test_an_error_without_text_is_named_by_type():
+    timeout = TimeoutError()
+    _, record = await _handle(_payload(), sent=(timeout, timeout))
+
+    assert record.await_args.kwargs["error"] is timeout
+    assert record.await_args.kwargs["message"] == "email reached 0 of 2 recipient(s); first error: TimeoutError"
+
+
+@pytest.mark.parametrize("recipients", [[], None])
+async def test_no_recipients_is_recorded(recipients):
+    send, record = await _handle(_payload(recipients=recipients), sent=())
+
+    send.assert_not_awaited()
+    assert record.await_args.args[1] is FailureCode.EMAIL_SEND_FAILED
+    assert record.await_args.kwargs["message"] == "email reached 0 of 0 recipient(s)"
+    assert record.await_args.kwargs["error"] is None
+
+
+@pytest.mark.parametrize("channels", [["SLACK"], [], None])
+async def test_no_email_channel_is_recorded_without_sending(channels):
+    send, record = await _handle(_payload(channels=channels))
+
+    send.assert_not_awaited()
+    assert record.await_args.args[1] is FailureCode.NO_SUPPORTED_CHANNEL
+    assert record.await_args.kwargs["error"] is None
+
+
+async def test_missing_details_are_sent_as_an_empty_list():
+    send, _ = await _handle(_payload(details=None))
+    assert send.await_args.kwargs["details"] == []
+
+
+@pytest.mark.parametrize("raw", [b"{not json", b"[1, 2]", b'"text"', None])
+async def test_malformed_message_is_recorded(raw):
+    send, record = await _handle(raw)
+
+    send.assert_not_awaited()
+    assert record.await_args.args[:2] == ({}, FailureCode.INVALID_ENVELOPE)
+    assert record.await_args.kwargs["operation"] is Operation.VALIDATE
+    assert isinstance(record.await_args.kwargs["error"], (TypeError, ValueError))
+
+
+async def test_delivery_raising_is_recorded_not_propagated():
+    payload = _payload(recipients=42)  # not iterable
+    _, record = await _handle(payload)
+
+    assert record.await_args.args == (payload, FailureCode.EMAIL_SEND_FAILED)
+    assert isinstance(record.await_args.kwargs["error"], TypeError)
+
+
+class TestEventIdClaim:
+    async def test_first_delivery_claims_the_event_id_before_sending(self):
         redis = _Redis(won=True)
-        deliver, auth_db = await self._run(_payload(), redis)
+        send, _ = await _handle(_payload(), redis=redis)
 
-        key, nx, ex = redis.calls[0]
-        assert key == f"{Constants.DELIVERY_CLAIM_KEY_PREFIX}6f1c0d52-4a36-4bb8-9a1c-2d4f7f0a8e11"
-        assert nx is True and ex == Constants.DELIVERY_CLAIM_TTL_SECONDS
-        deliver.assert_awaited_once()
-        assert deliver.await_args.args == (auth_db,)
-        assert deliver.await_args.kwargs == dict(
-            tenant_id="2",
-            recipients=[{"email": "admin@example.com", "name": "Asha"}],
-            event_name="TIER_CHANGED",
-            details=_payload()["details"],
-            platform_level=False,
-        )
+        assert redis.calls == [(
+            f"{Constants.DELIVERY_CLAIM_KEY_PREFIX}5f0c8a52-6c1e-4d1e-9a51-8f3d2a7e4b10",
+            True, Constants.DELIVERY_CLAIM_TTL_SECONDS,
+        )]
+        assert send.await_count == 2
 
-    async def test_redelivery_of_a_claimed_event_is_not_sent_again(self):
-        deliver, _ = await self._run(_payload(), _Redis(won=False))
-        deliver.assert_not_awaited()
+    async def test_redelivery_of_a_claimed_event_is_not_sent_or_recorded(self):
+        send, record = await _handle(_payload(), redis=_Redis(won=False))
+
+        send.assert_not_awaited()
+        record.assert_not_awaited()
 
     async def test_redis_down_still_delivers(self):
-        deliver, _ = await self._run(_payload(), _Redis(raises=True))
-        deliver.assert_awaited_once()
+        send, record = await _handle(_payload(), redis=_Redis(raises=True))
 
-    async def test_no_email_channel_is_skipped_without_claiming(self):
+        assert send.await_count == 2
+        record.assert_not_awaited()
+
+    @pytest.mark.parametrize("event_id", [None, ""])
+    async def test_no_event_id_delivers_without_a_claim(self, event_id):
         redis = _Redis()
-        deliver, _ = await self._run(_payload(channels=["SLACK"]), redis)
-        deliver.assert_not_awaited()
+        send, _ = await _handle(_payload(event_id=event_id), redis=redis)
+
         assert redis.calls == []
+        assert send.await_count == 2
 
-    async def test_monitoring_is_platform_level(self):
-        deliver, _ = await self._run(
-            _payload(notification_type="MONITORING", tenant_id="PLATFORM", tenant_name=None), _Redis()
-        )
-        assert deliver.await_args.kwargs["platform_level"] is True
+    async def test_malformed_message_takes_no_claim(self):
+        redis = _Redis()
+        await _handle(b"{not json", redis=redis)
 
-    async def test_delivery_raising_does_not_propagate(self):
-        with patch.object(h, "get_redis_client", lambda: _Redis()), patch.object(
-            h, "session_scope", _scope_stub(object())
-        ), patch.object(h.delivery, "deliver", AsyncMock(side_effect=RuntimeError("smtp"))):
-            await h.handle_notification_event(_msg(_payload()))
-
-
-class TestDeliver:
-    async def test_names_from_the_envelope_greet_each_recipient(self):
-        from consumers.notifications_consumer import delivery
-
-        sent = []
-
-        async def _send_one(*, recipient, institution_name, event_name, details):
-            sent.append((recipient.email, recipient.display_name, institution_name))
-            return True
-
-        with patch.object(delivery.emailer, "send_one", _send_one), patch.object(
-            delivery.recipients_lookup, "fetch_institution_name", AsyncMock(return_value="Acme Institute")
-        ):
-            outcome = await delivery.deliver(
-                object(), tenant_id="2", event_name="TIER_CHANGED", details=[],
-                recipients=[{"email": "a@x.io", "name": "Asha"}, {"email": "b@x.io", "name": None}],
-            )
-
-        assert outcome == "sent"
-        assert sent == [("a@x.io", "Asha", "Acme Institute"), ("b@x.io", "there", "Acme Institute")]
-
-    async def test_platform_level_skips_the_institution_lookup(self):
-        from consumers.notifications_consumer import delivery
-
-        lookup = AsyncMock()
-        with patch.object(delivery.emailer, "send_one", AsyncMock(return_value=True)), patch.object(
-            delivery.recipients_lookup, "fetch_institution_name", lookup
-        ):
-            outcome = await delivery.deliver(
-                object(), tenant_id="PLATFORM", event_name="ERROR_RATE_5XX", details=[],
-                recipients=[{"email": "a@x.io", "name": "Asha"}], platform_level=True,
-            )
-
-        assert outcome == "sent"
-        lookup.assert_not_awaited()
-
-    async def test_no_recipients(self):
-        from consumers.notifications_consumer import delivery
-
-        assert await delivery.deliver(
-            object(), tenant_id="2", event_name="TIER_CHANGED", details=[], recipients=[]
-        ) == "no_recipients"
+        assert redis.calls == []

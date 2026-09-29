@@ -352,8 +352,11 @@ def _first_of_next_month(dt: datetime) -> str:
     return dt.replace(year=year, month=month, day=1).date().isoformat()
 
 
-# Q-D2 — tenants on a tier, with names for tenant_name (ai4iplatform_auth)
-_TENANTS_ON_TIER_SQL = text("SELECT id::text AS tenant_id, name AS tenant_name FROM tenants WHERE tier_id = :tier_id")
+# Q-D2 — tenants on a tier, with the institution name (tenants.organisation,
+# not tenants.name, the contact person) as tenant_name (ai4iplatform_auth)
+_TENANTS_ON_TIER_SQL = text(
+    "SELECT id::text AS tenant_id, organisation AS tenant_name FROM tenants WHERE tier_id = :tier_id"
+)
 
 
 def _quota_text(value) -> str:

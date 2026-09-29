@@ -3,10 +3,10 @@
 
 Dear {{ recipient_name }},
 
-{{ alert_name }} has reached the configured threshold of {{ threshold }}{{ unit }} as of
-{{ alert_datetime }}.
+{{ event.name }} has reached the configured threshold of {{ event.threshold }}{{ event.unit }} as of
+{{ event.alert_datetime }}.
 
-Current Value: {{ current_value }}{{ unit }}
+Current Value: {{ event.current_value }}{{ event.unit }}
 
 {% if portal_url -%}
 Log in to the {{ platform_name }} Portal to view full details: {{ portal_url }}

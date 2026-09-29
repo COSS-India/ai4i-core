@@ -35,3 +35,7 @@ class TemplateRenderer:
         html = self._html_env.get_template(f"{name}.html").render(**ctx)
         text = self._text_env.get_template(f"{name}.txt").render(**ctx)
         return html, text
+
+    def render_text(self, name: str, ctx: dict) -> str:
+        """<name>.txt alone — for a one-line template such as a subject."""
+        return self._text_env.get_template(f"{name}.txt").render(**ctx)

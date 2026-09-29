@@ -3,10 +3,16 @@
 
 Dear {{ recipient_name }},
 
-{{ notification_headline }}
+{{ event.headline }}
 
-{% for line in notification_details -%}
+{% for line in event.lines -%}
+{% if line is string -%}
 {{ line }}
+{% else -%}
+{% for sub_line in line -%}
+{{ " " ~ sub_line }}
+{% endfor -%}
+{% endif -%}
 {% endfor %}
 
 {% if portal_url -%}

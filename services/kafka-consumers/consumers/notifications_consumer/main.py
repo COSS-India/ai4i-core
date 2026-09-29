@@ -2,13 +2,16 @@
 
 Implements skills/notification-kafka-design/notification-kafka-design.md:
 reads notification/alert events off TOPIC_NOTIFICATION and sends the email
-directly (no auth-service call). Who receives it is not resolved here —
-the producer already resolved and decrypted the recipient list, decided
-"is this new" and claimed its ledger row before publishing (ai4i_core.kafka's
-shared pipeline); this consumer just reads the v2 envelope and delivers.
-See recipients.py, emailer.py, delivery.py and handler.py for the pieces; this
-file is just the consume loop wiring, plus opening the second (auth)
-database connection recipients.py's fetch_institution_name() depends on.
+directly (no auth-service call). Everything the email needs — recipients,
+tenant_name, details — is resolved producer-side (ai4i_core.kafka's shared
+pipeline) and travels in the v2 envelope; this consumer only maps it onto
+the template and sends, skipping a redelivered event_id (a Redis claim,
+handler.py). See handler.py, emailer.py, email_templates.py and
+failures.py for the pieces; this file is just the consume loop wiring.
+
+The only database access is the default connection (ai4iplatform_core),
+used to write notification_alert_failure_log rows for events that reached
+no recipient (failures.py).
 
 Consumer-side only — the producers (auth-service's admin-change endpoints,
 and payperuse_consumer's producer half) are separate work, not built here.
@@ -29,7 +32,7 @@ from confluent_kafka import KafkaError, KafkaException, Message
 
 from bootstrap.config import get_db_settings
 from bootstrap.consumers import CommitMode, ManagedConsumer
-from bootstrap.lifecycle import add_database, infra, shutdown_event
+from bootstrap.lifecycle import infra, shutdown_event
 from consumers.notifications_consumer import config as cfg
 from consumers.notifications_consumer.handler import handle_notification_event
 
@@ -76,13 +79,6 @@ async def run() -> None:
     settings = cfg.get_settings()
 
     async with infra(db_name=db.PLATFORM_CORE_DB):
-        # Second connection, named "auth" — recipients.py reads
-        # tenants.organisation (the email body's institution name) by
-        # reading ai4iplatform_auth directly. Opened once here, not
-        # per-message; infra()'s own teardown closes every named connection
-        # alongside the default one.
-        await add_database("auth", db_name=settings.AUTH_SERVICE_DB)
-
         consumer = ManagedConsumer.build_bulk_message_consumer(
             group_id=GROUP_ID,
             topic=settings.TOPIC_NOTIFICATION,

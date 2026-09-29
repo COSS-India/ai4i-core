@@ -1,0 +1,5 @@
+{# details: [tier_name, changes, effective_date] #}
+{% set layout = "notification" %}
+{% set name = "Quota Limit Updated" %}
+{% set headline = "The Quota Limit for " ~ tenant_name ~ " has been updated." %}
+{% set lines = ["Tier: " ~ details[0]] + details[1] + ["Effective Date: " ~ details[2]] %}
