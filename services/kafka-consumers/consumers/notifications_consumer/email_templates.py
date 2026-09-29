@@ -101,8 +101,16 @@ MONITORING_ALERT_UNITS: dict[MonitoringAlertName, str] = {
 
 
 def _render(template: str, *, to: str, subject: str, ctx: dict) -> EmailMessage:
-    portal_url = get_settings().PORTAL_URL
-    html, text = _renderer.render(template, {**ctx, "portal_url": portal_url})
+    settings = get_settings()
+    html, text = _renderer.render(
+        template,
+        {
+            **ctx,
+            "portal_url": settings.PORTAL_URL,
+            "platform_name": settings.get_platform_name(),
+            "logo_url": settings.get_adopter_logo_url(),
+        },
+    )
     return EmailMessage(to=to, subject=subject, html_body=html, text_body=text)
 
 

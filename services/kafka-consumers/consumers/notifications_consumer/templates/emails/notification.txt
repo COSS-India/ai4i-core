@@ -1,4 +1,4 @@
-AI Switch
+{{ platform_name }}
 ================================
 
 Dear {{ recipient_name }},
@@ -10,11 +10,11 @@ Dear {{ recipient_name }},
 {% endfor %}
 
 {% if portal_url -%}
-Log in to the AI Switch Portal to view full details: {{ portal_url }}
+Log in to the {{ platform_name }} Portal to view full details: {{ portal_url }}
 {%- else -%}
-Log in to the AI Switch Portal to view full details.
+Log in to the {{ platform_name }} Portal to view full details.
 {%- endif %}
 
 
 Regards,
-AI Switch Team
+{{ platform_name }} Team
