@@ -84,18 +84,24 @@ const emptyServiceForm = (): Partial<Service> => ({
 export type ServiceTierFilterOption = { id: string; name: string };
 
 /**
- * Tier options built from the loaded rows, not `availableTiers` — that list is
- * ACTIVE-only and task-type-scoped, so it can omit tiers badged in the Tiers
- * column. `tierNames` is positionally aligned with `tierIds` server-side.
- * `pinnedId` keeps the active selection listed when a refetch leaves no row
- * carrying it, so the filter stays clearable.
+ * Tier options: every tier in `catalog` (ACTIVE, task-type-scoped), so a tier
+ * with no service mapped yet is still filterable, plus any tier the loaded rows
+ * carry that the catalog omits (inactive, other task type, or newer than the
+ * cache), so every badge in the Tiers column is filterable too. `tierNames` is
+ * positionally aligned with `tierIds` server-side. `pinnedId` keeps the active
+ * selection listed when a refetch leaves no source carrying it, so the filter
+ * stays clearable.
  */
 const buildTierFilterOptions = (
+  catalog: ServiceTierFilterOption[],
   services: Service[],
   pinnedId: string,
   pinnedName?: string,
 ): ServiceTierFilterOption[] => {
   const byId = new Map<string, string>();
+  for (const tier of catalog) {
+    if (tier.id) byId.set(String(tier.id), tier.name?.trim() || String(tier.id));
+  }
   for (const service of services) {
     const ids = service.tierIds ?? [];
     const names = service.tierNames ?? [];
@@ -258,9 +264,31 @@ export function useServicesManagement() {
     return registrySort.apply(filtered);
   }, [services, searchQuery, filterTier, registrySort]);
 
+  const tiersQuery = useQuery({
+    queryKey: ACTIVE_TIERS_QUERY_KEY,
+    queryFn: () => fetchTiers(undefined, "ACTIVE"),
+    staleTime: ACTIVE_TIERS_STALE_MS,
+    enabled: !isLoadingTaskTypes,
+  });
+  const availableTiers = useMemo(() => {
+    const all = tiersQuery.data?.data ?? [];
+    if (taskTypeNames.length === 0) return all;
+    const enabled = new Set(taskTypeNames.map((n) => n.trim().toLowerCase()));
+    return all.filter((t) =>
+      t.quotas?.some((q) => enabled.has(q.modelTaskType.toLowerCase())),
+    );
+  }, [tiersQuery.data, taskTypeNames]);
+  const tiersLoaded = tiersQuery.isSuccess;
+
   const tierFilterOptions = useMemo(
-    () => buildTierFilterOptions(services, filterTier, pinnedTier?.name),
-    [services, filterTier, pinnedTier],
+    () =>
+      buildTierFilterOptions(
+        availableTiers,
+        services,
+        filterTier,
+        pinnedTier?.name,
+      ),
+    [availableTiers, services, filterTier, pinnedTier],
   );
 
   /** Remembers the label as it is picked, so a later refetch cannot orphan it. */
@@ -357,22 +385,6 @@ export function useServicesManagement() {
     [modelsQuery.data],
   );
   const isLoadingModels = modelsQuery.isLoading || isLoadingModelDetails;
-
-  const tiersQuery = useQuery({
-    queryKey: ACTIVE_TIERS_QUERY_KEY,
-    queryFn: () => fetchTiers(undefined, "ACTIVE"),
-    staleTime: ACTIVE_TIERS_STALE_MS,
-    enabled: !isLoadingTaskTypes,
-  });
-  const availableTiers = useMemo(() => {
-    const all = tiersQuery.data?.data ?? [];
-    if (taskTypeNames.length === 0) return all;
-    const enabled = new Set(taskTypeNames.map((n) => n.trim().toLowerCase()));
-    return all.filter((t) =>
-      t.quotas?.some((q) => enabled.has(q.modelTaskType.toLowerCase())),
-    );
-  }, [tiersQuery.data, taskTypeNames]);
-  const tiersLoaded = tiersQuery.isSuccess;
 
   const fetchServices = useCallback(async (options?: {
     silent?: boolean;
