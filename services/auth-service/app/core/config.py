@@ -141,7 +141,7 @@ class AuthSettings(BaseSettings):
     # stays the single source of truth for which env vars this service expects.
     email_provider: str = "smtp"
     email_from: Optional[str] = None
-    email_from_name: str = "AI4I Orchestrate"
+    email_from_name: str = "AI Switch"
     email_reply_to: Optional[str] = None
     email_extra_headers: Optional[str] = None
     smtp_host: Optional[str] = None
@@ -155,7 +155,7 @@ class AuthSettings(BaseSettings):
     # Product name used in email subject/body copy. Independent of the SMTP
     # From display name (EMAIL_FROM_NAME, read by ai4i_core EmailSettings) so
     # EMAIL_FROM_NAME="COSS Support" does not become "Welcome to COSS Support".
-    platform_name: str = "AI4I Orchestrate"
+    platform_name: str = "AI Switch"
     # Absolute http(s) logo URL for email headers. Relative paths are ignored
     # (email clients cannot resolve same-origin paths). Empty ⇒ text brand mark.
     adopter_logo_url: Optional[str] = None
@@ -212,8 +212,8 @@ class AuthSettings(BaseSettings):
         return Path(self.rs256_key_directory)
 
     def get_platform_name(self) -> str:
-        """Product name for email subject/body copy. Falls back to AI4I Orchestrate."""
-        return (self.platform_name or "").strip() or "AI4I Orchestrate"
+        """Product name for email subject/body copy. Falls back to AI Switch."""
+        return (self.platform_name or "").strip() or "AI Switch"
 
     def get_adopter_logo_url(self) -> Optional[str]:
         """Absolute http(s) logo for email headers; None when unset/invalid."""

@@ -8,13 +8,13 @@ def _settings(**kwargs: str) -> AuthSettings:
 
 
 class TestPlatformNameSettings:
-    def test_defaults_to_ai4i_orchestrate(self, monkeypatch):
+    def test_defaults_to_ai_switch(self, monkeypatch):
         monkeypatch.delenv("PLATFORM_NAME", raising=False)
         monkeypatch.delenv("EMAIL_FROM_NAME", raising=False)
         monkeypatch.delenv("ADOPTER_LOGO_URL", raising=False)
         settings = AuthSettings(_env_file=None)
-        assert settings.platform_name == "AI4I Orchestrate"
-        assert settings.get_platform_name() == "AI4I Orchestrate"
+        assert settings.platform_name == "AI Switch"
+        assert settings.get_platform_name() == "AI Switch"
 
     def test_reads_platform_name_env(self, monkeypatch):
         monkeypatch.setenv("PLATFORM_NAME", "Custom Brand")
@@ -24,7 +24,7 @@ class TestPlatformNameSettings:
 
     def test_falls_back_when_blank(self):
         settings = _settings(platform_name="   ")
-        assert settings.get_platform_name() == "AI4I Orchestrate"
+        assert settings.get_platform_name() == "AI Switch"
 
     def test_get_platform_name_ignores_email_from_name(self, monkeypatch):
         monkeypatch.setenv("PLATFORM_NAME", "AI4I Orchestrate")
@@ -84,4 +84,4 @@ class TestResolveSmtpFromName:
 
     def test_falls_back_when_both_blank(self):
         settings = _settings(platform_name="")
-        assert settings.resolve_smtp_from_name("") == "AI4I Orchestrate"
+        assert settings.resolve_smtp_from_name("") == "AI Switch"

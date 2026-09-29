@@ -203,5 +203,5 @@ def test_portal_link_falls_back_to_plain_text_when_unset():
         to="a@b.com", recipient_name="Priya", institution_name="Acme Bank", currency="INR", budget_amount="500000",
     )
 
-    assert "Log in to the AI4I-Orchestrate Portal to view full details." in message.text_body
+    assert "Log in to the AI Switch Portal to view full details." in message.text_body
     assert "href=" not in message.text_body

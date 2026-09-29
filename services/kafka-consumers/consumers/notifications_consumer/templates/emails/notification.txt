@@ -1,4 +1,4 @@
-AI4I-Orchestrate
+AI Switch
 ================================
 
 Dear {{ recipient_name }},
@@ -10,11 +10,11 @@ Dear {{ recipient_name }},
 {% endfor %}
 
 {% if portal_url -%}
-Log in to the AI4I-Orchestrate Portal to view full details: {{ portal_url }}
+Log in to the AI Switch Portal to view full details: {{ portal_url }}
 {%- else -%}
-Log in to the AI4I-Orchestrate Portal to view full details.
+Log in to the AI Switch Portal to view full details.
 {%- endif %}
 
 
 Regards,
-AI4I-Orchestrate Team
+AI Switch Team
