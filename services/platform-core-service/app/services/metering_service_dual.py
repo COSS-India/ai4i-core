@@ -29,6 +29,7 @@ this class's dual-run override.
 """
 import asyncio
 import logging
+from datetime import datetime
 from typing import Optional, Union
 
 from app.schemas.metering import Graph
@@ -66,6 +67,7 @@ _COMPARABLE: dict = {
     "tenant_ranking": lambda r: {"grand_total": r["grand_total"], "tenant_count": r["total_tenant_count"]},
     "usage_by_tenant_service": lambda r: {"grand_total": r["grand_total"], "tenant_count": r["total_tenant_count"]},
     "model_usage_growth_pct": lambda r: {"pct": r},
+    "first_request_at": lambda r: {"first": r.isoformat() if r else None},
     "service_breakdown": lambda r: {
         "service_count": len(r["services"]),
         "total_requests": sum(s["requests"] for s in r["services"]),
@@ -206,6 +208,15 @@ class DualMeteringService(OpenSearchMeteringService):
             "model_usage_growth_pct",
             MeteringService.model_usage_growth_pct(self),
             OpenSearchMeteringService.model_usage_growth_pct(self),
+        )
+
+    async def first_request_at(
+        self, tenant: Optional[str], tenant_id: Optional[str] = None,
+    ) -> Optional[datetime]:
+        return await self._dual_call(
+            "first_request_at",
+            MeteringService.first_request_at(self, tenant, tenant_id),
+            OpenSearchMeteringService.first_request_at(self, tenant, tenant_id),
         )
 
     async def service_breakdown(

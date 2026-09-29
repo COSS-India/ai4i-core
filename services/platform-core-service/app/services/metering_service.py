@@ -760,6 +760,49 @@ class MeteringService:
             return None
         return round((cur_total - prev_total) / prev_total * 100, 1)
 
+    # Subquery step for first_request_at — the result's resolution.
+    _FIRST_REQUEST_STEP = "1h"
+
+    async def first_request_at(
+        self, tenant: Optional[str], tenant_id: Optional[str] = None,
+    ) -> Optional[datetime]:
+        """Earliest API-key inference request still in Prometheus for the
+        tenant (all tenants when neither is given), or None when there is none.
+
+        One half of /overview's first_usage_at. The other half is quota_usage,
+        which misses untiered traffic but outlives retention. Reads series
+        PRESENCE, not counter increase: a labelled counter series gets its
+        first sample on its first .inc(), so the earliest sample timestamp is
+        the first request. A windowed increase() would read the pruned
+        `unless offset` sample at the retention edge and count every
+        long-lived series as new there.
+
+        The hourly subquery sees each series' latest sample at each step, so
+        the raw minimum can be up to one step late. The step is subtracted so
+        the result errs early. Late could push the first day onto the next
+        IST day and hide real data; early can at most enable one empty day.
+
+        KNOWN CUTOVER GAP when ``tenant_id`` is given: see
+        build_base_selectors' docstring. Raises on a Prometheus failure; the
+        route falls back to the quota_usage value.
+        """
+        sel = build_base_selectors(
+            inference_only=True, tenant=tenant, tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE,
+        )
+        promql = (
+            f"min(min_over_time(timestamp({_METRIC}{sel})"
+            f"[{settings.prometheus_retention_days}d:{self._FIRST_REQUEST_STEP}]))"
+        )
+        # query(), not scalar(): scalar() maps an empty result to 0.0 (1970).
+        result = await self._client.query(promql)
+        if not result:
+            return None
+        ts = PrometheusClient._safe_float(result[0]["value"][1])
+        if ts <= 0:
+            return None
+        step = timedelta(seconds=_step_seconds(self._FIRST_REQUEST_STEP))
+        return datetime.fromtimestamp(ts, tz=timezone.utc) - step
+
     async def overview_tenant_data(
         self, time_ranges: list[str]
     ) -> tuple[dict, dict[str, dict]]:

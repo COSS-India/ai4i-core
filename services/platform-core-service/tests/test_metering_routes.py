@@ -522,6 +522,7 @@ def _overview_svc() -> MagicMock:
     svc.request_volume_chart = AsyncMock(return_value=None)
     svc.usage_concentration = AsyncMock(return_value=None)
     svc.model_usage_growth_pct = AsyncMock(return_value=None)
+    svc.first_request_at = AsyncMock(return_value=None)
     return svc
 
 
@@ -629,6 +630,55 @@ class TestOverviewFirstUsageAt:
         redis = _empty_redis()
         await _call_overview(_overview_svc(), redis=redis)
         redis.set.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("frozen_now")
+class TestOverviewFirstUsageAtHybrid:
+    """first_usage_at is the earlier of quota_usage (billed only, outlives
+    retention) and the metering source's first request (untiered too, within
+    retention)."""
+
+    def _svc(self, first_request=None, error=None) -> MagicMock:
+        svc = _overview_svc()
+        svc.first_request_at = AsyncMock(return_value=first_request, side_effect=error)
+        return svc
+
+    async def test_untiered_traffic_before_first_billed_usage_wins(self, fake_usage_repo):
+        fake_usage_repo.result = _utc(2026, 8, 10)
+        response = await _call_overview(self._svc(_utc(2026, 7, 2, 9, 30)))
+        assert response.first_usage_at == "2026-07-02T09:30:00Z"
+
+    async def test_billed_usage_older_than_retention_wins(self, fake_usage_repo):
+        fake_usage_repo.result = _utc(2025, 11, 1)
+        response = await _call_overview(self._svc(_utc(2026, 7, 2)))
+        assert response.first_usage_at == "2025-11-01T00:00:00Z"
+
+    async def test_metering_only(self, fake_usage_repo):
+        response = await _call_overview(self._svc(_utc(2026, 7, 2)))
+        assert response.first_usage_at == "2026-07-02T00:00:00Z"
+
+    async def test_neither_is_none(self, fake_usage_repo):
+        response = await _call_overview(self._svc())
+        assert response.first_usage_at is None
+
+    async def test_metering_lookup_is_scoped_to_the_callers_tenant(self, fake_usage_repo):
+        svc = self._svc()
+        await _call_overview(svc, request=_tenant_admin_request())
+        svc.first_request_at.assert_awaited_once_with("Acme Corp", "7")
+
+    async def test_metering_error_falls_back_to_quota_and_is_not_cached(self, fake_usage_repo):
+        fake_usage_repo.result = _utc(2026, 8, 10)
+        redis = _empty_redis()
+        response = await _call_overview(self._svc(error=RuntimeError("prometheus down")), redis=redis)
+        assert response.first_usage_at == "2026-08-10T00:00:00Z"
+        assert response.degraded is False
+        redis.set.assert_not_called()
+
+    async def test_cache_key_is_v4(self, fake_usage_repo):
+        redis = _empty_redis()
+        await _call_overview(self._svc(), redis=redis)
+        assert redis.set.call_args.args[0].startswith("metering:overview:v4:")
 
 
 @pytest.mark.asyncio

@@ -2793,3 +2793,47 @@ class TestAbsoluteRangeQueries:
         assert len(queries) == 3  # total, success, llm native units
         for q in queries:
             assert "[259200s] offset 172800s" in q
+
+
+# ── first_request_at (metering half of /overview's first_usage_at) ───────────
+
+
+@pytest.mark.asyncio
+class TestFirstRequestAt:
+    async def test_promql_reads_series_presence_over_retention(self):
+        svc = _make_service(query_return=[])
+        await svc.first_request_at(tenant="Acme Corp", tenant_id="7")
+        promql = svc._client.query.call_args.args[0]
+        from app.core.config import settings
+        assert promql.startswith("min(min_over_time(timestamp(telemetry_obsv_requests_total{")
+        assert promql.endswith(f"[{settings.prometheus_retention_days}d:1h]))")
+        assert 'tenant_id="7"' in promql
+        assert 'auth_type=~"api_key|"' in promql
+        # presence, not a windowed increase (which misreads the retention edge)
+        assert "increase(" not in promql and "unless" not in promql
+
+    async def test_platform_wide_has_no_tenant_filter(self):
+        svc = _make_service(query_return=[])
+        await svc.first_request_at(tenant=None, tenant_id=None)
+        promql = svc._client.query.call_args.args[0]
+        assert "tenant_id=" not in promql and 'tenant="' not in promql
+
+    async def test_result_is_shifted_one_step_earlier(self):
+        ts = _datetime(2026, 7, 2, 10, 0, tzinfo=_timezone.utc).timestamp()
+        svc = _make_service(query_return=[{"metric": {}, "value": [0, str(ts)]}])
+        result = await svc.first_request_at(tenant=None)
+        assert result == _datetime(2026, 7, 2, 9, 0, tzinfo=_timezone.utc)
+
+    async def test_no_series_is_none_not_epoch(self):
+        svc = _make_service(query_return=[])
+        assert await svc.first_request_at(tenant=None) is None
+
+    async def test_nan_value_is_none(self):
+        svc = _make_service(query_return=[{"metric": {}, "value": [0, "NaN"]}])
+        assert await svc.first_request_at(tenant=None) is None
+
+    async def test_prometheus_failure_propagates(self):
+        svc = _make_service()
+        svc._client.query = AsyncMock(side_effect=RuntimeError("down"))
+        with pytest.raises(RuntimeError):
+            await svc.first_request_at(tenant=None)

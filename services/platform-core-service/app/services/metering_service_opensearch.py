@@ -722,6 +722,30 @@ class OpenSearchMeteringService(MeteringService):
             },
         }
 
+    async def first_request_at(
+        self, tenant: Optional[str], tenant_id: Optional[str] = None,
+    ) -> Optional[datetime]:
+        """Exact earliest API-key inference request in the index for the
+        tenant (all tenants when tenant_id is None) — a `min` on
+        @timestamp, bounded only by the index's own retention. See
+        MeteringService.first_request_at for how /overview uses it.
+
+        `tenant` (the name) has no OpenSearch field; see `_base_filters`.
+        aggregate() is fail-soft, so a cluster error reads as "no data" and
+        /overview falls back to the quota_usage value.
+        """
+        filters = self._base_filters(
+            tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE, inference_only=True,
+        )
+        query = {"bool": {"filter": filters}} if filters else {"match_all": {}}
+        aggregations = await self._os_client.aggregate(
+            query, {"first": {"min": {"field": "@timestamp"}}}
+        )
+        value = aggregations.get("first", {}).get("value")
+        if value is None:
+            return None
+        return datetime.fromtimestamp(value / 1000, tz=timezone.utc)
+
     async def model_usage_growth_pct(self) -> Optional[float]:
         """Overall LLM request volume, rolling last 30 days vs the 30 days
         before that — same KPI #7 semantics as the Prometheus version

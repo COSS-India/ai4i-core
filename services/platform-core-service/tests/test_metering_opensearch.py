@@ -635,3 +635,24 @@ class TestAbsoluteRangeQueries:
             await svc.model_breakdown(tenant=None, time_range=_RANGE, task_types=["llm"])
         query = os_client.composite_all.call_args.args[0]
         assert query["bool"]["filter"][0]["range"]["@timestamp"]["lte"] == "2026-09-23T18:30:00+00:00"
+
+
+@pytest.mark.asyncio
+class TestFirstRequestAt:
+    async def test_min_timestamp_aggregation_without_time_filter(self):
+        svc, os_client = _make_os_service(aggregate_return={"first": {"value": 1_751_450_400_000}})
+        result = await svc.first_request_at(tenant="Acme Corp", tenant_id="7")
+        query, aggs = os_client.aggregate.call_args.args
+        assert aggs == {"first": {"min": {"field": "@timestamp"}}}
+        filters = query["bool"]["filter"]
+        assert {"term": {"tenant_id": "7"}} in filters
+        assert not any("range" in f for f in filters)
+        assert result == datetime(2025, 7, 2, 10, 0, tzinfo=timezone.utc)
+
+    async def test_no_documents_is_none(self):
+        svc, _ = _make_os_service(aggregate_return={"first": {"value": None}})
+        assert await svc.first_request_at(tenant=None) is None
+
+    async def test_failed_aggregation_is_none(self):
+        svc, _ = _make_os_service(aggregate_return={})
+        assert await svc.first_request_at(tenant=None) is None

@@ -286,11 +286,12 @@ def _scope_range_fields(window: str, custom_range: Optional[AbsoluteRange]) -> d
     }
 
 
-async def _first_usage_at(db: AsyncSession, tenant_id: Optional[str]) -> tuple[Optional[str], bool]:
-    """(value, ok). Best-effort, like the auth-DB lookups: a failure logs,
-    rolls the session back and yields (None, False) rather than failing the
-    whole response. ok=False tells the caller not to cache that None, which
-    would otherwise read as "no usage yet" for the whole TTL."""
+async def _first_usage_at(db: AsyncSession, tenant_id: Optional[str]) -> tuple[Optional[datetime], bool]:
+    """(first billed usage from quota_usage, ok). Best-effort, like the
+    auth-DB lookups: a failure logs, rolls the session back and yields
+    (None, False) rather than failing the whole response. ok=False tells the
+    caller not to cache that None, which would otherwise read as "no usage
+    yet" for the whole TTL."""
     try:
         first = await UsageRepository(db).get_first_usage_at(tenant_id)
     except Exception:
@@ -300,7 +301,16 @@ async def _first_usage_at(db: AsyncSession, tenant_id: Optional[str]) -> tuple[O
         except Exception:
             logger.warning("Core DB rollback after failed first_usage_at lookup also failed", exc_info=True)
         return None, False
-    return (_iso_utc(first) if first else None), True
+    return first, True
+
+
+def _combine_first_usage(*candidates: Optional[datetime]) -> Optional[str]:
+    """/overview's first_usage_at: the earliest of quota_usage's first billed
+    usage (outlives metering retention, but misses untiered traffic) and the
+    metering source's first API-key request (covers untiered traffic, but only
+    within retention). None when neither has anything."""
+    present = [c for c in candidates if c is not None]
+    return _iso_utc(min(present)) if present else None
 
 
 # ── Cache helpers ─────────────────────────────────────────────────────────────
@@ -641,9 +651,9 @@ async def get_overview(
     auth_type_filter = API_KEY_AUTH_TYPE
 
     ranking_active = is_admin and not scope_tenant
-    # v3: adds first_usage_at (and scope.from/to for custom ranges).
+    # v4: first_usage_at also reads the metering source (v3 was quota_usage only).
     cache_key = (
-        f"metering:overview:v3:{_range_cache_part(window, custom_range)}:{scope_tenant_name or 'all'}:"
+        f"metering:overview:v4:{_range_cache_part(window, custom_range)}:{scope_tenant_name or 'all'}:"
         f"{_caller_role_label(request)}:{','.join(task_type_filter) if task_type_filter else 'all'}"
         + (f":{limit}" if ranking_active else "")
     )
@@ -663,7 +673,7 @@ async def get_overview(
     # Core-DB session is shared with the metering service's repositories, so
     # this stays out of the gather() below (AsyncSession isn't safe for
     # concurrent use — same reasoning as overview_tenant_data above).
-    first_usage_at, first_usage_ok = await _first_usage_at(db, scope_tenant)
+    quota_first_usage, first_usage_ok = await _first_usage_at(db, scope_tenant)
 
     results = await asyncio.gather(
         svc.request_total(
@@ -680,8 +690,18 @@ async def get_overview(
         # Key Metrics KPI #7 (model_usage_growth_pct) is admin-only, fixed
         # calendar-month comparison — independent of `window` and from/to.
         svc.model_usage_growth_pct() if is_admin else asyncio.sleep(0),
+        # Other half of first_usage_at; kept out of _partition_results below.
+        svc.first_request_at(scope_tenant_name, scope_tenant),
         return_exceptions=True,
     )
+    *results, metering_first_request = results
+    # A failed lookup falls back to the quota value alone. It doesn't degrade
+    # the response, but like a failed quota lookup it mustn't be cached.
+    if isinstance(metering_first_request, Exception):
+        logger.warning("first_request_at lookup failed: %s", metering_first_request)
+        metering_first_request = None
+        first_usage_ok = False
+    first_usage_at = _combine_first_usage(quota_first_usage, metering_first_request)
     # Merge both result sets through one _partition_results call so a failure
     # in either half still degrades the response instead of raising —
     # active_tenants() (unlike tenant_count()) doesn't catch a Prometheus
