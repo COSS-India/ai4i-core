@@ -603,8 +603,7 @@ WindowParam = Literal["1h", "24h", "7d", "30d"]
 
 _FROM_DESCRIPTION = (
     "Custom range start, ISO-8601 date or datetime (no offset = IST). Must be "
-    "sent together with `to`; overrides `window` when both are given. Must "
-    "not be older than the metering retention (PROMETHEUS_RETENTION_DAYS)."
+    "sent together with `to`; overrides `window` when both are given."
 )
 _TO_DESCRIPTION = (
     "Custom range end, ISO-8601 date or datetime (no offset = IST). A date-only "
