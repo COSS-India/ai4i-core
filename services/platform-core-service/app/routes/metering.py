@@ -319,10 +319,12 @@ def _first_usage_cache_key(scope_tenant: Optional[str], scope_tenant_name: Optio
     """first_request_at depends only on the tenant scope, not on the window,
     task types, role or limit the overview key varies by. Both parts are in
     the key because first_request_at filters on the id when there is one and
-    on the name otherwise; a name-only scope must not share the "all" entry."""
+    on the name otherwise; a name-only scope must not share the "all" entry.
+
+    v2: v1 also cached a None result, which must not be served after deploy."""
     if not (scope_tenant or scope_tenant_name):
-        return "metering:first-usage:v1:all"
-    return f"metering:first-usage:v1:{scope_tenant or ''}:{scope_tenant_name or ''}"
+        return "metering:first-usage:v2:all"
+    return f"metering:first-usage:v2:{scope_tenant or ''}:{scope_tenant_name or ''}"
 
 
 def _parse_cached_first_request(cached: dict) -> Optional[datetime]:
@@ -734,10 +736,15 @@ async def get_overview(
         # every load pay for the slow query again while Prometheus struggles.
         logger.warning("first_request_at lookup failed: %s", metering_first_request)
         metering_first_request = None
-    else:
+    elif metering_first_request is not None:
+        # Only a real timestamp is cached. A None (no API-key requests yet)
+        # would stick for the whole TTL, and for a tenant on untiered keys
+        # quota_usage has nothing either, so first_usage_at would stay null
+        # for up to an hour after its first request. Not caching it costs
+        # one retry per overview miss until that first request shows up.
         await _cache_set(
             redis, first_usage_key,
-            {"first_request_at": _iso_utc(metering_first_request) if metering_first_request else None},
+            {"first_request_at": _iso_utc(metering_first_request)},
             ttl=_FIRST_USAGE_CACHE_TTL,
         )
     first_usage_at = _combine_first_usage(quota_first_usage, metering_first_request)
