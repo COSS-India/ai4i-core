@@ -24,6 +24,7 @@ No database — both sessions (primary + auth) are faked.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -37,13 +38,17 @@ from app.services.notification_management import catalog_service
 from app.services.notification_management import subscription_service as svc
 
 
-def _catalog_row(id=1, name="TIER_ASSIGNED", type="NOTIFICATION", scope="INSTITUTION", channels=("EMAIL",)):
+def _catalog_row(
+    id=1, name="TIER_ASSIGNED", type="NOTIFICATION", scope="INSTITUTION", channels=("EMAIL",),
+    config=None,
+):
     r = MagicMock()
     r.id = id
     r.name = name
     r.type = type
     r.scope = scope
     r.channels = list(channels)
+    r.config = config or {}
     return r
 
 
@@ -183,6 +188,32 @@ class TestListSubscriptions:
         )
         items = await svc.list_subscriptions(session, tenant_id="7")
         assert items[0].subscribed is False
+
+    async def test_alert_row_includes_configured_thresholds(self, monkeypatch):
+        # Same shape as CatalogItem.thresholds, read from the same
+        # notification_alert_threshold rows — subscription GET must not drop
+        # this for ALERT-type rows just because it's the institution's view.
+        bands = [
+            MagicMock(band_value=Decimal("70"), active=True),
+            MagicMock(band_value=Decimal("90"), active=False),
+        ]
+        load_bands = AsyncMock(return_value={1: bands})
+        monkeypatch.setattr(svc, "load_bands", load_bands)
+        session = _Session(catalog_rows=[_catalog_row(id=1, type="ALERT", scope="INSTITUTION")], sub_rows=[])
+        items = await svc.list_subscriptions(session, tenant_id="7")
+        assert items[0].thresholds == [
+            catalog_service.ThresholdBand(percentage=70, active=True),
+            catalog_service.ThresholdBand(percentage=90, active=False),
+        ]
+        load_bands.assert_awaited_once_with(session, [1])
+
+    async def test_notification_row_thresholds_is_none_and_bands_not_loaded(self, monkeypatch):
+        load_bands = AsyncMock(return_value={})
+        monkeypatch.setattr(svc, "load_bands", load_bands)
+        session = _Session(catalog_rows=[_catalog_row(id=1, type="NOTIFICATION")], sub_rows=[])
+        items = await svc.list_subscriptions(session, tenant_id="7")
+        assert items[0].thresholds is None
+        load_bands.assert_awaited_once_with(session, [])
 
 
 @pytest.mark.asyncio

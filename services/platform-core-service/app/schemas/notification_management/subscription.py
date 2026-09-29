@@ -1,9 +1,10 @@
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel, StrictBool
 
 from app.schemas.common import MessageMeta, SuccessResponse, SuccessResponseWithMeta
 from app.schemas.enums.notification_management import NotificationChannel, NotificationScope
+from app.schemas.notification_management.catalog import ThresholdBand
 
 
 class SubscriptionItem(BaseModel):
@@ -14,7 +15,13 @@ class SubscriptionItem(BaseModel):
     ``subscribed=true``/``locked=true`` (no unsubscribe option) regardless
     of whatever tenant_notification_subscription.subscribed still holds
     underneath — see subscription_service._to_subscription_item. ``locked``
-    is what the UI uses to disable the subscribe/unsubscribe control."""
+    is what the UI uses to disable the subscribe/unsubscribe control.
+
+    ``thresholds`` mirrors CatalogItem.thresholds exactly — ``None``
+    (dropped from the response) on a NOTIFICATION row, the configured bands
+    on an ALERT row, read from the same catalog row this subscription is
+    for, not per-institution state (thresholds aren't something an
+    institution sets, only the Adopter Admin does via the catalog)."""
 
     notification_id: int
     name: str
@@ -24,6 +31,7 @@ class SubscriptionItem(BaseModel):
     subscribed: bool
     locked: bool
     recipients: List[str]
+    thresholds: Optional[List[ThresholdBand]] = None
 
 
 class SubscriptionListData(BaseModel):
