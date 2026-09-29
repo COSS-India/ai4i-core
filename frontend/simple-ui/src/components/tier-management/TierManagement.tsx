@@ -3,6 +3,13 @@ import {
   Badge,
   Box,
   Button,
+  Drawer,
+  DrawerBody,
+  DrawerCloseButton,
+  DrawerContent,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerOverlay,
   FormControl,
   FormErrorMessage,
   HStack,
@@ -36,6 +43,7 @@ import DataTable, {
 } from "../common/table";
 import ConfirmDialog from "../common/ConfirmDialog";
 import CreateButton from "../common/CreateButton";
+import CreateHeader from "../common/CreateHeader";
 import FormActions from "../common/FormActions";
 import FormPage from "../common/FormPage";
 import FormSection from "../common/FormSection";
@@ -1121,135 +1129,7 @@ const TierManagement: React.FC = () => {
   const pendingQuotas =
     viewTier?.quotas?.filter((q) => q.pendingLimit != null) ?? [];
 
-  const formPage = isEditOpen ? (
-    <FormPage
-      title={editingTier?.name || "Edit Tier"}
-      description="Update this tier's access and usage limits."
-      parent={{
-        label: "Tier Management",
-        href: "/tier-management",
-        onNavigate: onEditClose,
-      }}
-      footer={
-        <FormActions
-          submitLabel="Save Changes"
-          onCancel={onEditClose}
-          isLoading={isSubmitting}
-          loadingText="Saving..."
-          onSubmit={handleEditSubmit}
-          justify="space-between"
-          pt={0}
-        />
-      }
-    >
-      {tierForm}
-      {editingTier ? (
-        <>
-          {hasActiveTiersError ? (
-            <Text fontSize="sm" color="red.500">
-              Could not load active tiers.
-            </Text>
-          ) : null}
-          <FormSection
-            title={`Services mapped · ${isServiceCountLoading ? "…" : servicesForEditingTier.length}`}
-          >
-            <ServicesMappedSection
-              services={servicesForEditingTier}
-              isLoading={isServiceCountLoading}
-              pendingRow={(service) => {
-                const targetId = stagedServiceTiers[service.serviceId];
-                if (!targetId) return null;
-                return (
-                  <PendingMove
-                    label={`Moving to ${tierName(targetId)}`}
-                    onUndo={() => stageServiceTier(service.serviceId, "")}
-                    isDisabled={isSubmitting}
-                  />
-                );
-              }}
-              tierControl={(service) => (
-                <RowActions
-                  label={`Actions for ${service.name}`}
-                  isDisabled={isSubmitting || !service.serviceId}
-                  items={[
-                    {
-                      label: "Reassign Tier",
-                      onClick: () => {
-                        setMoveTargetId("");
-                        setMoveDialog({
-                          kind: "service",
-                          id: service.serviceId,
-                          name: service.name,
-                          taskType: service.taskType,
-                        });
-                      },
-                    },
-                  ]}
-                />
-              )}
-            />
-          </FormSection>
-          <FormSection
-            title={`${INSTITUTIONS} assigned · ${isInstitutionCountLoading ? "…" : institutionsForEditingTier.length}`}
-          >
-            <AssignedTenantsSection
-              tenants={institutionsForEditingTier}
-              isLoading={isInstitutionCountLoading}
-              pendingRow={(institution) => {
-                if (stagedInstitutionRemovals[institution.tenantId]) {
-                  return (
-                    <PendingMove
-                      label="Removing"
-                      danger
-                      onUndo={() => undoInstitutionRemoval(institution.tenantId)}
-                      isDisabled={isSubmitting}
-                    />
-                  );
-                }
-                const targetId = stagedInstitutionTiers[institution.tenantId];
-                if (!targetId) return null;
-                return (
-                  <PendingMove
-                    label={`Moving to ${tierName(targetId)}`}
-                    onUndo={() => stageInstitutionTier(institution.tenantId, "")}
-                    isDisabled={isSubmitting}
-                  />
-                );
-              }}
-              tierControl={(institution) => (
-                <RowActions
-                  label={`Actions for ${institution.organisation}`}
-                  isDisabled={isSubmitting}
-                  items={[
-                    {
-                      label: "Change Tier",
-                      onClick: () => {
-                        setMoveTargetId("");
-                        setMoveDialog({
-                          kind: "institution",
-                          id: institution.tenantId,
-                          name: institution.organisation,
-                        });
-                      },
-                    },
-                    {
-                      label: "Remove from Tier",
-                      danger: true,
-                      onClick: () =>
-                        setRemoveDialog({
-                          id: institution.tenantId,
-                          name: institution.organisation,
-                        }),
-                    },
-                  ]}
-                />
-              )}
-            />
-          </FormSection>
-        </>
-      ) : null}
-    </FormPage>
-  ) : isCreateOpen ? (
+  const formPage = isCreateOpen ? (
     <FormPage
       title="Create Tier"
       description={`Configure access and usage limits for ${INSTITUTIONS.toLowerCase()}.`}
@@ -1417,6 +1297,157 @@ const TierManagement: React.FC = () => {
         ]}
       />
       </Box>
+
+      <Drawer
+        isOpen={isEditOpen}
+        onClose={onEditClose}
+        placement="right"
+        size="lg"
+        closeOnOverlayClick={!isSubmitting}
+        closeOnEsc={!isSubmitting}
+      >
+        <DrawerOverlay />
+        <DrawerContent maxW="640px">
+          <DrawerCloseButton isDisabled={isSubmitting} />
+          <DrawerHeader borderBottomWidth="1px" borderColor="ink.200">
+            <CreateHeader
+              title={
+                editingTier?.name ? `Edit Tier: ${editingTier.name}` : "Edit Tier"
+              }
+            />
+          </DrawerHeader>
+          <DrawerBody py={6}>
+            <VStack align="stretch" spacing={6}>
+              <TierForm
+                formData={formData}
+                onChange={setFormData}
+                taskTypeNames={taskTypeNames}
+                unitByTaskType={unitByTaskType}
+                onSchedule={handleOpenSchedule}
+                onRemove={(quota) => handleRemoveQuota(quota.modelTaskType)}
+                removingTaskType={removingTaskType}
+                isEditMode
+                showErrors={showQuotaErrors}
+              />
+              {editingTier ? (
+                <>
+                  {hasActiveTiersError ? (
+                    <Text fontSize="sm" color="red.500">
+                      Could not load active tiers.
+                    </Text>
+                  ) : null}
+                  <FormSection
+                    title={`Services mapped · ${isServiceCountLoading ? "…" : servicesForEditingTier.length}`}
+                  >
+                    <ServicesMappedSection
+                      services={servicesForEditingTier}
+                      isLoading={isServiceCountLoading}
+                      pendingRow={(service) => {
+                        const targetId = stagedServiceTiers[service.serviceId];
+                        if (!targetId) return null;
+                        return (
+                          <PendingMove
+                            label={`Moving to ${tierName(targetId)}`}
+                            onUndo={() => stageServiceTier(service.serviceId, "")}
+                            isDisabled={isSubmitting}
+                          />
+                        );
+                      }}
+                      tierControl={(service) => (
+                        <RowActions
+                          label={`Actions for ${service.name}`}
+                          isDisabled={isSubmitting || !service.serviceId}
+                          items={[
+                            {
+                              label: "Reassign Tier",
+                              onClick: () => {
+                                setMoveTargetId("");
+                                setMoveDialog({
+                                  kind: "service",
+                                  id: service.serviceId,
+                                  name: service.name,
+                                  taskType: service.taskType,
+                                });
+                              },
+                            },
+                          ]}
+                        />
+                      )}
+                    />
+                  </FormSection>
+                  <FormSection
+                    title={`${INSTITUTIONS} assigned · ${isInstitutionCountLoading ? "…" : institutionsForEditingTier.length}`}
+                  >
+                    <AssignedTenantsSection
+                      tenants={institutionsForEditingTier}
+                      isLoading={isInstitutionCountLoading}
+                      pendingRow={(institution) => {
+                        if (stagedInstitutionRemovals[institution.tenantId]) {
+                          return (
+                            <PendingMove
+                              label="Removing"
+                              danger
+                              onUndo={() => undoInstitutionRemoval(institution.tenantId)}
+                              isDisabled={isSubmitting}
+                            />
+                          );
+                        }
+                        const targetId = stagedInstitutionTiers[institution.tenantId];
+                        if (!targetId) return null;
+                        return (
+                          <PendingMove
+                            label={`Moving to ${tierName(targetId)}`}
+                            onUndo={() => stageInstitutionTier(institution.tenantId, "")}
+                            isDisabled={isSubmitting}
+                          />
+                        );
+                      }}
+                      tierControl={(institution) => (
+                        <RowActions
+                          label={`Actions for ${institution.organisation}`}
+                          isDisabled={isSubmitting}
+                          items={[
+                            {
+                              label: "Change Tier",
+                              onClick: () => {
+                                setMoveTargetId("");
+                                setMoveDialog({
+                                  kind: "institution",
+                                  id: institution.tenantId,
+                                  name: institution.organisation,
+                                });
+                              },
+                            },
+                            {
+                              label: "Remove from Tier",
+                              danger: true,
+                              onClick: () =>
+                                setRemoveDialog({
+                                  id: institution.tenantId,
+                                  name: institution.organisation,
+                                }),
+                            },
+                          ]}
+                        />
+                      )}
+                    />
+                  </FormSection>
+                </>
+              ) : null}
+            </VStack>
+          </DrawerBody>
+          <DrawerFooter borderTopWidth="1px" borderColor="ink.200">
+            <FormActions
+              submitLabel="Save Changes"
+              onCancel={onEditClose}
+              isLoading={isSubmitting}
+              loadingText="Saving..."
+              pt={0}
+              onSubmit={handleEditSubmit}
+            />
+          </DrawerFooter>
+        </DrawerContent>
+      </Drawer>
 
       {/* Lifecycle status confirmation (activate / deactivate) */}
       <ConfirmDialog
