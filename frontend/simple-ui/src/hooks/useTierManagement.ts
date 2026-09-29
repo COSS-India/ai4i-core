@@ -6,6 +6,7 @@ import { useToastWithDeduplication } from "../utils/toast";
 import { extractErrorInfo } from "../utils/errorHandler";
 import {
   changeTenantTier,
+  removeTenantFromTier,
   fetchTiers,
   createTier,
   updateTier,
@@ -135,22 +136,6 @@ function tierIdsReplacing(
   );
   const unique = next.filter((id, index) => next.indexOf(id) === index);
   return unique.length > 0 ? unique : [toId];
-}
-
-/**
- * Persist an institution leaving its tier.
- *
- * FE staging and the Edit Tier row are implemented. This function is the only
- * place that should call the backend. BE must provide an operation that clears
- * the institution's tier assignment. Do not send null, "", a fake id, or the
- * current tier id until that contract exists.
- */
-function removeTenantFromTier(_tenantId: string): Promise<void> {
-  return Promise.reject(
-    new Error(
-      "Institution removal cannot be saved yet. Clearing a tier requires a backend API that can clear tier_id.",
-    ),
-  );
 }
 
 function stageTarget(
@@ -521,6 +506,10 @@ export function useTierManagement() {
     queryClient.invalidateQueries({ queryKey: ["tenant-tiers"] });
   }, [queryClient]);
 
+  const refreshTenantDirectory = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: TENANTS_LIST_QUERY_KEY });
+  }, [queryClient]);
+
   const handleDeleteClick = useCallback(
     (tier: Tier) => {
       setTierToDelete(tier);
@@ -824,6 +813,7 @@ export function useTierManagement() {
       setEditingTier(null);
       refreshTiers();
       if (hadReassignments) refreshReassignmentQueries();
+      if (appliedRemovalIds.length) refreshTenantDirectory();
     } catch (error: any) {
       if (tierSaved) {
         setStagedServiceTiers((current) => withoutKeys(current, appliedServiceIds));
@@ -839,6 +829,7 @@ export function useTierManagement() {
         if (appliedServiceIds.length || appliedTenantIds.length || appliedRemovalIds.length) {
           refreshReassignmentQueries();
         }
+        if (appliedRemovalIds.length) refreshTenantDirectory();
       }
       const {
         title: errTitle,
@@ -869,6 +860,7 @@ export function useTierManagement() {
     discardStagedReassignments,
     refreshTiers,
     refreshReassignmentQueries,
+    refreshTenantDirectory,
   ]);
 
   const handleEditClose = useCallback(() => {
