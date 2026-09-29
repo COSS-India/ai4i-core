@@ -296,10 +296,13 @@ export function useTierManagement() {
   const enabledTaskTypesParam =
     taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
 
+  // One list for the table and for reassignment targets. Task type, status,
+  // and search are applied in `filteredTiers`. The query key must not include
+  // `filterTaskType`, or Edit would miss active tiers outside the table filter
+  // and changing the filter would refetch.
   const tiersQuery = useQuery({
-    queryKey: [TIER_QUERY_KEY, filterTaskType || enabledTaskTypesParam || "all"],
-    queryFn: () =>
-      fetchTiers(filterTaskType || enabledTaskTypesParam || undefined),
+    queryKey: [TIER_QUERY_KEY, enabledTaskTypesParam || "all"],
+    queryFn: () => fetchTiers(enabledTaskTypesParam || undefined),
     staleTime: 30 * 1000,
     retry: 1,
     enabled: taskTypeFilterReady,

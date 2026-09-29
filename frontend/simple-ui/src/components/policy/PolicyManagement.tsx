@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createPortal } from "react-dom";
 import {
   Alert,
@@ -61,6 +62,26 @@ const AUDIT_PAGE_SIZE_OPTIONS = [25, 50, 100, 200] as const;
 
 /** Set to `true` to show the Audit log tab again. */
 const SHOW_POLICY_AUDIT_TAB = false;
+
+const PII_TYPES_QUERY_KEY = ["pii-types-catalog"] as const;
+const EMPTY_PII_TYPES: PiiTypeOut[] = [];
+
+async function fetchAllPiiTypes(): Promise<PiiTypeOut[]> {
+  const acc: PiiTypeOut[] = [];
+  let page = 1;
+  const limit = 100;
+  for (;;) {
+    const res = await policyService.listPiiTypes({ page, limit });
+    acc.push(...res.data.data);
+    if (acc.length >= res.data.meta.total || res.data.data.length === 0) break;
+    page += 1;
+  }
+  return acc;
+}
+
+function policyFormFromList(policy: PolicyOut): boolean {
+  return Array.isArray(policy.supported_languages) && Array.isArray(policy.pii_types);
+}
 
 const POLICY_TAB_CONFIG = SHOW_POLICY_AUDIT_TAB
   ? ([
@@ -252,45 +273,26 @@ function PoliciesPanel({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<PolicyOut | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [piiOptions, setPiiOptions] = useState<PiiTypeOut[]>([]);
-  const [piiCatalogReady, setPiiCatalogReady] = useState(false);
-  const [piiOptionsLoading, setPiiOptionsLoading] = useState(false);
+  const queryClient = useQueryClient();
+  const piiQuery = useQuery({
+    queryKey: PII_TYPES_QUERY_KEY,
+    queryFn: fetchAllPiiTypes,
+    staleTime: 60 * 1000,
+  });
+  const piiOptions = piiQuery.data ?? EMPTY_PII_TYPES;
   const [policyStatusBusyId, setPolicyStatusBusyId] = useState<string | null>(null);
   const [activeStatusTooltipId, setActiveStatusTooltipId] = useState<string | null>(null);
   const statusTooltipTimeoutRef = useRef<number | null>(null);
 
   const bumpTablePage = useCallback(() => setTableEpoch((n) => n + 1), []);
 
-  const loadPiiOptions = useCallback(async () => {
-    setPiiOptionsLoading(true);
-    try {
-      const acc: PiiTypeOut[] = [];
-      let page = 1;
-      const limit = 100;
-      for (;;) {
-        const res = await policyService.listPiiTypes({ page, limit });
-        acc.push(...res.data.data);
-        if (acc.length >= res.data.meta.total || res.data.data.length === 0) break;
-        page += 1;
-      }
-      setPiiOptions(acc);
-      setPiiCatalogReady(true);
-    } catch (e: unknown) {
-      setPiiOptions([]);
-      setPiiCatalogReady(false);
-      showToast({
-        type: "error",
-        message: getPolicyApiErrorMessage(e, "Failed to load PII types for the policy form"),
-      });
-    } finally {
-      setPiiOptionsLoading(false);
-    }
-  }, []);
-
   const ensurePiiOptions = useCallback(async () => {
-    if (piiCatalogReady || piiOptionsLoading) return;
-    await loadPiiOptions();
-  }, [loadPiiOptions, piiCatalogReady, piiOptionsLoading]);
+    if (piiQuery.data) return;
+    await queryClient.fetchQuery({
+      queryKey: PII_TYPES_QUERY_KEY,
+      queryFn: fetchAllPiiTypes,
+    });
+  }, [piiQuery.data, queryClient]);
 
   const reloadPolicies = useCallback(async () => {
     setLoading(true);
@@ -317,10 +319,6 @@ function PoliciesPanel({
   useEffect(() => {
     void reloadPolicies();
   }, [reloadPolicies]);
-
-  useEffect(() => {
-    void loadPiiOptions();
-  }, [loadPiiOptions]);
 
   const getSortTimestamp = (value?: string | null): number => {
     if (value == null) return 0;
@@ -603,13 +601,17 @@ function PoliciesPanel({
       onLeaveToList={closePolicyForms}
       policyId={editingId}
       piiOptions={piiOptions}
-      refreshPiiOptions={loadPiiOptions}
+      refreshPiiOptions={ensurePiiOptions}
+      cachedPolicy={
+        editingId
+          ? allPolicies.find((policy) => policy.policy_id === editingId) ?? null
+          : null
+      }
       onSaved={() => {
         modal.onClose();
         setEditingId(null);
         closePolicyView();
         void reloadPolicies();
-        void loadPiiOptions();
         showToast({ type: "success", message: "Saved" });
       }}
       onError={(msg) => showToast({ type: "error", message: msg })}
@@ -627,6 +629,11 @@ function PoliciesPanel({
           policyId={viewPolicyId}
           piiOptions={piiOptions}
           refreshPiiOptions={ensurePiiOptions}
+          cachedPolicy={
+            viewPolicyId
+              ? allPolicies.find((policy) => policy.policy_id === viewPolicyId) ?? null
+              : null
+          }
           onSaved={() => undefined}
           onViewEdit={(id) => {
             openEdit(id);
@@ -733,6 +740,7 @@ function PolicyFormModal({
   policyId,
   piiOptions,
   refreshPiiOptions,
+  cachedPolicy = null,
   onSaved,
   onError,
   mode,
@@ -746,6 +754,8 @@ function PolicyFormModal({
   policyId: string | null;
   piiOptions: PiiTypeOut[];
   refreshPiiOptions: () => Promise<void> | void;
+  /** Row already loaded by the policy list. Skips GET /policies/{id} when complete. */
+  cachedPolicy?: PolicyOut | null;
   onSaved: () => void;
   onError: (msg: string) => void;
   mode?: "create" | "edit" | "view";
@@ -800,22 +810,33 @@ function PolicyFormModal({
       setLoadedPolicy(null);
       return;
     }
+    const applyPolicy = (p: PolicyOut) => {
+      setName(p.name);
+      setDescription(p.description || "");
+      setIsGlobal(p.is_global);
+      const tids = p.tenant_ids ?? [];
+      setTenantIds(tids);
+      setTenantInput(tids.join(", "));
+      setLangs(p.supported_languages?.length ? p.supported_languages : ["en"]);
+      setSelectedPii((p.pii_types || []).map((x: { pii_type_id: string }) => x.pii_type_id));
+      setLoadedPolicy(p);
+    };
+    if (
+      cachedPolicy &&
+      cachedPolicy.policy_id === policyId &&
+      policyFormFromList(cachedPolicy)
+    ) {
+      applyPolicy(cachedPolicy);
+      setLoadingDetail(false);
+      return;
+    }
     let cancelled = false;
     setLoadingDetail(true);
     const run = async () => {
       try {
         const res = await policyService.getPolicy(policyId);
         if (cancelled) return;
-        const p = res.data;
-        setName(p.name);
-        setDescription(p.description || "");
-        setIsGlobal(p.is_global);
-        const tids = p.tenant_ids ?? [];
-        setTenantIds(tids);
-        setTenantInput(tids.join(", "));
-        setLangs(p.supported_languages?.length ? p.supported_languages : ["en"]);
-        setSelectedPii((p.pii_types || []).map((x: { pii_type_id: string }) => x.pii_type_id));
-        setLoadedPolicy(p);
+        applyPolicy(res.data);
       } catch (e: unknown) {
         if (!cancelled) onError(getPolicyApiErrorMessage(e, "Failed to load policy"));
       } finally {
@@ -826,7 +847,7 @@ function PolicyFormModal({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, policyId, onError]);
+  }, [isOpen, policyId, onError, cachedPolicy]);
 
   const handleSubmit = async () => {
     const normalizedTenantIds =
@@ -1144,41 +1165,15 @@ function PolicyFormModal({
 function PiiTypeDetailModal({
   isOpen,
   onClose,
-  piiTypeId,
+  piiType,
   onEdit,
-  onError,
 }: {
   isOpen: boolean;
   onClose: () => void;
-  piiTypeId: string | null;
+  piiType: PiiTypeOut | null;
   onEdit: (row: PiiTypeOut) => void;
-  onError: (msg: string) => void;
 }) {
-  const [detail, setDetail] = useState<PiiTypeOut | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!isOpen || !piiTypeId) {
-      setDetail(null);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    const run = async () => {
-      try {
-        const res = await policyService.getPiiType(piiTypeId);
-        if (!cancelled) setDetail(res.data);
-      } catch (e: unknown) {
-        if (!cancelled) onError(getPolicyApiErrorMessage(e, "Failed to load PII type"));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [isOpen, piiTypeId, onError]);
+  const detail = isOpen ? piiType : null;
 
   return (
     <StandardModal
@@ -1207,11 +1202,7 @@ function PiiTypeDetailModal({
         )
       }
     >
-      {loading ? (
-        <Flex justify="center" py={8}>
-          <Spinner />
-        </Flex>
-      ) : detail ? (
+      {detail ? (
         <Stack spacing={4}>
           <Text fontSize="xs" color="gray.500" fontFamily="mono">
             {detail.pii_type_id}
@@ -1237,9 +1228,17 @@ function PiiTypeDetailModal({
 }
 
 function PiiTypesPanel() {
-  const [allTypes, setAllTypes] = useState<PiiTypeOut[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const piiQuery = useQuery({
+    queryKey: PII_TYPES_QUERY_KEY,
+    queryFn: fetchAllPiiTypes,
+    staleTime: 60 * 1000,
+  });
+  const allTypes = piiQuery.data ?? EMPTY_PII_TYPES;
+  const loading = piiQuery.isPending;
+  const error = piiQuery.isError
+    ? getPolicyApiErrorMessage(piiQuery.error, "Failed to load PII types")
+    : null;
   const [searchQuery, setSearchQuery] = useState("");
   const [filterMask, setFilterMask] = useState("");
   const piiTypeSortAccessors = useMemo(
@@ -1270,31 +1269,9 @@ function PiiTypesPanel() {
 
   const bumpTablePage = useCallback(() => setTableEpoch((n) => n + 1), []);
 
-  const reloadPiiTypes = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const acc: PiiTypeOut[] = [];
-      let page = 1;
-      const limit = 100;
-      for (;;) {
-        const res = await policyService.listPiiTypes({ page, limit });
-        acc.push(...res.data.data);
-        if (acc.length >= res.data.meta.total || res.data.data.length === 0) break;
-        page += 1;
-      }
-      setAllTypes(acc);
-    } catch (e: unknown) {
-      setError(getPolicyApiErrorMessage(e, "Failed to load PII types"));
-      setAllTypes([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void reloadPiiTypes();
-  }, [reloadPiiTypes]);
+  const reloadPiiTypes = useCallback(() => {
+    return queryClient.invalidateQueries({ queryKey: PII_TYPES_QUERY_KEY });
+  }, [queryClient]);
 
   const getSortTimestamp = (value?: string | null): number => {
     if (value == null) return 0;
@@ -1347,28 +1324,11 @@ function PiiTypesPanel() {
   const openEdit = (row: PiiTypeOut) => {
     setEditing(row);
     setExamples("");
+    setLabel(row.pii_type_label);
+    setRegex(row.regex_pattern);
+    setMask(row.mask_format as MaskFormat);
+    setPiiDetailLoading(false);
     modal.onOpen();
-    setPiiDetailLoading(true);
-    const run = async () => {
-      try {
-        const res = await policyService.getPiiType(row.pii_type_id);
-        const p = res.data;
-        setLabel(p.pii_type_label);
-        setRegex(p.regex_pattern);
-        setMask(p.mask_format as MaskFormat);
-      } catch (e: unknown) {
-        showToast({
-          type: "error",
-          message: getPolicyApiErrorMessage(e, "Could not load PII type (GET by id)"),
-        });
-        setLabel(row.pii_type_label);
-        setRegex(row.regex_pattern);
-        setMask(row.mask_format as MaskFormat);
-      } finally {
-        setPiiDetailLoading(false);
-      }
-    };
-    void run();
   };
 
   const save = async () => {
@@ -1593,14 +1553,11 @@ function PiiTypesPanel() {
       <PiiTypeDetailModal
         isOpen={viewModal.isOpen}
         onClose={closePiiView}
-        piiTypeId={viewPiiId}
+        piiType={allTypes.find((row) => row.pii_type_id === viewPiiId) ?? null}
         onEdit={(row) => {
           closePiiView();
           openEdit(row);
         }}
-        onError={(msg) =>
-          showToast({ type: "error", message: msg })
-        }
       />
 
       <CreateModal

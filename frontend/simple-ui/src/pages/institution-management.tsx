@@ -20,6 +20,7 @@ const InstitutionManagementPage: React.FC = () => {
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
   const openCreateRef = React.useRef<() => void>(() => {});
   const [isInstitutionDetail, setIsInstitutionDetail] = React.useState(false);
+  const [isInstitutionFormOpen, setIsInstitutionFormOpen] = React.useState(false);
 
   const showInstitutionManagement = canAccessInstitutionManagement(user?.roles);
   const isAdmin = isPlatformAdminUser(user?.roles);
@@ -58,7 +59,7 @@ const InstitutionManagementPage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        {!isInstitutionDetail ? (
+        {!isInstitutionDetail && !isInstitutionFormOpen ? (
           <ManagementPageHeader
             title={`${INSTITUTION} Management`}
             description={`Onboard ${INSTITUTIONS.toLowerCase()}, add users, and manage applications from one place.`}
@@ -77,6 +78,7 @@ const InstitutionManagementPage: React.FC = () => {
             openCreateRef.current = open;
           }}
           onInstitutionDetailChange={setIsInstitutionDetail}
+          onInstitutionFormOpenChange={setIsInstitutionFormOpen}
         />
       </ContentLayout>
     </>

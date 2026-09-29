@@ -30,7 +30,6 @@ import DataTable, {
   type DataTableColumn,
 } from "../common/table";
 import { useDeferredColumnSort } from "../../utils/tableSort";
-import StandardModal from "../common/StandardModal";
 import ConfirmDialog from "../common/ConfirmDialog";
 import FormActions from "../common/FormActions";
 import FormDrawer from "../common/FormDrawer";
@@ -461,18 +460,11 @@ export default function ApiKeyManagementTab({
             ]}
           />
 
-      {/* Update API Key Modal */}
-      <StandardModal
+      <FormDrawer
         isOpen={mgmt.isUpdateModalOpen}
         onClose={mgmt.handleCloseUpdateModal}
-        size="lg"
-        scrollBehavior="inside"
         title="Update API Key"
         description="Change this key's name and permissions."
-        modalProps={{ blockScrollOnMount: true }}
-        headerProps={{ px: 6, pt: 5, pb: 4 }}
-        bodyProps={{ px: 6, py: 5 }}
-        footerProps={{ px: 6, py: 4 }}
         footer={
           <FormActions
             submitLabel="Update"
@@ -547,7 +539,7 @@ export default function ApiKeyManagementTab({
                 </Text>
               )}
         </VStack>
-      </StandardModal>
+      </FormDrawer>
 
       <ConfirmDialog
         isOpen={mgmt.isRevokeModalOpen}

@@ -1,4 +1,4 @@
-// Services Management: registry list, or the shared form page for create, edit, and view.
+// Services Management: registry list, FormPage for create and view, FormDrawer for edit.
 import {
   Badge,
   Box,
@@ -12,6 +12,7 @@ import React, { useMemo } from "react";
 import ManagementPageHeader from "../common/ManagementPageHeader";
 import CreateButton from "../common/CreateButton";
 import FormActions from "../common/FormActions";
+import FormDrawer from "../common/FormDrawer";
 import FormPage from "../common/FormPage";
 import { createActionsColumn, type DataTableColumn } from "../common/table";
 import type { Service } from "../../services/servicesManagementService";
@@ -317,7 +318,10 @@ const ServicesManagement: React.FC = () => {
     />
   );
 
-  const main = isViewingService && selectedService ? (
+  const showServiceView = Boolean(isViewingService && selectedService);
+  const showServiceEdit = Boolean(editingService) && !isRegistryReadOnly && !showServiceView;
+
+  const main = showServiceView && selectedService ? (
     <ServiceDetailTab
       selectedService={selectedService}
       isRegistryReadOnly={isRegistryReadOnly}
@@ -330,37 +334,7 @@ const ServicesManagement: React.FC = () => {
       onRequestPublish={requestPublish}
       onBack={() => handleTabChange(0)}
     />
-  ) : editingService && !isRegistryReadOnly ? (
-    <FormPage
-      title={
-        editingService.name ||
-        editingService.serviceId ||
-        editingService.service_id ||
-        "Edit Service"
-      }
-      description="Update pricing and tier mapping. Service metadata is read-only."
-      parent={{
-        label: "Services Management",
-        href: "/services-management",
-        onNavigate: () => handleTabChange(0),
-      }}
-      footer={
-        <FormActions
-          submitLabel="Save Changes"
-          onCancel={handleCancelForm}
-          submitType="submit"
-          form={EDIT_SERVICE_FORM_ID}
-          isLoading={isSubmitting}
-          loadingText="Saving..."
-          isDisabled={!canCreateService || isSubmitting}
-          justify="space-between"
-          pt={0}
-        />
-      }
-    >
-      {serviceForm}
-    </FormPage>
-  ) : isCreateOpen ? (
+  ) : isCreateOpen && !showServiceEdit ? (
     <FormPage
       title="Create Service"
       description="Register a service and map it to a model and tiers."
@@ -404,10 +378,7 @@ const ServicesManagement: React.FC = () => {
       />
   );
 
-  const registryHidden =
-    Boolean(isViewingService && selectedService) ||
-    Boolean(editingService && !isRegistryReadOnly) ||
-    isCreateOpen;
+  const registryHidden = showServiceView || (isCreateOpen && !showServiceEdit);
 
   const registry = (
     <Box hidden={registryHidden}>
@@ -442,6 +413,32 @@ const ServicesManagement: React.FC = () => {
     <>
       {main}
       {registry}
+      <FormDrawer
+        isOpen={showServiceEdit}
+        onClose={handleCancelForm}
+        title={
+          editingService?.name ||
+          editingService?.serviceId ||
+          editingService?.service_id ||
+          "Edit Service"
+        }
+        description="Update pricing and tier mapping. Service metadata is read-only."
+        footer={
+          <FormActions
+            submitLabel="Save Changes"
+            onCancel={handleCancelForm}
+            submitType="submit"
+            form={EDIT_SERVICE_FORM_ID}
+            isLoading={isSubmitting}
+            loadingText="Saving..."
+            isDisabled={!canCreateService || isSubmitting}
+            justify="space-between"
+            pt={0}
+          />
+        }
+      >
+        {showServiceEdit ? serviceForm : null}
+      </FormDrawer>
 
       <ConfirmDialog
         isOpen={isOpen}

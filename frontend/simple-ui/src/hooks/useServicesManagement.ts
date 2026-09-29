@@ -9,13 +9,11 @@ import { useDeferredColumnSort } from "../utils/tableSort";
 import { resolveTaskType } from "../utils/platformService";
 import {
   fetchAllServicesMatchingFilters,
-  listServices,
   createService,
   getServiceById,
   updateService,
   deleteService,
   SERVICES_ALL_QUERY_KEY,
-  SERVICES_ALL_STALE_MS,
   sanitizeService,
   resolveMaskedAuthToken,
   Service,
@@ -325,18 +323,12 @@ export function useServicesManagement() {
   // re-create fetchServices every render and re-fire the fetch effect below.
   const enabledTaskTypesParam = taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
 
-  const servicesAllQuery = useQuery({
-    queryKey: SERVICES_ALL_QUERY_KEY,
-    queryFn: listServices,
-    staleTime: SERVICES_ALL_STALE_MS,
-  });
-  const existingServiceIds = useMemo(
-    () =>
-      (servicesAllQuery.data ?? [])
-        .map((s) => s.serviceId || s.service_id || "")
-        .filter((id): id is string => Boolean(id)),
-    [servicesAllQuery.data],
-  );
+  /**
+   * Service ids from the last registry fetch that was not narrowed by the
+   * table's task-type or publish filter. Create reuses this for the
+   * duplicate-id check instead of a second unfiltered `listServices` call.
+   */
+  const [fullServiceIds, setFullServiceIds] = useState<string[] | null>(null);
 
   const modelsQuery = useQuery({
     queryKey: MODELS_ALL_QUERY_KEY,
@@ -396,7 +388,24 @@ export function useServicesManagement() {
         taskTypes: enabledTaskTypesParam,
         isPublished: isPublishedFilter,
       });
-      if (commit) setServices(result.items);
+      if (commit) {
+        setServices(result.items);
+        const statusNarrows = statusFilter === "published" || statusFilter === "unpublished";
+        const onlyEnabledTask =
+          taskTypeNames.length === 1 && taskTypeFilter === taskTypeNames[0];
+        const taskNarrows = Boolean(taskTypeFilter) && !onlyEnabledTask;
+        const ids = result.items
+          .map((s) => s.serviceId || s.service_id || "")
+          .filter((id): id is string => Boolean(id));
+        if (!statusNarrows && !taskNarrows) {
+          setFullServiceIds(ids);
+        } else {
+          setFullServiceIds((prev) => {
+            const merged = new Set([...(prev ?? []), ...ids]);
+            return Array.from(merged);
+          });
+        }
+      }
       return result.items;
     } catch (error: any) {
       console.error("Failed to fetch services:", error);
@@ -406,7 +415,7 @@ export function useServicesManagement() {
     } finally {
       if (!options?.silent && commit) setIsLoading(false);
     }
-  }, [filterTaskType, filterStatus, enabledTaskTypesParam]);
+  }, [filterTaskType, filterStatus, enabledTaskTypesParam, taskTypeNames]);
 
   const serviceKey = (s: Pick<Service, "serviceId"> & { service_id?: string }) =>
     s.serviceId || s.service_id || "";
@@ -1045,6 +1054,7 @@ export function useServicesManagement() {
   const pricePerUnitError = validatePricePerUnit(pricePerUnit);
 
   // Duplicate serviceId check — only in create mode (serviceId is read-only when editing)
+  const existingServiceIds = fullServiceIds ?? [];
   const serviceIdExists =
     !editingService &&
     !!formData.serviceId?.trim() &&
@@ -1142,15 +1152,25 @@ export function useServicesManagement() {
       // Fetch model to know if deprecated (detail API may not include model.versionStatus)
       const modelId = service.modelId || service.model_id;
       if (modelId) {
-        try {
-          const modelDetails = await getModelById(modelId);
-          const deprecated =
-            modelDetails?.versionStatus &&
-            typeof modelDetails.versionStatus === "string" &&
-            modelDetails.versionStatus.toLowerCase() === "deprecated";
-          setSelectedServiceModelDeprecated(!!deprecated);
-        } catch {
-          setSelectedServiceModelDeprecated(false);
+        const cachedModel = (modelsQuery.data ?? []).find(
+          (model) => model.modelId === modelId,
+        );
+        if (cachedModel) {
+          const status = cachedModel.versionStatus;
+          setSelectedServiceModelDeprecated(
+            typeof status === "string" && status.toLowerCase() === "deprecated",
+          );
+        } else {
+          try {
+            const modelDetails = await getModelById(modelId);
+            const deprecated =
+              modelDetails?.versionStatus &&
+              typeof modelDetails.versionStatus === "string" &&
+              modelDetails.versionStatus.toLowerCase() === "deprecated";
+            setSelectedServiceModelDeprecated(!!deprecated);
+          } catch {
+            setSelectedServiceModelDeprecated(false);
+          }
         }
       } else {
         setSelectedServiceModelDeprecated(false);
