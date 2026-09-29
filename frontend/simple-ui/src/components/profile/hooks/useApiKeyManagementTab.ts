@@ -1,8 +1,8 @@
 import { useState, useMemo, useCallback, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { showToast } from "../../../utils/toast";
 import authService from "../../../services/authService";
 import * as tenantService from "../../../services/tenantService";
-import { listApplications } from "../../../services/applicationService";
 import {
   flattenApiKeyGroups,
   listGroupedApiKeys,
@@ -27,6 +27,13 @@ import {
 } from "../../../config/constants";
 import { formatPermissionLabel, normalizeApiKeyRecord } from "../../../utils/apiKeyUtils";
 import { useInferenceTypes } from "../../../hooks/useInferenceTypes";
+import {
+  API_KEY_CATALOG_STALE_MS,
+  API_KEY_PERMISSIONS_QUERY_KEY,
+  fetchPermissionCatalog,
+  fetchTenantApplications,
+  tenantApplicationsQueryKey,
+} from "./apiKeyCatalogQueries";
 import type { InferenceTypeItem } from "../../../services/inferenceTypesService";
 
 export interface ApiKeyTableRow extends APIKeyResponse {
@@ -82,6 +89,7 @@ function mapKeysToRows(
 }
 
 export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) {
+  const queryClient = useQueryClient();
   const { taskTypeNames, inferenceTypes } = useInferenceTypes();
   const [allApiKeys, setAllApiKeys] = useState<ApiKeyTableRow[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
@@ -167,8 +175,11 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
       return [];
     }
     try {
-      const result = await listApplications(tenantId);
-      const apps = result.applications;
+      const apps = await queryClient.fetchQuery({
+        queryKey: tenantApplicationsQueryKey(tenantId),
+        queryFn: () => fetchTenantApplications(tenantId),
+        staleTime: API_KEY_CATALOG_STALE_MS,
+      });
       setApplications(apps);
       return apps;
     } catch (err) {
@@ -176,19 +187,22 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
       setApplications([]);
       return [];
     }
-  }, [user?.tenant_id]);
+  }, [queryClient, user?.tenant_id]);
 
   const loadPermissionsCatalog = useCallback(async (): Promise<Permission[]> => {
     try {
-      const permsList = await authService.getAllPermissions();
-      const catalog = Array.isArray(permsList) ? permsList : [];
+      const catalog = await queryClient.fetchQuery({
+        queryKey: API_KEY_PERMISSIONS_QUERY_KEY,
+        queryFn: fetchPermissionCatalog,
+        staleTime: API_KEY_CATALOG_STALE_MS,
+      });
       setPermissions(catalog);
       return catalog;
     } catch (err) {
       console.error("Failed to fetch permissions for filter:", err);
       return [];
     }
-  }, []);
+  }, [queryClient]);
 
   const handleFetchAllApiKeys = useCallback(
     async (options?: { silent?: boolean }) => {

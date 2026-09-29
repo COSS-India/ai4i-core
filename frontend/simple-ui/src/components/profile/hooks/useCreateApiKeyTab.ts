@@ -1,10 +1,9 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { showError } from "../../../utils/errorHandler";
 import { showToast } from "../../../utils/toast";
 import { BUDGET_VALIDATION } from "../../../config/budgetMessages";
 import { INSTITUTION } from "../../../config/constants";
-import authService from "../../../services/authService";
-import { listApplications } from "../../../services/applicationService";
 import {
   createScopedApiKey,
   getApiKeyErrorCode,
@@ -13,6 +12,13 @@ import {
 import type { Application } from "../../../types/application";
 import type { Permission } from "../../../types/auth";
 import { useInferenceTypes } from "../../../hooks/useInferenceTypes";
+import {
+  API_KEY_CATALOG_STALE_MS,
+  API_KEY_PERMISSIONS_QUERY_KEY,
+  fetchPermissionCatalog,
+  fetchTenantApplications,
+  tenantApplicationsQueryKey,
+} from "./apiKeyCatalogQueries";
 import { formatSpendMoney } from "../../../utils/usageSpendHelpers";
 
 export interface UseCreateApiKeyTabOptions {
@@ -64,6 +70,7 @@ export function useCreateApiKeyTab({
   tenantId,
   onApiKeyCreated,
 }: UseCreateApiKeyTabOptions) {
+  const queryClient = useQueryClient();
   const { taskTypeNames, inferenceTypes } = useInferenceTypes();
   const [allPermissions, setAllPermissions] = useState<Permission[]>([]);
   const [isLoadingPermissions, setIsLoadingPermissions] = useState(false);
@@ -163,8 +170,12 @@ export function useCreateApiKeyTab({
   const handleLoadPermissions = async () => {
     setIsLoadingPermissions(true);
     try {
-      const fetchedPermissions = await authService.getAllPermissions();
-      setAllPermissions(Array.isArray(fetchedPermissions) ? fetchedPermissions : []);
+      const fetchedPermissions = await queryClient.fetchQuery({
+        queryKey: API_KEY_PERMISSIONS_QUERY_KEY,
+        queryFn: fetchPermissionCatalog,
+        staleTime: API_KEY_CATALOG_STALE_MS,
+      });
+      setAllPermissions(fetchedPermissions);
     } catch (error) {
       showError(error);
     } finally {
@@ -180,8 +191,12 @@ export function useCreateApiKeyTab({
     }
     setIsLoadingApplications(true);
     try {
-      const result = await listApplications(id);
-      setApplications(result.applications.filter((a) => a.status === "ACTIVE"));
+      const applicationsForTenant = await queryClient.fetchQuery({
+        queryKey: tenantApplicationsQueryKey(id),
+        queryFn: () => fetchTenantApplications(id),
+        staleTime: API_KEY_CATALOG_STALE_MS,
+      });
+      setApplications(applicationsForTenant.filter((a) => a.status === "ACTIVE"));
     } catch (error) {
       showError(error);
       setApplications([]);

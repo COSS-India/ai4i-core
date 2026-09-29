@@ -91,6 +91,37 @@ export async function changeTenantTier(
   });
 }
 
+export interface TenantTierUnassignData {
+  tenant_id: number | string;
+  /** Present on success. Not required to be null; DELETE itself is the unassign. */
+  tier_id?: string | null;
+  previous_tier_id?: string | null;
+  updated_at?: string | null;
+  updated_by?: string | null;
+}
+
+export interface TenantTierUnassignResponse {
+  success: boolean;
+  data: TenantTierUnassignData;
+}
+
+/**
+ * DELETE /auth/tenants/{tenant_id}/tier — clear the institution's tier.
+ * Tenant id is the path parameter. No request body.
+ */
+export async function removeTenantFromTier(
+  tenantId: string,
+): Promise<TenantTierUnassignResponse> {
+  const response = await apiClient.delete<TenantTierUnassignResponse>(
+    apiEndpoints.tenants.tenantTier(tenantId),
+  );
+  const body = response.data;
+  if (!body?.success || body.data == null) {
+    throw new Error("Could not remove the institution from this tier.");
+  }
+  return body;
+}
+
 export interface TenantTierAssignment {
   tenant_id: string;
   tenant_name?: string;

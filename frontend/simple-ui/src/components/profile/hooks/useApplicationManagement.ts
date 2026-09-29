@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useToast } from "@chakra-ui/react";
 import {
   createApplication,
@@ -308,10 +308,19 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     setTenantBudget(institutionBudget ?? 0);
   }, [institutionBudget]);
 
+  const budgetApplicationsRef = useRef<{
+    tenantId: string;
+    applications: Application[];
+  } | null>(null);
+
   const loadAllocationSummary = useCallback(async () => {
     if (!tenantId) return;
     try {
       const all = await listAllApplicationsForBudget(tenantId);
+      budgetApplicationsRef.current = {
+        tenantId,
+        applications: all.applications,
+      };
       setTotalAllocatedPct(sumAllocatedPercentage(all.applications));
     } catch {
       // Keep the previous summary if the full fetch fails.
@@ -433,7 +442,17 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     setBulkLoading(true);
     setBulkRows([]);
     try {
-      const list = await listAllApplicationsForBudget(tenantId);
+      const cached = budgetApplicationsRef.current;
+      const list =
+        cached?.tenantId === tenantId
+          ? { applications: cached.applications }
+          : await listAllApplicationsForBudget(tenantId);
+      if (cached?.tenantId !== tenantId) {
+        budgetApplicationsRef.current = {
+          tenantId,
+          applications: list.applications,
+        };
+      }
       let usageWarning: string | null = null;
       let usageRows: Awaited<
         ReturnType<typeof fetchApplicationUsageList>
