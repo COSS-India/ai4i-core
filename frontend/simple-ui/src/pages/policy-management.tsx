@@ -1,4 +1,4 @@
-import { Center } from "@chakra-ui/react";
+import { Box, Center } from "@chakra-ui/react";
 import Head from "next/head";
 import React from "react";
 import { useRouter } from "next/router";
@@ -15,6 +15,8 @@ const PolicyManagementPage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
   const openCreateRef = React.useRef<() => void>(() => {});
+  const [policyFormOpen, setPolicyFormOpen] = React.useState(false);
+  const [formHost, setFormHost] = React.useState<HTMLDivElement | null>(null);
 
   const canManagePolicies = isPlatformAdminUser(user?.roles);
 
@@ -55,24 +57,29 @@ const PolicyManagementPage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <ManagementPageHeader
-          title="Policy Management"
-          description="Manage policy definitions and PII types"
-          actions={
-            canManagePolicies ? (
-              <CreateButton onClick={() => openCreateRef.current()}>
-                Create Policy
-              </CreateButton>
-            ) : undefined
-          }
-        />
+        <Box ref={setFormHost} />
+        <Box hidden={policyFormOpen}>
+          <ManagementPageHeader
+            title="Policy Management"
+            description="Manage policy definitions and PII types"
+            actions={
+              canManagePolicies ? (
+                <CreateButton onClick={() => openCreateRef.current()}>
+                  Create Policy
+                </CreateButton>
+              ) : undefined
+            }
+          />
 
-        <PolicyManagement
-          canManage={canManagePolicies}
-          onRegisterCreatePolicy={(open) => {
-            openCreateRef.current = open;
-          }}
-        />
+          <PolicyManagement
+            canManage={canManagePolicies}
+            formHost={formHost}
+            onFormOpenChange={setPolicyFormOpen}
+            onRegisterCreatePolicy={(open) => {
+              openCreateRef.current = open;
+            }}
+          />
+        </Box>
       </ContentLayout>
     </>
   );

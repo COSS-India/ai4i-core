@@ -1,4 +1,4 @@
-import { Badge, Box, Text, VStack } from "@chakra-ui/react";
+import { Badge, Text } from "@chakra-ui/react";
 import React, { useEffect, useState } from "react";
 import {
   INSTITUTION,
@@ -9,9 +9,10 @@ import {
 import ConsentCheckbox, {
   getConsentValidationError,
 } from "../common/ConsentCheckbox";
-import FieldLabel from "../common/FieldLabel";
 import FormActions from "../common/FormActions";
-import StandardModal, { CreateModal } from "../common/StandardModal";
+import FormDrawer from "../common/FormDrawer";
+import FormSection from "../common/FormSection";
+import ReadOnlyField from "../common/ReadOnlyField";
 import { useTenantManagement } from "../profile/hooks/useTenantManagement";
 import type { TenantUserView } from "../../types/tenant";
 import InstitutionUserForm from "./InstitutionUserForm";
@@ -29,25 +30,74 @@ export default function InstitutionUserModal({
   const [userConsentAccepted, setUserConsentAccepted] = useState(false);
   const [userConsentError, setUserConsentError] = useState("");
 
+  const isEdit = tm.isEditUserModalOpen;
+  const isCreate = tm.isUserModalOpen;
+  const viewUser = tm.viewUserDetail;
+  const isView = tm.isViewUserModalOpen && Boolean(viewUser);
+
   useEffect(() => {
     setUserConsentAccepted(false);
     setUserConsentError("");
   }, [tm.isUserModalOpen]);
 
-  const viewUser = tm.viewUserDetail;
+  const closeActive = () => {
+    if (isEdit) {
+      if (tm.isSubmittingEditUser) return;
+      tm.closeEditUserModal();
+      return;
+    }
+    if (isCreate) {
+      if (tm.isSubmittingUser) return;
+      tm.closeUserModal();
+      return;
+    }
+    if (isView) tm.closeViewUserModal();
+  };
+
+  const editTitle =
+    tm.editUserForm.full_name?.trim() ||
+    tm.editUserRow?.full_name?.trim() ||
+    tm.editUserRow?.username ||
+    "Edit User";
+  const viewTitle =
+    viewUser?.full_name?.trim() || viewUser?.username || "User";
 
   return (
-    <>
-      <CreateModal
-        isOpen={tm.isUserModalOpen}
-        onClose={tm.closeUserModal}
-        size="md"
-        title={`Add ${INSTITUTION} User`}
-        description={`Invite someone to this ${INSTITUTION.toLowerCase()}.`}
-        footer={
+    <FormDrawer
+      isOpen={isEdit || isCreate || isView}
+      onClose={closeActive}
+      title={
+        isEdit
+          ? editTitle
+          : isCreate
+            ? `Add ${INSTITUTION} User`
+            : viewTitle
+      }
+      description={
+        isEdit
+          ? "Update the user's details."
+          : isCreate
+            ? `Invite someone to this ${INSTITUTION.toLowerCase()}.`
+            : "View the user's information."
+      }
+      footer={
+        isEdit ? (
           <FormActions
+            cancelLabel="Cancel"
+            submitLabel="Save Changes"
+            onCancel={closeActive}
+            onSubmit={tm.handleSaveEditUser}
+            isLoading={tm.isSubmittingEditUser}
+            isDisabled={!tm.canSubmitEditUserForm}
+            loadingText="Saving..."
+            justify="space-between"
+            pt={0}
+          />
+        ) : isCreate ? (
+          <FormActions
+            cancelLabel="Cancel"
             submitLabel="Add User"
-            onCancel={tm.closeUserModal}
+            onCancel={closeActive}
             isLoading={tm.isSubmittingUser}
             isDisabled={!tm.canSubmitUserForm || !userConsentAccepted}
             loadingText="Adding..."
@@ -62,9 +112,15 @@ export default function InstitutionUserModal({
               tm.handleRegisterUser();
             }}
           />
-        }
-      >
-        <VStack spacing={4} align="stretch">
+        ) : (
+          <FormActions hideSubmit cancelLabel="Back" onCancel={closeActive} pt={0} />
+        )
+      }
+    >
+      {isEdit ? (
+        <InstitutionUserForm mode="edit" tm={tm} />
+      ) : isCreate ? (
+        <>
           <InstitutionUserForm mode="create" tm={tm} />
           <ConsentCheckbox
             isChecked={userConsentAccepted}
@@ -74,66 +130,15 @@ export default function InstitutionUserModal({
             }}
             error={userConsentError}
           />
-        </VStack>
-      </CreateModal>
-
-      <StandardModal
-        isOpen={tm.isEditUserModalOpen}
-        onClose={tm.closeEditUserModal}
-        size="2xl"
-        scrollBehavior="inside"
-        title="Edit User"
-        description="Update the user's details."
-        modalProps={{ blockScrollOnMount: true }}
-        headerProps={{ px: 6, pt: 5, pb: 4 }}
-        bodyProps={{ px: 6, py: 5 }}
-        footerProps={{ px: 6, py: 4 }}
-        footer={
-          <FormActions
-            submitLabel="Save Changes"
-            onCancel={tm.closeEditUserModal}
-            onSubmit={tm.handleSaveEditUser}
-            isLoading={tm.isSubmittingEditUser}
-            isDisabled={!tm.canSubmitEditUserForm}
-            loadingText="Saving..."
-            justify="space-between"
-            pt={0}
-          />
-        }
-      >
-        <InstitutionUserForm mode="edit" tm={tm} />
-      </StandardModal>
-
-      <StandardModal
-        isOpen={tm.isViewUserModalOpen}
-        onClose={tm.closeViewUserModal}
-        size="xl"
-        scrollBehavior="inside"
-        title="User Details"
-        description="View the user's information."
-        modalProps={{ blockScrollOnMount: true }}
-        headerProps={{ px: 6, pt: 5, pb: 4 }}
-        bodyProps={{ px: 6, py: 5 }}
-        footerProps={{ px: 6, py: 4 }}
-        footer={
-          <FormActions
-            cancelLabel="Close"
-            onCancel={tm.closeViewUserModal}
-            hideSubmit
-            justify="flex-end"
-            pt={0}
-          />
-        }
-      >
-        {viewUser ? (
-          <VStack align="stretch" spacing={4}>
-            <InstitutionUserForm mode="view" tm={tm} />
-            <Box>
-              <FieldLabel variant="inline">User ID</FieldLabel>
-              <Text fontFamily="mono">{viewUser.user_id}</Text>
-            </Box>
-            <Box>
-              <FieldLabel variant="inline">Status</FieldLabel>
+        </>
+      ) : viewUser ? (
+        <>
+          <InstitutionUserForm mode="view" tm={tm} />
+          <FormSection title="Record">
+            <ReadOnlyField label="User ID">
+              <Text fontFamily="mono" fontSize="sm">{viewUser.user_id}</Text>
+            </ReadOnlyField>
+            <ReadOnlyField label="Status">
               <Badge
                 colorScheme={getTenantStatusColorScheme(
                   resolveUserDisplayStatus(viewUser),
@@ -141,12 +146,10 @@ export default function InstitutionUserModal({
               >
                 {formatTenantUserStatusLabel(resolveUserDisplayStatus(viewUser))}
               </Badge>
-            </Box>
-          </VStack>
-        ) : (
-          <Text>No user selected.</Text>
-        )}
-      </StandardModal>
-    </>
+            </ReadOnlyField>
+          </FormSection>
+        </>
+      ) : null}
+    </FormDrawer>
   );
 }
