@@ -4,8 +4,12 @@ email template and send it. Nothing else.
 The producer (ai4i_core.kafka's shared pipeline) already decided the event
 is new, claimed its ledger row, and resolved the recipients (email and
 name), the tenant_name and the positional details before publishing. This
-handler does not dedup, does not read or write the ledger, and does no
-lookups of its own.
+handler does not read or write the ledger and does no lookups of its own.
+
+A Kafka redelivery of the same event (a crash or rebalance between handling
+and the offset commit) is caught by a Redis claim on its event_id (SET NX),
+taken before sending. Redis being unavailable, or an envelope without an
+event_id, does not block delivery: a rare duplicate email beats a lost one.
 
 An event counts as delivered when the email reached at least one
 recipient. When it did not — malformed message, no channel this consumer
@@ -20,16 +24,34 @@ import asyncio
 import json
 from typing import Any, Mapping, Optional, Tuple
 
+from ai4i_core.bootstrap import get_redis_client
 from ai4i_core.kafka import FailureCode, NotificationChannel, Operation
 from ai4i_core.logging import get_logger
 from confluent_kafka import Message
 
 from consumers.notifications_consumer import emailer, failures
+from consumers.notifications_consumer.config import Constants
 
 logger = get_logger(__name__)
 
 # The one channel this consumer sends on (Slack/WhatsApp aren't built).
 EMAIL = NotificationChannel.EMAIL.value
+
+
+async def _claim(event_id: Any) -> bool:
+    """True when this is the first delivery of event_id."""
+    if not event_id:
+        return True
+    try:
+        return bool(
+            await get_redis_client().set(
+                f"{Constants.DELIVERY_CLAIM_KEY_PREFIX}{event_id}", "1",
+                nx=True, ex=Constants.DELIVERY_CLAIM_TTL_SECONDS,
+            )
+        )
+    except Exception as exc:
+        logger.warning("Delivery claim unavailable — delivering without dedup | event_id=%s: %s", event_id, exc)
+        return True
 
 
 async def _deliver(envelope: Mapping[str, Any]) -> Optional[Tuple[FailureCode, str]]:
@@ -66,6 +88,10 @@ async def handle_notification_event(msg: Message) -> None:
         await failures.record(
             {}, FailureCode.INVALID_ENVELOPE, kafka_topic=topic, operation=Operation.VALIDATE, error=exc,
         )
+        return
+
+    if not await _claim(envelope.get("event_id")):
+        logger.info("Redelivery of an already handled event — skipping | event_id=%s", envelope.get("event_id"))
         return
 
     try:

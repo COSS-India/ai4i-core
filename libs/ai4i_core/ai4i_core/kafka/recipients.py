@@ -21,11 +21,12 @@ logger = logging.getLogger(__name__)
 
 DecryptEmail = Callable[[Optional[str]], Optional[str]]
 
-# Q-R1 — recipients of one tenant, plus the institution name
+# Q-R1 — recipients of one tenant, plus the institution name. The name is
+# tenants.organisation (the institution); tenants.name is the contact person.
 _ONE_TENANT_SQL = text(
     """
     SELECT DISTINCT u.id, u.email, u.full_name,
-           (SELECT t.name FROM tenants t WHERE t.id = :tenant_id) AS tenant_name
+           (SELECT t.organisation FROM tenants t WHERE t.id = :tenant_id) AS tenant_name
       FROM users u
       LEFT JOIN user_role ur ON ur.user_id = u.id
       LEFT JOIN roles r      ON r.id = ur.role_id

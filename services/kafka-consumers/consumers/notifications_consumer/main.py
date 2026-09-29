@@ -5,7 +5,8 @@ reads notification/alert events off TOPIC_NOTIFICATION and sends the email
 directly (no auth-service call). Everything the email needs — recipients,
 tenant_name, details — is resolved producer-side (ai4i_core.kafka's shared
 pipeline) and travels in the v2 envelope; this consumer only maps it onto
-the template and sends. See handler.py, emailer.py, email_templates.py and
+the template and sends, skipping a redelivered event_id (a Redis claim,
+handler.py). See handler.py, emailer.py, email_templates.py and
 failures.py for the pieces; this file is just the consume loop wiring.
 
 The only database access is the default connection (ai4iplatform_core),

@@ -1,8 +1,9 @@
-"""consumers/notifications_consumer/handler.py — envelope -> emailer.send per
-recipient; one failure row when the email reached no one.
+"""consumers/notifications_consumer/handler.py — the event_id claim, then
+envelope -> emailer.send per recipient; one failure row when the email
+reached no one.
 
-emailer.send and failures.record are faked; nothing here touches a real
-database, Kafka, Redis or SMTP.
+emailer.send, failures.record and the Redis client are faked; nothing here
+touches a real database, Kafka, Redis or SMTP.
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ import pytest
 from ai4i_core.kafka import FailureCode, Operation
 
 from consumers.notifications_consumer import handler as h
+from consumers.notifications_consumer.config import Constants
 
 TOPIC = "notification.events"
 
@@ -47,10 +49,24 @@ def _msg(payload) -> SimpleNamespace:
     return SimpleNamespace(value=lambda: raw, topic=lambda: TOPIC, partition=lambda: 0, offset=lambda: 1)
 
 
-async def _handle(payload, *, sent=(True, True), send_error=None):
+class _Redis:
+    def __init__(self, won=True, raises=False):
+        self.won, self.raises, self.calls = won, raises, []
+
+    async def set(self, key, value, nx=False, ex=None):
+        self.calls.append((key, nx, ex))
+        if self.raises:
+            raise ConnectionError("redis down")
+        return self.won
+
+
+async def _handle(payload, *, sent=(True, True), send_error=None, redis=None):
     send = AsyncMock(side_effect=send_error or list(sent))
     record = AsyncMock()
-    with patch.object(h.emailer, "send", send), patch.object(h.failures, "record", record):
+    redis = redis or _Redis()
+    with patch.object(h.emailer, "send", send), patch.object(h.failures, "record", record), patch.object(
+        h, "get_redis_client", lambda: redis
+    ):
         await h.handle_notification_event(_msg(payload))
     return send, record
 
@@ -118,3 +134,41 @@ async def test_delivery_raising_is_recorded_not_propagated():
 
     assert record.await_args.args == (payload, FailureCode.EMAIL_SEND_FAILED)
     assert isinstance(record.await_args.kwargs["error"], TypeError)
+
+
+class TestEventIdClaim:
+    async def test_first_delivery_claims_the_event_id_before_sending(self):
+        redis = _Redis(won=True)
+        send, _ = await _handle(_payload(), redis=redis)
+
+        assert redis.calls == [(
+            f"{Constants.DELIVERY_CLAIM_KEY_PREFIX}5f0c8a52-6c1e-4d1e-9a51-8f3d2a7e4b10",
+            True, Constants.DELIVERY_CLAIM_TTL_SECONDS,
+        )]
+        assert send.await_count == 2
+
+    async def test_redelivery_of_a_claimed_event_is_not_sent_or_recorded(self):
+        send, record = await _handle(_payload(), redis=_Redis(won=False))
+
+        send.assert_not_awaited()
+        record.assert_not_awaited()
+
+    async def test_redis_down_still_delivers(self):
+        send, record = await _handle(_payload(), redis=_Redis(raises=True))
+
+        assert send.await_count == 2
+        record.assert_not_awaited()
+
+    @pytest.mark.parametrize("event_id", [None, ""])
+    async def test_no_event_id_delivers_without_a_claim(self, event_id):
+        redis = _Redis()
+        send, _ = await _handle(_payload(event_id=event_id), redis=redis)
+
+        assert redis.calls == []
+        assert send.await_count == 2
+
+    async def test_malformed_message_takes_no_claim(self):
+        redis = _Redis()
+        await _handle(b"{not json", redis=redis)
+
+        assert redis.calls == []

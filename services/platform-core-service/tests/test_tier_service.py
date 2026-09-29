@@ -156,6 +156,13 @@ class TestPublishQuotaLimitUpdated:
         assert first.details[1] == ["ASR: changed from 1,000 to 2,000"]
         assert "tier tier-1" in emit.await_args.kwargs["summary"]
 
+    def test_tenant_name_is_the_institution_not_the_contact(self):
+        """Q-D2's tenant_name fills the email subject and headline: it must be
+        tenants.organisation (the institution), never tenants.name (the contact)."""
+        sql = tier_service._TENANTS_ON_TIER_SQL.text
+        assert "organisation AS tenant_name" in sql
+        assert " name AS tenant_name" not in sql
+
     @pytest.mark.asyncio
     async def test_tenant_lookup_failure_is_a_source_failure_row(self, monkeypatch):
         runtime = _runtime_with_tenants(error=RuntimeError("auth db down"))
