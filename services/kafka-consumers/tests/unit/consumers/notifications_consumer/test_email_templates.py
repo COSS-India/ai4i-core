@@ -108,6 +108,22 @@ CASES = [
         ),
         ["Acme Bank", "80%", "81"],
     ),
+    (
+        templates.render_monitoring_alert_email,
+        dict(
+            to="a@b.com", recipient_name="Priya", alert=templates.MonitoringAlertName.ERROR_RATE_4XX,
+            threshold="5", alert_datetime="2026-09-28 10:00 UTC", current_value="6.2",
+        ),
+        ["Priya", "4xx Error Rate", "5%", "6.2%", "2026-09-28 10:00 UTC"],
+    ),
+    (
+        templates.render_monitoring_alert_email,
+        dict(
+            to="a@b.com", recipient_name="Priya", alert=templates.MonitoringAlertName.LATENCY_P95,
+            threshold="5", alert_datetime="2026-09-28 10:00 UTC", current_value="7.3",
+        ),
+        ["Priya", "P95 Latency", "5s", "7.3s", "2026-09-28 10:00 UTC"],
+    ),
 ]
 
 
@@ -143,6 +159,32 @@ def test_alert_subject_uses_enum_value(alert_name):
         institution_name="Acme Bank", alert_datetime="2026-09-10", threshold="80", current_value="81",
     )
     assert message.subject == f"{alert_name} at 80% — Acme Bank"
+
+
+@pytest.mark.parametrize("alert", list(templates.MonitoringAlertName), ids=lambda a: a.name)
+def test_monitoring_alert_subject_uses_enum_value_and_unit(alert):
+    """Every MonitoringAlertName has a unit, and the subject carries the
+    alert's own unit — never the metering "%" by default, never an institution."""
+    unit = templates.MONITORING_ALERT_UNITS[alert]
+    message = templates.render_monitoring_alert_email(
+        to="a@b.com", recipient_name="Priya", alert=alert,
+        threshold="10", alert_datetime="2026-09-28", current_value="11",
+    )
+    assert message.subject == f"{alert.value} at 10{unit}"
+    assert unit == ("%" if alert.name.startswith("ERROR_RATE") else "s")
+    assert "—" not in message.subject
+
+
+def test_monitoring_alert_portal_link_uses_configured_url(monkeypatch):
+    monkeypatch.setattr(get_settings(), "PORTAL_URL", "https://portal.example.com")
+
+    message = templates.render_monitoring_alert_email(
+        to="a@b.com", recipient_name="Priya", alert=templates.MonitoringAlertName.LATENCY_P50,
+        threshold="1", alert_datetime="2026-09-28", current_value="1.4",
+    )
+
+    assert 'href="https://portal.example.com"' in message.html_body
+    assert "https://portal.example.com" in message.text_body
 
 
 def test_portal_link_uses_configured_url(monkeypatch):

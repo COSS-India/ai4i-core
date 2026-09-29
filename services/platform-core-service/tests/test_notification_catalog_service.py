@@ -575,3 +575,74 @@ class TestScopeTransitionResetsTenantSubscriptions:
         )
 
         assert session.subscription_resets[0]["updated_by"] == "adopter-admin-1"
+
+
+# ── MONITORING rows ──────────────────────────────────────────────────────────
+
+
+def _monitoring_row(name="LATENCY_P95", bands=((2, False), (5, True), (10, False)), unit="SECONDS"):
+    return _row(
+        id=10, name=name, type="MONITORING", module="MONITORING", scope="GLOBAL",
+        recipient_roles={"ADMIN": True, "MODERATOR": False},
+        config={"monitoring_thresholds": [
+            {"value": v, "unit": unit, "active": a} for v, a in bands
+        ]},
+    )
+
+
+def test_non_monitoring_rows_omit_monitoring_thresholds():
+    item = svc._to_catalog_item(_row(type="ALERT", config={"thresholds": []}))
+    assert item.monitoring_thresholds is None
+
+
+@pytest.mark.asyncio
+class TestMonitoringCatalog:
+    async def test_monitoring_filter_returns_only_monitoring_rows(self):
+        rows = [
+            _row(id=1, name="QUOTA_THRESHOLD", type="ALERT", config={"thresholds": []}),
+            _monitoring_row(),
+        ]
+        items = await svc.list_catalog(_Session(rows=rows), NotificationType.MONITORING)
+        assert [i.name for i in items] == ["LATENCY_P95"]
+
+    async def test_monitoring_row_carries_monitoring_thresholds_not_thresholds(self):
+        item = (await svc.list_catalog(_Session(rows=[_monitoring_row()]), NotificationType.MONITORING))[0]
+        assert item.thresholds is None
+        assert [(b.value, b.unit.value, b.active) for b in item.monitoring_thresholds] == [
+            (2, "SECONDS", False), (5, "SECONDS", True), (10, "SECONDS", False),
+        ]
+        assert item.display_name == "P95 Latency"
+        assert item.recipient_roles == {"ADMIN": True, "MODERATOR": False}
+
+    async def test_metering_patch_404s_a_monitoring_row_and_saves_nothing(self):
+        # Review scenario: PATCH /catalog/LATENCY_P95 {"recipient_roles":
+        # {"MODERATOR": true}} used to 200 and save the role WITHOUT
+        # rebuilding monitoring_alert_recipient. Monitoring rows are written
+        # only through PATCH /monitoring-catalog/{name}.
+        row = _monitoring_row()
+        session = _Session(found=row)
+        with pytest.raises(EntityNotFoundError):
+            await svc.update_catalog(
+                session, row.name, CatalogUpdate(recipient_roles={"MODERATOR": True})
+            )
+        assert row.recipient_roles == {"ADMIN": True, "MODERATOR": False}
+        assert session.commits == 0
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            # Fields the monitoring model says a monitoring row doesn't have.
+            CatalogUpdate(scope="INSTITUTION"),
+            CatalogUpdate(channels=["EMAIL", "SMS"]),
+        ],
+        ids=["scope", "channels"],
+    )
+    async def test_metering_patch_cannot_change_scope_or_channels_of_a_monitoring_row(self, payload):
+        row = _monitoring_row()
+        session = _Session(found=row)
+        with pytest.raises(EntityNotFoundError):
+            await svc.update_catalog(session, row.name, payload)
+        assert row.scope == "GLOBAL"
+        assert row.channels == ["EMAIL"]
+        assert session.subscription_resets == []
+        assert session.commits == 0

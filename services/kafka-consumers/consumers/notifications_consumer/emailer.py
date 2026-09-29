@@ -96,6 +96,9 @@ _EXPECTED_DETAIL_COUNTS = {
     "BUDGET_EXHAUSTED": 2,
     "QUOTA_THRESHOLD": 3,
     "BUDGET_THRESHOLD": 3,
+    # MONITORING rows: [threshold, alert_datetime, current_value] — bare
+    # numbers, the unit is added by render_monitoring_alert_email.
+    **{name: 3 for name in email_templates.MonitoringAlertName.__members__},
 }
 
 
@@ -179,6 +182,16 @@ def _build_message(
     if event_name == "BUDGET_THRESHOLD":
         return email_templates.render_budget_threshold_alert_email(
             **common,
+            threshold=_at(details, 0, event_name),
+            alert_datetime=_at(details, 1, event_name),
+            current_value=_at(details, 2, event_name),
+        )
+    if event_name in email_templates.MonitoringAlertName.__members__:
+        # Platform-level — institution_name is not part of this template.
+        return email_templates.render_monitoring_alert_email(
+            to=recipient.email,
+            recipient_name=recipient.display_name,
+            alert=email_templates.MonitoringAlertName[event_name],
             threshold=_at(details, 0, event_name),
             alert_datetime=_at(details, 1, event_name),
             current_value=_at(details, 2, event_name),

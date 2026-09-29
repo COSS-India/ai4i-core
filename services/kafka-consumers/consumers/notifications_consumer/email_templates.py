@@ -8,7 +8,7 @@ the rendering logic belongs here, not in platform-core-service. Only the
 settings/template-dir wiring changed; the enums, generic renderers, and every
 typed wrapper below are otherwise the same file.
 
-Every event renders through one of two generic templates:
+Every event renders through one of three generic templates:
 
 - ``render_notification_email`` — Standard Notification Email Template.
   Body shape is a fixed "[Notification Headline] / [Notification Details]",
@@ -16,9 +16,14 @@ Every event renders through one of two generic templates:
 - ``render_alert_email`` — Standard Alert Email Template. Body shape is
   fixed: "[Alert Name] has reached [Threshold]% ... Current value:
   [Current Value]".
+- ``render_monitoring_alert_email`` — Standard Monitoring Alert Email
+  Template, for the 5 MONITORING catalog rows (error rate / latency). Not
+  a render_alert_email wrapper: that template hardcodes "%" and an
+  institution, and monitoring alerts are platform-level with a per-alert
+  unit (% or s).
 
 Every other function here (Tier Assigned, Budget Exhausted, Quota Threshold
-Alert, etc.) is a convenience wrapper around one of those two — it just
+Alert, etc.) is a convenience wrapper around one of the first two — it just
 builds the right headline/details (or alert_name) from typed parameters, so
 callers get a named function with the correct wording baked in instead of
 having to hand-format that text (or remember a magic string like
@@ -68,6 +73,31 @@ class AlertName(str, Enum):
 
     QUOTA_THRESHOLD = "Quota Threshold"
     BUDGET_THRESHOLD = "Budget Threshold"
+
+
+class MonitoringAlertName(str, Enum):
+    """The ``[Alert Name]`` of each MONITORING catalog row. Member names are
+    the catalog's event_name (so emailer.py can look one up by
+    ``MonitoringAlertName[event_name]``); values match platform-core's
+    catalog_metadata display_name. Kept off AlertName: those render through
+    the metering subject line ("... at X% — [Institution]"), these don't."""
+
+    ERROR_RATE_4XX = "4xx Error Rate"
+    ERROR_RATE_5XX = "5xx Error Rate"
+    LATENCY_P50 = "P50 Latency"
+    LATENCY_P95 = "P95 Latency"
+    LATENCY_P99 = "P99 Latency"
+
+
+#: Unit suffix per monitoring alert — fixed per row (the monitoring catalog
+#: PATCH rejects a unit change), so it's derived here, not sent in details.
+MONITORING_ALERT_UNITS: dict[MonitoringAlertName, str] = {
+    MonitoringAlertName.ERROR_RATE_4XX: "%",
+    MonitoringAlertName.ERROR_RATE_5XX: "%",
+    MonitoringAlertName.LATENCY_P50: "s",
+    MonitoringAlertName.LATENCY_P95: "s",
+    MonitoringAlertName.LATENCY_P99: "s",
+}
 
 
 def _render(template: str, *, to: str, subject: str, ctx: dict) -> EmailMessage:
@@ -347,4 +377,36 @@ def render_budget_threshold_alert_email(
         alert_datetime=alert_datetime,
         threshold=threshold,
         current_value=current_value,
+    )
+
+
+# ── Monitoring Alerts (the MONITORING catalog rows) ──
+
+
+def render_monitoring_alert_email(
+    *,
+    to: str,
+    recipient_name: str,
+    alert: MonitoringAlertName,
+    threshold: str,
+    alert_datetime: str,
+    current_value: str,
+) -> EmailMessage:
+    """Standard Monitoring Alert Email Template. Platform-level — no
+    institution. ``threshold`` and ``current_value`` are bare display
+    numbers (e.g. "5", "7.3"); the alert's unit (% or s) is appended here,
+    same convention as the metering alert's "%"."""
+    unit = MONITORING_ALERT_UNITS[alert]
+    return _render(
+        "monitoring_alert",
+        to=to,
+        subject=f"{alert.value} at {threshold}{unit}",
+        ctx={
+            "recipient_name": recipient_name,
+            "alert_name": alert.value,
+            "alert_datetime": alert_datetime,
+            "threshold": threshold,
+            "current_value": current_value,
+            "unit": unit,
+        },
     )

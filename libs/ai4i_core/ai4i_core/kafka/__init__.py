@@ -32,6 +32,7 @@ from .ledger import (
 )
 from .recipients import (
     configure as configure_recipient_decryption,
+    resolve_monitoring_recipients,
     resolve_recipients,
     resolve_recipients_bulk,
 )
@@ -57,6 +58,7 @@ __all__ = [
     "check_and_record_action",
     "check_and_record_actions_bulk",
     "configure_recipient_decryption",
+    "resolve_monitoring_recipients",
     "resolve_recipients",
     "resolve_recipients_bulk",
 ]
