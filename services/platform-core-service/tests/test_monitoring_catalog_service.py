@@ -171,17 +171,10 @@ class TestThresholds:
         assert [b.value for b in item.monitoring_thresholds] == [3, 6, 12]
         assert store.refreshed == [["LATENCY_P95"]]
 
-    async def test_two_bands_are_accepted(self, store):
-        row = _row()
-        store.seed(row)
-        await svc.update_monitoring_catalog(
-            _Session(row), "LATENCY_P95", MonitoringCatalogUpdate(monitoring_thresholds=_bands(2, 4)),
-        )
-        assert [b.severity for b in store.bands[10]] == ["WARNING", "CRITICAL"]
-
     @pytest.mark.parametrize("bands", [
         [],                                        # no band
-        _bands(*range(1, 12)),                     # 11 bands
+        _bands(2, 4),                              # 2 bands (exactly 3 required)
+        _bands(1, 2, 3, 4),                        # 4 bands
         _bands(1, 1, 2),                           # duplicate values
         _bands(0, 1, 2),                           # non-positive
         _bands(1, 2, 3, unit="PERCENT"),           # unit differs from the row's

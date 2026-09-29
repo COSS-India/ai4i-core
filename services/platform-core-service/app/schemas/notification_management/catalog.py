@@ -50,15 +50,14 @@ class CatalogItem(BaseModel):
     ``scope`` is GLOBAL (applies platform-wide, no per-institution
     opt-out) or INSTITUTION (available for an institution to subscribe to
     — see app.routes.notification_subscription). ``recipient_roles`` is
-    kept (not dropped) so the producer-side caches that still raw-SELECT it
-    keep working until they move onto scope. Its ``"ADMIN"`` key (the
-    Adopter Admin's own recipient toggle) is exactly the stored column
-    value, not re-derived from ``scope`` on read — every row was backfilled
-    to already be scope-consistent (True on GLOBAL, False on INSTITUTION,
-    see e2a4c6b8d0f2) and PATCH keeps it that way going forward (see
-    catalog_service._apply_admin_recipient_scope_invariant) — because the
-    send path reads this same column directly, and a value shown here that
-    the stored column disagrees with would be a lie."""
+    the stored column as-is: which roles receive this row (ADMIN / TENANT
+    ADMIN, or ADMIN / MODERATOR on a MONITORING row). Migration 0c96d7881ce5
+    starts every flag at false, so nobody is assigned until an admin picks
+    recipients. Its ``"ADMIN"`` key is never re-derived from ``scope`` on
+    read: PATCH forces it off while INSTITUTION and leaves it selectable
+    while GLOBAL (catalog_service._apply_admin_recipient_scope_invariant),
+    and the send path reads this same column, so what is shown here is what
+    is sent."""
 
     id: int
     name: str
@@ -89,8 +88,8 @@ class CatalogUpdate(BaseModel):
     is enforced against the row's effective ``scope`` regardless of what's
     sent here — see catalog_service._apply_admin_recipient_scope_invariant.
 
-    ``thresholds``, when present, must be the complete set of 1 to 10
-    bands — there is no partial/per-band PATCH, since a
+    ``thresholds``, when present, must be the complete set of
+    THRESHOLD_BAND_COUNT bands — there is no partial/per-band PATCH, since a
     band has no stable key to merge against once its own ``percentage`` is
     editable. Renaming/reordering has no meaning either (bands are unnamed);
     an Adopter Admin edits a percentage, flips ``active``, and sends the

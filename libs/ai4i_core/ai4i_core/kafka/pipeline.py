@@ -7,7 +7,12 @@ claim, recipients, publish.
   monitoring alerts): one cache read, then claims only for FIRE and RESET.
 * refresh_settings / refresh_subscriptions — writers, after their commit.
 
-Nothing here raises into the caller; every failure is a failure-log row.
+The emit_* functions never raise into the caller; each of their failures
+is a failure-log row. refresh_settings / refresh_subscriptions are the
+exception: a DB error while rebuilding the value raises, and the caller
+(platform-core's cache_refresh, auth-service's notification_events) catches
+and logs it. A Redis error inside them is still a failure-log row
+(TieredCache writes).
 """
 
 import inspect

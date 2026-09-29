@@ -162,11 +162,11 @@ LEGAL_RECIPIENT_ROLES: dict[NotificationName, frozenset[str]] = {
     for name in NotificationName
 }
 
-#: Threshold bands: a notification holds 1 to 10 bands with unique values.
+#: Threshold bands: a notification holds exactly THRESHOLD_BAND_COUNT bands
+#: with unique values (the catalog screens edit a fixed set of 3).
 #: Metering (ALERT) bands are whole percents 1-99; monitoring bands are
 #: greater than 0, and at most 100 when the unit is PERCENT. The count is
 #: service-enforced; the value limits are also DB checks.
 MIN_THRESHOLD_PERCENT = 1
 MAX_THRESHOLD_PERCENT = 99
-MIN_THRESHOLD_BANDS = 1
-MAX_THRESHOLD_BANDS = 10
+THRESHOLD_BAND_COUNT = 3

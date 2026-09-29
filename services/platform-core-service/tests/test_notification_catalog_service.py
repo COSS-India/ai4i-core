@@ -266,22 +266,16 @@ class TestUpdateCatalog:
         assert refreshes["settings"] == [["QUOTA_THRESHOLD"]]
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("count", [1, 2, 10])
-    async def test_one_to_ten_bands_are_accepted(self, bands, count):
-        row = _alert()
-        payload = CatalogUpdate(thresholds=_bands(*[(p, True) for p in range(1, count + 1)]))
-        await svc.update_catalog(_Session(found=row), row.name, payload)
-        assert len(bands.bands[8]) == count
-
-    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "pairs",
         [
             [],
-            [(p, True) for p in range(1, 12)],   # 11 bands
-            [(50, True), (50, False)],            # duplicate
-            [(0, True)],                          # below range
-            [(100, True)],                        # above range
+            [(50, True)],                               # 1 band (exactly 3 required)
+            [(50, True), (70, True)],                   # 2 bands
+            [(50, True), (70, True), (80, True), (90, True)],  # 4 bands
+            [(50, True), (50, False), (90, True)],      # duplicate
+            [(0, True), (50, True), (90, True)],        # below range
+            [(50, True), (90, True), (100, True)],      # above range
         ],
     )
     async def test_invalid_band_lists_are_rejected(self, bands, pairs):
@@ -289,6 +283,17 @@ class TestUpdateCatalog:
         with pytest.raises(ValidationError):
             await svc.update_catalog(_Session(found=row), row.name, CatalogUpdate(thresholds=_bands(*pairs)))
         assert bands.replaced == []
+
+    @pytest.mark.asyncio
+    async def test_omitted_fields_are_left_alone(self, bands, refreshes):
+        row = _alert(recipient_roles={"ADMIN": True, "TENANT ADMIN": False}, channels=("EMAIL",))
+        bands.bands[8] = [_band(50), _band(70), _band(90)]
+        item = await svc.update_catalog(_Session(found=row), row.name, CatalogUpdate())
+        assert row.scope == "GLOBAL"
+        assert row.recipient_roles == {"ADMIN": True, "TENANT ADMIN": False}
+        assert row.channels == ["EMAIL"]
+        assert bands.replaced == []
+        assert [b.percentage for b in item.thresholds] == [50, 70, 90]
 
     @pytest.mark.asyncio
     async def test_scope_is_updated(self):
@@ -364,6 +369,13 @@ class TestScopeTransitionResetsTenantSubscriptions:
         row = _row(scope="INSTITUTION")
         session = _Session(found=row)
         await svc.update_catalog(session, row.name, CatalogUpdate(scope="GLOBAL"))
+        assert session.subscription_resets == [] and refreshes["subscriptions"] == []
+
+    @pytest.mark.asyncio
+    async def test_a_patch_that_does_not_touch_scope_does_not_reset(self, refreshes):
+        row = _row(id=7, scope="INSTITUTION")
+        session = _Session(found=row)
+        await svc.update_catalog(session, row.name, CatalogUpdate(channels=["EMAIL"]))
         assert session.subscription_resets == [] and refreshes["subscriptions"] == []
 
     @pytest.mark.asyncio

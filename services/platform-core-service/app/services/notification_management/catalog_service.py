@@ -50,11 +50,10 @@ from app.services.notification_management.cache_refresh import (
 )
 from app.services.notification_management.catalog_metadata import (
     LEGAL_RECIPIENT_ROLES,
-    MAX_THRESHOLD_BANDS,
     MAX_THRESHOLD_PERCENT,
-    MIN_THRESHOLD_BANDS,
     MIN_THRESHOLD_PERCENT,
     NOTIFICATION_METADATA,
+    THRESHOLD_BAND_COUNT,
 )
 from app.services.notification_management.thresholds import load_bands, replace_bands
 
@@ -147,10 +146,10 @@ def _validate_recipient_roles(name: str, recipient_roles: Dict[str, bool]) -> No
 
 
 def _validate_band_count(name: str, count: int) -> None:
-    if not MIN_THRESHOLD_BANDS <= count <= MAX_THRESHOLD_BANDS:
+    if count != THRESHOLD_BAND_COUNT:
         raise ValidationError(
             message=(
-                f"'{name}' holds {MIN_THRESHOLD_BANDS} to {MAX_THRESHOLD_BANDS} threshold band(s) "
+                f"Exactly {THRESHOLD_BAND_COUNT} threshold band(s) are required for '{name}' "
                 f"(got {count})."
             ),
             code="INVALID_THRESHOLDS",
@@ -187,8 +186,8 @@ async def update_catalog(
     type is whatever is already stored, not something the caller asserts.
 
     ``thresholds`` is ALERT-only; sending it for any other row is a
-    validation error. It replaces the row's whole band list (1 to 10 bands)
-    and severities are recounted from the top. channels/recipient_roles/scope
+    validation error. It replaces the row's whole band list (exactly
+    THRESHOLD_BAND_COUNT bands) and severities are recounted from the top. channels/recipient_roles/scope
     are accepted for every type.
 
     recipient_roles is a partial-update dict: every key already stored keeps
