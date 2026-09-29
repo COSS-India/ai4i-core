@@ -4,12 +4,18 @@ Provides:
   - ``TIME_RANGES``: allowed time-window keys mapped to Prometheus duration strings.
   - ``INFERENCE_ENDPOINT_REGEX``: regex that matches all inference endpoints.
   - ``apply_time_range``: wraps a metric expression in ``increase(...[window])``.
+  - ``AbsoluteRange``: a custom from/to window, accepted anywhere a
+    ``time_range`` preset is (rendered as a ``[<n>s] offset <m>s`` range).
   - ``PROMETHEUS_API_PATH_LABEL``: the one exception — read from settings, since
     which label carries the HTTP path is environment-dependent (see
     ``CoreSettings.prometheus_api_path_label`` in app/core/config.py for why).
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Union
 
 from app.core.config import settings
 
@@ -86,6 +92,66 @@ WINDOW_STEP: dict = {
 }
 
 
+@dataclass(frozen=True)
+class AbsoluteRange:
+    """A custom ``[start, end]`` window (both tz-aware UTC), used in place of
+    a relative ``time_range`` preset like "7d" wherever a metering query takes
+    one. Built by ``_parse_from_to`` in routes/metering.py from the
+    ``from``/``to`` query params.
+
+    PromQL has no absolute range selector outside query_range, so a windowed
+    instant query over it is ``increase(metric[<duration>s] offset <now-end>s)``
+    — see ``window_duration`` / ``window_offset``.
+    """
+    start: datetime
+    end: datetime
+
+    @property
+    def duration_seconds(self) -> int:
+        return max(1, round((self.end - self.start).total_seconds()))
+
+    def end_offset_seconds(self, now: datetime | None = None) -> int:
+        """How far ``end`` lies in the past, clamped at 0."""
+        now = now or datetime.now(timezone.utc)
+        return max(0, round((now - self.end).total_seconds()))
+
+
+TimeRange = Union[str, AbsoluteRange, None]
+
+
+def window_duration(time_range: TimeRange) -> str | None:
+    """PromQL range-vector duration for ``time_range``: the TIME_RANGES value
+    for a preset key, a raw duration string ("1d") passed through as-is,
+    ``"<n>s"`` for an AbsoluteRange, and None for "all"/None."""
+    if isinstance(time_range, AbsoluteRange):
+        return f"{time_range.duration_seconds}s"
+    return TIME_RANGES.get(time_range or "all") or (
+        time_range if time_range and time_range != "all" else None
+    )
+
+
+def window_offset(time_range: TimeRange, extra_seconds: int = 0) -> str:
+    """`` offset <n>s`` modifier (leading space included) that shifts a
+    selector so it ends where ``time_range`` ends, pushed ``extra_seconds``
+    further back. Empty for a relative preset with no extra shift, since a
+    preset window always ends at now."""
+    seconds = extra_seconds
+    if isinstance(time_range, AbsoluteRange):
+        seconds += time_range.end_offset_seconds()
+    return f" offset {seconds}s" if seconds > 0 else ""
+
+
+def previous_window_offset(time_range: TimeRange) -> str:
+    """`` offset ...`` that shifts a selector back to where ``time_range``
+    starts — i.e. onto the equal-length window just before it, which is what
+    the vs-previous-period KPIs compare against. ``" offset 7d"`` for a
+    preset, ``" offset <now-end+duration>s"`` for an AbsoluteRange."""
+    if isinstance(time_range, AbsoluteRange):
+        return window_offset(time_range, time_range.duration_seconds)
+    window = window_duration(time_range)
+    return f" offset {window}" if window else ""
+
+
 def build_task_type_selector(task_types: list[str] | None) -> str | None:
     """Build an extra label-selector fragment restricting queries to specific task types.
 
@@ -144,19 +210,37 @@ def escape_label_value(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def apply_time_range(metric_expr: str, time_range: str | None) -> str:
+def apply_time_range(metric_expr: str, time_range: TimeRange) -> str:
     """Wrap metric_expr in increase(...[window]) when a time range is given.
 
     increase() returns how much the counter grew over the window.
     When time_range is None or 'all', returns the raw cumulative counter.
+    An AbsoluteRange becomes ``increase(metric[<duration>s] offset <n>s)``.
     """
-    window = TIME_RANGES.get(time_range or "all")
+    window = window_duration(time_range)
     if window:
-        return f"increase({metric_expr}[{window}])"
+        return f"increase({metric_expr}[{window}]{window_offset(time_range)})"
     return metric_expr
 
 
-def sum_over_window(metric_expr: str, time_range: str | None) -> str:
+def _hybrid_window_sum(metric_expr: str, time_range: TimeRange) -> str | None:
+    """The body shared by sum_over_window()/sum_over_window_by() — see
+    sum_over_window for why it has two arms. None when there's no window.
+
+    For an AbsoluteRange both arms are shifted to end at ``range.end``: the
+    raw-counter arm reads the counter at ``end`` for series absent at
+    ``start`` (``offset end`` unless ``offset end+duration``)."""
+    window = window_duration(time_range)
+    if not window:
+        return None
+    end_off = window_offset(time_range)
+    return (
+        f"({metric_expr}{end_off} unless {metric_expr}{previous_window_offset(time_range)})"
+        f" or (increase({metric_expr}[{window}]{end_off}) > 0)"
+    )
+
+
+def sum_over_window(metric_expr: str, time_range: TimeRange) -> str:
     """Build a PromQL sum that captures every request, including very recent ones.
 
     Two-part hybrid so no data is lost:
@@ -172,38 +256,42 @@ def sum_over_window(metric_expr: str, time_range: str | None) -> str:
     be > 0 and the unless arm would never run.
 
     Falls back to a plain sum for time_range="all"/None.
-    Accepts a TIME_RANGES key ("7d") or a raw Prometheus duration string ("1d").
+    Accepts a TIME_RANGES key ("7d"), a raw Prometheus duration string ("1d"),
+    or an AbsoluteRange.
     """
-    window = TIME_RANGES.get(time_range or "all") or (
-        time_range if time_range and time_range != "all" else None
-    )
-    if not window:
-        return f"sum({metric_expr})"
-    return (
-        f"sum("
-        f"({metric_expr} unless {metric_expr} offset {window})"
-        f" or (increase({metric_expr}[{window}]) > 0)"
-        f")"
-    )
+    body = _hybrid_window_sum(metric_expr, time_range)
+    return f"sum({body})" if body else f"sum({metric_expr})"
 
 
-def sum_over_window_by(metric_expr: str, by_label: str, time_range: str | None) -> str:
+def sum_over_window_by(metric_expr: str, by_label: str, time_range: TimeRange) -> str:
     """Same reset-aware hybrid as sum_over_window(), grouped by ``by_label``.
 
     Used to break a counter down per label value (e.g. per model) instead of
     collapsing it to a single total.
     """
-    window = TIME_RANGES.get(time_range or "all") or (
-        time_range if time_range and time_range != "all" else None
-    )
-    if not window:
-        return f"sum by({by_label}) ({metric_expr})"
-    return (
-        f"sum by({by_label}) ("
-        f"({metric_expr} unless {metric_expr} offset {window})"
-        f" or (increase({metric_expr}[{window}]) > 0)"
-        f")"
-    )
+    body = _hybrid_window_sum(metric_expr, time_range)
+    return f"sum by({by_label}) ({body})" if body else f"sum by({by_label}) ({metric_expr})"
+
+
+# Request Volume chart step for an AbsoluteRange — the same buckets as
+# WINDOW_STEP, picked by duration instead of by preset key: a range up to
+# 1h gets 10m bars, up to 24h 4h bars, up to 31d daily bars (one per
+# calendar day picked), and anything longer weekly bars. Capped at 7d
+# because the frontend's label formatting keys off these four step values
+# only.
+_RANGE_STEP_THRESHOLDS: tuple[tuple[int, str], ...] = (
+    (3_600, "10m"),
+    (86_400, "4h"),
+    (31 * 86_400, "1d"),
+)
+_RANGE_STEP_MAX = "7d"
+
+
+def step_for_duration(seconds: int) -> str:
+    for limit, step in _RANGE_STEP_THRESHOLDS:
+        if seconds <= limit:
+            return step
+    return _RANGE_STEP_MAX
 
 
 # Per-task display metadata for the service breakdown table.

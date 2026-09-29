@@ -19,6 +19,8 @@ from app.utils.prometheus_client import PrometheusClient
 from app.services.pay_per_use import inference_type_cache
 from app.utils.metering_promql_builder import (
     TIME_RANGES,
+    AbsoluteRange,
+    TimeRange,
     SERVICE_BREAKDOWN_CONFIG,
     SERVICE_BREAKDOWN_ENDPOINT_REGEX,
     LLM_CHAT_ENDPOINT_REGEX,
@@ -30,8 +32,12 @@ from app.utils.metering_promql_builder import (
     build_base_selectors,
     build_task_type_selector,
     escape_label_value,
+    previous_window_offset,
+    step_for_duration,
     sum_over_window,
     sum_over_window_by,
+    window_duration,
+    window_offset,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,6 +61,60 @@ def _step_seconds(step: str) -> int:
     """Parse a duration step (e.g. '10m', '4h', '1d') to seconds."""
     m = re.fullmatch(r"(\d+)([smhd])", step.strip())
     return int(m.group(1)) * _STEP_UNIT_SECONDS[m.group(2)] if m else 0
+
+
+def _chart_bounds(window: Union[str, AbsoluteRange]) -> Optional[tuple[str, float, float]]:
+    """(step, start, end) epoch-second bounds for the Request Volume chart, or
+    None for a window it doesn't support. Shared by the Prometheus and
+    OpenSearch request_volume_chart so both query the same span.
+
+    Preset: aligned so the LAST bucket ends at now. query_range places eval
+    points at start + i*step, so an unaligned start (e.g. a 30d window with a
+    7d step — 30 isn't divisible by 7) leaves the final point short of now and
+    the most recent bucket is never evaluated. Snap start to a whole number of
+    buckets ending at now.
+
+    AbsoluteRange: the exact ``[start, end]``. Its buckets are anchored at
+    ``start`` instead (see _range_chart_buckets), so the chart never counts
+    traffic from before the picked ``from`` — which rounding the bucket count
+    up would, by up to a whole step.
+    """
+    if isinstance(window, AbsoluteRange):
+        step = step_for_duration(window.duration_seconds)
+        return step, window.start.timestamp(), window.end.timestamp()
+    if window not in WINDOW_STEP:
+        return None
+    w_secs = _WINDOW_SECONDS[window]
+    step = WINDOW_STEP[window]
+    end = _time.time()
+    step_secs = _step_seconds(step)
+    n_buckets = max(1, -(-w_secs // step_secs)) if step_secs else 1
+    return step, end - n_buckets * step_secs, end
+
+
+def _range_chart_buckets(window: AbsoluteRange) -> tuple[str, int, int]:
+    """(step, full-bucket count, tail seconds) for an AbsoluteRange chart.
+    Buckets start at ``window.start``; when the range isn't a whole number of
+    steps (e.g. a range ending now), the last bucket is a partial one of
+    ``tail`` seconds ending at ``window.end``."""
+    step = step_for_duration(window.duration_seconds)
+    step_secs = _step_seconds(step)
+    n_full, tail = divmod(window.duration_seconds, step_secs)
+    return step, n_full, tail
+
+
+def _previous_window_retained(time_range: TimeRange) -> bool:
+    """False when an AbsoluteRange's vs-previous window (the equal-length
+    window ending at its start) reaches back past PROMETHEUS_RETENTION_DAYS.
+    increase() there would undercount from pruned data and inflate every
+    growth %, so request_total reports the previous figures as None instead,
+    same as model_usage_growth_pct's retention guard. Presets are unchanged.
+    """
+    if not isinstance(time_range, AbsoluteRange):
+        return True
+    prev_start = time_range.start - (time_range.end - time_range.start)
+    earliest = datetime.now(timezone.utc) - timedelta(days=settings.prometheus_retention_days)
+    return prev_start >= earliest
 
 
 def _series_points(res, ndigits: int) -> list[GraphPoint]:
@@ -207,14 +267,18 @@ class MeteringService:
         inference_only: bool,
         tenant: Optional[str],
         service_id: Optional[str],
-        time_range: Optional[str],
+        time_range: TimeRange,
         task_types: Optional[list[str]] = None,
         tenant_id: Optional[str] = None,
         auth_type: Optional[str] = None,
     ) -> dict:
         """KNOWN CUTOVER GAP when ``tenant_id`` is given (this is the
         single-tenant-scoped Overview view): see build_base_selectors'
-        docstring — accepted, not fixed here, tracked in the ticket."""
+        docstring — accepted, not fixed here, tracked in the ticket.
+
+        For an AbsoluteRange the "previous" figures cover the equal-length
+        window ending at ``time_range.start``, same as a preset compares
+        against the window just before it."""
         task_sel = build_task_type_selector(task_types)
         extra = [task_sel] if task_sel else None
         success_extra = [task_sel, 'status_code=~"2.."'] if task_sel else ['status_code=~"2.."']
@@ -226,21 +290,24 @@ class MeteringService:
         )
         base = f"{_METRIC}{label_str}"
         success_base = f"{_METRIC}{success_label_str}"
-        window = TIME_RANGES.get(time_range or "all")
+        window = window_duration(time_range)
         rate_window = window or "5m"
+        end_off = window_offset(time_range)
+        prev_off = previous_window_offset(time_range)
+        has_prev = bool(window) and _previous_window_retained(time_range)
 
         current_queries = [
-            self._client.scalar(sum_over_window(base, time_range)),          # 0: total
-            self._client.scalar(sum_over_window(success_base, time_range)),  # 1: success
-            self._client.scalar(f"sum(rate({base}[{rate_window}]))"),        # 2: avg rps
+            self._client.scalar(sum_over_window(base, time_range)),                  # 0: total
+            self._client.scalar(sum_over_window(success_base, time_range)),          # 1: success
+            self._client.scalar(f"sum(rate({base}[{rate_window}]{end_off}))"),       # 2: avg rps
         ]
         prev_queries = (
             [
-                self._client.scalar(f"sum(increase({base}[{window}] offset {window}))"),          # 3: prev total
-                self._client.scalar(f"sum(increase({success_base}[{window}] offset {window}))"),  # 4: prev success
-                self._client.scalar(f"sum(rate({base}[{window}] offset {window}))"),              # 5: prev avg rps
+                self._client.scalar(f"sum(increase({base}[{window}]{prev_off}))"),          # 3: prev total
+                self._client.scalar(f"sum(increase({success_base}[{window}]{prev_off}))"),  # 4: prev success
+                self._client.scalar(f"sum(rate({base}[{window}]{prev_off}))"),              # 5: prev avg rps
             ]
-            if window
+            if has_prev
             else []
         )
 
@@ -279,7 +346,7 @@ class MeteringService:
         prev_success_rate_v: Optional[float] = None
         prev_avg_rps_v: Optional[float] = None
 
-        if window:
+        if has_prev:
             prev_total = max(0, round(_float(raw[3])))
             prev_success = max(0, round(_float(raw[4])))
             prev_avg_rps = _float(raw[5])
@@ -355,7 +422,7 @@ class MeteringService:
 
     async def request_volume_chart(
         self,
-        window: str,
+        window: Union[str, AbsoluteRange],
         tenant: Optional[str],
         task_types: Optional[list[str]] = None,
         tenant_id: Optional[str] = None,
@@ -369,8 +436,12 @@ class MeteringService:
         so an OpenSearch-backed MeteringService implementation can override it —
         the route layer only calls `svc.request_volume_chart(...)` now, same as
         every other tab query.
+
+        ``window`` is a WINDOW_STEP preset key or an AbsoluteRange; for the
+        latter the buckets end at ``window.end`` instead of now.
         """
-        if window not in WINDOW_STEP:
+        bounds = _chart_bounds(window)
+        if bounds is None:
             return None
 
         task_sel = build_task_type_selector(task_types)
@@ -384,32 +455,27 @@ class MeteringService:
         )
         success_metric = f"{_METRIC}{success_sel}"
         failed_metric = f"{_METRIC}{failed_sel}"
-        step = WINDOW_STEP[window]
-        step_secs = _step_seconds(step)
-        w_secs = _WINDOW_SECONDS[window]
-        now = _time.time()
-        # Align the range so the LAST bucket ends at `now`. query_range places eval
-        # points at start + i*step, so an unaligned start (e.g. a 30d window with a 7d
-        # step — 30 isn't divisible by 7) leaves the final point short of now and the
-        # most recent bucket (today's requests) is never evaluated. Snap start to a
-        # whole number of buckets ending at now.
-        n_buckets = max(1, -(-w_secs // step_secs)) if step_secs else 1
-        start = now - n_buckets * step_secs
 
-        # `or vector(0)` fills idle buckets with 0 so the timeline is continuous.
-        # Without it increase() emits no sample for a zero-traffic bucket, the chart
-        # drops it, and the axis shows gaps (missing days / jumping intervals).
-        success_q = f"{sum_over_window(success_metric, step)} or vector(0)"
-        failed_q  = f"{sum_over_window(failed_metric,  step)} or vector(0)"
+        if isinstance(window, AbsoluteRange):
+            succ_points, fail_points, step = await self._range_volume_points(
+                window, success_metric, failed_metric,
+            )
+        else:
+            step, start, end = bounds
+            # `or vector(0)` fills idle buckets with 0 so the timeline is continuous.
+            # Without it increase() emits no sample for a zero-traffic bucket, the chart
+            # drops it, and the axis shows gaps (missing days / jumping intervals).
+            success_q = f"{sum_over_window(success_metric, step)} or vector(0)"
+            failed_q  = f"{sum_over_window(failed_metric,  step)} or vector(0)"
 
-        succ_res, fail_res = await asyncio.gather(
-            self._client.query_range(success_q, start=start, end=now, step=step),
-            self._client.query_range(failed_q, start=start, end=now, step=step),
-            return_exceptions=True,
-        )
+            succ_res, fail_res = await asyncio.gather(
+                self._client.query_range(success_q, start=start, end=end, step=step),
+                self._client.query_range(failed_q, start=start, end=end, step=step),
+                return_exceptions=True,
+            )
 
-        succ_points = _series_points(succ_res, 0)        # counts (zero-filled)
-        fail_points = _series_points(fail_res, 0)        # counts (zero-filled)
+            succ_points = _series_points(succ_res, 0)        # counts (zero-filled)
+            fail_points = _series_points(fail_res, 0)        # counts (zero-filled)
 
         # Series are now dense, so emptiness can't be inferred from point count —
         # only suppress the chart when there's no real activity anywhere in the window.
@@ -424,6 +490,42 @@ class MeteringService:
                 GraphSeries(key="failed", label="Failed", points=fail_points),
             ],
         )
+
+    async def _range_volume_points(
+        self, window: AbsoluteRange, success_metric: str, failed_metric: str,
+    ) -> tuple[list[GraphPoint], list[GraphPoint], str]:
+        """Request Volume points for an AbsoluteRange: full buckets from
+        query_range (eval points at start+step ... start+n*step, each covering
+        the step before it), then the partial tail bucket ending at
+        ``window.end`` as one instant query per series. Each point's ts is its
+        bucket's end, same as the preset chart."""
+        step, n_full, tail = _range_chart_buckets(window)
+        step_secs = _step_seconds(step)
+        first = window.start.timestamp() + step_secs
+        last = window.start.timestamp() + n_full * step_secs
+
+        coros = []
+        if n_full:
+            for metric in (success_metric, failed_metric):
+                coros.append(self._client.query_range(
+                    f"{sum_over_window(metric, step)} or vector(0)", start=first, end=last, step=step,
+                ))
+        if tail:
+            tail_range = AbsoluteRange(start=window.end - timedelta(seconds=tail), end=window.end)
+            for metric in (success_metric, failed_metric):
+                coros.append(self._client.scalar(sum_over_window(metric, tail_range)))
+        raw = await asyncio.gather(*coros, return_exceptions=True)
+
+        succ_points = _series_points(raw[0], 0) if n_full else []
+        fail_points = _series_points(raw[1], 0) if n_full else []
+        if tail:
+            tail_ts = int(window.end.timestamp())
+            succ_tail, fail_tail = raw[-2], raw[-1]
+            if not isinstance(succ_tail, Exception):
+                succ_points.append(GraphPoint(ts=tail_ts, value=round(max(0.0, float(succ_tail)))))
+            if not isinstance(fail_tail, Exception):
+                fail_points.append(GraphPoint(ts=tail_ts, value=round(max(0.0, float(fail_tail)))))
+        return succ_points, fail_points, step
 
     async def active_tenants(
         self, time_range: Optional[str], valid_names: Union[set, None, _Unset] = _UNSET
@@ -658,6 +760,49 @@ class MeteringService:
             return None
         return round((cur_total - prev_total) / prev_total * 100, 1)
 
+    # Subquery step for first_request_at — the result's resolution.
+    _FIRST_REQUEST_STEP = "1h"
+
+    async def first_request_at(
+        self, tenant: Optional[str], tenant_id: Optional[str] = None,
+    ) -> Optional[datetime]:
+        """Earliest API-key inference request still in Prometheus for the
+        tenant (all tenants when neither is given), or None when there is none.
+
+        One half of /overview's first_usage_at. The other half is quota_usage,
+        which misses untiered traffic but outlives retention. Reads series
+        PRESENCE, not counter increase: a labelled counter series gets its
+        first sample on its first .inc(), so the earliest sample timestamp is
+        the first request. A windowed increase() would read the pruned
+        `unless offset` sample at the retention edge and count every
+        long-lived series as new there.
+
+        The hourly subquery sees each series' latest sample at each step, so
+        the raw minimum can be up to one step late. The step is subtracted so
+        the result errs early. Late could push the first day onto the next
+        IST day and hide real data; early can at most enable one empty day.
+
+        KNOWN CUTOVER GAP when ``tenant_id`` is given: see
+        build_base_selectors' docstring. Raises on a Prometheus failure; the
+        route falls back to the quota_usage value.
+        """
+        sel = build_base_selectors(
+            inference_only=True, tenant=tenant, tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE,
+        )
+        promql = (
+            f"min(min_over_time(timestamp({_METRIC}{sel})"
+            f"[{settings.prometheus_retention_days}d:{self._FIRST_REQUEST_STEP}]))"
+        )
+        # query(), not scalar(): scalar() maps an empty result to 0.0 (1970).
+        result = await self._client.query(promql)
+        if not result:
+            return None
+        ts = PrometheusClient._safe_float(result[0]["value"][1])
+        if ts <= 0:
+            return None
+        step = timedelta(seconds=_step_seconds(self._FIRST_REQUEST_STEP))
+        return datetime.fromtimestamp(ts, tz=timezone.utc) - step
+
     async def overview_tenant_data(
         self, time_ranges: list[str]
     ) -> tuple[dict, dict[str, dict]]:
@@ -698,7 +843,7 @@ class MeteringService:
         return tc, dict(zip(time_ranges, active_results))
 
     async def usage_concentration(
-        self, limit: int, time_range: Optional[str], task_types: Optional[list[str]] = None,
+        self, limit: int, time_range: TimeRange, task_types: Optional[list[str]] = None,
     ) -> dict:
         task_sel = build_task_type_selector(task_types)
         metric = f"{_METRIC}{build_base_selectors(inference_only=True, extra=[task_sel] if task_sel else None, auth_type=API_KEY_AUTH_TYPE)}"
@@ -812,7 +957,7 @@ class MeteringService:
         }
 
     async def model_breakdown(
-        self, tenant: Optional[str], time_range: Optional[str],
+        self, tenant: Optional[str], time_range: TimeRange,
         tenant_id: Optional[str] = None,
         task_types: Optional[list[str]] = None,
     ) -> dict:
@@ -964,7 +1109,7 @@ class MeteringService:
         native_by_task: dict[str, dict[str, float]],
         unit_map: dict[str, str],
         tenant: Optional[str],
-        time_range: Optional[str],
+        time_range: TimeRange,
         task_types: Optional[list[str]],
     ) -> dict:
         """Everything model_breakdown() does AFTER fetching its rows — ghost-
@@ -1703,7 +1848,7 @@ class MeteringService:
         return natives
 
     def _model_native_unit_queries(
-        self, tenant: Optional[str], tenant_id: Optional[str], time_range: Optional[str],
+        self, tenant: Optional[str], tenant_id: Optional[str], time_range: TimeRange,
         task_types: Optional[list[str]],
     ) -> tuple[list[str], list]:
         """Per-task-type native-unit query coroutines for model_breakdown.
@@ -1889,19 +2034,13 @@ class MeteringService:
         )
 
     @staticmethod
-    def _by_tenant_promql(metric: str, time_range: Optional[str], filter_zero: bool) -> str:
+    def _by_tenant_promql(metric: str, time_range: TimeRange, filter_zero: bool) -> str:
         # See _tenant_delta_promql above for why `tenant` rides alongside
         # `tenant_id` in the group-by.
-        window = TIME_RANGES.get(time_range or "all")
-        if window:
-            return (
-                f"sum by(tenant_id, tenant) ("
-                f"({metric} unless {metric} offset {window})"
-                f" or (increase({metric}[{window}]) > 0)"
-                f") > 0"
-            )
-        base = f"sum by(tenant_id, tenant) ({metric})"
-        return f"{base} > 0" if filter_zero else base
+        # A windowed query always drops zero rows; filter_zero only matters
+        # for the unwindowed cumulative sum.
+        base = sum_over_window_by(metric, "tenant_id, tenant", time_range)
+        return f"{base} > 0" if filter_zero or window_duration(time_range) else base
 
     @staticmethod
     def _merge_tenant_rows(rows: list) -> list[dict]:

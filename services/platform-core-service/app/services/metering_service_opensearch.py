@@ -50,6 +50,8 @@ from app.services.metering_service import (
     _UNSET,
     _Unset,
     _WINDOW_SECONDS,
+    _chart_bounds,
+    _previous_window_retained,
     _step_seconds,
 )
 from app.services.pay_per_use import inference_type_cache
@@ -59,7 +61,8 @@ from app.utils.metering_promql_builder import (
     PROMETHEUS_API_PATH_LABEL,
     SERVICE_BREAKDOWN_CONFIG,
     TIME_RANGES,
-    WINDOW_STEP,
+    AbsoluteRange,
+    TimeRange,
 )
 from app.utils.opensearch_log_client import (
     OpenSearchLogClient,
@@ -86,6 +89,42 @@ def _task_type_paths(task_types: list[str]) -> list[str]:
         else:
             paths.append(f"/api/v1/{task.replace('_', '-')}/inference")
     return paths
+
+
+def _os_window(time_range: TimeRange) -> Union[str, AbsoluteRange, None]:
+    """What `_windowed_query` takes: an AbsoluteRange as-is, otherwise the
+    preset's TIME_RANGES duration (None for "all"). A bare
+    ``TIME_RANGES.get(time_range)`` would silently map an AbsoluteRange to
+    None, i.e. all-time."""
+    if isinstance(time_range, AbsoluteRange):
+        return time_range
+    return TIME_RANGES.get(time_range or "all")
+
+
+def _period_ranges(time_range: TimeRange) -> Optional[tuple[dict, dict, dict, int]]:
+    """(outer, current, previous) `@timestamp` range bodies plus the window
+    length in seconds, for request_total's vs-previous-period split (doc
+    §7.5). The previous period is the equal-length window right before the
+    current one. None when there's no bounded window ("all")."""
+    if isinstance(time_range, AbsoluteRange):
+        start, end = time_range.start, time_range.end
+        prev_start = start - (end - start)
+        return (
+            {"gte": prev_start.isoformat(), "lte": end.isoformat()},
+            {"gte": start.isoformat(), "lte": end.isoformat()},
+            {"gte": prev_start.isoformat(), "lt": start.isoformat()},
+            time_range.duration_seconds,
+        )
+    window = TIME_RANGES.get(time_range or "all")
+    if not window:
+        return None
+    double_window = OpenSearchMeteringService._double_window(window)
+    return (
+        {"gte": f"now-{double_window}", "lte": "now"},
+        {"gte": f"now-{window}", "lt": "now"},
+        {"gte": f"now-{double_window}", "lt": f"now-{window}"},
+        _WINDOW_SECONDS[window],
+    )
 
 
 class OpenSearchMeteringService(MeteringService):
@@ -175,7 +214,16 @@ class OpenSearchMeteringService(MeteringService):
         return filters
 
     @staticmethod
-    def _windowed_query(window: Optional[str], filters: list[dict]) -> dict:
+    def _windowed_query(window: Union[str, AbsoluteRange, None], filters: list[dict]) -> dict:
+        """``window`` comes from `_os_window`: a relative duration ("7d") is
+        date math ending at now; an AbsoluteRange is explicit UTC ISO bounds."""
+        if isinstance(window, AbsoluteRange):
+            return {"bool": {"filter": [
+                {"range": {"@timestamp": {
+                    "gte": window.start.isoformat(), "lte": window.end.isoformat(),
+                }}},
+                *filters,
+            ]}}
         if window:
             return {"bool": {"filter": [
                 {"range": {"@timestamp": {"gte": f"now-{window}", "lte": "now"}}},
@@ -190,12 +238,12 @@ class OpenSearchMeteringService(MeteringService):
         inference_only: bool,
         tenant: Optional[str],
         service_id: Optional[str],
-        time_range: Optional[str],
+        time_range: TimeRange,
         task_types: Optional[list[str]] = None,
         tenant_id: Optional[str] = None,
         auth_type: Optional[str] = None,
     ) -> dict:
-        window = TIME_RANGES.get(time_range or "all")
+        periods_def = _period_ranges(time_range)
         base_filters = self._base_filters(
             tenant_id=tenant_id, service_id=service_id, auth_type=auth_type,
             task_types=task_types, inference_only=inference_only,
@@ -206,19 +254,17 @@ class OpenSearchMeteringService(MeteringService):
         prev_total_v = prev_failed_v = prev_success_v = None
         prev_success_rate_v = prev_avg_rps_v = None
 
-        if window:
-            double_window = self._double_window(window)
+        if periods_def:
+            outer_range, current_range, previous_range, window_secs = periods_def
             query = {"bool": {"filter": [
-                {"range": {"@timestamp": {"gte": f"now-{double_window}", "lte": "now"}}},
+                {"range": {"@timestamp": outer_range}},
                 *base_filters,
             ]}}
             aggs = {
                 "by_period": {
                     "filters": {"filters": {
-                        "current": {"range": {"@timestamp": {"gte": f"now-{window}", "lt": "now"}}},
-                        "previous": {"range": {"@timestamp": {
-                            "gte": f"now-{double_window}", "lt": f"now-{window}",
-                        }}},
+                        "current": {"range": {"@timestamp": current_range}},
+                        "previous": {"range": {"@timestamp": previous_range}},
                     }},
                     "aggs": {"by_status": self._status_filters_agg()},
                 }
@@ -239,24 +285,28 @@ class OpenSearchMeteringService(MeteringService):
             prev_total, prev_success, prev_failed = _period_counts(prev)
 
             success_rate = round(success_v / total_v * 100, 2) if total_v else 0.0
-            avg_rps_v = round(total_v / _WINDOW_SECONDS[window], 4)
-            prev_avg_rps = prev_total / _WINDOW_SECONDS[window]
+            avg_rps_v = round(total_v / window_secs, 4)
+            prev_avg_rps = prev_total / window_secs
 
-            prev_total_v, prev_failed_v, prev_success_v = prev_total, prev_failed, prev_success
-            prev_avg_rps_v = round(prev_avg_rps, 4)
-            prev_success_rate_v = (
-                round(prev_success / prev_total * 100, 2) if prev_total > 0 else 0.0
-            )
+            # Same retention guard as the Prometheus request_total: a
+            # previous window reaching past retention reads mostly-deleted
+            # data, so its figures stay None instead of inflating growth %.
+            if _previous_window_retained(time_range):
+                prev_total_v, prev_failed_v, prev_success_v = prev_total, prev_failed, prev_success
+                prev_avg_rps_v = round(prev_avg_rps, 4)
+                prev_success_rate_v = (
+                    round(prev_success / prev_total * 100, 2) if prev_total > 0 else 0.0
+                )
 
-            if prev_total > 0:
-                total_vs_prev = round((total_v - prev_total) / prev_total * 100, 1)
-                success_rate_vs_prev = round(success_rate - prev_success_rate_v, 2)
-            if prev_failed > 0:
-                failed_vs_prev = round((failed_v - prev_failed) / prev_failed * 100, 1)
-            if prev_success > 0:
-                successful_vs_prev = round((success_v - prev_success) / prev_success * 100, 1)
-            if prev_avg_rps > 0:
-                avg_rps_vs_prev = round((avg_rps_v - prev_avg_rps) / prev_avg_rps * 100, 1)
+                if prev_total > 0:
+                    total_vs_prev = round((total_v - prev_total) / prev_total * 100, 1)
+                    success_rate_vs_prev = round(success_rate - prev_success_rate_v, 2)
+                if prev_failed > 0:
+                    failed_vs_prev = round((failed_v - prev_failed) / prev_failed * 100, 1)
+                if prev_success > 0:
+                    successful_vs_prev = round((success_v - prev_success) / prev_success * 100, 1)
+                if prev_avg_rps > 0:
+                    avg_rps_vs_prev = round((avg_rps_v - prev_avg_rps) / prev_avg_rps * 100, 1)
         else:
             # No window ("all"): total/success/failed are all-time counts,
             # but avg_rps still reflects a trailing 5-minute rate — mirrors
@@ -326,16 +376,12 @@ class OpenSearchMeteringService(MeteringService):
 
     async def request_volume_chart(
         self,
-        window: str,
+        window: Union[str, AbsoluteRange],
         tenant: Optional[str],
         task_types: Optional[list[str]] = None,
         tenant_id: Optional[str] = None,
         auth_type: Optional[str] = None,
     ) -> Optional[Graph]:
-        if window not in WINDOW_STEP:
-            return None
-
-        step = WINDOW_STEP[window]
         # Same bucket-count alignment MeteringService.request_volume_chart()
         # (the Prometheus version) uses: when the window doesn't divide
         # evenly by the bucket width — only 30d/7d today, ceil(30/7)=5
@@ -344,24 +390,38 @@ class OpenSearchMeteringService(MeteringService):
         # on that window disagrees permanently even with zero real drift
         # (caught in PR review — the literal-window query here undercounted
         # by up to one bucket width relative to Prometheus's aligned span).
-        step_secs = _step_seconds(step)
-        w_secs = _WINDOW_SECONDS[window]
-        n_buckets = max(1, -(-w_secs // step_secs)) if step_secs else 1
-        range_secs = n_buckets * step_secs
+        bounds = _chart_bounds(window)
+        if bounds is None:
+            return None
+        step, start, end = bounds
+        histogram = {"field": "@timestamp", "fixed_interval": step}
+        if isinstance(window, AbsoluteRange):
+            # Epoch millis — accepted by both the range query and
+            # extended_bounds under the default date format. Buckets are
+            # shifted (`offset`) to start at `from` rather than at multiples
+            # of the step since the epoch, so the first bar begins exactly at
+            # the picked day (IST midnight) and none of it predates `from`;
+            # the range filter clips the last bar at `to`. `lt` + max end-1
+            # so an `end` that falls on a bucket boundary doesn't add an
+            # empty bucket past the range.
+            gte, lte = int(start * 1000), int(end * 1000)
+            time_filter = {"gte": gte, "lt": lte}
+            histogram["offset"] = f"{gte % (_step_seconds(step) * 1000)}ms"
+            histogram["extended_bounds"] = {"min": gte, "max": lte - 1}
+        else:
+            gte, lte = f"now-{round(end - start)}s", "now"
+            time_filter = {"gte": gte, "lte": lte}
+            histogram["extended_bounds"] = {"min": gte, "max": lte}
 
         base_filters = self._base_filters(
             tenant_id=tenant_id, auth_type=auth_type, task_types=task_types, inference_only=True,
         )
         query = {"bool": {"filter": [
-            {"range": {"@timestamp": {"gte": f"now-{range_secs}s", "lte": "now"}}}, *base_filters,
+            {"range": {"@timestamp": time_filter}}, *base_filters,
         ]}}
         aggs = {
             "over_time": {
-                "date_histogram": {
-                    "field": "@timestamp",
-                    "fixed_interval": step,
-                    "extended_bounds": {"min": f"now-{range_secs}s", "max": "now"},
-                },
+                "date_histogram": histogram,
                 "aggs": {"by_status": self._status_filters_agg()},
             }
         }
@@ -391,7 +451,7 @@ class OpenSearchMeteringService(MeteringService):
     async def active_tenants(
         self, time_range: Optional[str], valid_names: Union[set, None, _Unset] = _UNSET
     ) -> dict:
-        window = TIME_RANGES.get(time_range or "all")
+        window = _os_window(time_range)
         base_filters = self._base_filters(auth_type=API_KEY_AUTH_TYPE, inference_only=True)
         query = self._windowed_query(window, base_filters)
         aggs = {"tenants": {"terms": {"field": "tenant_id", "size": 10000}}}
@@ -481,9 +541,9 @@ class OpenSearchMeteringService(MeteringService):
             return None
 
     async def usage_concentration(
-        self, limit: int, time_range: Optional[str], task_types: Optional[list[str]] = None,
+        self, limit: int, time_range: TimeRange, task_types: Optional[list[str]] = None,
     ) -> dict:
-        window = TIME_RANGES.get(time_range or "all")
+        window = _os_window(time_range)
         base_filters = self._base_filters(
             auth_type=API_KEY_AUTH_TYPE, task_types=task_types, inference_only=True,
         )
@@ -540,7 +600,7 @@ class OpenSearchMeteringService(MeteringService):
         self, limit: int, time_range: Optional[str], tenant: Optional[str] = None,
         tenant_id: Optional[str] = None,
     ) -> dict:
-        window = TIME_RANGES.get(time_range or "all")
+        window = _os_window(time_range)
         base_filters = self._base_filters(
             tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE, inference_only=True,
         )
@@ -602,7 +662,7 @@ class OpenSearchMeteringService(MeteringService):
         tenant_id: Optional[str] = None,
     ) -> dict:
         active_services = services or list(SERVICE_BREAKDOWN_CONFIG)
-        window = TIME_RANGES.get(time_range or "all")
+        window = _os_window(time_range)
         base_filters = self._base_filters(
             tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE, inference_only=True,
         )
@@ -661,6 +721,38 @@ class OpenSearchMeteringService(MeteringService):
                 "services": active_services,
             },
         }
+
+    async def first_request_at(
+        self, tenant: Optional[str], tenant_id: Optional[str] = None,
+    ) -> Optional[datetime]:
+        """Exact earliest API-key inference request in the index for the
+        tenant (all tenants when tenant_id is None) — a `min` on
+        @timestamp, bounded only by the index's own retention. See
+        MeteringService.first_request_at for how /overview uses it.
+
+        `tenant` (the name) has no OpenSearch field; see `_base_filters`.
+        Unlike the dashboard KPIs, this doesn't use aggregate()'s fail-soft
+        default: /overview caches the answer for an hour, so a cluster error
+        read as "no requests" would stick. A failed search raises instead,
+        and /overview falls back to the quota_usage value without caching.
+
+        A name-only scope (``tenant`` set, ``tenant_id`` not) returns None
+        rather than querying: with no id to filter on, the query would be
+        platform-wide and hand one tenant the platform's earliest request.
+        """
+        if tenant_id is None and tenant is not None:
+            return None
+        filters = self._base_filters(
+            tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE, inference_only=True,
+        )
+        query = {"bool": {"filter": filters}} if filters else {"match_all": {}}
+        aggregations = await self._os_client.aggregate(
+            query, {"first": {"min": {"field": "@timestamp"}}}, raise_on_error=True,
+        )
+        value = aggregations.get("first", {}).get("value")
+        if value is None:
+            return None
+        return datetime.fromtimestamp(value / 1000, tz=timezone.utc)
 
     async def model_usage_growth_pct(self) -> Optional[float]:
         """Overall LLM request volume, rolling last 30 days vs the 30 days
@@ -722,7 +814,7 @@ class OpenSearchMeteringService(MeteringService):
         """
         unit_map = await inference_type_cache.get_unit_map_standalone()
 
-        window = TIME_RANGES.get(time_range or "all")
+        window = _os_window(time_range)
         base_filters = self._base_filters(
             tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE,
             task_types=service_filter, inference_only=True,
@@ -768,7 +860,7 @@ class OpenSearchMeteringService(MeteringService):
         }
 
     async def model_breakdown(
-        self, tenant: Optional[str], time_range: Optional[str],
+        self, tenant: Optional[str], time_range: TimeRange,
         tenant_id: Optional[str] = None,
         task_types: Optional[list[str]] = None,
     ) -> dict:
@@ -795,7 +887,7 @@ class OpenSearchMeteringService(MeteringService):
         model-level view but NOT the service-level one).
         """
         unit_map = await inference_type_cache.get_unit_map_standalone()
-        window = TIME_RANGES.get(time_range or "all")
+        window = _os_window(time_range)
         base_filters = self._base_filters(
             tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE,
             task_types=task_types, inference_only=True,

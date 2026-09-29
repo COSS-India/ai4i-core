@@ -128,6 +128,10 @@ class CoreSettings(BaseSettings):
     model_cache_ttl_seconds: int = 3600
     service_cache_ttl_seconds: int = 300
     metering_cache_ttl_seconds: int = 60
+    # /overview's metering-source first_request_at, cached per tenant scope on
+    # its own key: it's a full-retention subquery, and it only moves when a
+    # tenant sends its first request.
+    metering_first_usage_cache_ttl_seconds: int = 3600
     ppu_tier_cache_ttl_seconds: int = 600
     # Auto-refresh interval exposed to the dashboard (METERING_REFRESH_INTERVAL_SECONDS).
     metering_refresh_interval_seconds: int = 60
@@ -137,11 +141,16 @@ class CoreSettings(BaseSettings):
     # MeteringService.model_usage_growth_pct() to refuse its rolling
     # last-30-days-vs-prior-30-days comparison when it can't fully cover the
     # flat 60-day lookback, rather than silently computing from whatever
-    # partial data survives retention. Defaults to Prometheus's own
-    # out-of-box default (15d) — deliberately conservative, since we can't
-    # know this repo's operator has raised it. Set
-    # PROMETHEUS_RETENTION_DAYS to match your actual retention (>= 60d
-    # required) to get a real percentage instead of null.
+    # partial data survives retention. Also the earliest `from` the Usage
+    # Dashboard's custom date range accepts (routes/metering.py
+    # _parse_from_to). Defaults to 15, Prometheus's own default retention,
+    # so a deployment that never sets PROMETHEUS_RETENTION_DAYS can't claim
+    # more history than it keeps. Set it explicitly per environment once its
+    # Prometheus is confirmed to retain longer (env.template sets 90 for
+    # local, matching --storage.tsdb.retention.time=90d in
+    # docker-compose-local.yml). A value above the real retention lets custom
+    # ranges read pruned data (each series' whole cumulative counter counted
+    # as usage) and lets model_usage_growth_pct compute from partial data.
     prometheus_retention_days: int = 15
 
     # ── Model management business rules ──

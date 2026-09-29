@@ -194,3 +194,30 @@ class TestOverviewTenantDataUsesDualActiveTenants:
         with patch.object(svc, "active_tenants", wraps=svc.active_tenants) as spy:
             await svc.overview_tenant_data(["24h"])
         assert spy.called
+
+
+@pytest.mark.asyncio
+class TestFirstRequestAtDualRun:
+    async def test_serves_prometheus_and_logs_delta(self):
+        from datetime import datetime, timezone
+        svc = _make_dual_service()
+        prom_ts = datetime(2026, 7, 2, 10, 0, tzinfo=timezone.utc).timestamp()
+        svc._client.query = AsyncMock(return_value=[{"metric": {}, "value": [0, str(prom_ts)]}])
+        svc._os_client.aggregate = AsyncMock(return_value={"first": {"value": 1_751_450_400_000}})
+
+        with patch("app.services.metering_service_dual.logger") as mock_logger:
+            result = await svc.first_request_at(tenant=None)
+
+        assert result == datetime(2026, 7, 2, 9, 0, tzinfo=timezone.utc)
+        assert "DELTA" in mock_logger.warning.call_args.args[0]
+
+    async def test_opensearch_failure_still_serves_prometheus(self):
+        from datetime import datetime, timezone
+        svc = _make_dual_service()
+        prom_ts = datetime(2026, 7, 2, 10, 0, tzinfo=timezone.utc).timestamp()
+        svc._client.query = AsyncMock(return_value=[{"metric": {}, "value": [0, str(prom_ts)]}])
+        svc._os_client.aggregate = AsyncMock(side_effect=RuntimeError("cluster down"))
+
+        result = await svc.first_request_at(tenant=None)
+
+        assert result == datetime(2026, 7, 2, 9, 0, tzinfo=timezone.utc)
