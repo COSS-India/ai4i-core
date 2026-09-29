@@ -170,9 +170,9 @@ def test_monitoring_alert_subject_uses_enum_value_and_unit(alert):
         to="a@b.com", recipient_name="Priya", alert=alert,
         threshold="10", alert_datetime="2026-09-28", current_value="11",
     )
-    assert message.subject == f"{alert.value} at 10{unit}"
+    assert message.subject == f"{alert.value} — Threshold 10{unit}"
     assert unit == ("%" if alert.name.startswith("ERROR_RATE") else "s")
-    assert "—" not in message.subject
+    assert "Acme Bank" not in message.subject
 
 
 def test_monitoring_alert_portal_link_uses_configured_url(monkeypatch):
