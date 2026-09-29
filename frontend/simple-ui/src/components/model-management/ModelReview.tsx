@@ -6,6 +6,7 @@ import {
   isModelVersionStatusActive,
 } from "../../config/constants";
 import FieldLabel from "../common/FieldLabel";
+import ReadOnlyField from "../common/ReadOnlyField";
 import { resolveTaskType } from "../../utils/platformService";
 
 /** Fields the registry already shows for a model. JSON stays the contract. */
@@ -63,12 +64,7 @@ function ReviewField({
   label: string;
   children: React.ReactNode;
 }) {
-  return (
-    <Box>
-      <FieldLabel variant="inline">{label}</FieldLabel>
-      {children}
-    </Box>
-  );
+  return <ReadOnlyField label={label}>{children}</ReadOnlyField>;
 }
 
 export default function ModelReview({

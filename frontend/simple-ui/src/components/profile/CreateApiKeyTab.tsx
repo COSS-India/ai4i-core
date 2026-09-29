@@ -103,7 +103,7 @@ export default function CreateApiKeyTab({
                     />
                   </HStack>
                   <Text fontSize="xs" color="ink.600" mb={2}>
-                    This token will not be shown again. Store it securely. The modal stays open until you close it.
+                    This token will not be shown again. Store it securely before you leave this page.
                   </Text>
                   <HStack align="stretch" spacing={2}>
                     <Input

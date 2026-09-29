@@ -1,8 +1,8 @@
 """Notification/alert catalog read endpoint — Adopter-facing, ADMIN only.
 
 One endpoint for both catalogs: ``type`` selects which rows of
-configs_notification_alert come back (NOTIFICATION or ALERT), same response
-shape either way. The alert catalog's PATCH lives separately in
+configs_notification_alert come back (NOTIFICATION, ALERT or MONITORING), same
+response shape for all three. The alert catalog's PATCH lives separately in
 app.routes.alert_catalog — this module is read-only.
 """
 
@@ -31,7 +31,8 @@ async def list_catalog(
     """List the notification or alert catalog: the seeded rows of the
     requested ``?type=``, each decorated with its display name/description,
     its scope (GLOBAL/INSTITUTION) and its currently saved channels/
-    thresholds (thresholds only for ALERT rows). Adopter Admin only."""
+    thresholds (``thresholds`` only for ALERT rows, ``monitoring_thresholds``
+    only for MONITORING rows). Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     items = await catalog_service.list_catalog(session, catalog_type)

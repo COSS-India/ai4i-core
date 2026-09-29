@@ -69,7 +69,13 @@ async def list_subscriptions(
     tenant_id: str,
     catalog_type: Optional[NotificationType] = None,
 ) -> List[SubscriptionItem]:
-    query = select(ConfigNotificationAlert).order_by(ConfigNotificationAlert.id)
+    # MONITORING rows are platform-level (no tenant, no subscription) — never
+    # on the institution surface, with or without ?type=.
+    query = (
+        select(ConfigNotificationAlert)
+        .where(ConfigNotificationAlert.type != NotificationType.MONITORING.value)
+        .order_by(ConfigNotificationAlert.id)
+    )
     if catalog_type is not None:
         query = query.where(ConfigNotificationAlert.type == catalog_type.value)
     catalog_rows = (await session.execute(query)).scalars().all()
@@ -92,7 +98,9 @@ async def _get_catalog_row(session: AsyncSession, notification_id: int) -> Confi
         select(ConfigNotificationAlert).where(ConfigNotificationAlert.id == notification_id)
     )
     row = result.scalar_one_or_none()
-    if row is None:
+    # Same exclusion as list_subscriptions: an institution can't subscribe
+    # to, or add recipients on, a MONITORING row.
+    if row is None or row.type == NotificationType.MONITORING.value:
         raise EntityNotFoundError(f"Catalog entry '{notification_id}'")
     return row
 

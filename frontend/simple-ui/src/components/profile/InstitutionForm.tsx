@@ -2,14 +2,14 @@ import {
   FormControl,
   FormErrorMessage,
   Input,
-  SimpleGrid,
-  Text,
   VStack,
 } from "@chakra-ui/react";
 import React from "react";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import FieldHint from "../common/FieldHint";
 import FieldLabel from "../common/FieldLabel";
+import FormSection from "../common/FormSection";
+import ReadOnlyField from "../common/ReadOnlyField";
 import { dash } from "../../utils/valueFormatters";
 
 export type InstitutionFormMode = "create" | "edit" | "view";
@@ -43,14 +43,6 @@ type InstitutionFormProps = {
   showOrganisation?: boolean;
 };
 
-function ReadOnlyValue({ children }: { children: React.ReactNode }) {
-  return (
-    <Text fontSize="md" color="ink.700" py={1}>
-      {children}
-    </Text>
-  );
-}
-
 /** Shared Institution fields. Mode changes editability, not the field list. */
 export default function InstitutionForm({
   mode,
@@ -80,79 +72,64 @@ export default function InstitutionForm({
     return null;
   })();
 
-  const fields = (
-    <>
-      {showOrganisation || !isView ? (
-      <FormControl
-        isRequired={!isView}
-        isInvalid={!isView && Boolean(errors.organisation)}
-      >
-        <FieldLabel variant={isView ? "inline" : undefined}>Organisation</FieldLabel>
-        {isView ? (
-          <ReadOnlyValue>{dash(values.organisation)}</ReadOnlyValue>
-        ) : (
-          <>
-            <Input
-              value={values.organisation}
-              onChange={(e) => onOrganisationChange?.(e.target.value)}
-              onBlur={(e) => onOrganisationBlur?.(e.target.value)}
-              placeholder={isCreate ? FIELD_HINTS.tenant.organisation.placeholder : undefined}
-              maxLength={100}
-            />
-            <FormErrorMessage>{errors.organisation}</FormErrorMessage>
-            <FieldHint show={!errors.organisation}>
-              {FIELD_HINTS.tenant.organisation.helper}
-            </FieldHint>
-          </>
-        )}
-      </FormControl>
-      ) : null}
+  if (isView) {
+    return (
+      <FormSection title="Institution">
+        {showOrganisation ? (
+          <ReadOnlyField label="Organisation">{dash(values.organisation)}</ReadOnlyField>
+        ) : null}
+        <ReadOnlyField label="Contact Name">{dash(values.contact_name)}</ReadOnlyField>
+        <ReadOnlyField label="Email">{dash(values.email)}</ReadOnlyField>
+        <ReadOnlyField label="Phone Number">{dash(values.phone_number)}</ReadOnlyField>
+      </FormSection>
+    );
+  }
 
-      <FormControl
-        isRequired={isCreate}
-        isInvalid={!isView && Boolean(errors.contact_name)}
-      >
-        <FieldLabel variant={isView ? "inline" : undefined}>Contact Name</FieldLabel>
-        {isView ? (
-          <ReadOnlyValue>{dash(values.contact_name)}</ReadOnlyValue>
-        ) : (
-          <>
-            <Input
-              value={values.contact_name}
-              onChange={(e) => onContactNameChange?.(e.target.value)}
-              onBlur={
-                isCreate
-                  ? (e) => onContactNameBlur?.(e.target.value)
-                  : undefined
-              }
-              placeholder={isCreate ? FIELD_HINTS.tenant.contactName.placeholder : undefined}
-            />
-            <FormErrorMessage>{errors.contact_name}</FormErrorMessage>
-            <FieldHint show={!errors.contact_name}>
-              {FIELD_HINTS.tenant.contactName.helper}
-            </FieldHint>
-          </>
-        )}
-      </FormControl>
+  return (
+    <FormSection title="Institution">
+      <VStack spacing={4} align="stretch">
+        <FormControl isRequired isInvalid={Boolean(errors.organisation)}>
+          <FieldLabel>Organisation</FieldLabel>
+          <Input
+            value={values.organisation}
+            onChange={(e) => onOrganisationChange?.(e.target.value)}
+            onBlur={(e) => onOrganisationBlur?.(e.target.value)}
+            placeholder={isCreate ? FIELD_HINTS.tenant.organisation.placeholder : undefined}
+            maxLength={100}
+          />
+          <FormErrorMessage>{errors.organisation}</FormErrorMessage>
+          <FieldHint show={!errors.organisation}>
+            {FIELD_HINTS.tenant.organisation.helper}
+          </FieldHint>
+        </FormControl>
 
-      <FormControl
-        isRequired={isCreate || (mode === "edit" && emailEditable)}
-        isInvalid={
-          !isView &&
-          (isCreate || emailEditable) &&
-          Boolean(errors.email)
-        }
-      >
-        <FieldLabel variant={isView ? "inline" : undefined}>Email</FieldLabel>
-        {isView || (mode === "edit" && !emailEditable) ? (
-          <>
-            <ReadOnlyValue>{dash(values.email)}</ReadOnlyValue>
-            {mode === "edit" && !emailEditable ? (
-              <FieldHint>{FIELD_HINTS.tenant.emailPendingOnly}</FieldHint>
-            ) : null}
-          </>
+        <FormControl isRequired={isCreate} isInvalid={Boolean(errors.contact_name)}>
+          <FieldLabel>Contact Name</FieldLabel>
+          <Input
+            value={values.contact_name}
+            onChange={(e) => onContactNameChange?.(e.target.value)}
+            onBlur={
+              isCreate ? (e) => onContactNameBlur?.(e.target.value) : undefined
+            }
+            placeholder={isCreate ? FIELD_HINTS.tenant.contactName.placeholder : undefined}
+          />
+          <FormErrorMessage>{errors.contact_name}</FormErrorMessage>
+          <FieldHint show={!errors.contact_name}>
+            {FIELD_HINTS.tenant.contactName.helper}
+          </FieldHint>
+        </FormControl>
+
+        {mode === "edit" && !emailEditable ? (
+          <FormControl>
+            <ReadOnlyField label="Email">{dash(values.email)}</ReadOnlyField>
+            <FieldHint>{FIELD_HINTS.tenant.emailPendingOnly}</FieldHint>
+          </FormControl>
         ) : (
-          <>
+          <FormControl
+            isRequired={isCreate || emailEditable}
+            isInvalid={Boolean(errors.email)}
+          >
+            <FieldLabel>Email</FieldLabel>
             <Input
               type="email"
               value={values.email}
@@ -186,42 +163,22 @@ export default function InstitutionForm({
                 </FieldHint>
               </>
             )}
-          </>
+          </FormControl>
         )}
-      </FormControl>
 
-      <FormControl isInvalid={!isView && Boolean(errors.phone_number)}>
-        <FieldLabel variant={isView ? "inline" : undefined}>Phone Number</FieldLabel>
-        {isView ? (
-          <ReadOnlyValue>{dash(values.phone_number)}</ReadOnlyValue>
-        ) : (
-          <>
-            <Input
-              value={values.phone_number}
-              onChange={(e) => onPhoneChange?.(e.target.value)}
-              placeholder={isCreate ? FIELD_HINTS.tenant.phone.placeholder : undefined}
-            />
-            <FormErrorMessage>{errors.phone_number}</FormErrorMessage>
-            <FieldHint show={!errors.phone_number}>
-              {FIELD_HINTS.tenant.phone.helper}
-            </FieldHint>
-          </>
-        )}
-      </FormControl>
-    </>
-  );
-
-  if (isView) {
-    return (
-      <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-        {fields}
-      </SimpleGrid>
-    );
-  }
-
-  return (
-    <VStack spacing={4} align="stretch">
-      {fields}
-    </VStack>
+        <FormControl isInvalid={Boolean(errors.phone_number)}>
+          <FieldLabel>Phone Number</FieldLabel>
+          <Input
+            value={values.phone_number}
+            onChange={(e) => onPhoneChange?.(e.target.value)}
+            placeholder={isCreate ? FIELD_HINTS.tenant.phone.placeholder : undefined}
+          />
+          <FormErrorMessage>{errors.phone_number}</FormErrorMessage>
+          <FieldHint show={!errors.phone_number}>
+            {FIELD_HINTS.tenant.phone.helper}
+          </FieldHint>
+        </FormControl>
+      </VStack>
+    </FormSection>
   );
 }

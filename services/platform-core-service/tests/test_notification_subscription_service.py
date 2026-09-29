@@ -27,6 +27,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+from sqlalchemy.sql import operators
 
 from app.core.exceptions import AppError, EntityNotFoundError, ValidationError
 from app.models.notification_management.tenant_notification_subscription import (
@@ -109,12 +110,21 @@ class _Session:
             result.scalars.return_value.all.return_value = [
                 r for r in self.sub_rows if r.tenant_id == params["tenant_id_1"]
             ]
-        elif "type_1" in params:
-            result.scalars.return_value.all.return_value = [
-                r for r in self.catalog_rows if r.type == params["type_1"]
-            ]
         else:
-            result.scalars.return_value.all.return_value = list(self.catalog_rows)
+            # The catalog list query. Apply every `type` filter with its real
+            # operator (== for ?type=, != for the always-on MONITORING
+            # exclusion) — keying on `type_1` alone would read `!=` as `==`
+            # and return exactly the rows the service meant to drop.
+            ops = {operators.eq: lambda a, b: a == b, operators.ne: lambda a, b: a != b}
+            type_filters = [
+                (ops[crit.operator], crit.right.value)
+                for crit in stmt._where_criteria
+                if getattr(crit.left, "key", None) == "type"
+            ]
+            result.scalars.return_value.all.return_value = [
+                r for r in self.catalog_rows
+                if all(op(r.type, value) for op, value in type_filters)
+            ]
         return result
 
     async def commit(self):
@@ -310,3 +320,66 @@ class TestNotificationChannelIsImportedNotDuplicated:
             "the channel string must not be re-declared in subscription_service — "
             "import NOTIFICATION_ALERT_UPDATES_CHANNEL from catalog_service instead"
         )
+
+
+# ── MONITORING rows are platform-level: never on the institution surface ────
+
+
+def _monitoring_row(id=10, name="LATENCY_P95"):
+    # Seeded GLOBAL, so before the exclusion an institution saw it as
+    # subscribed + locked.
+    return _catalog_row(id=id, name=name, type="MONITORING", scope="GLOBAL")
+
+
+@pytest.mark.asyncio
+class TestMonitoringRowsAreNotSubscribable:
+    async def test_list_without_type_omits_monitoring_rows(self):
+        # Review scenario: GET /notification-alerts/subscriptions (no ?type=)
+        # returned all 5 monitoring rows to an Institution Admin.
+        session = _Session(
+            catalog_rows=[
+                _catalog_row(id=1, name="TIER_ASSIGNED", type="NOTIFICATION", scope="GLOBAL"),
+                _catalog_row(id=2, name="QUOTA_THRESHOLD", type="ALERT", scope="INSTITUTION"),
+                _monitoring_row(id=10, name="LATENCY_P95"),
+                _monitoring_row(id=11, name="ERROR_RATE_5XX"),
+            ],
+        )
+        items = await svc.list_subscriptions(session, tenant_id="7")
+        assert [i.notification_id for i in items] == [1, 2]
+
+    async def test_list_with_type_monitoring_is_empty(self):
+        session = _Session(catalog_rows=[_monitoring_row()])
+        items = await svc.list_subscriptions(
+            session, tenant_id="7", catalog_type=svc.NotificationType.MONITORING
+        )
+        assert items == []
+
+    async def test_list_with_type_alert_still_filters_to_alert_rows(self):
+        session = _Session(
+            catalog_rows=[
+                _catalog_row(id=1, type="NOTIFICATION"),
+                _catalog_row(id=2, name="QUOTA_THRESHOLD", type="ALERT"),
+                _monitoring_row(),
+            ],
+        )
+        items = await svc.list_subscriptions(
+            session, tenant_id="7", catalog_type=svc.NotificationType.ALERT
+        )
+        assert [i.notification_id for i in items] == [2]
+
+    async def test_toggling_a_monitoring_row_is_not_found_and_writes_nothing(self):
+        session = _Session(catalog_rows=[_monitoring_row()])
+        with pytest.raises(EntityNotFoundError):
+            await svc.update_subscription_state(
+                session, tenant_id="7", notification_id=10, subscribed=True
+            )
+        assert session.added == [] and session.commits == 0
+
+    async def test_setting_recipients_on_a_monitoring_row_is_not_found_and_writes_nothing(self):
+        session = _Session(catalog_rows=[_monitoring_row()])
+        with pytest.raises(EntityNotFoundError):
+            await svc.update_subscription_recipients(
+                session, tenant_id="7", notification_id=10,
+                recipients=["u1"], auth_db=_AuthSession(["u1"]),
+            )
+        assert session.added == [] and session.commits == 0

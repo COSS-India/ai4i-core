@@ -159,6 +159,56 @@ class TestBuildMessageDispatch:
         assert msg.subject == "Budget Threshold at 80% — Acme Bank"
         assert "82%" in msg.html_body
 
+    def test_latency_p95_renders_seconds_not_percent_and_no_institution(self):
+        # The gap this pins: LATENCY_P95 used to raise "No email template
+        # mapping", and the metering alert template would have rendered
+        # "P95 Latency at 5% — <institution>" — wrong unit, and monitoring
+        # alerts have no institution even if the caller passes one.
+        msg = emailer._build_message(
+            recipient=_recipient(), institution_name="Acme Bank", event_name="LATENCY_P95",
+            details=["5", "2026-09-28 10:00 IST", "7.3"],
+        )
+        assert msg.subject == "P95 Latency at 5s"
+        for body in (msg.html_body, msg.text_body):
+            assert "5s" in body
+            assert "Current value: 7.3s" in body
+            assert "2026-09-28 10:00 IST" in body
+            # Not a bare "%" check — _base.html's layout has width="100%".
+            assert "5%" not in body and "7.3%" not in body
+            assert "Acme Bank" not in body
+
+    def test_error_rate_5xx_renders_percent(self):
+        msg = emailer._build_message(
+            recipient=_recipient(), institution_name="Acme Bank", event_name="ERROR_RATE_5XX",
+            details=["10", "2026-09-28 10:00 IST", "12.5"],
+        )
+        assert msg.subject == "5xx Error Rate at 10%"
+        assert "Current value: 12.5%" in msg.text_body
+        assert "Acme Bank" not in msg.html_body
+
+    @pytest.mark.parametrize(
+        "event_name",
+        # The 5 MONITORING names seeded by platform-core's
+        # a2b4d6f8c0e3_seed_monitoring_alert_catalog — spelled out rather
+        # than read from MonitoringAlertName, so a rename on either side fails here.
+        ["ERROR_RATE_4XX", "ERROR_RATE_5XX", "LATENCY_P50", "LATENCY_P95", "LATENCY_P99"],
+    )
+    def test_every_monitoring_catalog_row_has_a_template(self, event_name):
+        msg = emailer._build_message(
+            recipient=_recipient(), institution_name="Acme Bank", event_name=event_name,
+            details=["1", "2026-09-28 10:00 IST", "2"],
+        )
+        assert msg.subject.endswith(("at 1%", "at 1s"))
+        assert emailer._EXPECTED_DETAIL_COUNTS[event_name] == 3
+
+    def test_monitoring_short_array_degrades_to_missing_marker(self):
+        msg = emailer._build_message(
+            recipient=_recipient(), institution_name="Acme Bank", event_name="LATENCY_P99",
+            details=["20"],  # alert_datetime and current_value missing
+        )
+        assert msg.subject == "P99 Latency at 20s"
+        assert emailer._MISSING in msg.text_body
+
     def test_unknown_event_name_raises(self):
         with pytest.raises(ValueError):
             emailer._build_message(
@@ -186,3 +236,24 @@ class TestSendOneNeverRaises:
             recipient=_recipient(), institution_name="Acme Bank", event_name="SOMETHING_ELSE", details=[],
         )
         assert ok is False
+
+    async def test_monitoring_event_is_sent_not_reported_as_false(self, monkeypatch):
+        # Before the monitoring template existed, send_one swallowed the
+        # "No email template mapping" ValueError for LATENCY_P95 and returned
+        # False — the ledger settled to failed and nothing was sent.
+        sent = []
+
+        class _FakeClient:
+            async def send_safe(self, message):
+                sent.append(message)
+                return True
+
+        monkeypatch.setattr(emailer, "_client", lambda: _FakeClient())
+        monkeypatch.setattr(emailer, "_send_deadline_s", lambda: 5.0)
+
+        ok = await emailer.send_one(
+            recipient=_recipient(), institution_name="Acme Bank", event_name="LATENCY_P95",
+            details=["5", "2026-09-28 10:00 IST", "7.3"],
+        )
+        assert ok is True
+        assert [m.subject for m in sent] == ["P95 Latency at 5s"]

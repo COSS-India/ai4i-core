@@ -43,7 +43,9 @@ async def update_catalog(
     """Update one catalog row by name (NOTIFICATION or ALERT — whichever
     that name actually is): channels, scope and/or thresholds. Only the
     fields present in the body are changed. thresholds is rejected for a
-    NOTIFICATION-type row. Adopter Admin only."""
+    NOTIFICATION-type row. A MONITORING row is a 404 here — it's updated
+    through PATCH /notification-alerts/monitoring-catalog/{name}. Adopter
+    Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     updated_by = request.headers.get("X-User-Id")
