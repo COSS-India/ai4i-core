@@ -35,7 +35,9 @@ router = APIRouter(
 )
 
 
-@router.get("/subscriptions", response_model=ListSubscriptionResponse)
+@router.get(
+    "/subscriptions", response_model=ListSubscriptionResponse, response_model_exclude_none=True,
+)
 async def list_subscriptions(
     request: Request,
     tenant_id: str = Query(..., description="Institution (tenant) ID."),
@@ -52,7 +54,12 @@ async def list_subscriptions(
     return ListSubscriptionResponse(success=True, data=SubscriptionListData(items=items))
 
 
-@router.patch("/subscriptions/{notification_id}", responses=error_responses(404, 409))
+@router.patch(
+    "/subscriptions/{notification_id}",
+    response_model=UpdateSubscriptionResponse,
+    response_model_exclude_none=True,
+    responses=error_responses(404, 409),
+)
 async def update_subscription_state(
     notification_id: int,
     payload: SubscriptionPatch,
@@ -78,7 +85,12 @@ async def update_subscription_state(
     )
 
 
-@router.put("/subscriptions/{notification_id}", responses=error_responses(404))
+@router.put(
+    "/subscriptions/{notification_id}",
+    response_model=UpdateSubscriptionResponse,
+    response_model_exclude_none=True,
+    responses=error_responses(404),
+)
 async def update_subscription_recipients(
     notification_id: int,
     payload: SubscriptionRecipientsUpdate,
