@@ -168,10 +168,10 @@ class TestBuildMessageDispatch:
             recipient=_recipient(), institution_name="Acme Bank", event_name="LATENCY_P95",
             details=["5", "2026-09-28 10:00 IST", "7.3"],
         )
-        assert msg.subject == "P95 Latency at 5s"
+        assert msg.subject == "P95 Latency — Threshold 5s"
         for body in (msg.html_body, msg.text_body):
             assert "5s" in body
-            assert "Current value: 7.3s" in body
+            assert "Current Value: 7.3s" in body
             assert "2026-09-28 10:00 IST" in body
             # Not a bare "%" check — _base.html's layout has width="100%".
             assert "5%" not in body and "7.3%" not in body
@@ -182,8 +182,8 @@ class TestBuildMessageDispatch:
             recipient=_recipient(), institution_name="Acme Bank", event_name="ERROR_RATE_5XX",
             details=["10", "2026-09-28 10:00 IST", "12.5"],
         )
-        assert msg.subject == "5xx Error Rate at 10%"
-        assert "Current value: 12.5%" in msg.text_body
+        assert msg.subject == "5xx Error Rate — Threshold 10%"
+        assert "Current Value: 12.5%" in msg.text_body
         assert "Acme Bank" not in msg.html_body
 
     @pytest.mark.parametrize(
@@ -198,7 +198,7 @@ class TestBuildMessageDispatch:
             recipient=_recipient(), institution_name="Acme Bank", event_name=event_name,
             details=["1", "2026-09-28 10:00 IST", "2"],
         )
-        assert msg.subject.endswith(("at 1%", "at 1s"))
+        assert msg.subject.endswith(("— Threshold 1%", "— Threshold 1s"))
         assert emailer._EXPECTED_DETAIL_COUNTS[event_name] == 3
 
     def test_monitoring_short_array_degrades_to_missing_marker(self):
@@ -206,7 +206,7 @@ class TestBuildMessageDispatch:
             recipient=_recipient(), institution_name="Acme Bank", event_name="LATENCY_P99",
             details=["20"],  # alert_datetime and current_value missing
         )
-        assert msg.subject == "P99 Latency at 20s"
+        assert msg.subject == "P99 Latency — Threshold 20s"
         assert emailer._MISSING in msg.text_body
 
     def test_unknown_event_name_raises(self):
@@ -256,4 +256,4 @@ class TestSendOneNeverRaises:
             details=["5", "2026-09-28 10:00 IST", "7.3"],
         )
         assert ok is True
-        assert [m.subject for m in sent] == ["P95 Latency at 5s"]
+        assert [m.subject for m in sent] == ["P95 Latency — Threshold 5s"]

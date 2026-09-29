@@ -400,7 +400,7 @@ def render_monitoring_alert_email(
     return _render(
         "monitoring_alert",
         to=to,
-        subject=f"{alert.value} at {threshold}{unit}",
+        subject=f"{alert.value} — Threshold {threshold}{unit}",
         ctx={
             "recipient_name": recipient_name,
             "alert_name": alert.value,
