@@ -45,6 +45,7 @@
 
     { "endpoint": "GET:/api/v1/auth/tenants/tier/list",                    "permissionRequired": 145, "description": "List tenants with an assigned tier (ppu.tenant.read); replaces GET /pay-per-use/tenant/tier" },
     { "endpoint": "PATCH:/api/v1/auth/tenants/{tenant_id}/tier",           "permissionRequired": 144, "description": "Assign/reassign a tenant's tier (ppu.tenant.assign); replaces POST /pay-per-use/tenant/tier and PATCH .../tier/reassign" },
+    { "endpoint": "DELETE:/api/v1/auth/tenants/{tenant_id}/tier",          "permissionRequired": 144, "description": "Remove a tenant's tier assignment, tier_id → null (ppu.tenant.assign); same permission as assign/reassign" },
     { "endpoint": "PATCH:/api/v1/auth/tenants/{tenant_id}/budget",         "permissionRequired": 144, "description": "Revise tenant budget, top-up/top-down (ppu.tenant.assign); replaces PATCH /pay-per-use/tenant/budget" },
 
     { "endpoint": "GET:/api/v1/services",                                  "permissionRequired": 51, "description": "List all services (service.read)" },

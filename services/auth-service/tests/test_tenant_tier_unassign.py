@@ -1,0 +1,375 @@
+"""DELETE /auth/tenants/{id}/tier — removing a tenant's tier assignment.
+
+The bug this pins: tenants.tier_id is not the only copy of a tenant's tier.
+Every already-issued API key carries its own cached tier_id (Redis hash +
+api_key.cached_data), computed once at create_api_key and carried forward by
+every other cache writer (APIKeyService._preserved_tier_id). So:
+
+* Clearing only tenants.tier_id leaves every existing key served — and
+  billed, and entitlement-checked — under the OLD tier.
+* Deleting the cached field instead is worse: /auth/validate then emits
+  X-Tier-ID="", and inference-service skips its tier entitlement check
+  entirely on an empty header (orchestrator.py / llm_service.py), so the
+  key could reach every tier-restricted service.
+
+The fix writes an explicit UNASSIGNED_TIER_ID ("") onto every key and
+/auth/validate rejects exactly that value with 403 NO_ACTIVE_TIER, while an
+ABSENT tier_id (legacy pre-tier key) keeps being served unchanged.
+"""
+
+import json
+import pathlib
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
+
+import pytest
+from fastapi import FastAPI, HTTPException, Response
+
+from app.core.constants import UNASSIGNED_TIER_ID
+from app.core.exceptions import EntityNotFoundError
+from app.core.permission_checker import PermissionChecker
+from app.models.api_key import APIKey
+from app.models.tenant import Tenant, TenantStatus
+from app.models.user import User
+from app.routes.validation import _validate_api_key
+from app.services.api_key_service import APIKeyService
+from app.services.tenant_service import TenantService
+
+
+def _admin_user() -> User:
+    return User(id=uuid4(), email="test-admin@example.invalid", username=uuid4().hex[:12])
+
+
+def _tenant(*, tier_id=None, tenant_id=1) -> Tenant:
+    return Tenant(
+        id=tenant_id, name="Acme", organisation="Acme", email="test-contact@example.invalid",
+        status=TenantStatus.ACTIVE, tier_id=tier_id,
+    )
+
+
+def _svc(*, roles=("ADMIN",), tenant=None) -> TenantService:
+    svc = TenantService(
+        tenant_repo=AsyncMock(),
+        user_repo=AsyncMock(),
+        role_service=AsyncMock(),
+        verification_repo=AsyncMock(),
+        credentials_repo=AsyncMock(),
+        token_service=AsyncMock(),
+        email_client=AsyncMock(),
+        api_key_service=AsyncMock(),
+        allocation_service=AsyncMock(),
+    )
+    svc._roles.get_user_roles = AsyncMock(return_value=list(roles))
+    svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
+    svc._tenants.update = AsyncMock()
+    svc._tenants.save_and_refresh = AsyncMock()
+    return svc
+
+
+@pytest.fixture(autouse=True)
+def _no_notifications(monkeypatch):
+    """assign_tenant_tier (used by the re-assign test) fires the
+    TIER_ASSIGNED pipeline; keep it off platform_core_db's mock queue."""
+    monkeypatch.setattr(
+        "app.services.tenant_service.is_notification_enabled", AsyncMock(return_value=False)
+    )
+    monkeypatch.setattr(
+        "app.services.tenant_service.check_and_record_action", AsyncMock(return_value=False)
+    )
+    monkeypatch.setattr("app.services.tenant_service.publish_notification_event", MagicMock())
+
+
+def _mock_request() -> MagicMock:
+    request = MagicMock()
+    request.headers = {}  # no X-Original-Method/URI -> endpoint check passes through
+    return request
+
+
+def _validate_result(**overrides) -> dict:
+    base = {"id": 42, "application_id": "7", "tenant_id": "1", "permissions": [1, 2, 3]}
+    base.update(overrides)
+    return base
+
+
+async def _validate(result: dict):
+    api_key_svc = AsyncMock()
+    api_key_svc.validate_api_key.return_value = result
+    response = Response()
+    with patch("app.routes.validation._resolve_service", AsyncMock(return_value=None)):
+        out = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc)
+    return out, response
+
+
+# ── Service: TenantService.unassign_tenant_tier ─────────────────────────────
+
+
+class TestUnassignTenantTierService:
+    @pytest.mark.asyncio
+    async def test_assigned_tenant_is_cleared_and_keys_are_marked(self) -> None:
+        """The exact scenario: Institution on Premium → Remove from Tier.
+        tenants.tier_id must become NULL AND every existing key's cached
+        tier must be overwritten — the DB write alone leaves keys on Premium."""
+        premium = uuid4()
+        tenant = _tenant(tier_id=premium)
+        svc = _svc(tenant=tenant)
+        user = _admin_user()
+
+        result, previous = await svc.unassign_tenant_tier(user, 1)
+
+        assert result is tenant
+        assert previous == premium
+        svc._tenants.update.assert_awaited_once_with(
+            tenant, {"tier_id": None, "updated_by": user.id}
+        )
+        svc._tenants.save_and_refresh.assert_awaited_once_with(tenant)
+        svc._api_keys.mark_tier_unassigned_for_tenant.assert_awaited_once_with(1)
+        # Never routed through the assign path's "force a real tier" writer.
+        svc._api_keys.set_tier_id_for_tenant.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_non_admin_rejected_before_any_read_or_write(self) -> None:
+        svc = _svc(roles=["TENANT ADMIN"], tenant=_tenant(tier_id=uuid4()))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.unassign_tenant_tier(_admin_user(), 1)
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["code"] == "INSUFFICIENT_PERMISSIONS"
+        svc._tenants.get_by_id_for_update.assert_not_awaited()
+        svc._tenants.update.assert_not_awaited()
+        svc._api_keys.mark_tier_unassigned_for_tenant.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unknown_tenant_is_404(self) -> None:
+        svc = _svc(tenant=None)
+
+        with pytest.raises(EntityNotFoundError):
+            await svc.unassign_tenant_tier(_admin_user(), 999)
+
+        svc._tenants.update.assert_not_awaited()
+        svc._api_keys.mark_tier_unassigned_for_tenant.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_already_unassigned_is_a_safe_no_op(self) -> None:
+        """Repeat call: 200, no DB write, previous_tier_id None. The cache
+        mark still runs — it's what lets a retry repair a previous call whose
+        DB write committed but whose cache write failed."""
+        tenant = _tenant(tier_id=None)
+        svc = _svc(tenant=tenant)
+
+        result, previous = await svc.unassign_tenant_tier(_admin_user(), 1)
+
+        assert result is tenant
+        assert previous is None
+        svc._tenants.update.assert_not_awaited()
+        svc._tenants.save_and_refresh.assert_not_awaited()
+        svc._api_keys.mark_tier_unassigned_for_tenant.assert_awaited_once_with(1)
+
+    @pytest.mark.asyncio
+    async def test_twice_in_a_row_writes_the_db_only_once(self) -> None:
+        tenant = _tenant(tier_id=uuid4())
+        svc = _svc(tenant=tenant)
+
+        async def _apply(_tenant_obj, data):
+            for k, v in data.items():
+                setattr(_tenant_obj, k, v)
+        svc._tenants.update = AsyncMock(side_effect=_apply)
+
+        await svc.unassign_tenant_tier(_admin_user(), 1)
+        _, second_previous = await svc.unassign_tenant_tier(_admin_user(), 1)
+
+        assert tenant.tier_id is None
+        assert second_previous is None
+        assert svc._tenants.update.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_only_the_target_tenant_is_touched(self) -> None:
+        tenant = _tenant(tier_id=uuid4(), tenant_id=7)
+        svc = _svc(tenant=tenant)
+
+        await svc.unassign_tenant_tier(_admin_user(), 7)
+
+        svc._tenants.get_by_id_for_update.assert_awaited_once_with(7)
+        assert svc._tenants.update.await_args.args[0] is tenant
+        assert set(svc._tenants.update.await_args.args[1]) == {"tier_id", "updated_by"}
+        svc._api_keys.mark_tier_unassigned_for_tenant.assert_awaited_once_with(7)
+
+    @pytest.mark.asyncio
+    async def test_api_keys_service_missing_does_not_block_unassignment(self) -> None:
+        tenant = _tenant(tier_id=uuid4())
+        svc = _svc(tenant=tenant)
+        svc._api_keys = None
+
+        result, _ = await svc.unassign_tenant_tier(_admin_user(), 1)
+
+        assert result is tenant
+        svc._tenants.update.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_reassign_after_unassign_restores_a_real_cached_tier(self) -> None:
+        """Unassign → assign again must hand keys a real tier back (which
+        /auth/validate serves), not leave the unassigned marker in place."""
+        tenant = _tenant(tier_id=uuid4())
+        svc = _svc(tenant=tenant)
+
+        async def _apply(_tenant_obj, data):
+            for k, v in data.items():
+                setattr(_tenant_obj, k, v)
+        svc._tenants.update = AsyncMock(side_effect=_apply)
+
+        await svc.unassign_tenant_tier(_admin_user(), 1)
+
+        gold = uuid4()
+        tier_row = MagicMock(id=gold)
+        tier_row.name = "Gold"
+        core_db = AsyncMock()
+        core_db.execute = AsyncMock(return_value=MagicMock(first=MagicMock(return_value=tier_row)))
+        await svc.assign_tenant_tier(_admin_user(), 1, str(gold), core_db)
+
+        assert tenant.tier_id == gold
+        svc._api_keys.set_tier_id_for_tenant.assert_awaited_once_with(1, str(gold))
+
+
+# ── Cache: APIKeyService.mark_tier_unassigned_for_tenant ────────────────────
+
+
+def _key(cached_data=None) -> APIKey:
+    return APIKey(
+        id=1, application_id=1, key_name="test", api_key="a" * 32, permissions=[1],
+        is_active=True, cached_data=cached_data if cached_data is not None else {"api_key": "x"},
+        expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+    )
+
+
+class TestMarkTierUnassignedForTenant:
+    @pytest.mark.asyncio
+    async def test_overwrites_redis_and_cached_data_with_the_marker(self) -> None:
+        repo, cache, key = AsyncMock(), AsyncMock(), _key()
+        repo.list_active_keys_for_tenant = AsyncMock(return_value=[key])
+        svc = APIKeyService(repo, cache)
+
+        await svc.mark_tier_unassigned_for_tenant(1)
+
+        cache.patch_api_key_cache_field.assert_awaited_once_with(key.api_key, "tier_id", UNASSIGNED_TIER_ID)
+        repo.patch_cached_data_field_for_tenant.assert_awaited_once_with(1, "tier_id", UNASSIGNED_TIER_ID)
+        repo.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_field_is_never_deleted(self) -> None:
+        """An absent tier_id is how legacy keys look and is still served —
+        HDEL here would silently turn an unassigned tenant into one."""
+        repo, cache, key = AsyncMock(), AsyncMock(), _key()
+        repo.list_active_keys_for_tenant = AsyncMock(return_value=[key])
+        svc = APIKeyService(repo, cache)
+
+        await svc.mark_tier_unassigned_for_tenant(1)
+
+        cache.delete_api_key_cache_field.assert_not_awaited()
+        cache.delete_api_key_cache_fields.assert_not_awaited()
+        repo.remove_cached_data_fields_for_tenant.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_missing_repo_skips_everything(self) -> None:
+        cache = AsyncMock()
+        svc = APIKeyService(None, cache)
+
+        await svc.mark_tier_unassigned_for_tenant(1)
+
+        cache.patch_api_key_cache_field.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_marker_survives_a_later_cache_refresh(self) -> None:
+        """Adversarial: after unassign, an unrelated edit (key rename,
+        tenant update) rebuilds the key's cache via _refresh_redis_cache.
+        _preserved_tier_id must carry the marker forward — dropping it would
+        make the key look legacy (served, no tier restriction)."""
+        repo, cache = AsyncMock(), AsyncMock()
+        key = _key(cached_data={"api_key": "x", "tier_id": UNASSIGNED_TIER_ID})
+        cache.get_api_key_cache = AsyncMock(return_value={"tier_id": UNASSIGNED_TIER_ID})
+        svc = APIKeyService(repo, cache)
+
+        await svc._refresh_redis_cache(key, "1")
+
+        payload = cache.set_api_key_cache.await_args.args[2]
+        assert "tier_id" in payload
+        assert payload["tier_id"] == UNASSIGNED_TIER_ID
+
+
+# ── /auth/validate ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+class TestValidateRejectsUnassignedTier:
+    async def test_unassigned_key_is_403_no_active_tier(self) -> None:
+        out, response = await _validate(_validate_result(tier_id=UNASSIGNED_TIER_ID))
+
+        assert out.status_code == 403
+        assert b"NO_ACTIVE_TIER" in out.body
+        # Must not reach the success path that would emit X-Tier-ID="".
+        assert "X-Tier-ID" not in response.headers
+
+    async def test_unassigned_outranks_budget_exhausted(self) -> None:
+        out, _ = await _validate(
+            _validate_result(tier_id=UNASSIGNED_TIER_ID, **{"budget-exhausted": "1"})
+        )
+
+        assert out.status_code == 403
+        assert b"NO_ACTIVE_TIER" in out.body
+
+    async def test_legacy_key_without_tier_field_is_still_served(self) -> None:
+        """Compatibility: pre-tier keys never had tier_id in their payload.
+        They must keep working exactly as before this change."""
+        out, response = await _validate(_validate_result())
+
+        assert getattr(out, "status_code", 200) == 200
+        assert response.headers["X-Tier-ID"] == ""
+
+    async def test_assigned_key_is_unchanged(self) -> None:
+        tier = str(uuid4())
+        with patch("app.routes.validation.tier_status_cache.is_active", return_value=True):
+            out, response = await _validate(_validate_result(tier_id=tier))
+
+        assert getattr(out, "status_code", 200) == 200
+        assert response.headers["X-Tier-ID"] == tier
+
+
+# ── Contract: authorization map + OpenAPI ───────────────────────────────────
+
+
+_PERMISSIONS_JSON = pathlib.Path(__file__).parent.parent / "api_permissions.json"
+
+
+class TestUnassignContract:
+    def test_gateway_permission_matches_assign(self) -> None:
+        """An endpoint absent from api_permissions.json is PUBLIC at the
+        gateway (get_required_permission → None), so the DELETE must be
+        listed, with the exact permission the assign PATCH uses."""
+        mapping = {
+            m["endpoint"]: int(m["permissionRequired"])
+            for m in json.loads(_PERMISSIONS_JSON.read_text())["apiMappings"]
+        }
+        checker = PermissionChecker()
+        checker._api_permission_map = mapping
+
+        delete_perm = checker.get_required_permission("DELETE", "/api/v1/auth/tenants/42/tier")
+        patch_perm = checker.get_required_permission("PATCH", "/api/v1/auth/tenants/42/tier")
+
+        assert delete_perm is not None
+        assert delete_perm == patch_perm
+
+    def test_openapi_documents_delete_and_keeps_patch(self) -> None:
+        from app.routes.tenants import router
+
+        app = FastAPI()
+        app.include_router(router)
+        paths = app.openapi()["paths"]
+        tier_path = next(p for p in paths if p.endswith("/{tenant_id}/tier"))
+        ops = paths[tier_path]
+
+        assert "patch" in ops, "existing assign endpoint must remain"
+        delete = ops["delete"]
+        assert "requestBody" not in delete
+        assert {"200", "403", "404"} <= set(delete["responses"])
+        data_ref = app.openapi()["components"]["schemas"]["TenantTierUnassignData"]["properties"]
+        assert {"tenant_id", "tier_id", "previous_tier_id", "updated_at", "updated_by"} <= set(data_ref)

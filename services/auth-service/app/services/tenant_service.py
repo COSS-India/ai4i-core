@@ -1288,6 +1288,48 @@ class TenantService:
             await self._api_keys.set_tier_id_for_tenant(tenant_id, str(tier_uuid))
         return tenant
 
+    async def unassign_tenant_tier(
+        self, current_user: User, tenant_id: int
+    ) -> tuple[Tenant, Optional[UUID]]:
+        """Remove a tenant's tier — DELETE /auth/tenants/{id}/tier.
+
+        Same ADMIN-only rule as assign_tenant_tier. Returns (tenant,
+        previous_tier_id); previous_tier_id is None when the tenant was
+        already unassigned, which is a 200 no-op rather than a 409 — the
+        caller's desired end state already holds.
+
+        Clearing tenants.tier_id alone is not enough: every already-issued
+        key carries its own cached tier_id (see
+        APIKeyService._preserved_tier_id), so it would keep being served —
+        and billed — under the old tier. mark_tier_unassigned_for_tenant
+        rewrites that cached value, and /auth/validate then rejects those
+        keys with NO_ACTIVE_TIER. It runs on the no-op path too, so a retry
+        repairs a previous call whose DB write committed but whose cache
+        write failed.
+        """
+        roles = await self._roles.get_user_roles(current_user.id)
+        if RoleName.ADMIN.value not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "INSUFFICIENT_PERMISSIONS",
+                    "message": "Only administrators can remove a tenant's tier.",
+                },
+            )
+
+        tenant = await self._load_tenant_for_update_or_404(tenant_id)
+
+        previous_tier_id = tenant.tier_id
+        if previous_tier_id is not None:
+            await self._tenants.update(
+                tenant, {"tier_id": None, "updated_by": current_user.id}
+            )
+            await self._tenants.save_and_refresh(tenant)
+
+        if self._api_keys is not None:
+            await self._api_keys.mark_tier_unassigned_for_tenant(tenant_id)
+        return tenant, previous_tier_id
+
     async def sync_budget_effective_to_cache(self, tenant_id: int) -> Optional[datetime]:
         """Force-push tenants.budget_effective_to onto every cached API key
         for this tenant via APIKeyService.set_budget_effective_to_for_tenant

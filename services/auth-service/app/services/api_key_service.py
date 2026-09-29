@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ai4i_core.ppu import get_catalogue
 
 from app.core.config import settings
+from app.core.constants import UNASSIGNED_TIER_ID
 from app.core.database import get_db
 from app.core.exceptions import (
     AuthorizationError,
@@ -573,6 +574,19 @@ class APIKeyService:
         going through the normal preserve-on-write path.
         """
         await self._patch_all_tenant_key_caches(tenant_id, "tier_id", tier_id)
+
+    async def mark_tier_unassigned_for_tenant(self, tenant_id: int) -> None:
+        """Force every cached API key for the tenant onto UNASSIGNED_TIER_ID
+        after its tier was removed — the unassign counterpart of
+        set_tier_id_for_tenant, for the same _preserved_tier_id reason.
+
+        Overwritten, never HDEL'd: an absent tier_id is how legacy
+        pre-tier keys look, and /auth/validate still serves those (it only
+        rejects the explicit empty value). Deleting the field would leave
+        these keys working with X-Tier-ID="", which inference-service reads
+        as "no tier restriction at all".
+        """
+        await self._patch_all_tenant_key_caches(tenant_id, "tier_id", UNASSIGNED_TIER_ID)
 
     async def reset_all_quota_fields(self) -> None:
         """HDEL every quota-* field from all active API key hashes across all tenants,
