@@ -6,6 +6,7 @@ import {
   HStack,
   IconButton,
   Input,
+  type InputProps,
   Text,
   Tooltip,
   useDisclosure,
@@ -15,37 +16,66 @@ import React, { useMemo, useRef, useState } from "react";
 import {
   MAX_THRESHOLD_PERCENT,
   MIN_THRESHOLD_PERCENT,
-  validateThresholdDrafts,
   type ThresholdDraftBand,
 } from "../../types/notificationAlerts";
 import StandardModal from "../common/StandardModal";
 
-interface ThresholdBandsCellProps {
+/** What the cell needs back from a row's validator. */
+export interface ThresholdBandsValidation {
+  /** Index-aligned with the bands; empty string where the band is fine. */
+  bandErrors: string[];
+  /** Row-level problem (duplicates / wrong count), else null. */
+  rowError: string | null;
+  /** Non-null when the whole set is valid. */
+  bands: readonly unknown[] | null;
+}
+
+interface ThresholdBandsCellProps<B extends ThresholdDraftBand> {
   /** The row's current draft bands — exactly THRESHOLD_BAND_COUNT of them. */
-  bands: ThresholdDraftBand[];
+  bands: B[];
   /** Row display name, for the modal title and the inputs' accessible names. */
   rowLabel: string;
   /** Called with the edited set when the user applies the modal. */
-  onApply: (bands: ThresholdDraftBand[]) => void;
+  onApply: (bands: B[]) => void;
+  /** The row's band rules — gates Apply and drives the inline errors. */
+  validate: (bands: B[]) => ThresholdBandsValidation;
+  /** Suffix after each value. Defaults to "%" (metering). */
+  unitSuffix?: (band: B) => string;
+  /** Unit as read out by screen readers. Defaults to "percent" (metering). */
+  unitWord?: (band: B) => string;
+  /** The modal's guidance line. Defaults to the metering percentage rules. */
+  hint?: string;
+  inputMode?: InputProps["inputMode"];
+  maxLength?: number;
 }
+
+const percentSuffix = () => "%";
+const percentWord = () => "percent";
 
 /**
  * The Thresholds cell: one read-only box per band, plus an icon opening a
- * small editor.
+ * small editor. Shared by the metering Alerts Catalog (the defaults) and
+ * the Monitoring Alerts Catalog (value + unit bands, which passes its own
+ * unit, hint, rules and input limits).
  */
-const ThresholdBandsCell: React.FC<ThresholdBandsCellProps> = ({
+function ThresholdBandsCell<B extends ThresholdDraftBand>({
   bands,
   rowLabel,
   onApply,
-}) => {
+  validate,
+  unitSuffix = percentSuffix,
+  unitWord = percentWord,
+  hint = `Check the thresholds that should fire and set each percentage. ${MIN_THRESHOLD_PERCENT}-${MAX_THRESHOLD_PERCENT}%, no duplicates.`,
+  inputMode = "numeric",
+  // 3 chars, not 2: typing 100 and being told "1-99 only" explains the
+  // rule, where silently refusing the keystroke just looks broken.
+  maxLength = 3,
+}: Readonly<ThresholdBandsCellProps<B>>) {
   const { isOpen, onOpen, onClose } = useDisclosure();
-  const [editBands, setEditBands] = useState<ThresholdDraftBand[]>(bands);
+  const [editBands, setEditBands] = useState<B[]>(bands);
   const firstInputRef = useRef<HTMLInputElement>(null);
 
-  const validation = useMemo(
-    () => validateThresholdDrafts(editBands),
-    [editBands],
-  );
+  const validation = useMemo(() => validate(editBands), [validate, editBands]);
 
   const handleOpen = () => {
     // Re-seed from the draft every time, so a previous Cancel leaves nothing
@@ -61,18 +91,15 @@ const ThresholdBandsCell: React.FC<ThresholdBandsCellProps> = ({
   };
 
   const handleApply = () => {
-    const parsed = validation.bands;
-    if (!parsed) return;
+    if (!validation.bands) return;
     // Sorted and normalised on the way out ("07" -> "7"), which is safe to do
     // here because it happens on Apply, not per keystroke — re-sorting while
-    // someone was typing would shuffle the fields under the cursor.
+    // someone was typing would shuffle the fields under the cursor. Every
+    // value is a valid number by now, or the validator would have refused.
     onApply(
-      [...parsed]
-        .sort((a, b) => a.percentage - b.percentage)
-        .map((band) => ({
-          percentage: String(band.percentage),
-          active: band.active,
-        })),
+      editBands
+        .map((band) => ({ ...band, value: String(Number(band.value.trim())) }))
+        .sort((a, b) => Number(a.value) - Number(b.value)),
     );
     onClose();
   };
@@ -81,7 +108,7 @@ const ThresholdBandsCell: React.FC<ThresholdBandsCellProps> = ({
     <>
       <HStack spacing={2}>
         {/* Index keys on purpose: the list is a fixed 3 bands that are never
-            inserted, removed or reordered, and `percentage` — the only other
+            inserted, removed or reordered, and `value` — the only other
             candidate — is user-editable and so collides mid-edit. */}
         {bands.map((band, index) => (
           <Tooltip
@@ -102,9 +129,10 @@ const ThresholdBandsCell: React.FC<ThresholdBandsCellProps> = ({
               bg={band.active ? "blue.50" : "gray.50"}
               color={band.active ? "blue.800" : "gray.400"}
               fontWeight={band.active ? "semibold" : "normal"}
-              aria-label={`${band.percentage} percent, ${band.active ? "on" : "off"}`}
+              aria-label={`${band.value} ${unitWord(band)}, ${band.active ? "on" : "off"}`}
             >
-              {band.percentage}%
+              {band.value}
+              {unitSuffix(band)}
             </Box>
           </Tooltip>
         ))}
@@ -143,12 +171,11 @@ const ThresholdBandsCell: React.FC<ThresholdBandsCellProps> = ({
       >
         <VStack align="stretch" spacing={3}>
           <Text fontSize="sm" color="gray.600">
-            Check the thresholds that should fire and set each percentage.{" "}
-            {MIN_THRESHOLD_PERCENT}-{MAX_THRESHOLD_PERCENT}%, no duplicates.
+            {hint}
           </Text>
 
           {/* Index keys for the same reason as the boxes above — and here a
-              percentage key would actively break things: two fields briefly
+              value key would actively break things: two fields briefly
               share a number while retyping, and React would drop one. */}
           {editBands.map((band, index) => {
             const error = validation.bandErrors[index] ?? "";
@@ -164,23 +191,20 @@ const ThresholdBandsCell: React.FC<ThresholdBandsCellProps> = ({
                   />
                   <Input
                     ref={index === 0 ? firstInputRef : undefined}
-                    value={band.percentage}
+                    value={band.value}
                     onChange={(e) =>
-                      updateBand(index, { percentage: e.target.value })
+                      updateBand(index, { value: e.target.value })
                     }
-                    aria-label={`Threshold ${index + 1} percent`}
+                    aria-label={`Threshold ${index + 1} ${unitWord(band)}`}
                     isInvalid={Boolean(error)}
-                    inputMode="numeric"
-                    // 3 chars, not 2: typing 100 and being told "1-99 only"
-                    // explains the rule, where silently refusing the
-                    // keystroke just looks broken.
-                    maxLength={3}
+                    inputMode={inputMode}
+                    maxLength={maxLength}
                     size="sm"
                     w="80px"
                     textAlign="right"
                   />
                   <Text fontSize="sm" color="gray.600">
-                    %
+                    {unitSuffix(band)}
                   </Text>
                   {error ? (
                     <Text fontSize="xs" color="red.500">
@@ -205,6 +229,6 @@ const ThresholdBandsCell: React.FC<ThresholdBandsCellProps> = ({
       </StandardModal>
     </>
   );
-};
+}
 
 export default ThresholdBandsCell;
