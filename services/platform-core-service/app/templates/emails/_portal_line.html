@@ -9,7 +9,7 @@
 #}
 {% set _link_text = portal_link_text | default("view full details") %}
 {% if portal_url %}
-<p style="margin:0 0 20px 0;">Log in to the <a href="{{ portal_url }}" style="color:#0b66ff; text-decoration:none;">AI4I-Orchestrate Portal</a> to {{ _link_text }}.</p>
+<p style="margin:0 0 20px 0;">Log in to the <a href="{{ portal_url }}" style="color:#0b66ff; text-decoration:none;">{{ platform_name }} Portal</a> to {{ _link_text }}.</p>
 {% else %}
-<p style="margin:0 0 20px 0;">Log in to the AI4I-Orchestrate Portal to {{ _link_text }}.</p>
+<p style="margin:0 0 20px 0;">Log in to the {{ platform_name }} Portal to {{ _link_text }}.</p>
 {% endif %}

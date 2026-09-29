@@ -31,6 +31,7 @@ os.environ.setdefault("REDIS_HOST", "localhost")
 os.environ.setdefault("TOPIC_PAY_PER_USE", "kafka-topic-otel-trace")
 os.environ.setdefault("AUTH_SERVICE_URL", "http://auth.invalid")
 os.environ.setdefault("TOPIC_NOTIFICATION", "notification.events")
+os.environ.setdefault("PLATFORM_NAME", "Test Platform")
 
 
 @pytest.fixture(autouse=True)

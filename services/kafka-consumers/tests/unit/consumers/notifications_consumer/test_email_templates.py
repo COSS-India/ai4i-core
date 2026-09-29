@@ -10,7 +10,12 @@ from __future__ import annotations
 import pytest
 
 from consumers.notifications_consumer import email_templates as templates
-from consumers.notifications_consumer.config import get_settings
+from pydantic import ValidationError
+
+from consumers.notifications_consumer.config import Settings, get_settings
+
+# Supplied by tests/conftest.py as PLATFORM_NAME — the code itself has no default.
+BRAND = "Test Platform"
 
 
 @pytest.fixture(autouse=True)
@@ -18,6 +23,14 @@ def _no_portal_url(monkeypatch):
     """Default to no PORTAL_URL so the plain-text fallback wording is asserted
     consistently; test_portal_link_uses_configured_url overrides this."""
     monkeypatch.setattr(get_settings(), "PORTAL_URL", None)
+
+
+@pytest.fixture(autouse=True)
+def _default_branding(monkeypatch):
+    """Pin the brand so a local .env's PLATFORM_NAME / ADOPTER_LOGO_URL can't
+    change what these tests assert; the branding tests below override it."""
+    monkeypatch.setattr(get_settings(), "PLATFORM_NAME", BRAND)
+    monkeypatch.setattr(get_settings(), "ADOPTER_LOGO_URL", None)
 
 
 # Each entry: (render fn, kwargs, substrings expected in BOTH html_body and text_body)
@@ -203,5 +216,97 @@ def test_portal_link_falls_back_to_plain_text_when_unset():
         to="a@b.com", recipient_name="Priya", institution_name="Acme Bank", currency="INR", budget_amount="500000",
     )
 
-    assert "Log in to the AI4I-Orchestrate Portal to view full details." in message.text_body
+    assert f"Log in to the {BRAND} Portal to view full details." in message.text_body
     assert "href=" not in message.text_body
+
+
+# ── Branding (PLATFORM_NAME / ADOPTER_LOGO_URL — same pair as auth-service) ──
+
+_BRANDING_RENDERERS = [
+    lambda: templates.render_budget_assigned_email(
+        to="a@b.com", recipient_name="Priya", institution_name="Acme Bank", currency="INR", budget_amount="500000",
+    ),
+    lambda: templates.render_quota_threshold_alert_email(
+        to="a@b.com", recipient_name="Priya", institution_name="Acme Bank",
+        threshold="80", alert_datetime="2026-09-10", current_value="81",
+    ),
+    lambda: templates.render_monitoring_alert_email(
+        to="a@b.com", recipient_name="Priya", alert=templates.MonitoringAlertName.LATENCY_P95,
+        threshold="5", alert_datetime="2026-09-28", current_value="7.3",
+    ),
+]
+
+
+@pytest.mark.parametrize("render", _BRANDING_RENDERERS, ids=["notification", "alert", "monitoring_alert"])
+def test_platform_name_comes_from_settings(monkeypatch, render):
+    monkeypatch.setattr(get_settings(), "PLATFORM_NAME", "Custom Brand")
+
+    message = render()
+
+    for body in (message.html_body, message.text_body):
+        assert "Log in to the Custom Brand Portal to view full details." in body
+        assert "Custom Brand Team" in body
+        assert BRAND not in body
+        assert "AI Switch" not in body
+    assert "&copy; Custom Brand" in message.html_body
+
+
+class TestPlatformNameRequired:
+    """No in-code default: a missing/blank PLATFORM_NAME must stop the consumer at
+    startup, not let it send emails under a baked-in name."""
+
+    def test_missing_platform_name_fails(self, monkeypatch):
+        monkeypatch.delenv("PLATFORM_NAME", raising=False)
+        with pytest.raises(ValidationError, match="PLATFORM_NAME"):
+            Settings(_env_file=None)
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_blank_platform_name_fails(self, monkeypatch, blank):
+        # setup-env.sh writes PLATFORM_NAME= (empty) when the root .env leaves it blank.
+        monkeypatch.setenv("PLATFORM_NAME", blank)
+        with pytest.raises(ValidationError, match="PLATFORM_NAME must be set"):
+            Settings(_env_file=None)
+
+    def test_env_value_is_used_and_stripped(self, monkeypatch):
+        monkeypatch.setenv("PLATFORM_NAME", "  MahaVistaar  ")
+        assert Settings(_env_file=None).get_platform_name() == "MahaVistaar"
+
+    def test_consumer_startup_loads_settings_first(self):
+        """Fail-fast relies on main.run() calling get_settings() before any
+        Kafka/DB work — pin that so a refactor can't move it to send time,
+        where send_one() would swallow the error as a failed email."""
+        import inspect
+
+        from consumers.notifications_consumer import main
+
+        source = inspect.getsource(main.run)
+        assert source.index("cfg.get_settings()") < source.index("async with infra(")
+
+
+def test_logo_url_replaces_text_brand_mark_in_header(monkeypatch):
+    monkeypatch.setattr(get_settings(), "ADOPTER_LOGO_URL", "https://cdn.example.com/logo.png")
+
+    message = _BRANDING_RENDERERS[2]()
+
+    assert f'<img src="https://cdn.example.com/logo.png" alt="{BRAND}"' in message.html_body
+
+
+def test_relative_logo_url_is_ignored(monkeypatch):
+    monkeypatch.setattr(get_settings(), "ADOPTER_LOGO_URL", "/logo.png")
+
+    message = _BRANDING_RENDERERS[2]()
+
+    assert "<img" not in message.html_body
+
+
+class TestResolveSmtpFromName:
+    """EMAIL_FROM_NAME stays independent of PLATFORM_NAME; it only inherits it when blank."""
+
+    def test_keeps_explicit_from_name(self, monkeypatch):
+        monkeypatch.setattr(get_settings(), "PLATFORM_NAME", BRAND)
+        assert get_settings().resolve_smtp_from_name("COSS Support") == "COSS Support"
+
+    def test_inherits_platform_name_when_blank(self, monkeypatch):
+        monkeypatch.setattr(get_settings(), "PLATFORM_NAME", "Custom Brand")
+        assert get_settings().resolve_smtp_from_name("") == "Custom Brand"
+        assert get_settings().resolve_smtp_from_name("   ") == "Custom Brand"
