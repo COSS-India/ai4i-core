@@ -67,8 +67,8 @@ ALEMBIC_DB_PORT="$(read_env_var ALEMBIC_DB_PORT)"
 
 LLM_UPSTREAM_BASE_URL="$(read_env_var LLM_UPSTREAM_BASE_URL)"
 
-# Branding — root .env, else env.template; copied into simple-ui, auth-service
-# and kafka-consumers (notifications_consumer).
+# Branding — root .env, else env.template; copied into simple-ui, auth-service,
+# platform-core-service and kafka-consumers (notifications_consumer).
 PLATFORM_NAME="$(read_env_var PLATFORM_NAME "$ROOT_DIR/env.template")"
 ADOPTER_LOGO_URL="$(read_env_var ADOPTER_LOGO_URL "$ROOT_DIR/env.template")"
 

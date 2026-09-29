@@ -61,7 +61,15 @@ class AlertName(str, Enum):
 
 
 def _render(template: str, *, to: str, subject: str, ctx: dict) -> EmailMessage:
-    html, text = _renderer.render(template, {**ctx, "portal_url": settings.portal_url})
+    html, text = _renderer.render(
+        template,
+        {
+            **ctx,
+            "portal_url": settings.portal_url,
+            "platform_name": settings.get_platform_name(),
+            "logo_url": settings.get_adopter_logo_url(),
+        },
+    )
     return EmailMessage(to=to, subject=subject, html_body=html, text_body=text)
 
 
