@@ -671,6 +671,17 @@ class TestFirstRequestAt:
         with pytest.raises(RuntimeError, match="cluster down"):
             await svc.first_request_at(tenant=None)
 
+    async def test_name_only_scope_is_none_without_querying(self):
+        """No tenant_id to filter on: querying would be platform-wide."""
+        svc, os_client = _make_os_service(aggregate_return={"first": {"value": 1_751_450_400_000}})
+        assert await svc.first_request_at(tenant="Acme Corp", tenant_id=None) is None
+        os_client.aggregate.assert_not_called()
+
+    async def test_platform_wide_still_queries(self):
+        svc, os_client = _make_os_service(aggregate_return={"first": {"value": 1_751_450_400_000}})
+        assert await svc.first_request_at(tenant=None, tenant_id=None) is not None
+        os_client.aggregate.assert_awaited_once()
+
     async def test_no_documents_is_none(self):
         svc, _ = _make_os_service(aggregate_return={"first": {"value": None}})
         assert await svc.first_request_at(tenant=None) is None

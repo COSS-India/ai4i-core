@@ -287,12 +287,22 @@ def _scope_range_fields(window: str, custom_range: Optional[AbsoluteRange]) -> d
     }
 
 
-async def _first_usage_at(db: AsyncSession, tenant_id: Optional[str]) -> tuple[Optional[datetime], bool]:
+async def _first_usage_at(
+    db: AsyncSession, tenant_id: Optional[str], tenant_name: Optional[str] = None,
+) -> tuple[Optional[datetime], bool]:
     """(first billed usage from quota_usage, ok). Best-effort, like the
     auth-DB lookups: a failure logs, rolls the session back and yields
     (None, False) rather than failing the whole response. ok=False tells the
     caller not to cache that None, which would otherwise read as "no usage
-    yet" for the whole TTL."""
+    yet" for the whole TTL.
+
+    A name-only scope (a tenant admin with X-Tenant-Name but no X-Tenant-Id)
+    is skipped: quota_usage is keyed by tenant id, so tenant_id=None would
+    take the MIN over every tenant and hand the platform's earliest usage to
+    one tenant. _resolve_tenant_scope refuses to widen scope the same way.
+    The Prometheus lookup filters by name and still covers this case."""
+    if tenant_id is None and tenant_name is not None:
+        return None, True
     try:
         first = await UsageRepository(db).get_first_usage_at(tenant_id)
     except Exception:
@@ -689,7 +699,7 @@ async def get_overview(
     # Core-DB session is shared with the metering service's repositories, so
     # this stays out of the gather() below (AsyncSession isn't safe for
     # concurrent use — same reasoning as overview_tenant_data above).
-    quota_first_usage, first_usage_ok = await _first_usage_at(db, scope_tenant)
+    quota_first_usage, first_usage_ok = await _first_usage_at(db, scope_tenant, scope_tenant_name)
     first_usage_key = _first_usage_cache_key(scope_tenant, scope_tenant_name)
     first_request_cached = await _cache_get(redis, first_usage_key)
 

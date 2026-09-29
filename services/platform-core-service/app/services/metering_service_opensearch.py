@@ -735,7 +735,13 @@ class OpenSearchMeteringService(MeteringService):
         default: /overview caches the answer for an hour, so a cluster error
         read as "no requests" would stick. A failed search raises instead,
         and /overview falls back to the quota_usage value without caching.
+
+        A name-only scope (``tenant`` set, ``tenant_id`` not) returns None
+        rather than querying: with no id to filter on, the query would be
+        platform-wide and hand one tenant the platform's earliest request.
         """
+        if tenant_id is None and tenant is not None:
+            return None
         filters = self._base_filters(
             tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE, inference_only=True,
         )

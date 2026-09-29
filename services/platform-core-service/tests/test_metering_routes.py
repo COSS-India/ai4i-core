@@ -670,6 +670,18 @@ class TestOverviewFirstUsageAtHybrid:
         response = await _call_overview(self._svc())
         assert response.first_usage_at is None
 
+    async def test_name_only_scope_skips_the_quota_lookup(self, fake_usage_repo):
+        """A tenant admin with X-Tenant-Name but no X-Tenant-Id: quota_usage
+        is keyed by id, so get_first_usage_at(None) would return the
+        platform-wide MIN. Only the name-filtered metering lookup runs."""
+        fake_usage_repo.result = _utc(2025, 1, 1)  # another tenant's usage
+        svc = self._svc(_utc(2026, 7, 2))
+        request = SimpleNamespace(headers={"X-Permission-IDS": "5", "X-Tenant-Name": "Acme Corp"})
+        response = await _call_overview(svc, request=request)
+        assert fake_usage_repo.calls == []
+        svc.first_request_at.assert_awaited_once_with("Acme Corp", None)
+        assert response.first_usage_at == "2026-07-02T00:00:00Z"
+
     async def test_metering_lookup_is_scoped_to_the_callers_tenant(self, fake_usage_repo):
         svc = self._svc()
         await _call_overview(svc, request=_tenant_admin_request())
