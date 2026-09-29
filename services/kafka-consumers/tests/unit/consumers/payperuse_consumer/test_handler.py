@@ -33,9 +33,8 @@ class TestDisplayPct:
     """QUOTA_THRESHOLD/BUDGET_THRESHOLD's current_value (design doc §9.5)
     must never show more than 100% — a debit can push used past snap (e.g.
     concurrent requests racing past the ceiling), and "2900%" in an alert
-    email reads as a bug, not "very over budget". Display-only: the raw,
-    uncapped pre_pct/post_pct still drive crossed_bands/crossed_exhaustion
-    in _thresholds.py, which this helper must not affect."""
+    email reads as a bug, not "very over budget". Display-only: the pipeline
+    still evaluates the raw, uncapped value."""
 
     def test_under_100_is_unchanged(self):
         assert _display_pct(Decimal("82")) == Decimal("82")
@@ -324,19 +323,13 @@ class TestBillUsageThreadsInferenceTypeId:
             # budget block is a no-op, same as this class's tests intend.
             return None
 
-        async def _disabled(db, event_name, tenant_id=None):
-            # Not under test here — _bill_usage now checks this (in-memory
-            # cache read) *before* deciding whether to open the "auth"
-            # session at all (see handler.py). False means it never does,
-            # so _FakeAuthSessionScope/fetch_tenant_budget_status below are
-            # only there in case a future test in this class needs them.
-            return False
-
         monkeypatch.setattr(h, "get_service_pricing", _pricing)
         monkeypatch.setattr(h, "get_inference_type_id", _resolve)
         monkeypatch.setattr(h, "deduct_balance_and_update_quota", _write)
         monkeypatch.setattr(h, "fetch_tenant_budget_status", _no_tenant_budget)
-        monkeypatch.setattr(h, "is_notification_enabled", _disabled)
+        # Not under test here (see TestPublishUsageCrossingEvents): no
+        # pipeline configured means no usage alert is evaluated at all.
+        monkeypatch.setattr(h, "notifications_configured", lambda: False)
         monkeypatch.setattr(
             h, "session_scope", lambda name=None: self._FakeAuthSessionScope()
         )
@@ -421,18 +414,20 @@ class TestBillUsageThreadsInferenceTypeId:
         assert called["resolve"] is False
 
 
-class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
-    """_publish_usage_crossing_events — BUDGET_THRESHOLD/BUDGET_EXHAUSTED must
-    fire off the TENANT's pooled budget (fetch_tenant_budget_status), never
-    one API key's own budget_usage row. Design doc section 4's subject rule
-    already specified {} for these two events (Budget is a property of the
-    whole Tenant, same as Tier) — this suite pins the code actually matching
-    that, including the subject shape carrying no api_key_id any more.
+class TestPublishUsageCrossingEvents:
+    """_publish_usage_crossing_events builds the BAND items for the shared
+    pipeline (ai4i_core.kafka.emit_band_batch), which owns the gate, the
+    dedup, recipients and the publish. Pinned here: BUDGET_* use the
+    TENANT's pooled budget (never one API key's own row) with the
+    allocated_budget as the period key; QUOTA_* use this month's quota row
+    with billing_month as the period key; and the email details."""
 
-    QUOTA_THRESHOLD/QUOTA_EXHAUSTED are untouched by this change (quota_usage
-    is already keyed by tenant_id, not api_key_id) — one test below confirms
-    the budget change doesn't disturb them.
-    """
+    class _AuthScope:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *exc_info):
+            return False
 
     def _ctx(self, **overrides):
         from consumers.payperuse_consumer.handler import BillingContext
@@ -468,353 +463,160 @@ class TestPublishUsageCrossingEventsBudgetIsTenantLevel:
         base.update(overrides)
         return BillingWriteResult(**base)
 
-    def _patch_kafka_helpers(self, monkeypatch, *, tenant_budget):
-        """Stub every ai4i_core.kafka call _publish_usage_crossing_events
-        makes, plus fetch_tenant_budget_status — records every
-        check_and_record_threshold/check_and_record_exhaustion/
-        publish_notification_event call for assertions."""
+    def _patch(self, monkeypatch, *, tenant_budget=None, budget_can_fire=True):
         from consumers.payperuse_consumer import handler as h
+        from consumers.payperuse_consumer._billing import TenantBudgetStatus
 
-        calls: dict = {"threshold": [], "exhaustion": [], "published": []}
+        calls: dict = {"items": [], "budget_reads": 0}
+
+        async def _can_fire(names, tenant_id):
+            return list(names) if budget_can_fire else []
 
         async def _tenant_budget(auth_db, core_db, tenant_id):
-            return tenant_budget
+            calls["budget_reads"] += 1
+            if tenant_budget is None:
+                return None
+            used, snap = tenant_budget
+            return TenantBudgetStatus(used=Decimal(used), snap=None if snap is None else Decimal(snap))
 
-        async def _enabled(db, event_name, tenant_id=None):
-            return True
+        async def _emit(items):
+            calls["items"].extend(items)
+            return []
 
-        async def _bands(db, event_name):
-            return [50, 75, 90]
-
-        async def _record_threshold(db, event_name, tenant_id, subject, band):
-            calls["threshold"].append((event_name, tenant_id, dict(subject), band))
-            return True  # "fired" — not already recorded at this band
-
-        async def _record_exhaustion(db, event_name, tenant_id, subject):
-            calls["exhaustion"].append((event_name, tenant_id, dict(subject)))
-            return True  # "fired" — 0 -> 1 transition
-
-        async def _notification_id(db, event_name):
-            return 1
-
-        async def _resolve_recipients(core_db, auth_db, *, notification_id, tenant_id):
-            return ["admin@example.com"]
-
-        def _publish(*, event_name, tenant_id, subject, details, recipients=None, **kwargs):
-            calls["published"].append(
-                {
-                    "event_name": event_name, "tenant_id": tenant_id, "subject": dict(subject),
-                    "details": details, "recipients": recipients,
-                }
-            )
-
+        monkeypatch.setattr(h, "notifications_configured", lambda: True)
+        monkeypatch.setattr(h, "names_that_can_fire", _can_fire)
         monkeypatch.setattr(h, "fetch_tenant_budget_status", _tenant_budget)
-        monkeypatch.setattr(h, "is_notification_enabled", _enabled)
-        monkeypatch.setattr(h, "get_threshold_bands", _bands)
-        monkeypatch.setattr(h, "get_notification_id", _notification_id)
-        monkeypatch.setattr(h, "check_and_record_threshold", _record_threshold)
-        monkeypatch.setattr(h, "check_and_record_exhaustion", _record_exhaustion)
-        monkeypatch.setattr(h, "resolve_recipients", _resolve_recipients)
-        monkeypatch.setattr(h, "publish_notification_event", _publish)
+        monkeypatch.setattr(h, "emit_band_batch", _emit)
+        monkeypatch.setattr(h, "session_scope", lambda name=None: self._AuthScope())
         return calls
 
-    async def test_budget_subject_carries_no_api_key_id(self, monkeypatch):
-        """The whole point of the design change: one crossing per tenant, so
-        the ledger dedup subject needs nothing more specific than event_name
-        + tenant_id — no api_key_id, unlike the old per-key subject."""
-        from consumers.payperuse_consumer._billing import TenantBudgetStatus
+    @staticmethod
+    def _fire(item, band_value):
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+
+        context = SimpleNamespace(
+            band=SimpleNamespace(value=Decimal(band_value)),
+            observed=item.observed,
+            occurred_at=datetime(2026, 8, 10, 11, 22, tzinfo=timezone.utc),
+        )
+        return item.details(context)
+
+    async def _run(self, write=None, task="asr", db=None):
         from consumers.payperuse_consumer.handler import _publish_usage_crossing_events
 
-        # pre = (955-60)/1000 = 89.5%, post = 95.5% — crosses the 90% band.
-        tenant_budget = TenantBudgetStatus(used=Decimal("955"), snap=Decimal("1000"))
-        calls = self._patch_kafka_helpers(monkeypatch, tenant_budget=tenant_budget)
+        await _publish_usage_crossing_events(db or object(), self._ctx(), write or self._write(), task)
 
-        await _publish_usage_crossing_events(
-            db=object(), auth_db=object(), ctx=self._ctx(), write=self._write(),
-            cost=Decimal("60"), billed_units=Decimal("100"), inference_name="llm",
-            budget_threshold_enabled=True, budget_exhausted_enabled=True,
-        )
+    async def test_budget_items_use_the_tenant_totals_and_ceiling(self, monkeypatch):
+        from ai4i_core.kafka import NotificationName
 
-        assert calls["threshold"], "expected at least one BUDGET_THRESHOLD band crossed"
-        for event_name, tenant_id, subject, band in calls["threshold"]:
-            assert event_name == "BUDGET_THRESHOLD"
-            assert "api_key_id" not in subject
-        for event_name, tenant_id, subject in calls["exhaustion"]:
-            assert "api_key_id" not in subject
-        # The resolved recipients must actually reach publish_notification_event
-        # — _publish's old fake silently dropped **kwargs, so a call that
-        # omitted recipients entirely still passed this suite.
-        assert calls["published"][0]["recipients"] == ["admin@example.com"]
+        calls = self._patch(monkeypatch, tenant_budget=("820", "1000"))
+        await self._run()
 
-    async def test_only_the_highest_crossed_band_fires_not_every_one(self, monkeypatch):
-        """A single debit that jumps straight past more than one configured
-        band (bands are 50/75/90 per _patch_kafka_helpers's _bands stub) must
-        fire exactly one BUDGET_THRESHOLD email — for the HIGHEST band
-        reached — not one email per band it happened to pass through.
-        check_and_record_threshold's ledger dedup only compares "does this
-        differ from what's stored"; it has no notion of "highest" on its
-        own, so this is enforced by only ever calling it once, with
-        max(crossed_bands(...))."""
-        from consumers.payperuse_consumer._billing import TenantBudgetStatus
-        from consumers.payperuse_consumer.handler import _publish_usage_crossing_events
+        by_name = {i.name: i for i in calls["items"]}
+        assert set(by_name) == {NotificationName.BUDGET_THRESHOLD, NotificationName.BUDGET_EXHAUSTED}
+        for item in by_name.values():
+            assert item.tenant_id == "1"
+            # The tenant's allocated_budget is the period key; no api_key_id.
+            assert item.subject == {"budget_ceiling": "1000.00"}
+            assert item.observed.value == Decimal("82")
 
-        # pre = (920-330)/1000 = 59.0%, post = 92.0% — crosses BOTH the 75%
-        # and 90% bands in this one debit.
-        tenant_budget = TenantBudgetStatus(used=Decimal("920"), snap=Decimal("1000"))
-        calls = self._patch_kafka_helpers(monkeypatch, tenant_budget=tenant_budget)
+    async def test_budget_details(self, monkeypatch):
+        from ai4i_core.kafka import NotificationName
 
-        await _publish_usage_crossing_events(
-            db=object(), auth_db=object(), ctx=self._ctx(), write=self._write(),
-            cost=Decimal("330"), billed_units=Decimal("100"), inference_name="llm",
-            budget_threshold_enabled=True, budget_exhausted_enabled=False,
-        )
+        calls = self._patch(monkeypatch, tenant_budget=("2900", "100"))
+        await self._run()
 
-        assert len(calls["threshold"]) == 1, (
-            f"expected exactly one BUDGET_THRESHOLD call, got {calls['threshold']!r}"
-        )
-        assert calls["threshold"][0][3] == 90, "must report the highest band crossed (90), not 75"
-        assert len(calls["published"]) == 1
-        assert calls["published"][0]["details"][0] == "90"
+        by_name = {i.name: i for i in calls["items"]}
+        assert self._fire(by_name[NotificationName.BUDGET_THRESHOLD], "90") == ["90", "10 Aug 2026, 04:52 PM IST", "100%"]
+        assert self._fire(by_name[NotificationName.BUDGET_EXHAUSTED], "100") == ["INR", "100.00"]
 
-    async def test_gradual_progression_across_separate_messages_fires_each_band(self, monkeypatch):
-        """The opposite scenario from the one above: usage crossing bands
-        one at a time across SEPARATE billing messages (not one debit
-        spanning several bands) must still fire once per band — 50, then
-        75, then 90 — not collapse to a single email. max(crossed_bands())
-        only picks the highest band within ONE call's own pre/post range;
-        it has no memory across calls, so a message whose own pre/post only
-        spans one band reports that one band regardless of what an earlier,
-        separate message already reported. Each call here gets its own
-        fresh pre/post, exactly as three real, separate billed messages
-        would (each recomputing tenant_budget.used from scratch)."""
-        from consumers.payperuse_consumer._billing import TenantBudgetStatus
-        from consumers.payperuse_consumer.handler import _publish_usage_crossing_events
+    async def test_budget_is_not_read_when_no_budget_alert_can_fire(self, monkeypatch):
+        calls = self._patch(monkeypatch, tenant_budget=("820", "1000"), budget_can_fire=False)
+        await self._run()
+
+        assert calls["budget_reads"] == 0
+        assert calls["items"] == []
+
+    async def test_no_tenant_ceiling_means_no_budget_items(self, monkeypatch):
+        calls = self._patch(monkeypatch, tenant_budget=("820", None))
+        await self._run()
+
+        assert calls["items"] == []
+
+    async def test_quota_items_use_billing_month_and_task_type(self, monkeypatch):
+        from ai4i_core.kafka import NotificationName
+
+        calls = self._patch(monkeypatch, budget_can_fire=False)
+        await self._run(self._write(quota_recorded=True, quota_used=Decimal("810"), quota_snap=Decimal("1000")), task="ASR")
+
+        by_name = {i.name: i for i in calls["items"]}
+        assert set(by_name) == {NotificationName.QUOTA_THRESHOLD, NotificationName.QUOTA_EXHAUSTED}
+        for item in by_name.values():
+            assert item.subject == {"billing_month": "2026-08", "model_task_type": "asr"}
+            assert item.observed.value == Decimal("81")
+        assert self._fire(by_name[NotificationName.QUOTA_THRESHOLD], "80") == [
+            "80", "10 Aug 2026, 04:52 PM IST", "81% (ASR)",
+        ]
+
+    async def test_quota_exhausted_details_carry_tier_name_and_reset_date(self, monkeypatch):
+        from ai4i_core.kafka import NotificationName
         from consumers.payperuse_consumer import handler as h
 
-        calls = self._patch_kafka_helpers(monkeypatch, tenant_budget=None)  # overridden per-call below
+        calls = self._patch(monkeypatch, budget_can_fire=False)
 
-        def _stub_tenant_budget_at(used: Decimal):
-            """A fresh async stub per message — real separate billed
-            messages each re-query fetch_tenant_budget_status from
-            scratch, so each call here must too, not share one canned
-            return value."""
-            async def _fetch(auth_db, core_db, tenant_id):
-                return TenantBudgetStatus(used=used, snap=Decimal("1000"))
-            return _fetch
+        async def _tier_name(db, tier_id):
+            return "Gold" if tier_id == "tier-1" else tier_id
 
-        # Message 1: 45% -> 55% (used 450 -> 550 of 1000) — crosses only 50.
-        monkeypatch.setattr(h, "fetch_tenant_budget_status", _stub_tenant_budget_at(Decimal("550")))
-        await _publish_usage_crossing_events(
-            db=object(), auth_db=object(), ctx=self._ctx(), write=self._write(),
-            cost=Decimal("100"), billed_units=Decimal("10"), inference_name="llm",
-            budget_threshold_enabled=True, budget_exhausted_enabled=False,
-        )
+        monkeypatch.setattr(h, "_fetch_tier_name", _tier_name)
+        await self._run(self._write(quota_recorded=True, quota_used=Decimal("1000"), quota_snap=Decimal("1000")))
 
-        # Message 2: 55% -> 78% (used 550 -> 780) — crosses only 75 (50 is
-        # already behind pre, so it must not re-fire).
-        monkeypatch.setattr(h, "fetch_tenant_budget_status", _stub_tenant_budget_at(Decimal("780")))
-        await _publish_usage_crossing_events(
-            db=object(), auth_db=object(), ctx=self._ctx(), write=self._write(),
-            cost=Decimal("230"), billed_units=Decimal("10"), inference_name="llm",
-            budget_threshold_enabled=True, budget_exhausted_enabled=False,
-        )
+        item = next(i for i in calls["items"] if i.name is NotificationName.QUOTA_EXHAUSTED)
+        assert await self._fire(item, "100") == ["Gold", ["ASR: Quota Limit 1,000, Resets on 2026-09-01"]]
 
-        # Message 3: 78% -> 93% (used 780 -> 930) — crosses only 90.
-        monkeypatch.setattr(h, "fetch_tenant_budget_status", _stub_tenant_budget_at(Decimal("930")))
-        await _publish_usage_crossing_events(
-            db=object(), auth_db=object(), ctx=self._ctx(), write=self._write(),
-            cost=Decimal("150"), billed_units=Decimal("10"), inference_name="llm",
-            budget_threshold_enabled=True, budget_exhausted_enabled=False,
-        )
+    async def test_no_quota_row_means_no_quota_items(self, monkeypatch):
+        calls = self._patch(monkeypatch, budget_can_fire=False)
+        await self._run(self._write(quota_recorded=False, quota_used=Decimal("10"), quota_snap=Decimal("100")))
 
-        bands_fired = [band for _, _, _, band in calls["threshold"]]
-        assert bands_fired == [50, 75, 90], (
-            f"gradual progression must fire once per newly-crossed band, in order; got {bands_fired!r}"
-        )
-        assert len(calls["published"]) == 3
+        assert calls["items"] == []
 
-    async def test_percentage_comes_from_tenant_totals_not_the_one_keys_row(self, monkeypatch):
-        """write.api_key_budget_used/snap (this one key's own row) must be
-        completely ignored for BUDGET_THRESHOLD/BUDGET_EXHAUSTED now — only
-        tenant_budget.used/snap may drive the percentage."""
-        from consumers.payperuse_consumer._billing import TenantBudgetStatus
-        from consumers.payperuse_consumer.handler import _publish_usage_crossing_events
-
-        # This key's own row reads 99.9% used — if that leaked in, every
-        # band (and exhaustion) would fire. The tenant total is a much
-        # healthier 55%, and crosses only the 50% band.
-        write = self._write(api_key_budget_used=Decimal("999"), api_key_budget_snap=Decimal("1000"))
-        tenant_budget = TenantBudgetStatus(used=Decimal("550"), snap=Decimal("1000"))
-        cost = Decimal("60")  # pre = (550-60)/1000 = 49.0%, post = 55.0%
-        calls = self._patch_kafka_helpers(monkeypatch, tenant_budget=tenant_budget)
-
-        await _publish_usage_crossing_events(
-            db=object(), auth_db=object(), ctx=self._ctx(), write=write,
-            cost=cost, billed_units=Decimal("100"), inference_name="llm",
-            budget_threshold_enabled=True, budget_exhausted_enabled=True,
-        )
-
-        bands_crossed = [band for _, _, _, band in calls["threshold"]]
-        assert bands_crossed == [50]
-        assert calls["exhaustion"] == []  # 55% does not cross 100%
-
-    async def test_no_tenant_budget_configured_skips_both_checks_entirely(self, monkeypatch):
-        """fetch_tenant_budget_status returning None (no allocated_budget on
-        the tenant) must skip BUDGET_THRESHOLD/BUDGET_EXHAUSTED outright —
-        even though this key's own write.api_key_budget_snap is set."""
-        from consumers.payperuse_consumer.handler import _publish_usage_crossing_events
-
-        write = self._write(api_key_budget_used=Decimal("999"), api_key_budget_snap=Decimal("1000"))
-        calls = self._patch_kafka_helpers(monkeypatch, tenant_budget=None)
-
-        await _publish_usage_crossing_events(
-            db=object(), auth_db=object(), ctx=self._ctx(), write=write,
-            cost=Decimal("50"), billed_units=Decimal("100"), inference_name="llm",
-            budget_threshold_enabled=True, budget_exhausted_enabled=True,
-        )
-
-        assert calls["threshold"] == []
-        assert calls["exhaustion"] == []
-        assert calls["published"] == []
-
-    async def test_exhaustion_subject_uses_the_tenants_snap_not_the_keys(self, monkeypatch):
-        from consumers.payperuse_consumer._billing import TenantBudgetStatus
-        from consumers.payperuse_consumer.handler import _publish_usage_crossing_events
-
-        write = self._write(api_key_budget_used=Decimal("1"), api_key_budget_snap=Decimal("2"))
-        tenant_budget = TenantBudgetStatus(used=Decimal("1000"), snap=Decimal("1000"))
-        calls = self._patch_kafka_helpers(monkeypatch, tenant_budget=tenant_budget)
-
-        await _publish_usage_crossing_events(
-            db=object(), auth_db=object(), ctx=self._ctx(), write=write,
-            cost=Decimal("1"), billed_units=Decimal("100"), inference_name="llm",
-            budget_threshold_enabled=True, budget_exhausted_enabled=True,
-        )
-
-        assert calls["exhaustion"] == [("BUDGET_EXHAUSTED", "1", {"budget_snap": "1000"})]
-        published = next(p for p in calls["published"] if p["event_name"] == "BUDGET_EXHAUSTED")
-        assert published["details"] == ["INR", "1000"]
-
-    async def test_quota_block_is_unaffected_by_the_budget_change(self, monkeypatch):
-        """Quota was already tenant-level (quota_usage is keyed by tenant_id,
-        not api_key_id) — this change must not touch its subject shape or
-        its data source (write.quota_used/quota_snap, not tenant_budget)."""
-        from consumers.payperuse_consumer.handler import _publish_usage_crossing_events
-
-        write = self._write(
-            api_key_budget_snap=None,  # no budget ceiling at all — budget block fully skipped
-            quota_recorded=True,
-            quota_used=Decimal("80"),
-            quota_snap=Decimal("100"),
-        )
-        calls = self._patch_kafka_helpers(monkeypatch, tenant_budget=None)
-
-        await _publish_usage_crossing_events(
-            db=object(), auth_db=object(), ctx=self._ctx(), write=write,
-            cost=Decimal("10"), billed_units=Decimal("10"), inference_name="nmt",
-            budget_threshold_enabled=True, budget_exhausted_enabled=True,
-        )
-
-        assert calls["threshold"] == [("QUOTA_THRESHOLD", "1", {"model_task_type": "nmt"}, 75)]
-        assert "api_key_id" not in calls["threshold"][0][2]
-
-    async def test_quota_threshold_only_fires_for_the_highest_band_too(self, monkeypatch):
-        """Same "highest band only" fix as BUDGET_THRESHOLD, applied to
-        QUOTA_THRESHOLD too — it shares the identical loop-over-every-
-        crossed-band bug before this fix."""
-        from consumers.payperuse_consumer.handler import _publish_usage_crossing_events
-
-        # pre = (92-33)/100 = 59%, post = 92% — crosses both 75 and 90.
-        write = self._write(
-            api_key_budget_snap=None,
-            quota_recorded=True,
-            quota_used=Decimal("92"),
-            quota_snap=Decimal("100"),
-        )
-        calls = self._patch_kafka_helpers(monkeypatch, tenant_budget=None)
-
-        await _publish_usage_crossing_events(
-            db=object(), auth_db=object(), ctx=self._ctx(), write=write,
-            cost=Decimal("1"), billed_units=Decimal("33"), inference_name="nmt",
-            budget_threshold_enabled=True, budget_exhausted_enabled=True,
-        )
-
-        assert len(calls["threshold"]) == 1, (
-            f"expected exactly one QUOTA_THRESHOLD call, got {calls['threshold']!r}"
-        )
-        assert calls["threshold"][0][3] == 90, "must report the highest band crossed (90), not 75"
-
-
-class TestResolveRecipientsHelper:
-    """_resolve_recipients — the two fail-safe paths that make it return []
-    without ever calling ai4i_core.kafka.recipients.resolve_recipients: an
-    unknown event_name (no catalog row -> no notification_id), and a
-    missing auth_db (the second, named connection recipient resolution
-    reads ai4iplatform_auth through). Both must degrade to an empty list,
-    not raise — _publish_usage_crossing_events still publishes with
-    whatever this returns (see resolve_recipients's own module docstring:
-    an empty list is what makes the consumer settle the ledger row to
-    "failed" instead of leaving it wedged, not something this helper
-    should hide by raising)."""
-
-    async def test_unknown_notification_id_returns_empty_list_without_calling_resolve(self, monkeypatch):
+    async def test_nothing_is_evaluated_without_the_pipeline(self, monkeypatch):
         from consumers.payperuse_consumer import handler as h
 
-        called = {"resolve": False}
+        calls = self._patch(monkeypatch, tenant_budget=("820", "1000"))
+        monkeypatch.setattr(h, "notifications_configured", lambda: False)
+        await self._run(self._write(quota_recorded=True, quota_used=Decimal("810"), quota_snap=Decimal("1000")))
 
-        async def _no_id(db, event_name):
-            return None
+        assert calls["items"] == [] and calls["budget_reads"] == 0
 
-        async def _resolve(core_db, auth_db, *, notification_id, tenant_id):
-            called["resolve"] = True
-            return ["should-not-be-reached@example.com"]
+    async def test_budget_lookup_failure_never_reaches_billing(self, monkeypatch):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
 
-        monkeypatch.setattr(h, "get_notification_id", _no_id)
-        monkeypatch.setattr(h, "resolve_recipients", _resolve)
-
-        result = await h._resolve_recipients(object(), object(), "SOME_EVENT", "1")
-
-        assert result == []
-        assert called["resolve"] is False
-
-    async def test_missing_auth_db_returns_empty_list_without_calling_resolve(self, monkeypatch):
+        from ai4i_core.kafka import NotificationName
         from consumers.payperuse_consumer import handler as h
 
-        called = {"resolve": False}
+        calls = self._patch(monkeypatch, tenant_budget=("820", "1000"))
 
-        async def _has_id(db, event_name):
-            return 7
+        async def _down(auth_db, core_db, tenant_id):
+            raise ConnectionError("auth db down")
 
-        async def _resolve(core_db, auth_db, *, notification_id, tenant_id):
-            called["resolve"] = True
-            return ["should-not-be-reached@example.com"]
+        failures = SimpleNamespace(record=AsyncMock())
+        monkeypatch.setattr(h, "fetch_tenant_budget_status", _down)
+        monkeypatch.setattr(h, "get_notification_runtime", lambda: SimpleNamespace(failures=failures))
+        await self._run()  # must not raise
 
-        monkeypatch.setattr(h, "get_notification_id", _has_id)
-        monkeypatch.setattr(h, "resolve_recipients", _resolve)
+        assert calls["items"] == []
+        recorded = [c.kwargs["notification_name"] for c in failures.record.await_args_list]
+        assert recorded == [NotificationName.BUDGET_THRESHOLD, NotificationName.BUDGET_EXHAUSTED]
+        stage, code = failures.record.await_args.args
+        assert stage.value == "SOURCE" and code.value == "TENANT_LOOKUP_FAILED"
 
-        result = await h._resolve_recipients(object(), None, "SOME_EVENT", "1")
+    async def test_quota_exhausted_has_fallback_details_for_a_failed_tier_lookup(self, monkeypatch):
+        from ai4i_core.kafka import NotificationName
 
-        assert result == []
-        assert called["resolve"] is False
+        calls = self._patch(monkeypatch, budget_can_fire=False)
+        await self._run(self._write(quota_recorded=True, quota_used=Decimal("1000"), quota_snap=Decimal("1000")))
 
-    async def test_happy_path_forwards_notification_id_and_tenant_id(self, monkeypatch):
-        from consumers.payperuse_consumer import handler as h
-
-        captured = {}
-
-        async def _has_id(db, event_name):
-            return 7
-
-        async def _resolve(core_db, auth_db, *, notification_id, tenant_id):
-            captured["notification_id"] = notification_id
-            captured["tenant_id"] = tenant_id
-            return ["admin@example.com"]
-
-        monkeypatch.setattr(h, "get_notification_id", _has_id)
-        monkeypatch.setattr(h, "resolve_recipients", _resolve)
-
-        result = await h._resolve_recipients(object(), object(), "QUOTA_THRESHOLD", 42)
-
-        assert result == ["admin@example.com"]
-        assert captured["notification_id"] == 7
-        assert captured["tenant_id"] == "42"  # coerced to str, per the call site
+        item = next(i for i in calls["items"] if i.name is NotificationName.QUOTA_EXHAUSTED)
+        assert list(item.fallback_details) == ["tier-1", ["ASR: Quota Limit 1,000, Resets on 2026-09-01"]]

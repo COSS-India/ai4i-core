@@ -159,19 +159,6 @@ def render_password_changed(user: User, when: Optional[datetime] = None) -> Emai
     )
 
 
-def render_quota_limit_updated(user: User, tier_name: str) -> EmailMessage:
-    name = _platform_name()
-    return _render(
-        "quota_limit_updated",
-        to=user.email,
-        subject=f"Tier quota limit updated — {name}",
-        ctx={
-            "display_name": _display_name(user),
-            "tier_name": tier_name,
-        },
-    )
-
-
 def render_account_deleted(email: str, full_name: Optional[str] = None) -> EmailMessage:
     """Deletion confirmation sent to the user's original address.
 

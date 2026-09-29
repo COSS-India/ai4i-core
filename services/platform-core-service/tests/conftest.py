@@ -7,6 +7,7 @@ autouse fixture would run too late (after imports) and cause a ValidationError
 during collection.
 """
 
+import importlib.util
 import os
 import sys
 import time
@@ -113,7 +114,18 @@ _ai4i_exc = _conftest_stub(
     success_response=_success_response,
     error_response=_error_response,
 )
-_conftest_stub("ai4i_core", exceptions=_ai4i_exc)
+# Found before "ai4i_core" is stubbed below, so find_spec locates the real
+# package on disk instead of reading the stub.
+_real_ai4i_core_spec = importlib.util.find_spec("ai4i_core")
+
+_ai4i_core_stub = _conftest_stub("ai4i_core", exceptions=_ai4i_exc)
+
+# Give the stub the real package's __path__ so an unstubbed submodule, such
+# as ai4i_core.kafka (the shared notification constants and pipeline), still
+# resolves to the real module. Submodules already stubbed by exact name
+# (.exceptions, .ppu, ...) keep using their fakes.
+if _real_ai4i_core_spec and _real_ai4i_core_spec.submodule_search_locations:
+    _ai4i_core_stub.__path__ = list(_real_ai4i_core_spec.submodule_search_locations)
 
 # The seeded catalogue. Must mirror the seed migration
 # (52eb3034332e_seed_inference_types.py) exactly — metering_service.py reads

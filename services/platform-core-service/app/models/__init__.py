@@ -47,6 +47,15 @@ from app.models.notification_management.config_notification_alert import (  # no
 from app.models.notification_management.tenant_notification_subscription import (  # noqa: E402
     TenantNotificationSubscription,
 )
+from app.models.notification_management.notification_alert_threshold import (  # noqa: E402
+    NotificationAlertThreshold,
+)
+from app.models.notification_management.ledger_notification_alert import (  # noqa: E402
+    LedgerNotificationAlert,
+)
+from app.models.notification_management.notification_alert_failure_log import (  # noqa: E402
+    NotificationAlertFailureLog,
+)
 
 # Pay-per-use tables (Tier before TierQuota FK)
 # Pay-per-use tables (InferenceType before the tables that FK to it;
@@ -76,6 +85,9 @@ __all__ = [
     # notification-management
     "ConfigNotificationAlert",
     "TenantNotificationSubscription",
+    "NotificationAlertThreshold",
+    "LedgerNotificationAlert",
+    "NotificationAlertFailureLog",
     # pay-per-use
     "InferenceType",
     "Tier",

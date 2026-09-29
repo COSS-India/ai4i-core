@@ -42,12 +42,10 @@ from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationRepository
 from app.core.responses import to_response
-from ai4i_core.kafka import (
-    publish_admin_event as publish_notification_event,
-    is_notification_enabled,
-    get_notification_id,
-    check_and_record_action,
-    resolve_recipients,
+from app.services.notification_events import (
+    publish_budget_event,
+    publish_tier_event,
+    refresh_tenant_subscriptions,
 )
 from app.schemas.tenant import (
     TenantCreate,
@@ -86,10 +84,6 @@ from app.utils.masking import drop_masked_pii, mask_pii_in_dict
 from app.utils.username import allocate_unique_username, derive_username_from_email
 
 logger = logging.getLogger(__name__)
-
-# Matches platform-core-service's usage_service._CURRENCY — tenant budgets
-# are INR-only today; no per-tenant currency column exists yet.
-_BUDGET_CURRENCY = "INR"
 
 # Derived from tenants.allocated_budget's own column type (NUMERIC(15, 2))
 # rather than hand-computed, so widening that column can't silently leave
@@ -213,6 +207,7 @@ async def _seed_notification_subscriptions_for_new_tenant(
                 },
             )
         await platform_core_db.commit()
+        refresh_tenant_subscriptions(tenant_id)
     except Exception as exc:
         logger.exception(
             "Seeding tenant_notification_subscription failed for tenant %s "
@@ -1070,134 +1065,6 @@ class TenantService:
     # local Tenant row with no cross-DB PPU-assignment bookkeeping and no
     # HTTP round trip to another service.
 
-    async def _fetch_tier_email_fields(
-        self, tier_id: UUID, platform_core_db: AsyncSession
-    ) -> tuple[str, list[str]]:
-        """(description, quota_lines) for TIER_ASSIGNED/TIER_CHANGED's details
-        array (design doc §9.5) — quota_lines is one "NAME: N req/mo" string
-        per Model Task Type on this tier. Rate limit and Effective From/To
-        are deliberately not part of this email at all (not merely omitted
-        here) — a Tier has no rate-limit column and no expiry (it applies
-        until reassigned), so there's nothing real to show for either; see
-        design doc §9.5."""
-        description = ""
-        quota_lines: list[str] = []
-        try:
-            tier_row = (
-                await platform_core_db.execute(
-                    text("SELECT description FROM tiers WHERE id = :tid"), {"tid": tier_id}
-                )
-            ).first()
-            if tier_row is not None and tier_row.description:
-                description = tier_row.description
-            quota_rows = (
-                await platform_core_db.execute(
-                    text(
-                        "SELECT it.name AS inference_name, tq.monthly_quota "
-                        "FROM tier_quotas tq JOIN inference_types it ON it.id = tq.inference_type_id "
-                        "WHERE tq.tier_id = :tid ORDER BY it.name"
-                    ),
-                    {"tid": tier_id},
-                )
-            ).all()
-            quota_lines = [
-                f"{row.inference_name.upper()}: {row.monthly_quota:,.0f} req/mo" for row in quota_rows
-            ]
-        except Exception:
-            pass
-        return description, quota_lines
-
-    async def _publish_tier_event(
-        self,
-        old_tier_id: Optional[UUID],
-        new_tier_id: UUID,
-        new_tier_name: str,
-        tenant_id: int,
-        actor_id: str,
-        platform_core_db: Optional[AsyncSession],
-    ) -> None:
-        """Fire TIER_ASSIGNED/TIER_CHANGED after the tier write commits.
-        Best-effort — a Kafka outage must never fail the tier assignment
-        itself, matching _notify_tier_updated's existing framing.
-
-        Before publishing, ledger_notification_alert (design doc §5-7) is
-        checked/updated with the identical occurred_at: it's the atomic,
-        DB-level dedup guard against this exact action double-firing (e.g.
-        two producer replicas racing the same commit) — is_notification_enabled
-        is only the fast "is anyone listening at all" pre-check, not dedup.
-
-        details is the positional array design doc §9.5 specifies for these
-        two events, not the old {"tier_name": ...}/{"previous", "current"}
-        dict shape — the consumer (emailer.py) now indexes into it
-        positionally."""
-        occurred_at = datetime.now(timezone.utc).isoformat()
-        if old_tier_id is None:
-            if platform_core_db is not None and await is_notification_enabled(
-                platform_core_db, "TIER_ASSIGNED", str(tenant_id)
-            ):
-                fired = await check_and_record_action(
-                    platform_core_db, "TIER_ASSIGNED", str(tenant_id), {}, occurred_at, str(actor_id)
-                )
-                if fired:
-                    description, quota_lines = await self._fetch_tier_email_fields(new_tier_id, platform_core_db)
-                    recipients = await self._resolve_recipients(platform_core_db, "TIER_ASSIGNED", tenant_id)
-                    publish_notification_event(
-                        event_name="TIER_ASSIGNED",
-                        tenant_id=str(tenant_id),
-                        subject={},
-                        details=[new_tier_name, description, quota_lines],
-                        actor_id=str(actor_id),
-                        occurred_at=occurred_at,
-                        recipients=recipients,
-                    )
-            return
-        if platform_core_db is None or not await is_notification_enabled(
-            platform_core_db, "TIER_CHANGED", str(tenant_id)
-        ):
-            return
-        old_tier_name = old_tier_id
-        try:
-            old_row = (
-                await platform_core_db.execute(
-                    text("SELECT name FROM tiers WHERE id = :tid"), {"tid": old_tier_id}
-                )
-            ).first()
-            if old_row is not None:
-                old_tier_name = old_row.name
-        except Exception:
-            pass
-        fired = await check_and_record_action(
-            platform_core_db, "TIER_CHANGED", str(tenant_id), {}, occurred_at, str(actor_id)
-        )
-        if fired:
-            description, quota_lines = await self._fetch_tier_email_fields(new_tier_id, platform_core_db)
-            recipients = await self._resolve_recipients(platform_core_db, "TIER_CHANGED", tenant_id)
-            publish_notification_event(
-                event_name="TIER_CHANGED",
-                tenant_id=str(tenant_id),
-                subject={},
-                details=[str(old_tier_name), new_tier_name, description, quota_lines],
-                actor_id=str(actor_id),
-                recipients=recipients,
-                occurred_at=occurred_at,
-            )
-
-    async def _resolve_recipients(
-        self, platform_core_db: AsyncSession, name: str, tenant_id: int
-    ) -> list[str]:
-        """Shared helper — every producer call site needs the same
-        (notification_id, tenant_id) -> resolved email list lookup. auth_db
-        is this service's own default session (the repos' shared
-        AsyncSession, already against ai4iplatform_auth where users/roles
-        live); platform_core_db is the cross-service session already open
-        at every call site for is_notification_enabled/the ledger."""
-        notification_id = await get_notification_id(platform_core_db, name)
-        if notification_id is None:
-            return []
-        return await resolve_recipients(
-            platform_core_db, self._tenants._db, notification_id=notification_id, tenant_id=str(tenant_id)
-        )
-
     async def assign_tenant_tier(
         self,
         current_user: User,
@@ -1272,9 +1139,7 @@ class TenantService:
         )
         await self._tenants.save_and_refresh(tenant)
 
-        await self._publish_tier_event(
-            old_tier_id, tier_uuid, row.name, tenant_id, current_user.id, platform_core_db
-        )
+        publish_tier_event(old_tier_id, tier_uuid, row.name, tenant_id, revised_at=tenant.updated_at)
 
         if self._api_keys is not None:
             # Quota is tier-scoped: flags earned under the old tier would
@@ -1775,42 +1640,16 @@ class TenantService:
         await self._tenants.commit()
         await self._tenants.refresh(tenant)
 
-        # ledger_notification_alert is the atomic dedup guard (design doc
-        # §5-7) — see _publish_tier_event for the full reasoning;
-        # is_notification_enabled is only the fast "anyone listening"
-        # pre-check.
-        budget_event_name = "BUDGET_ASSIGNED" if current_budget == 0 else "BUDGET_UPDATED"
-        if (
-            action is not None
-            and platform_core_db is not None
-            and await is_notification_enabled(platform_core_db, budget_event_name, str(tenant_id))
-        ):
-            occurred_at_dt = datetime.now(timezone.utc)
-            occurred_at = occurred_at_dt.isoformat()
-            fired = await check_and_record_action(
-                platform_core_db, budget_event_name, str(tenant_id), {}, occurred_at, str(current_user.id)
+        # A top-up or top-down (not a pure window-date edit) is the budget
+        # change BUDGET_ASSIGNED / BUDGET_UPDATED report.
+        if action is not None:
+            publish_budget_event(
+                tenant_id,
+                current_budget,
+                new_budget,
+                new_effective_from.date() if new_effective_from is not None else None,
+                revised_at=tenant.updated_at,
             )
-            if fired:
-                # A Budget revision is instant (design doc §9.5's own note on
-                # BUDGET_UPDATED's effective_date) — new_effective_from only
-                # differs from today when this revision itself set a future
-                # start date, which is the case worth showing.
-                effective_date = (new_effective_from or occurred_at_dt).date().isoformat()
-                details = (
-                    [_BUDGET_CURRENCY, str(new_budget)]
-                    if current_budget == 0
-                    else [_BUDGET_CURRENCY, str(current_budget), str(new_budget), effective_date]
-                )
-                recipients = await self._resolve_recipients(platform_core_db, budget_event_name, tenant_id)
-                publish_notification_event(
-                    event_name=budget_event_name,
-                    tenant_id=str(tenant_id),
-                    subject={},
-                    details=details,
-                    actor_id=str(current_user.id),
-                    occurred_at=occurred_at,
-                    recipients=recipients,
-                )
 
         snapshot_write_failed = not await write_budget_snapshot(snapshot_writes, platform_core_db)
         if snapshot_write_failed:

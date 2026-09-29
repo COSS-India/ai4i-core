@@ -1,191 +1,205 @@
-"""ai4i_core.kafka.recipients.resolve_monitoring_recipients
+"""ai4i_core.kafka.recipients.RecipientResolver (Q-R1, Q-R2, Q-R3)
 
-MONITORING recipients are resolved from configs_notification_alert.
-recipient_roles on every call (send time), never from a list frozen when the
-row was last PATCHed — so a user who gains ADMIN/MODERATOR after the save is
-included, and one who loses the role or is deactivated is dropped, with no
-re-save in between.
+MONITORING recipients are resolved from the row's selected roles on every
+send, never from a list frozen when the row was last saved — so a user who
+gains ADMIN/MODERATOR after the save is included, and one who loses the role
+or is deactivated is dropped, with no re-save in between.
 
-Both databases are faked. The fake auth DB applies the active / not-deleted
-filters only if the SQL actually carries them, so dropping either filter
-from the query fails a test here rather than passing silently.
+The fake auth DB applies the active / not-deleted filters only if the SQL
+actually carries them, so dropping either filter from the query fails a test
+here rather than passing silently.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from types import SimpleNamespace
-from typing import Dict, List, Set
+from typing import List, Set
 
 import pytest
 
-from ai4i_core.kafka import recipients
-
-
-@pytest.fixture(autouse=True)
-def _decrypt():
-    recipients.configure(lambda token: token.removeprefix("enc:") if token else None)
-    yield
-    recipients._decrypt_email = None
+from ai4i_core.kafka.recipients import RecipientResolver
 
 
 @dataclass
 class _User:
+    id: str
     email: str
     roles: Set[str]
+    full_name: str = ""
     is_active: bool = True
     is_delete: bool = False
-
-    @property
-    def token(self) -> str:
-        return f"enc:{self.email}"
 
 
 class _Result:
     def __init__(self, rows):
         self._rows = rows
 
-    def all(self):
+    def mappings(self):
         return list(self._rows)
-
-    def first(self):
-        return self._rows[0] if self._rows else None
-
-
-@dataclass
-class _CoreDb:
-    """configs_notification_alert rows: id -> (type, recipient_roles)."""
-
-    rows: Dict[int, tuple]
-
-    async def execute(self, stmt, params):
-        sql = str(stmt)
-        assert "FROM configs_notification_alert" in sql, sql
-        row = self.rows.get(params["notification_id"])
-        if row is None or ("type::text = 'MONITORING'" in sql and row[0] != "MONITORING"):
-            return _Result([])
-        return _Result([SimpleNamespace(recipient_roles=row[1])])
 
 
 @dataclass
 class _AuthDb:
-    users: List[_User]
-    queries: List[dict] = field(default_factory=list)
+    users: List[_User] = field(default_factory=list)
+    calls: int = 0
 
     async def execute(self, stmt, params):
+        self.calls += 1
         sql = str(stmt)
-        self.queries.append(params)
-        wanted = set(params["roles"])
-        tokens = []
-        for user in self.users:
-            if not user.roles & wanted:
+        rows = []
+        for u in self.users:
+            if not set(params["roles"]) & u.roles:
                 continue
-            if "u.is_active IS TRUE" in sql and not user.is_active:
+            if "is_active IS TRUE" in sql and not u.is_active:
                 continue
-            if "u.is_delete IS NOT TRUE" in sql and user.is_delete:
+            if "is_delete IS NOT TRUE" in sql and u.is_delete:
                 continue
-            tokens.append(user.token)
-        # DISTINCT u.email in the real query.
-        return _Result([SimpleNamespace(email=t) for t in dict.fromkeys(tokens)])
+            rows.append({"id": u.id, "email": f"enc:{u.email}", "full_name": u.full_name})
+        return _Result(rows)
 
 
-async def _resolve(core_db, auth_db, notification_id=10):
-    return await recipients.resolve_monitoring_recipients(
-        core_db, auth_db, notification_id=notification_id
+def _resolver():
+    return RecipientResolver(lambda token: token.removeprefix("enc:") if token else None)
+
+
+@pytest.mark.asyncio
+async def test_every_active_holder_of_a_selected_role_is_resolved_once():
+    db = _AuthDb([
+        _User("1", "a@x.io", {"ADMIN"}, "Asha"),
+        _User("2", "m@x.io", {"MODERATOR"}),
+        _User("3", "both@x.io", {"ADMIN", "MODERATOR"}),
+        _User("4", "t@x.io", {"TENANT ADMIN"}),
+    ])
+    out = await _resolver().for_roles(db, ["ADMIN", "MODERATOR"])
+    assert [r.email for r in out] == ["a@x.io", "both@x.io", "m@x.io"]
+    assert out[0].name == "Asha"
+
+
+@pytest.mark.asyncio
+async def test_inactive_and_deleted_users_are_dropped():
+    db = _AuthDb([
+        _User("1", "a@x.io", {"ADMIN"}),
+        _User("2", "off@x.io", {"ADMIN"}, is_active=False),
+        _User("3", "gone@x.io", {"ADMIN"}, is_delete=True),
+    ])
+    assert [r.email for r in await _resolver().for_roles(db, ["ADMIN"])] == ["a@x.io"]
+
+
+@pytest.mark.asyncio
+async def test_a_role_granted_or_revoked_after_the_save_shows_on_the_next_send():
+    admin = _User("1", "a@x.io", {"ADMIN"})
+    newcomer = _User("2", "new@x.io", set())
+    db = _AuthDb([admin, newcomer])
+    resolver = _resolver()
+    assert [r.email for r in await resolver.for_roles(db, ["ADMIN"])] == ["a@x.io"]
+
+    newcomer.roles.add("ADMIN")
+    admin.roles.clear()
+    assert [r.email for r in await resolver.for_roles(db, ["ADMIN"])] == ["new@x.io"]
+
+
+@pytest.mark.asyncio
+async def test_no_or_non_monitoring_roles_resolve_to_nobody_without_a_query():
+    db = _AuthDb([_User("1", "t@x.io", {"TENANT ADMIN"})])
+    assert await _resolver().for_roles(db, []) == []
+    assert await _resolver().for_roles(db, ["TENANT ADMIN"]) == []
+    assert db.calls == 0
+
+
+# ── Decrypt failure: one bad email never drops the event for the others ──
+
+
+class _Mappings(list):
+    def all(self):
+        return list(self)
+
+
+class _RowsDb:
+    """Returns fixed rows for any query — for_tenant / for_tenants."""
+
+    def __init__(self, rows):
+        self.rows = rows
+
+    async def execute(self, stmt, params):
+        rows = self.rows
+
+        class _R:
+            def mappings(self):
+                return _Mappings(rows)
+
+        return _R()
+
+
+def _strict_resolver():
+    def decrypt(token):
+        if "bad" in token:
+            raise ValueError("cannot decrypt")
+        return token.removeprefix("enc:")
+
+    return RecipientResolver(decrypt)
+
+
+@pytest.mark.asyncio
+async def test_undecryptable_recipient_is_skipped_for_roles_others_still_resolved():
+    db = _AuthDb([_User("1", "ok@x.io", {"ADMIN"}), _User("2", "bad@x.io", {"ADMIN"})])
+    assert [r.email for r in await _strict_resolver().for_roles(db, ["ADMIN"])] == ["ok@x.io"]
+
+
+@pytest.mark.asyncio
+async def test_undecryptable_recipient_is_skipped_for_tenant_others_still_resolved():
+    db = _RowsDb([
+        {"id": 1, "email": "enc:ok@x.io", "full_name": "Ok", "tenant_name": "Acme"},
+        {"id": 2, "email": "enc:bad@x.io", "full_name": "Bad", "tenant_name": "Acme"},
+    ])
+    people, tenant_name = await _strict_resolver().for_tenant(db, "7", {"ADMIN": True})
+    assert [r.email for r in people] == ["ok@x.io"]
+    assert tenant_name == "Acme"
+
+
+# ── for_tenants: per-tenant grouping (Q-R2) ──
+
+
+def _tenant_row(tenant_id, role, user_id, email):
+    return {"tenant_id": tenant_id, "role": role, "user_id": user_id, "email": f"enc:{email}", "full_name": ""}
+
+
+@pytest.mark.asyncio
+async def test_for_tenants_keeps_tenant_admins_and_extras_on_their_own_tenant():
+    db = _RowsDb([
+        _tenant_row("1", "ADMIN", "a", "admin@x.io"),
+        _tenant_row("7", "TENANT ADMIN", "t7", "ta7@x.io"),
+        _tenant_row("8", "TENANT ADMIN", "t8", "ta8@x.io"),
+        _tenant_row("7", "USER", "u7", "extra7@x.io"),
+        _tenant_row("8", "USER", "u8", "extra8@x.io"),
+    ])
+    out = await _resolver().for_tenants(
+        db, ["7", "8"], {"ADMIN": True, "TENANT ADMIN": True}, {"7": ["u7"], "8": ["u8"]}
     )
+    assert [r.email for r in out["7"]] == ["admin@x.io", "extra7@x.io", "ta7@x.io"]
+    assert [r.email for r in out["8"]] == ["admin@x.io", "extra8@x.io", "ta8@x.io"]
 
 
 @pytest.mark.asyncio
-class TestResolvedAtSendTime:
-    async def test_new_admin_is_included_and_deactivated_admin_dropped_without_a_resave(self):
-        # Review scenario. The row was saved once with ADMIN selected; after
-        # that, a new Adopter Admin is added and an existing one is
-        # deactivated. No PATCH happens in between — the next send must
-        # still reflect both changes.
-        core_db = _CoreDb(rows={10: ("MONITORING", {"ADMIN": True, "MODERATOR": False})})
-        a1 = _User("a1@x.com", {"ADMIN"})
-        a2 = _User("a2@x.com", {"ADMIN"})
-        auth_db = _AuthDb(users=[a1, a2])
-
-        assert await _resolve(core_db, auth_db) == ["a1@x.com", "a2@x.com"]
-
-        auth_db.users.append(_User("a3@x.com", {"ADMIN"}))
-        a2.is_active = False
-
-        assert await _resolve(core_db, auth_db) == ["a1@x.com", "a3@x.com"]
-
-    async def test_user_whose_role_was_revoked_is_dropped(self):
-        core_db = _CoreDb(rows={10: ("MONITORING", {"ADMIN": False, "MODERATOR": True})})
-        mod = _User("m@x.com", {"MODERATOR"})
-        auth_db = _AuthDb(users=[mod])
-        assert await _resolve(core_db, auth_db) == ["m@x.com"]
-
-        mod.roles = set()
-        assert await _resolve(core_db, auth_db) == []
-
-    async def test_soft_deleted_user_is_dropped(self):
-        core_db = _CoreDb(rows={10: ("MONITORING", {"ADMIN": True})})
-        auth_db = _AuthDb(users=[_User("gone@x.com", {"ADMIN"}, is_delete=True)])
-        assert await _resolve(core_db, auth_db) == []
-
-    async def test_role_selection_is_read_on_every_call(self):
-        # Changing recipient_roles takes effect on the next send — there is
-        # nothing else to rebuild.
-        roles = {"ADMIN": True, "MODERATOR": False}
-        core_db = _CoreDb(rows={10: ("MONITORING", roles)})
-        auth_db = _AuthDb(users=[_User("a@x.com", {"ADMIN"}), _User("m@x.com", {"MODERATOR"})])
-        assert await _resolve(core_db, auth_db) == ["a@x.com"]
-
-        roles["MODERATOR"] = True
-        assert await _resolve(core_db, auth_db) == ["a@x.com", "m@x.com"]
+async def test_for_tenants_extra_listed_by_another_tenant_is_not_leaked():
+    # u8 is tenant 7's user row but only tenant 8's subscription lists it.
+    db = _RowsDb([_tenant_row("7", "USER", "u8", "someone@x.io")])
+    out = await _resolver().for_tenants(db, ["7", "8"], {}, {"8": ["u8"]})
+    assert out == {"7": [], "8": []}
 
 
 @pytest.mark.asyncio
-class TestRoleSelection:
-    async def test_user_holding_both_roles_is_listed_once(self):
-        core_db = _CoreDb(rows={10: ("MONITORING", {"ADMIN": True, "MODERATOR": True})})
-        auth_db = _AuthDb(users=[_User("both@x.com", {"ADMIN", "MODERATOR"})])
-        assert await _resolve(core_db, auth_db) == ["both@x.com"]
-
-    async def test_no_role_selected_returns_empty_without_querying_users(self):
-        core_db = _CoreDb(rows={10: ("MONITORING", {"ADMIN": False, "MODERATOR": False})})
-        auth_db = _AuthDb(users=[_User("a@x.com", {"ADMIN"})])
-        assert await _resolve(core_db, auth_db) == []
-        assert auth_db.queries == []
-
-    async def test_only_admin_and_moderator_are_ever_queried(self):
-        # A stray key (never writable through the monitoring PATCH, but
-        # defend anyway) must not widen the audience to tenant users.
-        core_db = _CoreDb(rows={10: ("MONITORING", {"ADMIN": True, "TENANT ADMIN": True})})
-        auth_db = _AuthDb(users=[_User("a@x.com", {"ADMIN"}), _User("t@x.com", {"TENANT ADMIN"})])
-        assert await _resolve(core_db, auth_db) == ["a@x.com"]
-        assert auth_db.queries == [{"roles": ["ADMIN"]}]
-
-    async def test_non_monitoring_notification_id_resolves_to_nobody(self):
-        core_db = _CoreDb(rows={2: ("ALERT", {"ADMIN": True})})
-        auth_db = _AuthDb(users=[_User("a@x.com", {"ADMIN"})])
-        assert await _resolve(core_db, auth_db, notification_id=2) == []
-
-    async def test_unknown_notification_id_resolves_to_nobody(self):
-        core_db = _CoreDb(rows={})
-        auth_db = _AuthDb(users=[_User("a@x.com", {"ADMIN"})])
-        assert await _resolve(core_db, auth_db, notification_id=999) == []
+async def test_for_tenants_unselected_roles_are_left_out_and_duplicates_collapse():
+    db = _RowsDb([
+        _tenant_row("1", "ADMIN", "a", "admin@x.io"),
+        _tenant_row("7", "TENANT ADMIN", "t7", "ta7@x.io"),
+        _tenant_row("7", "TENANT ADMIN", "t7", "ta7@x.io"),
+    ])
+    out = await _resolver().for_tenants(db, ["7"], {"TENANT ADMIN": True}, {})
+    assert [r.email for r in out["7"]] == ["ta7@x.io"]
 
 
 @pytest.mark.asyncio
-class TestBestEffort:
-    async def test_lookup_failure_returns_empty_not_raises(self):
-        class _Down:
-            async def execute(self, stmt, params):
-                raise ConnectionError("auth db down")
-
-        core_db = _CoreDb(rows={10: ("MONITORING", {"ADMIN": True})})
-        assert await _resolve(core_db, _Down()) == []
-
-    async def test_undecryptable_recipient_is_skipped_others_still_sent(self):
-        recipients.configure(
-            lambda token: (_ for _ in ()).throw(ValueError("bad")) if "bad" in token else token.removeprefix("enc:")
-        )
-        core_db = _CoreDb(rows={10: ("MONITORING", {"ADMIN": True})})
-        auth_db = _AuthDb(users=[_User("ok@x.com", {"ADMIN"}), _User("bad@x.com", {"ADMIN"})])
-        assert await _resolve(core_db, auth_db) == ["ok@x.com"]
+async def test_for_tenants_no_tenants_runs_no_query():
+    db = _AuthDb()
+    assert await _resolver().for_tenants(db, [], {"ADMIN": True}, {}) == {}
+    assert db.calls == 0

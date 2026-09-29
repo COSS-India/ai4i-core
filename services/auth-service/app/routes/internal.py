@@ -2,14 +2,13 @@
 
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.exceptions import EntityNotFoundError
-from app.dependencies.services import get_api_key_service, get_quota_notification_service, get_tenant_service
-from app.schemas.quota import QuotaLimitUpdatedRequest, TierReactivatedRequest
+from app.dependencies.services import get_api_key_service, get_tenant_service
+from app.schemas.quota import TierReactivatedRequest
 from app.services.api_key_service import APIKeyService
-from app.services.quota_notification_service import QuotaNotificationService
 from app.services.tenant_service import TenantService
 from app.services.tier_status_cache import tier_status_cache
 
@@ -139,15 +138,6 @@ async def reset_tenant_quota(
     except (ValueError, TypeError):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid tenant_id")
     await svc.clear_quota_flags_for_tenant(tid)
-
-
-@router.post("/ppu/tier/quota-limit-updated", status_code=status.HTTP_204_NO_CONTENT)
-async def notify_quota_limit_updated(
-    body: QuotaLimitUpdatedRequest,
-    background_tasks: BackgroundTasks,
-    svc: QuotaNotificationService = Depends(get_quota_notification_service),
-):
-    await svc.notify_quota_limit_updated(body.tier_name, body.tenant_ids, background_tasks)
 
 
 @router.post("/ppu/tier/reactivated", status_code=status.HTTP_204_NO_CONTENT)

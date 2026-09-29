@@ -80,23 +80,14 @@ def _svc(*, roles=("ADMIN",), allocation_service=None) -> TenantService:
 
 @pytest.fixture(autouse=True)
 def _no_notifications(monkeypatch):
-    """Neutralise the TIER_ASSIGNED/TIER_CHANGED/BUDGET_ASSIGNED/
-    BUDGET_UPDATED notification pipeline for every test in this file by
-    default. is_notification_enabled/check_and_record_action are real
-    ai4i_core.kafka calls that touch platform_core_db.execute (config
-    cache miss, ledger UPSERT) — left unpatched, they'd consume entries
-    from this file's own fixed mock-response queues (_core_db's
-    side_effect list), breaking execute.await_count assertions that
-    predate and have nothing to do with notifications. TestTierBudget
-    NotificationPublishing below overrides these per test to exercise the
-    notification path itself."""
-    monkeypatch.setattr(
-        "app.services.tenant_service.is_notification_enabled", AsyncMock(return_value=False)
-    )
-    monkeypatch.setattr(
-        "app.services.tenant_service.check_and_record_action", AsyncMock(return_value=False)
-    )
-    monkeypatch.setattr("app.services.tenant_service.publish_notification_event", MagicMock())
+    """Neutralise the notification hand-off for every test in this file by
+    default. publish_tier_event/publish_budget_event hand the event to the
+    shared ai4i_core.kafka pipeline in the background; tenant_service's own
+    contract is only that it calls them with the right values, which
+    TestTierBudgetNotificationPublishing below checks."""
+    monkeypatch.setattr("app.services.tenant_service.publish_tier_event", MagicMock())
+    monkeypatch.setattr("app.services.tenant_service.publish_budget_event", MagicMock())
+    monkeypatch.setattr("app.services.tenant_service.refresh_tenant_subscriptions", MagicMock())
 
 
 def _core_db(*, tier_row=(), budget_usage_rows=None) -> AsyncMock:
@@ -1336,61 +1327,14 @@ class TestListTenantTiers:
 
 
 class TestTierBudgetNotificationPublishing:
-    """TIER_ASSIGNED/TIER_CHANGED/BUDGET_ASSIGNED/BUDGET_UPDATED — the
-    producer-side publish gated by is_notification_enabled (config cache:
-    is anyone listening) then check_and_record_action (ledger dedup: is
-    this exact action genuinely new) — see _publish_tier_event and
-    revise_tenant_budget's own notification block.
-
-    is_notification_enabled/check_and_record_action are patched per test
-    here (overriding this file's own autouse _no_notifications fixture)
-    rather than driven through the real ai4i_core.kafka cache/ledger —
-    those are covered by their own module's tests and by live verification
-    against the real stack; this file's job is only tenant_service's own
-    contract with them: called with the right event name and arguments,
-    called in the right order, and publish_notification_event only fires
-    when both gates pass.
-    """
+    """TIER_ASSIGNED/TIER_CHANGED/BUDGET_ASSIGNED/BUDGET_UPDATED — after the
+    tier or budget change commits, tenant_service hands the change to
+    app.services.notification_events (which runs the shared pipeline in the
+    background). These pin what is handed over and when; the event content
+    itself is covered by test_notification_events.py."""
 
     @pytest.mark.asyncio
-    async def test_first_assignment_publishes_tier_assigned_when_enabled_and_new(self) -> None:
-        new_tier_id = uuid4()
-        tenant = _tenant(tier_id=None)
-        svc = _svc()
-        svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
-        svc._tenants.update = AsyncMock()
-        svc._tenants.save_and_refresh = AsyncMock()
-        tier_row = MagicMock(id=new_tier_id)
-        tier_row.name = "Gold"
-        description_row = MagicMock(description="High-volume tier")
-        quota_row = MagicMock(inference_name="asr", monthly_quota=10000)
-        # 1) the tier lookup, 2) _fetch_tier_email_fields' description query,
-        # 3) its tier_quotas query (fetched via .all()).
-        db = _core_db(tier_row=[tier_row, description_row, [quota_row]])
-        actor = _admin_user()
-
-        with patch(
-            "app.services.tenant_service.is_notification_enabled", AsyncMock(return_value=True)
-        ), patch(
-            "app.services.tenant_service.check_and_record_action", AsyncMock(return_value=True)
-        ) as mock_ledger, patch(
-            "app.services.tenant_service.publish_notification_event"
-        ) as mock_publish:
-            await svc.assign_tenant_tier(actor, 1, str(new_tier_id), db)
-
-        mock_ledger.assert_awaited_once_with(db, "TIER_ASSIGNED", "1", {}, ANY, str(actor.id))
-        mock_publish.assert_called_once_with(
-            event_name="TIER_ASSIGNED",
-            tenant_id="1",
-            subject={},
-            details=["Gold", "High-volume tier", ["ASR: 10,000 req/mo"]],
-            actor_id=str(actor.id),
-            occurred_at=ANY,
-            recipients=[],
-        )
-
-    @pytest.mark.asyncio
-    async def test_first_assignment_skips_publish_when_notification_disabled(self) -> None:
+    async def test_first_assignment_hands_over_no_previous_tier(self) -> None:
         new_tier_id = uuid4()
         tenant = _tenant(tier_id=None)
         svc = _svc()
@@ -1401,45 +1345,15 @@ class TestTierBudgetNotificationPublishing:
         tier_row.name = "Gold"
         db = _core_db(tier_row=[tier_row])
 
-        with patch(
-            "app.services.tenant_service.is_notification_enabled", AsyncMock(return_value=False)
-        ), patch(
-            "app.services.tenant_service.check_and_record_action"
-        ) as mock_ledger, patch(
-            "app.services.tenant_service.publish_notification_event"
-        ) as mock_publish:
+        with patch("app.services.tenant_service.publish_tier_event") as mock_publish:
             await svc.assign_tenant_tier(_admin_user(), 1, str(new_tier_id), db)
 
-        mock_ledger.assert_not_awaited()
-        mock_publish.assert_not_called()
+        mock_publish.assert_called_once_with(None, new_tier_id, "Gold", 1, revised_at=tenant.updated_at)
+        # Only the tier lookup ran on the request's session.
+        assert db.execute.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_first_assignment_skips_publish_when_ledger_says_already_recorded(self) -> None:
-        """enabled=True but check_and_record_action returns False (this
-        exact action was already recorded) — must not double-publish."""
-        new_tier_id = uuid4()
-        tenant = _tenant(tier_id=None)
-        svc = _svc()
-        svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
-        svc._tenants.update = AsyncMock()
-        svc._tenants.save_and_refresh = AsyncMock()
-        tier_row = MagicMock(id=new_tier_id)
-        tier_row.name = "Gold"
-        db = _core_db(tier_row=[tier_row])
-
-        with patch(
-            "app.services.tenant_service.is_notification_enabled", AsyncMock(return_value=True)
-        ), patch(
-            "app.services.tenant_service.check_and_record_action", AsyncMock(return_value=False)
-        ), patch(
-            "app.services.tenant_service.publish_notification_event"
-        ) as mock_publish:
-            await svc.assign_tenant_tier(_admin_user(), 1, str(new_tier_id), db)
-
-        mock_publish.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_reassignment_publishes_tier_changed_with_previous_and_current(self) -> None:
+    async def test_reassignment_hands_over_previous_and_new_tier(self) -> None:
         old_tier_id, new_tier_id = uuid4(), uuid4()
         tenant = _tenant(tier_id=old_tier_id)
         svc = _svc()
@@ -1448,216 +1362,72 @@ class TestTierBudgetNotificationPublishing:
         svc._tenants.save_and_refresh = AsyncMock()
         new_tier_row = MagicMock(id=new_tier_id)
         new_tier_row.name = "Platinum"
-        old_tier_row = MagicMock(id=old_tier_id)
-        old_tier_row.name = "Silver"
-        description_row = MagicMock(description="High-volume tier")
-        quota_row = MagicMock(inference_name="asr", monthly_quota=10000)
-        # 1) the new-tier existence lookup, 2) _publish_tier_event's own
-        # old-tier-name lookup, 3-4) _fetch_tier_email_fields' description
-        # and tier_quotas queries — four separate platform_core_db.execute
-        # calls in that order.
-        db = _core_db(tier_row=[new_tier_row, old_tier_row, description_row, [quota_row]])
+        db = _core_db(tier_row=[new_tier_row])
 
-        with patch(
-            "app.services.tenant_service.is_notification_enabled", AsyncMock(return_value=True)
-        ), patch(
-            "app.services.tenant_service.check_and_record_action", AsyncMock(return_value=True)
-        ), patch(
-            "app.services.tenant_service.publish_notification_event"
-        ) as mock_publish:
+        with patch("app.services.tenant_service.publish_tier_event") as mock_publish:
             await svc.assign_tenant_tier(_admin_user(), 1, str(new_tier_id), db)
 
         mock_publish.assert_called_once_with(
-            event_name="TIER_CHANGED",
-            tenant_id="1",
-            subject={},
-            details=["Silver", "Platinum", "High-volume tier", ["ASR: 10,000 req/mo"]],
-            actor_id=ANY,
-            occurred_at=ANY,
-            recipients=[],
+            old_tier_id, new_tier_id, "Platinum", 1, revised_at=tenant.updated_at,
         )
 
     @pytest.mark.asyncio
-    async def test_reassignment_falls_back_to_uuid_when_old_tier_name_lookup_fails(self) -> None:
-        """The old-tier-name lookup is best-effort (try/except pass) — a
-        failure must not block the notification, just fall back to the raw
-        UUID instead of the resolved name."""
-        old_tier_id, new_tier_id = uuid4(), uuid4()
-        tenant = _tenant(tier_id=old_tier_id)
-        svc = _svc()
-        svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
-        svc._tenants.update = AsyncMock()
-        svc._tenants.save_and_refresh = AsyncMock()
-        new_tier_row = MagicMock(id=new_tier_id)
-        new_tier_row.name = "Platinum"
-        db = AsyncMock()
-        db.execute = AsyncMock(
-            side_effect=[
-                MagicMock(first=MagicMock(return_value=new_tier_row)),
-                RuntimeError("platform-core unreachable"),
-            ]
-        )
-
-        with patch(
-            "app.services.tenant_service.is_notification_enabled", AsyncMock(return_value=True)
-        ), patch(
-            "app.services.tenant_service.check_and_record_action", AsyncMock(return_value=True)
-        ), patch(
-            "app.services.tenant_service.publish_notification_event"
-        ) as mock_publish:
-            await svc.assign_tenant_tier(_admin_user(), 1, str(new_tier_id), db)
-
-        mock_publish.assert_called_once_with(
-            event_name="TIER_CHANGED",
-            tenant_id="1",
-            subject={},
-            # _fetch_tier_email_fields also best-effort degrades to
-            # ""/[] here — its own two queries exhaust this mock's
-            # side_effect list right after the old-tier-name lookup fails.
-            details=[str(old_tier_id), "Platinum", "", []],
-            actor_id=ANY,
-            occurred_at=ANY,
-            recipients=[],
-        )
-
-    @pytest.mark.asyncio
-    async def test_first_budget_publishes_budget_assigned_when_enabled_and_new(self) -> None:
+    async def test_first_budget_hands_over_zero_previous_budget(self) -> None:
         svc = _svc()
         svc._tenants.get_by_id_for_update = AsyncMock(
-            return_value=_tenant(allocated_budget=Decimal("0"))
-        )
-        svc._tenants.update = AsyncMock()
-        svc._api_keys.list_key_ids_for_tenant = AsyncMock(return_value=[])
-        db = _core_db()  # sync short-circuits on empty key_ids -- no execute call
-        actor = _admin_user()
-
-        with patch(
-            "app.services.tenant_service.is_notification_enabled", AsyncMock(return_value=True)
-        ), patch(
-            "app.services.tenant_service.check_and_record_action", AsyncMock(return_value=True)
-        ) as mock_ledger, patch(
-            "app.services.tenant_service.publish_notification_event"
-        ) as mock_publish:
-            await svc.revise_tenant_budget(
-                actor, 1, "top-up", Decimal("500"),
-                _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db,
-            )
-
-        mock_ledger.assert_awaited_once_with(db, "BUDGET_ASSIGNED", "1", {}, ANY, str(actor.id))
-        mock_publish.assert_called_once_with(
-            event_name="BUDGET_ASSIGNED",
-            tenant_id="1",
-            subject={},
-            details=["INR", "500"],
-            actor_id=str(actor.id),
-            occurred_at=ANY,
-            recipients=[],
-        )
-
-    @pytest.mark.asyncio
-    async def test_revision_publishes_budget_updated_with_previous_and_current(self) -> None:
-        svc = _svc()
-        svc._tenants.get_by_id_for_update = AsyncMock(
-            return_value=_tenant(allocated_budget=Decimal("1000"))
+            return_value=(tenant := _tenant(allocated_budget=Decimal("0")))
         )
         svc._tenants.update = AsyncMock()
         svc._api_keys.list_key_ids_for_tenant = AsyncMock(return_value=[])
         db = _core_db()
 
-        with patch(
-            "app.services.tenant_service.is_notification_enabled", AsyncMock(return_value=True)
-        ), patch(
-            "app.services.tenant_service.check_and_record_action", AsyncMock(return_value=True)
-        ), patch(
-            "app.services.tenant_service.publish_notification_event"
-        ) as mock_publish:
+        with patch("app.services.tenant_service.publish_budget_event") as mock_publish:
             await svc.revise_tenant_budget(
                 _admin_user(), 1, "top-up", Decimal("500"),
                 _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db,
             )
 
         mock_publish.assert_called_once_with(
-            event_name="BUDGET_UPDATED",
-            tenant_id="1",
-            subject={},
-            details=["INR", "1000", "1500", _VALID_EFFECTIVE_FROM.date().isoformat()],
-            actor_id=ANY,
-            occurred_at=ANY,
-            recipients=[],
+            1, Decimal("0"), Decimal("500"), _VALID_EFFECTIVE_FROM.date(), revised_at=tenant.updated_at,
         )
 
     @pytest.mark.asyncio
-    async def test_budget_revision_skips_publish_when_notification_disabled(self) -> None:
+    async def test_revision_hands_over_previous_and_new_budget(self) -> None:
         svc = _svc()
         svc._tenants.get_by_id_for_update = AsyncMock(
-            return_value=_tenant(allocated_budget=Decimal("0"))
+            return_value=(tenant := _tenant(allocated_budget=Decimal("1000")))
         )
         svc._tenants.update = AsyncMock()
         svc._api_keys.list_key_ids_for_tenant = AsyncMock(return_value=[])
         db = _core_db()
 
-        with patch(
-            "app.services.tenant_service.is_notification_enabled", AsyncMock(return_value=False)
-        ), patch(
-            "app.services.tenant_service.check_and_record_action"
-        ) as mock_ledger, patch(
-            "app.services.tenant_service.publish_notification_event"
-        ) as mock_publish:
+        with patch("app.services.tenant_service.publish_budget_event") as mock_publish:
             await svc.revise_tenant_budget(
                 _admin_user(), 1, "top-up", Decimal("500"),
                 _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db,
             )
 
-        mock_ledger.assert_not_awaited()
-        mock_publish.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_budget_revision_skips_publish_when_ledger_says_already_recorded(self) -> None:
-        svc = _svc()
-        svc._tenants.get_by_id_for_update = AsyncMock(
-            return_value=_tenant(allocated_budget=Decimal("0"))
+        mock_publish.assert_called_once_with(
+            1, Decimal("1000"), Decimal("1500"), _VALID_EFFECTIVE_FROM.date(), revised_at=tenant.updated_at,
         )
-        svc._tenants.update = AsyncMock()
-        svc._api_keys.list_key_ids_for_tenant = AsyncMock(return_value=[])
-        db = _core_db()
-
-        with patch(
-            "app.services.tenant_service.is_notification_enabled", AsyncMock(return_value=True)
-        ), patch(
-            "app.services.tenant_service.check_and_record_action", AsyncMock(return_value=False)
-        ), patch(
-            "app.services.tenant_service.publish_notification_event"
-        ) as mock_publish:
-            await svc.revise_tenant_budget(
-                _admin_user(), 1, "top-up", Decimal("500"),
-                _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, db,
-            )
-
-        mock_publish.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_budget_revision_skips_publish_when_platform_core_db_is_none(self) -> None:
-        """No session to run the config-cache/ledger checks against — must
-        not even attempt is_notification_enabled, matching the fail-closed
-        'never publish when we can't tell' reasoning it's built on."""
+    async def test_budget_is_handed_over_even_without_a_request_platform_core_session(self) -> None:
+        """The pipeline opens its own platform-core sessions, so the event
+        no longer depends on this request's optional platform_core_db."""
         svc = _svc()
         svc._tenants.get_by_id_for_update = AsyncMock(
             return_value=_tenant(allocated_budget=Decimal("0"))
         )
         svc._tenants.update = AsyncMock()
 
-        with patch(
-            "app.services.tenant_service.is_notification_enabled"
-        ) as mock_enabled, patch(
-            "app.services.tenant_service.publish_notification_event"
-        ) as mock_publish:
+        with patch("app.services.tenant_service.publish_budget_event") as mock_publish:
             await svc.revise_tenant_budget(
                 _admin_user(), 1, "top-up", Decimal("500"),
                 _VALID_EFFECTIVE_FROM, _VALID_EFFECTIVE_TO, None,
             )
 
-        mock_enabled.assert_not_called()
-        mock_publish.assert_not_called()
+        mock_publish.assert_called_once()
 
 
 class TestTenantBudgetRequestSchema:

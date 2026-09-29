@@ -56,7 +56,7 @@ logger = get_logger(__name__)
 # sends off before aiosmtplib's own, more generous timeout would have,
 # confirmed in practice: with smtp_timeout=30 (the ai4i_core.email default)
 # and this at a hardcoded 20, a real SES send that took ~21-25s was logged
-# as "timed out — treating as failed" and the ledger settled to failed,
+# as "timed out — treating as failed",
 # even though the message had already been accepted by SES and the
 # recipient received it. See _send_deadline_s().
 #

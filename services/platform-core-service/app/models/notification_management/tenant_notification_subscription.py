@@ -51,7 +51,11 @@ class TenantNotificationSubscription(Base):
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     notification_id = Column(
         BigInteger,
-        ForeignKey("configs_notification_alert.id", name="fk_tenant_notification_subscription_notification_id"),
+        ForeignKey(
+            "configs_notification_alert.id",
+            name="fk_tenant_notification_subscription_notification_id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
     )
     tenant_id = Column(String(255), nullable=False)

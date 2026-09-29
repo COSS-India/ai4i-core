@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, Index, String, UniqueConstraint
+from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY, ENUM, JSONB
 from sqlalchemy.sql import func
 
@@ -24,29 +24,27 @@ class ConfigNotificationAlert(Base):
     The API only ever updates these rows (never inserts or deletes).
     ``scope`` decides who a row applies to: GLOBAL is platform-wide with no
     per-institution opt-out; INSTITUTION is available for an institution to
-    subscribe to via ``tenant_notification_subscription``. ``config`` holds
-    only ``thresholds`` (ALERT-type rows). Everything listed, counted or
-    grouped by the catalog UI is a column: name, type, module, channels,
-    scope. See catalog_metadata.py for the code-side display name,
-    description and detail line that decorate these rows on read.
-
-    ``recipient_roles`` is kept (not dropped) alongside ``scope`` — the
-    shared producer-side cache (libs/ai4i_core/ai4i_core/kafka/
-    notification_settings_cache.py) and kafka-consumers' catalog_cache.py
-    both still raw-SELECT it in the same query as id/channels/config; a
-    missing column there fails that whole query (not just the recipient
-    lookup) and silently stops every notification/alert send. Drop it only
-    in the follow-up that moves those readers onto scope +
-    tenant_notification_subscription. Within this dict, the ``"ADMIN"`` key
-    is the Adopter Admin's own recipient toggle — see catalog_service.
-    _apply_admin_recipient_scope_invariant for how it's tied to ``scope``.
+    subscribe to via ``tenant_notification_subscription``.
+    ``recipient_roles`` carries every legal role key for the row's type
+    (ADMIN + TENANT ADMIN, or ADMIN + MODERATOR on MONITORING rows).
+    Threshold bands are rows of ``notification_alert_threshold``. See
+    catalog_metadata.py for the code-side display name, description and
+    detail line that decorate these rows on read.
     """
 
     __tablename__ = "configs_notification_alert"
     __table_args__ = (
         UniqueConstraint("name", name="uq_configs_notification_alert_name"),
         CheckConstraint("cardinality(channels) > 0", name="ck_configs_notification_alert_channels"),
-        Index("ix_configs_notification_alert_channels", "channels", postgresql_using="gin"),
+        CheckConstraint("jsonb_typeof(recipient_roles) = 'object'", name="ck_configs_notification_alert_roles"),
+        CheckConstraint(
+            "(type = 'MONITORING' AND recipient_roles ?& ARRAY['ADMIN', 'MODERATOR'])"
+            " OR (type <> 'MONITORING' AND recipient_roles ?& ARRAY['ADMIN', 'TENANT ADMIN'])",
+            name="ck_configs_notification_alert_role_keys",
+        ),
+        CheckConstraint(
+            "type <> 'MONITORING' OR scope = 'GLOBAL'", name="ck_configs_notification_alert_mon_scope"
+        ),
     )
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
@@ -56,7 +54,6 @@ class ConfigNotificationAlert(Base):
     channels = Column(ARRAY(_CHANNEL_ENUM), nullable=False, server_default="{EMAIL}")
     recipient_roles = Column(JSONB, nullable=False, server_default="{}")
     scope = Column(_SCOPE_ENUM, nullable=False, server_default="GLOBAL")
-    config = Column(JSONB, nullable=False, server_default="{}")
     created_by = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_by = Column(String(255), nullable=True)

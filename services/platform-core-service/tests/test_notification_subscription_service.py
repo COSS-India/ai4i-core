@@ -24,7 +24,8 @@ No database — both sessions (primary + auth) are faked.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from decimal import Decimal
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy.sql import operators
@@ -188,44 +189,31 @@ class TestListSubscriptions:
         items = await svc.list_subscriptions(session, tenant_id="7")
         assert items[0].subscribed is False
 
-    async def test_alert_row_includes_configured_thresholds(self):
-        # Same shape/parsing as CatalogItem.thresholds (catalog_service.
-        # _parse_thresholds) — subscription GET must not drop this for
-        # ALERT-type rows just because it's the institution's own view.
-        session = _Session(
-            catalog_rows=[
-                _catalog_row(
-                    id=1, type="ALERT", scope="INSTITUTION",
-                    config={"thresholds": [{"percentage": 70, "active": True}, {"percentage": 90, "active": False}]},
-                )
-            ],
-            sub_rows=[],
-        )
+    async def test_alert_row_includes_configured_thresholds(self, monkeypatch):
+        # Same shape as CatalogItem.thresholds, read from the same
+        # notification_alert_threshold rows — subscription GET must not drop
+        # this for ALERT-type rows just because it's the institution's view.
+        bands = [
+            MagicMock(band_value=Decimal("70"), active=True),
+            MagicMock(band_value=Decimal("90"), active=False),
+        ]
+        load_bands = AsyncMock(return_value={1: bands})
+        monkeypatch.setattr(svc, "load_bands", load_bands)
+        session = _Session(catalog_rows=[_catalog_row(id=1, type="ALERT", scope="INSTITUTION")], sub_rows=[])
         items = await svc.list_subscriptions(session, tenant_id="7")
         assert items[0].thresholds == [
             catalog_service.ThresholdBand(percentage=70, active=True),
             catalog_service.ThresholdBand(percentage=90, active=False),
         ]
+        load_bands.assert_awaited_once_with(session, [1])
 
-    async def test_alert_row_with_legacy_dict_shaped_thresholds_still_parses(self):
-        # Pre-migration shape (percent-as-string keys) — same degrade-not-500
-        # behavior catalog_service._parse_thresholds already guarantees.
-        session = _Session(
-            catalog_rows=[
-                _catalog_row(id=1, type="ALERT", config={"thresholds": {"70": True, "90": False}})
-            ],
-            sub_rows=[],
-        )
-        items = await svc.list_subscriptions(session, tenant_id="7")
-        assert {(b.percentage, b.active) for b in items[0].thresholds} == {(70, True), (90, False)}
-
-    async def test_notification_row_thresholds_is_none(self):
-        session = _Session(
-            catalog_rows=[_catalog_row(id=1, type="NOTIFICATION", config={"thresholds": [{"percentage": 70, "active": True}]})],
-            sub_rows=[],
-        )
+    async def test_notification_row_thresholds_is_none_and_bands_not_loaded(self, monkeypatch):
+        load_bands = AsyncMock(return_value={})
+        monkeypatch.setattr(svc, "load_bands", load_bands)
+        session = _Session(catalog_rows=[_catalog_row(id=1, type="NOTIFICATION")], sub_rows=[])
         items = await svc.list_subscriptions(session, tenant_id="7")
         assert items[0].thresholds is None
+        load_bands.assert_awaited_once_with(session, [])
 
 
 @pytest.mark.asyncio
@@ -347,22 +335,33 @@ class TestGetOrCreateSubscriptionRowIsRaceSafe:
         assert len(session.sub_rows) == 1
 
 
-class TestNotificationChannelIsImportedNotDuplicated:
-    """A rename of the channel constant only has to happen in
-    catalog_service — subscription_service must import it, not redefine
-    its own copy that could silently drift out of sync."""
+class TestSubscriptionWritesRefreshTheSharedCache:
+    """Every subscription write rebuilds that tenant's value in Redis and
+    publishes SUBSCRIPTION (cache_refresh.after_subscription_write), so
+    every producer sees the change at once."""
 
-    def test_same_channel_value_as_catalog_service(self):
-        assert svc.NOTIFICATION_ALERT_UPDATES_CHANNEL == catalog_service.NOTIFICATION_ALERT_UPDATES_CHANNEL
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("write", ["state", "recipients"])
+    async def test_both_writes_refresh_the_tenant_after_commit(self, monkeypatch, write):
+        refresh = AsyncMock()
+        monkeypatch.setattr(svc, "after_subscription_write", refresh)
+        session = _Session(catalog_rows=[_catalog_row(id=1, scope="INSTITUTION")], sub_rows=[])
+        if write == "state":
+            await svc.update_subscription_state(session, tenant_id="7", notification_id=1, subscribed=True)
+        else:
+            await svc.update_subscription_recipients(
+                session, tenant_id="7", notification_id=1, recipients=["u1"],
+                auth_db=_AuthSession(active_user_ids=["u1"]),
+            )
+        refresh.assert_awaited_once_with(["7"])
+        assert session.commits == 1
 
-    def test_is_the_same_module_attribute_not_a_copy(self):
+    def test_uses_the_shared_refresh_not_its_own_channel(self):
         import inspect
 
         source = inspect.getsource(svc)
-        assert '"notification_alert_updates"' not in source, (
-            "the channel string must not be re-declared in subscription_service — "
-            "import NOTIFICATION_ALERT_UPDATES_CHANNEL from catalog_service instead"
-        )
+        assert "after_subscription_write" in source
+        assert "notification_alert_updates" not in source
 
 
 # ── MONITORING rows are platform-level: never on the institution surface ────

@@ -21,32 +21,41 @@ never touched by a scope change in either direction.
 """
 
 import logging
-from typing import List, Optional
+from typing import Dict, List, Optional, Sequence
 
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AppError, EntityNotFoundError, ValidationError
-from app.core.redis import get_redis_client
 from app.models.notification_management.config_notification_alert import ConfigNotificationAlert
+from app.models.notification_management.notification_alert_threshold import NotificationAlertThreshold
 from app.models.notification_management.tenant_notification_subscription import (
     TenantNotificationSubscription,
 )
 from app.schemas.enums.notification_management import NotificationScope, NotificationType
+from app.schemas.notification_management.catalog import ThresholdBand
 from app.schemas.notification_management.subscription import SubscriptionItem
 from app.services.notification_management.catalog_metadata import NOTIFICATION_METADATA
-from app.services.notification_management.catalog_service import (
-    NOTIFICATION_ALERT_UPDATES_CHANNEL,
-    _parse_thresholds,
-)
+from app.services.notification_management.cache_refresh import after_subscription_write
+from app.services.notification_management.thresholds import load_bands
 
 logger = logging.getLogger(__name__)
+
+
+async def _alert_bands(
+    session: AsyncSession, catalog_rows: Sequence[ConfigNotificationAlert]
+) -> Dict[int, List[NotificationAlertThreshold]]:
+    """Editable bands of the ALERT rows only — no query for NOTIFICATION rows."""
+    return await load_bands(
+        session, [row.id for row in catalog_rows if row.type == NotificationType.ALERT.value]
+    )
 
 
 def _to_subscription_item(
     catalog_row: ConfigNotificationAlert,
     sub_row: Optional[TenantNotificationSubscription],
+    bands: Sequence[NotificationAlertThreshold] = (),
 ) -> SubscriptionItem:
     meta = NOTIFICATION_METADATA.get(catalog_row.name)
     is_global = catalog_row.scope == NotificationScope.GLOBAL.value
@@ -62,11 +71,10 @@ def _to_subscription_item(
         subscribed=True if is_global else stored_subscribed,
         locked=is_global,
         recipients=recipients,
-        # Same catalog-row-derived value as CatalogItem.thresholds — None
-        # (dropped from the response) on a NOTIFICATION row, see catalog_
-        # service._to_catalog_item.
+        # Same value as CatalogItem.thresholds — None (dropped from the
+        # response) on a NOTIFICATION row, see catalog_service._to_catalog_item.
         thresholds=(
-            _parse_thresholds((catalog_row.config or {}).get("thresholds"))
+            [ThresholdBand(percentage=int(band.band_value), active=band.active) for band in bands]
             if is_alert
             else None
         ),
@@ -96,9 +104,10 @@ async def list_subscriptions(
         )
     )
     subs_by_notification_id = {row.notification_id: row for row in sub_result.scalars().all()}
+    bands = await _alert_bands(session, catalog_rows)
 
     return [
-        _to_subscription_item(row, subs_by_notification_id.get(row.id))
+        _to_subscription_item(row, subs_by_notification_id.get(row.id), bands.get(row.id, []))
         for row in catalog_rows
     ]
 
@@ -147,19 +156,6 @@ async def _get_or_create_subscription_row(
     return result.scalar_one()
 
 
-async def _notify_producers(name: str) -> None:
-    # Best-effort, same framing as catalog_service.update_catalog's own
-    # publish: a cache falls back to its last known value if this fails.
-    try:
-        redis = get_redis_client()
-        await redis.publish(NOTIFICATION_ALERT_UPDATES_CHANNEL, name)
-    except Exception as exc:
-        logger.warning(
-            "Failed to publish %s update to '%s': %s",
-            NOTIFICATION_ALERT_UPDATES_CHANNEL, name, exc,
-        )
-
-
 async def update_subscription_state(
     session: AsyncSession,
     *,
@@ -190,8 +186,9 @@ async def update_subscription_state(
 
     await session.commit()
     await session.refresh(sub_row)
-    await _notify_producers(catalog_row.name)
-    return _to_subscription_item(catalog_row, sub_row)
+    await after_subscription_write([tenant_id])
+    bands = await _alert_bands(session, [catalog_row])
+    return _to_subscription_item(catalog_row, sub_row, bands.get(catalog_row.id, []))
 
 
 async def _validate_recipients_belong_to_tenant(
@@ -253,4 +250,6 @@ async def update_subscription_recipients(
 
     await session.commit()
     await session.refresh(sub_row)
-    return _to_subscription_item(catalog_row, sub_row)
+    await after_subscription_write([tenant_id])
+    bands = await _alert_bands(session, [catalog_row])
+    return _to_subscription_item(catalog_row, sub_row, bands.get(catalog_row.id, []))

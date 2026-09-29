@@ -64,18 +64,10 @@ async def update_tier(
     request: Request,
     body: TierUpdate,
     session: AsyncSession = Depends(get_db),
-    auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ):
     """Update an existing PPU tier."""
     updated_by = request.headers.get("X-User-Id")
-    return await tier_service.update_tier(
-        body,
-        session,
-        updated_by=updated_by,
-        auth_service_url=settings.auth_service_url,
-        http_client=request.app.state.http_client,
-        auth_db=auth_db,
-    )
+    return await tier_service.update_tier(body, session, updated_by=updated_by)
 
 
 

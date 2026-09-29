@@ -1,55 +1,48 @@
 """Message handler for notifications_consumer.
 
-The producer (auth-service / platform-core-service / payperuse_consumer)
-already decided whether this occurrence is new and claimed the ledger row
-before ever publishing — see libs/ai4i_core/ai4i_core/kafka/ledger.py. By
-the time a message reaches here, ledger_notification_alert already has a
-row for (notification_id, tenant_id, subject, channel) with
-{"value": ..., "delivery": "in_progress"}. This handler does not decide a
-new value; it claims the SEND (ledger.claim_send), delivers, and settles
-`delivery` to "sent"/"failed".
+The producer (auth-service / platform-core-service / payperuse_consumer,
+through ai4i_core.kafka's shared pipeline) already decided the occurrence is
+new, claimed its ledger row and resolved who gets it before publishing. The
+envelope (schema_version 2) carries everything delivery needs: the channels,
+the recipients (email and name) and the positional details. This handler
+only delivers.
 
-Consumer-side only: this reads whatever envelope a producer publishes and
-acts on it. Nothing here publishes to Kafka.
+A Kafka redelivery of the same event is caught by a Redis claim on its
+event_id (SET NX), taken before sending. Redis being unavailable does not
+block delivery: a rare duplicate email beats a lost one.
 
-Retry behaviour on a handler failure is a design doc open question (§12),
-not decided here — a per-message exception is logged and the message is
-treated as handled (committed), not redelivered. That matches this
-consumer's own send-side retries already being bounded (emailer.py's
-EmailClient.send_safe / the deadline around it) rather than adding a
-second, undecided retry ladder on top.
+Consumer-side only: nothing here publishes to Kafka. A per-message
+exception is logged and the message is treated as handled (committed), not
+redelivered — this consumer's own send-side retries are already bounded
+(emailer.py's EmailClient.send_safe).
 
-Two database connections are in play: the default one (ai4iplatform_core —
-settings, ledger) and a second, named one opened once at startup (main.py)
-against ai4iplatform_auth, for recipients.py's fetch_institution_name() —
-see delivery.py. Who actually gets the email no longer needs a lookup here
-at all: it travels with the message (envelope["recipients"]), resolved by
-the producer before it ever published (ai4i_core.kafka.recipients).
+Two database connections are in play: the default one (ai4iplatform_core)
+and a second, named one opened once at startup (main.py) against
+ai4iplatform_auth, for recipients.py's fetch_institution_name() — see
+delivery.py.
 """
 from __future__ import annotations
 
 import json
 from typing import Any, Dict, Optional
 
+from ai4i_core.bootstrap import get_redis_client
+from ai4i_core.kafka import NotificationChannel, NotificationType
+from ai4i_core.kafka.constants import ENVELOPE_SCHEMA_VERSION
 from ai4i_core.logging import get_logger
 from confluent_kafka import Message
 
 from bootstrap.lifecycle import session_scope
-from consumers.notifications_consumer import delivery, ledger
-from consumers.notifications_consumer.catalog_cache import NotificationConfig, get_config
+from consumers.notifications_consumer import delivery
+from consumers.notifications_consumer.config import Constants
 
 logger = get_logger(__name__)
 
-# Terminal delivery states — a row already settled here needs nothing more
-# from a redelivered/duplicate message.
-_TERMINAL_DELIVERIES = {"sent", "failed", "skipped"}
-
 
 def _parse_envelope(msg: Message) -> Optional[Dict[str, Any]]:
-    """The 5-field envelope publish_event() (ai4i_core.kafka.producer)
-    sends, plus actor_id. Malformed input is a permanent skip, not a
-    retry — there is no version of this message that will parse
-    differently later."""
+    """The v2 envelope ai4i_core.kafka's publisher sends. Malformed input is
+    a permanent skip, not a retry — there is no version of this message
+    that will parse differently later."""
     try:
         data = json.loads(msg.value())
     except (TypeError, ValueError) as exc:
@@ -58,27 +51,50 @@ def _parse_envelope(msg: Message) -> Optional[Dict[str, Any]]:
             msg.topic(), msg.partition(), msg.offset(), exc,
         )
         return None
+    if not isinstance(data, dict):
+        logger.error("Malformed message — not a JSON object | %r", data)
+        return None
 
+    if data.get("schema_version") != ENVELOPE_SCHEMA_VERSION:
+        logger.error(
+            "Unsupported envelope schema_version=%r (expected %d) | event_name=%r",
+            data.get("schema_version"), ENVELOPE_SCHEMA_VERSION, data.get("event_name"),
+        )
+        return None
+
+    event_id = data.get("event_id")
     event_name = data.get("event_name")
     tenant_id = data.get("tenant_id")
-    if not event_name or not tenant_id:
-        logger.error("Malformed message — missing event_name/tenant_id | %r", data)
+    if not event_id or not event_name or not tenant_id:
+        logger.error("Malformed message — missing event_id/event_name/tenant_id | %r", data)
         return None
 
     return {
+        "event_id": str(event_id),
         "event_name": event_name,
+        "notification_type": data.get("notification_type"),
         "tenant_id": str(tenant_id),
-        "occurred_at": data.get("occurred_at") or "",
-        "subject": data.get("subject") or {},
-        # A plain positional array now, not a dict — design doc §9. Each
-        # event_name has its own fixed value order, matching whatever
-        # email_templates.py renderer emailer.py calls for it.
+        "channels": data.get("channels") or [],
+        # A plain positional array — each event_name has its own fixed value
+        # order, matching the email_templates.py renderer emailer.py calls.
         "details": data.get("details") or [],
-        "actor_id": data.get("actor_id"),
-        # Resolved by the producer (ai4i_core.kafka.recipients) before this
-        # was ever published — a plain list of email addresses, not roles.
-        "recipients": data.get("recipients") or [],
+        # [{"email": ..., "name": ...}], resolved by the producer.
+        "recipients": [r for r in data.get("recipients") or [] if isinstance(r, dict) and r.get("email")],
     }
+
+
+async def _claim(event_id: str) -> bool:
+    """True when this delivery is the first for event_id."""
+    try:
+        return bool(
+            await get_redis_client().set(
+                f"{Constants.DELIVERY_CLAIM_KEY_PREFIX}{event_id}", "1",
+                nx=True, ex=Constants.DELIVERY_CLAIM_TTL_SECONDS,
+            )
+        )
+    except Exception as exc:
+        logger.warning("Delivery claim unavailable — delivering without dedup | event_id=%s: %s", event_id, exc)
+        return True
 
 
 async def handle_notification_event(msg: Message) -> None:
@@ -86,86 +102,17 @@ async def handle_notification_event(msg: Message) -> None:
     if envelope is None:
         return
 
-    try:
-        async with session_scope() as db:
-            cfg = await get_config(db, envelope["event_name"])
-            if cfg is None:
-                logger.warning(
-                    "No catalog row for event_name=%s — skipping", envelope["event_name"]
-                )
-                return
-
-            # The producer already resolved who gets this (ai4i_core.kafka.
-            # recipients) before publishing — an empty list here means
-            # resolution genuinely found nobody (e.g. a lookup failure, or a
-            # tenant with no ADMIN/TENANT ADMIN and no extra recipients on
-            # file), not that this consumer has anything left to look up.
-            # Deliberately NOT gated here: the producer already committed
-            # the ledger row as "in_progress" before publishing, and
-            # main.py commits the Kafka offset once this function returns
-            # regardless — an early return here would leave that row
-            # wedged at "in_progress" forever, with no failed record and no
-            # automatic recovery. Fall through to _process_channel so
-            # delivery.deliver()'s "no_recipients" outcome settles it to
-            # "failed" instead, same as any other delivery failure.
-            for channel in cfg.channels:
-                await _process_channel(db, cfg, envelope, channel)
-    except Exception:
-        logger.exception(
-            "Unhandled error processing notification event | event_name=%s tenant_id=%s",
-            envelope["event_name"], envelope["tenant_id"],
-        )
-
-
-async def _process_channel(
-    db, cfg: NotificationConfig, envelope: Dict[str, Any], channel: str
-) -> None:
-    row = await ledger.fetch_row(
-        db,
-        notification_id=cfg.id,
-        tenant_id=envelope["tenant_id"],
-        subject=envelope["subject"],
-        channel=channel,
-    )
-    if row is None:
-        logger.warning(
-            "No ledger row yet for event_name=%s tenant_id=%s channel=%s — "
-            "producer hasn't committed its claim, or this channel wasn't "
-            "configured when it published. Nothing to do.",
-            envelope["event_name"], envelope["tenant_id"], channel,
+    if NotificationChannel.EMAIL.value not in envelope["channels"]:
+        # Slack/WhatsApp sending isn't built yet.
+        logger.info(
+            "No supported channel — skipping | event_name=%s channels=%s",
+            envelope["event_name"], envelope["channels"],
         )
         return
 
-    row_id, status = row
-    current_delivery = status.get("delivery")
-    if current_delivery in _TERMINAL_DELIVERIES:
-        return  # already handled — a genuine redelivery of this exact occurrence
+    if not await _claim(envelope["event_id"]):
+        return  # a redelivery of an event already handled
 
-    if current_delivery != "in_progress":
-        logger.warning(
-            "Unexpected delivery state %r on ledger row %s — leaving it alone",
-            current_delivery, row_id,
-        )
-        return
-
-    if channel != "EMAIL":
-        # Slack/WhatsApp sending isn't built yet — design doc §8's "Templates
-        # folder" note and §12's open questions.
-        await ledger.mark_delivery(db, row_id=row_id, delivery="skipped")
-        return
-
-    won = await ledger.claim_send(db, row_id=row_id)
-    if not won:
-        return  # a concurrent redelivery/replica already claimed this send
-
-    # Once claim_send has committed "sending", the row MUST be settled no
-    # matter what happens next — a raise here (a StrictUndefined render
-    # miss, the auth DB dropping mid-query) would otherwise leave the row
-    # stuck at "sending" forever: handle_notification_event's own
-    # try/except just logs and moves on, the offset still commits, and
-    # every later pass hits the "Unexpected delivery state" branch above
-    # and refuses to touch it — the notification is lost with no failed
-    # record and no recovery short of a manual UPDATE.
     try:
         async with session_scope(name="auth") as auth_db:
             outcome = await delivery.deliver(
@@ -174,19 +121,15 @@ async def _process_channel(
                 recipients=envelope["recipients"],
                 event_name=envelope["event_name"],
                 details=envelope["details"],
+                platform_level=envelope["notification_type"] == NotificationType.MONITORING.value,
             )
-        delivery_status = "sent" if outcome == "sent" else "failed"
     except Exception:
         logger.exception(
-            "Delivery raised — settling ledger row to failed | event_name=%s "
-            "tenant_id=%s channel=%s ledger_id=%s",
-            envelope["event_name"], envelope["tenant_id"], channel, row_id,
+            "Delivery raised | event_id=%s event_name=%s tenant_id=%s",
+            envelope["event_id"], envelope["event_name"], envelope["tenant_id"],
         )
-        outcome = "error"
-        delivery_status = "failed"
-    await ledger.mark_delivery(db, row_id=row_id, delivery=delivery_status)
+        return
     logger.info(
-        "Notification delivery settled | event_name=%s tenant_id=%s channel=%s "
-        "ledger_id=%s outcome=%s delivery=%s",
-        envelope["event_name"], envelope["tenant_id"], channel, row_id, outcome, delivery_status,
+        "Notification delivered | event_id=%s event_name=%s tenant_id=%s outcome=%s",
+        envelope["event_id"], envelope["event_name"], envelope["tenant_id"], outcome,
     )

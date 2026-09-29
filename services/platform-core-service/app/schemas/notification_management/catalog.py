@@ -30,10 +30,8 @@ class ThresholdBand(BaseModel):
 class MonitoringThresholdBand(BaseModel):
     """One configurable band on a MONITORING row: the value it fires at
     (``>=``), its unit (PERCENT for error rates, SECONDS for latencies) and
-    whether it's currently turned on. Stored under
-    ``config.monitoring_thresholds`` — kept off ``config.thresholds`` so
-    readers of the metering band shape never see it (see
-    a2b4d6f8c0e3_seed_monitoring_alert_catalog)."""
+    whether it's currently turned on. Stored as a row of
+    notification_alert_threshold."""
 
     # Strict so a string ("5") or a bool (True is an int) 422s instead of
     # being silently coerced — same reasoning as ``active`` below.
@@ -46,21 +44,20 @@ class CatalogItem(BaseModel):
     """One row of the notification/alert catalog, decorated with its
     code-side display metadata (see catalog_metadata.py). ``thresholds`` is
     omitted entirely on a NOTIFICATION row (``None``, dropped from the JSON
-    response) rather than sent as an always-empty ``[]`` — that key only
-    ever exists in ``config`` for ALERT-type rows (design section 6.1).
+    response) rather than sent as an always-empty ``[]`` — only ALERT-type
+    rows have admin-editable percentage bands.
 
     ``scope`` is GLOBAL (applies platform-wide, no per-institution
     opt-out) or INSTITUTION (available for an institution to subscribe to
     — see app.routes.notification_subscription). ``recipient_roles`` is
-    kept (not dropped) so the producer-side caches that still raw-SELECT it
-    keep working until they move onto scope. Its ``"ADMIN"`` key (the
-    Adopter Admin's own recipient toggle) is exactly the stored column
-    value, not re-derived from ``scope`` on read — every row was backfilled
-    to already be scope-consistent (True on GLOBAL, False on INSTITUTION,
-    see e2a4c6b8d0f2) and PATCH keeps it that way going forward (see
-    catalog_service._apply_admin_recipient_scope_invariant) — because the
-    send path reads this same column directly, and a value shown here that
-    the stored column disagrees with would be a lie."""
+    the stored column as-is: which roles receive this row (ADMIN / TENANT
+    ADMIN, or ADMIN / MODERATOR on a MONITORING row). Migration 0c96d7881ce5
+    starts every flag at false, so nobody is assigned until an admin picks
+    recipients. Its ``"ADMIN"`` key is never re-derived from ``scope`` on
+    read: PATCH forces it off while INSTITUTION and leaves it selectable
+    while GLOBAL (catalog_service._apply_admin_recipient_scope_invariant),
+    and the send path reads this same column, so what is shown here is what
+    is sent."""
 
     id: int
     name: str
@@ -83,7 +80,7 @@ class CatalogResponse(BaseModel):
 class CatalogUpdate(BaseModel):
     """PATCH /notification-alerts/catalog/{name} body. Every field optional — only the fields
     present are changed; recipient_roles/scope/thresholds each replace
-    their own column/config-key wholesale (the mockup's checkbox group
+    their own value wholesale (the mockup's checkbox group
     sends its whole current state) without disturbing the other, unset
     one.
 
@@ -91,7 +88,7 @@ class CatalogUpdate(BaseModel):
     is enforced against the row's effective ``scope`` regardless of what's
     sent here — see catalog_service._apply_admin_recipient_scope_invariant.
 
-    ``thresholds``, when present, must be the complete set of exactly
+    ``thresholds``, when present, must be the complete set of
     THRESHOLD_BAND_COUNT bands — there is no partial/per-band PATCH, since a
     band has no stable key to merge against once its own ``percentage`` is
     editable. Renaming/reordering has no meaning either (bands are unnamed);

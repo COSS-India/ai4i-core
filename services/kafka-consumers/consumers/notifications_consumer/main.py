@@ -3,13 +3,10 @@
 Implements skills/notification-kafka-design/notification-kafka-design.md:
 reads notification/alert events off TOPIC_NOTIFICATION and sends the email
 directly (no auth-service call). Who receives it is not resolved here —
-the producer already resolved and decrypted the recipient list before
-publishing (ai4i_core.kafka.recipients); this consumer just reads
-envelope["recipients"], a plain list of email addresses. The producer also
-already decided "is this new" and claimed the ledger row (libs/ai4i_core/
-ai4i_core/kafka/ledger.py) before publishing — this consumer only claims
-and settles the delivery half. See catalog_cache.py, ledger.py,
-recipients.py, emailer.py, delivery.py and handler.py for the pieces; this
+the producer already resolved and decrypted the recipient list, decided
+"is this new" and claimed its ledger row before publishing (ai4i_core.kafka's
+shared pipeline); this consumer just reads the v2 envelope and delivers.
+See recipients.py, emailer.py, delivery.py and handler.py for the pieces; this
 file is just the consume loop wiring, plus opening the second (auth)
 database connection recipients.py's fetch_institution_name() depends on.
 
@@ -33,7 +30,7 @@ from confluent_kafka import KafkaError, KafkaException, Message
 from bootstrap.config import get_db_settings
 from bootstrap.consumers import CommitMode, ManagedConsumer
 from bootstrap.lifecycle import add_database, infra, shutdown_event
-from consumers.notifications_consumer import catalog_cache, config as cfg
+from consumers.notifications_consumer import config as cfg
 from consumers.notifications_consumer.handler import handle_notification_event
 
 logger = get_logger(__name__)
@@ -86,12 +83,6 @@ async def run() -> None:
         # alongside the default one.
         await add_database("auth", db_name=settings.AUTH_SERVICE_DB)
 
-        # Live cache invalidation — see catalog_cache.py's module docstring.
-        # Opens its own dedicated Redis connection (not the shared one from
-        # infra() — that one's socket_timeout is wrong for a blocking
-        # pub/sub read).
-        catalog_cache.start_listener()
-
         consumer = ManagedConsumer.build_bulk_message_consumer(
             group_id=GROUP_ID,
             topic=settings.TOPIC_NOTIFICATION,
@@ -143,4 +134,3 @@ async def run() -> None:
                     await consumer.record_processed(msg)
         finally:
             consumer.shutdown()
-            await catalog_cache.stop_listener()
