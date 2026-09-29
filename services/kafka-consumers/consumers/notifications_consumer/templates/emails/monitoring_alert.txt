@@ -1,12 +1,11 @@
-{{ platform_name }}
-================================
-
 Dear {{ recipient_name }},
 
-{{ alert_name }} has reached the configured threshold of {{ threshold }}{{ unit }} as of
-{{ alert_datetime }}.
+{{ alert_name }} has reached the configured threshold of {{ threshold }}{{ unit }} as of {{ alert_datetime }}.
 
 Current Value: {{ current_value }}{{ unit }}
+{% if affected_service -%}
+Affected Service: {{ affected_service }}
+{% endif %}
 
 {% if portal_url -%}
 Log in to the {{ platform_name }} Portal to view full details: {{ portal_url }}

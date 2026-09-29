@@ -51,3 +51,21 @@ async def fetch_institution_name(db: AsyncSession, *, tenant_id: str) -> str:
         logger.warning("No organisation name for tenant_id=%s — using raw id", tenant_id)
         return tenant_id
     return row[0]
+
+
+async def fetch_service_name(db: AsyncSession, *, service_id: str) -> str:
+    """mm_services.name — the monitoring email's "Affected Service", read from
+    ai4iplatform_core (this consumer's default connection). ``service_id`` is
+    the monitoring envelope's subject key. Falls back to the raw service_id
+    on a miss, same reasoning as fetch_institution_name: a less friendly
+    label beats no email at all. Soft-deleted services are still named — the
+    alert is about what that service did."""
+    result = await db.execute(
+        text("SELECT name FROM mm_services WHERE service_id = :service_id"),
+        {"service_id": service_id},
+    )
+    row = result.first()
+    if row is None or not row[0]:
+        logger.warning("No service name for service_id=%s — using raw id", service_id)
+        return service_id
+    return row[0]

@@ -28,12 +28,13 @@ from typing import Any, Dict, Optional
 
 from ai4i_core.bootstrap import get_redis_client
 from ai4i_core.kafka import NotificationChannel, NotificationType
-from ai4i_core.kafka.constants import ENVELOPE_SCHEMA_VERSION
+from ai4i_core.kafka.constants import ENVELOPE_SCHEMA_VERSION, SubjectKey
 from ai4i_core.logging import get_logger
 from confluent_kafka import Message
 
 from bootstrap.lifecycle import session_scope
 from consumers.notifications_consumer import delivery
+from consumers.notifications_consumer import recipients as recipients_lookup
 from consumers.notifications_consumer.config import Constants
 
 logger = get_logger(__name__)
@@ -78,6 +79,9 @@ def _parse_envelope(msg: Message) -> Optional[Dict[str, Any]]:
         # A plain positional array — each event_name has its own fixed value
         # order, matching the email_templates.py renderer emailer.py calls.
         "details": data.get("details") or [],
+        # Ledger subject; for MONITORING events it carries the service_id
+        # (ai4i_core.kafka.keys.monitoring_subject) — the "Affected Service".
+        "subject": data.get("subject") if isinstance(data.get("subject"), dict) else {},
         # [{"email": ..., "name": ...}], resolved by the producer.
         "recipients": [r for r in data.get("recipients") or [] if isinstance(r, dict) and r.get("email")],
     }
@@ -97,6 +101,25 @@ async def _claim(event_id: str) -> bool:
         return True
 
 
+async def _affected_service(envelope: Dict[str, Any]) -> str:
+    """The monitoring email's "Affected Service": the service's name, from the
+    envelope subject's service_id. "" for non-MONITORING events or a
+    monitoring event with no service_id — the template then omits the line.
+    A lookup failure degrades to the raw service_id rather than losing the
+    email (the default connection is ai4iplatform_core, where mm_services is)."""
+    if envelope["notification_type"] != NotificationType.MONITORING.value:
+        return ""
+    service_id = str(envelope["subject"].get(SubjectKey.SERVICE_ID.value) or "").strip()
+    if not service_id:
+        return ""
+    try:
+        async with session_scope() as core_db:
+            return await recipients_lookup.fetch_service_name(core_db, service_id=service_id)
+    except Exception as exc:
+        logger.warning("Service name lookup failed — using raw service_id=%s: %s", service_id, exc)
+        return service_id
+
+
 async def handle_notification_event(msg: Message) -> None:
     envelope = _parse_envelope(msg)
     if envelope is None:
@@ -114,6 +137,7 @@ async def handle_notification_event(msg: Message) -> None:
         return  # a redelivery of an event already handled
 
     try:
+        affected_service = await _affected_service(envelope)
         async with session_scope(name="auth") as auth_db:
             outcome = await delivery.deliver(
                 auth_db,
@@ -122,6 +146,7 @@ async def handle_notification_event(msg: Message) -> None:
                 event_name=envelope["event_name"],
                 details=envelope["details"],
                 platform_level=envelope["notification_type"] == NotificationType.MONITORING.value,
+                affected_service=affected_service,
             )
     except Exception:
         logger.exception(

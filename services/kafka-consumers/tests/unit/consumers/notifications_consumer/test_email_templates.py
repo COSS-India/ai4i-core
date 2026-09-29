@@ -248,7 +248,8 @@ def test_platform_name_comes_from_settings(monkeypatch, render):
         assert "Custom Brand Team" in body
         assert BRAND not in body
         assert "AI Switch" not in body
-    assert "&copy; Custom Brand" in message.html_body
+    if render is not _BRANDING_RENDERERS[2]:  # monitoring has no © footer (template spec)
+        assert "&copy; Custom Brand" in message.html_body
 
 
 class TestPlatformNameRequired:
@@ -286,7 +287,7 @@ class TestPlatformNameRequired:
 def test_logo_url_replaces_text_brand_mark_in_header(monkeypatch):
     monkeypatch.setattr(get_settings(), "ADOPTER_LOGO_URL", "https://cdn.example.com/logo.png")
 
-    message = _BRANDING_RENDERERS[2]()
+    message = _BRANDING_RENDERERS[0]()
 
     assert f'<img src="https://cdn.example.com/logo.png" alt="{BRAND}"' in message.html_body
 
@@ -294,7 +295,7 @@ def test_logo_url_replaces_text_brand_mark_in_header(monkeypatch):
 def test_relative_logo_url_is_ignored(monkeypatch):
     monkeypatch.setattr(get_settings(), "ADOPTER_LOGO_URL", "/logo.png")
 
-    message = _BRANDING_RENDERERS[2]()
+    message = _BRANDING_RENDERERS[0]()
 
     assert "<img" not in message.html_body
 
@@ -310,3 +311,104 @@ class TestResolveSmtpFromName:
         monkeypatch.setattr(get_settings(), "PLATFORM_NAME", "Custom Brand")
         assert get_settings().resolve_smtp_from_name("") == "Custom Brand"
         assert get_settings().resolve_smtp_from_name("   ") == "Custom Brand"
+
+
+class TestMonitoringAffectedService:
+    """Standard Monitoring Alert Email Template: "Affected Service: [...]" sits
+    directly under "Current Value: [...]", and only "if applicable"."""
+
+    def _render(self, affected_service=None):
+        kwargs = dict(
+            to="a@b.com", recipient_name="Priya", alert=templates.MonitoringAlertName.ERROR_RATE_5XX,
+            threshold="5", alert_datetime="2026-09-28 10:00 IST", current_value="6.2",
+        )
+        if affected_service is not None:
+            kwargs["affected_service"] = affected_service
+        return templates.render_monitoring_alert_email(**kwargs)
+
+    def test_text_body_matches_the_template_line_for_line(self):
+        lines = [l for l in self._render("Legal Translate v2").text_body.splitlines() if l.strip()]
+        start = lines.index("Dear Priya,")
+        assert lines[start:start + 6] == [
+            "Dear Priya,",
+            "5xx Error Rate has reached the configured threshold of 5% as of 2026-09-28 10:00 IST.",
+            "Current Value: 6.2%",
+            "Affected Service: Legal Translate v2",
+            f"Log in to the {BRAND} Portal to view full details.",
+            "Regards,",
+        ]
+
+    def test_html_body_has_the_line(self):
+        assert "Affected Service: Legal Translate v2" in self._render("Legal Translate v2").html_body
+
+    def test_line_is_omitted_when_not_applicable(self):
+        # Existing callers that don't pass it at all behave exactly as before.
+        for message in (self._render(), self._render("")):
+            assert "Affected Service" not in message.text_body
+            assert "Affected Service" not in message.html_body
+
+    def test_service_name_is_html_escaped(self):
+        message = self._render("<b>x</b> & y")
+        assert "Affected Service: &lt;b&gt;x&lt;/b&gt; &amp; y" in message.html_body
+
+
+def _visible_html_lines(html_body: str) -> list:
+    """Text a reader actually sees in the HTML email, one entry per line."""
+    import html as _html
+    import re
+
+    body = re.sub(r"(?s)<head>.*?</head>", "", html_body)
+    body = " ".join(body.split())  # source line breaks render as spaces
+    body = re.sub(r"<br\s*/?>|</p>", "\n", body)
+    body = _html.unescape(re.sub(r"<[^>]+>", " ", body))
+    return [" ".join(line.split()) for line in body.splitlines() if line.strip()]
+
+
+class TestMonitoringMatchesTemplateExactly:
+    """Only what the Standard Monitoring Alert Email Template lists — no inbox
+    preheader, brand header, in-body heading, © footer, or text banner."""
+
+    def _render(self):
+        return templates.render_monitoring_alert_email(
+            to="a@b.com", recipient_name="Priya", alert=templates.MonitoringAlertName.LATENCY_P95,
+            threshold="5", alert_datetime="2026-09-28 10:00 IST", current_value="7.3",
+            affected_service="Legal Translate v2",
+        )
+
+    EXPECTED = [
+        "Dear Priya,",
+        "P95 Latency has reached the configured threshold of 5s as of 2026-09-28 10:00 IST.",
+        "Current Value: 7.3s",
+        "Affected Service: Legal Translate v2",
+        f"Log in to the {BRAND} Portal to view full details.",
+        "Regards,",
+        f"{BRAND} Team",
+    ]
+
+    def test_subject(self):
+        assert self._render().subject == "P95 Latency — Threshold 5s"
+
+    def test_html_shows_only_the_template_lines(self):
+        message = self._render()
+        assert _visible_html_lines(message.html_body) == self.EXPECTED
+        assert "<h1" not in message.html_body
+        assert "&copy;" not in message.html_body
+
+    def test_text_shows_only_the_template_lines(self):
+        lines = [line for line in self._render().text_body.splitlines() if line.strip()]
+        assert lines == self.EXPECTED
+
+
+def test_other_emails_keep_header_heading_and_footer():
+    """The new _base.html header/footer blocks are opt-out for monitoring only."""
+    notification = templates.render_budget_assigned_email(
+        to="a@b.com", recipient_name="Priya", institution_name="Acme Bank", currency="INR", budget_amount="500000",
+    )
+    alert = templates.render_quota_threshold_alert_email(
+        to="a@b.com", recipient_name="Priya", institution_name="Acme Bank",
+        threshold="80", alert_datetime="2026-09-10", current_value="81",
+    )
+    for message in (notification, alert):
+        assert "<h1" in message.html_body
+        assert f"&copy; {BRAND}" in message.html_body
+        assert message.text_body.startswith(f"{BRAND}\n====")

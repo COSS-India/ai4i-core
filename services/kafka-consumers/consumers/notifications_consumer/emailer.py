@@ -129,6 +129,7 @@ def _at(details: List[Any], index: int, event_name: str, default: Any = _MISSING
 
 def _build_message(
     *, recipient: Recipient, institution_name: str, event_name: str, details: List[Any],
+    affected_service: str = "",
 ) -> EmailMessage:
     """Design doc §9's per-event_name table gives the exact position ->
     meaning mapping this dispatch mirrors — keep the two in sync."""
@@ -201,12 +202,14 @@ def _build_message(
             threshold=_at(details, 0, event_name),
             alert_datetime=_at(details, 1, event_name),
             current_value=_at(details, 2, event_name),
+            affected_service=affected_service,
         )
     raise ValueError(f"No email template mapping for event_name={event_name!r}")
 
 
 async def send_one(
     *, recipient: Recipient, institution_name: str, event_name: str, details: List[Any],
+    affected_service: str = "",
 ) -> bool:
     """True on a confirmed send. Never raises and never blocks past
     _send_deadline_s() — provider failures are logged and reported as False
@@ -217,6 +220,7 @@ async def send_one(
     try:
         message = _build_message(
             recipient=recipient, institution_name=institution_name, event_name=event_name, details=details,
+            affected_service=affected_service,
         )
         return await asyncio.wait_for(_client().send_safe(message), timeout=deadline)
     except asyncio.TimeoutError:

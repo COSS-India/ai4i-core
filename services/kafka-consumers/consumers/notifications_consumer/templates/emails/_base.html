@@ -11,6 +11,7 @@
      {% block preheader %}  short snippet shown in inbox preview (under 90 chars)
      {% block heading %}    h1 text inside the card
      {% block body %}       main paragraphs
+   Optional overrides (default: shown): header (brand mark), footer (© line).
 #}<!DOCTYPE html>
 <html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>
@@ -46,6 +47,7 @@
         <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background-color:#ffffff; border-radius:12px; border:1px solid #e5e7eb; overflow:hidden;">
 
           {# ── Header ── #}
+          {% block header %}
           <tr>
             <td class="px-32" style="padding: 28px 32px 20px 32px; border-bottom:1px solid #eef0f3;">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
@@ -61,6 +63,7 @@
               </table>
             </td>
           </tr>
+          {% endblock %}
 
           {# ── Body ── #}
           <tr>
@@ -78,9 +81,11 @@
 
         </table>
 
+        {% block footer %}
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size:12px; line-height:18px; color:#9ca3af; margin-top:16px; max-width:600px;">
           &copy; {{ platform_name }}
         </div>
+        {% endblock %}
       </td>
     </tr>
   </table>

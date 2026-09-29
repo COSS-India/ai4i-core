@@ -22,13 +22,15 @@ logger = get_logger(__name__)
 
 async def deliver(
     auth_db: AsyncSession, *, tenant_id: str, recipients: List[Dict[str, Any]], event_name: str,
-    details: List[Any], platform_level: bool = False,
+    details: List[Any], platform_level: bool = False, affected_service: str = "",
 ) -> str:
     """Returns "sent", "no_recipients", or "failed". "sent" only if at least
     one recipient's email actually went out. ``recipients`` are the
     envelope's already-resolved {"email", "name"} entries; a recipient with
     no name is greeted generically ("there"). platform_level (monitoring)
-    alerts have no tenant, so no institution name is looked up."""
+    alerts have no tenant, so no institution name is looked up.
+    ``affected_service`` (monitoring only, "" otherwise) is already resolved
+    by the handler and passed through unchanged."""
     people = [
         Recipient(email=r["email"], display_name=r.get("name") or "there")
         for r in recipients
@@ -55,7 +57,7 @@ async def deliver(
         *(
             emailer.send_one(
                 recipient=person, institution_name=institution_name, event_name=event_name,
-                details=details,
+                details=details, affected_service=affected_service,
             )
             for person in people
         ),

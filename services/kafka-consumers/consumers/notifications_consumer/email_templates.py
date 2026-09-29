@@ -399,6 +399,7 @@ def render_monitoring_alert_email(
     threshold: str,
     alert_datetime: str,
     current_value: str,
+    affected_service: str = "",
 ) -> EmailMessage:
     """Standard Monitoring Alert Email Template. Platform-level — no
     institution. ``threshold`` and ``current_value`` are bare display
@@ -416,5 +417,7 @@ def render_monitoring_alert_email(
             "threshold": threshold,
             "current_value": current_value,
             "unit": unit,
+            # "" ⇒ the "Affected Service" line is omitted ("if applicable").
+            "affected_service": affected_service,
         },
     )

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-from consumers.notifications_consumer.recipients import fetch_institution_name
+from consumers.notifications_consumer.recipients import fetch_institution_name, fetch_service_name
 
 
 def _db(row_value=None) -> AsyncMock:
@@ -54,3 +54,20 @@ class TestFetchInstitutionName:
         params = db.execute.call_args.args[1]
         assert params == {"tenant_id": 2}
         assert isinstance(params["tenant_id"], int)
+
+
+class TestFetchServiceName:
+    async def test_successful_lookup_returns_service_name(self):
+        db = _db(row_value=("Legal Translate v2",))
+        assert await fetch_service_name(db, service_id="ai4bharat/legal-translate-v2") == "Legal Translate v2"
+        _sql, params = db.execute.await_args.args
+        assert "mm_services" in str(_sql)
+        assert params == {"service_id": "ai4bharat/legal-translate-v2"}
+
+    async def test_no_matching_row_falls_back_to_raw_service_id(self):
+        db = _db(row_value=None)
+        assert await fetch_service_name(db, service_id="gone/service") == "gone/service"
+
+    async def test_empty_name_falls_back_to_raw_service_id(self):
+        db = _db(row_value=("",))
+        assert await fetch_service_name(db, service_id="svc-1") == "svc-1"

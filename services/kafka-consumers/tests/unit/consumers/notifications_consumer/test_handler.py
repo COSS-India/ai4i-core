@@ -111,6 +111,7 @@ class TestHandleNotificationEvent:
             event_name="TIER_CHANGED",
             details=_payload()["details"],
             platform_level=False,
+            affected_service="",
         )
 
     async def test_redelivery_of_a_claimed_event_is_not_sent_again(self):
@@ -146,7 +147,7 @@ class TestDeliver:
 
         sent = []
 
-        async def _send_one(*, recipient, institution_name, event_name, details):
+        async def _send_one(*, recipient, institution_name, event_name, details, affected_service=""):
             sent.append((recipient.email, recipient.display_name, institution_name))
             return True
 
@@ -182,3 +183,82 @@ class TestDeliver:
         assert await delivery.deliver(
             object(), tenant_id="2", event_name="TIER_CHANGED", details=[], recipients=[]
         ) == "no_recipients"
+
+
+# ── Affected Service (monitoring email) ─────────────────────────────────────
+
+
+def _monitoring_payload(**overrides) -> dict:
+    """A MONITORING envelope exactly as ai4i_core.kafka publishes it: platform
+    tenant, subject = monitoring_subject(service_id), details =
+    [threshold, alert_datetime, current_value]."""
+    fields = dict(
+        event_name="LATENCY_P95", notification_type="MONITORING", tenant_id="PLATFORM", tenant_name=None,
+        subject={"service_id": "ai4bharat/legal-translate-v2"}, severity="WARNING",
+        details=["5", "2026-09-28 10:00 IST", "7.3"],
+    )
+    fields.update(overrides)
+    return _payload(**fields)
+
+
+class TestAffectedServiceEndToEnd:
+    """The reported gap: a monitoring alert email had no "Affected Service" line
+    even though the envelope's subject carries the service_id. Runs the real
+    handler -> delivery -> emailer -> template path; only I/O is faked."""
+
+    async def _send(self, payload, monkeypatch, *, lookup):
+        from consumers.notifications_consumer import emailer
+
+        sent, scopes = [], []
+
+        class _FakeClient:
+            async def send_safe(self, message):
+                sent.append(message)
+                return True
+
+        @asynccontextmanager
+        async def _scope(name=None):
+            scopes.append(name)
+            yield object()
+
+        monkeypatch.setattr(emailer, "_client", lambda: _FakeClient())
+        monkeypatch.setattr(emailer, "_send_deadline_s", lambda: 5.0)
+        with patch.object(h, "get_redis_client", lambda: _Redis()), patch.object(h, "session_scope", _scope), \
+                patch.object(h.recipients_lookup, "fetch_service_name", lookup):
+            await h.handle_notification_event(_msg(payload))
+        return sent, scopes
+
+    async def test_service_name_is_shown_in_the_email(self, monkeypatch):
+        lookup = AsyncMock(return_value="Legal Translate v2")
+        sent, scopes = await self._send(_monitoring_payload(), monkeypatch, lookup=lookup)
+
+        assert lookup.await_args.kwargs == {"service_id": "ai4bharat/legal-translate-v2"}
+        assert scopes[0] is None  # default connection (ai4iplatform_core, where mm_services is)
+        [message] = sent
+        assert message.subject == "P95 Latency — Threshold 5s"
+        assert "Current Value: 7.3s\nAffected Service: Legal Translate v2\n" in message.text_body
+        assert "Affected Service: Legal Translate v2" in message.html_body
+
+    async def test_lookup_failure_falls_back_to_raw_service_id_and_still_sends(self, monkeypatch):
+        lookup = AsyncMock(side_effect=RuntimeError("core db down"))
+        sent, _ = await self._send(_monitoring_payload(), monkeypatch, lookup=lookup)
+
+        [message] = sent
+        assert "Affected Service: ai4bharat/legal-translate-v2" in message.text_body
+
+    @pytest.mark.parametrize("subject", [{}, {"service_id": ""}, {"service_id": "   "}, None, "not-a-dict"])
+    async def test_no_service_id_omits_the_line_without_a_lookup(self, monkeypatch, subject):
+        lookup = AsyncMock()
+        sent, _ = await self._send(_monitoring_payload(subject=subject), monkeypatch, lookup=lookup)
+
+        lookup.assert_not_awaited()
+        [message] = sent
+        assert "Affected Service" not in message.text_body
+        assert "Affected Service" not in message.html_body
+
+    async def test_non_monitoring_event_never_looks_up_a_service(self):
+        lookup = AsyncMock()
+        with patch.object(h.recipients_lookup, "fetch_service_name", lookup):
+            envelope = h._parse_envelope(_msg(_payload(subject={"service_id": "x"})))
+            assert await h._affected_service(envelope) == ""
+        lookup.assert_not_awaited()
