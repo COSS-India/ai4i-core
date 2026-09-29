@@ -36,6 +36,8 @@ export interface ConfirmDialogProps {
    * so screen readers and focus behave correctly.
    */
   leastDestructiveRef?: RefObject<HTMLButtonElement>;
+  /** Centre the dialog vertically instead of pinning it near the top. */
+  isCentered?: boolean;
 }
 
 /**
@@ -54,6 +56,7 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   isConfirmLoading = false,
   confirmLoadingText,
   leastDestructiveRef: leastDestructiveRefProp,
+  isCentered = false,
 }) => {
   const dialogBg = useColorModeValue("white", "gray.800");
   const fallbackRef = useRef<HTMLButtonElement>(null);
@@ -63,6 +66,7 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
     <AlertDialog
       isOpen={isOpen}
       leastDestructiveRef={leastDestructiveRef}
+      isCentered={isCentered}
       onClose={() => {
         if (!isConfirmLoading) onClose();
       }}

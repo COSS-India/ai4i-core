@@ -7,6 +7,19 @@ export type NotificationAlertModule = "TIER" | "BUDGET" | "QUOTA";
 
 export type NotificationChannel = "EMAIL" | "SMS" | "SLACK" | "WHATSAPP" | string;
 
+/**
+ * GLOBAL reaches every Institution Admin with no opt-out; INSTITUTION is
+ * subscribable per institution. Matches platform-core `NotificationScope`.
+ */
+export type NotificationScope = "GLOBAL" | "INSTITUTION";
+
+export type CatalogScopeFilter = "all" | NotificationScope;
+
+export const SCOPE_LABELS: Record<NotificationScope, string> = {
+  GLOBAL: "Global",
+  INSTITUTION: "Institution",
+};
+
 /** API recipient-role keys (LEGAL_RECIPIENT_ROLES). */
 export type RecipientRoleKey = "TENANT ADMIN" | "ADMIN";
 
@@ -24,7 +37,6 @@ export interface ThresholdBand {
 /**
  * One catalog row for the UI.
  * API fields come from `GET /api/v1/notification-alerts/catalog`.
- * `enabled` is derived from recipient_roles (API has no enabled flag).
  */
 export interface NotificationAlertCatalogItem {
   id: number;
@@ -34,31 +46,58 @@ export interface NotificationAlertCatalogItem {
   type: NotificationAlertType;
   module: NotificationAlertModule;
   channels: NotificationChannel[];
+  /**
+   * Only `ADMIN` (the Adopter Admin's own copy) is edited in the UI. The BE
+   * forces it false on INSTITUTION rows.
+   */
   recipient_roles: Record<RecipientRoleKey, boolean>;
+  scope: NotificationScope;
   /** Present only on ALERT rows. */
   thresholds?: ThresholdBand[];
-  /** True when any recipient role is enabled. */
-  enabled: boolean;
-  origin: "seeded" | "custom";
+}
+
+/** Institution Admin status filter — evaluated on the saved state. */
+export type SubscriptionStatusFilter =
+  | "all"
+  | "mandatory"
+  | "subscribed"
+  | "unsubscribed";
+
+/**
+ * One catalog row as an Institution Admin sees it, from
+ * `GET /api/v1/notification-alerts/subscriptions?tenant_id=`.
+ * `subscribed`/`locked` are the effective values — a GLOBAL row is always
+ * subscribed and locked (mandatory, no opt-out).
+ */
+export interface NotificationSubscriptionItem {
+  notification_id: number;
+  name: string;
+  display_name: string;
+  /** Empty until the BE adds it to `SubscriptionItem`. */
+  description: string;
+  scope: NotificationScope;
+  channels: NotificationChannel[];
+  subscribed: boolean;
+  locked: boolean;
+  /** Additional recipients — auth user ids of this same institution. */
+  recipients: string[];
+  /** ALERT rows only, read-only; absent until the BE adds it to `SubscriptionItem`. */
+  thresholds?: ThresholdBand[];
 }
 
 /** PATCH body accepted by `/notification-alerts/catalog/{name}`. */
 export interface CatalogUpdatePayload {
   channels?: NotificationChannel[];
   recipient_roles?: Partial<Record<RecipientRoleKey, boolean>>;
+  scope?: NotificationScope;
   /** Full replacement of the band list — never a partial merge. */
   thresholds?: ThresholdBand[];
 }
-
-export type CatalogStatusFilter = "all" | "enabled" | "disabled";
 
 export const RECIPIENT_ROLE_LABELS: Record<RecipientRoleKey, string> = {
   "TENANT ADMIN": `${INSTITUTION} Admin`,
   ADMIN: "Adopter Admin",
 };
-
-/** Default role when enabling a row that has none selected. */
-export const DEFAULT_ENABLE_ROLE: RecipientRoleKey = "TENANT ADMIN";
 
 /** Fallback bands when an alert row has no thresholds yet (matches BE seed d5601baf6611). */
 export const DEFAULT_ALERT_THRESHOLDS = [70, 80, 90] as const;
@@ -80,12 +119,6 @@ export function normalizeRecipientRoles(
     "TENANT ADMIN": Boolean(roles?.["TENANT ADMIN"]),
     ADMIN: Boolean(roles?.ADMIN),
   };
-}
-
-export function isCatalogItemEnabled(
-  roles: Record<string, boolean> | null | undefined,
-): boolean {
-  return Object.values(roles ?? {}).some(Boolean);
 }
 
 /**

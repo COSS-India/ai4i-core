@@ -1,23 +1,24 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { notificationAlertsService } from "../services/notificationAlertsService";
 import type {
+  CatalogScopeFilter,
   CatalogUpdatePayload,
   NotificationAlertCatalogItem,
   NotificationAlertType,
-  RecipientRoleKey,
+  NotificationScope,
   ThresholdDraftBand,
 } from "../types/notificationAlerts";
 import {
-  DEFAULT_ENABLE_ROLE,
   draftBandsEqual,
-  isCatalogItemEnabled,
   toThresholdDrafts,
   validateThresholdDrafts,
 } from "../types/notificationAlerts";
 import { replaceTenantCopy } from "../utils/replaceTenantCopy";
 
 export interface CatalogDraft {
-  recipient_roles: Record<RecipientRoleKey, boolean>;
+  scope: NotificationScope;
+  /** recipient_roles.ADMIN — always false while `scope` is INSTITUTION. */
+  adminRecipient: boolean;
   /** ALERT rows only. Always the complete band set once present. */
   thresholds?: ThresholdDraftBand[];
 }
@@ -34,26 +35,21 @@ export interface CatalogSubmitResult {
  */
 function toDraft(item: NotificationAlertCatalogItem): CatalogDraft {
   return {
-    recipient_roles: { ...item.recipient_roles },
+    scope: item.scope,
+    adminRecipient: item.recipient_roles.ADMIN,
     thresholds: item.thresholds ? toThresholdDrafts(item.thresholds) : undefined,
   };
 }
 
-function draftEnabled(draft: CatalogDraft): boolean {
-  return isCatalogItemEnabled(draft.recipient_roles);
-}
-
 function draftsEqual(draft: CatalogDraft, item: NotificationAlertCatalogItem): boolean {
-  if (draft.recipient_roles["TENANT ADMIN"] !== item.recipient_roles["TENANT ADMIN"]) {
-    return false;
-  }
-  if (draft.recipient_roles.ADMIN !== item.recipient_roles.ADMIN) return false;
+  if (draft.scope !== item.scope) return false;
+  if (draft.adminRecipient !== item.recipient_roles.ADMIN) return false;
   // No bands at all — nothing to compare (NOTIFICATION rows).
   if (!draft.thresholds) return true;
   return draftBandsEqual(draft.thresholds, toThresholdDrafts(item.thresholds));
 }
 
-function catalogErrorMessage(error: unknown, fallback: string): string {
+export function catalogErrorMessage(error: unknown, fallback: string): string {
   let message = fallback;
   if (!error || typeof error !== "object") {
     message = error instanceof Error ? error.message : fallback;
@@ -62,7 +58,7 @@ function catalogErrorMessage(error: unknown, fallback: string): string {
       message?: string;
       response?: {
         data?: {
-          detail?: string | { message?: string };
+          detail?: string | { message?: string } | Array<{ msg?: string }>;
           error?: { message?: string };
           message?: string;
         };
@@ -71,7 +67,13 @@ function catalogErrorMessage(error: unknown, fallback: string): string {
     const detail = maybeAxios.response?.data?.detail;
     if (typeof detail === "string" && detail.trim()) {
       message = detail;
-    } else if (detail && typeof detail === "object" && detail.message) {
+    } else if (Array.isArray(detail) && detail.length > 0) {
+      // Raw pydantic 422 — a list of field errors rather than the app envelope.
+      message = detail
+        .map((entry) => entry.msg)
+        .filter(Boolean)
+        .join("; ") || fallback;
+    } else if (detail && !Array.isArray(detail) && typeof detail === "object" && detail.message) {
       message = detail.message;
     } else if (maybeAxios.response?.data?.error?.message) {
       message = maybeAxios.response.data.error.message;
@@ -88,6 +90,7 @@ export function useNotificationCatalog(type: NotificationAlertType) {
   const [items, setItems] = useState<NotificationAlertCatalogItem[]>([]);
   const [drafts, setDrafts] = useState<Record<string, CatalogDraft>>({});
   const [search, setSearch] = useState("");
+  const [scopeFilter, setScopeFilter] = useState<CatalogScopeFilter>("all");
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -136,134 +139,91 @@ export function useNotificationCatalog(type: NotificationAlertType) {
     [drafts],
   );
 
+  /**
+   * Filters on the saved scope, not the draft: filtering on the draft would
+   * make a row vanish from under the cursor the moment its toggle is flipped
+   * while a scope filter is active.
+   */
   const filteredItems = useMemo(() => {
     const q = search.trim().toLowerCase();
     return items.filter(
       (item) =>
-        !q ||
-        item.display_name.toLowerCase().includes(q) ||
-        item.name.toLowerCase().includes(q) ||
-        item.description.toLowerCase().includes(q),
+        (scopeFilter === "all" || item.scope === scopeFilter) &&
+        (!q ||
+          item.display_name.toLowerCase().includes(q) ||
+          item.name.toLowerCase().includes(q) ||
+          item.description.toLowerCase().includes(q)),
     );
-  }, [items, search]);
+  }, [items, scopeFilter, search]);
 
   const updateDraft = useCallback(
     (
       name: string,
-      patch: {
-        recipient_roles?: Partial<Record<RecipientRoleKey, boolean>>;
-        thresholds?: ThresholdDraftBand[];
-      },
+      update: (current: CatalogDraft, item: NotificationAlertCatalogItem) => CatalogDraft,
     ) => {
-      setDrafts((prev) => {
-        const current =
-          prev[name] ?? toDraft(items.find((item) => item.name === name)!);
-        return {
-          ...prev,
-          [name]: {
-            ...current,
-            recipient_roles: patch.recipient_roles
-              ? { ...current.recipient_roles, ...patch.recipient_roles }
-              : current.recipient_roles,
-            thresholds: patch.thresholds
-              ? patch.thresholds.map((band) => ({ ...band }))
-              : current.thresholds,
-          },
-        };
-      });
-    },
-    [items],
-  );
-
-  /** Enable/disable maps to recipient_roles only (no wire `enabled` field). */
-  const setEnabled = useCallback(
-    (name: string, enabled: boolean) => {
       setDrafts((prev) => {
         const item = items.find((row) => row.name === name);
         if (!item) return prev;
-        const current = prev[name] ?? toDraft(item);
-        if (!enabled) {
-          return {
-            ...prev,
-            [name]: {
-              ...current,
-              recipient_roles: { "TENANT ADMIN": false, ADMIN: false },
-            },
-          };
-        }
-        const hasRole = isCatalogItemEnabled(current.recipient_roles);
-        return {
-          ...prev,
-          [name]: {
-            ...current,
-            recipient_roles: hasRole
-              ? current.recipient_roles
-              : {
-                  "TENANT ADMIN": DEFAULT_ENABLE_ROLE === "TENANT ADMIN",
-                  ADMIN: DEFAULT_ENABLE_ROLE === "ADMIN",
-                },
-          },
-        };
+        return { ...prev, [name]: update(prev[name] ?? toDraft(item), item) };
       });
     },
     [items],
   );
 
-  const setAllEnabled = useCallback(
-    (enabled: boolean) => {
-      setDrafts((prev) => {
-        const next = { ...prev };
-        filteredItems.forEach((item) => {
-          const current = next[item.name] ?? toDraft(item);
-          if (!enabled) {
-            next[item.name] = {
-              ...current,
-              recipient_roles: { "TENANT ADMIN": false, ADMIN: false },
-            };
-            return;
-          }
-          const hasRole = isCatalogItemEnabled(current.recipient_roles);
-          next[item.name] = {
-            ...current,
-            recipient_roles: hasRole
-              ? current.recipient_roles
-              : {
-                  "TENANT ADMIN": DEFAULT_ENABLE_ROLE === "TENANT ADMIN",
-                  ADMIN: DEFAULT_ENABLE_ROLE === "ADMIN",
-                },
-          };
-        });
-        return next;
-      });
+  /**
+   * INSTITUTION forces the Adopter Admin copy off (the BE does too).
+   * GLOBAL turns it on, per design ("defaults to selected") — the BE only
+   * defaults a *missing* ADMIN key, and every stored INSTITUTION row already
+   * holds ADMIN=false, so a scope-only PATCH would leave it off. Flipping
+   * back to the saved scope restores the saved value instead, so an
+   * out-and-back toggle leaves the row clean.
+   */
+  const setScope = useCallback(
+    (name: string, scope: NotificationScope) => {
+      updateDraft(name, (current, item) => ({
+        ...current,
+        scope,
+        adminRecipient:
+          scope === item.scope ? item.recipient_roles.ADMIN : scope === "GLOBAL",
+      }));
     },
-    [filteredItems],
+    [updateDraft],
   );
 
-  const setRecipientRole = useCallback(
-    (name: string, role: RecipientRoleKey, checked: boolean) => {
-      updateDraft(name, {
-        recipient_roles: { [role]: checked },
-      });
+  const setAdminRecipient = useCallback(
+    (name: string, checked: boolean) => {
+      updateDraft(name, (current) =>
+        current.scope === "INSTITUTION"
+          ? current
+          : { ...current, adminRecipient: checked },
+      );
     },
     [updateDraft],
   );
 
   /**
    * Replaces a row's whole band set at once — the only threshold mutator.
-   * Never a per-band patch the way recipient_roles does it: an editable
-   * percentage is no stable key to merge against. The modal validates before
-   * applying, so bands arrive complete and valid — what the API takes too.
+   * An editable percentage is no stable key to merge a per-band patch
+   * against. Bands are validated in the editor on Apply and again on Submit.
    */
   const setThresholds = useCallback(
     (name: string, thresholds: ThresholdDraftBand[]) => {
-      updateDraft(name, { thresholds });
+      updateDraft(name, (current) => ({
+        ...current,
+        thresholds: thresholds.map((band) => ({ ...band })),
+      }));
     },
     [updateDraft],
   );
 
-  const allFilteredEnabled =
-    filteredItems.length > 0 &&
-    filteredItems.every((item) => draftEnabled(getDraft(item)));
+  const discard = useCallback(() => {
+    const nextDrafts: Record<string, CatalogDraft> = {};
+    items.forEach((item) => {
+      nextDrafts[item.name] = toDraft(item);
+    });
+    setDrafts(nextDrafts);
+    setError(null);
+  }, [items]);
 
   const dirtyCount = useMemo(() => {
     return items.reduce((count, item) => {
@@ -272,6 +232,20 @@ export function useNotificationCatalog(type: NotificationAlertType) {
       return draftsEqual(draft, item) ? count : count + 1;
     }, 0);
   }, [items, drafts]);
+
+  /**
+   * Rows about to move GLOBAL -> INSTITUTION. The BE resets every
+   * institution's subscription to unsubscribed on that flip, so the UI
+   * confirms before submitting them.
+   */
+  const pendingInstitutionFlips = useMemo(
+    () =>
+      items.filter(
+        (item) =>
+          item.scope === "GLOBAL" && drafts[item.name]?.scope === "INSTITUTION",
+      ),
+    [items, drafts],
+  );
 
   const submit = useCallback(async (): Promise<CatalogSubmitResult> => {
     setIsSubmitting(true);
@@ -282,9 +256,12 @@ export function useNotificationCatalog(type: NotificationAlertType) {
         const draft = drafts[item.name];
         if (!draft || draftsEqual(draft, item)) continue;
 
+        // ADMIN is always sent explicitly — see setScope for why the BE's
+        // own default can't be relied on after a scope flip.
         const payload: CatalogUpdatePayload = {
-          recipient_roles: draft.recipient_roles,
+          recipient_roles: { ADMIN: draft.adminRecipient },
         };
+        if (draft.scope !== item.scope) payload.scope = draft.scope;
         if (item.type === "ALERT" && draft.thresholds) {
           const original = toThresholdDrafts(item.thresholds);
           if (!draftBandsEqual(draft.thresholds, original)) {
@@ -335,17 +312,18 @@ export function useNotificationCatalog(type: NotificationAlertType) {
     filteredItems,
     search,
     setSearch,
+    scopeFilter,
+    setScopeFilter,
     isLoading,
     isSubmitting,
     error,
     getDraft,
-    draftEnabled,
-    setEnabled,
-    setAllEnabled,
-    setRecipientRole,
+    setScope,
+    setAdminRecipient,
     setThresholds,
-    allFilteredEnabled,
+    discard,
     dirtyCount,
+    pendingInstitutionFlips,
     submit,
     reload: load,
   };

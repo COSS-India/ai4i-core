@@ -82,6 +82,14 @@ export function canAccessInstitutionManagement(roles?: string[]): boolean {
   return isDefaultAdminUser(roles) || isTenantAdminUser(roles);
 }
 
+/**
+ * Notifications & Alerts page — platform ADMIN edits the catalog; an
+ * Institution Admin manages their own institution's subscriptions.
+ */
+export function canAccessNotificationsAlerts(roles?: string[]): boolean {
+  return isPlatformAdminUser(roles) || isTenantAdminUser(roles);
+}
+
 /** Tenant Admin without platform ADMIN or MODERATOR. */
 export function isTenantAdminOnlyUser(roles?: string[]): boolean {
   return isTenantAdminUser(roles) && !canAccessPlatformMetering(roles);
