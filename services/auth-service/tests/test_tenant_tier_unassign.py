@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+import pytest_asyncio
 from fastapi import FastAPI, HTTPException, Response
 
 from app.core.constants import UNASSIGNED_TIER_ID
@@ -70,14 +71,20 @@ def _svc(*, roles=("ADMIN",), tenant=None) -> TenantService:
 @pytest.fixture(autouse=True)
 def _no_notifications(monkeypatch):
     """assign_tenant_tier (used by the re-assign test) fires the
-    TIER_ASSIGNED pipeline; keep it off platform_core_db's mock queue."""
-    monkeypatch.setattr(
-        "app.services.tenant_service.is_notification_enabled", AsyncMock(return_value=False)
-    )
-    monkeypatch.setattr(
-        "app.services.tenant_service.check_and_record_action", AsyncMock(return_value=False)
-    )
-    monkeypatch.setattr("app.services.tenant_service.publish_notification_event", MagicMock())
+    TIER_ASSIGNED pipeline; keep it off platform_core_db's mock queue.
+
+    raising=False throughout: the notification hand-off in tenant_service
+    is being reworked in parallel (the first three names are replaced by
+    the last two), so this file must pass whichever version it runs on
+    instead of erroring at setup on a name that module no longer has."""
+    for name, stub in (
+        ("is_notification_enabled", AsyncMock(return_value=False)),
+        ("check_and_record_action", AsyncMock(return_value=False)),
+        ("publish_notification_event", MagicMock()),
+        ("publish_tier_event", MagicMock()),
+        ("refresh_tenant_subscriptions", MagicMock()),
+    ):
+        monkeypatch.setattr(f"app.services.tenant_service.{name}", stub, raising=False)
 
 
 def _mock_request() -> MagicMock:
@@ -244,16 +251,38 @@ def _key(cached_data=None) -> APIKey:
 
 class TestMarkTierUnassignedForTenant:
     @pytest.mark.asyncio
-    async def test_overwrites_redis_and_cached_data_with_the_marker(self) -> None:
+    async def test_overwrites_only_keys_that_carry_a_tier(self) -> None:
+        """Both stores go through their only-if-present variant — the
+        unconditional writers would add the marker to legacy keys too."""
         repo, cache, key = AsyncMock(), AsyncMock(), _key()
         repo.list_active_keys_for_tenant = AsyncMock(return_value=[key])
         svc = APIKeyService(repo, cache)
 
         await svc.mark_tier_unassigned_for_tenant(1)
 
-        cache.patch_api_key_cache_field.assert_awaited_once_with(key.api_key, "tier_id", UNASSIGNED_TIER_ID)
-        repo.patch_cached_data_field_for_tenant.assert_awaited_once_with(1, "tier_id", UNASSIGNED_TIER_ID)
+        cache.patch_api_key_cache_field_if_present.assert_awaited_once_with(
+            key.api_key, "tier_id", UNASSIGNED_TIER_ID
+        )
+        cache.patch_api_key_cache_field.assert_not_awaited()
+        repo.patch_cached_data_field_for_tenant.assert_awaited_once_with(
+            1, "tier_id", UNASSIGNED_TIER_ID, only_if_present=True
+        )
         repo.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_other_tenant_wide_writers_stay_unconditional(self) -> None:
+        """Assign must still ADD tier_id to a key that lacks it (that's how a
+        legacy key joins a tier) — only unassign is restricted."""
+        repo, cache, key = AsyncMock(), AsyncMock(), _key()
+        repo.list_active_keys_for_tenant = AsyncMock(return_value=[key])
+        svc = APIKeyService(repo, cache)
+        tier = str(uuid4())
+
+        await svc.set_tier_id_for_tenant(1, tier)
+
+        cache.patch_api_key_cache_field.assert_awaited_once_with(key.api_key, "tier_id", tier)
+        cache.patch_api_key_cache_field_if_present.assert_not_awaited()
+        repo.patch_cached_data_field_for_tenant.assert_awaited_once_with(1, "tier_id", tier)
 
     @pytest.mark.asyncio
     async def test_field_is_never_deleted(self) -> None:
@@ -373,3 +402,212 @@ class TestUnassignContract:
         assert {"200", "403", "404"} <= set(delete["responses"])
         data_ref = app.openapi()["components"]["schemas"]["TenantTierUnassignData"]["properties"]
         assert {"tenant_id", "tier_id", "previous_tier_id", "updated_at", "updated_by"} <= set(data_ref)
+
+
+# ── Review fix: never-tiered tenants' legacy keys stay untouched ────────────
+
+
+def _redis_with_hashes(hashes: dict) -> MagicMock:
+    """A redis mock whose eval honours _HSET_IF_FIELD_EXISTS's contract
+    against an in-memory {redis_key: {field: value}} map, so the whole
+    TenantService → APIKeyService → CacheService chain can run for real.
+    The script's own semantics on a real Redis are pinned separately by
+    TestHsetIfFieldExistsLiveRedis."""
+    redis = MagicMock()
+
+    async def _eval(_script, _numkeys, key, field, value):
+        h = hashes.get(key)
+        if h is None or field not in h:
+            return 0
+        h[field] = value
+        return 1
+
+    redis.eval = AsyncMock(side_effect=_eval)
+    redis.hset = AsyncMock()
+    return redis
+
+
+def _chain(tenant: Tenant, keys: list[APIKey], hashes: dict):
+    """TenantService wired to a REAL APIKeyService and CacheService — only
+    the DB repos and the Redis client are doubles."""
+    from app.services.cache_service import CacheService
+
+    api_repo = AsyncMock()
+    api_repo.list_active_keys_for_tenant = AsyncMock(return_value=keys)
+    redis = _redis_with_hashes(hashes)
+    api_keys = APIKeyService(api_repo, CacheService(redis))
+    svc = _svc(tenant=tenant)
+    svc._api_keys = api_keys
+    return svc, api_repo, redis
+
+
+class TestNeverTieredTenantLegacyKeys:
+    @pytest.mark.asyncio
+    async def test_unassign_on_never_tiered_tenant_leaves_legacy_key_servable(self) -> None:
+        """The exact review scenario: tenant never had a tier, still holds a
+        pre-tier key whose cache has no tier_id. DELETE returns the 200
+        no-op — and the key must keep validating afterwards."""
+        from app.services.cache_service import REDIS_API_KEY_PREFIX
+
+        legacy = _key(cached_data={"api_key": "a" * 32, "tenant_id": "5"})
+        redis_key = f"{REDIS_API_KEY_PREFIX}{legacy.api_key}"
+        legacy_hash = {"id": "1", "tenant_id": "5", "permissions": "[1, 2, 3]"}
+        hashes = {redis_key: legacy_hash}
+        svc, api_repo, redis = _chain(_tenant(tier_id=None, tenant_id=5), [legacy], hashes)
+
+        _, previous = await svc.unassign_tenant_tier(_admin_user(), 5)
+
+        assert previous is None
+        assert "tier_id" not in hashes[redis_key], "legacy Redis hash must not gain the marker"
+        redis.hset.assert_not_awaited()
+        api_repo.patch_cached_data_field_for_tenant.assert_awaited_once_with(
+            5, "tier_id", UNASSIGNED_TIER_ID, only_if_present=True
+        )
+        # And the key's actual payload still validates.
+        out, response = await _validate(_validate_result(tenant_id="5"))
+        assert getattr(out, "status_code", 200) == 200
+        assert response.headers["X-Tier-ID"] == ""
+
+    @pytest.mark.asyncio
+    async def test_first_unassign_blocks_tiered_keys_but_spares_legacy_ones(self) -> None:
+        """Same tenant holding both kinds (tier_id set by migration, not
+        PATCH): only the key issued under the tier gets the marker."""
+        from app.services.cache_service import REDIS_API_KEY_PREFIX
+
+        premium = str(uuid4())
+        tiered = _key(cached_data={"api_key": "b" * 32, "tier_id": premium})
+        tiered.api_key = "b" * 32
+        legacy = _key(cached_data={"api_key": "c" * 32})
+        legacy.api_key = "c" * 32
+        hashes = {
+            f"{REDIS_API_KEY_PREFIX}{'b' * 32}": {"tier_id": premium},
+            f"{REDIS_API_KEY_PREFIX}{'c' * 32}": {"id": "2"},
+        }
+        svc, _, _ = _chain(_tenant(tier_id=uuid4()), [tiered, legacy], hashes)
+
+        await svc.unassign_tenant_tier(_admin_user(), 1)
+
+        assert hashes[f"{REDIS_API_KEY_PREFIX}{'b' * 32}"]["tier_id"] == UNASSIGNED_TIER_ID
+        assert "tier_id" not in hashes[f"{REDIS_API_KEY_PREFIX}{'c' * 32}"]
+
+    @pytest.mark.asyncio
+    async def test_retry_still_repairs_a_key_left_on_the_old_tier(self) -> None:
+        """The reason the no-op path writes at all: DB already NULL, but a
+        key still carries the old tier from a failed earlier fan-out."""
+        from app.services.cache_service import REDIS_API_KEY_PREFIX
+
+        stale = _key(cached_data={"api_key": "d" * 32, "tier_id": str(uuid4())})
+        stale.api_key = "d" * 32
+        hashes = {f"{REDIS_API_KEY_PREFIX}{'d' * 32}": {"tier_id": str(uuid4())}}
+        svc, _, _ = _chain(_tenant(tier_id=None), [stale], hashes)
+
+        _, previous = await svc.unassign_tenant_tier(_admin_user(), 1)
+
+        assert previous is None
+        assert hashes[f"{REDIS_API_KEY_PREFIX}{'d' * 32}"]["tier_id"] == UNASSIGNED_TIER_ID
+
+
+class TestPatchApiKeyCacheFieldIfPresent:
+    @pytest.mark.asyncio
+    async def test_runs_the_atomic_script_and_reports_the_write(self) -> None:
+        from app.services.cache_service import (
+            REDIS_API_KEY_PREFIX, CacheService, _HSET_IF_FIELD_EXISTS,
+        )
+
+        redis = MagicMock()
+        redis.eval = AsyncMock(return_value=1)
+        assert await CacheService(redis).patch_api_key_cache_field_if_present("k", "tier_id", "") is True
+        redis.eval.assert_awaited_once_with(
+            _HSET_IF_FIELD_EXISTS, 1, f"{REDIS_API_KEY_PREFIX}k", "tier_id", ""
+        )
+
+    @pytest.mark.asyncio
+    async def test_field_absent_is_reported_as_not_written(self) -> None:
+        from app.services.cache_service import CacheService
+
+        redis = MagicMock()
+        redis.eval = AsyncMock(return_value=0)
+        assert await CacheService(redis).patch_api_key_cache_field_if_present("k", "tier_id", "") is False
+
+    @pytest.mark.asyncio
+    async def test_non_hash_key_is_deleted_like_the_unconditional_writer(self) -> None:
+        from redis.exceptions import ResponseError
+
+        from app.services.cache_service import REDIS_API_KEY_PREFIX, CacheService
+
+        redis = MagicMock()
+        redis.eval = AsyncMock(side_effect=ResponseError("WRONGTYPE"))
+        redis.delete = AsyncMock()
+        assert await CacheService(redis).patch_api_key_cache_field_if_present("k", "tier_id", "") is False
+        redis.delete.assert_awaited_once_with(f"{REDIS_API_KEY_PREFIX}k")
+
+
+class TestPatchCachedDataFieldOnlyIfPresent:
+    @staticmethod
+    async def _compiled_sql(**kwargs) -> str:
+        from sqlalchemy.dialects import postgresql
+
+        from app.repositories.api_key_repository import APIKeyRepository
+
+        db = AsyncMock()
+        db.execute = AsyncMock(return_value=MagicMock(rowcount=0))
+        await APIKeyRepository(db).patch_cached_data_field_for_tenant(1, "tier_id", "", **kwargs)
+        stmt = db.execute.await_args.args[0]
+        return str(stmt.compile(dialect=postgresql.dialect()))
+
+    @pytest.mark.asyncio
+    async def test_only_if_present_adds_the_jsonb_key_exists_filter(self) -> None:
+        assert "api_key.cached_data ? " in await self._compiled_sql(only_if_present=True)
+
+    @pytest.mark.asyncio
+    async def test_default_is_unchanged(self) -> None:
+        assert " ? " not in await self._compiled_sql()
+
+
+class TestHsetIfFieldExistsLiveRedis:
+    """Runs the real Lua script against the dev Redis (skipped when it
+    isn't reachable) — the in-memory double above only mirrors it."""
+
+    @pytest_asyncio.fixture()
+    async def redis(self):
+        import os
+
+        import redis.asyncio as aioredis
+
+        from app.core.config import settings
+
+        password = settings.redis_password.get_secret_value() if settings.redis_password else None
+        client = aioredis.Redis(
+            host=os.environ.get("TEST_REDIS_HOST", "localhost"),
+            port=settings.redis_port, password=password, decode_responses=True,
+        )
+        try:
+            await client.ping()
+        except Exception as exc:
+            await client.aclose()
+            pytest.skip(f"dev Redis unreachable: {exc}")
+        prefix = f"test-tier-unassign-{uuid4().hex}"
+        yield client, prefix
+        for k in await client.keys(f"auth:apikey:{prefix}*"):
+            await client.delete(k)
+        await client.aclose()
+
+    @pytest.mark.asyncio
+    async def test_semantics_on_real_redis(self, redis) -> None:
+        from app.services.cache_service import REDIS_API_KEY_PREFIX, CacheService
+
+        client, prefix = redis
+        cache = CacheService(client)
+        legacy, tiered, missing = f"{prefix}-legacy", f"{prefix}-tiered", f"{prefix}-missing"
+        await client.hset(f"{REDIS_API_KEY_PREFIX}{legacy}", mapping={"id": "1"})
+        await client.hset(f"{REDIS_API_KEY_PREFIX}{tiered}", mapping={"id": "2", "tier_id": "old"})
+        await client.expire(f"{REDIS_API_KEY_PREFIX}{tiered}", 600)
+
+        assert await cache.patch_api_key_cache_field_if_present(legacy, "tier_id", "") is False
+        assert await cache.patch_api_key_cache_field_if_present(tiered, "tier_id", "") is True
+        assert await cache.patch_api_key_cache_field_if_present(missing, "tier_id", "") is False
+
+        assert await client.hgetall(f"{REDIS_API_KEY_PREFIX}{legacy}") == {"id": "1"}
+        assert await client.hget(f"{REDIS_API_KEY_PREFIX}{tiered}", "tier_id") == ""
+        assert 0 < await client.ttl(f"{REDIS_API_KEY_PREFIX}{tiered}") <= 600, "TTL must survive"
+        assert await client.exists(f"{REDIS_API_KEY_PREFIX}{missing}") == 0, "no partial hash created"

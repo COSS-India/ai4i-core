@@ -424,19 +424,28 @@ class APIKeyService:
                 break
 
     async def _patch_all_tenant_key_caches(
-        self, tenant_id: int, field: str, value: str
+        self, tenant_id: int, field: str, value: str, *, only_if_present: bool = False
     ) -> None:
         """Patch a single Redis hash field on every cached API key for the
         tenant, and mirror the same field/value onto cached_data (write-
         through) so it survives a cache eviction instead of resetting to
-        unset on the next DB-fallback rehydrate."""
+        unset on the next DB-fallback rehydrate.
+
+        ``only_if_present`` restricts both stores to keys that already carry
+        ``field``; keys without it are left untouched."""
         if self._repo is None:
             return
+        if only_if_present:
+            patch_field = self._cache.patch_api_key_cache_field_if_present
+            repo_kwargs = {"only_if_present": True}
+        else:
+            patch_field = self._cache.patch_api_key_cache_field
+            repo_kwargs = {}
         await self._for_each_active_tenant_key(
             tenant_id,
-            lambda key: self._cache.patch_api_key_cache_field(key.api_key, field, value),
+            lambda key: patch_field(key.api_key, field, value),
         )
-        await self._repo.patch_cached_data_field_for_tenant(tenant_id, field, value)
+        await self._repo.patch_cached_data_field_for_tenant(tenant_id, field, value, **repo_kwargs)
         await self._repo.commit()
 
     async def set_budget_exhausted_for_tenant(self, tenant_id: int, exhausted: bool) -> None:
@@ -576,17 +585,22 @@ class APIKeyService:
         await self._patch_all_tenant_key_caches(tenant_id, "tier_id", tier_id)
 
     async def mark_tier_unassigned_for_tenant(self, tenant_id: int) -> None:
-        """Force every cached API key for the tenant onto UNASSIGNED_TIER_ID
-        after its tier was removed — the unassign counterpart of
-        set_tier_id_for_tenant, for the same _preserved_tier_id reason.
+        """Overwrite the cached tier_id with UNASSIGNED_TIER_ID on every key
+        of the tenant that carries one, after its tier was removed — the
+        unassign counterpart of set_tier_id_for_tenant, for the same
+        _preserved_tier_id reason.
 
-        Overwritten, never HDEL'd: an absent tier_id is how legacy
-        pre-tier keys look, and /auth/validate still serves those (it only
-        rejects the explicit empty value). Deleting the field would leave
-        these keys working with X-Tier-ID="", which inference-service reads
-        as "no tier restriction at all".
+        Only keys that already HAVE a tier_id are touched. An absent tier_id
+        is how legacy pre-tier keys look, and /auth/validate still serves
+        those (it only rejects the explicit empty value) — writing the
+        marker onto them would newly block keys that were never on any
+        tier. For the same reason the field is overwritten, never HDEL'd:
+        deleting it would leave a tiered key working with X-Tier-ID="",
+        which inference-service reads as "no tier restriction at all".
         """
-        await self._patch_all_tenant_key_caches(tenant_id, "tier_id", UNASSIGNED_TIER_ID)
+        await self._patch_all_tenant_key_caches(
+            tenant_id, "tier_id", UNASSIGNED_TIER_ID, only_if_present=True
+        )
 
     async def reset_all_quota_fields(self) -> None:
         """HDEL every quota-* field from all active API key hashes across all tenants,

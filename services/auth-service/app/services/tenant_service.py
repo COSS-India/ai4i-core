@@ -1302,10 +1302,12 @@ class TenantService:
         key carries its own cached tier_id (see
         APIKeyService._preserved_tier_id), so it would keep being served —
         and billed — under the old tier. mark_tier_unassigned_for_tenant
-        rewrites that cached value, and /auth/validate then rejects those
-        keys with NO_ACTIVE_TIER. It runs on the no-op path too, so a retry
+        rewrites that cached value on every key that carries one, and
+        /auth/validate then rejects those keys with NO_ACTIVE_TIER. Keys with
+        no cached tier_id at all (legacy pre-tier keys) are left untouched
+        and keep being served. It runs on the no-op path too, so a retry
         repairs a previous call whose DB write committed but whose cache
-        write failed.
+        write failed — without touching a never-tiered tenant's legacy keys.
         """
         roles = await self._roles.get_user_roles(current_user.id)
         if RoleName.ADMIN.value not in roles:

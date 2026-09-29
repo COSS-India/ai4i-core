@@ -251,10 +251,12 @@ async def unassign_tenant_tier(
 
     Idempotent: a tenant that is already unassigned returns 200 with
     ``previous_tier_id: null`` and nothing is written. The tenant drops out
-    of ``GET /tenants/tier/list`` immediately. Its existing API keys are
-    rejected by /auth/validate with 403 NO_ACTIVE_TIER until a tier is
-    assigned again via ``PATCH /tenants/{id}/tier`` — the same state
-    create_api_key already refuses to issue keys in.
+    of ``GET /tenants/tier/list`` immediately. Its existing API keys that
+    were issued under a tier are rejected by /auth/validate with 403
+    NO_ACTIVE_TIER until a tier is assigned again via
+    ``PATCH /tenants/{id}/tier`` — the same state create_api_key already
+    refuses to issue keys in. Legacy keys issued before tiers existed carry
+    no tier and are not affected.
     """
     tenant, previous_tier_id = await svc.unassign_tenant_tier(current_user, tenant_id)
     return TenantTierUnassignResponse(
