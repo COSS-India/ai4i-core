@@ -42,9 +42,10 @@ async def list_subscriptions(
     catalog_type: Optional[NotificationType] = Query(None, alias="type"),
     session: AsyncSession = Depends(get_db),
 ) -> ListSubscriptionResponse:
-    """Every catalog row (optionally filtered by ``?type=``), decorated
-    with this institution's effective subscription state, lock state and
-    recipients."""
+    """Every NOTIFICATION / ALERT catalog row (optionally filtered by
+    ``?type=``), decorated with this institution's effective subscription
+    state, lock state and recipients. MONITORING rows are platform-level
+    and never listed here (``?type=MONITORING`` returns an empty list)."""
     authorize_own_tenant_or_admin(request, tenant_id)
     items = await subscription_service.list_subscriptions(
         session, tenant_id=tenant_id, catalog_type=catalog_type

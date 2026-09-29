@@ -150,7 +150,8 @@ def _merged_bool_dict(existing: Dict[str, bool], incoming: Dict[str, bool]) -> D
 
 def _validate_recipient_roles(name: str, recipient_roles: Dict[str, bool]) -> None:
     # NOTIFICATION and ALERT rows are restricted to ADMIN / TENANT ADMIN
-    # (design 6.1); MONITORING rows to ADMIN / MODERATOR.
+    # (design 6.1). MONITORING rows never reach here — update_catalog 404s
+    # them; monitoring_catalog_service validates their ADMIN / MODERATOR.
     legal_roles = LEGAL_RECIPIENT_ROLES[NotificationName(name)]
     illegal = set(recipient_roles) - legal_roles
     if illegal:
@@ -233,7 +234,10 @@ async def update_catalog(
         select(ConfigNotificationAlert).where(ConfigNotificationAlert.name == name)
     )
     row = result.scalar_one_or_none()
-    if row is None:
+    # MONITORING rows have their own model (no scope, Email only, ADMIN /
+    # MODERATOR with resolved recipients) and are written only through
+    # monitoring_catalog_service — same 404 it returns for metering names.
+    if row is None or row.type == NotificationType.MONITORING.value:
         raise EntityNotFoundError(f"Catalog entry '{name}'")
 
     if payload.thresholds is not None and row.type != NotificationType.ALERT.value:

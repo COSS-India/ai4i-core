@@ -614,16 +614,35 @@ class TestMonitoringCatalog:
         assert item.display_name == "P95 Latency"
         assert item.recipient_roles == {"ADMIN": True, "MODERATOR": False}
 
-    async def test_moderator_is_a_legal_recipient_for_a_monitoring_row(self):
-        row = _monitoring_row(name="ERROR_RATE_4XX", bands=((1, False),), unit="PERCENT")
-        item = await svc.update_catalog(
-            _Session(found=row), row.name, CatalogUpdate(recipient_roles={"MODERATOR": True})
-        )
-        assert item.recipient_roles == {"ADMIN": True, "MODERATOR": True}
-
-    async def test_tenant_admin_is_rejected_for_a_monitoring_row(self):
+    async def test_metering_patch_404s_a_monitoring_row_and_saves_nothing(self):
+        # Review scenario: PATCH /catalog/LATENCY_P95 {"recipient_roles":
+        # {"MODERATOR": true}} used to 200 and save the role WITHOUT
+        # rebuilding monitoring_alert_recipient. Monitoring rows are written
+        # only through PATCH /monitoring-catalog/{name}.
         row = _monitoring_row()
-        with pytest.raises(ValidationError):
+        session = _Session(found=row)
+        with pytest.raises(EntityNotFoundError):
             await svc.update_catalog(
-                _Session(found=row), row.name, CatalogUpdate(recipient_roles={"TENANT ADMIN": True})
+                session, row.name, CatalogUpdate(recipient_roles={"MODERATOR": True})
             )
+        assert row.recipient_roles == {"ADMIN": True, "MODERATOR": False}
+        assert session.commits == 0
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            # Fields the monitoring model says a monitoring row doesn't have.
+            CatalogUpdate(scope="INSTITUTION"),
+            CatalogUpdate(channels=["EMAIL", "SMS"]),
+        ],
+        ids=["scope", "channels"],
+    )
+    async def test_metering_patch_cannot_change_scope_or_channels_of_a_monitoring_row(self, payload):
+        row = _monitoring_row()
+        session = _Session(found=row)
+        with pytest.raises(EntityNotFoundError):
+            await svc.update_catalog(session, row.name, payload)
+        assert row.scope == "GLOBAL"
+        assert row.channels == ["EMAIL"]
+        assert session.subscription_resets == []
+        assert session.commits == 0
