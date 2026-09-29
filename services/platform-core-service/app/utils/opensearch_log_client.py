@@ -66,15 +66,17 @@ class OpenSearchLogClient:
 
     # ── low-level ────────────────────────────────────────────────────────
 
-    def _search(self, body: dict) -> dict:
+    def _search(self, body: dict, raise_on_error: bool = False) -> dict:
         try:
             return self._client.search(index=self.index, body=body)
         except Exception:
             logger.warning("OpenSearchLogClient search failed", exc_info=True)
+            if raise_on_error:
+                raise
             return {}
 
-    async def _asearch(self, body: dict) -> dict:
-        return await asyncio.to_thread(self._search, body)
+    async def _asearch(self, body: dict, raise_on_error: bool = False) -> dict:
+        return await asyncio.to_thread(self._search, body, raise_on_error)
 
     # ── aggregation primitives ──────────────────────────────────────────
 
@@ -86,14 +88,18 @@ class OpenSearchLogClient:
         response = await self._asearch(body)
         return int(response.get("hits", {}).get("total", {}).get("value", 0))
 
-    async def aggregate(self, query: dict, aggs: dict) -> dict:
+    async def aggregate(self, query: dict, aggs: dict, *, raise_on_error: bool = False) -> dict:
         """Run a ``size: 0`` aggregation-only search. Returns
         ``response["aggregations"]``, or ``{}`` on any failure (connection
         error, malformed query, cluster down) — callers treat that the same
         as "no data", matching PrometheusClient's own fail-soft contract for
-        this codebase's dashboard queries."""
+        this codebase's dashboard queries.
+
+        ``raise_on_error=True`` re-raises the failure instead, for a caller
+        whose "no data" answer gets cached and so must be told apart from an
+        error (OpenSearchMeteringService.first_request_at)."""
         body = {"size": 0, "query": query, "aggs": aggs}
-        response = await self._asearch(body)
+        response = await self._asearch(body, raise_on_error)
         return response.get("aggregations", {})
 
     async def composite_all(

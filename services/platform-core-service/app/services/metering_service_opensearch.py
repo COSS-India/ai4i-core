@@ -731,15 +731,17 @@ class OpenSearchMeteringService(MeteringService):
         MeteringService.first_request_at for how /overview uses it.
 
         `tenant` (the name) has no OpenSearch field; see `_base_filters`.
-        aggregate() is fail-soft, so a cluster error reads as "no data" and
-        /overview falls back to the quota_usage value.
+        Unlike the dashboard KPIs, this doesn't use aggregate()'s fail-soft
+        default: /overview caches the answer for an hour, so a cluster error
+        read as "no requests" would stick. A failed search raises instead,
+        and /overview falls back to the quota_usage value without caching.
         """
         filters = self._base_filters(
             tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE, inference_only=True,
         )
         query = {"bool": {"filter": filters}} if filters else {"match_all": {}}
         aggregations = await self._os_client.aggregate(
-            query, {"first": {"min": {"field": "@timestamp"}}}
+            query, {"first": {"min": {"field": "@timestamp"}}}, raise_on_error=True,
         )
         value = aggregations.get("first", {}).get("value")
         if value is None:

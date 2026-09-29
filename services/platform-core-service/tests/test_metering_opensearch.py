@@ -63,6 +63,15 @@ class TestOpenSearchLogClientAggregate:
         aggs = await client.aggregate({"match_all": {}}, {})
         assert aggs == {}
 
+    async def test_search_failure_is_empty_dict_by_default(self):
+        client = _client_with_search(side_effect=RuntimeError("cluster down"))
+        assert await client.aggregate({"match_all": {}}, {}) == {}
+
+    async def test_raise_on_error_reraises_search_failure(self):
+        client = _client_with_search(side_effect=RuntimeError("cluster down"))
+        with pytest.raises(RuntimeError, match="cluster down"):
+            await client.aggregate({"match_all": {}}, {}, raise_on_error=True)
+
 
 @pytest.mark.asyncio
 class TestOpenSearchLogClientCompositeAll:
@@ -649,10 +658,23 @@ class TestFirstRequestAt:
         assert not any("range" in f for f in filters)
         assert result == datetime(2025, 7, 2, 10, 0, tzinfo=timezone.utc)
 
+    async def test_opts_out_of_fail_soft(self):
+        """/overview caches this answer for an hour, so a cluster error must
+        raise rather than read as "no requests"."""
+        svc, os_client = _make_os_service(aggregate_return={"first": {"value": None}})
+        await svc.first_request_at(tenant=None)
+        assert os_client.aggregate.call_args.kwargs == {"raise_on_error": True}
+
+    async def test_search_failure_propagates(self):
+        svc, os_client = _make_os_service()
+        os_client.aggregate = AsyncMock(side_effect=RuntimeError("cluster down"))
+        with pytest.raises(RuntimeError, match="cluster down"):
+            await svc.first_request_at(tenant=None)
+
     async def test_no_documents_is_none(self):
         svc, _ = _make_os_service(aggregate_return={"first": {"value": None}})
         assert await svc.first_request_at(tenant=None) is None
 
-    async def test_failed_aggregation_is_none(self):
+    async def test_missing_aggregation_is_none(self):
         svc, _ = _make_os_service(aggregate_return={})
         assert await svc.first_request_at(tenant=None) is None
