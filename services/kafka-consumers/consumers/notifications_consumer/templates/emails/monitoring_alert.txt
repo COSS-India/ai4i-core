@@ -3,10 +3,10 @@ AI4I-Orchestrate
 
 Dear {{ recipient_name }},
 
-{{ event.name }} has crossed the configured threshold of {{ event.threshold }}{{ event.unit }} as of
+{{ event.name }} has reached the configured threshold of {{ event.threshold }}{{ event.unit }} as of
 {{ event.alert_datetime }}.
 
-Current value: {{ event.current_value }}{{ event.unit }}
+Current Value: {{ event.current_value }}{{ event.unit }}
 
 {% if portal_url -%}
 Log in to the AI4I-Orchestrate Portal to view full details: {{ portal_url }}

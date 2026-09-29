@@ -45,6 +45,15 @@ async def test_confirmed_send_returns_true(client):
     assert "Dear Priya," in message.text_body
 
 
+async def test_monitoring_alert_send(client):
+    assert await _send(event_name="LATENCY_P95", details=["5", "2026-09-28 10:00 IST", "7.3"]) is True
+    [message] = client.sent
+    assert message.subject == "P95 Latency — Threshold 5s"
+    for body in (message.html_body, message.text_body):
+        assert "Current Value: 7.3s" in body
+        assert "IIT Madras" not in body
+
+
 async def test_provider_failure_returns_false(client):
     client.result = False
     assert await _send() is False

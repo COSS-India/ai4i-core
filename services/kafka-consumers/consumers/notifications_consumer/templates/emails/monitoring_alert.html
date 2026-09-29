@@ -3,16 +3,16 @@
    institution anywhere (unlike alert.html). From events/<event_name>.j2:
    event.name, event.unit ("%" or "s", appended to threshold and current
    value), event.threshold, event.alert_datetime, event.current_value. #}
-{% block title %}{{ event.name }} at {{ event.threshold }}{{ event.unit }}{% endblock %}
-{% block preheader %}{{ event.name }} has crossed the {{ event.threshold }}{{ event.unit }} threshold.{% endblock %}
-{% block heading %}{{ event.name }} at {{ event.threshold }}{{ event.unit }}{% endblock %}
+{% block title %}{{ event.name }} — Threshold {{ event.threshold }}{{ event.unit }}{% endblock %}
+{% block preheader %}{{ event.name }} has reached the configured threshold of {{ event.threshold }}{{ event.unit }}.{% endblock %}
+{% block heading %}{{ event.name }} — Threshold {{ event.threshold }}{{ event.unit }}{% endblock %}
 {% block body %}
   <p style="margin:0 0 4px 0;">Dear {{ recipient_name }},</p>
   <p style="margin:0 0 8px 0;">
-    <strong>{{ event.name }}</strong> has crossed the configured threshold of
+    <strong>{{ event.name }}</strong> has reached the configured threshold of
     <strong>{{ event.threshold }}{{ event.unit }}</strong> as of {{ event.alert_datetime }}.
   </p>
-  <p style="margin:0 0 20px 0;">Current value: {{ event.current_value }}{{ event.unit }}</p>
+  <p style="margin:0 0 20px 0;">Current Value: {{ event.current_value }}{{ event.unit }}</p>
   {% include "_portal_line.html" %}
   <p style="margin:20px 0 0 0;">
     Regards,<br>

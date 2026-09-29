@@ -83,11 +83,26 @@ CASES = [
         f"Budget Threshold at 80% — {TENANT}",
         ["Budget Threshold has reached", "80%", TENANT, WHEN, "Current value: 81%"],
     ),
-    ("ERROR_RATE_4XX", ["5", WHEN, "6.2"], "4xx Error Rate at 5%", ["4xx Error Rate", "5%", WHEN, "Current value: 6.2%"]),
-    ("ERROR_RATE_5XX", ["5", WHEN, "6.2"], "5xx Error Rate at 5%", ["5xx Error Rate", "5%", WHEN, "Current value: 6.2%"]),
-    ("LATENCY_P50", ["1", WHEN, "1.4"], "P50 Latency at 1s", ["P50 Latency", "1s", WHEN, "Current value: 1.4s"]),
-    ("LATENCY_P95", ["2", WHEN, "2.5"], "P95 Latency at 2s", ["P95 Latency", "2s", WHEN, "Current value: 2.5s"]),
-    ("LATENCY_P99", ["3", WHEN, "3.5"], "P99 Latency at 3s", ["P99 Latency", "3s", WHEN, "Current value: 3.5s"]),
+    (
+        "ERROR_RATE_4XX", ["5", WHEN, "6.2"], "4xx Error Rate — Threshold 5%",
+        ["4xx Error Rate has reached the configured threshold of", "5%", WHEN, "Current Value: 6.2%"],
+    ),
+    (
+        "ERROR_RATE_5XX", ["5", WHEN, "6.2"], "5xx Error Rate — Threshold 5%",
+        ["5xx Error Rate has reached the configured threshold of", "5%", WHEN, "Current Value: 6.2%"],
+    ),
+    (
+        "LATENCY_P50", ["1", WHEN, "1.4"], "P50 Latency — Threshold 1s",
+        ["P50 Latency has reached the configured threshold of", "1s", WHEN, "Current Value: 1.4s"],
+    ),
+    (
+        "LATENCY_P95", ["2", WHEN, "2.5"], "P95 Latency — Threshold 2s",
+        ["P95 Latency has reached the configured threshold of", "2s", WHEN, "Current Value: 2.5s"],
+    ),
+    (
+        "LATENCY_P99", ["3", WHEN, "3.5"], "P99 Latency — Threshold 3s",
+        ["P99 Latency has reached the configured threshold of", "3s", WHEN, "Current Value: 3.5s"],
+    ),
 ]
 
 
@@ -110,7 +125,7 @@ def test_every_catalog_event_has_a_template():
 def test_monitoring_alerts_carry_no_institution(event_name):
     message = _render(event_name, ["5", WHEN, "6"], tenant_name="PLATFORM")
 
-    assert "—" not in message.subject
+    assert "PLATFORM" not in message.subject
     assert "PLATFORM" not in message.html_body
     assert "PLATFORM" not in message.text_body
 
