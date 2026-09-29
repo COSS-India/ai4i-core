@@ -3,18 +3,26 @@ import { apiEndpoints } from "./apiEndpoints";
 import {
   catalogListResponseSchema,
   catalogUpdateResponseSchema,
+  monitoringCatalogListResponseSchema,
+  monitoringCatalogUpdateResponseSchema,
   subscriptionListResponseSchema,
   subscriptionUpdateResponseSchema,
   type ApiCatalogItem,
+  type ApiMonitoringCatalogItem,
   type ApiSubscriptionItem,
 } from "./dto/schemas/notificationAlerts";
 import type {
   CatalogUpdatePayload,
+  MonitoringCatalogItem,
+  MonitoringCatalogUpdatePayload,
   NotificationAlertCatalogItem,
   NotificationAlertType,
   NotificationSubscriptionItem,
 } from "../types/notificationAlerts";
-import { normalizeRecipientRoles } from "../types/notificationAlerts";
+import {
+  normalizeMonitoringRecipientRoles,
+  normalizeRecipientRoles,
+} from "../types/notificationAlerts";
 import { replaceTenantCopy } from "../utils/replaceTenantCopy";
 
 function fromApiItem(item: ApiCatalogItem): NotificationAlertCatalogItem {
@@ -69,6 +77,54 @@ async function updateCatalogApi(
   );
   const parsed = catalogUpdateResponseSchema.parse(response.data);
   return fromApiItem(parsed.data);
+}
+
+function fromApiMonitoringItem(item: ApiMonitoringCatalogItem): MonitoringCatalogItem {
+  return {
+    id: item.id,
+    name: item.name,
+    display_name: replaceTenantCopy(item.display_name),
+    description: replaceTenantCopy(item.description),
+    channels: [...item.channels],
+    recipient_roles: normalizeMonitoringRecipientRoles(item.recipient_roles),
+    monitoring_thresholds: (item.monitoring_thresholds ?? []).map((band) => ({
+      ...band,
+    })),
+  };
+}
+
+async function listMonitoringCatalogApi(
+  signal?: AbortSignal,
+): Promise<MonitoringCatalogItem[]> {
+  const response = await apiClient.get(apiEndpoints.notificationAlerts.catalog, {
+    params: { type: "MONITORING" },
+    signal,
+  });
+  const parsed = monitoringCatalogListResponseSchema.parse(response.data);
+  return parsed.data.items.map(fromApiMonitoringItem);
+}
+
+async function updateMonitoringCatalogApi(
+  name: string,
+  payload: MonitoringCatalogUpdatePayload,
+): Promise<MonitoringCatalogItem> {
+  const body: MonitoringCatalogUpdatePayload = {};
+  if (payload.recipient_roles) {
+    body.recipient_roles = { ...payload.recipient_roles };
+  }
+  // Wholesale replacement, same as the metering thresholds.
+  if (payload.monitoring_thresholds) {
+    body.monitoring_thresholds = payload.monitoring_thresholds.map((band) => ({
+      ...band,
+    }));
+  }
+
+  const response = await apiClient.patch(
+    apiEndpoints.notificationAlerts.monitoringCatalogByName(name),
+    body,
+  );
+  const parsed = monitoringCatalogUpdateResponseSchema.parse(response.data);
+  return fromApiMonitoringItem(parsed.data);
 }
 
 function fromApiSubscription(item: ApiSubscriptionItem): NotificationSubscriptionItem {
@@ -132,6 +188,7 @@ async function updateSubscriptionRecipientsApi(
 
 /**
  * Catalog service — GET/PATCH `/api/v1/notification-alerts/catalog` (Adopter
+ * Admin), PATCH `/api/v1/notification-alerts/monitoring-catalog` (Adopter
  * Admin) and GET/PATCH/PUT `/api/v1/notification-alerts/subscriptions`
  * (Institution Admin).
  */
@@ -148,6 +205,20 @@ export const notificationAlertsService = {
     payload: CatalogUpdatePayload,
   ): Promise<NotificationAlertCatalogItem> {
     return updateCatalogApi(name, payload);
+  },
+
+  async listMonitoringCatalog(
+    signal?: AbortSignal,
+  ): Promise<MonitoringCatalogItem[]> {
+    return listMonitoringCatalogApi(signal);
+  },
+
+  /** Monitoring rows only — the metering PATCH 404s on them, and vice versa. */
+  async updateMonitoringCatalog(
+    name: string,
+    payload: MonitoringCatalogUpdatePayload,
+  ): Promise<MonitoringCatalogItem> {
+    return updateMonitoringCatalogApi(name, payload);
   },
 
   async listSubscriptions(

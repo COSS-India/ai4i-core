@@ -15,6 +15,7 @@ import { useNotificationCatalog } from "../../hooks/useNotificationCatalog";
 import {
   SCOPE_LABELS,
   toThresholdDrafts,
+  validateThresholdDrafts,
   type CatalogScopeFilter,
   type NotificationAlertCatalogItem,
   type NotificationAlertType,
@@ -151,6 +152,7 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
             bands={getDraft(item).thresholds ?? toThresholdDrafts(item.thresholds)}
             rowLabel={item.display_name}
             onApply={(bands) => setThresholds(item.name, bands)}
+            validate={validateThresholdDrafts}
           />
         ),
       });

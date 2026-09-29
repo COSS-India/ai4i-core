@@ -17,6 +17,7 @@ from ai4i_core.email.settings import EmailSettings
 from ai4i_core.logging import get_logger
 
 from consumers.notifications_consumer import email_templates
+from consumers.notifications_consumer.config import get_settings
 
 logger = get_logger(__name__)
 
@@ -41,6 +42,11 @@ _DEADLINE_HEADROOM_S = 0.0
 @lru_cache(maxsize=1)
 def _client() -> EmailClient:
     settings = EmailSettings()
+    settings = settings.model_copy(
+        update={
+            "email_from_name": get_settings().resolve_smtp_from_name(settings.email_from_name)
+        }
+    )
     return EmailClient(build_provider(settings))
 
 

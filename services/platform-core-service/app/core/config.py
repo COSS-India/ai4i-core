@@ -10,7 +10,7 @@ both .env and OS-level vars are accepted.
 
 from typing import Optional
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -193,9 +193,21 @@ class CoreSettings(BaseSettings):
     auth_service_url: str = ""
     model_management_url: str = ""
     # Adopter-facing portal URL, linked from notification/alert emails
-    # ("Log in to the AI4I-Orchestrate Portal ..."). None → link renders as
+    # ("Log in to the <PLATFORM_NAME> Portal ..."). None → link renders as
     # plain text instead of an <a href>.
     portal_url: Optional[str] = None
+
+    # ── Branding (same PLATFORM_NAME / ADOPTER_LOGO_URL pair as auth-service
+    # and kafka-consumers — AI4IDS-3043), copied from the root .env by
+    # ./scripts/setup-env.sh. Product name in every notification/alert email;
+    # independent of the SMTP From display name (EMAIL_FROM_NAME, read by
+    # ai4i_core EmailSettings) — see resolve_smtp_from_name.
+    # Required, no in-code default: a missing/blank PLATFORM_NAME fails startup
+    # instead of silently sending emails under a baked-in name.
+    platform_name: str
+    # Absolute http(s) logo URL for email headers. Relative paths are ignored
+    # (email clients cannot resolve same-origin paths). Empty ⇒ text brand mark.
+    adopter_logo_url: Optional[str] = None
 
     # ── Logging / Observability ──
     log_level: str = "INFO"
@@ -275,6 +287,33 @@ class CoreSettings(BaseSettings):
     def get_opensearch_url(self) -> str:
         """Get OpenSearch URL from configuration."""
         return self.opensearch_url
+
+    def get_platform_name(self) -> str:
+        """Product name for email copy (PLATFORM_NAME, validated non-blank)."""
+        return self.platform_name
+
+    def get_adopter_logo_url(self) -> Optional[str]:
+        """Absolute http(s) logo for email headers; None when unset/invalid."""
+        raw = (self.adopter_logo_url or "").strip()
+        if raw.startswith(("http://", "https://")):
+            return raw
+        return None
+
+    def resolve_smtp_from_name(self, email_from_name: str) -> str:
+        """SMTP From display name: explicit EMAIL_FROM_NAME, else platform name.
+
+        The provider is built from ai4i_core EmailSettings, so
+        dependencies/services.py passes that value in and applies this result
+        when constructing the client."""
+        return (email_from_name or "").strip() or self.get_platform_name()
+
+    @field_validator("platform_name")
+    @classmethod
+    def validate_platform_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("PLATFORM_NAME must be set to the product name used in emails")
+        return v
 
 
 settings = CoreSettings()

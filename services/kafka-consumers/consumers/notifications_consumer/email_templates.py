@@ -26,12 +26,15 @@ _renderer = TemplateRenderer([_TEMPLATE_DIR])
 def render_email(
     *, to: str, recipient_name: Optional[str], event_name: str, tenant_name: Optional[str], details: List[Any],
 ) -> EmailMessage:
+    settings = get_settings()
     ctx = {
         "event_name": event_name,
         "tenant_name": tenant_name,
         "recipient_name": recipient_name,
         "details": details,
-        "portal_url": get_settings().PORTAL_URL,
+        "portal_url": settings.PORTAL_URL,
+        "platform_name": settings.get_platform_name(),
+        "logo_url": settings.get_adopter_logo_url(),
     }
     html, text = _renderer.render("email", ctx)
     subject = _renderer.render_text("email.subject", ctx)
