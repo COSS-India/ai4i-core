@@ -56,6 +56,7 @@ _ROLE_MODERATOR = 2
 _ROLE_TENANT_ADMIN = 5
 
 _CACHE_TTL = settings.metering_cache_ttl_seconds
+_FIRST_USAGE_CACHE_TTL = settings.metering_first_usage_cache_ttl_seconds
 
 
 # ── Auth helpers ─────────────────────────────────────────────────────────────
@@ -304,6 +305,21 @@ async def _first_usage_at(db: AsyncSession, tenant_id: Optional[str]) -> tuple[O
     return first, True
 
 
+def _first_usage_cache_key(scope_tenant: Optional[str], scope_tenant_name: Optional[str]) -> str:
+    """first_request_at depends only on the tenant scope, not on the window,
+    task types, role or limit the overview key varies by. Both parts are in
+    the key because first_request_at filters on the id when there is one and
+    on the name otherwise; a name-only scope must not share the "all" entry."""
+    if not (scope_tenant or scope_tenant_name):
+        return "metering:first-usage:v1:all"
+    return f"metering:first-usage:v1:{scope_tenant or ''}:{scope_tenant_name or ''}"
+
+
+def _parse_cached_first_request(cached: dict) -> Optional[datetime]:
+    value = cached.get("first_request_at")
+    return datetime.fromisoformat(value.replace("Z", "+00:00")) if value else None
+
+
 def _combine_first_usage(*candidates: Optional[datetime]) -> Optional[str]:
     """/overview's first_usage_at: the earliest of quota_usage's first billed
     usage (outlives metering retention, but misses untiered traffic) and the
@@ -324,9 +340,9 @@ async def _cache_get(redis: aioredis.Redis, key: str) -> Optional[dict]:
         return None
 
 
-async def _cache_set(redis: aioredis.Redis, key: str, data: dict) -> None:
+async def _cache_set(redis: aioredis.Redis, key: str, data: dict, ttl: int = _CACHE_TTL) -> None:
     try:
-        await redis.set(key, json.dumps(data), ex=_CACHE_TTL)
+        await redis.set(key, json.dumps(data), ex=ttl)
     except Exception:
         pass
 
@@ -674,6 +690,8 @@ async def get_overview(
     # this stays out of the gather() below (AsyncSession isn't safe for
     # concurrent use — same reasoning as overview_tenant_data above).
     quota_first_usage, first_usage_ok = await _first_usage_at(db, scope_tenant)
+    first_usage_key = _first_usage_cache_key(scope_tenant, scope_tenant_name)
+    first_request_cached = await _cache_get(redis, first_usage_key)
 
     results = await asyncio.gather(
         svc.request_total(
@@ -690,17 +708,28 @@ async def get_overview(
         # Key Metrics KPI #7 (model_usage_growth_pct) is admin-only, fixed
         # calendar-month comparison — independent of `window` and from/to.
         svc.model_usage_growth_pct() if is_admin else asyncio.sleep(0),
-        # Other half of first_usage_at; kept out of _partition_results below.
-        svc.first_request_at(scope_tenant_name, scope_tenant),
+        # Other half of first_usage_at, from its own longer-lived cache when
+        # possible; kept out of _partition_results below.
+        svc.first_request_at(scope_tenant_name, scope_tenant)
+        if first_request_cached is None else asyncio.sleep(0),
         return_exceptions=True,
     )
     *results, metering_first_request = results
-    # A failed lookup falls back to the quota value alone. It doesn't degrade
-    # the response, but like a failed quota lookup it mustn't be cached.
-    if isinstance(metering_first_request, Exception):
+    if first_request_cached is not None:
+        metering_first_request = _parse_cached_first_request(first_request_cached)
+    elif isinstance(metering_first_request, Exception):
+        # Falls back to the quota value alone. Not degraded, and not cached
+        # under its own key, so the next overview miss retries it. The
+        # overview itself is still cached: blocking that too would make
+        # every load pay for the slow query again while Prometheus struggles.
         logger.warning("first_request_at lookup failed: %s", metering_first_request)
         metering_first_request = None
-        first_usage_ok = False
+    else:
+        await _cache_set(
+            redis, first_usage_key,
+            {"first_request_at": _iso_utc(metering_first_request) if metering_first_request else None},
+            ttl=_FIRST_USAGE_CACHE_TTL,
+        )
     first_usage_at = _combine_first_usage(quota_first_usage, metering_first_request)
     # Merge both result sets through one _partition_results call so a failure
     # in either half still degrades the response instead of raising —

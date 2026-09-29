@@ -128,6 +128,10 @@ class CoreSettings(BaseSettings):
     model_cache_ttl_seconds: int = 3600
     service_cache_ttl_seconds: int = 300
     metering_cache_ttl_seconds: int = 60
+    # /overview's metering-source first_request_at, cached per tenant scope on
+    # its own key: it's a full-retention subquery, and it only moves when a
+    # tenant sends its first request.
+    metering_first_usage_cache_ttl_seconds: int = 3600
     ppu_tier_cache_ttl_seconds: int = 600
     # Auto-refresh interval exposed to the dashboard (METERING_REFRESH_INTERVAL_SECONDS).
     metering_refresh_interval_seconds: int = 60

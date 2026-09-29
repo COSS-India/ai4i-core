@@ -532,6 +532,14 @@ def _empty_redis() -> AsyncMock:
     return redis
 
 
+def _set_keys(redis: AsyncMock) -> list[str]:
+    return [c.args[0] for c in redis.set.call_args_list]
+
+
+def _overview_keys(redis: AsyncMock) -> list[str]:
+    return [k for k in _set_keys(redis) if k.startswith("metering:overview:")]
+
+
 def _tenant_admin_request() -> SimpleNamespace:
     return SimpleNamespace(headers={
         "X-Permission-IDS": "5", "X-Tenant-Id": "7", "X-Tenant-Name": "Acme Corp",
@@ -623,13 +631,13 @@ class TestOverviewFirstUsageAt:
         fake_usage_repo.error = SQLAlchemyError("db down")
         redis = _empty_redis()
         await _call_overview(_overview_svc(), redis=redis)
-        redis.set.assert_not_called()
+        assert _overview_keys(redis) == []
 
     async def test_successful_lookup_is_cached(self, fake_usage_repo):
         fake_usage_repo.result = _utc(2026, 3, 4)
         redis = _empty_redis()
         await _call_overview(_overview_svc(), redis=redis)
-        redis.set.assert_awaited_once()
+        assert len(_overview_keys(redis)) == 1
 
 
 @pytest.mark.asyncio
@@ -667,18 +675,82 @@ class TestOverviewFirstUsageAtHybrid:
         await _call_overview(svc, request=_tenant_admin_request())
         svc.first_request_at.assert_awaited_once_with("Acme Corp", "7")
 
-    async def test_metering_error_falls_back_to_quota_and_is_not_cached(self, fake_usage_repo):
+    async def test_metering_error_falls_back_to_quota_and_is_retried_next_miss(self, fake_usage_repo):
+        """Not cached under its own key, so the next overview miss retries it.
+        The overview itself is still cached, so a struggling Prometheus isn't
+        hit again on every load."""
         fake_usage_repo.result = _utc(2026, 8, 10)
         redis = _empty_redis()
         response = await _call_overview(self._svc(error=RuntimeError("prometheus down")), redis=redis)
         assert response.first_usage_at == "2026-08-10T00:00:00Z"
         assert response.degraded is False
-        redis.set.assert_not_called()
+        assert not any(k.startswith("metering:first-usage:") for k in _set_keys(redis))
+        assert len(_overview_keys(redis)) == 1
 
     async def test_cache_key_is_v4(self, fake_usage_repo):
         redis = _empty_redis()
         await _call_overview(self._svc(), redis=redis)
-        assert redis.set.call_args.args[0].startswith("metering:overview:v4:")
+        assert _overview_keys(redis)[0].startswith("metering:overview:v4:")
+
+
+def _redis_with(entries: dict) -> AsyncMock:
+    """Redis mock whose get() serves `entries` (key -> JSON-able dict)."""
+    redis = AsyncMock()
+    redis.get = AsyncMock(side_effect=lambda key: json.dumps(entries[key]) if key in entries else None)
+    return redis
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("frozen_now")
+class TestFirstRequestAtCache:
+    """first_request_at is a full-retention subquery that only moves when a
+    tenant sends its first request, so it's cached per tenant scope under
+    its own key and TTL, independent of the overview's window/task-type/
+    role/limit key."""
+
+    def _svc(self, first_request=None) -> MagicMock:
+        svc = _overview_svc()
+        svc.first_request_at = AsyncMock(return_value=first_request)
+        return svc
+
+    async def test_cache_hit_skips_the_query(self, fake_usage_repo):
+        svc = self._svc()
+        redis = _redis_with({"metering:first-usage:v1:all": {"first_request_at": "2026-07-02T09:00:00Z"}})
+        response = await _call_overview(svc, redis=redis)
+        svc.first_request_at.assert_not_called()
+        assert response.first_usage_at == "2026-07-02T09:00:00Z"
+
+    async def test_cached_none_is_a_hit_too(self, fake_usage_repo):
+        svc = self._svc()
+        redis = _redis_with({"metering:first-usage:v1:all": {"first_request_at": None}})
+        response = await _call_overview(svc, redis=redis)
+        svc.first_request_at.assert_not_called()
+        assert response.first_usage_at is None
+
+    async def test_miss_stores_value_with_long_ttl(self, fake_usage_repo):
+        redis = _empty_redis()
+        await _call_overview(self._svc(_utc(2026, 7, 2, 9)), redis=redis)
+        call = next(c for c in redis.set.call_args_list if c.args[0] == "metering:first-usage:v1:all")
+        assert json.loads(call.args[1]) == {"first_request_at": "2026-07-02T09:00:00Z"}
+        assert call.kwargs["ex"] == _metering_route_mod._FIRST_USAGE_CACHE_TTL
+        assert _metering_route_mod._FIRST_USAGE_CACHE_TTL >= 3600
+
+    async def test_shared_across_windows_and_task_types(self, fake_usage_repo):
+        svc = self._svc()
+        redis = _redis_with({"metering:first-usage:v1:all": {"first_request_at": None}})
+        await _call_overview(svc, redis=redis, window="7d", task_types="llm")
+        await _call_overview(svc, redis=redis, from_="2026-09-20", to="2026-09-22")
+        svc.first_request_at.assert_not_called()
+
+    async def test_tenant_scoped_key(self, fake_usage_repo):
+        redis = _empty_redis()
+        await _call_overview(self._svc(), redis=redis, request=_tenant_admin_request())
+        assert "metering:first-usage:v1:7:Acme Corp" in _set_keys(redis)
+
+    def test_name_only_scope_does_not_share_the_platform_wide_key(self):
+        key = _metering_route_mod._first_usage_cache_key
+        assert key(None, None) == "metering:first-usage:v1:all"
+        assert key(None, "Acme Corp") != key(None, None)
 
 
 @pytest.mark.asyncio
