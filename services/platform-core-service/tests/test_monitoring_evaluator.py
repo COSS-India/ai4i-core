@@ -82,8 +82,8 @@ async def test_unreachable_prometheus(monkeypatch):
 @pytest.mark.asyncio
 async def test_tick_evaluates_only_alerts_with_bands_and_recipients(monkeypatch):
     monkeypatch.setattr(ev.settings, "prometheus_url", "http://prom")
-    ready = SimpleNamespace(bands=(object(),), recipient_user_ids=("u1",))
-    no_recipients = SimpleNamespace(bands=(object(),), recipient_user_ids=())
+    ready = SimpleNamespace(bands=(object(),), recipient_roles={"ADMIN": True}, any_role_enabled=lambda: True)
+    no_recipients = SimpleNamespace(bands=(object(),), recipient_roles={}, any_role_enabled=lambda: False)
     rows = {NotificationName.ERROR_RATE_5XX.value: ready, NotificationName.LATENCY_P95.value: no_recipients}
     snapshot = SimpleNamespace(get=lambda name: rows.get(name.value))
     runtime = MagicMock()
@@ -114,7 +114,7 @@ async def test_tick_evaluates_only_alerts_with_bands_and_recipients(monkeypatch)
 @pytest.mark.asyncio
 async def test_prometheus_failure_writes_a_throttled_source_row(monkeypatch):
     monkeypatch.setattr(ev.settings, "prometheus_url", "http://prom")
-    rows = {NotificationName.ERROR_RATE_4XX.value: SimpleNamespace(bands=(object(),), recipient_user_ids=("u1",))}
+    rows = {NotificationName.ERROR_RATE_4XX.value: SimpleNamespace(bands=(object(),), recipient_roles={"ADMIN": True}, any_role_enabled=lambda: True)}
     runtime = MagicMock()
     runtime.cache.read = AsyncMock(return_value=SimpleNamespace(settings=SimpleNamespace(get=lambda n: rows.get(n.value))))
     runtime.failures.record = AsyncMock()
@@ -160,7 +160,7 @@ async def test_settings_unavailable_writes_a_settings_row(monkeypatch):
 @pytest.mark.asyncio
 async def test_source_rows_name_the_promql(monkeypatch):
     monkeypatch.setattr(ev.settings, "prometheus_url", "http://prom")
-    rows = {NotificationName.LATENCY_P99.value: SimpleNamespace(bands=(object(),), recipient_user_ids=("u1",))}
+    rows = {NotificationName.LATENCY_P99.value: SimpleNamespace(bands=(object(),), recipient_roles={"ADMIN": True}, any_role_enabled=lambda: True)}
     runtime = MagicMock()
     runtime.cache.read = AsyncMock(return_value=SimpleNamespace(settings=SimpleNamespace(get=lambda n: rows.get(n.value))))
     runtime.failures.record = AsyncMock()

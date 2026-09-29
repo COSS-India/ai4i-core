@@ -1,5 +1,8 @@
 """Recipient resolution, ai4iplatform_auth (Q-R1, Q-R2, Q-R3).
 
+Monitoring recipients are not stored: Q-R3 resolves every active user who
+holds a selected role (ADMIN / MODERATOR) at send time.
+
 Runs only when an event fires. Role flags come from the settings row's
 recipient_roles; extra user ids come from the tenant's own subscription row,
 and are only ever matched inside that tenant. users.email is encrypted at
@@ -11,7 +14,7 @@ from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, 
 
 from sqlalchemy import text
 
-from .constants import RecipientRole
+from .constants import MONITORING_RECIPIENT_ROLES, RecipientRole
 from .models import Recipient
 
 logger = logging.getLogger(__name__)
@@ -54,14 +57,17 @@ _MANY_TENANTS_SQL = text(
     """
 )
 
-# Q-R3 — monitoring recipients, ids from the settings snapshot
-_USERS_SQL = text(
+# Q-R3 — monitoring recipients: every active user holding a selected role,
+# resolved at send time (no tenant filter; monitoring is platform-level)
+_ROLE_USERS_SQL = text(
     """
-    SELECT id, email, full_name
-      FROM users
-     WHERE id::text = ANY(CAST(:user_ids AS varchar[]))
-       AND is_active IS TRUE
-       AND is_delete IS NOT TRUE
+    SELECT DISTINCT u.id, u.email, u.full_name
+      FROM users u
+      JOIN user_role ur ON ur.user_id = u.id
+      JOIN roles r      ON r.id = ur.role_id
+     WHERE r.name = ANY(CAST(:roles AS varchar[]))
+       AND u.is_active IS TRUE
+       AND u.is_delete IS NOT TRUE
     """
 )
 
@@ -154,9 +160,13 @@ class RecipientResolver:
                     per_tenant[tenant].append(entry)
         return {tenant: self._unique(admins + rows) for tenant, rows in per_tenant.items()}
 
-    async def for_users(self, session, user_ids: Sequence[str]) -> List[Recipient]:
-        """Q-R3: recipients by user id (monitoring)."""
-        if not user_ids:
+    async def for_roles(self, session, roles: Sequence[str]) -> List[Recipient]:
+        """Q-R3: monitoring recipients, resolved now from the selected roles,
+        so a user granted, revoked or deactivated since the last save is
+        reflected on the next alert. Only MONITORING roles are honoured."""
+        legal = {r.value for r in MONITORING_RECIPIENT_ROLES}
+        selected = sorted({str(r) for r in roles} & legal)
+        if not selected:
             return []
-        result = await session.execute(_USERS_SQL, {"user_ids": [str(u) for u in user_ids]})
+        result = await session.execute(_ROLE_USERS_SQL, {"roles": selected})
         return self._unique((str(r["id"]), r["email"], r["full_name"]) for r in result.mappings())

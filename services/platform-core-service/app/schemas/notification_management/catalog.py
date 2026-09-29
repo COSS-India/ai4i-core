@@ -123,21 +123,14 @@ class MonitoringCatalogUpdate(BaseModel):
     (Email is the only delivery channel).
 
     ``recipient_roles`` is a partial-update dict over ADMIN / MODERATOR —
-    only the key(s) that changed need sending. Whenever it's present the
-    row's resolved recipients (monitoring_alert_recipient) are rebuilt from
-    every user currently holding a selected role.
+    only the key(s) that changed need sending. Only the selection is
+    stored; the users it means are resolved at send time.
 
     ``monitoring_thresholds``, when present, must be the complete set of
     bands, same wholesale-replace semantics as CatalogUpdate.thresholds."""
 
     recipient_roles: Optional[Dict[str, StrictBool]] = None
     monitoring_thresholds: Optional[List[MonitoringThresholdBand]] = None
-
-
-class MonitoringCatalogItem(CatalogItem):
-    """A MONITORING catalog row plus its resolved recipient user ids."""
-
-    recipients: List[str]
 
 
 # ── Route response envelopes — ``{"success": true, "data": ...}`` ──
@@ -159,5 +152,5 @@ class UpdateCatalogResponse(SuccessResponseWithMeta):
 class UpdateMonitoringCatalogResponse(SuccessResponseWithMeta):
     """PATCH /notification-alerts/monitoring-catalog/{name}"""
 
-    data: MonitoringCatalogItem
+    data: CatalogItem
     meta: MessageMeta

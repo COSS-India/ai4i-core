@@ -184,9 +184,13 @@ async def _seed_notification_subscriptions_for_new_tenant(
         return
     try:
         notification_ids = (
-            await platform_core_db.execute(
-                text("SELECT id FROM configs_notification_alert WHERE type <> 'MONITORING'")
-            )
+            # MONITORING rows are platform-level — no tenant, no subscription.
+            # ::text so this still runs on a DB whose enum predates MONITORING
+            # (an unknown enum label errors, and the except below would then
+            # skip seeding every row, not just these).
+            await platform_core_db.execute(text(
+                "SELECT id FROM configs_notification_alert WHERE type::text <> 'MONITORING'"
+            ))
         ).scalars().all()
         for notification_id in notification_ids:
             await platform_core_db.execute(

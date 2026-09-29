@@ -136,7 +136,7 @@ def test_decision_table(spec, band, state, expected):
 # ── JSON forms ───────────────────────────────────────────────────────────
 
 
-def test_settings_snapshot_round_trip_keeps_recipient_ids_on_monitoring_only():
+def test_settings_snapshot_round_trip_stores_roles_not_recipient_ids():
     data = {
         "schema_version": 1,
         "built_at": "2026-09-28T10:15:00.000Z",
@@ -148,14 +148,15 @@ def test_settings_snapshot_round_trip_keeps_recipient_ids_on_monitoring_only():
             "ERROR_RATE_5XX": {"id": 11, "type": "MONITORING", "module": "MONITORING", "scope": "GLOBAL",
                                "channels": ["EMAIL"], "recipient_roles": {"ADMIN": True, "MODERATOR": False},
                                "bands": [{"value": 5, "unit": "PERCENT", "severity": "CRITICAL"}],
+                               # an older snapshot's frozen ids are ignored
                                "recipient_user_ids": ["u1"]},
         },
     }
     snapshot = SettingsSnapshot.from_json(data)
     assert [b.value for b in snapshot.get("QUOTA_THRESHOLD").bands] == [80, 90]
     out = snapshot.to_json()
-    assert "recipient_user_ids" not in out["rows"]["QUOTA_THRESHOLD"]
-    assert out["rows"]["ERROR_RATE_5XX"]["recipient_user_ids"] == ["u1"]
+    assert all("recipient_user_ids" not in row for row in out["rows"].values())
+    assert snapshot.get("ERROR_RATE_5XX").enabled_roles() == ("ADMIN",)
     assert SettingsSnapshot.from_json(out) == snapshot
 
 

@@ -226,13 +226,24 @@ class TestUpdateCatalog:
             await svc.update_catalog(_Session(found=None), "TIER_ASSIGNED", CatalogUpdate())
 
     @pytest.mark.asyncio
-    async def test_monitoring_rows_are_sent_to_their_own_endpoint(self):
-        row = _row(id=12, name="LATENCY_P95", type="MONITORING", module="MONITORING", scope="GLOBAL")
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            CatalogUpdate(recipient_roles={"MODERATOR": True}),
+            CatalogUpdate(scope=NotificationScope.INSTITUTION),
+            CatalogUpdate(channels=["EMAIL", "SMS"]),
+        ],
+        ids=["recipient_roles", "scope", "channels"],
+    )
+    async def test_metering_patch_404s_a_monitoring_row_and_saves_nothing(self, payload):
+        # Monitoring rows are written only through PATCH /monitoring-catalog/{name}.
+        row = _row(id=12, name="LATENCY_P95", type="MONITORING", module="MONITORING", scope="GLOBAL",
+                   recipient_roles={"ADMIN": True, "MODERATOR": False})
         session = _Session(found=row)
-        with pytest.raises(ValidationError) as exc:
-            await svc.update_catalog(session, row.name, CatalogUpdate(scope=NotificationScope.INSTITUTION))
-        assert exc.value.code == "USE_MONITORING_CATALOG"
+        with pytest.raises(EntityNotFoundError):
+            await svc.update_catalog(session, row.name, payload)
         assert row.scope == "GLOBAL"
+        assert row.recipient_roles == {"ADMIN": True, "MODERATOR": False}
 
     @pytest.mark.asyncio
     async def test_thresholds_are_rejected_for_a_notification_row(self):

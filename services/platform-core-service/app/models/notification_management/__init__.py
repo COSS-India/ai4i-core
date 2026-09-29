@@ -9,9 +9,6 @@ from app.models.notification_management.config_notification_alert import (
 from app.models.notification_management.ledger_notification_alert import (
     LedgerNotificationAlert,
 )
-from app.models.notification_management.monitoring_alert_recipient import (
-    MonitoringAlertRecipient,
-)
 from app.models.notification_management.notification_alert_failure_log import (
     NotificationAlertFailureLog,
 )
@@ -25,7 +22,6 @@ from app.models.notification_management.tenant_notification_subscription import 
 __all__ = [
     "ConfigNotificationAlert",
     "LedgerNotificationAlert",
-    "MonitoringAlertRecipient",
     "NotificationAlertFailureLog",
     "NotificationAlertThreshold",
     "TenantNotificationSubscription",

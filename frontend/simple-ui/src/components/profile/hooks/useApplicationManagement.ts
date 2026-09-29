@@ -771,6 +771,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
       });
       toast({ title: "Application updated.", status: "success", duration: 3000, isClosable: true });
       setEditOpen(false);
+      setViewOpen(false);
       await reload();
     } catch (error) {
       const code = getApplicationErrorCode(error);

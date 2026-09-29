@@ -60,14 +60,15 @@ class SettingsRow:
     recipient_roles: Dict[str, bool]
     #: Active bands only, ascending by value.
     bands: Tuple[Band, ...]
-    #: Resolved monitoring recipients; None on every non-MONITORING row.
-    recipient_user_ids: Optional[Tuple[str, ...]] = None
 
     def role_enabled(self, role: RecipientRole) -> bool:
         return bool(self.recipient_roles.get(role.value))
 
     def any_role_enabled(self) -> bool:
         return any(bool(on) for on in self.recipient_roles.values())
+
+    def enabled_roles(self) -> Tuple[str, ...]:
+        return tuple(sorted(role for role, on in self.recipient_roles.items() if on))
 
     def to_json(self) -> Dict[str, Any]:
         data: Dict[str, Any] = {
@@ -79,13 +80,10 @@ class SettingsRow:
             "recipient_roles": dict(self.recipient_roles),
             "bands": [band.to_json() for band in self.bands],
         }
-        if self.recipient_user_ids is not None:
-            data["recipient_user_ids"] = list(self.recipient_user_ids)
         return data
 
     @classmethod
     def from_json(cls, name: str, data: Mapping[str, Any]) -> "SettingsRow":
-        user_ids = data.get("recipient_user_ids")
         return cls(
             id=int(data["id"]),
             name=NotificationName(name),
@@ -95,7 +93,6 @@ class SettingsRow:
             channels=tuple(data.get("channels") or ()),
             recipient_roles={str(k): bool(v) for k, v in (data.get("recipient_roles") or {}).items()},
             bands=tuple(sorted((Band.from_json(b) for b in data.get("bands") or ()), key=lambda b: b.value)),
-            recipient_user_ids=tuple(str(u) for u in user_ids) if user_ids is not None else None,
         )
 
 

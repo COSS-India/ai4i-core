@@ -3,8 +3,8 @@ LATENCY_P95, LATENCY_P99.
 
 A timer tick runs on every platform-core pod; only the pod that wins the
 evaluator lock (SET NX PX, never released — it expires before the next tick)
-evaluates. The leader keeps the alerts that have active bands and saved
-recipients, runs their PromQL queries concurrently against Prometheus, and
+evaluates. The leader keeps the alerts that have active bands and a selected
+recipient role, runs their PromQL queries concurrently against Prometheus, and
 hands every (alert, service) value to the shared BAND pipeline in one batch
 (ai4i_core.kafka.emit_band_batch): one ledger read, claims only for FIRE and
 RESET, one Redis pipeline for all changes.
@@ -192,7 +192,7 @@ async def run_tick(client: httpx.AsyncClient) -> List[uuid.UUID]:
     wanted = []
     for name, (promql, unit) in queries.items():
         row = read.settings.get(name)
-        if row is not None and row.bands and row.recipient_user_ids:
+        if row is not None and row.bands and row.any_role_enabled():
             wanted.append((name, promql, unit))
     if not wanted:
         return []

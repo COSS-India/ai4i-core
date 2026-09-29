@@ -14,8 +14,8 @@ services/platform-core-service/app/models/notification_management):
   admin picks recipients. New checks: recipient_roles is an object that
   carries every legal key for the row's type, and MONITORING rows are
   always GLOBAL.
-* monitoring_alert_recipient — cleared to match the reset role flags, and
-  role is checked to be ADMIN or MODERATOR.
+  Monitoring recipients are resolved from recipient_roles at send time
+  (monitoring_alert_recipient was dropped in c4d6f8a0b2e5).
 * tenant_notification_subscription — FK now cascades on delete. Rows for
   MONITORING notifications are removed: monitoring alerts have no tenant.
 * ledger_notification_alert — rebuilt without channel/status. One row per
@@ -25,7 +25,7 @@ services/platform-core-service/app/models/notification_management):
   failures before the Kafka handoff.
 
 Revision ID: 0c96d7881ce5
-Revises: b3c5e7a9d1f4
+Revises: c4d6f8a0b2e5
 Create Date: 2026-09-28 00:00:00.000001
 
 """
@@ -38,7 +38,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = '0c96d7881ce5'
-down_revision: Union[str, None] = 'b3c5e7a9d1f4'
+down_revision: Union[str, None] = 'c4d6f8a0b2e5'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -47,7 +47,6 @@ depends_on: Union[str, Sequence[str], None] = None
 CATALOG_TABLE = "configs_notification_alert"
 THRESHOLD_TABLE = "notification_alert_threshold"
 SUBSCRIPTION_TABLE = "tenant_notification_subscription"
-MONITORING_RECIPIENT_TABLE = "monitoring_alert_recipient"
 LEDGER_TABLE = "ledger_notification_alert"
 FAILURE_LOG_TABLE = "notification_alert_failure_log"
 
@@ -140,12 +139,6 @@ def _reset_recipients() -> None:
                                       ELSE {_jsonb(NO_TENANT_RECIPIENTS)}
                                  END
         """
-    )
-    op.execute(f"DELETE FROM {MONITORING_RECIPIENT_TABLE}")
-    op.create_check_constraint(
-        "ck_monitoring_alert_recipient_role",
-        MONITORING_RECIPIENT_TABLE,
-        f"role IN ({_sql_list(MONITORING_ROLES)})",
     )
     # Monitoring alerts have no tenant, so a per-tenant subscription row for
     # one means nothing.
@@ -403,9 +396,7 @@ def downgrade() -> None:
     op.drop_table(THRESHOLD_TABLE)
 
     # Previous recipient flags: ADMIN follows scope on metering rows
-    # (e2a4c6b8d0f2); monitoring rows go back to their seed value. Cleared
-    # monitoring recipients are not restored: the next monitoring catalog
-    # save rebuilds them.
+    # (e2a4c6b8d0f2); monitoring rows go back to their seed value.
     op.execute(
         f"UPDATE {CATALOG_TABLE} "
         f"SET recipient_roles = jsonb_build_object('{ROLE_ADMIN}', scope = '{SCOPE_GLOBAL}') "
@@ -415,7 +406,6 @@ def downgrade() -> None:
         f"UPDATE {CATALOG_TABLE} SET recipient_roles = {_jsonb(PREVIOUS_MONITORING_RECIPIENTS)} "
         f"WHERE type = '{TYPE_MONITORING}'"
     )
-    op.drop_constraint("ck_monitoring_alert_recipient_role", MONITORING_RECIPIENT_TABLE, type_="check")
 
     bind = op.get_bind()
     for name in (FAILURE_STAGE_ENUM, SEVERITY_ENUM, THRESHOLD_UNIT_ENUM):

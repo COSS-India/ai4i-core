@@ -105,10 +105,10 @@ def _gate_needs_subscription(row: SettingsRow) -> bool:
 
 
 def _someone_assigned(row: SettingsRow, subs: Optional[TenantSubscriptions]) -> bool:
-    """A role flag is on, or the tenant listed extra recipients; monitoring
-    rows need at least one resolved recipient id."""
+    """A role flag is on, or the tenant listed extra recipients. Monitoring
+    rows need a selected role; its users are resolved at send time."""
     if row.type is NotificationType.MONITORING:
-        return bool(row.recipient_user_ids)
+        return row.any_role_enabled()
     return row.any_role_enabled() or bool(subs is not None and subs.entry(row.name).recipients)
 
 
@@ -160,7 +160,7 @@ async def _deliver(
         try:
             async with rt.auth_session_factory() as session:
                 if row.type is NotificationType.MONITORING:
-                    recipients = await rt.recipients.for_users(session, row.recipient_user_ids or ())
+                    recipients = await rt.recipients.for_roles(session, row.enabled_roles())
                 else:
                     recipients, resolved_name = await rt.recipients.for_tenant(
                         session, tenant_id, row.recipient_roles, extra_user_ids

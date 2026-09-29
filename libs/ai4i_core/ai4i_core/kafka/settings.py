@@ -12,7 +12,7 @@ from .constants import NotificationModule, NotificationName, NotificationScope, 
 from .keys import iso_z, to_decimal, utc_now
 from .models import Band, SettingsRow, SettingsSnapshot, SubscriptionEntry, TenantSubscriptions
 
-# Q-S1 — every catalog row with its active bands; recipient ids on MONITORING rows only.
+# Q-S1 — every catalog row with its active bands.
 _SNAPSHOT_SQL = text(
     """
     SELECT c.id, c.name::text AS name, c.type::text AS type, c.module::text AS module,
@@ -25,14 +25,7 @@ _SNAPSHOT_SQL = text(
                  FROM notification_alert_threshold t
                 WHERE t.notification_id = c.id
                   AND t.active
-           ), '[]'::json) AS bands,
-           CASE WHEN c.type = 'MONITORING' THEN
-               COALESCE((
-                   SELECT array_agg(r.user_id ORDER BY r.user_id)
-                     FROM monitoring_alert_recipient r
-                    WHERE r.notification_id = c.id
-               ), '{}'::varchar[])
-           END AS recipient_user_ids
+           ), '[]'::json) AS bands
       FROM configs_notification_alert c
     """
 )
@@ -76,7 +69,6 @@ async def load_settings_snapshot(session) -> SettingsSnapshot:
     rows: Dict[str, SettingsRow] = {}
     result = await session.execute(_SNAPSHOT_SQL)
     for row in result.mappings():
-        user_ids = row["recipient_user_ids"]
         rows[row["name"]] = SettingsRow(
             id=int(row["id"]),
             name=NotificationName(row["name"]),
@@ -86,7 +78,6 @@ async def load_settings_snapshot(session) -> SettingsSnapshot:
             channels=tuple(row["channels"] or ()),
             recipient_roles={str(k): bool(v) for k, v in (_json(row["recipient_roles"]) or {}).items()},
             bands=_bands(row["bands"]),
-            recipient_user_ids=tuple(str(u) for u in user_ids) if user_ids is not None else None,
         )
     return SettingsSnapshot(built_at=iso_z(utc_now()), rows=rows)
 

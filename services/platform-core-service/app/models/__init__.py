@@ -47,9 +47,6 @@ from app.models.notification_management.config_notification_alert import (  # no
 from app.models.notification_management.tenant_notification_subscription import (  # noqa: E402
     TenantNotificationSubscription,
 )
-from app.models.notification_management.monitoring_alert_recipient import (  # noqa: E402
-    MonitoringAlertRecipient,
-)
 from app.models.notification_management.notification_alert_threshold import (  # noqa: E402
     NotificationAlertThreshold,
 )
@@ -88,7 +85,6 @@ __all__ = [
     # notification-management
     "ConfigNotificationAlert",
     "TenantNotificationSubscription",
-    "MonitoringAlertRecipient",
     "NotificationAlertThreshold",
     "LedgerNotificationAlert",
     "NotificationAlertFailureLog",
