@@ -1,4 +1,4 @@
-"""ai4i_core.kafka.recipients.RecipientResolver.for_roles (Q-R3)
+"""ai4i_core.kafka.recipients.RecipientResolver (Q-R1, Q-R2, Q-R3)
 
 MONITORING recipients are resolved from the row's selected roles on every
 send, never from a list frozen when the row was last saved — so a user who
@@ -103,4 +103,103 @@ async def test_no_or_non_monitoring_roles_resolve_to_nobody_without_a_query():
     db = _AuthDb([_User("1", "t@x.io", {"TENANT ADMIN"})])
     assert await _resolver().for_roles(db, []) == []
     assert await _resolver().for_roles(db, ["TENANT ADMIN"]) == []
+    assert db.calls == 0
+
+
+# ── Decrypt failure: one bad email never drops the event for the others ──
+
+
+class _Mappings(list):
+    def all(self):
+        return list(self)
+
+
+class _RowsDb:
+    """Returns fixed rows for any query — for_tenant / for_tenants."""
+
+    def __init__(self, rows):
+        self.rows = rows
+
+    async def execute(self, stmt, params):
+        rows = self.rows
+
+        class _R:
+            def mappings(self):
+                return _Mappings(rows)
+
+        return _R()
+
+
+def _strict_resolver():
+    def decrypt(token):
+        if "bad" in token:
+            raise ValueError("cannot decrypt")
+        return token.removeprefix("enc:")
+
+    return RecipientResolver(decrypt)
+
+
+@pytest.mark.asyncio
+async def test_undecryptable_recipient_is_skipped_for_roles_others_still_resolved():
+    db = _AuthDb([_User("1", "ok@x.io", {"ADMIN"}), _User("2", "bad@x.io", {"ADMIN"})])
+    assert [r.email for r in await _strict_resolver().for_roles(db, ["ADMIN"])] == ["ok@x.io"]
+
+
+@pytest.mark.asyncio
+async def test_undecryptable_recipient_is_skipped_for_tenant_others_still_resolved():
+    db = _RowsDb([
+        {"id": 1, "email": "enc:ok@x.io", "full_name": "Ok", "tenant_name": "Acme"},
+        {"id": 2, "email": "enc:bad@x.io", "full_name": "Bad", "tenant_name": "Acme"},
+    ])
+    people, tenant_name = await _strict_resolver().for_tenant(db, "7", {"ADMIN": True})
+    assert [r.email for r in people] == ["ok@x.io"]
+    assert tenant_name == "Acme"
+
+
+# ── for_tenants: per-tenant grouping (Q-R2) ──
+
+
+def _tenant_row(tenant_id, role, user_id, email):
+    return {"tenant_id": tenant_id, "role": role, "user_id": user_id, "email": f"enc:{email}", "full_name": ""}
+
+
+@pytest.mark.asyncio
+async def test_for_tenants_keeps_tenant_admins_and_extras_on_their_own_tenant():
+    db = _RowsDb([
+        _tenant_row("1", "ADMIN", "a", "admin@x.io"),
+        _tenant_row("7", "TENANT ADMIN", "t7", "ta7@x.io"),
+        _tenant_row("8", "TENANT ADMIN", "t8", "ta8@x.io"),
+        _tenant_row("7", "USER", "u7", "extra7@x.io"),
+        _tenant_row("8", "USER", "u8", "extra8@x.io"),
+    ])
+    out = await _resolver().for_tenants(
+        db, ["7", "8"], {"ADMIN": True, "TENANT ADMIN": True}, {"7": ["u7"], "8": ["u8"]}
+    )
+    assert [r.email for r in out["7"]] == ["admin@x.io", "extra7@x.io", "ta7@x.io"]
+    assert [r.email for r in out["8"]] == ["admin@x.io", "extra8@x.io", "ta8@x.io"]
+
+
+@pytest.mark.asyncio
+async def test_for_tenants_extra_listed_by_another_tenant_is_not_leaked():
+    # u8 is tenant 7's user row but only tenant 8's subscription lists it.
+    db = _RowsDb([_tenant_row("7", "USER", "u8", "someone@x.io")])
+    out = await _resolver().for_tenants(db, ["7", "8"], {}, {"8": ["u8"]})
+    assert out == {"7": [], "8": []}
+
+
+@pytest.mark.asyncio
+async def test_for_tenants_unselected_roles_are_left_out_and_duplicates_collapse():
+    db = _RowsDb([
+        _tenant_row("1", "ADMIN", "a", "admin@x.io"),
+        _tenant_row("7", "TENANT ADMIN", "t7", "ta7@x.io"),
+        _tenant_row("7", "TENANT ADMIN", "t7", "ta7@x.io"),
+    ])
+    out = await _resolver().for_tenants(db, ["7"], {"TENANT ADMIN": True}, {})
+    assert [r.email for r in out["7"]] == ["ta7@x.io"]
+
+
+@pytest.mark.asyncio
+async def test_for_tenants_no_tenants_runs_no_query():
+    db = _AuthDb()
+    assert await _resolver().for_tenants(db, [], {"ADMIN": True}, {}) == {}
     assert db.calls == 0
