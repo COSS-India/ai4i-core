@@ -1,14 +1,16 @@
 {% extends "_base.html" %}
-{% block title %}{{ alert_name }} at {{ threshold }}% — {{ institution_name }}{% endblock %}
-{% block preheader %}{{ alert_name }} has reached {{ threshold }}% for {{ institution_name }}.{% endblock %}
-{% block heading %}{{ alert_name }} at {{ threshold }}% — {{ institution_name }}{% endblock %}
+{# Standard Alert Email Template. From events/<event_name>.j2:
+   event.name, event.threshold, event.alert_datetime, event.current_value. #}
+{% block title %}{{ event.name }} at {{ event.threshold }}% — {{ tenant_name }}{% endblock %}
+{% block preheader %}{{ event.name }} has reached {{ event.threshold }}% for {{ tenant_name }}.{% endblock %}
+{% block heading %}{{ event.name }} at {{ event.threshold }}% — {{ tenant_name }}{% endblock %}
 {% block body %}
   <p style="margin:0 0 4px 0;">Dear {{ recipient_name }},</p>
   <p style="margin:0 0 8px 0;">
-    <strong>{{ alert_name }}</strong> has reached <strong>{{ threshold }}%</strong> for
-    <strong>{{ institution_name }}</strong> as of {{ alert_datetime }}.
+    <strong>{{ event.name }}</strong> has reached <strong>{{ event.threshold }}%</strong> for
+    <strong>{{ tenant_name }}</strong> as of {{ event.alert_datetime }}.
   </p>
-  <p style="margin:0 0 20px 0;">Current value: {{ current_value }}</p>
+  <p style="margin:0 0 20px 0;">Current value: {{ event.current_value }}</p>
   {% include "_portal_line.html" %}
   <p style="margin:20px 0 0 0;">
     Regards,<br>

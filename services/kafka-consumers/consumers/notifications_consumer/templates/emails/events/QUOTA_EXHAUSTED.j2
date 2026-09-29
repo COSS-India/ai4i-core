@@ -1,0 +1,5 @@
+{# details: [tier_name, exhausted_lines] #}
+{% set layout = "notification" %}
+{% set name = "Quota Exhausted" %}
+{% set headline = "The Quota for " ~ tenant_name ~ " has been fully consumed." %}
+{% set lines = ["Tier: " ~ details[0]] + details[1] %}

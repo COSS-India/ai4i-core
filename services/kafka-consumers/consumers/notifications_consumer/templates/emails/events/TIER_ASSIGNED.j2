@@ -1,0 +1,5 @@
+{# details: [tier_name, tier_description, quota_lines] #}
+{% set layout = "notification" %}
+{% set name = "Tier Assigned" %}
+{% set headline = "A Tier has been assigned to " ~ tenant_name ~ "." %}
+{% set lines = ["Tier: " ~ details[0], "Description: " ~ details[1], "Quota Limits:", details[2]] %}

@@ -1,135 +1,90 @@
-"""Message handler for notifications_consumer.
+"""Message handler for notifications_consumer: map the envelope onto the
+email template and send it. Nothing else.
 
-The producer (auth-service / platform-core-service / payperuse_consumer,
-through ai4i_core.kafka's shared pipeline) already decided the occurrence is
-new, claimed its ledger row and resolved who gets it before publishing. The
-envelope (schema_version 2) carries everything delivery needs: the channels,
-the recipients (email and name) and the positional details. This handler
-only delivers.
+The producer (ai4i_core.kafka's shared pipeline) already decided the event
+is new, claimed its ledger row, and resolved the recipients (email and
+name), the tenant_name and the positional details before publishing. This
+handler does not dedup, does not read or write the ledger, and does no
+lookups of its own.
 
-A Kafka redelivery of the same event is caught by a Redis claim on its
-event_id (SET NX), taken before sending. Redis being unavailable does not
-block delivery: a rare duplicate email beats a lost one.
-
-Consumer-side only: nothing here publishes to Kafka. A per-message
-exception is logged and the message is treated as handled (committed), not
-redelivered — this consumer's own send-side retries are already bounded
-(emailer.py's EmailClient.send_safe).
-
-Two database connections are in play: the default one (ai4iplatform_core)
-and a second, named one opened once at startup (main.py) against
-ai4iplatform_auth, for recipients.py's fetch_institution_name() — see
-delivery.py.
+An event counts as delivered when the email reached at least one
+recipient. When it did not — malformed message, no channel this consumer
+sends on, or every send failed — one row goes to
+notification_alert_failure_log (failures.py). The message is then treated as
+handled (committed), not redelivered: the send-side retries are already
+bounded (emailer.py, EmailClient.send_safe).
 """
 from __future__ import annotations
 
+import asyncio
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Mapping, Optional, Tuple
 
-from ai4i_core.bootstrap import get_redis_client
-from ai4i_core.kafka import NotificationChannel, NotificationType
-from ai4i_core.kafka.constants import ENVELOPE_SCHEMA_VERSION
+from ai4i_core.kafka import FailureCode, NotificationChannel, Operation
 from ai4i_core.logging import get_logger
 from confluent_kafka import Message
 
-from bootstrap.lifecycle import session_scope
-from consumers.notifications_consumer import delivery
-from consumers.notifications_consumer.config import Constants
+from consumers.notifications_consumer import emailer, failures
 
 logger = get_logger(__name__)
 
-
-def _parse_envelope(msg: Message) -> Optional[Dict[str, Any]]:
-    """The v2 envelope ai4i_core.kafka's publisher sends. Malformed input is
-    a permanent skip, not a retry — there is no version of this message
-    that will parse differently later."""
-    try:
-        data = json.loads(msg.value())
-    except (TypeError, ValueError) as exc:
-        logger.error(
-            "Malformed message — not valid JSON | %s[%d]@%d: %s",
-            msg.topic(), msg.partition(), msg.offset(), exc,
-        )
-        return None
-    if not isinstance(data, dict):
-        logger.error("Malformed message — not a JSON object | %r", data)
-        return None
-
-    if data.get("schema_version") != ENVELOPE_SCHEMA_VERSION:
-        logger.error(
-            "Unsupported envelope schema_version=%r (expected %d) | event_name=%r",
-            data.get("schema_version"), ENVELOPE_SCHEMA_VERSION, data.get("event_name"),
-        )
-        return None
-
-    event_id = data.get("event_id")
-    event_name = data.get("event_name")
-    tenant_id = data.get("tenant_id")
-    if not event_id or not event_name or not tenant_id:
-        logger.error("Malformed message — missing event_id/event_name/tenant_id | %r", data)
-        return None
-
-    return {
-        "event_id": str(event_id),
-        "event_name": event_name,
-        "notification_type": data.get("notification_type"),
-        "tenant_id": str(tenant_id),
-        "channels": data.get("channels") or [],
-        # A plain positional array — each event_name has its own fixed value
-        # order, matching the email_templates.py renderer emailer.py calls.
-        "details": data.get("details") or [],
-        # [{"email": ..., "name": ...}], resolved by the producer.
-        "recipients": [r for r in data.get("recipients") or [] if isinstance(r, dict) and r.get("email")],
-    }
+# The one channel this consumer sends on (Slack/WhatsApp aren't built).
+EMAIL = NotificationChannel.EMAIL.value
 
 
-async def _claim(event_id: str) -> bool:
-    """True when this delivery is the first for event_id."""
-    try:
-        return bool(
-            await get_redis_client().set(
-                f"{Constants.DELIVERY_CLAIM_KEY_PREFIX}{event_id}", "1",
-                nx=True, ex=Constants.DELIVERY_CLAIM_TTL_SECONDS,
+async def _deliver(envelope: Mapping[str, Any]) -> Optional[Tuple[FailureCode, str]]:
+    """None when the email reached at least one recipient, else why not."""
+    channels = envelope.get("channels") or []
+    if EMAIL not in channels:
+        return FailureCode.NO_SUPPORTED_CHANNEL, f"no supported channel in {channels!r}; only {EMAIL} is sent"
+
+    recipients = envelope.get("recipients") or []
+    sent = await asyncio.gather(
+        *(
+            emailer.send(
+                recipient=recipient,
+                event_name=envelope.get("event_name"),
+                tenant_name=envelope.get("tenant_name"),
+                details=envelope.get("details") or [],
             )
+            for recipient in recipients
         )
-    except Exception as exc:
-        logger.warning("Delivery claim unavailable — delivering without dedup | event_id=%s: %s", event_id, exc)
-        return True
+    )
+    if any(sent):
+        return None
+    return FailureCode.EMAIL_SEND_FAILED, f"email reached 0 of {len(recipients)} recipient(s)"
 
 
 async def handle_notification_event(msg: Message) -> None:
-    envelope = _parse_envelope(msg)
-    if envelope is None:
-        return
-
-    if NotificationChannel.EMAIL.value not in envelope["channels"]:
-        # Slack/WhatsApp sending isn't built yet.
-        logger.info(
-            "No supported channel — skipping | event_name=%s channels=%s",
-            envelope["event_name"], envelope["channels"],
+    topic = msg.topic()
+    try:
+        envelope = json.loads(msg.value())
+        if not isinstance(envelope, dict):
+            raise ValueError("envelope is not a JSON object")
+    except (TypeError, ValueError) as exc:
+        logger.error("Malformed notification message | %s[%s]@%s: %s", topic, msg.partition(), msg.offset(), exc)
+        await failures.record(
+            {}, FailureCode.INVALID_ENVELOPE, kafka_topic=topic, operation=Operation.VALIDATE, error=exc,
         )
         return
-
-    if not await _claim(envelope["event_id"]):
-        return  # a redelivery of an event already handled
 
     try:
-        async with session_scope(name="auth") as auth_db:
-            outcome = await delivery.deliver(
-                auth_db,
-                tenant_id=envelope["tenant_id"],
-                recipients=envelope["recipients"],
-                event_name=envelope["event_name"],
-                details=envelope["details"],
-                platform_level=envelope["notification_type"] == NotificationType.MONITORING.value,
-            )
-    except Exception:
-        logger.exception(
-            "Delivery raised | event_id=%s event_name=%s tenant_id=%s",
-            envelope["event_id"], envelope["event_name"], envelope["tenant_id"],
+        failure = await _deliver(envelope)
+    except Exception as exc:
+        logger.exception("Delivery raised | event_id=%s", envelope.get("event_id"))
+        await failures.record(envelope, FailureCode.EMAIL_SEND_FAILED, kafka_topic=topic, error=exc)
+        return
+
+    if failure is None:
+        logger.info(
+            "Notification delivered | event_id=%s event_name=%s tenant_id=%s",
+            envelope.get("event_id"), envelope.get("event_name"), envelope.get("tenant_id"),
         )
         return
-    logger.info(
-        "Notification delivered | event_id=%s event_name=%s tenant_id=%s outcome=%s",
-        envelope["event_id"], envelope["event_name"], envelope["tenant_id"], outcome,
+
+    code, message = failure
+    logger.error(
+        "Notification not delivered | event_id=%s event_name=%s tenant_id=%s: %s",
+        envelope.get("event_id"), envelope.get("event_name"), envelope.get("tenant_id"), message,
     )
+    await failures.record(envelope, code, kafka_topic=topic, message=message)

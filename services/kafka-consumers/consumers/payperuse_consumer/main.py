@@ -57,8 +57,7 @@ async def run() -> None:
         # now fire on the tenant's pooled budget, not one API key's own
         # allocation — see handler.py's _publish_usage_crossing_events).
         # Opened once here, not per-message; infra()'s own teardown closes it
-        # alongside the default connection. Mirrors notifications_consumer/
-        # main.py's identical second connection exactly.
+        # alongside the default connection.
         await add_database("auth", db_name=settings.AUTH_SERVICE_DB)
 
         init_kafka_producer(

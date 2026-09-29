@@ -1,0 +1,4 @@
+{# Plain-text twin of email.html. #}
+{% import "events/" ~ event_name ~ ".j2" as event with context %}
+{% set recipient_name = recipient_name or "there" %}
+{% extends event.layout ~ ".txt" %}

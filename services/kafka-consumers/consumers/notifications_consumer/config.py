@@ -10,29 +10,13 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Optional
 
-from ai4i_core.kafka.constants import REDIS_KEY_PREFIX
 from pydantic import Field
 from pydantic_settings import BaseSettings
-
-
-class Constants:
-    # One claim per delivered event_id (SET NX) — catches a Kafka
-    # redelivery of an event this consumer already handled.
-    DELIVERY_CLAIM_KEY_PREFIX = f"{REDIS_KEY_PREFIX}delivered:"
-    DELIVERY_CLAIM_TTL_SECONDS = 7 * 24 * 3600
 
 
 class Settings(BaseSettings):
     TOPIC_NOTIFICATION: str = Field(
         description="Kafka topic this consumer subscribes to — design doc §10."
-    )
-    AUTH_SERVICE_DB: str = Field(
-        default="ai4iplatform_auth",
-        description="Database name for the second, named connection this consumer "
-        "opens (main.py, bootstrap.lifecycle.add_database) so recipients.py can "
-        "read tenants.organisation for the email body's institution name. Same "
-        "Postgres instance/credentials as PLATFORM_CORE_DB — only the database "
-        "name differs.",
     )
     PORTAL_URL: Optional[str] = Field(
         default=None,

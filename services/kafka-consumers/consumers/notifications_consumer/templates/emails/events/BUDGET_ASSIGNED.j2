@@ -1,0 +1,5 @@
+{# details: [currency, budget_amount] #}
+{% set layout = "notification" %}
+{% set name = "Budget Assigned" %}
+{% set headline = "A Budget has been assigned to " ~ tenant_name ~ "." %}
+{% set lines = ["Budget: " ~ details[0] ~ " " ~ details[1]] %}

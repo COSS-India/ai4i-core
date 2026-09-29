@@ -113,6 +113,8 @@ class FailureStage(str, Enum):
     RECIPIENTS = "RECIPIENTS"
     PUBLISH = "PUBLISH"
     CACHE = "CACHE"
+    #: notifications_consumer: the event reached no recipient on any channel.
+    DELIVERY = "DELIVERY"
 
 
 class FailureCode(str, Enum):
@@ -135,6 +137,10 @@ class FailureCode(str, Enum):
     CACHE_READ_FAILED = "CACHE_READ_FAILED"
     CACHE_WRITE_FAILED = "CACHE_WRITE_FAILED"
     INVALIDATION_PUBLISH_FAILED = "INVALIDATION_PUBLISH_FAILED"
+    # notifications_consumer
+    INVALID_ENVELOPE = "INVALID_ENVELOPE"
+    NO_SUPPORTED_CHANNEL = "NO_SUPPORTED_CHANNEL"
+    EMAIL_SEND_FAILED = "EMAIL_SEND_FAILED"
 
 
 class Producer(str, Enum):
@@ -144,6 +150,7 @@ class Producer(str, Enum):
     PLATFORM_CORE_SERVICE = "platform-core-service"
     PAYPERUSE_CONSUMER = "payperuse-consumer"
     MONITORING_EVALUATOR = "monitoring-evaluator"
+    NOTIFICATIONS_CONSUMER = "notifications-consumer"
 
 
 class Operation(str, Enum):
@@ -166,6 +173,7 @@ class Operation(str, Enum):
     CACHE_WRITE = "cache_write"
     INVALIDATION_PUBLISH = "invalidation_publish"
     VALIDATE = "validate"
+    EMAIL_SEND = "email_send"
 
 
 class InvalidationKind(str, Enum):
