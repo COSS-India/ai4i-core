@@ -760,26 +760,29 @@ export function useServicesManagement() {
         setFormData((prev) => {
           const task_type = resolvedModelTaskType || prev.task_type || "";
           const taskIsLlm = task_type.trim().toLowerCase() === "llm";
-          // Every task type pre-fills "{modelName}/"; the admin adds the suffix
-          // ("[model-name]/[GPU]"), so two services on one model cannot clash.
+          // Every task type pre-fills "{modelName}"; the admin may add a suffix
+          // ("[model-name]/[GPU]") so two services on one model cannot clash.
           // LLM sanitizes tighter — its Service ID is sent as the name too.
           const sanitizeId = (s: string) => sanitizeServiceId(s, taskIsLlm);
-          const modelPrefix = modelName ? `${sanitizeId(modelName)}/` : "";
+          const modelPrefix = modelName ? sanitizeId(modelName) : "";
           let nextServiceId = prev.serviceId || "";
           if (!editingService) {
             const prevPrefix = prev.modelName
-              ? `${sanitizeId(prev.modelName)}/`
+              ? sanitizeId(prev.modelName)
               : "";
+            // Suffix must start at a "/" boundary, so "llama2-x" is not
+            // mistaken for the auto-filled "llama" plus a suffix.
+            const hasPrevSuffix =
+              !!prevPrefix && nextServiceId.startsWith(`${prevPrefix}/`);
             if (
               !nextServiceId ||
               nextServiceId === prevPrefix ||
-              (prevPrefix && nextServiceId.startsWith(prevPrefix))
+              hasPrevSuffix
             ) {
               // Still on the auto-generated prefix pattern — swap prefix, keep suffix
-              const suffix =
-                prevPrefix && nextServiceId.startsWith(prevPrefix)
-                  ? nextServiceId.slice(prevPrefix.length)
-                  : "";
+              const suffix = hasPrevSuffix
+                ? nextServiceId.slice(prevPrefix.length)
+                : "";
               nextServiceId = `${modelPrefix}${sanitizeId(suffix)}`;
             }
             // else: user hand-edited away from the previous model prefix — preserve

@@ -13,13 +13,22 @@ import {
   METERING,
   type MeteringSubTab,
 } from "../../config/meteringConstants";
-import type { MeteringTopN, MeteringWindow } from "../../types/metering";
+import type {
+  MeteringDateRange,
+  MeteringTopN,
+  MeteringWindow,
+} from "../../types/metering";
 import { formatMeteringRefreshTime } from "../../utils/meteringFormatters";
+import CustomRangePicker from "./CustomRangePicker";
 import SegmentedTabBar from "./SegmentedTabBar";
 
 interface MeteringControlsProps {
   timeWindow: MeteringWindow;
   onTimeWindowChange: (w: MeteringWindow) => void;
+  /** Applied custom range; when set no preset is highlighted. */
+  customRange?: MeteringDateRange | null;
+  onApplyCustomRange?: (range: MeteringDateRange) => void;
+  onClearCustomRange?: () => void;
   topN?: MeteringTopN;
   onTopNChange?: (n: MeteringTopN) => void;
   showTopN?: boolean;
@@ -40,6 +49,9 @@ interface MeteringControlsProps {
 const MeteringControls: React.FC<MeteringControlsProps> = ({
   timeWindow,
   onTimeWindowChange,
+  customRange = null,
+  onApplyCustomRange,
+  onClearCustomRange,
   topN,
   onTopNChange,
   showTopN = false,
@@ -72,20 +84,32 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
   return (
   <VStack align="stretch" spacing={3}>
     {isPeriodIndependentTab ? null : (
-      <ButtonGroup size="sm" isAttached variant="outline" flexWrap="wrap">
-        {METERING.TIME_WINDOWS.map((opt) => (
-          <Button
-            key={opt.value}
-            onClick={() => onTimeWindowChange(opt.value)}
-            colorScheme={timeWindow === opt.value ? "orange" : "gray"}
-            variant={timeWindow === opt.value ? "solid" : "outline"}
-            fontWeight={timeWindow === opt.value ? "semibold" : "normal"}
-            borderRadius="full"
-          >
-            {opt.label}
-          </Button>
-        ))}
-      </ButtonGroup>
+      <HStack spacing={2} flexWrap="wrap">
+        <ButtonGroup size="sm" isAttached variant="outline" flexWrap="wrap">
+          {METERING.TIME_WINDOWS.map((opt) => {
+            const isActive = !customRange && timeWindow === opt.value;
+            return (
+              <Button
+                key={opt.value}
+                onClick={() => onTimeWindowChange(opt.value)}
+                colorScheme={isActive ? "orange" : "gray"}
+                variant={isActive ? "solid" : "outline"}
+                fontWeight={isActive ? "semibold" : "normal"}
+                borderRadius="full"
+              >
+                {opt.label}
+              </Button>
+            );
+          })}
+        </ButtonGroup>
+        {onApplyCustomRange && onClearCustomRange ? (
+          <CustomRangePicker
+            appliedRange={customRange}
+            onApply={onApplyCustomRange}
+            onClear={onClearCustomRange}
+          />
+        ) : null}
+      </HStack>
     )}
 
     <HStack spacing={3} flexWrap="wrap" justify="space-between" align="flex-end">

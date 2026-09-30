@@ -1,11 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { METERING, type MeteringSubTab } from "../config/meteringConstants";
 import { useInferenceTypes } from "./useInferenceTypes";
 import { toMeteringKey } from "../utils/meteringTaskKey";
 import { useTenantsList } from "./useTenantsList";
 import type {
+  MeteringDateRange,
   MeteringResponseMeta,
   MeteringTopN,
   MeteringWindow,
@@ -68,6 +69,9 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
 
   const [subTab, setSubTab] = useState<MeteringSubTab>(METERING.DEFAULTS.SUB_TAB);
   const [timeWindow, setTimeWindow] = useState<MeteringWindow>(METERING.DEFAULTS.TIME_WINDOW);
+  // Applied custom range (IST dates); overrides timeWindow on the Institution
+  // and Model queries only.
+  const [customRange, setCustomRange] = useState<MeteringDateRange | null>(null);
   const [topN, setTopN] = useState<MeteringTopN>(METERING.DEFAULTS.TOP_N);
   const [scopeTenantId, setScopeTenantId] = useState("");
   const [refreshNonce, setRefreshNonce] = useState(0);
@@ -79,6 +83,16 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     if (typeof raw !== "string" || !isMeteringSubTab(raw, availableSubTabs)) return;
     setSubTab(raw);
   }, [router.isReady, router.query.tab, availableSubTabs]);
+
+  const selectTimeWindow = useCallback((w: MeteringWindow) => {
+    setCustomRange(null);
+    setTimeWindow(w);
+  }, []);
+
+  const clearCustomRange = useCallback(() => {
+    setCustomRange(null);
+    setTimeWindow(METERING.DEFAULTS.TIME_WINDOW);
+  }, []);
 
   const tenantsQuery = useTenantsList({
     enabled: isAdopterView,
@@ -125,7 +139,9 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
   const enabledServicesKey = enabledServices?.join(",") ?? "";
   const enabledServicesReady = enabledServices != null;
 
-  const overviewQuery = useQuery({
+  const overviewEnabled = enabledServicesReady && (isAdopterView || tenantOverviewEnabled);
+
+  const overviewQueryOptions = (range: MeteringDateRange | null) => ({
     queryKey: meteringQueryKey(
       METERING.QUERY.SCOPES.OVERVIEW,
       timeWindow,
@@ -134,6 +150,8 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       isAdopterView,
       enabledServicesKey,
       refreshNonce,
+      range?.from ?? null,
+      range?.to ?? null,
     ),
     queryFn: () =>
       fetchMeteringOverview(
@@ -142,12 +160,28 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
         queryTenantId,
         enabledServices,
         METERING.USAGE_CONCENTRATION_FETCH_LIMIT,
+        range,
       ),
-    enabled: enabledServicesReady && (isAdopterView || tenantOverviewEnabled),
     ...meteringQueryDefaults,
   });
 
+  const overviewQuery = useQuery({
+    ...overviewQueryOptions(customRange),
+    enabled: overviewEnabled,
+  });
+
   const overview = overviewQuery.data;
+
+  // Key metrics ignore the custom range. Their values are window-independent,
+  // but a custom-range fetch (or its failure) must not blank them, so they
+  // read the preset overview — the same cache entry the dashboard used before
+  // the range was applied.
+  const keyMetricsOverviewQuery = useQuery({
+    ...overviewQueryOptions(null),
+    enabled: overviewEnabled && isAdopterView && customRange != null,
+  });
+
+  const keyMetricsOverview = customRange ? keyMetricsOverviewQuery.data : overview;
 
   const modelQueryEnabled =
     enabledServicesReady &&
@@ -164,6 +198,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     isAdopterView &&
     modelQueryEnabled &&
     timeWindow === "30d" &&
+    !customRange &&
     !scopeTenantId;
 
   const modelQuery = useQuery({
@@ -175,9 +210,17 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       isAdopterView,
       enabledServicesKey,
       refreshNonce,
+      customRange?.from ?? null,
+      customRange?.to ?? null,
     ),
     queryFn: () =>
-      fetchMeteringModelConsumption(timeWindow, ctx, queryTenantId, enabledServices),
+      fetchMeteringModelConsumption(
+        timeWindow,
+        ctx,
+        queryTenantId,
+        enabledServices,
+        customRange,
+      ),
     enabled: modelQueryEnabled,
     ...meteringQueryDefaults,
   });
@@ -240,6 +283,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     const err =
       overviewQuery.error ||
       modelQuery.error ||
+      (isAdopterView && customRange && keyMetricsOverviewQuery.error) ||
       (isAdopterView && keyMetricsModelQuery.error) ||
       (isAdopterView && keyMetricsBudgetQuery.error);
     return err ? parseMeteringError(err) : null;
@@ -248,6 +292,8 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     isAdopterView,
     overviewQuery.error,
     modelQuery.error,
+    customRange,
+    keyMetricsOverviewQuery.error,
     keyMetricsModelQuery.error,
     keyMetricsBudgetQuery.error,
   ]);
@@ -265,6 +311,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
   const isRefreshing =
     overviewQuery.isFetching ||
     (modelQueryEnabled && modelQuery.isFetching) ||
+    (isAdopterView && customRange != null && keyMetricsOverviewQuery.isFetching) ||
     (isAdopterView && keyMetricsModelQuery.isFetching) ||
     (isAdopterView && keyMetricsBudgetQuery.isFetching);
 
@@ -275,6 +322,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       modelQuery.refetch();
     }
     if (isAdopterView) {
+      if (customRange) keyMetricsOverviewQuery.refetch();
       keyMetricsModelQuery.refetch();
       keyMetricsBudgetQuery.refetch();
     }
@@ -305,7 +353,10 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     subTab,
     setSubTab,
     timeWindow,
-    setTimeWindow,
+    setTimeWindow: selectTimeWindow,
+    customRange,
+    applyCustomRange: setCustomRange,
+    clearCustomRange,
     topN,
     setTopN,
     scopeTenantId,
@@ -315,6 +366,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     previewTenants,
     tenantOrganisationById,
     overview,
+    keyMetricsOverview,
     modelQuery,
     isLoading,
     isRefreshing,

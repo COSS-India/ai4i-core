@@ -88,6 +88,21 @@ export const METERING = {
     "7d": "last 7 days",
     "30d": "last 30 days",
   } as const satisfies Record<MeteringWindow, string>,
+  /** Custom date ranges are calendar days in IST, whatever the browser zone. */
+  IST_TIME_ZONE: "Asia/Kolkata",
+  CUSTOM_RANGE: {
+    TITLE: "Custom date range",
+    SUBTITLE: "Select a start date and an end date",
+    SELECT_START: "Select a start date",
+    SELECT_END: "Select an end date",
+    TIME_ZONE_NOTE: "IST (UTC+05:30)",
+    APPLY: "Apply",
+    CANCEL: "Cancel",
+    CLEAR: "Clear custom range",
+    PREVIOUS_MONTH: "Previous month",
+    NEXT_MONTH: "Next month",
+    WEEKDAYS: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"],
+  },
   TOP_N_OPTIONS: [10, 25] as const satisfies readonly MeteringTopN[],
   TOP_N_SEGMENT_OPTIONS: [
     { id: "10", label: "Top 10" },
@@ -114,6 +129,7 @@ export const METERING = {
   CONTROLS: {
     ALL_TENANTS: `All ${INSTITUTIONS}`,
     TOP_N_PREFIX: "Top",
+    CUSTOM_RANGE: "Custom range",
     LAST_REFRESHED_PREFIX: "Last refreshed:",
     REFRESH: "Refresh",
   },

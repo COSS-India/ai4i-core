@@ -25,7 +25,7 @@ import {
   deriveModelInsights,
   formatCompactNumber,
   formatNativeConsumption,
-  getWindowLabel,
+  getScopeWindowLabel,
   modelConsumptionTaskTypeColor,
 } from "../../utils/meteringFormatters";
 import { normalizeModelTaskType } from "../../utils/meteringTaskType";
@@ -380,7 +380,7 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
 
           <MeteringSectionCard
             title={section.BREAKDOWN_TITLE}
-            subtitle={`${section.BREAKDOWN_SUBTITLE_PREFIX} ${getWindowLabel(data.scope.window)}`}
+            subtitle={`${section.BREAKDOWN_SUBTITLE_PREFIX} ${getScopeWindowLabel(data.scope)}`}
             sectionLabel
             bare
           >
