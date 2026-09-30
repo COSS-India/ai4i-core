@@ -101,8 +101,6 @@ export const METERING = {
     CLEAR: "Clear custom range",
     PREVIOUS_MONTH: "Previous month",
     NEXT_MONTH: "Next month",
-    /** Hover text on days before the earliest selectable date. */
-    NO_DATA: "No data available",
     WEEKDAYS: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"],
   },
   TOP_N_OPTIONS: [10, 25] as const satisfies readonly MeteringTopN[],

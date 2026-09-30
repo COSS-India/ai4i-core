@@ -28,7 +28,6 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
     customRange,
     applyCustomRange,
     clearCustomRange,
-    earliestSelectableDay,
     topN,
     setTopN,
     scopeTenantId,
@@ -88,7 +87,6 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
         timeWindow={timeWindow}
         onTimeWindowChange={setTimeWindow}
         customRange={customRange}
-        earliestSelectableDay={earliestSelectableDay}
         onApplyCustomRange={applyCustomRange}
         onClearCustomRange={clearCustomRange}
         lastGeneratedAt={lastGeneratedAt}

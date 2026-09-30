@@ -15,7 +15,6 @@ import {
 } from "../../config/meteringConstants";
 import type {
   MeteringDateRange,
-  MeteringDayKey,
   MeteringTopN,
   MeteringWindow,
 } from "../../types/metering";
@@ -28,7 +27,6 @@ interface MeteringControlsProps {
   onTimeWindowChange: (w: MeteringWindow) => void;
   /** Applied custom range; when set no preset is highlighted. */
   customRange?: MeteringDateRange | null;
-  earliestSelectableDay?: MeteringDayKey | null;
   onApplyCustomRange?: (range: MeteringDateRange) => void;
   onClearCustomRange?: () => void;
   topN?: MeteringTopN;
@@ -52,7 +50,6 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
   timeWindow,
   onTimeWindowChange,
   customRange = null,
-  earliestSelectableDay = null,
   onApplyCustomRange,
   onClearCustomRange,
   topN,
@@ -108,7 +105,6 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
         {onApplyCustomRange && onClearCustomRange ? (
           <CustomRangePicker
             appliedRange={customRange}
-            earliestDay={earliestSelectableDay}
             onApply={onApplyCustomRange}
             onClear={onClearCustomRange}
           />

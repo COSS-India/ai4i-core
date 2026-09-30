@@ -67,21 +67,6 @@ export function buildMeteringRangeParams(
   return { from: istMidnightIso(range.from), to };
 }
 
-/**
- * Earliest selectable IST date: the later of the tenant's first usage and the
- * metering retention floor. Null when neither is known.
- */
-export function resolveEarliestSelectableDay(
-  firstUsageAt?: string | null,
-  earliestFrom?: string | null,
-): MeteringDayKey | null {
-  const instants = [firstUsageAt, earliestFrom]
-    .map((iso) => (iso ? new Date(iso).getTime() : Number.NaN))
-    .filter((ms) => !Number.isNaN(ms));
-  if (!instants.length) return null;
-  return istDayKey(Math.max(...instants));
-}
-
 function formatDayMonth(key: MeteringDayKey): string {
   const [, m, d] = key.split("-");
   return `${d} ${MONTHS_SHORT[Number(m) - 1]}`;

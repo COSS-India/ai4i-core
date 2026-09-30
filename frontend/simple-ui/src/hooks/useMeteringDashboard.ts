@@ -24,7 +24,6 @@ import { getMeteringRoleViewConfig } from "../utils/rbac";
 import { meteringQueryDefaults, meteringQueryKey } from "../utils/meteringQuery";
 import { resolveMeteringGeneratedAt, formatMeteringDataStateBanner } from "../utils/meteringFormatters";
 import { getTenantIdFromToken } from "../utils/helpers";
-import { resolveEarliestSelectableDay } from "../utils/meteringDateRange";
 
 function isMeteringSubTab(
   value: string,
@@ -183,17 +182,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
   });
 
   const keyMetricsOverview = customRange ? keyMetricsOverviewQuery.data : overview;
-
-  // Remember the last known floor so the picker stays usable while a
-  // custom-range request is loading or has failed.
-  const latestEarliestSelectableDay = resolveEarliestSelectableDay(
-    overview?.first_usage_at,
-    overview?.earliest_from,
-  );
-  const [earliestSelectableDay, setEarliestSelectableDay] = useState<string | null>(null);
-  useEffect(() => {
-    if (latestEarliestSelectableDay) setEarliestSelectableDay(latestEarliestSelectableDay);
-  }, [latestEarliestSelectableDay]);
 
   const modelQueryEnabled =
     enabledServicesReady &&
@@ -369,7 +357,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     customRange,
     applyCustomRange: setCustomRange,
     clearCustomRange,
-    earliestSelectableDay,
     topN,
     setTopN,
     scopeTenantId,

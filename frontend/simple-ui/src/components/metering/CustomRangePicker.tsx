@@ -11,7 +11,6 @@ import {
   Portal,
   SimpleGrid,
   Text,
-  Tooltip,
   VStack,
   useDisclosure,
 } from "@chakra-ui/react";
@@ -39,8 +38,6 @@ import {
 
 interface CustomRangePickerProps {
   appliedRange: MeteringDateRange | null;
-  /** Earliest selectable IST date; the picker is unavailable until it is known. */
-  earliestDay: MeteringDayKey | null;
   onApply: (range: MeteringDateRange) => void;
   onClear: () => void;
 }
@@ -48,7 +45,6 @@ interface CustomRangePickerProps {
 interface CalendarMonthProps {
   month: MeteringCalendarMonth;
   today: MeteringDayKey;
-  earliestDay: MeteringDayKey | null;
   start: MeteringDayKey | null;
   end: MeteringDayKey | null;
   hoverDay: MeteringDayKey | null;
@@ -59,7 +55,6 @@ interface CalendarMonthProps {
 const CalendarMonth: React.FC<CalendarMonthProps> = ({
   month,
   today,
-  earliestDay,
   start,
   end,
   hoverDay,
@@ -83,11 +78,11 @@ const CalendarMonth: React.FC<CalendarMonthProps> = ({
         ))}
         {buildCalendarWeeks(month).flat().map((day, i) => {
           if (!day) return <Box key={`pad-${i}`} />;
-          const isBeforeData = earliestDay != null && day < earliestDay;
-          const isDisabled = day > today || isBeforeData;
+          // Any past day can be picked; only future days are disabled.
+          const isDisabled = day > today;
           const isEndpoint = day === start || day === end;
           const isInRange = !!start && !!rangeEnd && day > start && day < rangeEnd;
-          const dayButton = (
+          return (
             <Button
               key={day}
               size="sm"
@@ -103,10 +98,7 @@ const CalendarMonth: React.FC<CalendarMonthProps> = ({
               borderColor="orange.400"
               _hover={{ bg: isEndpoint ? "orange.600" : "orange.100" }}
               isDisabled={isDisabled}
-              // A disabled button swallows hover in some browsers; let the
-              // pointer reach the tooltip wrapper instead.
-              pointerEvents={isBeforeData ? "none" : undefined}
-              aria-label={isBeforeData ? `${day}, ${copy.NO_DATA}` : day}
+              aria-label={day}
               aria-pressed={isEndpoint}
               onClick={() => onSelect(day)}
               onMouseEnter={() => onHover(day)}
@@ -114,14 +106,6 @@ const CalendarMonth: React.FC<CalendarMonthProps> = ({
             >
               {Number(day.slice(8))}
             </Button>
-          );
-          if (!isBeforeData) return dayButton;
-          return (
-            <Tooltip key={day} label={copy.NO_DATA} hasArrow placement="top" openDelay={150}>
-              <Box display="flex" justifyContent="center" cursor="not-allowed">
-                {dayButton}
-              </Box>
-            </Tooltip>
           );
         })}
       </SimpleGrid>
@@ -132,7 +116,6 @@ const CalendarMonth: React.FC<CalendarMonthProps> = ({
 /** "Custom range" time filter: a two-month IST calendar with Apply / Cancel. */
 const CustomRangePicker: React.FC<CustomRangePickerProps> = ({
   appliedRange,
-  earliestDay,
   onApply,
   onClear,
 }) => {
@@ -195,7 +178,6 @@ const CustomRangePicker: React.FC<CustomRangePickerProps> = ({
             colorScheme={isActive || isOpen ? "orange" : "gray"}
             variant={isActive ? "solid" : "outline"}
             fontWeight={isActive ? "semibold" : "normal"}
-            isDisabled={earliestDay == null}
           >
             {appliedRange ? formatMeteringDateRange(appliedRange) : METERING.CONTROLS.CUSTOM_RANGE}
           </Button>
@@ -233,7 +215,6 @@ const CustomRangePicker: React.FC<CustomRangePickerProps> = ({
                     key={`${month.year}-${month.month}`}
                     month={month}
                     today={today}
-                    earliestDay={earliestDay}
                     start={start}
                     end={end}
                     hoverDay={hoverDay}
