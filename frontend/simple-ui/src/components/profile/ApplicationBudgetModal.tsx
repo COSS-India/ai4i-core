@@ -36,6 +36,12 @@ export default function ApplicationBudgetModal({
   const draftAmount =
     draftOk && mgr.tenantBudget > 0 ? (draftPct / 100) * mgr.tenantBudget : null;
   const allocatedAmount = usage ? usage.allocated : mgr.selected?.allocated_budget;
+  const remainingAmount = usage ? usage.remaining : null;
+  const remainingPct =
+    remainingAmount != null && mgr.tenantBudget > 0
+      ? (remainingAmount / mgr.tenantBudget) * 100
+      : null;
+  const remainingNegative = remainingAmount != null && remainingAmount < 0;
   const close = () => mgr.setBudgetOpen(false);
 
   return (
@@ -91,15 +97,28 @@ export default function ApplicationBudgetModal({
             allocatedAmount={allocatedAmount}
             consumedLabel={consumedLabel}
             consumedSub={consumedSub}
+            remainingLabel={BUDGET_COPY.remaining}
             remainingValue={
               loading
                 ? BUDGET_COPY.loading
-                : usage
-                  ? formatBudgetMoney(usage.remaining, currency)
-                  : "—"
+                : remainingPct != null
+                  ? formatBudgetPct(remainingPct)
+                  : remainingAmount != null
+                    ? formatBudgetMoney(remainingAmount, currency)
+                    : "—"
             }
-            remainingSub={usage ? BUDGET_COPY.leftInThisApplication : undefined}
-            remainingColor={usage ? "green.700" : "ink.800"}
+            remainingSub={
+              loading || remainingAmount == null || remainingPct == null
+                ? undefined
+                : formatBudgetMoney(remainingAmount, currency)
+            }
+            remainingColor={
+              remainingNegative ? "red.600" : remainingAmount != null ? "green.700" : "ink.800"
+            }
+            remainingSubColor={
+              remainingNegative ? "red.600" : remainingAmount != null ? "green.700" : undefined
+            }
+            remainingNegative={remainingNegative}
             rangeLabel={rangeValue}
             currency={currency}
           />
