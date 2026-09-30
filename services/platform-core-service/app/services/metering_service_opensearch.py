@@ -288,10 +288,12 @@ class OpenSearchMeteringService(MeteringService):
             avg_rps_v = round(total_v / window_secs, 4)
             prev_avg_rps = prev_total / window_secs
 
-            # Same retention guard as the Prometheus request_total: a
-            # previous window reaching past retention reads mostly-deleted
-            # data, so its figures stay None instead of inflating growth %.
-            if _previous_window_retained(time_range):
+            # Same retention guard as the Prometheus request_total for a
+            # custom range: a previous window reaching past retention reads
+            # mostly-deleted data, so its figures stay None instead of
+            # inflating growth %. Presets keep theirs: OpenSearch's counts
+            # don't depend on how much data Prometheus holds.
+            if _previous_window_retained(time_range, presets=False):
                 prev_total_v, prev_failed_v, prev_success_v = prev_total, prev_failed, prev_success
                 prev_avg_rps_v = round(prev_avg_rps, 4)
                 prev_success_rate_v = (

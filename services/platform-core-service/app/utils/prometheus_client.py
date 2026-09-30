@@ -1,5 +1,6 @@
 """Prometheus HTTP API client."""
 import logging
+import time as _time
 from typing import Optional
 
 import httpx
@@ -101,6 +102,30 @@ class PrometheusClient:
             logger.warning("Could not read Prometheus runtimeinfo: %s", type(exc).__name__)
             return None
         return value if isinstance(value, str) and value.strip() else None
+
+    async def lowest_sample_timestamp(self) -> Optional[float]:
+        """Epoch seconds of the oldest sample Prometheus actually holds, from
+        its self-scraped ``prometheus_tsdb_lowest_timestamp_seconds`` (the
+        ``job_name: "prometheus"`` target). ``storageRetention`` is only the
+        configured maximum; after a fresh start or a redeploy without its
+        volume the data is shallower than that.
+
+        ``max()`` across series, so with several Prometheus instances the
+        youngest data wins, which is the safe side. None when the metric
+        isn't scraped, the query fails, or the value is not a past instant
+        (an empty TSDB reports a far-future sentinel). Never raises.
+        """
+        try:
+            result = await self.query("max(prometheus_tsdb_lowest_timestamp_seconds)")
+        except Exception as exc:
+            logger.warning("Could not read prometheus_tsdb_lowest_timestamp_seconds: %s", type(exc).__name__)
+            return None
+        if not result:
+            return None
+        ts = self._safe_float(result[0].get("value", [None, None])[1], default=0.0)
+        if ts <= 0 or ts > _time.time():
+            return None
+        return ts
 
     @staticmethod
     def _safe_float(value: str, default: float = 0.0) -> float:

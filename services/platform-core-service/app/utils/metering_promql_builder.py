@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Union
 
 from app.core.config import settings
-from app.utils.metering_retention import retention_days
+from app.utils.metering_retention import data_floor, retention_days
 
 # See CoreSettings.prometheus_api_path_label (app/core/config.py) for why this
 # is env-driven rather than hardcoded. Every selector/groupby here and in
@@ -139,25 +139,59 @@ NOT_RETAINED = _NotRetained()
 _RETENTION_MARGIN = timedelta(hours=1)
 
 
-def retention_edge(now: datetime | None = None) -> datetime:
-    """Earliest instant whose Prometheus samples are reliably still retained:
-    now − the retention Prometheus reports (PROMETHEUS_RETENTION_DAYS when it
-    doesn't; see metering_retention), plus _RETENTION_MARGIN."""
+def data_start(now: datetime | None = None) -> datetime:
+    """Where the data Prometheus holds starts: the later of now − its
+    configured retention (PROMETHEUS_RETENTION_DAYS when it doesn't report
+    one) and its oldest sample (metering_retention.data_floor, skipped when
+    not exposed). retention_edge() adds the safety margin on top."""
     now = now or datetime.now(timezone.utc)
-    return now - timedelta(days=retention_days()) + _RETENTION_MARGIN
+    start = now - timedelta(days=retention_days())
+    floor = data_floor()
+    return floor if floor is not None and floor > start else start
+
+
+def retention_edge(now: datetime | None = None) -> datetime:
+    """Earliest instant from which Prometheus reliably holds samples, plus
+    _RETENTION_MARGIN: the later of
+
+    - now − the retention Prometheus reports (PROMETHEUS_RETENTION_DAYS when
+      it doesn't), the configured maximum; and
+    - the oldest sample it actually holds (metering_retention.data_floor),
+      which is younger after a fresh start or a redeploy without its volume.
+      Skipped when Prometheus doesn't expose it.
+
+    Every windowed metering query is clamped here (retained_range), so a
+    window reaching past the data never reads a missing start sample."""
+    return data_start(now) + _RETENTION_MARGIN
+
+
+# Seconds covered by each TIME_RANGES preset, for clamping presets that
+# reach past the data (see retained_range).
+PRESET_SECONDS: dict[str, int] = {"1h": 3_600, "24h": 86_400, "7d": 604_800, "30d": 2_592_000}
 
 
 def retained_range(time_range: TimeRange) -> Union[TimeRange, _NotRetained]:
-    """The part of an AbsoluteRange Prometheus still holds: its start clamped
-    to retention_edge(), or NOT_RETAINED when the whole range is older.
-    Presets and None pass through unchanged.
+    """The part of a window Prometheus still holds: its start clamped to
+    retention_edge(), or NOT_RETAINED when the whole window is older.
+
+    - An AbsoluteRange is clamped as it is.
+    - A preset (1h/24h/7d/30d) whose start (now − duration) is before the
+      edge becomes AbsoluteRange(edge, now); one whose start is inside the
+      data passes through, so its PromQL is unchanged.
+    - Raw durations (chart steps like "1d") and None pass through.
 
     Why it matters: the windowed hybrid (see sum_over_window) reads each
-    series at the range's start to tell established series from new ones.
-    Once that sample is pruned every series looks new, and its whole lifetime
-    counter would be counted as usage for the range. Clamping keeps the start
-    inside retention, so a range reaching further back simply counts what's
-    still there instead of erroring or overcounting."""
+    series at the window's start to tell established series from new ones.
+    With no sample there, every series looks new and its whole lifetime
+    counter would be counted as usage. Clamping keeps the start inside the
+    data, so a window reaching further back simply counts what's there
+    instead of erroring or overcounting."""
+    if isinstance(time_range, str) and time_range in PRESET_SECONDS:
+        now = datetime.now(timezone.utc)
+        edge = retention_edge(now)
+        if now - timedelta(seconds=PRESET_SECONDS[time_range]) >= edge:
+            return time_range
+        return NOT_RETAINED if edge >= now else AbsoluteRange(start=edge, end=now)
     if not isinstance(time_range, AbsoluteRange):
         return time_range
     edge = retention_edge()

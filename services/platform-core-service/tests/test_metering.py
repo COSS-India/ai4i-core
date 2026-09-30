@@ -2925,9 +2925,15 @@ class TestRetainedRange:
     def test_range_entirely_before_the_edge_is_not_retained(self, retention_15d):
         assert _builder_mod.retained_range(_abs_range(60, 30)) is _builder_mod.NOT_RETAINED
 
-    def test_presets_pass_through(self, retention_15d):
-        assert _builder_mod.retained_range("30d") == "30d"
+    def test_presets_inside_retention_pass_through(self, retention_15d):
+        assert _builder_mod.retained_range("7d") == "7d"
         assert _builder_mod.retained_range(None) is None
+        assert _builder_mod.retained_range("1d") == "1d"  # raw chart step
+
+    def test_preset_longer_than_retention_is_clamped(self, retention_15d):
+        """A 30d preset on 15 days of data used to read every series'
+        missing `offset 30d` sample and count lifetime counters."""
+        assert _builder_mod.retained_range("30d") == AbsoluteRange(start=retention_15d, end=_NOW)
 
     def test_straddling_range_query_starts_at_the_edge(self, retention_15d):
         """The unless arm reads each series at the clamped start (inside
@@ -2944,8 +2950,8 @@ class TestRetainedRange:
         assert apply_time_range("m{}", r) == "(m{} unless m{})"
 
     def test_presets_are_byte_for_byte_unchanged(self, retention_15d):
-        assert sum_over_window("m{}", "30d") == (
-            "sum((m{} unless m{} offset 30d) or (increase(m{}[30d]) > 0))"
+        assert sum_over_window("m{}", "7d") == (
+            "sum((m{} unless m{} offset 7d) or (increase(m{}[7d]) > 0))"
         )
 
 
@@ -3251,3 +3257,264 @@ class TestCustomRangeBarsStampedAtBucketStart:
         os_chart = await OpenSearchMeteringService(os_client=os_client).request_volume_chart(r, tenant=None)
 
         assert prom_chart.series[0].points[0].ts == os_chart.series[0].points[0].ts == int(start_ts)
+
+
+# ── Data floor: the oldest sample Prometheus actually holds ──────────────────
+
+
+@pytest.mark.asyncio
+class TestPrometheusClientLowestSampleTimestamp:
+    def _client(self, result=None, error=None):
+        http = AsyncMock()
+        resp = MagicMock()
+        resp.json.return_value = {"data": {"result": result or []}}
+        resp.raise_for_status = MagicMock()
+        http.get = AsyncMock(return_value=resp, side_effect=error)
+        return PrometheusClient("http://prometheus:9090", http), http
+
+    async def test_reads_the_max_lowest_timestamp(self):
+        import time as _t
+        ts = _t.time() - 10 * 86_400
+        client, http = self._client([{"metric": {}, "value": [0, str(ts)]}])
+        assert await client.lowest_sample_timestamp() == pytest.approx(ts)
+        assert http.get.call_args.kwargs["params"]["query"] == "max(prometheus_tsdb_lowest_timestamp_seconds)"
+
+    async def test_metric_not_scraped_is_none(self):
+        client, _ = self._client([])
+        assert await client.lowest_sample_timestamp() is None
+
+    async def test_error_is_none_without_raising(self):
+        import httpx
+        client, _ = self._client(error=httpx.ConnectError("down"))
+        assert await client.lowest_sample_timestamp() is None
+
+    @pytest.mark.parametrize("value", ["NaN", "0", "9223372036854775"])  # NaN, zero, empty-TSDB sentinel
+    async def test_non_past_value_is_none(self, value):
+        client, _ = self._client([{"metric": {}, "value": [0, value]}])
+        assert await client.lowest_sample_timestamp() is None
+
+
+class _FakeFloorSource(_FakeRetentionSource):
+    def __init__(self, retention, *floors):
+        super().__init__(retention)
+        self._floors = list(floors)
+        self.floor_calls = 0
+
+    async def lowest_sample_timestamp(self):
+        self.floor_calls += 1
+        value = self._floors.pop(0) if self._floors else None
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+
+@pytest.mark.asyncio
+class TestRefreshDataFloor:
+    async def test_floor_is_cached_for_a_minute(self, fake_clock):
+        source = _FakeFloorSource("90d", 1_000_000.0, 2_000_000.0)
+        await _retention_mod.refresh_retention(source)
+        assert _retention_mod.data_floor().timestamp() == 1_000_000.0
+        fake_clock["now"] += 59
+        await _retention_mod.refresh_retention(source)
+        assert source.floor_calls == 1
+        fake_clock["now"] += 2
+        await _retention_mod.refresh_retention(source)
+        assert source.floor_calls == 2
+        assert _retention_mod.data_floor().timestamp() == 2_000_000.0
+        # storageRetention keeps its own, longer TTL
+        assert source.calls == 1
+
+    async def test_failed_or_missing_floor_is_skipped(self, fake_clock):
+        await _retention_mod.refresh_retention(_FakeFloorSource("90d", RuntimeError("down")))
+        assert _retention_mod.data_floor() is None
+        _retention_mod.reset_retention_cache()
+        await _retention_mod.refresh_retention(_FakeRetentionSource("90d"))  # no such method
+        assert _retention_mod.data_floor() is None
+
+    async def test_reset_clears_the_floor(self, fake_clock):
+        await _retention_mod.refresh_retention(_FakeFloorSource("90d", 1_000_000.0))
+        _retention_mod.reset_retention_cache()
+        assert _retention_mod.data_floor() is None
+
+
+def _set_floor(monkeypatch, when: "_datetime", retention_days: float = 90.0):
+    """Prometheus reporting ``retention_days`` configured but holding data
+    only since ``when`` — the review's fresh-start / volume-less redeploy."""
+    monkeypatch.setattr(_retention_mod, "_discovered_days", retention_days)
+    monkeypatch.setattr(_retention_mod, "_floor_ts", when.timestamp())
+
+
+@pytest.mark.usefixtures("frozen_builder_now")
+class TestEdgeFlooredAtOldestSample:
+    def test_younger_floor_wins(self, monkeypatch):
+        _set_floor(monkeypatch, _NOW - _timedelta(days=10))
+        assert _builder_mod.data_start() == _NOW - _timedelta(days=10)
+        assert _builder_mod.retention_edge() == _NOW - _timedelta(days=10) + _timedelta(hours=1)
+
+    def test_older_floor_is_ignored(self, monkeypatch):
+        _set_floor(monkeypatch, _NOW - _timedelta(days=200))
+        assert _builder_mod.retention_edge() == _NOW - _timedelta(days=90) + _timedelta(hours=1)
+
+    def test_no_floor_uses_the_configured_retention(self, monkeypatch):
+        monkeypatch.setattr(_retention_mod, "_discovered_days", 90.0)
+        assert _builder_mod.retention_edge() == _NOW - _timedelta(days=90) + _timedelta(hours=1)
+
+    def test_review_custom_range_30d_to_1d_is_floored(self, monkeypatch):
+        """The measured 102,592-vs-2,592 case: 90d configured, 10 days held.
+        The hybrid must read the counter at floor + 1h, not at `from`."""
+        _set_floor(monkeypatch, _NOW - _timedelta(days=10))
+        r = _abs_range(30, 1)
+        edge = _NOW - _timedelta(days=10) + _timedelta(hours=1)
+        assert _builder_mod.retained_range(r) == AbsoluteRange(start=edge, end=r.end)
+        duration = int((r.end - edge).total_seconds())
+        assert f"increase(m{{}}[{duration}s] offset 86400s)" in sum_over_window("m{}", r)
+
+    def test_review_30d_preset_is_floored(self, monkeypatch):
+        """Pre-existing on release-2.8 (102,843 vs 2,843): a 30d preset read
+        every series' missing `offset 30d` sample."""
+        _set_floor(monkeypatch, _NOW - _timedelta(days=10))
+        edge = _NOW - _timedelta(days=10) + _timedelta(hours=1)
+        assert _builder_mod.retained_range("30d") == AbsoluteRange(start=edge, end=_NOW)
+        expr = sum_over_window("m{}", "30d")
+        assert "[30d]" not in expr and "offset 30d" not in expr
+        assert f"increase(m{{}}[{int((_NOW - edge).total_seconds())}s])" in expr
+
+    def test_preset_inside_the_data_is_byte_for_byte_unchanged(self, monkeypatch):
+        _set_floor(monkeypatch, _NOW - _timedelta(days=10))
+        assert sum_over_window("m{}", "7d") == (
+            "sum((m{} unless m{} offset 7d) or (increase(m{}[7d]) > 0))"
+        )
+        for preset in ("1h", "24h", "7d"):
+            assert _builder_mod.retained_range(preset) == preset
+
+    def test_floor_at_now_means_nothing_is_retained(self, monkeypatch):
+        _set_floor(monkeypatch, _NOW)
+        assert _builder_mod.retained_range("1h") is _builder_mod.NOT_RETAINED
+        assert sum_over_window("m{}", "1h") == "sum((m{} unless m{}))"
+
+
+@pytest.mark.usefixtures("frozen_builder_now")
+class TestHandRolledArmsGoThroughTheBuilder:
+    """tenant ranking, service breakdown and the heatmap used to build their
+    own `unless offset <window>`, bypassing the clamp."""
+
+    def test_identical_when_the_data_is_deep(self, monkeypatch):
+        _set_floor(monkeypatch, _NOW - _timedelta(days=200), retention_days=400)
+        assert MeteringService._tenant_delta_promql("m{}", "7d") == (
+            "sum by(tenant_id, tenant) ((m{} unless m{} offset 7d) or (increase(m{}[7d]) > 0)) > 0"
+        )
+        m = "telemetry_obsv_requests_total{x}"
+        assert MeteringService._service_breakdown_by_ep_promql("{x}", "30d") == (
+            f"sum by({PROMETHEUS_API_PATH_LABEL}) (({m} unless {m} offset 30d) or (increase({m}[30d]) > 0))"
+        )
+
+    def test_clamped_when_the_data_is_shallow(self, monkeypatch):
+        _set_floor(monkeypatch, _NOW - _timedelta(days=3))
+        for q in (
+            MeteringService._tenant_delta_promql("m{}", "7d"),
+            MeteringService._service_breakdown_by_ep_promql("{}", "7d"),
+        ):
+            assert "offset 7d" not in q and "[7d]" not in q
+
+    @pytest.mark.asyncio
+    async def test_heatmap_is_clamped_when_the_data_is_shallow(self, monkeypatch):
+        _set_floor(monkeypatch, _NOW - _timedelta(days=3))
+        svc = _make_service(query_return=[])
+        svc._resolve_tenant_names = AsyncMock(return_value={})
+        await svc.usage_by_tenant_service(limit=5, time_range="7d", services=["nmt"])
+        q = svc._client.query.call_args_list[0].args[0]
+        assert "offset 7d" not in q and "[7d]" not in q
+
+
+@pytest.mark.asyncio
+class TestPreviousFiguresPastTheData:
+    """A preset's previous window (now − 2×duration) past the data would
+    undercount and inflate every growth %."""
+
+    async def test_request_total_30d_on_45_days_has_no_previous(self, monkeypatch):
+        _set_floor(monkeypatch, _datetime.now(_timezone.utc) - _timedelta(days=45))
+        svc = _make_service(scalar_return=10.0)
+        result = await svc.request_total(inference_only=True, tenant=None, service_id=None, time_range="30d")
+        assert svc._client.scalar.await_count == 3  # current only
+        assert result["total_requests"]["previous_count"] is None
+
+    async def test_request_total_30d_on_deep_data_keeps_previous(self, monkeypatch):
+        _set_floor(monkeypatch, _datetime.now(_timezone.utc) - _timedelta(days=89))
+        svc = _make_service(scalar_return=10.0)
+        result = await svc.request_total(inference_only=True, tenant=None, service_id=None, time_range="30d")
+        assert svc._client.scalar.await_count == 6
+        assert result["total_requests"]["previous_count"] == 10
+
+    async def test_tenant_tab_previous_helpers_are_none(self, monkeypatch):
+        _set_floor(monkeypatch, _datetime.now(_timezone.utc) - _timedelta(days=45))
+        svc = _make_service(query_return=[{"metric": {"tenant_id": "1", "tenant": "a"}, "value": [0, "5"]}])
+        assert await svc.active_tenants_count_previous("30d") is None
+        assert await svc.avg_per_active_tenant_previous("30d") is None
+        svc._client.query.assert_not_called()
+        svc._client.scalar.assert_not_called()
+
+    async def test_opensearch_presets_keep_previous_figures(self, monkeypatch):
+        from app.services.metering_service_opensearch import OpenSearchMeteringService
+        _set_floor(monkeypatch, _datetime.now(_timezone.utc) - _timedelta(days=10))
+        os_client = MagicMock()
+        os_client.aggregate = AsyncMock(return_value={"by_period": {"buckets": {
+            "current": {"doc_count": 10, "by_status": {"buckets": {"success": {"doc_count": 10}}}},
+            "previous": {"doc_count": 5, "by_status": {"buckets": {"success": {"doc_count": 5}}}},
+        }}})
+        svc = OpenSearchMeteringService(os_client=os_client)
+        result = await svc.request_total(inference_only=True, tenant=None, service_id=None, time_range="30d")
+        assert result["total_requests"]["previous_count"] == 5
+
+
+@pytest.mark.asyncio
+class TestPresetChartPastTheData:
+    async def test_buckets_before_the_floor_are_zero_and_not_queried(self, monkeypatch):
+        """The review's 100,041 bar: a 30d preset (5 weekly buckets) on 10
+        days of data. Only the last eval point's bucket is inside the data."""
+        _set_floor(monkeypatch, _datetime.now(_timezone.utc) - _timedelta(days=10))
+        svc = _make_service(range_return=[{"values": [[9e9, "7"]]}])
+        chart = await svc.request_volume_chart("30d", tenant=None)
+        kwargs = svc._client.query_range.call_args.kwargs
+        assert kwargs["start"] == pytest.approx(kwargs["end"])  # one eval point left
+        succ = next(s for s in chart.series if s.key == "successful")
+        assert [p.value for p in succ.points] == [0.0] * 5 + [7]
+
+    async def test_deep_data_queries_the_whole_preset(self, monkeypatch):
+        _set_floor(monkeypatch, _datetime.now(_timezone.utc) - _timedelta(days=89))
+        svc = _make_service(range_return=[])
+        await svc.request_volume_chart("30d", tenant=None)
+        kwargs = svc._client.query_range.call_args.kwargs
+        assert kwargs["end"] - kwargs["start"] == pytest.approx(5 * 7 * 86_400)
+
+    async def test_nothing_retained_is_none_without_querying(self, monkeypatch):
+        _set_floor(monkeypatch, _datetime.now(_timezone.utc))
+        svc = _make_service(range_return=[{"values": [[9e9, "7"]]}])
+        assert await svc.request_volume_chart("24h", tenant=None) is None
+        svc._client.query_range.assert_not_called()
+
+
+@pytest.mark.asyncio
+class TestGrowthKpiNeedsDataDepth:
+    async def test_none_when_prometheus_holds_under_60_days(self, monkeypatch):
+        _set_floor(monkeypatch, _datetime.now(_timezone.utc) - _timedelta(days=50))
+        client = MagicMock()
+        client.scalar = AsyncMock(side_effect=[4200.0, 3000.0])
+        assert await MeteringService(client=client, auth_db=None).model_usage_growth_pct() is None
+        client.scalar.assert_not_called()
+
+    async def test_computes_with_enough_data(self, monkeypatch):
+        _set_floor(monkeypatch, _datetime.now(_timezone.utc) - _timedelta(days=70))
+        client = MagicMock()
+        client.scalar = AsyncMock(side_effect=[4200.0, 3000.0])
+        assert await MeteringService(client=client, auth_db=None).model_usage_growth_pct() == 40.0
+
+
+@pytest.mark.asyncio
+class TestServiceRefreshReadsTheFloor:
+    async def test_reads_both_through_the_client(self, fake_clock):
+        client = MagicMock()
+        client.storage_retention = AsyncMock(return_value="90d")
+        client.lowest_sample_timestamp = AsyncMock(return_value=1_000_000.0)
+        await MeteringService(client=client, auth_db=None).refresh_retention()
+        assert _retention_mod.retention_days() == 90
+        assert _retention_mod.data_floor().timestamp() == 1_000_000.0

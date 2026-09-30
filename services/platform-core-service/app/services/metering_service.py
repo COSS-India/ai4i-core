@@ -29,12 +29,14 @@ from app.utils.metering_promql_builder import (
     PROMETHEUS_API_PATH_LABEL,
     API_KEY_AUTH_TYPE,
     NOT_RETAINED,
+    PRESET_SECONDS,
     WINDOW_STEP,
     api_key_auth_type_selector,
     build_base_selectors,
     build_task_type_selector,
     escape_label_value,
     previous_window_offset,
+    data_start,
     retained_range,
     retention_edge,
     step_for_duration,
@@ -107,13 +109,22 @@ def _range_chart_buckets(window: AbsoluteRange) -> tuple[str, int, int]:
     return step, n_full, tail
 
 
-def _previous_window_retained(time_range: TimeRange) -> bool:
-    """False when an AbsoluteRange's vs-previous window (the equal-length
-    window ending at its start) reaches back past PROMETHEUS_RETENTION_DAYS.
-    increase() there would undercount from pruned data and inflate every
-    growth %, so request_total reports the previous figures as None instead,
-    same as model_usage_growth_pct's retention guard. Presets are unchanged.
-    """
+def _previous_window_retained(time_range: TimeRange, presets: bool = True) -> bool:
+    """False when the vs-previous window (the equal-length window ending
+    where ``time_range`` starts) reaches back past the data Prometheus holds
+    (retention_edge). increase() there would undercount and inflate every
+    growth %, so the previous figures are reported as None instead, same as
+    model_usage_growth_pct's guard.
+
+    Covers an AbsoluteRange and, unless ``presets`` is False, a preset (its
+    previous window starts at now − 2 × duration). OpenSearch passes False:
+    its counts don't depend on Prometheus's data, and its presets keep their
+    previous figures."""
+    if isinstance(time_range, str) and time_range in PRESET_SECONDS:
+        if not presets:
+            return True
+        prev_start = datetime.now(timezone.utc) - timedelta(seconds=2 * PRESET_SECONDS[time_range])
+        return prev_start >= retention_edge()
     if not isinstance(time_range, AbsoluteRange):
         return True
     prev_start = time_range.start - (time_range.end - time_range.start)
@@ -490,20 +501,34 @@ class MeteringService:
             )
         else:
             step, start, end = bounds
-            # `or vector(0)` fills idle buckets with 0 so the timeline is continuous.
-            # Without it increase() emits no sample for a zero-traffic bucket, the chart
-            # drops it, and the axis shows gaps (missing days / jumping intervals).
-            success_q = f"{sum_over_window(success_metric, step)} or vector(0)"
-            failed_q  = f"{sum_over_window(failed_metric,  step)} or vector(0)"
+            # Each eval point t covers (t - step, t] and reads the counter at
+            # t - step. A point whose bucket starts before the data Prometheus
+            # holds (retention_edge) would count lifetime counters, so it's
+            # emitted as 0 and not queried; query_range starts at the first
+            # retained point. Presets keep their end-stamped timestamps.
+            step_secs = _step_seconds(step)
+            n_points = round((end - start) / step_secs) + 1
+            skipped = max(0, math.ceil((retention_edge().timestamp() + step_secs - start) / step_secs))
+            skipped = min(skipped, n_points)
+            zeros = [GraphPoint(ts=int(start + i * step_secs), value=0.0) for i in range(skipped)]
 
-            succ_res, fail_res = await asyncio.gather(
-                self._client.query_range(success_q, start=start, end=end, step=step),
-                self._client.query_range(failed_q, start=start, end=end, step=step),
-                return_exceptions=True,
-            )
+            succ_points, fail_points = list(zeros), list(zeros)
+            if skipped < n_points:
+                query_start = start + skipped * step_secs
+                # `or vector(0)` fills idle buckets with 0 so the timeline is continuous.
+                # Without it increase() emits no sample for a zero-traffic bucket, the chart
+                # drops it, and the axis shows gaps (missing days / jumping intervals).
+                success_q = f"{sum_over_window(success_metric, step)} or vector(0)"
+                failed_q  = f"{sum_over_window(failed_metric,  step)} or vector(0)"
 
-            succ_points = _series_points(succ_res, 0)        # counts (zero-filled)
-            fail_points = _series_points(fail_res, 0)        # counts (zero-filled)
+                succ_res, fail_res = await asyncio.gather(
+                    self._client.query_range(success_q, start=query_start, end=end, step=step),
+                    self._client.query_range(failed_q, start=query_start, end=end, step=step),
+                    return_exceptions=True,
+                )
+
+                succ_points += _series_points(succ_res, 0)        # counts (zero-filled)
+                fail_points += _series_points(fail_res, 0)        # counts (zero-filled)
 
         # Series are now dense, so emptiness can't be inferred from point count —
         # only suppress the chart when there's no real activity anywhere in the window.
@@ -680,7 +705,9 @@ class MeteringService:
         tenant too).
         """
         window = TIME_RANGES.get(time_range or "all")
-        if not window:
+        if not window or not _previous_window_retained(time_range):
+            # No bounded window, or its previous window reaches past the
+            # data Prometheus holds (it would undercount).
             return None
         metric = f"{_METRIC}{build_base_selectors(inference_only=True, auth_type=API_KEY_AUTH_TYPE)}"
         promql = f"sum by(tenant_id, tenant)(increase({metric}[{window}] offset {window}) > 0)"
@@ -702,7 +729,9 @@ class MeteringService:
         build_base_selectors' docstring — accepted, not fixed here, tracked
         in the ticket."""
         window = TIME_RANGES.get(time_range or "all")
-        if not window:
+        if not window or not _previous_window_retained(time_range):
+            # No bounded window, or its previous window reaches past the
+            # data Prometheus holds (it would undercount).
             return None
         metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant, tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE)}"
         total_q = f"sum(increase({metric}[{window}] offset {window}))"
@@ -781,19 +810,25 @@ class MeteringService:
         `cur_q` uses sum_over_window() rather than a bare increase() so a
         mid-window pod redeploy doesn't get extrapolated up. Requires 60
         days of Prometheus history (`prev_q`'s `offset 30d` reaches back to
-        `now - 60d`); skipped when Prometheus keeps less than that
-        (metering_retention.retention_days: what Prometheus reports, else
-        PROMETHEUS_RETENTION_DAYS), since it would otherwise silently
-        under-count from partial data instead of this returning `None`.
+        `now - 60d`); skipped when Prometheus holds less than that
+        (data_start: the later of its configured retention and its oldest
+        sample), since it would otherwise silently under-count from
+        partial data instead of this returning `None`.
 
         Returns None if retention is insufficient, the previous 30-day
         window had no traffic (divide by zero), or the query fails.
         """
         lookback_days_needed = 60
-        if lookback_days_needed > retention_days():
+        # Data depth, not configured retention: a Prometheus started (or
+        # redeployed without its volume) 40 days ago can't cover 60 days
+        # even with storageRetention=90d. data_start() is the later of the
+        # two (without the clamp's safety margin).
+        now = datetime.now(timezone.utc)
+        data_days = (now - data_start(now)).total_seconds() / 86_400
+        if data_days < lookback_days_needed:
             logger.info(
-                "model_usage_growth_pct: skipping — needs %dd of history, retention is %sd",
-                lookback_days_needed, retention_days(),
+                "model_usage_growth_pct: skipping — needs %dd of history, Prometheus holds %.1fd",
+                lookback_days_needed, data_days,
             )
             return None
 
@@ -1024,11 +1059,9 @@ class MeteringService:
         base_sel    = "{" + _base + "}"
         success_sel = "{" + _base + ',status_code=~"2.."' + "}"
 
-        window = TIME_RANGES.get(time_range or "all")
-
         fixed_queries = [
-            self._client.query(self._service_breakdown_by_ep_promql(base_sel, window)),     # 0 total
-            self._client.query(self._service_breakdown_by_ep_promql(success_sel, window)),  # 1 success
+            self._client.query(self._service_breakdown_by_ep_promql(base_sel, time_range)),     # 0 total
+            self._client.query(self._service_breakdown_by_ep_promql(success_sel, time_range)),  # 1 success
         ]
         native_tasks, native_coros = self._native_unit_queries(
             tenant, time_range, service_filter, tenant_id=tenant_id
@@ -1798,17 +1831,11 @@ class MeteringService:
         )
         base_sel = '{' + _ep + ',tenant!="unknown"' + _tenant_part + ',' + api_key_auth_type_selector() + '}'
         metric = f"{_METRIC}{base_sel}"
-        window = TIME_RANGES.get(time_range or "all")
-
-        if window:
-            promql = (
-                f"sum by(tenant_id, tenant, {PROMETHEUS_API_PATH_LABEL}) ("
-                f"({metric} unless {metric} offset {window})"
-                f" or (increase({metric}[{window}]) > 0)"
-                f") > 0"
-            )
-        else:
-            promql = f"sum by(tenant_id, tenant, {PROMETHEUS_API_PATH_LABEL}) ({metric}) > 0"
+        # Through the builder, so a window reaching past the data Prometheus
+        # holds is clamped (see retained_range).
+        promql = sum_over_window_by(
+            metric, f"tenant_id, tenant, {PROMETHEUS_API_PATH_LABEL}", time_range,
+        ) + " > 0"
 
         results = await self._client.query(promql)
         tenant_task = self._accumulate_tenant_task_counts(results, active_services)
@@ -1852,22 +1879,16 @@ class MeteringService:
         return default if isinstance(result, Exception) else result
 
     @staticmethod
-    def _service_breakdown_by_ep_promql(selector: str, window: Optional[str]) -> str:
+    def _service_breakdown_by_ep_promql(selector: str, time_range: TimeRange) -> str:
         """PromQL for one service_breakdown selector, grouped by endpoint.
 
         Without a window: a plain instantaneous sum. With one: an
         offset-diff that's reset-aware, falling back to increase() for
         brand-new series — same reasoning as the native-unit queries below.
+        Built by sum_over_window_by, so a window reaching past the data
+        Prometheus holds is clamped (see retained_range).
         """
-        metric = f"{_METRIC}{selector}"
-        if not window:
-            return f"sum by({PROMETHEUS_API_PATH_LABEL}) ({metric})"
-        return (
-            f"sum by({PROMETHEUS_API_PATH_LABEL}) ("
-            f"({metric} unless {metric} offset {window})"
-            f" or (increase({metric}[{window}]) > 0)"
-            f")"
-        )
+        return sum_over_window_by(f"{_METRIC}{selector}", PROMETHEUS_API_PATH_LABEL, time_range)
 
     def _native_unit_queries(
         self, tenant: Optional[str], time_range: Optional[str],
@@ -2108,21 +2129,15 @@ class MeteringService:
         return str(n)
 
     @staticmethod
-    def _tenant_delta_promql(metric: str, time_range: Optional[str]) -> str:
+    def _tenant_delta_promql(metric: str, time_range: TimeRange) -> str:
         # Groups by tenant (the name) alongside tenant_id so a pre-cutover
         # row (empty tenant_id) still carries a usable name instead of being
         # merged into one anonymous bucket — see _merge_tenant_rows, which
         # re-merges same-tenant_id rows so a same-window rename (which now
         # produces two rows sharing one tenant_id) doesn't split back apart.
-        window = TIME_RANGES.get(time_range or "all")
-        if not window:
-            return f"sum by(tenant_id, tenant) ({metric}) > 0"
-        return (
-            f"sum by(tenant_id, tenant) ("
-            f"({metric} unless {metric} offset {window})"
-            f" or (increase({metric}[{window}]) > 0)"
-            f") > 0"
-        )
+        # Through the builder, so a window reaching past the data Prometheus
+        # holds is clamped (see retained_range).
+        return sum_over_window_by(metric, "tenant_id, tenant", time_range) + " > 0"
 
     @staticmethod
     def _by_tenant_promql(metric: str, time_range: TimeRange, filter_zero: bool) -> str:
