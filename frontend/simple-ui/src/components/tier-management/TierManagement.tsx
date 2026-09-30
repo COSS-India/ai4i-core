@@ -68,6 +68,9 @@ import { generateUUID } from "../../utils/uuid";
 import { QUOTA_LIMIT_MAX, validateQuotaLimit } from "./tierFormValidation";
 import { useDeferredColumnSort } from "../../utils/tableSort";
 
+/** Flip to true to restore Remove from Tier in the tier edit drawer. */
+const TIER_REMOVAL_ENABLED = false;
+
 function getTaskTypeBadgeColor(taskType: string): string {
   switch (taskType.toUpperCase()) {
     case "LLM":
@@ -1382,7 +1385,10 @@ const TierManagement: React.FC = () => {
                       tenants={institutionsForEditingTier}
                       isLoading={isInstitutionCountLoading}
                       pendingRow={(institution) => {
-                        if (stagedInstitutionRemovals[institution.tenantId]) {
+                        if (
+                          TIER_REMOVAL_ENABLED &&
+                          stagedInstitutionRemovals[institution.tenantId]
+                        ) {
                           return (
                             <PendingMove
                               label="Removing"
@@ -1418,15 +1424,19 @@ const TierManagement: React.FC = () => {
                                 });
                               },
                             },
-                            {
-                              label: "Remove from Tier",
-                              danger: true,
-                              onClick: () =>
-                                setRemoveDialog({
-                                  id: institution.tenantId,
-                                  name: institution.organisation,
-                                }),
-                            },
+                            ...(TIER_REMOVAL_ENABLED
+                              ? [
+                                  {
+                                    label: "Remove from Tier",
+                                    danger: true,
+                                    onClick: () =>
+                                      setRemoveDialog({
+                                        id: institution.tenantId,
+                                        name: institution.organisation,
+                                      }),
+                                  },
+                                ]
+                              : []),
                           ]}
                         />
                       )}
@@ -1578,38 +1588,40 @@ const TierManagement: React.FC = () => {
         </VStack>
       </StandardModal>
 
-      <StandardModal
-        isOpen={!!removeDialog}
-        onClose={() => setRemoveDialog(null)}
-        title={
-          removeDialog
-            ? `Remove "${removeDialog.name}" from ${editingTier?.name ?? "this tier"}?`
-            : "Remove from Tier"
-        }
-        size="sm"
-        footer={
-          <HStack justify="flex-end" spacing={3} w="full">
-            <Button variant="outline" onClick={() => setRemoveDialog(null)}>
-              Cancel
-            </Button>
-            <Button
-              colorScheme="red"
-              onClick={() => {
-                if (!removeDialog) return;
-                stageInstitutionRemoval(removeDialog.id);
-                setRemoveDialog(null);
-              }}
-            >
-              Remove on save
-            </Button>
-          </HStack>
-        }
-      >
-        <Text fontSize="sm" color="red.600">
-          Once saved, this institution will have no tier assigned. It won’t be able
-          to consume any metered service until a new tier is set.
-        </Text>
-      </StandardModal>
+      {TIER_REMOVAL_ENABLED ? (
+        <StandardModal
+          isOpen={!!removeDialog}
+          onClose={() => setRemoveDialog(null)}
+          title={
+            removeDialog
+              ? `Remove "${removeDialog.name}" from ${editingTier?.name ?? "this tier"}?`
+              : "Remove from Tier"
+          }
+          size="sm"
+          footer={
+            <HStack justify="flex-end" spacing={3} w="full">
+              <Button variant="outline" onClick={() => setRemoveDialog(null)}>
+                Cancel
+              </Button>
+              <Button
+                colorScheme="red"
+                onClick={() => {
+                  if (!removeDialog) return;
+                  stageInstitutionRemoval(removeDialog.id);
+                  setRemoveDialog(null);
+                }}
+              >
+                Remove on save
+              </Button>
+            </HStack>
+          }
+        >
+          <Text fontSize="sm" color="red.600">
+            Once saved, this institution will have no tier assigned. It won’t be able
+            to consume any metered service until a new tier is set.
+          </Text>
+        </StandardModal>
+      ) : null}
 
       {/* Schedule quota change modal */}
       <StandardModal
