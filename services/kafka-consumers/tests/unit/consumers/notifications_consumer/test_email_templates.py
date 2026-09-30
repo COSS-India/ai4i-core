@@ -142,6 +142,100 @@ def test_monitoring_alerts_carry_no_institution(event_name):
     assert "PLATFORM" not in message.text_body
 
 
+# 12:27 — asr, llm and tts all cross 5xx in one tick: the evaluator's one event.
+GROUPED = ["5", WHEN, "11.3", "tts-service", [
+    ["tts-service", "11.3", "10"], ["asr-service", "9.1", "5"], ["llm-service", "6.2", "5"],
+]]
+
+
+def test_services_over_one_alert_in_one_tick_are_listed_in_one_email():
+    message = _render("ERROR_RATE_5XX", GROUPED, tenant_name=None)
+
+    assert message.subject == "5xx Error Rate — Threshold 5%"
+    assert (
+        "Affected Services:\n"
+        " tts-service — Current Value: 11.3% (Threshold 10%)\n"
+        " asr-service — Current Value: 9.1%\n"
+        " llm-service — Current Value: 6.2%\n"
+        "\nLog in to"
+    ) in message.text_body
+    html = message.html_body
+    assert "Affected Services:" in html
+    assert (
+        html.index("tts-service — Current Value: 11.3% (Threshold 10%)")
+        < html.index("asr-service — Current Value: 9.1%")
+        < html.index("llm-service — Current Value: 6.2%")
+        < html.index("Log in to")
+    )
+    # The list replaces the single-service lines.
+    for body in (message.text_body, html):
+        assert "Affected Service:" not in body
+        assert "\nCurrent Value:" not in body and ">Current Value:" not in body
+
+
+def test_a_service_that_fired_alone_keeps_the_single_service_lines():
+    message = _render("ERROR_RATE_5XX", ["5", WHEN, "6.2", "asr-service"], tenant_name=None)
+
+    assert "Current Value: 6.2%\nAffected Service: asr-service\n\nLog in to" in message.text_body
+    assert "Affected Services" not in message.text_body + message.html_body
+    html = message.html_body
+    assert '<p style="margin:0 0 4px 0;">Current Value: 6.2%</p>' in html
+    assert '<p style="margin:0 0 20px 0;">Affected Service: asr-service</p>' in html
+
+
+@pytest.mark.parametrize("event_name", ["ERROR_RATE_4XX", "ERROR_RATE_5XX", "LATENCY_P50", "LATENCY_P95", "LATENCY_P99"])
+def test_every_monitoring_alert_shows_the_affected_service(event_name):
+    message = _render(event_name, ["5", WHEN, "6", "svc-a"], tenant_name=None)
+
+    assert "Affected Service: svc-a" in message.html_body
+    assert "Affected Service: svc-a" in message.text_body
+
+
+def test_monitoring_envelope_without_a_service_still_renders():
+    """An envelope published before the producer sent the service (still in
+    Kafka, or retried, during a rollout) renders without the line."""
+    message = _render("LATENCY_P95", ["2", WHEN, "2.5"], tenant_name=None)
+
+    assert "Current Value: 2.5s\n\nLog in to" in message.text_body
+    assert "Affected Service" not in message.text_body
+    assert "Affected Service" not in message.html_body
+    assert '<p style="margin:0 0 20px 0;">Current Value: 2.5s</p>' in message.html_body
+
+
+def test_affected_service_is_escaped_in_html_only():
+    message = _render("ERROR_RATE_4XX", ["5", WHEN, "6", "<b>svc</b>"], tenant_name=None)
+
+    assert "Affected Service: &lt;b&gt;svc&lt;/b&gt;" in message.html_body
+    assert "Affected Service: <b>svc</b>" in message.text_body
+
+
+def test_listed_services_are_escaped_in_html_only():
+    details = ["5", WHEN, "9", "<b>a</b>", [["<b>a</b>", "9", "5"], ["b", "6", "5"]]]
+    message = _render("ERROR_RATE_4XX", details, tenant_name=None)
+
+    assert "&lt;b&gt;a&lt;/b&gt; — Current Value: 9%" in message.html_body
+    assert " <b>a</b> — Current Value: 9%" in message.text_body
+
+
+@pytest.mark.parametrize("event_name", ["ERROR_RATE_4XX", "ERROR_RATE_5XX", "LATENCY_P50", "LATENCY_P95", "LATENCY_P99"])
+def test_every_monitoring_alert_lists_grouped_services(event_name):
+    details = ["1", WHEN, "3", "svc-b", [["svc-b", "3", "1"], ["svc-a", "2", "1"]]]
+    message = _render(event_name, details, tenant_name=None)
+
+    for body in (message.html_body, message.text_body):
+        assert "Affected Services:" in body
+        assert "svc-b — Current Value: 3" in body and "svc-a — Current Value: 2" in body
+
+
+def test_a_one_service_list_renders_the_single_service_lines():
+    """The producer sends a lone service without the list, but a one-entry
+    list must not render a one-line 'Affected Services' block."""
+    message = _render("ERROR_RATE_5XX", ["5", WHEN, "6.2", "asr-service", [["asr-service", "6.2", "5"]]], tenant_name=None)
+
+    assert "Current Value: 6.2%\nAffected Service: asr-service\n" in message.text_body
+    assert "Affected Services" not in message.text_body
+
+
 def test_list_detail_renders_as_indented_lines_in_text():
     message = _render("TIER_ASSIGNED", ["Gold", "desc", ["ASR: 1 req/mo", "NMT: 2 req/mo"]])
 
