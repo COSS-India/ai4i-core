@@ -32,6 +32,15 @@ function accept(
     onChange("");
     return;
   }
+  if (raw.trim() === "-") {
+    onChange(raw);
+    onBoundHit?.("min");
+    return;
+  }
+  if (raw.trim().startsWith("-")) {
+    onBoundHit?.("min");
+    return;
+  }
   const n = Number(raw);
   if (!Number.isFinite(n)) return;
   if (n > 100) {
@@ -45,7 +54,7 @@ function accept(
   onChange(raw);
 }
 
-/** Shared budget % input — rejects outside 0–100, leaves the field unchanged. */
+/** Shared budget % input — rejects outside 0–100, leaves the field unchanged (a lone "-" is held and flagged). */
 export default function PercentageStepper({
   value,
   onChange,

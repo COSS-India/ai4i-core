@@ -23,7 +23,7 @@ import { CopyIcon, CloseIcon } from "@chakra-ui/icons";
 import { useCreateApiKeyTab } from "./hooks/useCreateApiKeyTab";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { FIELD_HINTS } from "../../config/fieldHints";
-import { percentageBoundMessage } from "../../config/budgetMessages";
+import { BUDGET_VALIDATION, percentageBoundMessage } from "../../config/budgetMessages";
 import FieldHint from "../common/FieldHint";
 import FieldLabel from "../common/FieldLabel";
 import FormActions from "../common/FormActions";
@@ -229,7 +229,11 @@ export default function CreateApiKeyTab({
               <PercentageStepper
                 value={create.apiKeyForm.allocated_percentage}
                 onChange={(next) => {
-                  setBudgetBoundHint(null);
+                  setBudgetBoundHint(
+                    next.trim() !== "" && Number(next) === 0
+                      ? BUDGET_VALIDATION.budgetMustBeGreaterThanZero
+                      : null,
+                  );
                   create.clearFieldError("budget");
                   create.setApiKeyForm({
                     ...create.apiKeyForm,
