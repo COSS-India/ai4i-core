@@ -417,28 +417,16 @@ class TestParseFromTo:
         r = _parse_from_to("2026-09-28", "2026-09-29")
         assert r.end == _NOW
 
-    # With a 15-day retention, now-15d is 2026-09-14T17:30 IST, so the
-    # earliest accepted `from` is the next IST midnight: 2026-09-15 IST
-    # (2026-09-14T18:30Z).
-    def test_from_past_retention_raises_422(self, monkeypatch):
+    def test_from_past_retention_is_accepted(self, monkeypatch):
+        """No retention floor: a range reaching back past what Prometheus
+        keeps is accepted, and the queries clamp it instead (see
+        metering_promql_builder.retained_range)."""
         monkeypatch.setattr(_metering_route_mod.settings, "prometheus_retention_days", 15)
-        self._assert_422("2026-09-14T18:29:59Z", "2026-09-20T00:00:00Z", "on or after")
+        r = _parse_from_to("2025-01-01", "2026-09-20")
+        assert r.start == _utc(2024, 12, 31, 18, 30)
 
-    def test_from_at_retention_floor_is_accepted(self, monkeypatch):
-        monkeypatch.setattr(_metering_route_mod.settings, "prometheus_retention_days", 15)
-        r = _parse_from_to("2026-09-14T18:30:00Z", "2026-09-20T00:00:00Z")
-        assert r.start == _utc(2026, 9, 14, 18, 30)
-
-    def test_earliest_calendar_day_is_accepted(self, monkeypatch):
-        """The first whole IST day inside retention is selectable; the day
-        before it (partly past retention) is not."""
-        monkeypatch.setattr(_metering_route_mod.settings, "prometheus_retention_days", 15)
-        assert _parse_from_to("2026-09-15", "2026-09-20").start == _utc(2026, 9, 14, 18, 30)
-        self._assert_422("2026-09-14", "2026-09-20", "on or after")
-
-    def test_earliest_from_is_an_ist_midnight(self, monkeypatch):
-        monkeypatch.setattr(_metering_route_mod.settings, "prometheus_retention_days", 15)
-        assert _metering_route_mod._earliest_from(_NOW) == _utc(2026, 9, 14, 18, 30)
+    def test_no_earliest_from_helper(self):
+        assert not hasattr(_metering_route_mod, "_earliest_from")
 
     def test_unencoded_plus_offset_is_accepted(self):
         """`+05:30` sent without URL-encoding arrives as ` 05:30`."""
@@ -526,6 +514,30 @@ def _overview_svc() -> MagicMock:
     return svc
 
 
+def _recording_svc() -> tuple[MeteringService, list[str]]:
+    """A real MeteringService over a Prometheus client that records every
+    PromQL it's sent and returns no data."""
+    queries: list[str] = []
+
+    async def _record(promql, *args, **kwargs):
+        queries.append(promql)
+        return []
+
+    client = MagicMock()
+    client.query = AsyncMock(side_effect=_record)
+    client.query_range = AsyncMock(side_effect=_record)
+    client.scalar = AsyncMock(side_effect=lambda promql, *a, **k: queries.append(promql) or 0.0)
+    svc = MeteringService(client=client, auth_db=None)
+    svc.overview_tenant_data = AsyncMock(return_value=(None, {"24h": None, "7d": None, "30d": None}))
+    svc.registry_model_count = AsyncMock(return_value=0)
+    return svc, queries
+
+
+def _tenant_scoped(queries: list[str]) -> list[str]:
+    """Queries filtering on one tenant (not the `tenant!="unknown"` guard)."""
+    return [q for q in queries if 'tenant="' in q or 'tenant_id="' in q]
+
+
 def _empty_redis() -> AsyncMock:
     redis = AsyncMock()
     redis.get = AsyncMock(return_value=None)
@@ -591,6 +603,18 @@ class TestOverviewCustomRange:
         restored = type(response).model_validate(json.loads(redis.set.call_args.args[1]))
         assert restored.scope.from_ == "2026-09-19T18:30:00Z"
         assert restored.scope.to == "2026-09-22T18:30:00Z"
+
+    async def test_admin_without_tenant_id_stays_platform_wide(self):
+        """A custom range must not narrow an admin's platform-wide view to
+        any one tenant, the same as a preset window."""
+        svc, queries = _recording_svc()
+        redis = _empty_redis()
+        response = await _call_overview(svc, redis=redis, from_="2026-09-20", to="2026-09-22")
+
+        assert queries
+        assert _tenant_scoped(queries) == []
+        assert response.scope.tenant_id is None and response.scope.organisation is None
+        assert ":all:" in _overview_keys(redis)[0]
 
     async def test_invalid_range_raises_422_before_querying(self):
         svc = _overview_svc()
@@ -699,10 +723,10 @@ class TestOverviewFirstUsageAtHybrid:
         assert not any(k.startswith("metering:first-usage:") for k in _set_keys(redis))
         assert len(_overview_keys(redis)) == 1
 
-    async def test_cache_key_is_v4(self, fake_usage_repo):
+    async def test_cache_key_is_v5(self, fake_usage_repo):
         redis = _empty_redis()
         await _call_overview(self._svc(), redis=redis)
-        assert _overview_keys(redis)[0].startswith("metering:overview:v4:")
+        assert _overview_keys(redis)[0].startswith("metering:overview:v5:")
 
 
 def _redis_with(entries: dict) -> AsyncMock:
@@ -727,7 +751,7 @@ class TestFirstRequestAtCache:
 
     async def test_cache_hit_skips_the_query(self, fake_usage_repo):
         svc = self._svc()
-        redis = _redis_with({"metering:first-usage:v2:all": {"first_request_at": "2026-07-02T09:00:00Z"}})
+        redis = _redis_with({"metering:first-usage:v3:all": {"first_request_at": "2026-07-02T09:00:00Z"}})
         response = await _call_overview(svc, redis=redis)
         svc.first_request_at.assert_not_called()
         assert response.first_usage_at == "2026-07-02T09:00:00Z"
@@ -752,14 +776,14 @@ class TestFirstRequestAtCache:
     async def test_miss_stores_value_with_long_ttl(self, fake_usage_repo):
         redis = _empty_redis()
         await _call_overview(self._svc(_utc(2026, 7, 2, 9)), redis=redis)
-        call = next(c for c in redis.set.call_args_list if c.args[0] == "metering:first-usage:v2:all")
+        call = next(c for c in redis.set.call_args_list if c.args[0] == "metering:first-usage:v3:all")
         assert json.loads(call.args[1]) == {"first_request_at": "2026-07-02T09:00:00Z"}
         assert call.kwargs["ex"] == _metering_route_mod._FIRST_USAGE_CACHE_TTL
         assert _metering_route_mod._FIRST_USAGE_CACHE_TTL >= 3600
 
     async def test_shared_across_windows_and_task_types(self, fake_usage_repo):
         svc = self._svc()
-        redis = _redis_with({"metering:first-usage:v2:all": {"first_request_at": "2026-07-02T09:00:00Z"}})
+        redis = _redis_with({"metering:first-usage:v3:all": {"first_request_at": "2026-07-02T09:00:00Z"}})
         await _call_overview(svc, redis=redis, window="7d", task_types="llm")
         await _call_overview(svc, redis=redis, from_="2026-09-20", to="2026-09-22")
         svc.first_request_at.assert_not_called()
@@ -767,30 +791,27 @@ class TestFirstRequestAtCache:
     async def test_tenant_scoped_key(self, fake_usage_repo):
         redis = _empty_redis()
         await _call_overview(self._svc(_utc(2026, 7, 2)), redis=redis, request=_tenant_admin_request())
-        assert "metering:first-usage:v2:7:Acme Corp" in _set_keys(redis)
+        assert "metering:first-usage:v3:7:Acme Corp" in _set_keys(redis)
 
     def test_name_only_scope_does_not_share_the_platform_wide_key(self):
         key = _metering_route_mod._first_usage_cache_key
-        assert key(None, None) == "metering:first-usage:v2:all"
+        assert key(None, None) == "metering:first-usage:v3:all"
         assert key(None, "Acme Corp") != key(None, None)
 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("frozen_now", "fake_usage_repo")
-class TestOverviewEarliestFrom:
-    async def test_response_carries_retention_floor(self, monkeypatch):
-        monkeypatch.setattr(_metering_route_mod.settings, "prometheus_retention_days", 15)
+class TestOverviewHasNoEarliestFrom:
+    async def test_response_has_no_earliest_from(self):
         response = await _call_overview(_overview_svc())
-        assert response.earliest_from == "2026-09-14T18:30:00Z"
+        assert "earliest_from" not in response.model_dump()
 
-    async def test_cache_hit_gets_a_fresh_value(self, monkeypatch):
-        """earliest_from moves at IST midnight, so a cached payload's copy
-        is replaced rather than served stale."""
-        monkeypatch.setattr(_metering_route_mod.settings, "prometheus_retention_days", 15)
+    async def test_cache_hit_is_served_as_is(self):
+        cached = {"degraded": False, "first_usage_at": "2026-07-02T09:00:00Z"}
         redis = AsyncMock()
-        redis.get = AsyncMock(return_value=json.dumps({"earliest_from": "stale", "degraded": False}))
+        redis.get = AsyncMock(return_value=json.dumps(cached))
         response = await _call_overview(_overview_svc(), redis=redis)
-        assert response["earliest_from"] == "2026-09-14T18:30:00Z"
+        assert response == cached
 
 
 @pytest.mark.asyncio
@@ -818,6 +839,14 @@ class TestModelConsumptionCustomRange:
         )
         assert response.scope.window == "custom"
         assert response.scope.from_ == "2026-09-20T00:00:00Z"
+
+    async def test_admin_without_tenant_id_stays_platform_wide(self):
+        svc, queries = _recording_svc()
+        response = await self._call(svc, from_="2026-09-20", to="2026-09-22")
+
+        assert queries
+        assert _tenant_scoped(queries) == []
+        assert response.scope.tenant_id is None and response.scope.organisation is None
 
     async def test_window_only_is_unchanged(self):
         svc = self._svc()

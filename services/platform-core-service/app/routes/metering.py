@@ -184,20 +184,6 @@ def _parse_range_bound(name: str, raw: str) -> tuple[datetime, bool]:
     return dt.astimezone(timezone.utc), False
 
 
-def _earliest_from(now: datetime) -> datetime:
-    """Earliest ``from`` a custom range accepts: the first IST midnight at or
-    after ``now - PROMETHEUS_RETENTION_DAYS``, in UTC. Rounded up to a whole
-    day so the calendar's earliest selectable day (a date-only ``from``,
-    i.e. IST midnight) is always accepted, and never reaches past retention.
-    Returned on /overview as ``earliest_from`` so the frontend doesn't have to
-    know the retention setting."""
-    cutoff = (now - timedelta(days=settings.prometheus_retention_days)).astimezone(_IST)
-    midnight = datetime.combine(cutoff.date(), time(), tzinfo=_IST)
-    if midnight < cutoff:
-        midnight += timedelta(days=1)
-    return midnight.astimezone(timezone.utc)
-
-
 def _parse_from_to(from_: Optional[str], to: Optional[str]) -> Optional[AbsoluteRange]:
     """Parse the ``from``/``to`` query params into an AbsoluteRange, or None
     when neither is given (the caller then falls back to ``window``).
@@ -213,10 +199,10 @@ def _parse_from_to(from_: Optional[str], to: Optional[str]) -> Optional[Absolute
     - ``from`` must be before ``to``, and ``to`` must not be in the future.
       Not validated against first_usage_at — a range before it just comes
       back sparse/empty.
-    - ``from`` must not be before _earliest_from (PROMETHEUS_RETENTION_DAYS).
-      The windowed PromQL reads the counter at ``from``; once that sample is
-      pruned, every series looks new and its whole cumulative value is
-      counted as usage for the range. This also caps the range length.
+    - ``from`` may be as far back as the caller likes. Data older than a
+      source's retention is simply not counted: the Prometheus queries clamp
+      the range to what's retained (metering_promql_builder.retained_range)
+      rather than erroring or counting lifetime counters.
     """
     if from_ is None and to is None:
         return None
@@ -251,15 +237,6 @@ def _parse_from_to(from_: Optional[str], to: Optional[str]) -> Optional[Absolute
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="`from` must be earlier than `to`.",
-        )
-    earliest = _earliest_from(now)
-    if start < earliest:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"`from` must be on or after {_iso_utc(earliest)} "
-                f"(metering history is kept for {settings.prometheus_retention_days} days)."
-            ),
         )
     return AbsoluteRange(start=start, end=end)
 
@@ -321,10 +298,12 @@ def _first_usage_cache_key(scope_tenant: Optional[str], scope_tenant_name: Optio
     the key because first_request_at filters on the id when there is one and
     on the name otherwise; a name-only scope must not share the "all" entry.
 
-    v2: v1 also cached a None result, which must not be served after deploy."""
+    v2: v1 also cached a None result, which must not be served after deploy.
+    v3: the Prometheus lookback no longer stops at PROMETHEUS_RETENTION_DAYS,
+    so a v2 value found with the shorter lookback may be too late."""
     if not (scope_tenant or scope_tenant_name):
-        return "metering:first-usage:v2:all"
-    return f"metering:first-usage:v2:{scope_tenant or ''}:{scope_tenant_name or ''}"
+        return "metering:first-usage:v3:all"
+    return f"metering:first-usage:v3:{scope_tenant or ''}:{scope_tenant_name or ''}"
 
 
 def _parse_cached_first_request(cached: dict) -> Optional[datetime]:
@@ -679,17 +658,15 @@ async def get_overview(
     auth_type_filter = API_KEY_AUTH_TYPE
 
     ranking_active = is_admin and not scope_tenant
-    # v4: first_usage_at also reads the metering source (v3 was quota_usage only).
+    # v5: earliest_from dropped from the payload (v4 carried it).
     cache_key = (
-        f"metering:overview:v4:{_range_cache_part(window, custom_range)}:{scope_tenant_name or 'all'}:"
+        f"metering:overview:v5:{_range_cache_part(window, custom_range)}:{scope_tenant_name or 'all'}:"
         f"{_caller_role_label(request)}:{','.join(task_type_filter) if task_type_filter else 'all'}"
         + (f":{limit}" if ranking_active else "")
     )
-    # earliest_from moves at IST midnight, so it's never served from cache.
-    earliest_from = _iso_utc(_earliest_from(datetime.now(timezone.utc)))
     cached = await _cache_get(redis, cache_key)
     if cached:
-        return {**cached, "earliest_from": earliest_from}
+        return cached
 
     # tenant_count()/active_tenants() all touch self._auth_db (a single
     # AsyncSession — NOT safe for concurrent use), so they're fetched via
@@ -729,14 +706,19 @@ async def get_overview(
     *results, metering_first_request = results
     if first_request_cached is not None:
         metering_first_request = _parse_cached_first_request(first_request_cached)
+        metering_source = "cache_hit"
     elif isinstance(metering_first_request, Exception):
+        metering_source = "failed"
         # Falls back to the quota value alone. Not degraded, and not cached
         # under its own key, so the next overview miss retries it. The
         # overview itself is still cached: blocking that too would make
         # every load pay for the slow query again while Prometheus struggles.
         logger.warning("first_request_at lookup failed: %s", metering_first_request)
         metering_first_request = None
-    elif metering_first_request is not None:
+    elif metering_first_request is None:
+        metering_source = "none"
+    else:
+        metering_source = "queried"
         # Only a real timestamp is cached. A None (no API-key requests yet)
         # would stick for the whole TTL, and for a tenant on untiered keys
         # quota_usage has nothing either, so first_usage_at would stay null
@@ -748,6 +730,15 @@ async def get_overview(
             ttl=_FIRST_USAGE_CACHE_TTL,
         )
     first_usage_at = _combine_first_usage(quota_first_usage, metering_first_request)
+    # One line per overview miss, so a null first_usage_at can be traced to
+    # the half that produced it without a debugger.
+    logger.info(
+        "first_usage_at tenant_id=%s tenant=%s quota=%s quota_ok=%s metering=%s metering_source=%s result=%s",
+        scope_tenant, scope_tenant_name,
+        _iso_utc(quota_first_usage) if quota_first_usage else None, first_usage_ok,
+        _iso_utc(metering_first_request) if metering_first_request else None, metering_source,
+        first_usage_at,
+    )
     # Merge both result sets through one _partition_results call so a failure
     # in either half still degrades the response instead of raising —
     # active_tenants() (unlike tenant_count()) doesn't catch a Prometheus
@@ -776,7 +767,6 @@ async def get_overview(
         usage_concentration=usage_conc,
         request_volume=chart,
         first_usage_at=first_usage_at,
-        earliest_from=earliest_from,
         degraded=degraded,
         generated_at=generated_at,
     )

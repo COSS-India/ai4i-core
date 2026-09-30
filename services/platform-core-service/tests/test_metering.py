@@ -379,6 +379,16 @@ class TestPrometheusClientQuery:
         result = await client.query("up")
         assert result == []
 
+    async def test_query_evaluates_now_by_default(self):
+        client = self._make_client({"data": {"result": []}})
+        await client.query("up")
+        assert client._client.get.call_args.kwargs["params"] == {"query": "up"}
+
+    async def test_query_time_sends_the_time_param(self):
+        client = self._make_client({"data": {"result": []}})
+        await client.query("up", time=1_750_000_000.0)
+        assert client._client.get.call_args.kwargs["params"] == {"query": "up", "time": 1_750_000_000.0}
+
     async def test_scalar_returns_float(self):
         client = self._make_client({
             "data": {"result": [{"metric": {}, "value": [1234, "7.5"]}]}
@@ -2800,17 +2810,56 @@ class TestAbsoluteRangeQueries:
 
 @pytest.mark.asyncio
 class TestFirstRequestAt:
-    async def test_promql_reads_series_presence_over_retention(self):
+    @staticmethod
+    def _ts(*args) -> float:
+        return _datetime(*args, tzinfo=_timezone.utc).timestamp()
+
+    @staticmethod
+    def _row(ts: float) -> list:
+        return [{"metric": {}, "value": [0, str(ts)]}]
+
+    async def test_coarse_query_reads_series_presence_over_a_fixed_long_lookback(self, monkeypatch):
+        """The lookback no longer stops at PROMETHEUS_RETENTION_DAYS: a
+        15-day setting hid tenants idle since an older pod restart."""
+        from app.core.config import settings
+        monkeypatch.setattr(settings, "prometheus_retention_days", 15)
         svc = _make_service(query_return=[])
         await svc.first_request_at(tenant="Acme Corp", tenant_id="7")
         promql = svc._client.query.call_args.args[0]
-        from app.core.config import settings
         assert promql.startswith("min(min_over_time(timestamp(telemetry_obsv_requests_total{")
-        assert promql.endswith(f"[{settings.prometheus_retention_days}d:1h]))")
+        assert promql.endswith("[400d:6h]))")
+        assert "15d" not in promql
         assert 'tenant_id="7"' in promql
         assert 'auth_type=~"api_key|"' in promql
         # presence, not a windowed increase (which misreads the retention edge)
         assert "increase(" not in promql and "unless" not in promql
+
+    async def test_empty_coarse_result_skips_the_refine(self):
+        svc = _make_service(query_return=[])
+        assert await svc.first_request_at(tenant=None) is None
+        assert svc._client.query.await_count == 1
+
+    async def test_refine_runs_hourly_at_the_coarse_hit(self):
+        coarse = self._ts(2026, 7, 2, 12, 0)
+        fine = self._ts(2026, 7, 2, 9, 0)
+        svc = _make_service()
+        svc._client.query = AsyncMock(side_effect=[self._row(coarse), self._row(fine)])
+        result = await svc.first_request_at(tenant=None, tenant_id="7")
+
+        refine = svc._client.query.await_args_list[1]
+        assert refine.args[0].endswith("[6h:1h]))")
+        assert 'tenant_id="7"' in refine.args[0]
+        # one fine step past the coarse hit, so the whole coarse step before
+        # it is covered
+        assert refine.kwargs["time"] == coarse + 3600
+        assert result == _datetime(2026, 7, 2, 8, 0, tzinfo=_timezone.utc)
+
+    async def test_empty_refine_falls_back_to_coarse_minus_a_coarse_step(self):
+        coarse = self._ts(2026, 7, 2, 12, 0)
+        svc = _make_service()
+        svc._client.query = AsyncMock(side_effect=[self._row(coarse), []])
+        result = await svc.first_request_at(tenant=None)
+        assert result == _datetime(2026, 7, 2, 6, 0, tzinfo=_timezone.utc)
 
     async def test_platform_wide_has_no_tenant_filter(self):
         svc = _make_service(query_return=[])
@@ -2837,3 +2886,105 @@ class TestFirstRequestAt:
         svc._client.query = AsyncMock(side_effect=RuntimeError("down"))
         with pytest.raises(RuntimeError):
             await svc.first_request_at(tenant=None)
+
+
+# ── Ranges reaching past Prometheus retention ────────────────────────────────
+
+
+@pytest.fixture
+def retention_15d(monkeypatch):
+    """15-day retention with the frozen _NOW, so retention_edge() is
+    _NOW - 15d + 1h (2026-09-14T13:00Z)."""
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "prometheus_retention_days", 15)
+    return _NOW - _timedelta(days=15) + _timedelta(hours=1)
+
+
+@pytest.mark.usefixtures("frozen_builder_now")
+class TestRetainedRange:
+    def test_range_inside_retention_is_unchanged(self, retention_15d):
+        r = _abs_range(5, 2)
+        assert _builder_mod.retained_range(r) == r
+
+    def test_range_straddling_the_edge_is_clamped(self, retention_15d):
+        r = _abs_range(30, 2)
+        clamped = _builder_mod.retained_range(r)
+        assert clamped == AbsoluteRange(start=retention_15d, end=r.end)
+
+    def test_range_entirely_before_the_edge_is_not_retained(self, retention_15d):
+        assert _builder_mod.retained_range(_abs_range(60, 30)) is _builder_mod.NOT_RETAINED
+
+    def test_presets_pass_through(self, retention_15d):
+        assert _builder_mod.retained_range("30d") == "30d"
+        assert _builder_mod.retained_range(None) is None
+
+    def test_straddling_range_query_starts_at_the_edge(self, retention_15d):
+        """The unless arm reads each series at the clamped start (inside
+        retention), not at the pruned `from`."""
+        expr = sum_over_window("m{}", _abs_range(30, 2))
+        duration = int((_abs_range(30, 2).end - retention_15d).total_seconds())
+        assert f"increase(m{{}}[{duration}s] offset 172800s)" in expr
+        assert f"m{{}} offset {172800 + duration}s)" in expr
+
+    def test_fully_pruned_range_gives_an_empty_vector(self, retention_15d):
+        r = _abs_range(60, 30)
+        assert sum_over_window("m{}", r) == "sum((m{} unless m{}))"
+        assert sum_over_window_by("m{}", "model", r) == "sum by(model) ((m{} unless m{}))"
+        assert apply_time_range("m{}", r) == "(m{} unless m{})"
+
+    def test_presets_are_byte_for_byte_unchanged(self, retention_15d):
+        assert sum_over_window("m{}", "30d") == (
+            "sum((m{} unless m{} offset 30d) or (increase(m{}[30d]) > 0))"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("frozen_builder_now")
+class TestPastRetentionQueries:
+    async def test_request_total_fully_pruned_is_zero_without_querying(self, retention_15d):
+        svc = _make_service(scalar_return=99.0)
+        result = await svc.request_total(
+            inference_only=True, tenant=None, service_id=None, time_range=_abs_range(60, 30),
+        )
+        svc._client.scalar.assert_not_called()
+        assert result["total_requests"]["count"] == 0
+        assert result["avg_rps"]["value"] == 0.0
+        assert result["total_requests"]["previous_count"] is None
+
+    async def test_request_total_straddling_is_clamped_and_has_no_previous(self, retention_15d):
+        svc = _make_service(scalar_return=10.0)
+        result = await svc.request_total(
+            inference_only=True, tenant=None, service_id=None, time_range=_abs_range(30, 2),
+        )
+        queries = [c.args[0] for c in svc._client.scalar.call_args_list]
+        assert len(queries) == 3  # current only
+        duration = int((_abs_range(30, 2).end - retention_15d).total_seconds())
+        assert all(f"[{duration}s] offset 172800s" in q for q in queries)
+        assert result["total_requests"]["previous_count"] is None
+
+    async def test_chart_buckets_before_the_edge_are_zero_and_not_queried(self, retention_15d):
+        """A 20-day range with daily buckets: the first bucket starting on or
+        after the edge (2026-09-14T13:00Z) is the one from 2026-09-15T12:00Z."""
+        r = _abs_range(20, 0)
+        svc = _make_service(range_return=[{"values": [[1, "3"]]}])
+        chart = await svc.request_volume_chart(r, tenant=None)
+
+        start_ts = r.start.timestamp()
+        kwargs = svc._client.query_range.call_args.kwargs
+        # buckets 1-6 start before the edge; bucket 7 starts at start+6d
+        assert kwargs["start"] == start_ts + 7 * 86_400
+        assert kwargs["end"] == start_ts + 20 * 86_400
+        succ = next(s for s in chart.series if s.key == "successful")
+        assert [p.value for p in succ.points[:6]] == [0.0] * 6
+        assert succ.points[0].ts == int(start_ts + 86_400)
+
+    async def test_chart_fully_pruned_is_none_without_querying(self, retention_15d):
+        svc = _make_service(range_return=[{"values": [[1, "3"]]}])
+        assert await svc.request_volume_chart(_abs_range(60, 30), tenant=None) is None
+        svc._client.query_range.assert_not_called()
+        svc._client.scalar.assert_not_called()
+
+    async def test_usage_concentration_fully_pruned_is_empty(self, retention_15d):
+        svc = _make_service(query_return=[])
+        await svc.usage_concentration(limit=5, time_range=_abs_range(60, 30))
+        assert "unless" in svc._client.query.call_args.args[0]
