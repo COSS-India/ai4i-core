@@ -56,10 +56,6 @@ export default function ApiKeyBudgetModal({
   const keyName = row?.key_name || focusedKeyName || BUDGET_COPY.apiKeyFallback;
   const totalOver = liveTotalPct > 100 + 1e-6;
   const figures = row ? keyBudgetFigures(row, rows, applicationBudget) : null;
-  const savedRemaining =
-    row?.originalAmount != null && row.consumed_budget != null
-      ? Math.round((row.originalAmount - row.consumed_budget) * 100) / 100
-      : null;
   const draftPct = row?.resolvedPct;
   const fieldError = row?.rowError || (totalOver ? totalApiKeysExceeds100(liveTotalPct) : null);
   const rangeLabel = isLoading
@@ -131,10 +127,12 @@ export default function ApiKeyBudgetModal({
                   isLoading ? undefined : formatBudgetMoney(row?.consumed_budget, currency)
                 }
                 remainingValue={
-                  isLoading ? BUDGET_COPY.loading : formatBudgetMoney(savedRemaining, currency)
+                  isLoading ? BUDGET_COPY.loading : formatBudgetMoney(figures?.remaining, currency)
                 }
                 remainingSub={isLoading ? undefined : BUDGET_COPY.leftForThisKey}
-                remainingColor={savedRemaining != null && savedRemaining >= 0 ? "green.700" : "ink.800"}
+                remainingColor={
+                  figures?.remaining != null && figures.remaining >= 0 ? "green.700" : "ink.800"
+                }
                 rangeLabel={rangeLabel}
                 currency={currency}
               />

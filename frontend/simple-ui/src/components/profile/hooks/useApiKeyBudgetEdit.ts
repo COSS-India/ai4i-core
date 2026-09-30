@@ -178,7 +178,7 @@ function buildDraftFromUsageKey(
   };
 }
 
-/** Display figures for one key. Percent headroom stays on the parent Application budget. */
+/** Display figures for one key. Remaining is the saved allocation minus consumed. Percent headroom stays on the parent Application budget. */
 export function keyBudgetFigures(
   row: KeyBudgetDraft,
   rows: KeyBudgetDraft[],
@@ -190,7 +190,7 @@ export function keyBudgetFigures(
   minimum: number | null;
   maximum: number | null;
 } {
-  const allocated = row.resolvedAmount;
+  const allocated = row.originalAmount;
   const consumed = row.consumed_budget;
   const remaining =
     allocated != null && consumed != null

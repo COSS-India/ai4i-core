@@ -277,10 +277,16 @@ export default function ApiKeyManagementTab({
               {
                 id: "budget",
                 label: "Edit budget",
-                tooltip: key.application_id ? BUDGET_COPY.editBudget : BUDGET_COPY.keyHasNoApplication,
+                tooltip: !key.application_id
+                  ? BUDGET_COPY.keyHasNoApplication
+                  : mgmt.isKeyEffectivelyActive(key)
+                    ? BUDGET_COPY.editBudget
+                    : mgmt.isKeyRevocable(key)
+                      ? "Only effectively active API keys can have their budget edited."
+                      : "This API key has been revoked and cannot have its budget edited.",
                 "aria-label": editBudgetForKey(key.key_name),
                 icon: <FiSliders />,
-                disabled: !key.application_id,
+                disabled: !key.application_id || !mgmt.isKeyEffectivelyActive(key),
                 onClick: () => {
                   if (key.application_id) {
                     openSingleKeyBudget(key.application_id, key.id, key.key_name);
@@ -679,6 +685,7 @@ export default function ApiKeyManagementTab({
         cancelLabel="Cancel"
         confirmColorScheme="red"
         isConfirmLoading={mgmt.isRevoking}
+        isConfirmDisabled={mgmt.revokeBudget?.status === "loading"}
         confirmLoadingText="Revoking..."
         leastDestructiveRef={cancelRef}
       />
