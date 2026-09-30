@@ -105,3 +105,37 @@ async def test_a_failed_write_does_not_raise(monkeypatch):
         await failures.record({"event_id": EVENT_ID}, FailureCode.EMAIL_SEND_FAILED, kafka_topic="t")
     finally:
         failures._failure_logger.cache_clear()
+
+
+async def test_a_grouped_event_writes_one_row_per_service(rows):
+    """12:27 — one email for asr, llm and tts fails to send: each service
+    gets its row, instead of one row with an empty subject."""
+    envelope = {
+        "event_id": EVENT_ID,
+        "event_name": "ERROR_RATE_5XX",
+        "tenant_id": "PLATFORM",
+        "subject": {},
+        "subjects": [{"service_id": "asr-service"}, {"service_id": "llm-service"}, {"service_id": "tts-service"}],
+        "band": {"value": 10, "unit": "PERCENT"},
+    }
+
+    await failures.record(
+        envelope, FailureCode.EMAIL_SEND_FAILED, kafka_topic="notification.events",
+        message="email reached 0 of 2 recipient(s)",
+    )
+
+    assert [json.loads(row["subject"]) for row in rows] == envelope["subjects"]
+    assert {row["event_id"] for row in rows} == {uuid.UUID(EVENT_ID)}
+    assert {row["error_code"] for row in rows} == {"EMAIL_SEND_FAILED"}
+
+
+@pytest.mark.parametrize("subjects", [None, [], "asr-service", 7, ["asr-service"]])
+async def test_unusable_subjects_fall_back_to_the_one_subject(rows, subjects):
+    """Envelopes from before the list, or with a broken one, still write their single row."""
+    await failures.record(
+        {"event_id": EVENT_ID, "subject": {"service_id": "asr-service"}, "subjects": subjects},
+        FailureCode.EMAIL_SEND_FAILED, kafka_topic="t",
+    )
+
+    [row] = rows
+    assert json.loads(row["subject"]) == {"service_id": "asr-service"}

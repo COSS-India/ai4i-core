@@ -160,13 +160,21 @@ async def _deliver(
     state_hash_value: Optional[str] = None,
     recipients: Optional[List[Recipient]] = None,
     tenant_name: Optional[str] = None,
+    subjects: Sequence[Mapping[str, str]] = (),
 ) -> Optional[uuid.UUID]:
-    """Recipients (unless given), then publish. The claim is already made."""
+    """Recipients (unless given), then publish. The claim is already made.
+    subjects are a grouped event's members (its subject is empty); each of
+    its failure rows names one of them."""
     failure = dict(
-        notification_name=row.name, notification_id=row.id, tenant_id=tenant_id, subject=subject,
+        notification_name=row.name, notification_id=row.id, tenant_id=tenant_id,
         event_id=event_id, state_hash=state_hash_value,
         observed=observed.to_json() if observed else None, band=band.value_unit() if band else None,
     )
+
+    async def record(stage: FailureStage, code: FailureCode, **fields) -> None:
+        for member in subjects or (subject,):
+            await rt.failures.record(stage, code, subject=member, **fields, **failure)
+
     if recipients is None:
         try:
             async with rt.auth_session_factory() as session:
@@ -178,15 +186,15 @@ async def _deliver(
                     )
                     tenant_name = tenant_name or resolved_name
         except Exception as exc:
-            await rt.failures.record(
+            await record(
                 FailureStage.RECIPIENTS, FailureCode.RECIPIENTS_LOOKUP_FAILED,
-                operation=Operation.RECIPIENTS_LOOKUP, error=exc, **failure,
+                operation=Operation.RECIPIENTS_LOOKUP, error=exc,
             )
             return None
     if not recipients:
-        await rt.failures.record(
+        await record(
             FailureStage.RECIPIENTS, FailureCode.NO_RECIPIENTS, operation=Operation.RECIPIENTS_LOOKUP,
-            message="no active user matches the selected recipients", **failure,
+            message="no active user matches the selected recipients",
         )
         return None
     envelope = Envelope(
@@ -203,6 +211,7 @@ async def _deliver(
         recipients=recipients,
         band=band,
         observed=observed,
+        subjects=[dict(member) for member in subjects],
         state_hash=state_hash_value,
     )
     sent = await rt.publisher.send(envelope, notification_id=row.id)
@@ -612,16 +621,20 @@ async def emit_band_batch(items: Sequence[BandItem]) -> List[uuid.UUID]:
     for members in groups.values():
         if len(members) == 1:
             e, subject, details = members[0], members[0].ref.subject_dict, members[0].details
+            subjects = []
         else:
             # The highest band sets the event's band and severity; a group
-            # spans several subjects, so it carries none.
+            # spans several subjects, so it carries none of its own and
+            # lists them instead.
             e = max(members, key=lambda m: m.band.value)
             subject, details = {}, await _group_details(rt, e, members)
+            subjects = [m.ref.subject_dict for m in members]
         event_id = await _deliver(
             rt, e.row, tenant_id=e.ref.tenant_id, subject=subject, event_id=e.event_id,
             occurred_at=now, details=details, severity=e.band.severity, band=e.band,
             observed=e.item.observed,
             extra_user_ids=e.subs.entry(e.spec.name).recipients if e.subs is not None else (),
+            subjects=subjects,
         )
         if event_id is not None:
             sent.append(event_id)
@@ -630,15 +643,16 @@ async def emit_band_batch(items: Sequence[BandItem]) -> List[uuid.UUID]:
 
 async def _group_details(rt: NotificationRuntime, head: _Evaluation, members: List[_Evaluation]) -> List[Any]:
     """Best effort, like _details: a failing merge sends head's own details
-    and writes DETAILS_PARTIAL."""
+    and writes DETAILS_PARTIAL, one row per member."""
     try:
         return list(head.item.group_details([list(m.details) for m in members]))
     except Exception as exc:
-        await rt.failures.record(
-            FailureStage.DETAILS, FailureCode.DETAILS_PARTIAL, notification_name=head.spec.name,
-            notification_id=head.row.id, tenant_id=head.ref.tenant_id, event_id=head.event_id,
-            operation=Operation.DETAILS_LOOKUP, error=exc,
-        )
+        for m in members:
+            await rt.failures.record(
+                FailureStage.DETAILS, FailureCode.DETAILS_PARTIAL, notification_name=head.spec.name,
+                notification_id=head.row.id, tenant_id=head.ref.tenant_id, subject=m.ref.subject_dict,
+                event_id=head.event_id, operation=Operation.DETAILS_LOOKUP, error=exc,
+            )
         return list(head.details)
 
 

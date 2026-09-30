@@ -1,5 +1,6 @@
 """Delivery failures -> notification_alert_failure_log, one row per event
-that reached no recipient on any channel.
+that reached no recipient on any channel (one per member subject of a
+grouped event, so each row names its service).
 
 Written through ai4i_core.kafka's FailureLogger, the same writer the
 producers use, so a consumer row has the same shape as theirs: producer
@@ -12,7 +13,7 @@ from __future__ import annotations
 import os
 import uuid
 from functools import lru_cache
-from typing import Any, Mapping, Optional
+from typing import Any, List, Mapping, Optional
 
 from ai4i_core.kafka import FailureCode, FailureStage, Operation, Producer
 from ai4i_core.kafka.constants import DEFAULT_FAILURE_THROTTLE_S
@@ -38,6 +39,14 @@ def _mapping(value: Any) -> Optional[Mapping[str, Any]]:
     return value if isinstance(value, Mapping) else None
 
 
+def _subjects(envelope: Mapping[str, Any]) -> List[Optional[Mapping[str, Any]]]:
+    """One per row: a grouped event's member subjects (its own is empty), so
+    each row names one of them; otherwise its own subject."""
+    members = envelope.get("subjects")
+    members = [m for m in members if isinstance(m, Mapping)] if isinstance(members, list) else []
+    return members or [_mapping(envelope.get("subject"))]
+
+
 def _event_id(value: Any) -> Optional[uuid.UUID]:
     """event_id is a UUID column; a value that isn't one is left out."""
     try:
@@ -55,17 +64,18 @@ async def record(
     message: Optional[str] = None,
     error: Optional[BaseException] = None,
 ) -> None:
-    await _failure_logger().record(
-        FailureStage.DELIVERY,
-        code,
-        notification_name=envelope.get("event_name") or UNKNOWN_NOTIFICATION,
-        operation=operation,
-        error=error,
-        message=message,
-        tenant_id=envelope.get("tenant_id"),
-        subject=_mapping(envelope.get("subject")),
-        event_id=_event_id(envelope.get("event_id")),
-        kafka_topic=kafka_topic,
-        observed=_mapping(envelope.get("observed")),
-        band=_mapping(envelope.get("band")),
-    )
+    for subject in _subjects(envelope):
+        await _failure_logger().record(
+            FailureStage.DELIVERY,
+            code,
+            notification_name=envelope.get("event_name") or UNKNOWN_NOTIFICATION,
+            operation=operation,
+            error=error,
+            message=message,
+            tenant_id=envelope.get("tenant_id"),
+            subject=subject,
+            event_id=_event_id(envelope.get("event_id")),
+            kafka_topic=kafka_topic,
+            observed=_mapping(envelope.get("observed")),
+            band=_mapping(envelope.get("band")),
+        )

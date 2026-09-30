@@ -169,5 +169,89 @@ async def test_a_failing_merge_sends_the_highest_band_service_and_writes_details
 
     (envelope,) = _envelopes(rt)
     assert envelope.details == ["10", "30 Sep 2026, 12:27 PM IST", "11.3", "tts-service"]
-    stage, code = rt.failures.record.await_args.args
-    assert (stage.value, code.value) == ("DETAILS", "DETAILS_PARTIAL")
+    assert _failure_rows(rt) == [
+        ("DETAILS_PARTIAL", {"service_id": "asr-service"}, envelope.event_id),
+        ("DETAILS_PARTIAL", {"service_id": "tts-service"}, envelope.event_id),
+    ]
+
+
+# ── Failure rows of a grouped event name every service in it ─────────────
+
+
+THREE = ("asr-service", "9.1"), ("llm-service", "6.2"), ("tts-service", "11.3")
+
+
+def _failure_rows(rt):
+    return [
+        (call.args[1].value, call.kwargs["subject"], call.kwargs.get("event_id"))
+        for call in rt.failures.record.await_args_list
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_grouped_event_with_no_recipients_writes_one_row_per_service(rt):
+    """12:27 — asr, llm and tts cross 5xx but nobody holds the role: each
+    service's row says so, instead of one row with an empty subject."""
+    rt.recipients.for_roles = AsyncMock(return_value=[])
+
+    assert await emit_band_batch([_item(s, v) for s, v in THREE]) == []
+
+    rows = _failure_rows(rt)
+    assert [(code, subject) for code, subject, _ in rows] == [
+        ("NO_RECIPIENTS", {"service_id": "asr-service"}),
+        ("NO_RECIPIENTS", {"service_id": "llm-service"}),
+        ("NO_RECIPIENTS", {"service_id": "tts-service"}),
+    ]
+    assert len({event_id for *_, event_id in rows}) == 1
+    rt.publisher.send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_grouped_event_whose_recipient_lookup_fails_writes_one_row_per_service(rt):
+    rt.recipients.for_roles = AsyncMock(side_effect=RuntimeError("auth db down"))
+
+    await emit_band_batch([_item(s, v) for s, v in THREE])
+
+    assert [(code, subject["service_id"]) for code, subject, _ in _failure_rows(rt)] == [
+        ("RECIPIENTS_LOOKUP_FAILED", "asr-service"),
+        ("RECIPIENTS_LOOKUP_FAILED", "llm-service"),
+        ("RECIPIENTS_LOOKUP_FAILED", "tts-service"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_grouped_envelope_carries_every_service_and_a_single_one_does_not(rt):
+    await emit_band_batch([_item(s, v) for s, v in THREE] + [_item("asr-service", "7", name=NotificationName.ERROR_RATE_4XX)])
+
+    by_name = {e.event_name: e for e in _envelopes(rt)}
+    grouped, single = by_name[NotificationName.ERROR_RATE_5XX], by_name[NotificationName.ERROR_RATE_4XX]
+    assert grouped.to_json()["subjects"] == [
+        {"service_id": "asr-service"}, {"service_id": "llm-service"}, {"service_id": "tts-service"},
+    ]
+    # A single-service message is unchanged on the wire.
+    assert "subjects" not in single.to_json()
+    assert single.to_json()["subject"] == {"service_id": "asr-service"}
+
+
+@pytest.mark.asyncio
+async def test_a_grouped_event_whose_kafka_send_fails_writes_one_row_per_service(monkeypatch):
+    from ai4i_core.kafka import publisher as publisher_module
+    from ai4i_core.kafka.publisher import Envelope, Publisher
+
+    def broken():
+        raise RuntimeError("broker down")
+
+    monkeypatch.setattr(publisher_module, "get_kafka_producer_client", broken)
+    failures = MagicMock(record=AsyncMock())
+    subjects = [monitoring_subject(s) for s, _ in THREE]
+    envelope = Envelope(
+        event_id=pipeline.uuid.uuid4(), event_name=NotificationName.ERROR_RATE_5XX,
+        notification_type=NotificationType.MONITORING, tenant_id=PLATFORM_TENANT_ID, tenant_name=None,
+        subject={}, occurred_at=utc_now(), channels=("EMAIL",), severity=Severity.CRITICAL, details=[],
+        recipients=[Recipient("admin@example.com", "Admin")], subjects=subjects,
+    )
+
+    assert await Publisher("notification.events", failures).send(envelope, notification_id=11) is False
+
+    rows = [(c.args[1].value, c.kwargs["subject"], c.kwargs["event_id"]) for c in failures.record.await_args_list]
+    assert rows == [("KAFKA_SEND_FAILED", s, envelope.event_id) for s in subjects]
