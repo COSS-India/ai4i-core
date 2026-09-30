@@ -8,6 +8,7 @@ import {
   listGroupedApiKeys,
   toLegacyApiKeyResponse,
 } from "../../../services/apiKeyService";
+import { fetchApplicationUsageDetail } from "../../../services/applicationUsageService";
 import type {
   User,
   Permission,
@@ -39,6 +40,18 @@ import type { InferenceTypeItem } from "../../../services/inferenceTypesService"
 export interface ApiKeyTableRow extends APIKeyResponse {
   application_name?: string;
 }
+
+/** Null until revoke opens. Error must not be rendered as ₹0. */
+export type RevokeBudgetSummary =
+  | { status: "loading" }
+  | { status: "error" }
+  | {
+      status: "ready";
+      allocated: number;
+      consumed: number;
+      unused: number;
+      applicationName: string;
+    };
 
 export interface UseApiKeyManagementTabOptions {
   user: User | null;
@@ -103,6 +116,8 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
   const [isRevokeModalOpen, setIsRevokeModalOpen] = useState(false);
   const [keyToRevoke, setKeyToRevoke] = useState<ApiKeyTableRow | null>(null);
+  const [revokeBudget, setRevokeBudget] = useState<RevokeBudgetSummary | null>(null);
+  const revokeLoadRef = useRef(0);
   const [isRevoking, setIsRevoking] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateFormData, setUpdateFormData] = useState<APIKeyUpdate>({
@@ -234,10 +249,10 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
             message: `Loaded ${flat.length} API key(s)`,
           });
         }
-      } catch (error) {
+      } catch {
         showToast({
           type: "error",
-          message: error instanceof Error ? error.message : "Failed to load API keys",
+          message: "Unable to load API keys. Please try again.",
         });
       } finally {
         setIsLoadingAllApiKeys(false);
@@ -341,11 +356,53 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     if (permissions.length === 0) {
       void loadPermissionsCatalog();
     }
+    const loadId = ++revokeLoadRef.current;
+    setRevokeBudget({ status: "loading" });
+    const tenantId = user?.tenant_id?.trim();
+    const applicationId = Number(key.application_id);
+    if (!tenantId || !Number.isFinite(applicationId) || applicationId <= 0) {
+      setRevokeBudget({ status: "error" });
+      return;
+    }
+    void fetchApplicationUsageDetail(tenantId, applicationId)
+      .then((detail) => {
+        if (revokeLoadRef.current !== loadId) return;
+        const match = detail.apiKeys.find((item) => item.keyId === key.id);
+        const allocated = match?.allocatedBudget.amount;
+        const consumed = match?.spendBudget.amount;
+        if (
+          !match ||
+          allocated == null ||
+          consumed == null ||
+          !Number.isFinite(allocated) ||
+          !Number.isFinite(consumed)
+        ) {
+          setRevokeBudget({ status: "error" });
+          return;
+        }
+        const applicationName =
+          detail.applicationName?.trim() ||
+          key.application_name?.trim() ||
+          "the parent Application";
+        setRevokeBudget({
+          status: "ready",
+          allocated,
+          consumed,
+          unused: Math.round((allocated - consumed) * 100) / 100,
+          applicationName,
+        });
+      })
+      .catch(() => {
+        if (revokeLoadRef.current !== loadId) return;
+        setRevokeBudget({ status: "error" });
+      });
   };
 
   const handleCloseRevokeModal = () => {
+    revokeLoadRef.current += 1;
     setIsRevokeModalOpen(false);
     setKeyToRevoke(null);
+    setRevokeBudget(null);
   };
 
   const handleOpenViewModal = (key: ApiKeyTableRow) => {
@@ -445,6 +502,40 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     [taskTypeNames, inferenceTypes],
   );
 
+  const allocationOverview = useMemo(() => {
+    const activeApps = applications.filter(
+      (app) =>
+        app.status === "ACTIVE" &&
+        app.allocated_budget != null &&
+        Number.isFinite(app.allocated_budget) &&
+        app.allocated_budget > 0,
+    );
+    const pool = activeApps.reduce((sum, app) => sum + (app.allocated_budget ?? 0), 0);
+    const activeAppIds = new Set(activeApps.map((app) => app.application_id));
+    let assignedInPool = 0;
+    let assignedKnown = 0;
+    let hasAmount = false;
+    for (const key of visibleApiKeys) {
+      if (key.is_revoked || key.is_active === false) continue;
+      if (key.allocated_budget == null || !Number.isFinite(key.allocated_budget)) continue;
+      hasAmount = true;
+      assignedKnown += key.allocated_budget;
+      if (key.application_id && activeAppIds.has(key.application_id)) {
+        assignedInPool += key.allocated_budget;
+      }
+    }
+    const comparable = pool > 0;
+    const allocatedPct = comparable ? (assignedInPool / pool) * 100 : null;
+    return {
+      keyCount: visibleApiKeys.length,
+      comparable,
+      allocatedPct,
+      availablePct: allocatedPct == null ? null : Math.max(0, 100 - allocatedPct),
+      pool,
+      allocatedAmount: hasAmount ? (comparable ? assignedInPool : assignedKnown) : null,
+    };
+  }, [applications, visibleApiKeys]);
+
   const formatKeyId = (key: ApiKeyTableRow) => key.api_key ?? "—";
 
   const formatBudgetPct = (key: ApiKeyTableRow): string => {
@@ -456,6 +547,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
 
   return {
     allApiKeys,
+    allocationOverview,
     visibleApiKeysCount: visibleApiKeys.length,
     isLoadingAllApiKeys,
     permissions,
@@ -481,6 +573,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     handleUpdateApiKey,
     isRevokeModalOpen,
     keyToRevoke,
+    revokeBudget,
     handleOpenRevokeModal,
     handleCloseRevokeModal,
     handleRevokeApiKey,

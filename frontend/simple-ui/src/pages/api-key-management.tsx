@@ -1,13 +1,16 @@
 import {
   Box,
+  Button,
   Center,
   Heading,
+  HStack,
   Spinner,
   useDisclosure,
   VStack,
 } from "@chakra-ui/react";
+import { FiRefreshCw, FiSliders } from "react-icons/fi";
 import Head from "next/head";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
@@ -16,8 +19,11 @@ import FormActions from "../components/common/FormActions";
 import FormPage from "../components/common/FormPage";
 import FormSection from "../components/common/FormSection";
 import { useAuth } from "../hooks/useAuth";
+import { BUDGET_COPY } from "../config/budgetMessages";
 import CreateApiKeyTab from "../components/profile/CreateApiKeyTab";
-import ApiKeyManagementTab from "../components/profile/ApiKeyManagementTab";
+import ApiKeyManagementTab, {
+  type ApiKeyPageActions,
+} from "../components/profile/ApiKeyManagementTab";
 import { userMayManageApiKeys } from "../utils/rbac";
 import { getPlatformName } from "../config/runtimeConfig";
 
@@ -72,6 +78,10 @@ const ApiKeyManagementPage: React.FC = () => {
     };
   }, [router.events]);
   const refreshManagedKeysRef = useRef<(() => Promise<void>) | null>(null);
+  const [pageActions, setPageActions] = useState<ApiKeyPageActions | null>(null);
+  const bindPageActions = useCallback((actions: ApiKeyPageActions) => {
+    setPageActions(actions);
+  }, []);
   const showList = !isCreateOpen;
 
   const showApiKeyManagement = userMayManageApiKeys(user?.roles);
@@ -163,13 +173,37 @@ const ApiKeyManagementPage: React.FC = () => {
         <Box hidden={!showList}>
           <ManagementPageHeader
             title="API Key Management"
-            description="Create keys, set permissions, and allocate a required budget as a percentage of the application"
+            description="Manage API keys, permissions, allocations and access for applications."
             actions={
-              <CreateButton onClick={onCreateOpen}>Create API Key</CreateButton>
+              <HStack spacing={2} flexWrap="wrap" justify="flex-end">
+                <Button
+                  leftIcon={<FiRefreshCw />}
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => pageActions?.refresh()}
+                  isLoading={pageActions?.refreshing}
+                  isDisabled={!pageActions}
+                >
+                  Refresh
+                </Button>
+                <Button
+                  leftIcon={<FiSliders />}
+                  size="sm"
+                  variant="outline"
+                  aria-label={BUDGET_COPY.bulkUpdateBudgets}
+                  onClick={() => pageActions?.openBulk()}
+                  isDisabled={!pageActions || pageActions.bulkDisabled}
+                >
+                  {BUDGET_COPY.bulkUpdateBudgets}
+                </Button>
+                <CreateButton onClick={onCreateOpen}>Create API Key</CreateButton>
+              </HStack>
             }
           />
           <ApiKeyManagementTab
             isActive
+            onCreate={onCreateOpen}
+            onBindPageActions={bindPageActions}
             onRegisterRefresh={(refresh) => {
               refreshManagedKeysRef.current = refresh;
             }}
