@@ -147,6 +147,11 @@ _IST = ZoneInfo("Asia/Kolkata")
 # rejected as a future date — absorbs client/server clock skew when the
 # frontend sends its own "now".
 _FUTURE_TO_TOLERANCE = timedelta(seconds=60)
+# Earliest `from` a custom range uses; an earlier one is silently clamped to
+# it (see _parse_from_to). The platform has no data before it, and without a
+# floor an absurd `from` (e.g. year 1) overflows datetime arithmetic and asks
+# the chart for ~100k zero-filled weekly buckets.
+_FROM_FLOOR = datetime(2000, 1, 1, tzinfo=_IST).astimezone(timezone.utc)
 
 
 def _floor_to_cache_ttl(now: datetime) -> datetime:
@@ -163,6 +168,22 @@ def _floor_to_cache_ttl(now: datetime) -> datetime:
 _UNENCODED_OFFSET = re.compile(r"(T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?) (\d{2}:?\d{2})$")
 
 
+def _to_utc(name: str, dt: datetime) -> datetime:
+    """``dt`` in UTC. A value so far out that UTC falls outside datetime's
+    range (year 1 in a positive offset, year 9999 in a negative one) can't
+    overflow into a 500: an ancient one becomes the floor (clamped anyway),
+    a far-future one is the usual future-date 422."""
+    try:
+        return dt.astimezone(timezone.utc)
+    except OverflowError:
+        if dt.year < _FROM_FLOOR.year:
+            return _FROM_FLOOR
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"`{name}` must not be in the future.",
+        ) from None
+
+
 def _parse_range_bound(name: str, raw: str) -> tuple[datetime, bool]:
     """Parse one from/to value to (UTC datetime, is_date_only)."""
     value = _UNENCODED_OFFSET.sub(r"\1+\2", raw.strip())
@@ -171,7 +192,7 @@ def _parse_range_bound(name: str, raw: str) -> tuple[datetime, bool]:
     except ValueError:
         day = None
     if day is not None:
-        return datetime.combine(day, time(), tzinfo=_IST).astimezone(timezone.utc), True
+        return _to_utc(name, datetime.combine(day, time(), tzinfo=_IST)), True
     try:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
@@ -181,7 +202,7 @@ def _parse_range_bound(name: str, raw: str) -> tuple[datetime, bool]:
         ) from None
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=_IST)
-    return dt.astimezone(timezone.utc), False
+    return _to_utc(name, dt), False
 
 
 def _parse_from_to(from_: Optional[str], to: Optional[str]) -> Optional[AbsoluteRange]:
@@ -203,6 +224,12 @@ def _parse_from_to(from_: Optional[str], to: Optional[str]) -> Optional[Absolute
       source's retention is simply not counted: the Prometheus queries clamp
       the range to what's retained (metering_promql_builder.retained_range)
       rather than erroring or counting lifetime counters.
+    - A ``from`` before _FROM_FLOOR (2000-01-01 IST) is silently clamped to
+      it, and a range entirely before it becomes the one day starting at the
+      floor (no data, so zeros). Never a 422: an absurd ``from`` would
+      otherwise overflow datetime arithmetic (a 500, or the previous-period
+      window before year 1) and zero-fill ~100k chart buckets. Scope echoes
+      the clamped range.
     """
     if from_ is None and to is None:
         return None
@@ -227,6 +254,10 @@ def _parse_from_to(from_: Optional[str], to: Optional[str]) -> Optional[Absolute
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="`to` must not be in the future.",
         )
+    if start < _FROM_FLOOR:
+        start = _FROM_FLOOR
+        if end <= start:
+            end = start + timedelta(days=1)
     open_end = _floor_to_cache_ttl(now)
     if end > open_end:
         # Fall back to the exact now when the floor would cut off the whole
@@ -300,10 +331,12 @@ def _first_usage_cache_key(scope_tenant: Optional[str], scope_tenant_name: Optio
 
     v2: v1 also cached a None result, which must not be served after deploy.
     v3: the Prometheus lookback no longer stops at PROMETHEUS_RETENTION_DAYS,
-    so a v2 value found with the shorter lookback may be too late."""
+    so a v2 value found with the shorter lookback may be too late.
+    v4: the lookback is now capped at the retention Prometheus reports, so a
+    v3 value found by the fixed 400-day lookback may lie past it."""
     if not (scope_tenant or scope_tenant_name):
-        return "metering:first-usage:v3:all"
-    return f"metering:first-usage:v3:{scope_tenant or ''}:{scope_tenant_name or ''}"
+        return "metering:first-usage:v4:all"
+    return f"metering:first-usage:v4:{scope_tenant or ''}:{scope_tenant_name or ''}"
 
 
 def _parse_cached_first_request(cached: dict) -> Optional[datetime]:
@@ -667,6 +700,9 @@ async def get_overview(
     cached = await _cache_get(redis, cache_key)
     if cached:
         return cached
+    # How far back Prometheus holds data, for the custom-range clamp and the
+    # first-usage lookback (cached per process; see metering_retention).
+    await svc.refresh_retention()
 
     # tenant_count()/active_tenants() all touch self._auth_db (a single
     # AsyncSession — NOT safe for concurrent use), so they're fetched via
@@ -1000,6 +1036,8 @@ async def get_model_consumption(
     cached = await _cache_get(redis, cache_key)
     if cached:
         return cached
+    # For the custom-range clamp (cached per process; see metering_retention).
+    await svc.refresh_retention()
 
     results = await asyncio.gather(
         svc.model_breakdown(

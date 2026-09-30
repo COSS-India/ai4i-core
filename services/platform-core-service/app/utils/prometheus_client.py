@@ -82,6 +82,26 @@ class PrometheusClient:
             )
         return data.get("data", {}).get("result", [])
 
+    async def storage_retention(self) -> Optional[str]:
+        """Prometheus's own configured retention, as reported by
+        ``/api/v1/status/runtimeinfo`` (``storageRetention``, e.g. "90d" or
+        "30d or 512MiB"). None when it can't be read: an HTTP or connection
+        error, a proxy that doesn't serve this endpoint (Thanos, Mimir), or a
+        response without the field.
+
+        Unlike query()/query_range(), this never raises: callers fall back to
+        PROMETHEUS_RETENTION_DAYS (see metering_promql_builder.retention_days).
+        """
+        url = f"{self.base_url}/api/v1/status/runtimeinfo"
+        try:
+            resp = await self._client.get(url, timeout=self.timeout)
+            resp.raise_for_status()
+            value = resp.json().get("data", {}).get("storageRetention")
+        except Exception as exc:
+            logger.warning("Could not read Prometheus runtimeinfo: %s", type(exc).__name__)
+            return None
+        return value if isinstance(value, str) and value.strip() else None
+
     @staticmethod
     def _safe_float(value: str, default: float = 0.0) -> float:
         """Parse a Prometheus value string, coercing NaN/Inf to default."""

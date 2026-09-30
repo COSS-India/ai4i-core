@@ -16,6 +16,7 @@ from app.repositories.model_management.model_repository import ModelRepository
 from app.repositories.model_management.service_repository import ServiceRepository
 from app.schemas.metering import Graph, GraphPoint, GraphSeries
 from app.utils.prometheus_client import PrometheusClient
+from app.utils.metering_retention import refresh_retention as _refresh_retention, retention_days
 from app.services.pay_per_use import inference_type_cache
 from app.utils.metering_promql_builder import (
     TIME_RANGES,
@@ -252,6 +253,13 @@ class MeteringService:
         self._auth_db = auth_db
         self._service_repo = service_repo
         self._model_repo = model_repo
+
+    async def refresh_retention(self) -> None:
+        """Re-read how much history Prometheus keeps (cached per process;
+        see metering_retention) before building retention-aware queries.
+        A no-op without a Prometheus client (opensearch mode without
+        PROMETHEUS_URL). Never raises."""
+        await _refresh_retention(self._client)
 
     async def _safe_rollback_auth_db(self) -> None:
         """Best-effort rollback after a swallowed self._auth_db failure — every
@@ -765,20 +773,19 @@ class MeteringService:
         `cur_q` uses sum_over_window() rather than a bare increase() so a
         mid-window pod redeploy doesn't get extrapolated up. Requires 60
         days of Prometheus history (`prev_q`'s `offset 30d` reaches back to
-        `now - 60d`); skipped via `settings.prometheus_retention_days` if
-        the deployment hasn't declared enough retention, since Prometheus
-        would otherwise silently under-count from partial data instead of
-        this returning `None`.
+        `now - 60d`); skipped when Prometheus keeps less than that
+        (metering_retention.retention_days: what Prometheus reports, else
+        PROMETHEUS_RETENTION_DAYS), since it would otherwise silently
+        under-count from partial data instead of this returning `None`.
 
         Returns None if retention is insufficient, the previous 30-day
         window had no traffic (divide by zero), or the query fails.
         """
         lookback_days_needed = 60
-        if lookback_days_needed > settings.prometheus_retention_days:
+        if lookback_days_needed > retention_days():
             logger.info(
-                "model_usage_growth_pct: skipping — needs %dd of history, "
-                "PROMETHEUS_RETENTION_DAYS=%d",
-                lookback_days_needed, settings.prometheus_retention_days,
+                "model_usage_growth_pct: skipping — needs %dd of history, retention is %sd",
+                lookback_days_needed, retention_days(),
             )
             return None
 
@@ -801,15 +808,12 @@ class MeteringService:
             return None
         return round((cur_total - prev_total) / prev_total * 100, 1)
 
-    # first_request_at's lookback and steps. The lookback is fixed, not
-    # PROMETHEUS_RETENTION_DAYS: a setting below the real retention hid every
-    # tenant idle since an inference-pod restart older than it (its series
-    # only has samples while that pod lived). Prometheus returns nothing for
-    # pruned periods, so a lookback past retention can't error. Coarse steps
-    # keep the scan cheap (400d at 6h is 1,600 steps, fewer than 90d at 1h);
-    # a series alive under 6h that never spans a coarse step is missed, and
-    # that tenant's next series is found instead.
-    _FIRST_REQUEST_LOOKBACK = "400d"
+    # first_request_at's steps. The lookback is the retention Prometheus
+    # reports (metering_retention.retention_days), the same value the
+    # custom-range clamp uses, so first_usage_at never names a day the
+    # dashboard then reads as zero. Coarse steps keep the scan cheap (90d at
+    # 6h is 360 steps); a series alive under 6h that never spans a coarse
+    # step is missed, and that tenant's next series is found instead.
     _FIRST_REQUEST_COARSE_STEP = "6h"
     _FIRST_REQUEST_STEP = "1h"
 
@@ -828,7 +832,8 @@ class MeteringService:
         long-lived series as new there.
 
         Two phases, both presence queries:
-        1. Coarse: min sample timestamp over _FIRST_REQUEST_LOOKBACK at
+        1. Coarse: min sample timestamp over the retention Prometheus reports
+           (PROMETHEUS_RETENTION_DAYS when it doesn't) at
            _FIRST_REQUEST_COARSE_STEP, i.e. the first coarse step that saw a
            series. The first sample lies in the coarse step before it.
         2. Refine: the same query at hourly steps over that coarse step,
@@ -847,9 +852,10 @@ class MeteringService:
             inference_only=True, tenant=tenant, tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE,
         )
         presence = f"timestamp({_METRIC}{sel})"
+        lookback_secs = int(retention_days() * 86_400)
         coarse_q = (
             f"min(min_over_time({presence}"
-            f"[{self._FIRST_REQUEST_LOOKBACK}:{self._FIRST_REQUEST_COARSE_STEP}]))"
+            f"[{lookback_secs}s:{self._FIRST_REQUEST_COARSE_STEP}]))"
         )
         # query(), not scalar(): scalar() maps an empty result to 0.0 (1970).
         coarse_ts = self._min_timestamp(await self._client.query(coarse_q))

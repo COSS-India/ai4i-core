@@ -2818,21 +2818,31 @@ class TestFirstRequestAt:
     def _row(ts: float) -> list:
         return [{"metric": {}, "value": [0, str(ts)]}]
 
-    async def test_coarse_query_reads_series_presence_over_a_fixed_long_lookback(self, monkeypatch):
-        """The lookback no longer stops at PROMETHEUS_RETENTION_DAYS: a
-        15-day setting hid tenants idle since an older pod restart."""
+    async def test_coarse_lookback_is_the_retention_prometheus_reports(self, monkeypatch):
+        """Capped at the same retention the custom-range clamp uses, so
+        first_usage_at never names a day the dashboard then reads as zero;
+        a 15-day setting no longer shortens it when Prometheus keeps 90."""
         from app.core.config import settings
+        from app.utils import metering_retention
         monkeypatch.setattr(settings, "prometheus_retention_days", 15)
+        monkeypatch.setattr(metering_retention, "_discovered_days", 90.0)
         svc = _make_service(query_return=[])
         await svc.first_request_at(tenant="Acme Corp", tenant_id="7")
         promql = svc._client.query.call_args.args[0]
         assert promql.startswith("min(min_over_time(timestamp(telemetry_obsv_requests_total{")
-        assert promql.endswith("[400d:6h]))")
-        assert "15d" not in promql
+        assert promql.endswith(f"[{90 * 86_400}s:6h]))")
+        assert "400d" not in promql
         assert 'tenant_id="7"' in promql
         assert 'auth_type=~"api_key|"' in promql
         # presence, not a windowed increase (which misreads the retention edge)
         assert "increase(" not in promql and "unless" not in promql
+
+    async def test_coarse_lookback_falls_back_to_the_setting(self, monkeypatch):
+        from app.core.config import settings
+        monkeypatch.setattr(settings, "prometheus_retention_days", 15)
+        svc = _make_service(query_return=[])
+        await svc.first_request_at(tenant=None)
+        assert svc._client.query.call_args.args[0].endswith(f"[{15 * 86_400}s:6h]))")
 
     async def test_empty_coarse_result_skips_the_refine(self):
         svc = _make_service(query_return=[])
@@ -2988,3 +2998,201 @@ class TestPastRetentionQueries:
         svc = _make_service(query_return=[])
         await svc.usage_concentration(limit=5, time_range=_abs_range(60, 30))
         assert "unless" in svc._client.query.call_args.args[0]
+
+
+# ── Retention reported by Prometheus ─────────────────────────────────────────
+
+from app.utils import metering_retention as _retention_mod
+
+
+class TestParseStorageRetention:
+    @pytest.mark.parametrize("value,days", [
+        ("90d", 90), ("15d", 15), ("1y", 365), ("2w", 14), ("1y2w", 379),
+        ("12h", 0.5), ("30d or 512MiB", 30), (" 90d ", 90),
+    ])
+    def test_time_retention(self, value, days):
+        assert _retention_mod.parse_storage_retention(value) == pytest.approx(days)
+
+    @pytest.mark.parametrize("value", ["512MiB", "", None, "forever", "90 days", "0d"])
+    def test_no_time_retention_is_none(self, value):
+        assert _retention_mod.parse_storage_retention(value) is None
+
+
+@pytest.mark.asyncio
+class TestPrometheusClientStorageRetention:
+    def _client(self, json_data=None, status_error=None, request_error=None):
+        http = AsyncMock()
+        resp = MagicMock()
+        resp.json.return_value = json_data or {}
+        resp.raise_for_status = MagicMock(side_effect=status_error)
+        http.get = AsyncMock(return_value=resp, side_effect=request_error)
+        return PrometheusClient("http://prometheus:9090", http), http
+
+    async def test_reads_storage_retention(self):
+        client, http = self._client({"data": {"storageRetention": "90d"}})
+        assert await client.storage_retention() == "90d"
+        assert http.get.call_args.args[0] == "http://prometheus:9090/api/v1/status/runtimeinfo"
+
+    async def test_http_error_is_none(self):
+        import httpx
+        err = httpx.HTTPStatusError("404", request=MagicMock(), response=MagicMock(status_code=404))
+        client, _ = self._client(status_error=err)
+        assert await client.storage_retention() is None
+
+    async def test_connection_error_is_none(self):
+        import httpx
+        client, _ = self._client(request_error=httpx.ConnectError("down"))
+        assert await client.storage_retention() is None
+
+    async def test_missing_field_is_none(self):
+        client, _ = self._client({"data": {}})
+        assert await client.storage_retention() is None
+
+
+class _FakeRetentionSource:
+    def __init__(self, *values):
+        self._values = list(values)
+        self.calls = 0
+
+    async def storage_retention(self):
+        self.calls += 1
+        value = self._values.pop(0) if self._values else None
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+
+@pytest.fixture
+def fake_clock(monkeypatch):
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(_retention_mod.time, "monotonic", lambda: clock["now"])
+    return clock
+
+
+@pytest.mark.asyncio
+class TestRefreshRetention:
+    async def test_discovered_value_wins_over_the_setting(self, monkeypatch, fake_clock):
+        from app.core.config import settings
+        monkeypatch.setattr(settings, "prometheus_retention_days", 15)
+        await _retention_mod.refresh_retention(_FakeRetentionSource("90d"))
+        assert _retention_mod.retention_days() == 90
+
+    async def test_nothing_discovered_falls_back_to_the_setting(self, monkeypatch, fake_clock):
+        from app.core.config import settings
+        monkeypatch.setattr(settings, "prometheus_retention_days", 15)
+        assert _retention_mod.retention_days() == 15
+        await _retention_mod.refresh_retention(_FakeRetentionSource(None))
+        assert _retention_mod.retention_days() == 15
+
+    async def test_size_only_retention_falls_back(self, monkeypatch, fake_clock):
+        from app.core.config import settings
+        monkeypatch.setattr(settings, "prometheus_retention_days", 15)
+        await _retention_mod.refresh_retention(_FakeRetentionSource("512MiB"))
+        assert _retention_mod.retention_days() == 15
+
+    async def test_success_is_cached_for_an_hour(self, fake_clock):
+        source = _FakeRetentionSource("90d", "30d")
+        await _retention_mod.refresh_retention(source)
+        fake_clock["now"] += 3599
+        await _retention_mod.refresh_retention(source)
+        assert source.calls == 1
+        fake_clock["now"] += 2
+        await _retention_mod.refresh_retention(source)
+        assert source.calls == 2
+        assert _retention_mod.retention_days() == 30
+
+    async def test_failure_is_retried_after_five_minutes(self, fake_clock):
+        source = _FakeRetentionSource(None, "90d")
+        await _retention_mod.refresh_retention(source)
+        fake_clock["now"] += 299
+        await _retention_mod.refresh_retention(source)
+        assert source.calls == 1
+        fake_clock["now"] += 2
+        await _retention_mod.refresh_retention(source)
+        assert source.calls == 2
+        assert _retention_mod.retention_days() == 90
+
+    async def test_failure_keeps_the_last_good_value(self, fake_clock):
+        source = _FakeRetentionSource("90d", RuntimeError("down"))
+        await _retention_mod.refresh_retention(source)
+        fake_clock["now"] += 3601
+        await _retention_mod.refresh_retention(source)  # must not raise
+        assert _retention_mod.retention_days() == 90
+
+    async def test_no_client_is_a_noop(self):
+        await _retention_mod.refresh_retention(None)
+        assert _retention_mod._fetched_at is None
+
+
+@pytest.fixture
+def discovered_90d_setting_15(monkeypatch):
+    """The review's scenario: the setting left at its default 15 while
+    Prometheus keeps 90 days."""
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "prometheus_retention_days", 15)
+    monkeypatch.setattr(_retention_mod, "_discovered_days", 90.0)
+
+
+@pytest.mark.usefixtures("frozen_builder_now", "discovered_90d_setting_15")
+class TestClampUsesDiscoveredRetention:
+    def test_edge_follows_the_discovered_retention(self):
+        assert _builder_mod.retention_edge() == _NOW - _timedelta(days=90) + _timedelta(hours=1)
+
+    def test_range_40_to_30_days_back_is_a_real_query(self):
+        """Review example: with the setting at 15 this built (m unless m),
+        always 0 for a period that had usage."""
+        r = _abs_range(40, 30)
+        expr = sum_over_window("m{}", r)
+        assert "unless m{})" not in expr
+        assert f"increase(m{{}}[{10 * 86_400}s] offset {30 * 86_400}s)" in expr
+
+    def test_range_20_to_10_days_back_is_not_cut(self):
+        """Review example: with the setting at 15 this was silently cut to
+        start 15 days ago."""
+        r = _abs_range(20, 10)
+        assert _builder_mod.retained_range(r) == r
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("discovered_90d_setting_15")
+class TestGrowthKpiUsesDiscoveredRetention:
+    async def test_computes_when_prometheus_reports_90d(self):
+        client = MagicMock()
+        client.scalar = AsyncMock(side_effect=[4200.0, 3000.0])
+        svc = MeteringService(client=client, auth_db=None)
+        assert await svc.model_usage_growth_pct() == 40.0
+
+    async def test_is_none_when_prometheus_reports_30d(self, monkeypatch):
+        monkeypatch.setattr(_retention_mod, "_discovered_days", 30.0)
+        client = MagicMock()
+        client.scalar = AsyncMock(side_effect=[4200.0, 3000.0])
+        svc = MeteringService(client=client, auth_db=None)
+        assert await svc.model_usage_growth_pct() is None
+        client.scalar.assert_not_called()
+
+
+@pytest.mark.asyncio
+class TestServiceRefreshRetention:
+    async def test_reads_prometheus_through_the_client(self, fake_clock):
+        client = MagicMock()
+        client.storage_retention = AsyncMock(return_value="90d")
+        await MeteringService(client=client, auth_db=None).refresh_retention()
+        assert _retention_mod.retention_days() == 90
+
+    async def test_without_a_prometheus_client_is_a_noop(self):
+        await MeteringService(client=None, auth_db=None).refresh_retention()
+        assert _retention_mod._fetched_at is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("frozen_builder_now")
+class TestChartSizeFromTheFloor:
+    async def test_floor_to_now_is_about_1400_weekly_points(self, retention_15d):
+        """The largest chart a custom range can ask for: `from` is clamped to
+        2000-01-01 IST (routes/metering.py _FROM_FLOOR), so ~1,400 weekly
+        buckets, not the ~106k a year-1 `from` used to zero-fill."""
+        floor = _datetime(1999, 12, 31, 18, 30, tzinfo=_timezone.utc)
+        svc = _make_service(range_return=[{"values": [[1, "3"]]}])
+        chart = await svc.request_volume_chart(AbsoluteRange(start=floor, end=_NOW), tenant=None)
+        assert chart.step == "7d"
+        assert all(len(s.points) <= 1_400 for s in chart.series)

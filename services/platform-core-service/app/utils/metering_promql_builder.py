@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Union
 
 from app.core.config import settings
+from app.utils.metering_retention import retention_days
 
 # See CoreSettings.prometheus_api_path_label (app/core/config.py) for why this
 # is env-driven rather than hardcoded. Every selector/groupby here and in
@@ -140,9 +141,10 @@ _RETENTION_MARGIN = timedelta(hours=1)
 
 def retention_edge(now: datetime | None = None) -> datetime:
     """Earliest instant whose Prometheus samples are reliably still retained:
-    now − PROMETHEUS_RETENTION_DAYS, plus _RETENTION_MARGIN."""
+    now − the retention Prometheus reports (PROMETHEUS_RETENTION_DAYS when it
+    doesn't; see metering_retention), plus _RETENTION_MARGIN."""
     now = now or datetime.now(timezone.utc)
-    return now - timedelta(days=settings.prometheus_retention_days) + _RETENTION_MARGIN
+    return now - timedelta(days=retention_days()) + _RETENTION_MARGIN
 
 
 def retained_range(time_range: TimeRange) -> Union[TimeRange, _NotRetained]:

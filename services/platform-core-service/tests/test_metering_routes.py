@@ -12,7 +12,7 @@ import asyncio
 import importlib.util
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -425,6 +425,28 @@ class TestParseFromTo:
         r = _parse_from_to("2025-01-01", "2026-09-20")
         assert r.start == _utc(2024, 12, 31, 18, 30)
 
+    # 2000-01-01 IST
+    _FLOOR = _utc(1999, 12, 31, 18, 30)
+
+    def test_ancient_date_only_from_is_clamped_not_a_500(self):
+        """0001-01-01 IST is before year 1 in UTC: OverflowError, a 500."""
+        r = _parse_from_to("0001-01-01", "2026-09-20")
+        assert r.start == self._FLOOR
+
+    def test_ancient_datetime_from_is_clamped(self):
+        assert _parse_from_to("0001-01-01T00:00:00Z", "2026-09-20").start == self._FLOOR
+        assert _parse_from_to("1900-01-01", "2026-09-20").start == self._FLOOR
+
+    def test_from_after_the_floor_is_unchanged(self):
+        assert _parse_from_to("2020-01-01", "2026-09-20").start == _utc(2019, 12, 31, 18, 30)
+
+    def test_range_entirely_before_the_floor_is_one_day_at_it(self):
+        r = _parse_from_to("1900-01-01", "1950-01-01")
+        assert r == AbsoluteRange(start=self._FLOOR, end=self._FLOOR + timedelta(days=1))
+
+    def test_overflowing_future_to_is_a_422_not_a_500(self):
+        self._assert_422("2026-09-01", "9999-12-31T23:59:59-05:00", "future")
+
     def test_no_earliest_from_helper(self):
         assert not hasattr(_metering_route_mod, "_earliest_from")
 
@@ -511,6 +533,7 @@ def _overview_svc() -> MagicMock:
     svc.usage_concentration = AsyncMock(return_value=None)
     svc.model_usage_growth_pct = AsyncMock(return_value=None)
     svc.first_request_at = AsyncMock(return_value=None)
+    svc.refresh_retention = AsyncMock()
     return svc
 
 
@@ -751,7 +774,7 @@ class TestFirstRequestAtCache:
 
     async def test_cache_hit_skips_the_query(self, fake_usage_repo):
         svc = self._svc()
-        redis = _redis_with({"metering:first-usage:v3:all": {"first_request_at": "2026-07-02T09:00:00Z"}})
+        redis = _redis_with({"metering:first-usage:v4:all": {"first_request_at": "2026-07-02T09:00:00Z"}})
         response = await _call_overview(svc, redis=redis)
         svc.first_request_at.assert_not_called()
         assert response.first_usage_at == "2026-07-02T09:00:00Z"
@@ -776,14 +799,14 @@ class TestFirstRequestAtCache:
     async def test_miss_stores_value_with_long_ttl(self, fake_usage_repo):
         redis = _empty_redis()
         await _call_overview(self._svc(_utc(2026, 7, 2, 9)), redis=redis)
-        call = next(c for c in redis.set.call_args_list if c.args[0] == "metering:first-usage:v3:all")
+        call = next(c for c in redis.set.call_args_list if c.args[0] == "metering:first-usage:v4:all")
         assert json.loads(call.args[1]) == {"first_request_at": "2026-07-02T09:00:00Z"}
         assert call.kwargs["ex"] == _metering_route_mod._FIRST_USAGE_CACHE_TTL
         assert _metering_route_mod._FIRST_USAGE_CACHE_TTL >= 3600
 
     async def test_shared_across_windows_and_task_types(self, fake_usage_repo):
         svc = self._svc()
-        redis = _redis_with({"metering:first-usage:v3:all": {"first_request_at": "2026-07-02T09:00:00Z"}})
+        redis = _redis_with({"metering:first-usage:v4:all": {"first_request_at": "2026-07-02T09:00:00Z"}})
         await _call_overview(svc, redis=redis, window="7d", task_types="llm")
         await _call_overview(svc, redis=redis, from_="2026-09-20", to="2026-09-22")
         svc.first_request_at.assert_not_called()
@@ -791,17 +814,53 @@ class TestFirstRequestAtCache:
     async def test_tenant_scoped_key(self, fake_usage_repo):
         redis = _empty_redis()
         await _call_overview(self._svc(_utc(2026, 7, 2)), redis=redis, request=_tenant_admin_request())
-        assert "metering:first-usage:v3:7:Acme Corp" in _set_keys(redis)
+        assert "metering:first-usage:v4:7:Acme Corp" in _set_keys(redis)
 
     def test_name_only_scope_does_not_share_the_platform_wide_key(self):
         key = _metering_route_mod._first_usage_cache_key
-        assert key(None, None) == "metering:first-usage:v3:all"
+        assert key(None, None) == "metering:first-usage:v4:all"
         assert key(None, "Acme Corp") != key(None, None)
 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("frozen_now", "fake_usage_repo")
+class TestRoutesRefreshRetention:
+    """How far back Prometheus keeps data is re-read (cached per process)
+    before building queries, on a cache miss only."""
+
+    async def test_overview_refreshes_on_a_miss(self):
+        svc = _overview_svc()
+        await _call_overview(svc)
+        svc.refresh_retention.assert_awaited_once()
+
+    async def test_overview_skips_it_on_a_cache_hit(self):
+        svc = _overview_svc()
+        redis = AsyncMock()
+        redis.get = AsyncMock(return_value=json.dumps({"degraded": False}))
+        await _call_overview(svc, redis=redis)
+        svc.refresh_retention.assert_not_called()
+
+    async def test_model_consumption_refreshes_on_a_miss(self):
+        svc = MagicMock()
+        svc._auth_db = None
+        svc.model_breakdown = AsyncMock(return_value=None)
+        svc.registry_model_count = AsyncMock(return_value=None)
+        svc.refresh_retention = AsyncMock()
+        await get_model_consumption(
+            request=_admin_request(), svc=svc, redis=_empty_redis(), window="24h",
+            from_=None, to=None, tenant_id=None, limit=10, task_types=None,
+        )
+        svc.refresh_retention.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("frozen_now", "fake_usage_repo")
 class TestOverviewHasNoEarliestFrom:
+    async def test_ancient_from_is_200_with_scope_at_the_floor(self):
+        response = await _call_overview(_overview_svc(), from_="0001-01-01", to="2026-09-20")
+        assert response.scope.window == "custom"
+        assert response.scope.from_ == "1999-12-31T18:30:00Z"
+
     async def test_response_has_no_earliest_from(self):
         response = await _call_overview(_overview_svc())
         assert "earliest_from" not in response.model_dump()
@@ -822,6 +881,7 @@ class TestModelConsumptionCustomRange:
         svc._auth_db = None
         svc.model_breakdown = AsyncMock(return_value=None)
         svc.registry_model_count = AsyncMock(return_value=None)
+        svc.refresh_retention = AsyncMock()
         return svc
 
     async def _call(self, svc, **params):
