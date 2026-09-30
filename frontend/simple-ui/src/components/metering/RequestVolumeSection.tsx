@@ -3,7 +3,7 @@ import React, { useMemo } from "react";
 import { Bar, BarChart, CartesianGrid, Tooltip, XAxis, YAxis } from "recharts";
 import { METERING } from "../../config/meteringConstants";
 import { useMeteringChartColors } from "../../hooks/useMeteringChartColors";
-import type { MeteringDateRange, MeteringGraph, MeteringWindow } from "../../types/metering";
+import type { MeteringGraph, MeteringScope } from "../../types/metering";
 import {
   buildRequestVolumeChartData,
   formatCompactNumber,
@@ -38,15 +38,12 @@ const RequestVolumeTooltip: React.FC<{
 
 const RequestVolumeSection: React.FC<{
   graph?: MeteringGraph | null;
-  timeWindow: MeteringWindow;
-  customRange?: MeteringDateRange | null;
-}> = ({ graph, timeWindow, customRange }) => {
+  /** Scope of the response `graph` came from; drives the label format. */
+  scope: MeteringScope;
+}> = ({ graph, scope }) => {
   const colors = useMeteringChartColors();
   const section = METERING.SECTIONS.REQUEST_VOLUME;
-  const scale = useMemo(
-    () => resolveMeteringChartScale(timeWindow, customRange),
-    [timeWindow, customRange],
-  );
+  const scale = useMemo(() => resolveMeteringChartScale(scope), [scope]);
   const chartData = useMemo(() => buildRequestVolumeChartData(graph, scale), [graph, scale]);
 
   return (

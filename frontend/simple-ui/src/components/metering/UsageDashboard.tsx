@@ -56,8 +56,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
   const requestVolumeSection = overview ? (
     <RequestVolumeSection
       graph={requestVolumeGraph}
-      timeWindow={timeWindow}
-      customRange={customRange}
+      scope={overview.scope}
     />
   ) : null;
 

@@ -1,6 +1,5 @@
 import type {
   MeteringDataState,
-  MeteringDateRange,
   MeteringGraph,
   MeteringScope,
   MeteringWindow,
@@ -38,14 +37,22 @@ export interface MeteringChartScale {
   timeZone?: string;
 }
 
-export function resolveMeteringChartScale(
-  window: MeteringWindow,
-  range?: MeteringDateRange | null,
-): MeteringChartScale {
-  if (range) {
-    return { intraday: rangeLengthDays(range) === 1, timeZone: METERING.IST_TIME_ZONE };
-  }
+function presetChartScale(window: MeteringWindow): MeteringChartScale {
   return { intraday: window === "1h" || window === "24h" };
+}
+
+/**
+ * Chart scale from the response `scope`, not the selected filter: while a new
+ * window loads, keepPreviousData still shows the previous graph, and its
+ * labels must follow the data actually on screen.
+ */
+export function resolveMeteringChartScale(scope: MeteringScope): MeteringChartScale {
+  if (scope.window !== "custom") return presetChartScale(scope.window);
+  const range = scopeToDateRange(scope);
+  return {
+    intraday: range != null && rangeLengthDays(range) === 1,
+    timeZone: METERING.IST_TIME_ZONE,
+  };
 }
 
 export type MeteringKpiInput = string | number | null | undefined;
@@ -107,7 +114,7 @@ export function findMeteringSeries(
 /** Build request volume chart rows from successful/failed counts. */
 export function buildRequestVolumeChartData(
   graph?: MeteringGraph | null,
-  scale: MeteringChartScale = resolveMeteringChartScale(METERING.DEFAULTS.TIME_WINDOW),
+  scale: MeteringChartScale = presetChartScale(METERING.DEFAULTS.TIME_WINDOW),
 ): RequestVolumeChartPoint[] {
   const { SUCCESSFUL, FAILED } = METERING.GRAPH.SERIES_KEYS;
   const successfulSeries = findMeteringSeries(graph, SUCCESSFUL);

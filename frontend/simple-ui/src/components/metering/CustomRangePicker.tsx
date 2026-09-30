@@ -11,6 +11,7 @@ import {
   Portal,
   SimpleGrid,
   Text,
+  Tooltip,
   VStack,
   useDisclosure,
 } from "@chakra-ui/react";
@@ -82,10 +83,11 @@ const CalendarMonth: React.FC<CalendarMonthProps> = ({
         ))}
         {buildCalendarWeeks(month).flat().map((day, i) => {
           if (!day) return <Box key={`pad-${i}`} />;
-          const isDisabled = day > today || (earliestDay != null && day < earliestDay);
+          const isBeforeData = earliestDay != null && day < earliestDay;
+          const isDisabled = day > today || isBeforeData;
           const isEndpoint = day === start || day === end;
           const isInRange = !!start && !!rangeEnd && day > start && day < rangeEnd;
-          return (
+          const dayButton = (
             <Button
               key={day}
               size="sm"
@@ -101,7 +103,10 @@ const CalendarMonth: React.FC<CalendarMonthProps> = ({
               borderColor="orange.400"
               _hover={{ bg: isEndpoint ? "orange.600" : "orange.100" }}
               isDisabled={isDisabled}
-              aria-label={day}
+              // A disabled button swallows hover in some browsers; let the
+              // pointer reach the tooltip wrapper instead.
+              pointerEvents={isBeforeData ? "none" : undefined}
+              aria-label={isBeforeData ? `${day}, ${copy.NO_DATA}` : day}
               aria-pressed={isEndpoint}
               onClick={() => onSelect(day)}
               onMouseEnter={() => onHover(day)}
@@ -109,6 +114,14 @@ const CalendarMonth: React.FC<CalendarMonthProps> = ({
             >
               {Number(day.slice(8))}
             </Button>
+          );
+          if (!isBeforeData) return dayButton;
+          return (
+            <Tooltip key={day} label={copy.NO_DATA} hasArrow placement="top" openDelay={150}>
+              <Box display="flex" justifyContent="center" cursor="not-allowed">
+                {dayButton}
+              </Box>
+            </Tooltip>
           );
         })}
       </SimpleGrid>
@@ -132,8 +145,8 @@ const CustomRangePicker: React.FC<CustomRangePickerProps> = ({
   const [hoverDay, setHoverDay] = useState<MeteringDayKey | null>(null);
 
   const rightMonth = shiftMonth(leftMonth, 1);
-  const canGoBack =
-    earliestDay == null || compareMonths(leftMonth, monthOfDayKey(earliestDay)) > 0;
+  // Earlier months stay reachable; their days are disabled with a "No data
+  // available" hint rather than hiding the months.
   const canGoForward = compareMonths(rightMonth, monthOfDayKey(today)) < 0;
 
   // Every open starts fresh: previous + current month, nothing preselected.
@@ -201,7 +214,6 @@ const CustomRangePicker: React.FC<CustomRangePickerProps> = ({
                     variant="outline"
                     aria-label={copy.PREVIOUS_MONTH}
                     icon={<ChevronLeftIcon />}
-                    isDisabled={!canGoBack}
                     onClick={() => setLeftMonth((m) => shiftMonth(m, -1))}
                   />
                   <IconButton
