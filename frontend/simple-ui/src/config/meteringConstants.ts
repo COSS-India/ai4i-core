@@ -93,14 +93,15 @@ export const METERING = {
   CUSTOM_RANGE: {
     TITLE: "Custom date range",
     SUBTITLE: "Select a start date and an end date",
-    SELECT_START: "Select a start date",
-    SELECT_END: "Select an end date",
-    TIME_ZONE_NOTE: "IST (UTC+05:30)",
     APPLY: "Apply",
     CANCEL: "Cancel",
     CLEAR: "Clear custom range",
     PREVIOUS_MONTH: "Previous month",
     NEXT_MONTH: "Next month",
+    /** Title hint: clicking the month title opens the year / month picker. */
+    CHOOSE_MONTH_YEAR: "Choose month and year",
+    /** First year in the calendar's year list; there is no minimum date. */
+    MIN_YEAR: 1900,
     WEEKDAYS: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"],
   },
   TOP_N_OPTIONS: [10, 25] as const satisfies readonly MeteringTopN[],
