@@ -16,6 +16,7 @@ from app.repositories.model_management.model_repository import ModelRepository
 from app.repositories.model_management.service_repository import ServiceRepository
 from app.schemas.metering import Graph, GraphPoint, GraphSeries
 from app.utils.prometheus_client import PrometheusClient
+from app.utils.metering_retention import refresh_retention as _refresh_retention, retention_days
 from app.services.pay_per_use import inference_type_cache
 from app.utils.metering_promql_builder import (
     TIME_RANGES,
@@ -27,12 +28,15 @@ from app.utils.metering_promql_builder import (
     ENDPOINT_TO_TASK,
     PROMETHEUS_API_PATH_LABEL,
     API_KEY_AUTH_TYPE,
+    NOT_RETAINED,
     WINDOW_STEP,
     api_key_auth_type_selector,
     build_base_selectors,
     build_task_type_selector,
     escape_label_value,
     previous_window_offset,
+    retained_range,
+    retention_edge,
     step_for_duration,
     sum_over_window,
     sum_over_window_by,
@@ -113,8 +117,11 @@ def _previous_window_retained(time_range: TimeRange) -> bool:
     if not isinstance(time_range, AbsoluteRange):
         return True
     prev_start = time_range.start - (time_range.end - time_range.start)
-    earliest = datetime.now(timezone.utc) - timedelta(days=settings.prometheus_retention_days)
-    return prev_start >= earliest
+    return prev_start >= retention_edge()
+
+
+async def _zero() -> float:
+    return 0.0
 
 
 def _series_points(res, ndigits: int) -> list[GraphPoint]:
@@ -247,6 +254,13 @@ class MeteringService:
         self._service_repo = service_repo
         self._model_repo = model_repo
 
+    async def refresh_retention(self) -> None:
+        """Re-read how much history Prometheus keeps (cached per process;
+        see metering_retention) before building retention-aware queries.
+        A no-op without a Prometheus client (opensearch mode without
+        PROMETHEUS_URL). Never raises."""
+        await _refresh_retention(self._client)
+
     async def _safe_rollback_auth_db(self) -> None:
         """Best-effort rollback after a swallowed self._auth_db failure — every
         auth_db-touching method here degrades to None/{} rather than raising,
@@ -278,7 +292,12 @@ class MeteringService:
 
         For an AbsoluteRange the "previous" figures cover the equal-length
         window ending at ``time_range.start``, same as a preset compares
-        against the window just before it."""
+        against the window just before it.
+
+        An AbsoluteRange is first clamped to Prometheus retention
+        (retained_range): a range reaching back past it counts only what's
+        retained, and one entirely older counts zero. The previous figures
+        are then None, since the previous window lies past retention."""
         task_sel = build_task_type_selector(task_types)
         extra = [task_sel] if task_sel else None
         success_extra = [task_sel, 'status_code=~"2.."'] if task_sel else ['status_code=~"2.."']
@@ -290,17 +309,26 @@ class MeteringService:
         )
         base = f"{_METRIC}{label_str}"
         success_base = f"{_METRIC}{success_label_str}"
+        retained = retained_range(time_range)
+        if retained is not NOT_RETAINED:
+            time_range = retained
         window = window_duration(time_range)
         rate_window = window or "5m"
         end_off = window_offset(time_range)
         prev_off = previous_window_offset(time_range)
         has_prev = bool(window) and _previous_window_retained(time_range)
 
-        current_queries = [
-            self._client.scalar(sum_over_window(base, time_range)),                  # 0: total
-            self._client.scalar(sum_over_window(success_base, time_range)),          # 1: success
-            self._client.scalar(f"sum(rate({base}[{rate_window}]{end_off}))"),       # 2: avg rps
-        ]
+        if retained is NOT_RETAINED:
+            # Entirely older than retention: nothing to count. rate() needs a
+            # raw selector, so it can't take the builder's empty expression.
+            has_prev = False
+            current_queries = [_zero(), _zero(), _zero()]
+        else:
+            current_queries = [
+                self._client.scalar(sum_over_window(base, time_range)),                  # 0: total
+                self._client.scalar(sum_over_window(success_base, time_range)),          # 1: success
+                self._client.scalar(f"sum(rate({base}[{rate_window}]{end_off}))"),       # 2: avg rps
+            ]
         prev_queries = (
             [
                 self._client.scalar(f"sum(increase({base}[{window}]{prev_off}))"),          # 3: prev total
@@ -497,29 +525,58 @@ class MeteringService:
         """Request Volume points for an AbsoluteRange: full buckets from
         query_range (eval points at start+step ... start+n*step, each covering
         the step before it), then the partial tail bucket ending at
-        ``window.end`` as one instant query per series. Each point's ts is its
-        bucket's end, same as the preset chart."""
+        ``window.end`` as one instant query per series.
+
+        Each point's ts is its bucket's START, the same as the OpenSearch
+        chart's date_histogram key, so a daily bucket is labelled with the
+        day it covers. query_range still evaluates at each bucket's end
+        (that's what makes the value cover the step before it); the returned
+        ts is shifted back one step. The partial tail is stamped at its own
+        start, so a range ending today shows today once.
+
+        A bucket that starts before retention_edge() is emitted as 0 and not
+        queried: each bucket reads the counter at its own start, and a pruned
+        start sample would count lifetime counters (see retained_range). The
+        layout stays anchored at ``window.start``."""
         step, n_full, tail = _range_chart_buckets(window)
         step_secs = _step_seconds(step)
-        first = window.start.timestamp() + step_secs
-        last = window.start.timestamp() + n_full * step_secs
+        start_ts = window.start.timestamp()
+        edge_ts = retention_edge().timestamp()
+        # Bucket i (1-based) covers (start+(i-1)·step, start+i·step]; the
+        # first one whose start is retained:
+        first_retained = max(1, math.ceil((edge_ts - start_ts) / step_secs) + 1)
+        skipped = min(n_full, first_retained - 1)
+        queried = n_full - skipped
+        first = start_ts + (skipped + 1) * step_secs
+        last = start_ts + n_full * step_secs
+        tail_start = window.end - timedelta(seconds=tail)
+        tail_retained = bool(tail) and tail_start.timestamp() >= edge_ts
 
         coros = []
-        if n_full:
+        if queried:
             for metric in (success_metric, failed_metric):
                 coros.append(self._client.query_range(
                     f"{sum_over_window(metric, step)} or vector(0)", start=first, end=last, step=step,
                 ))
-        if tail:
-            tail_range = AbsoluteRange(start=window.end - timedelta(seconds=tail), end=window.end)
+        if tail_retained:
+            tail_range = AbsoluteRange(start=tail_start, end=window.end)
             for metric in (success_metric, failed_metric):
                 coros.append(self._client.scalar(sum_over_window(metric, tail_range)))
         raw = await asyncio.gather(*coros, return_exceptions=True)
 
-        succ_points = _series_points(raw[0], 0) if n_full else []
-        fail_points = _series_points(raw[1], 0) if n_full else []
-        if tail:
-            tail_ts = int(window.end.timestamp())
+        def _at_bucket_start(points: list[GraphPoint]) -> list[GraphPoint]:
+            return [GraphPoint(ts=p.ts - step_secs, value=p.value) for p in points]
+
+        zeros = [
+            GraphPoint(ts=int(start_ts + (i - 1) * step_secs), value=0.0) for i in range(1, skipped + 1)
+        ]
+        succ_points = zeros + (_at_bucket_start(_series_points(raw[0], 0)) if queried else [])
+        fail_points = list(zeros) + (_at_bucket_start(_series_points(raw[1], 0)) if queried else [])
+        tail_ts = int(tail_start.timestamp())
+        if tail and not tail_retained:
+            succ_points.append(GraphPoint(ts=tail_ts, value=0.0))
+            fail_points.append(GraphPoint(ts=tail_ts, value=0.0))
+        elif tail:
             succ_tail, fail_tail = raw[-2], raw[-1]
             if not isinstance(succ_tail, Exception):
                 succ_points.append(GraphPoint(ts=tail_ts, value=round(max(0.0, float(succ_tail)))))
@@ -724,20 +781,19 @@ class MeteringService:
         `cur_q` uses sum_over_window() rather than a bare increase() so a
         mid-window pod redeploy doesn't get extrapolated up. Requires 60
         days of Prometheus history (`prev_q`'s `offset 30d` reaches back to
-        `now - 60d`); skipped via `settings.prometheus_retention_days` if
-        the deployment hasn't declared enough retention, since Prometheus
-        would otherwise silently under-count from partial data instead of
-        this returning `None`.
+        `now - 60d`); skipped when Prometheus keeps less than that
+        (metering_retention.retention_days: what Prometheus reports, else
+        PROMETHEUS_RETENTION_DAYS), since it would otherwise silently
+        under-count from partial data instead of this returning `None`.
 
         Returns None if retention is insufficient, the previous 30-day
         window had no traffic (divide by zero), or the query fails.
         """
         lookback_days_needed = 60
-        if lookback_days_needed > settings.prometheus_retention_days:
+        if lookback_days_needed > retention_days():
             logger.info(
-                "model_usage_growth_pct: skipping — needs %dd of history, "
-                "PROMETHEUS_RETENTION_DAYS=%d",
-                lookback_days_needed, settings.prometheus_retention_days,
+                "model_usage_growth_pct: skipping — needs %dd of history, retention is %sd",
+                lookback_days_needed, retention_days(),
             )
             return None
 
@@ -760,7 +816,13 @@ class MeteringService:
             return None
         return round((cur_total - prev_total) / prev_total * 100, 1)
 
-    # Subquery step for first_request_at — the result's resolution.
+    # first_request_at's steps. The lookback is the retention Prometheus
+    # reports (metering_retention.retention_days), the same value the
+    # custom-range clamp uses, so first_usage_at never names a day the
+    # dashboard then reads as zero. Coarse steps keep the scan cheap (90d at
+    # 6h is 360 steps); a series alive under 6h that never spans a coarse
+    # step is missed, and that tenant's next series is found instead.
+    _FIRST_REQUEST_COARSE_STEP = "6h"
     _FIRST_REQUEST_STEP = "1h"
 
     async def first_request_at(
@@ -777,10 +839,18 @@ class MeteringService:
         `unless offset` sample at the retention edge and count every
         long-lived series as new there.
 
-        The hourly subquery sees each series' latest sample at each step, so
-        the raw minimum can be up to one step late. The step is subtracted so
-        the result errs early. Late could push the first day onto the next
-        IST day and hide real data; early can at most enable one empty day.
+        Two phases, both presence queries:
+        1. Coarse: min sample timestamp over the retention Prometheus reports
+           (PROMETHEUS_RETENTION_DAYS when it doesn't) at
+           _FIRST_REQUEST_COARSE_STEP, i.e. the first coarse step that saw a
+           series. The first sample lies in the coarse step before it.
+        2. Refine: the same query at hourly steps over that coarse step,
+           evaluated there with the API's ``time`` parameter.
+        Each step sees a series' latest sample at that step, so a minimum can
+        be up to one step late. That step is subtracted so the result errs
+        early. Late could push the first day onto the next IST day and hide
+        real data; early can at most enable one empty day. If the refine
+        comes back empty, the coarse value minus a coarse step is used.
 
         KNOWN CUTOVER GAP when ``tenant_id`` is given: see
         build_base_selectors' docstring. Raises on a Prometheus failure; the
@@ -789,19 +859,40 @@ class MeteringService:
         sel = build_base_selectors(
             inference_only=True, tenant=tenant, tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE,
         )
-        promql = (
-            f"min(min_over_time(timestamp({_METRIC}{sel})"
-            f"[{settings.prometheus_retention_days}d:{self._FIRST_REQUEST_STEP}]))"
+        presence = f"timestamp({_METRIC}{sel})"
+        lookback_secs = int(retention_days() * 86_400)
+        coarse_q = (
+            f"min(min_over_time({presence}"
+            f"[{lookback_secs}s:{self._FIRST_REQUEST_COARSE_STEP}]))"
         )
         # query(), not scalar(): scalar() maps an empty result to 0.0 (1970).
-        result = await self._client.query(promql)
+        coarse_ts = self._min_timestamp(await self._client.query(coarse_q))
+        if coarse_ts is None:
+            return None
+
+        coarse_secs = _step_seconds(self._FIRST_REQUEST_COARSE_STEP)
+        fine_secs = _step_seconds(self._FIRST_REQUEST_STEP)
+        # Evaluated one fine step past the coarse hit, so the hourly steps in
+        # [coarse_step:fine_step] cover the whole coarse step before it.
+        fine_q = (
+            f"min(min_over_time({presence}"
+            f"[{self._FIRST_REQUEST_COARSE_STEP}:{self._FIRST_REQUEST_STEP}]))"
+        )
+        fine_ts = self._min_timestamp(
+            await self._client.query(fine_q, time=coarse_ts + fine_secs)
+        )
+        if fine_ts is None:
+            return datetime.fromtimestamp(coarse_ts - coarse_secs, tz=timezone.utc)
+        return datetime.fromtimestamp(fine_ts - fine_secs, tz=timezone.utc)
+
+    @staticmethod
+    def _min_timestamp(result: list) -> Optional[float]:
+        """The single value of a min(...) instant-query result, or None when
+        it's empty, NaN or not positive."""
         if not result:
             return None
         ts = PrometheusClient._safe_float(result[0]["value"][1])
-        if ts <= 0:
-            return None
-        step = timedelta(seconds=_step_seconds(self._FIRST_REQUEST_STEP))
-        return datetime.fromtimestamp(ts, tz=timezone.utc) - step
+        return ts if ts > 0 else None
 
     async def overview_tenant_data(
         self, time_ranges: list[str]

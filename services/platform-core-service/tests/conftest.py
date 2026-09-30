@@ -224,6 +224,19 @@ import pytest  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
+def _reset_metering_retention_cache():
+    """The Prometheus-reported retention is cached per process
+    (app.utils.metering_retention); start and end every test without one, so
+    a value one test discovers can't change what another test's queries
+    clamp to. Tests that set PROMETHEUS_RETENTION_DAYS get the fallback."""
+    from app.utils.metering_retention import reset_retention_cache
+
+    reset_retention_cache()
+    yield
+    reset_retention_cache()
+
+
+@pytest.fixture(autouse=True)
 def _stub_inference_type_catalogue(monkeypatch):
     from app.services.pay_per_use import inference_type_cache
 

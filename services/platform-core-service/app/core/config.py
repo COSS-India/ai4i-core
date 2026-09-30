@@ -135,22 +135,18 @@ class CoreSettings(BaseSettings):
     ppu_tier_cache_ttl_seconds: int = 600
     # Auto-refresh interval exposed to the dashboard (METERING_REFRESH_INTERVAL_SECONDS).
     metering_refresh_interval_seconds: int = 60
-    # How many days of history the deployment's Prometheus actually retains
-    # (its own --storage.tsdb.retention.time, or the effective window of a
-    # remote long-term-storage backend). Used by
-    # MeteringService.model_usage_growth_pct() to refuse its rolling
-    # last-30-days-vs-prior-30-days comparison when it can't fully cover the
-    # flat 60-day lookback, rather than silently computing from whatever
-    # partial data survives retention. Also the earliest `from` the Usage
-    # Dashboard's custom date range accepts (routes/metering.py
-    # _parse_from_to). Defaults to 15, Prometheus's own default retention,
-    # so a deployment that never sets PROMETHEUS_RETENTION_DAYS can't claim
-    # more history than it keeps. Set it explicitly per environment once its
-    # Prometheus is confirmed to retain longer (env.template sets 90 for
-    # local, matching --storage.tsdb.retention.time=90d in
-    # docker-compose-local.yml). A value above the real retention lets custom
-    # ranges read pruned data (each series' whole cumulative counter counted
-    # as usage) and lets model_usage_growth_pct compute from partial data.
+    # FALLBACK only: how many days of history the deployment's Prometheus
+    # retains, used when Prometheus doesn't report it itself. The metering
+    # code reads the real value from /api/v1/status/runtimeinfo
+    # (storageRetention; see app/utils/metering_retention.py) and uses it for
+    # the custom-range clamp, the vs-previous guard, the first-usage lookback
+    # and model_usage_growth_pct's 60-day guard. This setting applies when
+    # that endpoint is missing (a Thanos/Mimir proxy), the retention is
+    # size-only, or the read fails; set it to the real retention there.
+    # Defaults to 15, Prometheus's own default retention. Above the real
+    # retention, custom ranges read pruned data (each series' whole
+    # cumulative counter counted as usage); below it, days with data read
+    # zero.
     prometheus_retention_days: int = 15
 
     # ── Model management business rules ──
