@@ -118,6 +118,7 @@ export default function ApplicationBudgetModal({
             remainingSubColor={
               remainingNegative ? "red.600" : remainingAmount != null ? "green.700" : undefined
             }
+            remainingNegative={remainingNegative}
             rangeLabel={rangeValue}
             currency={currency}
           />

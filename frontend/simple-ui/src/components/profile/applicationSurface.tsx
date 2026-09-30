@@ -294,6 +294,7 @@ export function ApplicationBudgetFacts({
   remainingSub,
   remainingColor = "ink.800",
   remainingSubColor,
+  remainingNegative = false,
   rangeLabel,
   currency,
 }: {
@@ -310,10 +311,11 @@ export function ApplicationBudgetFacts({
   remainingColor?: string;
   /** Keeps a negative rupee remainder in the same error color as the percentage. */
   remainingSubColor?: string;
+  /** Tints the remaining column when this application is already over-consumed. */
+  remainingNegative?: boolean;
   rangeLabel: string;
   currency: string;
 }) {
-  const remainingAlert = remainingColor === "red.600";
   const factPad = { px: { base: 4, md: 5 }, py: 4 };
   return (
     <Box borderWidth="1px" borderColor="ink.200" borderRadius="lg" bg="ink.50" overflow="hidden">
@@ -344,7 +346,7 @@ export function ApplicationBudgetFacts({
         >
           <Metric label="Consumed" value={consumedLabel} sub={consumedSub} subFontWeight="600" />
         </Box>
-        <Box {...factPad} bg={remainingAlert ? "red.50" : undefined}>
+        <Box {...factPad} bg={remainingNegative ? "red.50" : undefined}>
           <Metric
             label={remainingLabel}
             value={remainingValue}
