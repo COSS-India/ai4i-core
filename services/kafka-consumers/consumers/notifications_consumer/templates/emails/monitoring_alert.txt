@@ -7,6 +7,9 @@ Dear {{ recipient_name }},
 {{ event.alert_datetime }}.
 
 Current Value: {{ event.current_value }}{{ event.unit }}
+{% if event.affected_service %}
+Affected Service: {{ event.affected_service }}
+{% endif %}
 
 {% if portal_url -%}
 Log in to the {{ platform_name }} Portal to view full details: {{ portal_url }}

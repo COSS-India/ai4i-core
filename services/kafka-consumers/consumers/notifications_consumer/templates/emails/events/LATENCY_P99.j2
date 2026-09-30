@@ -1,7 +1,10 @@
-{# details: [threshold, alert_datetime, current_value] — bare numbers, unit appended by the layout #}
+{# details: [threshold, alert_datetime, current_value, service_id] — bare numbers, unit
+   appended by the layout. An envelope published before service_id was added has
+   three; it renders without the Affected Service line. #}
 {% set layout = "monitoring_alert" %}
 {% set name = "P99 Latency" %}
 {% set unit = "s" %}
 {% set threshold = details[0] %}
 {% set alert_datetime = details[1] %}
 {% set current_value = details[2] %}
+{% set affected_service = details[3] if details | length > 3 else "" %}

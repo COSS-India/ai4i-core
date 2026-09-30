@@ -2,7 +2,8 @@
 {# Standard Monitoring Alert Email Template — platform-level, so no
    institution anywhere (unlike alert.html). From events/<event_name>.j2:
    event.name, event.unit ("%" or "s", appended to threshold and current
-   value), event.threshold, event.alert_datetime, event.current_value. #}
+   value), event.threshold, event.alert_datetime, event.current_value,
+   event.affected_service ("" when the envelope carried none). #}
 {% block title %}{{ event.name }} — Threshold {{ event.threshold }}{{ event.unit }}{% endblock %}
 {% block preheader %}{{ event.name }} has reached the configured threshold of {{ event.threshold }}{{ event.unit }}.{% endblock %}
 {% block heading %}{{ event.name }} — Threshold {{ event.threshold }}{{ event.unit }}{% endblock %}
@@ -12,7 +13,12 @@
     <strong>{{ event.name }}</strong> has reached the configured threshold of
     <strong>{{ event.threshold }}{{ event.unit }}</strong> as of {{ event.alert_datetime }}.
   </p>
+  {% if event.affected_service %}
+  <p style="margin:0 0 4px 0;">Current Value: {{ event.current_value }}{{ event.unit }}</p>
+  <p style="margin:0 0 20px 0;">Affected Service: {{ event.affected_service }}</p>
+  {% else %}
   <p style="margin:0 0 20px 0;">Current Value: {{ event.current_value }}{{ event.unit }}</p>
+  {% endif %}
   {% include "_portal_line.html" %}
   <p style="margin:20px 0 0 0;">
     Regards,<br>

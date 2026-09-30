@@ -140,7 +140,35 @@ def test_details_follow_the_consumer_template_contract():
         band=SimpleNamespace(value=Decimal("5"), severity=SimpleNamespace(value="WARNING")),
         occurred_at=datetime(2026, 9, 28, 10, 15, tzinfo=timezone.utc),
     )
-    assert ev._details(context) == ["5", "28 Sep 2026, 03:45 PM IST", "6.25"]
+    assert ev._details(context) == ["5", "28 Sep 2026, 03:45 PM IST", "6.25", "svc-a"]
+
+
+@pytest.mark.asyncio
+async def test_each_breaching_service_names_itself_in_its_details(monkeypatch):
+    """Two services over the same alert in one tick fire two emails; each
+    email's details carry its own service, not a sibling's."""
+    from datetime import datetime, timezone
+
+    monkeypatch.setattr(ev.settings, "prometheus_url", "http://prom")
+    ready = SimpleNamespace(bands=(object(),), recipient_roles={"ADMIN": True}, any_role_enabled=lambda: True)
+    runtime = MagicMock()
+    runtime.cache.read = AsyncMock(return_value=SimpleNamespace(
+        settings=SimpleNamespace(get=lambda n: ready if n is NotificationName.ERROR_RATE_5XX else None)
+    ))
+    monkeypatch.setattr(ev, "get_notification_runtime", lambda: runtime)
+    emit = AsyncMock(return_value=["event-1", "event-2"])
+    monkeypatch.setattr(ev, "emit_band_batch", emit)
+
+    async with _client(lambda req: httpx.Response(200, json=_vector(("asr-service", "6.2"), ("llm-service", "9.1")))) as c:
+        await ev.run_tick(c)
+
+    band = SimpleNamespace(value=Decimal("5"), severity=SimpleNamespace(value="WARNING"))
+    when = datetime(2026, 9, 28, 10, 15, tzinfo=timezone.utc)
+    details = [
+        item.details(SimpleNamespace(subject=item.subject, observed=item.observed, band=band, occurred_at=when))
+        for item in emit.await_args.args[0]
+    ]
+    assert [(d[2], d[3]) for d in details] == [("6.2", "asr-service"), ("9.1", "llm-service")]
 
 
 @pytest.mark.asyncio

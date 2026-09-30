@@ -127,13 +127,15 @@ def _bare(value) -> str:
 
 
 def _details(context: FireContext) -> List[str]:
-    """The consumer's monitoring template contract, same shape as the usage
-    alerts: [threshold, alert_datetime_ist, current_value]. The service id
-    and severity travel in the envelope's subject and severity."""
+    """The consumer's monitoring template contract: the usage alerts' shape
+    plus the affected service, [threshold, alert_datetime_ist, current_value,
+    service_id]. One event fires per (alert, service), so the service is that
+    event's own subject. Severity travels in the envelope's severity."""
     return [
         _bare(context.band.value),
         context.occurred_at.astimezone(IST).strftime("%d %b %Y, %I:%M %p IST"),
         _bare(context.observed.value),
+        context.subject[ntf.SubjectKey.SERVICE_ID.value],
     ]
 
 

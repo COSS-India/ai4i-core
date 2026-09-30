@@ -142,6 +142,45 @@ def test_monitoring_alerts_carry_no_institution(event_name):
     assert "PLATFORM" not in message.text_body
 
 
+def test_each_monitoring_email_names_its_own_affected_service():
+    """Two services over the 5xx threshold in one tick get one email each;
+    each says which service, on the line after Current Value."""
+    asr = _render("ERROR_RATE_5XX", ["5", WHEN, "6.2", "asr-service"], tenant_name=None)
+    llm = _render("ERROR_RATE_5XX", ["5", WHEN, "9.1", "llm-service"], tenant_name=None)
+
+    assert "Current Value: 6.2%\nAffected Service: asr-service\n" in asr.text_body
+    assert "Current Value: 9.1%\nAffected Service: llm-service\n" in llm.text_body
+    assert "llm-service" not in asr.text_body + asr.html_body
+    assert "asr-service" not in llm.text_body + llm.html_body
+    html = asr.html_body
+    assert html.index("Current Value: 6.2%") < html.index("Affected Service: asr-service") < html.index("Log in to")
+
+
+@pytest.mark.parametrize("event_name", ["ERROR_RATE_4XX", "ERROR_RATE_5XX", "LATENCY_P50", "LATENCY_P95", "LATENCY_P99"])
+def test_every_monitoring_alert_shows_the_affected_service(event_name):
+    message = _render(event_name, ["5", WHEN, "6", "svc-a"], tenant_name=None)
+
+    assert "Affected Service: svc-a" in message.html_body
+    assert "Affected Service: svc-a" in message.text_body
+
+
+def test_monitoring_envelope_without_a_service_still_renders():
+    """An envelope published before the producer sent the service (still in
+    Kafka, or retried, during a rollout) renders without the line."""
+    message = _render("LATENCY_P95", ["2", WHEN, "2.5"], tenant_name=None)
+
+    assert "Current Value: 2.5s\n\nLog in to" in message.text_body
+    assert "Affected Service" not in message.text_body
+    assert "Affected Service" not in message.html_body
+
+
+def test_affected_service_is_escaped_in_html_only():
+    message = _render("ERROR_RATE_4XX", ["5", WHEN, "6", "<b>svc</b>"], tenant_name=None)
+
+    assert "Affected Service: &lt;b&gt;svc&lt;/b&gt;" in message.html_body
+    assert "Affected Service: <b>svc</b>" in message.text_body
+
+
 def test_list_detail_renders_as_indented_lines_in_text():
     message = _render("TIER_ASSIGNED", ["Gold", "desc", ["ASR: 1 req/mo", "NMT: 2 req/mo"]])
 
