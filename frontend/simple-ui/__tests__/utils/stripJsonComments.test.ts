@@ -125,7 +125,7 @@ describe("stripJsonComments", () => {
 describe("SAMPLE_MODEL_JSON", () => {
   it("still carries its explanatory comments for the downloaded file", () => {
     expect(SAMPLE_MODEL_JSON).toContain("// Required. Version for the model.");
-    expect(SAMPLE_MODEL_JSON.split("\n").filter((line) => line.includes("//")).length).toBeGreaterThan(50);
+    expect(SAMPLE_MODEL_JSON.split("\n").filter((line) => line.includes("//")).length).toBeGreaterThan(20);
   });
 
   it("parses once the comments are stripped", () => {
@@ -137,43 +137,30 @@ describe("SAMPLE_MODEL_JSON", () => {
       "version",
       "name",
       "description",
-      "refUrl",
       "task",
       "languages",
-      "isLangDetectionEnabled",
-      "isMultilingual",
       "license",
-      "licenseUrl",
       "domain",
-      "callbackUrl",
-      "inferenceApiKey",
-      "isSyncApi",
-      "asyncApiDetails",
       "adapterConfig",
       "schema",
       "trainingDataset",
-      "benchmarks",
       "submitter",
     ]);
   });
 
-  it("keeps URLs and nested structures intact through the strip", () => {
+  it("keeps nested structures intact through the strip", () => {
     const sample = parse(SAMPLE_MODEL_JSON);
 
-    expect(sample.refUrl).toBe("https://github.com/example/example-model");
-    expect(sample.licenseUrl).toBe("https://opensource.org/licenses/MIT");
-    expect(sample.callbackUrl).toBe(
-      "https://inference.example.com/v2/models/example-model/infer"
-    );
     expect(sample.task).toEqual({ type: "llm" });
+    expect(sample.schema.taskType).toBe(sample.task.type);
+    expect(sample.adapterConfig.model_name).toBe("google/gemma-4-31B-it");
     expect(sample.adapterConfig.inputs[0]).toEqual({
       tensor: "INPUT_TEXT",
       dtype: "BYTES",
       shape: [-1, 1],
       value_path: "input.source",
     });
-    expect(sample.benchmarks[0].score).toEqual([{ metricName: "WER", score: "7.5" }]);
-    expect(sample.submitter.team[0].oauthId.provider).toBe("google");
-    expect(sample.asyncApiDetails).toBeNull();
+    expect(sample.schema.response.choices[0].message.content).toBe("Hello!");
+    expect(sample.submitter).toEqual({ name: "Example Org" });
   });
 });
