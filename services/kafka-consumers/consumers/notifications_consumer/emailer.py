@@ -30,13 +30,20 @@ logger = get_logger(__name__)
 # partition (KAFKA_MAX_POLL_INTERVAL_MS). A hard deadline here means a
 # send that can't complete becomes "failed", not "wedged forever".
 #
-# MUST stay >= EmailSettings.smtp_timeout — a deadline shorter than
-# smtp_timeout cuts off sends aiosmtplib would still have completed (seen
-# in practice with SES sends taking ~21-25s). Headroom is 0 by design:
-# SMTP_TIMEOUT is 60s in env.template and this deadline matches it. If
-# DNS/connect-phase hangs show up in practice, bump this above 0 rather than
-# shortening SMTP_TIMEOUT.
-_DEADLINE_HEADROOM_S = 0.0
+# MUST stay strictly ABOVE 0 — headroom at 0 means this outer wait_for and
+# aiosmtplib's own internal timeout (smtp.py's `timeout=self._timeout`,
+# the same smtp_timeout value) expire at the same instant, so this cancels
+# the send in a race against aiosmtplib's own completion rather than after
+# it. Confirmed in staging (2026-09-30): a real SES send that had already
+# been accepted by the far end was still cancelled by this wait_for at the
+# same moment, logged "timed out — treating as failed", and recorded as a
+# failed delivery — even though the recipient received the email. 15s of
+# headroom gives aiosmtplib's own timeout (or a real success) a chance to
+# resolve first; only a send stuck well past smtp_timeout — a true hang,
+# not just a slow-but-completing one — still hits this outer deadline.
+# KAFKA_MAX_POLL_INTERVAL_MS (300s in env.template) has ample room for the
+# extra wait on a single message.
+_DEADLINE_HEADROOM_S = 15.0
 
 
 @lru_cache(maxsize=1)

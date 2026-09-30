@@ -105,20 +105,32 @@ class RecipientResolver:
         extra_user_ids: Sequence[str] = (),
     ) -> Tuple[List[Recipient], Optional[str]]:
         """Q-R1: recipients of one tenant and the institution name."""
-        result = await session.execute(
-            _ONE_TENANT_SQL,
-            {
-                "tenant_id": int(tenant_id),
-                "include_admin": bool(recipient_roles.get(RecipientRole.ADMIN.value)),
-                "include_tenant_admin": bool(recipient_roles.get(RecipientRole.TENANT_ADMIN.value)),
-                "admin_role": RecipientRole.ADMIN.value,
-                "tenant_admin_role": RecipientRole.TENANT_ADMIN.value,
-                "extra_user_ids": [str(u) for u in extra_user_ids],
-            },
-        )
+        params = {
+            "tenant_id": int(tenant_id),
+            "include_admin": bool(recipient_roles.get(RecipientRole.ADMIN.value)),
+            "include_tenant_admin": bool(recipient_roles.get(RecipientRole.TENANT_ADMIN.value)),
+            "admin_role": RecipientRole.ADMIN.value,
+            "tenant_admin_role": RecipientRole.TENANT_ADMIN.value,
+            "extra_user_ids": [str(u) for u in extra_user_ids],
+        }
+        result = await session.execute(_ONE_TENANT_SQL, params)
         rows = result.mappings().all()
+        # TEMPORARY — AI4IDS budget-notification recipient-drop investigation.
+        # Remove once the "one of two Institution Admins missing" bug is
+        # root-caused; logs no PII beyond user ids already visible in the DB.
+        logger.warning(
+            "DEBUG_RECIPIENTS for_tenant tenant_id=%s include_admin=%s include_tenant_admin=%s "
+            "extra_user_ids=%r row_count=%d row_ids=%r",
+            tenant_id, params["include_admin"], params["include_tenant_admin"],
+            params["extra_user_ids"], len(rows), [str(r["id"]) for r in rows],
+        )
         tenant_name = rows[0]["tenant_name"] if rows else None
-        return self._unique((str(r["id"]), r["email"], r["full_name"]) for r in rows), tenant_name
+        recipients = self._unique((str(r["id"]), r["email"], r["full_name"]) for r in rows)
+        logger.warning(
+            "DEBUG_RECIPIENTS for_tenant tenant_id=%s post_unique_count=%d",
+            tenant_id, len(recipients),
+        )
+        return recipients, tenant_name
 
     async def for_tenants(
         self,
