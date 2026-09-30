@@ -7,7 +7,9 @@ evaluates. The leader keeps the alerts that have active bands and a selected
 recipient role, runs their PromQL queries concurrently against Prometheus, and
 hands every (alert, service) value to the shared BAND pipeline in one batch
 (ai4i_core.kafka.emit_band_batch): one ledger read, claims only for FIRE and
-RESET, one Redis pipeline for all changes.
+RESET, one Redis pipeline for all changes. Services that fire the same alert
+in one tick are sent as one email listing them all; each keeps its own
+ledger row, so its band and cooldown are tracked apart.
 
 A service missing from a result (no traffic, or under the minimum request
 count) causes no change: missing data never counts as recovery.
@@ -127,15 +129,32 @@ def _bare(value) -> str:
 
 
 def _details(context: FireContext) -> List[str]:
-    """The consumer's monitoring template contract: the usage alerts' shape
-    plus the affected service, [threshold, alert_datetime_ist, current_value,
-    service_id]. One event fires per (alert, service), so the service is that
-    event's own subject. Severity travels in the envelope's severity."""
+    """One service's part of the consumer's monitoring template contract:
+    the usage alerts' shape plus the affected service, [threshold,
+    alert_datetime_ist, current_value, service_id]. It is the whole event
+    when this service fires alone in its tick. Severity travels in the
+    envelope's severity."""
     return [
         _bare(context.band.value),
         context.occurred_at.astimezone(IST).strftime("%d %b %Y, %I:%M %p IST"),
         _bare(context.observed.value),
         context.subject[ntf.SubjectKey.SERVICE_ID.value],
+    ]
+
+
+def _group_details(parts: List[List[str]]) -> List:
+    """Details of one event for every service that fired an alert in the
+    same tick: [threshold, alert_datetime_ist, current_value, service_id,
+    [[service_id, current_value, threshold], ...]]. The list is worst first;
+    the first four values are the worst service's, so a consumer that does
+    not read the list still renders a complete email. threshold is the
+    lowest band among them, which every listed service has reached."""
+    parts = sorted(parts, key=lambda p: Decimal(p[2]), reverse=True)
+    threshold = min((p[0] for p in parts), key=Decimal)
+    _, alert_datetime, current_value, service_id = parts[0]
+    return [
+        threshold, alert_datetime, current_value, service_id,
+        [[p[3], p[2], p[0]] for p in parts],
     ]
 
 
@@ -217,6 +236,7 @@ async def run_tick(client: httpx.AsyncClient) -> List[uuid.UUID]:
                     subject=monitoring_subject(service_id),
                     observed=Measurement(value=_decimal(value), unit=unit),
                     details=_details,
+                    group_details=_group_details,
                 )
             )
     if not items:

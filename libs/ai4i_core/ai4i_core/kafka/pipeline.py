@@ -76,7 +76,12 @@ class FireContext:
 @dataclass(frozen=True)
 class BandItem:
     """One BAND evaluation (emit_band_batch). details builds the email's
-    positional values when the band fires."""
+    positional values when the band fires.
+
+    Items of one call with the same name and tenant that set group_details
+    and fire together are sent as one event: each keeps its own ledger claim,
+    and group_details merges their details (in firing order) into the
+    event's. An item that fires alone keeps its own details."""
 
     name: NotificationName
     tenant_id: str
@@ -84,6 +89,7 @@ class BandItem:
     observed: Measurement
     details: Optional[Callable[[FireContext], Union[Details, Awaitable[Details]]]] = None
     fallback_details: Details = ()
+    group_details: Optional[Callable[[List[Details]], Details]] = None
 
 
 def _name_text(name) -> str:
@@ -421,8 +427,9 @@ async def emit_band_batch(items: Sequence[BandItem]) -> List[uuid.UUID]:
     """BAND evaluations of one billed span or monitoring tick. One cache read
     for all items (L1, then one Redis pipeline, then one Q-L1); claims only
     for FIRE (Q-L2) and RESET (Q-L3); one Redis pipeline for every ledger
-    change; then recipients and publish per fired item. Returns the event
-    ids handed to Kafka."""
+    change; then recipients and publish per fired item, or per group of
+    fired items (BandItem.group_details). Returns the event ids handed to
+    Kafka."""
     rt = get_runtime()
     evaluations: List[_Evaluation] = []
     for item in items:
@@ -531,9 +538,13 @@ async def emit_band_batch(items: Sequence[BandItem]) -> List[uuid.UUID]:
         if not active:
             return []
 
+    group_event_ids: Dict[Tuple[NotificationName, str], uuid.UUID] = {}
     for e in active:
         if e.decision is Decision.FIRE:
-            e.event_id = uuid.uuid4()
+            if e.item.group_details is None:
+                e.event_id = uuid.uuid4()
+            else:
+                e.event_id = group_event_ids.setdefault((e.spec.name, e.ref.tenant_id), uuid.uuid4())
             context = FireContext(e.spec.name, e.ref.tenant_id, e.ref.subject_dict, e.band, e.item.observed, now)
             e.details = await _details(
                 rt, e.item.details, context, e.item.fallback_details, name=e.spec.name, row_id=e.row.id,
@@ -593,17 +604,42 @@ async def emit_band_batch(items: Sequence[BandItem]) -> List[uuid.UUID]:
         names = list(dict.fromkeys(e.spec.name.value for e in active if e.ref.key in changed))
         await rt.cache.write_ledger(changed, refreshed, names)
 
-    sent: List[uuid.UUID] = []
+    # Grouped items share an event_id; the rest have their own.
+    groups: Dict[uuid.UUID, List[_Evaluation]] = {}
     for e in fired:
+        groups.setdefault(e.event_id, []).append(e)
+    sent: List[uuid.UUID] = []
+    for members in groups.values():
+        if len(members) == 1:
+            e, subject, details = members[0], members[0].ref.subject_dict, members[0].details
+        else:
+            # The highest band sets the event's band and severity; a group
+            # spans several subjects, so it carries none.
+            e = max(members, key=lambda m: m.band.value)
+            subject, details = {}, await _group_details(rt, e, members)
         event_id = await _deliver(
-            rt, e.row, tenant_id=e.ref.tenant_id, subject=e.ref.subject_dict, event_id=e.event_id,
-            occurred_at=now, details=e.details, severity=e.band.severity, band=e.band,
+            rt, e.row, tenant_id=e.ref.tenant_id, subject=subject, event_id=e.event_id,
+            occurred_at=now, details=details, severity=e.band.severity, band=e.band,
             observed=e.item.observed,
             extra_user_ids=e.subs.entry(e.spec.name).recipients if e.subs is not None else (),
         )
         if event_id is not None:
             sent.append(event_id)
     return sent
+
+
+async def _group_details(rt: NotificationRuntime, head: _Evaluation, members: List[_Evaluation]) -> List[Any]:
+    """Best effort, like _details: a failing merge sends head's own details
+    and writes DETAILS_PARTIAL."""
+    try:
+        return list(head.item.group_details([list(m.details) for m in members]))
+    except Exception as exc:
+        await rt.failures.record(
+            FailureStage.DETAILS, FailureCode.DETAILS_PARTIAL, notification_name=head.spec.name,
+            notification_id=head.row.id, tenant_id=head.ref.tenant_id, event_id=head.event_id,
+            operation=Operation.DETAILS_LOOKUP, error=exc,
+        )
+        return list(head.details)
 
 
 async def names_that_can_fire(names: Sequence, tenant_id: str) -> List[NotificationName]:
