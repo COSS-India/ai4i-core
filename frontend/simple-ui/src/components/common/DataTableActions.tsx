@@ -51,6 +51,7 @@ export type DataTableActionsProps = {
   className?: string;
   /** Stop row-click propagation (default true). */
   stopPropagation?: boolean;
+  justify?: "flex-start" | "flex-end" | "center";
 };
 
 /**
@@ -62,6 +63,7 @@ export function DataTableActions({
   spacing = 1,
   className = "row-actions",
   stopPropagation = true,
+  justify,
 }: DataTableActionsProps) {
   const visible = actions.filter((a) => a.visible !== false);
   if (visible.length === 0) return null;
@@ -69,6 +71,7 @@ export function DataTableActions({
   return (
     <HStack
       spacing={spacing}
+      justify={justify}
       className={className}
       onClick={stopPropagation ? (e) => e.stopPropagation() : undefined}
     >
@@ -102,7 +105,14 @@ export function DataTableActions({
         return (
           <Tooltip key={action.id} label={tooltip} hasArrow openDelay={300} isDisabled={!tooltip}>
             {action.disabled ? (
-              <Box as="span" display="inline-flex">
+              <Box
+                as="span"
+                display="inline-flex"
+                tabIndex={0}
+                aria-label={aria}
+                borderRadius="md"
+                _focusVisible={{ boxShadow: "outline" }}
+              >
                 {button}
               </Box>
             ) : (

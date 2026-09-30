@@ -184,6 +184,11 @@ export interface DataTableAdminProps<T> extends DataTableSharedProps<T> {
   onClearFilters?: () => void;
   filterToolbarAlign?: "flex-start" | "center";
   filterToolbarRightContent?: React.ReactNode;
+  /**
+   * Draw the toolbar as the top of the table surface.
+   * Default leaves the toolbar above a separate table card.
+   */
+  toolbarAttached?: boolean;
   showFiltersHeading?: boolean;
   filtersHeading?: string;
   /**
@@ -196,7 +201,11 @@ export interface DataTableAdminProps<T> extends DataTableSharedProps<T> {
   pageSizeOptions?: readonly number[];
   serverPagination?: UseAdminDataTableServerOptions;
   loadingMessage?: string;
+  /** Replaces the default spinner. Other admin tables keep the spinner when omitted. */
+  loadingContent?: React.ReactNode;
   emptyMessage?: string;
+  /** Replaces the default empty alert. Other admin tables keep the alert when omitted. */
+  emptyContent?: React.ReactNode;
   noResultsMessage?: string;
   unfilteredCount?: number;
   maxHeight?: string;
@@ -246,6 +255,7 @@ export function TableSearchField({
   placeholder,
   helper,
   hint,
+  hideLabel = false,
   debounceMs,
   formControlProps,
   inputGroupProps,
@@ -257,6 +267,7 @@ export function TableSearchField({
   placeholder?: string;
   helper?: string;
   hint?: string;
+  hideLabel?: boolean;
   debounceMs?: number;
   formControlProps?: FormControlProps;
   inputGroupProps?: Omit<InputGroupProps, "children">;
@@ -296,7 +307,9 @@ export function TableSearchField({
 
   return (
     <FormControl w={{ base: "full", md: "320px" }} {...formControlProps}>
-      <FieldLabel hint={hint}>{label}</FieldLabel>
+      <FieldLabel hint={hint} formLabelProps={hideLabel ? { srOnly: true, mb: 0 } : undefined}>
+        {label}
+      </FieldLabel>
       <InputGroup size="sm" {...inputGroupProps}>
         <InputLeftElement pointerEvents="none">
           <SearchIcon color="gray.400" />
@@ -413,6 +426,7 @@ export function TableSelectField({
   hint,
   formControlProps,
   selectProps,
+  hideLabel = false,
 }: {
   label: string;
   value: string;
@@ -422,11 +436,14 @@ export function TableSelectField({
   hint?: string;
   formControlProps?: FormControlProps;
   selectProps?: Omit<SelectProps, "value" | "onChange" | "children">;
+  hideLabel?: boolean;
 }) {
   const { resetPage, inputBg } = useDataTableFilterContext();
   return (
     <FormControl w={{ base: "full", sm: "200px" }} {...formControlProps}>
-      <FieldLabel hint={hint}>{label}</FieldLabel>
+      <FieldLabel hint={hint} formLabelProps={hideLabel ? { srOnly: true, mb: 0 } : undefined}>
+        {label}
+      </FieldLabel>
       <Select
         size="sm"
         value={value}
@@ -461,6 +478,7 @@ function ConfigDrivenFilters({
           onChange={search.onChange}
           placeholder={search.placeholder}
           helper={search.helper}
+          hideLabel={search.hideLabel}
           debounceMs={search.debounceMs}
         />
       ) : null}
@@ -477,6 +495,7 @@ function ConfigDrivenFilters({
               value={def.value}
               onChange={def.onChange}
               helper={def.helper}
+              hideLabel={def.hideLabel}
               formControlProps={widthProps ? { w: widthProps.w } : undefined}
             >
               {(def.options ?? []).map((opt) => (
@@ -785,6 +804,7 @@ function AdminLayoutDataTable<T>({
   onClearFilters,
   filterToolbarAlign = "flex-start",
   filterToolbarRightContent,
+  toolbarAttached = false,
   showFiltersHeading = false,
   filtersHeading = "Filters",
   sort,
@@ -795,7 +815,9 @@ function AdminLayoutDataTable<T>({
   serverPagination,
   isLoading = false,
   loadingMessage = "Loading…",
+  loadingContent,
   emptyMessage = "No items found.",
+  emptyContent,
   noResultsMessage = "No items match the current filters.",
   unfilteredCount,
   onRowClick,
@@ -916,6 +938,9 @@ function AdminLayoutDataTable<T>({
     ) : null;
 
   const hasFilterToolbar = Boolean(search || (filterDefs && filterDefs.length > 0));
+  const toolbarLabelsVisible =
+    Boolean(search && !search.hideLabel) ||
+    (filterDefs ?? []).some((def) => !def.hideLabel);
 
   // Outer shell owns border/radius; strip chrome overrides from container props.
   const {
@@ -1019,55 +1044,80 @@ function AdminLayoutDataTable<T>({
     </TableContainer>
   );
 
+  const toolbar = hasFilterToolbar ? (
+    <Box
+      px={toolbarAttached ? 4 : 0}
+      py={toolbarAttached ? 3 : 0}
+      borderBottomWidth={toolbarAttached ? "1px" : 0}
+      borderColor="ink.100"
+    >
+      <VStack spacing={4} align="stretch">
+        {showFiltersHeading ? (
+          <Text fontSize="sm" fontWeight="semibold" color="gray.700" userSelect="none">
+            {filtersHeading}
+          </Text>
+        ) : null}
+        <TableFilterToolbar
+          hasActiveFilters={hasActiveFilters}
+          onClear={onClearFilters ? handleClearFilters : undefined}
+          align={filterToolbarAlign}
+          alignActionsToInputs={toolbarLabelsVisible}
+          rightContent={filterToolbarRightContent}
+        >
+          <ConfigDrivenFilters search={search} filterDefs={filterDefs} />
+        </TableFilterToolbar>
+      </VStack>
+    </Box>
+  ) : null;
+
+  const tableSurface = isLoading ? (
+    loadingContent ?? (
+      <Center py={8}>
+        <VStack spacing={4}>
+          <Spinner size="lg" color="ink.600" />
+          <Text color="gray.600">{loadingMessage}</Text>
+        </VStack>
+      </Center>
+    )
+  ) : showEmpty ? (
+    emptyContent ?? (
+      <Alert status="info" borderRadius="md">
+        <AlertIcon />
+        <AlertDescription>{emptyText}</AlertDescription>
+      </Alert>
+    )
+  ) : (
+    <Box
+      w="full"
+      minW={0}
+      borderWidth={toolbarAttached ? 0 : "1px"}
+      borderColor="ink.200"
+      borderRadius={toolbarAttached ? 0 : "14px"}
+      bg="white"
+      overflow="hidden"
+    >
+      {paginationPosition === "top" ? paginationBlock : null}
+      {tableBody}
+      {paginationPosition === "bottom" ? paginationBlock : null}
+    </Box>
+  );
+
+  const stack = (
+    <VStack spacing={toolbarAttached ? 0 : 4} align="stretch" w="full" minW={0}>
+      {toolbar}
+      {tableSurface}
+    </VStack>
+  );
+
   return (
     <DataTableFilterContext.Provider value={filterContextValue}>
-      <VStack spacing={4} align="stretch" w="full" minW={0}>
-        {hasFilterToolbar ? (
-          <VStack spacing={4} align="stretch">
-            {showFiltersHeading ? (
-              <Text fontSize="sm" fontWeight="semibold" color="gray.700" userSelect="none">
-                {filtersHeading}
-              </Text>
-            ) : null}
-            <TableFilterToolbar
-              hasActiveFilters={hasActiveFilters}
-              onClear={onClearFilters ? handleClearFilters : undefined}
-              align={filterToolbarAlign}
-              rightContent={filterToolbarRightContent}
-            >
-              <ConfigDrivenFilters search={search} filterDefs={filterDefs} />
-            </TableFilterToolbar>
-          </VStack>
-        ) : null}
-
-        {isLoading ? (
-          <Center py={8}>
-            <VStack spacing={4}>
-              <Spinner size="lg" color="ink.600" />
-              <Text color="gray.600">{loadingMessage}</Text>
-            </VStack>
-          </Center>
-        ) : showEmpty ? (
-          <Alert status="info" borderRadius="md">
-            <AlertIcon />
-            <AlertDescription>{emptyText}</AlertDescription>
-          </Alert>
-        ) : (
-          <Box
-            w="full"
-            minW={0}
-            borderWidth="1px"
-            borderColor="ink.200"
-            borderRadius="14px"
-            bg="white"
-            overflow="hidden"
-          >
-            {paginationPosition === "top" ? paginationBlock : null}
-            {tableBody}
-            {paginationPosition === "bottom" ? paginationBlock : null}
-          </Box>
-        )}
-      </VStack>
+      {toolbarAttached ? (
+        <Box w="full" minW={0} borderWidth="1px" borderColor="ink.200" borderRadius="lg" bg="white" overflow="hidden">
+          {stack}
+        </Box>
+      ) : (
+        stack
+      )}
     </DataTableFilterContext.Provider>
   );
 }

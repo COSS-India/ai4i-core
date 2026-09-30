@@ -58,12 +58,15 @@ const EMPTY_FORM: ApplicationForm = {
   allocated_percentage: "",
 };
 
+/** Application-level amounts from the usage list. Null means that list did not supply them. */
 export type BulkBudgetDraft = {
   application_id: string;
   name: string;
   status: ApplicationStatus;
+  allocated_amount: number | null;
   consumed_percentage: number | null;
   consumed_budget: number | null;
+  remaining_budget: number | null;
   originalPct: number | null;
   pctInput: string;
   resolvedPct: number | null;
@@ -73,6 +76,8 @@ export type BulkBudgetDraft = {
   keys: ApplicationApiKeyRow[];
   keyPreviews: ApplicationKeyPreview[];
   rowError: string | null;
+  /** Rejected stepper attempt. Does not change the draft or block save. */
+  inputNotice: string | null;
 };
 
 function mapApplicationAllocationError(error: unknown): string {
@@ -179,8 +184,10 @@ function buildDraftFromApplication(app: Application): BulkBudgetDraft {
     application_id: app.application_id,
     name: app.name,
     status: app.status,
+    allocated_amount: null,
     consumed_percentage: app.consumed_percentage ?? null,
     consumed_budget: app.consumed_budget ?? null,
+    remaining_budget: null,
     originalPct: pct,
     pctInput: pctString(pct),
     resolvedPct: pct,
@@ -190,6 +197,7 @@ function buildDraftFromApplication(app: Application): BulkBudgetDraft {
     keys: [],
     keyPreviews: [],
     rowError: null,
+    inputNotice: null,
   };
 }
 
@@ -197,6 +205,9 @@ function evaluateRowError(
   row: BulkBudgetDraft,
   tenantBudget: number,
 ): string | null {
+  if (row.pctInput.trim() === "" && row.originalPct != null) {
+    return BUDGET_VALIDATION.enterValidAllocationPercentage;
+  }
   if (row.resolvedPct == null) return null;
   if (row.resolvedPct < 0 || row.resolvedPct > 100) {
     return BUDGET_VALIDATION.percentageMustBeBetween0And100;
@@ -238,12 +249,13 @@ function applyResolved(
       resolvedAmount: null,
       keyPreviews: [],
       rowError: null,
+      inputNotice: null,
     };
     return { ...next, rowError: evaluateRowError(next, tenantBudget) };
   }
   const numeric = Number(trimmed);
   if (!Number.isFinite(numeric)) {
-    return { ...row, rowError: BUDGET_VALIDATION.enterValidNumber };
+    return { ...row, inputNotice: null, rowError: BUDGET_VALIDATION.enterValidAllocationPercentage };
   }
   const resolved = resolveApplicationBudget("percentage", numeric, tenantBudget);
   if (!resolved) {
@@ -261,6 +273,7 @@ function applyResolved(
     resolvedAmount: resolved.amount,
     keyPreviews,
     rowError: null,
+    inputNotice: null,
   };
   return { ...next, rowError: evaluateRowError(next, tenantBudget) };
 }
@@ -268,6 +281,10 @@ function applyResolved(
 export function useApplicationManagement(tenantId: string, institutionBudget: number | null) {
   const toast = useToast();
   const [applications, setApplications] = useState<Application[]>([]);
+  /** Count from the full budget list, so search does not change the overview. */
+  const [institutionApplicationCount, setInstitutionApplicationCount] = useState<number | null>(
+    null,
+  );
   const [totalAllocatedPct, setTotalAllocatedPct] = useState(0);
   const [tenantBudget, setTenantBudget] = useState(institutionBudget ?? 0);
   const [total, setTotal] = useState(0);
@@ -292,6 +309,16 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
   const [budgetFloor, setBudgetFloor] = useState(0);
   const [budgetBanner, setBudgetBanner] = useState<string | null>(null);
   const [budgetStepperHint, setBudgetStepperHint] = useState<string | null>(null);
+  /** Null unless usage detail succeeded. Never treat a failed load as ₹0. */
+  const [budgetUsage, setBudgetUsage] = useState<{
+    allocated: number;
+    consumed: number;
+    remaining: number;
+  } | null>(null);
+  const [budgetUsageState, setBudgetUsageState] = useState<"loading" | "ready" | "error">(
+    "loading",
+  );
+  const budgetUsageRequestRef = useRef<string | null>(null);
 
   const [bulkBudgetOpen, setBulkBudgetOpen] = useState(false);
   const [bulkLoading, setBulkLoading] = useState(false);
@@ -322,6 +349,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
         applications: all.applications,
       };
       setTotalAllocatedPct(sumAllocatedPercentage(all.applications));
+      setInstitutionApplicationCount(all.applications.length);
     } catch {
       // Keep the previous summary if the full fetch fails.
     }
@@ -472,11 +500,13 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
         const draft = buildDraftFromApplication(app);
         const usageRow = usageByAppId.get(app.application_id);
         if (usageRow) {
+          draft.allocated_amount = usageRow.allocatedBudget.amount;
           draft.consumed_percentage = toInstitutionConsumedPct(
             usageRow.spendBudget.amount,
             effectiveBudget,
           );
           draft.consumed_budget = usageRow.spendBudget.amount;
+          draft.remaining_budget = usageRow.remainingBudget.amount;
         }
         if (
           draft.resolvedPct != null &&
@@ -528,7 +558,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     setBulkRows((prev) =>
       prev.map((row) =>
         row.application_id === applicationId && isApplicationBudgetEditable(row.status)
-          ? { ...row, rowError: percentageBoundMessage(bound) }
+          ? { ...row, inputNotice: percentageBoundMessage(bound) }
           : row,
       ),
     );
@@ -627,14 +657,30 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     setBudgetFloor(0);
     setBudgetBanner(null);
     setBudgetStepperHint(null);
+    setBudgetUsage(null);
+    setBudgetUsageState("loading");
     setBudgetOpen(true);
+    const requestId = app.application_id;
+    budgetUsageRequestRef.current = requestId;
     void fetchApplicationUsageDetail(tenantId, Number(app.application_id))
       .then((detail) => {
+        if (budgetUsageRequestRef.current !== requestId) return;
         const budget = institutionBudget ?? tenantBudget;
         const floor = toInstitutionConsumedPct(detail.spendBudget.amount, budget);
         setBudgetFloor(floor ?? 0);
+        setBudgetUsage({
+          allocated: detail.allocatedBudget.amount,
+          consumed: detail.spendBudget.amount,
+          remaining: detail.remainingBudget.amount,
+        });
+        setBudgetUsageState("ready");
       })
-      .catch(() => setBudgetFloor(0));
+      .catch(() => {
+        if (budgetUsageRequestRef.current !== requestId) return;
+        setBudgetFloor(0);
+        setBudgetUsage(null);
+        setBudgetUsageState("error");
+      });
   };
 
   const budgetOthersAllocated = useMemo(() => {
@@ -649,19 +695,23 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
   const budgetAvailable = Math.max(0, 100 - budgetOthersAllocated);
 
   const budgetFieldError = useMemo(() => {
-    if (budgetParsed === "invalid") return BUDGET_VALIDATION.enterValidPercentage;
+    if (budgetDraft.trim() === "" || budgetParsed === "invalid") {
+      return BUDGET_VALIDATION.enterValidAllocationPercentage;
+    }
     if (budgetParsed != null && budgetParsed < 0) return BUDGET_VALIDATION.budgetCannotBeNegative;
     if (budgetParsed != null && budgetParsed > 100) {
       return BUDGET_VALIDATION.percentageMustBeBetween0And100;
     }
     if (budgetParsed != null && budgetFloor > 0 && budgetParsed < budgetFloor - 1e-6) {
-      return belowConsumedPctRaw(budgetFloor);
+      return budgetUsage
+        ? belowConsumedAmount(budgetUsage.consumed)
+        : belowConsumedPctRaw(budgetFloor);
     }
     if (budgetLiveTotal > 100 + 1e-6) {
       return totalApplicationsOver100(budgetLiveTotal);
     }
     return null;
-  }, [budgetParsed, budgetFloor, budgetLiveTotal]);
+  }, [budgetDraft, budgetParsed, budgetFloor, budgetLiveTotal, budgetUsage]);
 
   const validateCreate = (): boolean => {
     const errors: Record<string, string> = {};
@@ -824,6 +874,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     loadError,
     remainingPct,
     totalAllocatedPct,
+    institutionApplicationCount,
     tenantBudget,
     institutionBudgetUnset,
     createOpen,
@@ -860,6 +911,8 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     budgetFieldError,
     budgetFloor,
     budgetAvailable,
+    budgetUsage,
+    budgetUsageState,
     budgetBanner,
     bulkBudgetOpen,
     setBulkBudgetOpen,

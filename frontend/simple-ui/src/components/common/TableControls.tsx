@@ -333,6 +333,7 @@ export function TableFilterToolbar({
   spacing = 3,
   align = "flex-start",
   justify = "flex-start",
+  alignActionsToInputs = true,
 }: {
   children: React.ReactNode;
   hasActiveFilters?: boolean;
@@ -342,12 +343,14 @@ export function TableFilterToolbar({
   spacing?: number;
   align?: string;
   justify?: string;
+  /** Offset actions by a form-label height. Turn off when every control hides its label. */
+  alignActionsToInputs?: boolean;
 }) {
   const actions =
     (hasActiveFilters && onClear) || rightContent ? (
       <HStack
         spacing={2}
-        pt={FORM_LABEL_TO_INPUT_PT}
+        pt={alignActionsToInputs ? FORM_LABEL_TO_INPUT_PT : 0}
         align="center"
         flexShrink={0}
         ml={rightContent ? "auto" : undefined}
