@@ -766,11 +766,14 @@ async def get_overview(
             ttl=_FIRST_USAGE_CACHE_TTL,
         )
     first_usage_at = _combine_first_usage(quota_first_usage, metering_first_request)
-    # One line per overview miss, so a null first_usage_at can be traced to
-    # the half that produced it without a debugger.
-    logger.info(
-        "first_usage_at tenant_id=%s tenant=%s quota=%s quota_ok=%s metering=%s metering_source=%s result=%s",
-        scope_tenant, scope_tenant_name,
+    # Traces a null first_usage_at to the half that produced it without a
+    # debugger: INFO only when it is null (the case worth looking at), DEBUG
+    # otherwise, so routine overview misses don't add log volume. The tenant
+    # id is enough to trace; the organisation name stays out of the logs.
+    logger.log(
+        logging.INFO if first_usage_at is None else logging.DEBUG,
+        "first_usage_at tenant_id=%s quota=%s quota_ok=%s metering=%s metering_source=%s result=%s",
+        scope_tenant,
         _iso_utc(quota_first_usage) if quota_first_usage else None, first_usage_ok,
         _iso_utc(metering_first_request) if metering_first_request else None, metering_source,
         first_usage_at,

@@ -9,6 +9,7 @@ to turn (X-Tenant-Id / X-Tenant-Name / tenant_id query param) into the
   - a transient auth-DB failure surfaces as 503, distinct from "not found"
 """
 import asyncio
+import logging
 import importlib.util
 import json
 import sys
@@ -820,6 +821,39 @@ class TestFirstRequestAtCache:
         key = _metering_route_mod._first_usage_cache_key
         assert key(None, None) == "metering:first-usage:v4:all"
         assert key(None, "Acme Corp") != key(None, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("frozen_now")
+class TestFirstUsageDiagnosisLog:
+    """Review: INFO on every overview miss, with the tenant name, was too
+    much volume. INFO only when first_usage_at is null; DEBUG otherwise."""
+
+    @staticmethod
+    def _records(caplog):
+        return [r for r in caplog.records if r.getMessage().startswith("first_usage_at ")]
+
+    async def test_null_result_is_logged_at_info(self, caplog, fake_usage_repo):
+        caplog.set_level(logging.DEBUG, logger="app.routes.metering")
+        await _call_overview(_overview_svc())
+        (record,) = self._records(caplog)
+        assert record.levelno == logging.INFO
+        assert "metering_source=none" in record.getMessage()
+        assert "result=None" in record.getMessage()
+
+    async def test_non_null_result_is_debug_only(self, caplog, fake_usage_repo):
+        caplog.set_level(logging.DEBUG, logger="app.routes.metering")
+        fake_usage_repo.result = _utc(2026, 3, 4)
+        await _call_overview(_overview_svc())
+        (record,) = self._records(caplog)
+        assert record.levelno == logging.DEBUG
+
+    async def test_logs_the_tenant_id_not_its_name(self, caplog, fake_usage_repo):
+        caplog.set_level(logging.DEBUG, logger="app.routes.metering")
+        await _call_overview(_overview_svc(), request=_tenant_admin_request())
+        (record,) = self._records(caplog)
+        assert "tenant_id=7" in record.getMessage()
+        assert "Acme Corp" not in record.getMessage()
 
 
 @pytest.mark.asyncio
