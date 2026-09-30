@@ -988,8 +988,9 @@ const TierManagement: React.FC = () => {
     stagedInstitutionRemovals,
     stageServiceTier,
     stageInstitutionTier,
-    stageInstitutionRemoval,
-    undoInstitutionRemoval,
+    // Temporarily disabled: Remove from Tier.
+    // stageInstitutionRemoval,
+    // undoInstitutionRemoval,
     removingTaskType,
     handleRemoveQuota,
     scheduleTarget,
@@ -1024,9 +1025,10 @@ const TierManagement: React.FC = () => {
     | null
   >(null);
   const [moveTargetId, setMoveTargetId] = useState("");
-  const [removeDialog, setRemoveDialog] = useState<{ id: string; name: string } | null>(
-    null,
-  );
+  // Temporarily disabled: Remove from Tier.
+  // const [removeDialog, setRemoveDialog] = useState<{ id: string; name: string } | null>(
+  //   null,
+  // );
 
   const closeMoveDialog = () => {
     setMoveDialog(null);
@@ -1382,16 +1384,17 @@ const TierManagement: React.FC = () => {
                       tenants={institutionsForEditingTier}
                       isLoading={isInstitutionCountLoading}
                       pendingRow={(institution) => {
-                        if (stagedInstitutionRemovals[institution.tenantId]) {
-                          return (
-                            <PendingMove
-                              label="Removing"
-                              danger
-                              onUndo={() => undoInstitutionRemoval(institution.tenantId)}
-                              isDisabled={isSubmitting}
-                            />
-                          );
-                        }
+                        // Temporarily disabled: Remove from Tier.
+                        // if (stagedInstitutionRemovals[institution.tenantId]) {
+                        //   return (
+                        //     <PendingMove
+                        //       label="Removing"
+                        //       danger
+                        //       onUndo={() => undoInstitutionRemoval(institution.tenantId)}
+                        //       isDisabled={isSubmitting}
+                        //     />
+                        //   );
+                        // }
                         const targetId = stagedInstitutionTiers[institution.tenantId];
                         if (!targetId) return null;
                         return (
@@ -1418,6 +1421,7 @@ const TierManagement: React.FC = () => {
                                 });
                               },
                             },
+                            /* Temporarily disabled: Remove from Tier.
                             {
                               label: "Remove from Tier",
                               danger: true,
@@ -1427,6 +1431,7 @@ const TierManagement: React.FC = () => {
                                   name: institution.organisation,
                                 }),
                             },
+                            */
                           ]}
                         />
                       )}
@@ -1578,6 +1583,7 @@ const TierManagement: React.FC = () => {
         </VStack>
       </StandardModal>
 
+      {/* Temporarily disabled: Remove from Tier.
       <StandardModal
         isOpen={!!removeDialog}
         onClose={() => setRemoveDialog(null)}
@@ -1610,6 +1616,7 @@ const TierManagement: React.FC = () => {
           to consume any metered service until a new tier is set.
         </Text>
       </StandardModal>
+      */}
 
       {/* Schedule quota change modal */}
       <StandardModal

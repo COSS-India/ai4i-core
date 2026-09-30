@@ -10,6 +10,7 @@ import {
 } from "@chakra-ui/react";
 import React from "react";
 import CreateButton from "../common/CreateButton";
+import { BUDGET_COPY } from "../../config/budgetMessages";
 import { formatBudgetMoney, formatBudgetPct } from "./budgetVisuals";
 
 function money(amount: number | null | undefined, currency: string): string {
@@ -116,11 +117,15 @@ function Metric({
   value,
   sub,
   valueColor = "ink.800",
+  subColor = "ink.500",
+  subFontWeight,
 }: {
   label: string;
   value: string;
   sub?: string;
   valueColor?: string;
+  subColor?: string;
+  subFontWeight?: string;
 }) {
   return (
     <Box minW={0}>
@@ -138,7 +143,7 @@ function Metric({
         {value}
       </Text>
       {sub ? (
-        <Text fontSize="xs" color="ink.500" mt={1} noOfLines={2}>
+        <Text fontSize="xs" fontWeight={subFontWeight} color={subColor} mt={1} noOfLines={2}>
           {sub}
         </Text>
       ) : null}
@@ -284,9 +289,11 @@ export function ApplicationBudgetFacts({
   allocatedLabel,
   consumedLabel,
   consumedSub,
+  remainingLabel = BUDGET_COPY.remaining,
   remainingValue,
   remainingSub,
   remainingColor = "ink.800",
+  remainingSubColor,
   rangeLabel,
   currency,
 }: {
@@ -296,37 +303,62 @@ export function ApplicationBudgetFacts({
   allocatedLabel?: string;
   consumedLabel: string;
   consumedSub?: string;
-  /** This application's unused allocation. Not institution headroom. */
+  /** Headline for the third metric. */
+  remainingLabel?: string;
   remainingValue: string;
   remainingSub?: string;
   remainingColor?: string;
+  /** Keeps a negative rupee remainder in the same error color as the percentage. */
+  remainingSubColor?: string;
   rangeLabel: string;
   currency: string;
 }) {
+  const remainingAlert = remainingColor === "red.600";
+  const factPad = { px: { base: 4, md: 5 }, py: 4 };
   return (
     <Box borderWidth="1px" borderColor="ink.200" borderRadius="lg" bg="ink.50" overflow="hidden">
-      <SimpleGrid columns={{ base: 1, sm: 3 }} spacing={{ base: 4, sm: 6 }} px={{ base: 4, md: 5 }} py={4}>
-        <Metric
-          label="Allocated"
-          value={allocatedLabel ?? formatBudgetPct(allocatedPct)}
-          sub={
-            allocatedLabel && allocatedAmount == null
-              ? undefined
-              : money(allocatedAmount, currency)
-          }
-          valueColor="blue.700"
-        />
-        <Metric label="Consumed" value={consumedLabel} sub={consumedSub} />
-        <Metric
-          label="Remaining"
-          value={remainingValue}
-          sub={remainingSub}
-          valueColor={remainingColor}
-        />
+      <SimpleGrid columns={{ base: 1, sm: 3 }} spacing={0}>
+        <Box
+          {...factPad}
+          borderColor="ink.200"
+          borderBottomWidth={{ base: "1px", sm: 0 }}
+          borderRightWidth={{ sm: "1px" }}
+        >
+          <Metric
+            label="Allocated"
+            value={allocatedLabel ?? formatBudgetPct(allocatedPct)}
+            sub={
+              allocatedLabel && allocatedAmount == null
+                ? undefined
+                : money(allocatedAmount, currency)
+            }
+            valueColor="blue.700"
+            subFontWeight="600"
+          />
+        </Box>
+        <Box
+          {...factPad}
+          borderColor="ink.200"
+          borderBottomWidth={{ base: "1px", sm: 0 }}
+          borderRightWidth={{ sm: "1px" }}
+        >
+          <Metric label="Consumed" value={consumedLabel} sub={consumedSub} subFontWeight="600" />
+        </Box>
+        <Box {...factPad} bg={remainingAlert ? "red.50" : undefined}>
+          <Metric
+            label={remainingLabel}
+            value={remainingValue}
+            sub={remainingSub}
+            valueColor={remainingColor}
+            subColor={remainingSubColor}
+            subFontWeight="600"
+          />
+        </Box>
       </SimpleGrid>
       <Flex
         px={{ base: 4, md: 5 }}
-        py={3}
+        py={2.5}
+        bg="white"
         borderTopWidth="1px"
         borderColor="ink.200"
         justify="space-between"
@@ -336,7 +368,7 @@ export function ApplicationBudgetFacts({
         <Text fontSize="11px" fontWeight="600" letterSpacing="0.04em" textTransform="uppercase" color="ink.500">
           Allowed range
         </Text>
-        <Text fontSize="sm" fontWeight="700" color="ink.800" textAlign="right">
+        <Text fontSize="xs" fontWeight="600" color="ink.600" textAlign="right">
           {rangeLabel}
         </Text>
       </Flex>

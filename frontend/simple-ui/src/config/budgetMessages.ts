@@ -15,6 +15,7 @@ export const BUDGET_COPY = {
   saving: "Saving...",
   bulkUpdateBudgets: "Bulk Update Budgets",
   leftInThisApplication: "Left in this application",
+  remaining: "Remaining",
   leftForThisKey: "Left for this key",
   applicationPrefix: "Application:",
   apiKeyFallback: "API key",
