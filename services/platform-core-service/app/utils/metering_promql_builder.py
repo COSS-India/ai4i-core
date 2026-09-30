@@ -6,6 +6,8 @@ Provides:
   - ``apply_time_range``: wraps a metric expression in ``increase(...[window])``.
   - ``AbsoluteRange``: a custom from/to window, accepted anywhere a
     ``time_range`` preset is (rendered as a ``[<n>s] offset <m>s`` range).
+  - ``retained_range``: clamps an AbsoluteRange to what Prometheus still
+    retains, so a range reaching past retention never overcounts.
   - ``PROMETHEUS_API_PATH_LABEL``: the one exception — read from settings, since
     which label carries the HTTP path is environment-dependent (see
     ``CoreSettings.prometheus_api_path_label`` in app/core/config.py for why).
@@ -14,10 +16,11 @@ Provides:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Union
 
 from app.core.config import settings
+from app.utils.metering_retention import retention_days
 
 # See CoreSettings.prometheus_api_path_label (app/core/config.py) for why this
 # is env-driven rather than hardcoded. Every selector/groupby here and in
@@ -119,6 +122,58 @@ class AbsoluteRange:
 TimeRange = Union[str, AbsoluteRange, None]
 
 
+class _NotRetained:
+    """Sentinel from retained_range(): the whole AbsoluteRange is older than
+    Prometheus retention, so there is nothing left to count."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<NOT_RETAINED>"
+
+
+NOT_RETAINED = _NotRetained()
+
+# Prometheus deletes a block only once all of it is older than retention, so
+# a sample this far inside the edge is always still there.
+_RETENTION_MARGIN = timedelta(hours=1)
+
+
+def retention_edge(now: datetime | None = None) -> datetime:
+    """Earliest instant whose Prometheus samples are reliably still retained:
+    now − the retention Prometheus reports (PROMETHEUS_RETENTION_DAYS when it
+    doesn't; see metering_retention), plus _RETENTION_MARGIN."""
+    now = now or datetime.now(timezone.utc)
+    return now - timedelta(days=retention_days()) + _RETENTION_MARGIN
+
+
+def retained_range(time_range: TimeRange) -> Union[TimeRange, _NotRetained]:
+    """The part of an AbsoluteRange Prometheus still holds: its start clamped
+    to retention_edge(), or NOT_RETAINED when the whole range is older.
+    Presets and None pass through unchanged.
+
+    Why it matters: the windowed hybrid (see sum_over_window) reads each
+    series at the range's start to tell established series from new ones.
+    Once that sample is pruned every series looks new, and its whole lifetime
+    counter would be counted as usage for the range. Clamping keeps the start
+    inside retention, so a range reaching further back simply counts what's
+    still there instead of erroring or overcounting."""
+    if not isinstance(time_range, AbsoluteRange):
+        return time_range
+    edge = retention_edge()
+    if time_range.end <= edge:
+        return NOT_RETAINED
+    if time_range.start >= edge:
+        return time_range
+    return AbsoluteRange(start=edge, end=time_range.end)
+
+
+def _empty_expr(metric_expr: str) -> str:
+    """A valid PromQL expression that always yields an empty vector, so
+    sum() over it has no result (0.0 via scalar(), [] via query())."""
+    return f"({metric_expr} unless {metric_expr})"
+
+
 def window_duration(time_range: TimeRange) -> str | None:
     """PromQL range-vector duration for ``time_range``: the TIME_RANGES value
     for a preset key, a raw duration string ("1d") passed through as-is,
@@ -215,8 +270,12 @@ def apply_time_range(metric_expr: str, time_range: TimeRange) -> str:
 
     increase() returns how much the counter grew over the window.
     When time_range is None or 'all', returns the raw cumulative counter.
-    An AbsoluteRange becomes ``increase(metric[<duration>s] offset <n>s)``.
+    An AbsoluteRange becomes ``increase(metric[<duration>s] offset <n>s)``,
+    clamped to retention (see retained_range).
     """
+    time_range = retained_range(time_range)
+    if time_range is NOT_RETAINED:
+        return _empty_expr(metric_expr)
     window = window_duration(time_range)
     if window:
         return f"increase({metric_expr}[{window}]{window_offset(time_range)})"
@@ -229,7 +288,12 @@ def _hybrid_window_sum(metric_expr: str, time_range: TimeRange) -> str | None:
 
     For an AbsoluteRange both arms are shifted to end at ``range.end``: the
     raw-counter arm reads the counter at ``end`` for series absent at
-    ``start`` (``offset end`` unless ``offset end+duration``)."""
+    ``start`` (``offset end`` unless ``offset end+duration``). The range is
+    clamped to retention first (see retained_range), so ``start`` is always a
+    sample Prometheus still has; a fully pruned range gives an empty vector."""
+    time_range = retained_range(time_range)
+    if time_range is NOT_RETAINED:
+        return _empty_expr(metric_expr)
     window = window_duration(time_range)
     if not window:
         return None

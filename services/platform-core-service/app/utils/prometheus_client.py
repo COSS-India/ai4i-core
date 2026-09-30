@@ -1,5 +1,6 @@
 """Prometheus HTTP API client."""
 import logging
+from typing import Optional
 
 import httpx
 from fastapi import HTTPException, status
@@ -13,11 +14,17 @@ class PrometheusClient:
         self._client = client
         self.timeout = timeout
 
-    async def query(self, promql: str) -> list:
-        """Execute an instant PromQL query and return the raw result vector."""
+    async def query(self, promql: str, time: Optional[float] = None) -> list:
+        """Execute an instant PromQL query and return the raw result vector.
+
+        ``time`` (epoch seconds) evaluates it at that instant instead of now,
+        via the API's standard ``time`` parameter."""
         url = f"{self.base_url}/api/v1/query"
+        params: dict = {"query": promql}
+        if time is not None:
+            params["time"] = time
         try:
-            resp = await self._client.get(url, params={"query": promql}, timeout=self.timeout)
+            resp = await self._client.get(url, params=params, timeout=self.timeout)
             resp.raise_for_status()
             data = resp.json()
         except httpx.HTTPStatusError as exc:
@@ -74,6 +81,26 @@ class PrometheusClient:
                 detail="Cannot reach Prometheus.",
             )
         return data.get("data", {}).get("result", [])
+
+    async def storage_retention(self) -> Optional[str]:
+        """Prometheus's own configured retention, as reported by
+        ``/api/v1/status/runtimeinfo`` (``storageRetention``, e.g. "90d" or
+        "30d or 512MiB"). None when it can't be read: an HTTP or connection
+        error, a proxy that doesn't serve this endpoint (Thanos, Mimir), or a
+        response without the field.
+
+        Unlike query()/query_range(), this never raises: callers fall back to
+        PROMETHEUS_RETENTION_DAYS (see metering_promql_builder.retention_days).
+        """
+        url = f"{self.base_url}/api/v1/status/runtimeinfo"
+        try:
+            resp = await self._client.get(url, timeout=self.timeout)
+            resp.raise_for_status()
+            value = resp.json().get("data", {}).get("storageRetention")
+        except Exception as exc:
+            logger.warning("Could not read Prometheus runtimeinfo: %s", type(exc).__name__)
+            return None
+        return value if isinstance(value, str) and value.strip() else None
 
     @staticmethod
     def _safe_float(value: str, default: float = 0.0) -> float:

@@ -189,14 +189,11 @@ class OverviewResponse(BaseModel):
     platform_adoption: Optional[PlatformAdoption] = None
     usage_concentration: Optional[UsageConcentration] = None
     request_volume: Optional[Graph] = None
-    # Earliest billed usage for the scoped tenant (platform-wide for an
-    # unscoped admin view), UTC ISO-8601 — lets the date picker disable days
-    # before any data exists. None when there's no usage or the lookup failed.
+    # Earliest usage for the scoped tenant (platform-wide for an unscoped
+    # admin view), UTC ISO-8601: the earlier of the first billed usage
+    # (quota_usage) and the first API-key request the metering source still
+    # holds. The date picker's floor; None when neither has any usage.
     first_usage_at: Optional[str] = None
-    # Earliest `from` a custom range accepts (UTC ISO-8601, an IST midnight):
-    # the metering retention limit. The date picker's floor is the later of
-    # this and first_usage_at.
-    earliest_from: Optional[str] = None
     degraded: bool = False
     generated_at: str
 
