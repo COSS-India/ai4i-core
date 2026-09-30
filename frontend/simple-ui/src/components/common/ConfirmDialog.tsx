@@ -29,6 +29,8 @@ export interface ConfirmDialogProps {
   confirmColorScheme?: string;
   /** When true, confirm button shows a spinner and is disabled. */
   isConfirmLoading?: boolean;
+  /** When true, confirm stays disabled without a spinner. Cancel still works. */
+  isConfirmDisabled?: boolean;
   /** Optional text to show while confirm is loading. */
   confirmLoadingText?: string;
   /**
@@ -54,6 +56,7 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   cancelLabel = "Cancel",
   confirmColorScheme = "red",
   isConfirmLoading = false,
+  isConfirmDisabled = false,
   confirmLoadingText,
   leastDestructiveRef: leastDestructiveRefProp,
   isCentered = false,
@@ -93,6 +96,7 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
               colorScheme={confirmColorScheme}
               onClick={onConfirm}
               isLoading={isConfirmLoading}
+              isDisabled={isConfirmDisabled || isConfirmLoading}
               loadingText={confirmLoadingText}
             >
               {confirmLabel}

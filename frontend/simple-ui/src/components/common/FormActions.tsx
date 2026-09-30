@@ -21,6 +21,11 @@ type FormActionsProps = {
   /** Extra outline action (e.g. Reset) between Cancel and the primary button. */
   extraLabel?: string;
   onExtra?: () => void;
+  /**
+   * When validation disables submit, draw it as a quiet control.
+   * The loading spinner stays on the primary button.
+   */
+  mutedWhenDisabled?: boolean;
 };
 
 /** Shared Cancel + primary Create/Save row for Manage create/edit forms. */
@@ -40,7 +45,9 @@ export default function FormActions({
   pt = 2,
   extraLabel,
   onExtra,
+  mutedWhenDisabled = false,
 }: FormActionsProps) {
+  const validationDisabled = isDisabled && !isLoading;
   return (
     <HStack justify={justify} spacing={3} pt={pt} w="full">
       {!hideCancel && onCancel ? (
@@ -60,6 +67,25 @@ export default function FormActions({
           isLoading={isLoading}
           loadingText={loadingText}
           isDisabled={isDisabled || isLoading}
+          cursor={mutedWhenDisabled && validationDisabled ? "not-allowed" : undefined}
+          sx={
+            mutedWhenDisabled && validationDisabled
+              ? {
+                  bg: "ink.100",
+                  color: "ink.400",
+                  _disabled: {
+                    opacity: 1,
+                    cursor: "not-allowed",
+                    bg: "ink.100",
+                    color: "ink.400",
+                    boxShadow: "none",
+                    pointerEvents: "none",
+                    _hover: { bg: "ink.100" },
+                    _active: { bg: "ink.100" },
+                  },
+                }
+              : undefined
+          }
           onClick={submitType === "submit" ? undefined : onSubmit}
         >
           {submitLabel}

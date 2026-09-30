@@ -5,22 +5,26 @@ import {
   Badge,
   Box,
   FormControl,
-  FormErrorMessage,
-  HStack,
   Text,
   VStack,
 } from "@chakra-ui/react";
 import StandardModal from "../common/StandardModal";
 import FormActions from "../common/FormActions";
 import DataTable, { type DataTableColumn } from "../common/table";
-import InfoTip from "../common/InfoTip";
 import PercentageStepper, {
   type PercentageBound,
 } from "../common/PercentageStepper";
 import { FIELD_HINTS } from "../../config/fieldHints";
-import { totalApplicationsExceeds100 } from "../../config/budgetMessages";
+import { BUDGET_COPY, totalApplicationsOver100 } from "../../config/budgetMessages";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
+import { InstitutionAllocationPanel } from "./applicationSurface";
+import {
+  BudgetAmountCell,
+  formatBudgetMoney,
+  formatBudgetPct,
+} from "./budgetVisuals";
 import type { BulkBudgetDraft } from "./hooks/useApplicationManagement";
+import { BudgetFieldFeedback, bulkBudgetModalProps } from "./BudgetAllocationField";
 
 function formatPct(value: number | null | undefined): string {
   if (value == null) return "—";
@@ -31,6 +35,30 @@ function formatPct(value: number | null | undefined): string {
 function parsePctInput(value: string): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : -1;
+}
+
+/** Institution room still assignable to this Application, in rupees. */
+function applicationHeadroomAmount(
+  row: BulkBudgetDraft,
+  rows: BulkBudgetDraft[],
+  tenantBudget: number,
+): number | null {
+  if (tenantBudget <= 0) return null;
+  const othersPct = rows.reduce(
+    (sum, other) =>
+      other.application_id === row.application_id ? sum : sum + (other.resolvedPct ?? 0),
+    0,
+  );
+  const maxPct = Math.max(0, 100 - othersPct);
+  return Math.round(((tenantBudget * maxPct) / 100) * 100) / 100;
+}
+
+function hasUsageAmounts(row: BulkBudgetDraft): boolean {
+  return (
+    row.allocated_amount != null ||
+    row.consumed_budget != null ||
+    row.remaining_budget != null
+  );
 }
 
 export default function ApplicationBulkBudgetModal({
@@ -67,6 +95,10 @@ export default function ApplicationBulkBudgetModal({
   canSave: boolean;
 }) {
   const totalOver = liveTotalPct > 100 + 1e-6;
+  const rowsRef = React.useRef(rows);
+  rowsRef.current = rows;
+  const tenantBudgetRef = React.useRef(tenantBudget);
+  tenantBudgetRef.current = tenantBudget;
 
   const columns = useMemo<DataTableColumn<BulkBudgetDraft>[]>(
     () => [
@@ -78,8 +110,8 @@ export default function ApplicationBulkBudgetModal({
         cell: (row) => {
           const editable = row.status === "ACTIVE";
           return (
-            <Box opacity={editable ? 1 : 0.75}>
-              <Text fontWeight="600" fontSize="sm">
+            <Box opacity={editable ? 1 : 0.75} minW={0} maxW="220px">
+              <Text fontWeight="600" fontSize="sm" noOfLines={2} title={row.name}>
                 {row.name}
               </Text>
               {!editable ? (
@@ -92,38 +124,57 @@ export default function ApplicationBulkBudgetModal({
         },
       },
       {
-        id: "used",
-        header: "Used",
+        id: "allocated",
+        header: "Allocated",
         sortable: true,
-        sortAccessor: (row) => row.consumed_percentage ?? -1,
+        sortAccessor: (row) => row.originalPct ?? -1,
+        cell: (row) => (
+          <BudgetAmountCell
+            primary={formatBudgetPct(row.originalPct)}
+            secondary={formatBudgetMoney(row.allocated_amount, currency)}
+          />
+        ),
+      },
+      {
+        id: "consumed",
+        header: "Consumed",
+        sortable: true,
+        sortAccessor: (row) => row.consumed_budget ?? row.consumed_percentage ?? -1,
         cell: (row) => {
-          if (row.consumed_percentage != null) {
-            return (
-              <>
-                <Text fontSize="sm">{formatPct(row.consumed_percentage)}</Text>
-                <Text fontSize="xs" color="ink.500">
-                  {formatSpendMoney(row.consumed_budget ?? 0, currency)}
+          if (!hasUsageAmounts(row)) {
+            if (row.rowError?.startsWith("Could not load")) {
+              return (
+                <Text fontSize="sm" color="red.500">
+                  Load failed — refocus to retry
                 </Text>
-              </>
-            );
-          }
-          if (row.rowError?.startsWith("Could not load")) {
+              );
+            }
             return (
-              <Text fontSize="sm" color="red.500">
-                Load failed — refocus to retry
+              <Text fontSize="sm" color="ink.400">
+                {row.keysLoading ? BUDGET_COPY.loading : "Focus row to load keys"}
               </Text>
             );
           }
           return (
-            <Text fontSize="sm" color="ink.400">
-              {row.keysLoading ? "Loading…" : "Focus row to load keys"}
-            </Text>
+            <BudgetAmountCell
+              primary={formatBudgetPct(row.consumed_percentage)}
+              secondary={formatBudgetMoney(row.consumed_budget, currency)}
+            />
           );
         },
       },
       {
+        id: "remaining",
+        header: "Remaining",
+        sortable: true,
+        sortAccessor: (row) => row.remaining_budget ?? -1,
+        cell: (row) => (
+          <BudgetAmountCell primary={formatBudgetMoney(row.remaining_budget, currency)} />
+        ),
+      },
+      {
         id: "budgetPct",
-        header: "Budget %",
+        header: "Allocation",
         sortable: true,
         sortAccessor: (row) => parsePctInput(row.pctInput),
         cell: (row) => {
@@ -138,10 +189,24 @@ export default function ApplicationBulkBudgetModal({
                 onFocus={() => onRowFocus(row.application_id)}
                 isDisabled={!editable}
               />
-              {row.rowError ? (
-                <FormErrorMessage mt={1}>{row.rowError}</FormErrorMessage>
-              ) : null}
+              <BudgetFieldFeedback error={row.rowError} notice={row.inputNotice} />
             </FormControl>
+          );
+        },
+      },
+      {
+        id: "range",
+        header: "Allowed range",
+        cell: (row) => {
+          const maximum = applicationHeadroomAmount(
+            row,
+            rowsRef.current,
+            tenantBudgetRef.current,
+          );
+          return (
+            <Text fontSize="12px" fontWeight="700" color="ink.800">
+              {formatBudgetMoney(row.consumed_budget, currency)} – {formatBudgetMoney(maximum, currency)}
+            </Text>
           );
         },
       },
@@ -189,63 +254,34 @@ export default function ApplicationBulkBudgetModal({
     <StandardModal
       isOpen={isOpen}
       onClose={onClose}
-      title="Edit Budget"
-      description="Adjust budget allocation across applications."
-      size="6xl"
-      scrollBehavior="inside"
-      modalProps={{ blockScrollOnMount: true }}
-      headerProps={{ px: 6, pt: 5, pb: 4 }}
-      bodyProps={{ px: 6, py: 5 }}
-      footerProps={{ px: 6, py: 4 }}
+      title={BUDGET_COPY.bulkUpdateBudgets}
+      {...bulkBudgetModalProps}
       footer={
         <FormActions
-          submitLabel="Save Changes"
+          submitLabel={BUDGET_COPY.saveAllChanges}
           onCancel={onClose}
           onSubmit={() => void onSave()}
           isLoading={isSaving}
           isDisabled={!canSave}
-          loadingText="Saving..."
-          justify="space-between"
+          mutedWhenDisabled
+          loadingText={BUDGET_COPY.saving}
+          justify="flex-end"
           pt={0}
         />
       }
     >
       <VStack align="stretch" spacing={4}>
-        <Text fontSize="sm" color="ink.600">
-          {FIELD_HINTS.application.bulkBudgetEdit.intro}
+        <Text fontSize="sm" color="ink.500">
+          Adjust each application’s share of the institution budget. Only rows you change are saved.
         </Text>
-
-        <Box bg="blue.50" borderRadius="md" p={4}>
-          <HStack justify="space-between" mb={2}>
-            <HStack spacing={1.5}>
-              <Text
-                fontSize="xs"
-                fontWeight="bold"
-                color="ink.500"
-                textTransform="uppercase"
-              >
-                {FIELD_HINTS.application.bulkBudgetEdit.institutionBudgetAllocatedLabel}
-              </Text>
-              <InfoTip
-                message={FIELD_HINTS.application.tooltips.institutionBudgetAllocated}
-              />
-            </HStack>
-            <Text fontWeight="bold" color={totalOver ? "red.500" : undefined}>
-              {formatPct(liveTotalPct)}
-            </Text>
-          </HStack>
-          <Box h="8px" bg="ink.200" borderRadius="full" overflow="hidden">
-            <Box
-              h="100%"
-              bg={totalOver ? "red.500" : "blue.500"}
-              width={`${Math.min(liveTotalPct, 100)}%`}
-            />
-          </Box>
-          <Text fontSize="xs" color="ink.500" mt={2}>
-            {FIELD_HINTS.application.bulkBudgetEdit.institutionTotalPrefix}{" "}
-            {formatSpendMoney(tenantBudget, currency)}
-          </Text>
-        </Box>
+        <InstitutionAllocationPanel
+          allocatedPct={liveTotalPct}
+          availablePct={Math.max(0, 100 - liveTotalPct)}
+          institutionBudget={tenantBudget}
+          currency={currency}
+          overAllocated={totalOver}
+          overMessage="Allocation exceeds the available institution budget."
+        />
 
         {institutionBudgetUnset && (
           <Alert status="warning" borderRadius="md">
@@ -257,7 +293,7 @@ export default function ApplicationBulkBudgetModal({
         {totalOver && (
           <Alert status="error" borderRadius="md">
             <AlertIcon />
-            {totalApplicationsExceeds100(liveTotalPct)}
+            {totalApplicationsOver100(liveTotalPct)}
           </Alert>
         )}
 

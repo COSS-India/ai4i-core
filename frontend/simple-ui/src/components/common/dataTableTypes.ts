@@ -14,6 +14,8 @@ export type DataTableSearchConfig = {
   onChange: (value: string) => void;
   placeholder?: string;
   label?: string;
+  /** Keep the label for screen readers and drop it from the toolbar layout. */
+  hideLabel?: boolean;
   helper?: string;
   /**
    * Fields the parent should search (documentation / client helpers).
@@ -47,6 +49,8 @@ export type DataTableFilterDef = {
   defaultValue?: string;
   placeholder?: string;
   helper?: string;
+  /** Keep the label for screen readers and drop it from the toolbar layout. */
+  hideLabel?: boolean;
   /**
    * Input subtype for `text` / `date` filters.
    * - text: `"text"` (default) or `"number"`

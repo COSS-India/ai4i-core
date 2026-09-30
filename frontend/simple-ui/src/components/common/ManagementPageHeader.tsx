@@ -2,7 +2,7 @@ import { Box, Flex, Heading, Text } from "@chakra-ui/react";
 import { useRouter } from "next/router";
 import React from "react";
 import { useAuth } from "../../hooks/useAuth";
-import { getHomePath } from "../../utils/navigation";
+import { getDefaultLandingPath } from "../../utils/navigation";
 import PageBreadcrumb, {
   getPageBreadcrumbs,
   type Crumb,
@@ -27,7 +27,7 @@ const ManagementPageHeader: React.FC<ManagementPageHeaderProps> = ({
   const items =
     crumbs === false
       ? null
-      : crumbs ?? getPageBreadcrumbs(router.pathname, title, getHomePath(user?.roles));
+      : crumbs ?? getPageBreadcrumbs(router.pathname, title, getDefaultLandingPath(user?.roles));
 
   return (
     <Box w="full" mb={6} pb={6} borderBottom="1px" borderColor="ink.200">
