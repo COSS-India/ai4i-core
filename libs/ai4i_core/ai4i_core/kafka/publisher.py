@@ -12,7 +12,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from . import constants as c
 from . import metrics
@@ -40,6 +40,9 @@ class Envelope:
     recipients: Sequence[Recipient]
     band: Optional[Band] = None
     observed: Optional[Measurement] = None
+    #: A grouped event's member subjects (its own subject is empty), so each
+    #: failure row names one of them. Empty for a single-subject event.
+    subjects: Sequence[Mapping[str, str]] = ()
     #: Carried into a PUBLISH failure row; not part of the message.
     state_hash: Optional[str] = field(default=None, compare=False)
 
@@ -47,8 +50,14 @@ class Envelope:
     def key(self) -> str:
         return kafka_message_key(self.event_name, self.tenant_id, self.subject)
 
+    @property
+    def failure_subjects(self) -> List[Mapping[str, str]]:
+        """The subject of each failure row this event writes: one per member
+        of a grouped event, else its own."""
+        return list(self.subjects) or [self.subject]
+
     def to_json(self) -> Dict[str, Any]:
-        return {
+        data = {
             "schema_version": c.ENVELOPE_SCHEMA_VERSION,
             "event_id": str(self.event_id),
             "event_name": self.event_name.value,
@@ -64,6 +73,10 @@ class Envelope:
             "details": list(self.details),
             "recipients": [r.to_json() for r in self.recipients],
         }
+        # Only a grouped event carries it, so a single-subject message is unchanged.
+        if self.subjects:
+            data["subjects"] = [dict(s) for s in self.subjects]
+        return data
 
 
 class Publisher:
@@ -88,15 +101,16 @@ class Publisher:
             )
         except Exception as exc:
             metrics.PUBLISHES.labels(name, PublishResult.FAILED.value).inc()
-            await self._failures.record(
-                FailureStage.PUBLISH, FailureCode.KAFKA_SEND_FAILED,
-                notification_name=name, notification_id=notification_id, tenant_id=envelope.tenant_id,
-                subject=envelope.subject, event_id=envelope.event_id, operation=Operation.KAFKA_SEND,
-                error=exc, kafka_topic=self._topic,
-                observed=envelope.observed.to_json() if envelope.observed else None,
-                band=envelope.band.value_unit() if envelope.band else None,
-                state_hash=envelope.state_hash,
-            )
+            for subject in envelope.failure_subjects:
+                await self._failures.record(
+                    FailureStage.PUBLISH, FailureCode.KAFKA_SEND_FAILED,
+                    notification_name=name, notification_id=notification_id, tenant_id=envelope.tenant_id,
+                    subject=subject, event_id=envelope.event_id, operation=Operation.KAFKA_SEND,
+                    error=exc, kafka_topic=self._topic,
+                    observed=envelope.observed.to_json() if envelope.observed else None,
+                    band=envelope.band.value_unit() if envelope.band else None,
+                    state_hash=envelope.state_hash,
+                )
             return False
         try:
             future.add_errback(

@@ -140,7 +140,54 @@ def test_details_follow_the_consumer_template_contract():
         band=SimpleNamespace(value=Decimal("5"), severity=SimpleNamespace(value="WARNING")),
         occurred_at=datetime(2026, 9, 28, 10, 15, tzinfo=timezone.utc),
     )
-    assert ev._details(context) == ["5", "28 Sep 2026, 03:45 PM IST", "6.25"]
+    assert ev._details(context) == ["5", "28 Sep 2026, 03:45 PM IST", "6.25", "svc-a"]
+
+
+@pytest.mark.asyncio
+async def test_services_breaching_in_one_tick_merge_into_one_list(monkeypatch):
+    """12:27 — asr, llm and tts all cross 5xx in one tick. Each item names its
+    own service, and every item carries the merge that lists all three in
+    one email, worst first."""
+    from datetime import datetime, timezone
+
+    monkeypatch.setattr(ev.settings, "prometheus_url", "http://prom")
+    ready = SimpleNamespace(bands=(object(),), recipient_roles={"ADMIN": True}, any_role_enabled=lambda: True)
+    runtime = MagicMock()
+    runtime.cache.read = AsyncMock(return_value=SimpleNamespace(
+        settings=SimpleNamespace(get=lambda n: ready if n is NotificationName.ERROR_RATE_5XX else None)
+    ))
+    monkeypatch.setattr(ev, "get_notification_runtime", lambda: runtime)
+    emit = AsyncMock(return_value=["event-1", "event-2"])
+    monkeypatch.setattr(ev, "emit_band_batch", emit)
+
+    vector = _vector(("asr-service", "9.1"), ("llm-service", "6.2"), ("tts-service", "11.3"))
+    async with _client(lambda req: httpx.Response(200, json=vector)) as c:
+        await ev.run_tick(c)
+
+    bands = {"asr-service": "5", "llm-service": "5", "tts-service": "10"}
+    when = datetime(2026, 9, 30, 6, 57, tzinfo=timezone.utc)
+    items = emit.await_args.args[0]
+    parts = [
+        item.details(SimpleNamespace(
+            subject=item.subject, observed=item.observed, occurred_at=when,
+            band=SimpleNamespace(value=Decimal(bands[item.subject["service_id"]])),
+        ))
+        for item in items
+    ]
+    assert [(p[2], p[3]) for p in parts] == [("9.1", "asr-service"), ("6.2", "llm-service"), ("11.3", "tts-service")]
+    assert {item.group_details for item in items} == {ev._group_details}
+    assert ev._group_details(parts) == [
+        "5", "30 Sep 2026, 12:27 PM IST", "11.3", "tts-service",
+        [["tts-service", "11.3", "10"], ["asr-service", "9.1", "5"], ["llm-service", "6.2", "5"]],
+    ]
+
+
+def test_merge_sorts_by_value_not_text():
+    """"10.5" sorts before "9" as text; the list must still be worst first."""
+    parts = [["5", "t", "9", "a"], ["5", "t", "10.5", "b"]]
+
+    assert ev._group_details(parts)[4] == [["b", "10.5", "5"], ["a", "9", "5"]]
+    assert ev._group_details(parts)[:4] == ["5", "t", "10.5", "b"]
 
 
 @pytest.mark.asyncio
