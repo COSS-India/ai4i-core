@@ -1,6 +1,16 @@
 /** Metering & Usage Dashboard API types (matches platform-core-service contract). */
 
 export type MeteringWindow = "1h" | "24h" | "7d" | "30d";
+/** `scope.window` echo — "custom" when the request carried `from`/`to`. */
+export type MeteringScopeWindow = MeteringWindow | "custom";
+/** IST calendar date, "YYYY-MM-DD". */
+export type MeteringDayKey = string;
+
+/** Inclusive IST date range for the Usage Dashboard custom range filter. */
+export interface MeteringDateRange {
+  from: MeteringDayKey;
+  to: MeteringDayKey;
+}
 export type MeteringTopN = 10 | 25;
 export type MeteringDataState = "ok" | "error" | "empty" | "no_history";
 
@@ -41,7 +51,10 @@ export interface MeteringScope {
   role: string;
   tenant_id: string | null;
   organisation: string | null;
-  window: MeteringWindow;
+  window: MeteringScopeWindow;
+  /** Effective UTC bounds of a custom range; `to` is exclusive. */
+  from?: string | null;
+  to?: string | null;
   task_types?: string[] | null;
 }
 
@@ -110,6 +123,10 @@ export interface OverviewResponse extends MeteringResponseMeta {
   request_health?: RequestHealth | null;
   request_volume?: MeteringGraph | null;
   throughput?: ThroughputData;
+  /** First recorded usage for the tenant scope (UTC); null when there is none yet. */
+  first_usage_at?: string | null;
+  /** Earliest `from` the metering history still covers (UTC, an IST midnight). */
+  earliest_from?: string | null;
 }
 
 /** Per-service row from GET /metering/model-consumption (no roll-up by model_name). */

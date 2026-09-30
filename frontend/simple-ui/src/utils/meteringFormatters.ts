@@ -1,6 +1,8 @@
 import type {
   MeteringDataState,
+  MeteringDateRange,
   MeteringGraph,
+  MeteringScope,
   MeteringWindow,
   ModelConsumptionRow,
   ModelConsumptionSummary,
@@ -11,9 +13,40 @@ import { METERING } from "../config/meteringConstants";
 import { meteringColorAt } from "./meteringColors";
 import { normalizeModelTaskType } from "./meteringTaskType";
 import { taskTypeColor } from "./usageSpendHelpers";
+import {
+  formatMeteringDateRange,
+  rangeLengthDays,
+  scopeToDateRange,
+} from "./meteringDateRange";
 
 export const getWindowLabel = (window: MeteringWindow): string =>
   METERING.TIME_WINDOW_LABELS[window] ?? window;
+
+/** Period label for a response scope — preset label, or the applied custom dates. */
+export function getScopeWindowLabel(scope: MeteringScope): string {
+  if (scope.window !== "custom") return getWindowLabel(scope.window);
+  const range = scopeToDateRange(scope);
+  return range ? formatMeteringDateRange(range) : METERING.CONTROLS.CUSTOM_RANGE;
+}
+
+/**
+ * How request-volume buckets are labelled. Intraday windows show HH:mm;
+ * custom ranges are bucketed from IST midnight, so they format in IST.
+ */
+export interface MeteringChartScale {
+  intraday: boolean;
+  timeZone?: string;
+}
+
+export function resolveMeteringChartScale(
+  window: MeteringWindow,
+  range?: MeteringDateRange | null,
+): MeteringChartScale {
+  if (range) {
+    return { intraday: rangeLengthDays(range) === 1, timeZone: METERING.IST_TIME_ZONE };
+  }
+  return { intraday: window === "1h" || window === "24h" };
+}
 
 export type MeteringKpiInput = string | number | null | undefined;
 
@@ -25,22 +58,25 @@ export interface RequestVolumeChartPoint {
   failed: number;
 }
 
-/** X-axis label format per selected time window (HH:mm or DD MMM). */
-export function formatMeteringAxisLabel(ts: number, window: MeteringWindow): string {
+/** X-axis label format per chart scale (HH:mm or DD MMM). */
+export function formatMeteringAxisLabel(ts: number, scale: MeteringChartScale): string {
   const d = new Date(ts * 1000);
-  if (window === "1h" || window === "24h") {
-    const hours = String(d.getHours()).padStart(2, "0");
-    const minutes = String(d.getMinutes()).padStart(2, "0");
-    return `${hours}:${minutes}`;
+  if (scale.intraday) {
+    return d.toLocaleTimeString("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+      timeZone: scale.timeZone,
+    });
   }
-  return d.toLocaleDateString([], { day: "numeric", month: "short" });
+  return d.toLocaleDateString([], { day: "numeric", month: "short", timeZone: scale.timeZone });
 }
 
 /** Rich tooltip timestamp — includes time for multi-day windows. */
-export function formatMeteringTooltipLabel(ts: number, window: MeteringWindow): string {
+export function formatMeteringTooltipLabel(ts: number, scale: MeteringChartScale): string {
   const d = new Date(ts * 1000);
-  if (window === "1h" || window === "24h") {
-    return formatMeteringAxisLabel(ts, window);
+  if (scale.intraday) {
+    return formatMeteringAxisLabel(ts, scale);
   }
   return d.toLocaleString([], {
     day: "numeric",
@@ -48,6 +84,7 @@ export function formatMeteringTooltipLabel(ts: number, window: MeteringWindow): 
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
+    timeZone: scale.timeZone,
   });
 }
 
@@ -70,7 +107,7 @@ export function findMeteringSeries(
 /** Build request volume chart rows from successful/failed counts. */
 export function buildRequestVolumeChartData(
   graph?: MeteringGraph | null,
-  timeWindow: MeteringWindow = METERING.DEFAULTS.TIME_WINDOW,
+  scale: MeteringChartScale = resolveMeteringChartScale(METERING.DEFAULTS.TIME_WINDOW),
 ): RequestVolumeChartPoint[] {
   const { SUCCESSFUL, FAILED } = METERING.GRAPH.SERIES_KEYS;
   const successfulSeries = findMeteringSeries(graph, SUCCESSFUL);
@@ -86,7 +123,7 @@ export function buildRequestVolumeChartData(
 
     return {
       ts,
-      label: formatMeteringAxisLabel(ts, timeWindow),
+      label: formatMeteringAxisLabel(ts, scale),
       requests: successful + failed,
       successful,
       failed,

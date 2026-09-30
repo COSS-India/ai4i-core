@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const meteringWindowSchema = z.enum(["1h", "24h", "7d", "30d"]);
+const meteringScopeWindowSchema = z.enum(["1h", "24h", "7d", "30d", "custom"]);
 
 export const meteringCellSchema = z.object({
   key: z.string(),
@@ -30,7 +30,9 @@ export const meteringScopeSchema = z.object({
   role: z.string(),
   tenant_id: z.string().nullable(),
   organisation: z.string().nullable(),
-  window: meteringWindowSchema,
+  window: meteringScopeWindowSchema,
+  from: z.string().nullable().optional(),
+  to: z.string().nullable().optional(),
   task_types: z.array(z.string()).nullable().optional(),
 });
 
@@ -100,6 +102,8 @@ export const overviewResponseSchema = z.object({
   request_health: requestHealthSchema.nullable().optional(),
   request_volume: meteringGraphSchema.nullable().optional(),
   throughput: throughputDataSchema.optional(),
+  first_usage_at: z.string().nullable().optional(),
+  earliest_from: z.string().nullable().optional(),
   ...meteringResponseMetaSchema,
 });
 

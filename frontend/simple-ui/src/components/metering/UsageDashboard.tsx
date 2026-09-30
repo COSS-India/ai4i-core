@@ -25,6 +25,10 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
     setSubTab,
     timeWindow,
     setTimeWindow,
+    customRange,
+    applyCustomRange,
+    clearCustomRange,
+    earliestSelectableDay,
     topN,
     setTopN,
     scopeTenantId,
@@ -33,6 +37,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
     previewTenants,
     tenantOrganisationById,
     overview,
+    keyMetricsOverview,
     modelQuery,
     isLoading,
     isRefreshing,
@@ -52,6 +57,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
     <RequestVolumeSection
       graph={requestVolumeGraph}
       timeWindow={timeWindow}
+      customRange={customRange}
     />
   ) : null;
 
@@ -76,12 +82,16 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
       <MeteringAlerts errorMessage={primaryError} dataStateBanner={dataStateBanner} />
 
       {showKeyMetrics ? (
-        <KeyMetricsSection data={overview} supplement={keyMetricsSupplement} />
+        <KeyMetricsSection data={keyMetricsOverview} supplement={keyMetricsSupplement} />
       ) : null}
 
       <MeteringControls
         timeWindow={timeWindow}
         onTimeWindowChange={setTimeWindow}
+        customRange={customRange}
+        earliestSelectableDay={earliestSelectableDay}
+        onApplyCustomRange={applyCustomRange}
+        onClearCustomRange={clearCustomRange}
         lastGeneratedAt={lastGeneratedAt}
         onRefresh={isTenantView ? undefined : handleRefresh}
         isRefreshing={isRefreshing}
