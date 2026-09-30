@@ -108,19 +108,28 @@ def _enabled(row: SettingsRow, subs: Optional[TenantSubscriptions]) -> bool:
 
 
 def _gate_needs_subscription(row: SettingsRow) -> bool:
-    """INSTITUTION rows need `subscribed`; a row with no role flag needs the
-    tenant's extra recipients to know whether anyone is assigned."""
-    if row.type is NotificationType.MONITORING:
-        return False
-    return row.scope is NotificationScope.INSTITUTION or not row.any_role_enabled()
+    """NOTIFICATION/ALERT rows always need the tenant's own subscription
+    row: INSTITUTION for its `subscribed` gate (_enabled), GLOBAL for its
+    extra recipients (which apply regardless of scope). MONITORING rows
+    have no tenant subscription concept at all — resolved by role at send
+    time (Q-R3) — so they never need one."""
+    return row.type is not NotificationType.MONITORING
 
 
 def _someone_assigned(row: SettingsRow, subs: Optional[TenantSubscriptions]) -> bool:
-    """A role flag is on, or the tenant listed extra recipients. Monitoring
-    rows need a selected role; its users are resolved at send time."""
+    """Who's assigned is decided by scope now, not a stored role flag
+    (RecipientResolver.for_tenant/for_tenants): GLOBAL always resolves
+    every platform ADMIN plus this tenant's own TENANT ADMIN users;
+    INSTITUTION resolves this tenant's own TENANT ADMIN users once
+    _enabled() has already confirmed it's subscribed. Either way there is
+    always someone in principle — the one true "nobody left" case (e.g. a
+    tenant with zero active Tenant Admins) is caught downstream by
+    _deliver()'s own NO_RECIPIENTS failure once the live query comes back
+    empty, not here. MONITORING is the one type still gated on a role flag
+    (its users are resolved by role at send time, Q-R3)."""
     if row.type is NotificationType.MONITORING:
         return row.any_role_enabled()
-    return row.any_role_enabled() or bool(subs is not None and subs.entry(row.name).recipients)
+    return True
 
 
 async def _details(
@@ -182,7 +191,7 @@ async def _deliver(
                     recipients = await rt.recipients.for_roles(session, row.enabled_roles())
                 else:
                     recipients, resolved_name = await rt.recipients.for_tenant(
-                        session, tenant_id, row.recipient_roles, extra_user_ids
+                        session, tenant_id, row.scope, extra_user_ids
                     )
                     tenant_name = tenant_name or resolved_name
         except Exception as exc:
@@ -391,7 +400,7 @@ async def emit_state_bulk(name, items: Sequence[StateItem], *, summary: str = ""
     }
     try:
         async with rt.auth_session_factory() as session:
-            by_tenant = await rt.recipients.for_tenants(session, fired_tenants, row.recipient_roles, extras)
+            by_tenant = await rt.recipients.for_tenants(session, fired_tenants, row.scope, extras)
     except Exception as exc:
         for claim in won:
             await rt.failures.record(

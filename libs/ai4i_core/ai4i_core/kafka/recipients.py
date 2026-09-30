@@ -3,10 +3,18 @@
 Monitoring recipients are not stored: Q-R3 resolves every active user who
 holds a selected role (ADMIN / MODERATOR) at send time.
 
-Runs only when an event fires. Role flags come from the settings row's
-recipient_roles; extra user ids come from the tenant's own subscription row,
-and are only ever matched inside that tenant. users.email is encrypted at
-rest and decrypted in-process; a recipient that fails to decrypt is skipped.
+Runs only when an event fires. For a GLOBAL/INSTITUTION row (Q-R1/Q-R2), who
+gets it is decided by scope, not a stored role flag: GLOBAL always resolves
+every platform ADMIN plus this tenant's own TENANT ADMIN users; INSTITUTION
+resolves only this tenant's own TENANT ADMIN users (the platform ADMIN is
+deliberately excluded — an Institution-scope row is never delivered to the
+Adopter Admin as such). Either way, the tenant's own extra recipients (its
+subscription row's own added user ids) are always included on top, and are
+only ever matched inside that tenant — recipients added while a row was
+INSTITUTION-scope survive a later revert to GLOBAL.
+
+users.email is encrypted at rest and decrypted in-process; a recipient that
+fails to decrypt is skipped.
 """
 
 import logging
@@ -14,7 +22,7 @@ from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, 
 
 from sqlalchemy import text
 
-from .constants import MONITORING_RECIPIENT_ROLES, RecipientRole
+from .constants import MONITORING_RECIPIENT_ROLES, NotificationScope, RecipientRole
 from .models import Recipient
 
 logger = logging.getLogger(__name__)
@@ -101,52 +109,43 @@ class RecipientResolver:
         self,
         session,
         tenant_id: str,
-        recipient_roles: Mapping[str, bool],
+        scope: NotificationScope,
         extra_user_ids: Sequence[str] = (),
     ) -> Tuple[List[Recipient], Optional[str]]:
-        """Q-R1: recipients of one tenant and the institution name."""
+        """Q-R1: recipients of one tenant and the institution name. GLOBAL
+        includes every platform ADMIN; INSTITUTION never does (the Adopter
+        Admin is not a recipient of an Institution-scope row). Both include
+        this tenant's own TENANT ADMIN users and its extra recipients."""
         params = {
             "tenant_id": int(tenant_id),
-            "include_admin": bool(recipient_roles.get(RecipientRole.ADMIN.value)),
-            "include_tenant_admin": bool(recipient_roles.get(RecipientRole.TENANT_ADMIN.value)),
+            "include_admin": scope is NotificationScope.GLOBAL,
+            "include_tenant_admin": True,
             "admin_role": RecipientRole.ADMIN.value,
             "tenant_admin_role": RecipientRole.TENANT_ADMIN.value,
             "extra_user_ids": [str(u) for u in extra_user_ids],
         }
         result = await session.execute(_ONE_TENANT_SQL, params)
         rows = result.mappings().all()
-        # TEMPORARY — AI4IDS budget-notification recipient-drop investigation.
-        # Remove once the "one of two Institution Admins missing" bug is
-        # root-caused; logs no PII beyond user ids already visible in the DB.
-        logger.warning(
-            "DEBUG_RECIPIENTS for_tenant tenant_id=%s include_admin=%s include_tenant_admin=%s "
-            "extra_user_ids=%r row_count=%d row_ids=%r",
-            tenant_id, params["include_admin"], params["include_tenant_admin"],
-            params["extra_user_ids"], len(rows), [str(r["id"]) for r in rows],
-        )
         tenant_name = rows[0]["tenant_name"] if rows else None
-        recipients = self._unique((str(r["id"]), r["email"], r["full_name"]) for r in rows)
-        logger.warning(
-            "DEBUG_RECIPIENTS for_tenant tenant_id=%s post_unique_count=%d",
-            tenant_id, len(recipients),
-        )
-        return recipients, tenant_name
+        return self._unique((str(r["id"]), r["email"], r["full_name"]) for r in rows), tenant_name
 
     async def for_tenants(
         self,
         session,
         tenant_ids: Sequence[str],
-        recipient_roles: Mapping[str, bool],
+        scope: NotificationScope,
         extra_user_ids: Mapping[str, Sequence[str]],
     ) -> Dict[str, List[Recipient]]:
-        """Q-R2: recipients of many tenants. ADMIN users go to every tenant; a
-        TENANT ADMIN only to their own tenant; an extra user id only to the
-        tenant whose subscription lists it."""
+        """Q-R2: recipients of many tenants. GLOBAL: every platform ADMIN
+        goes to every tenant, plus each tenant's own TENANT ADMIN users.
+        INSTITUTION: no platform ADMIN, only each tenant's own TENANT ADMIN
+        users. Either way, an extra user id only goes to the tenant whose
+        subscription lists it."""
         ids = [str(t) for t in tenant_ids]
         if not ids:
             return {}
-        include_admin = bool(recipient_roles.get(RecipientRole.ADMIN.value))
-        include_tenant_admin = bool(recipient_roles.get(RecipientRole.TENANT_ADMIN.value))
+        include_admin = scope is NotificationScope.GLOBAL
+        include_tenant_admin = True
         extras = {str(t): {str(u) for u in users} for t, users in extra_user_ids.items()}
         result = await session.execute(
             _MANY_TENANTS_SQL,
