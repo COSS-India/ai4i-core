@@ -16,6 +16,7 @@ import PercentageStepper, {
 } from "../common/PercentageStepper";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import { BUDGET_COPY, totalApplicationsOver100 } from "../../config/budgetMessages";
+import { allocatedKeyFloorAmount } from "../../utils/applicationBudgetPreview";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
 import { InstitutionAllocationPanel } from "./applicationSurface";
 import {
@@ -203,9 +204,13 @@ export default function ApplicationBulkBudgetModal({
             rowsRef.current,
             tenantBudgetRef.current,
           );
+          const minimum = Math.max(row.consumed_budget ?? 0, allocatedKeyFloorAmount(row.keys));
+          const minimumPct =
+            tenantBudgetRef.current > 0 ? (minimum / tenantBudgetRef.current) * 100 : null;
           return (
             <Text fontSize="12px" fontWeight="700" color="ink.800">
-              {formatBudgetMoney(row.consumed_budget, currency)} – {formatBudgetMoney(maximum, currency)}
+              {formatBudgetMoney(minimum, currency)}
+              {minimumPct != null ? ` (${formatBudgetPct(minimumPct)})` : ""} – {formatBudgetMoney(maximum, currency)}
             </Text>
           );
         },

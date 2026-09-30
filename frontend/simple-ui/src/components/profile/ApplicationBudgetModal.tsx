@@ -28,9 +28,21 @@ export default function ApplicationBudgetModal({
   const consumedSub = loading ? undefined : usage ? formatBudgetMoney(usage.consumed, currency) : "—";
   const maximumAmount =
     mgr.tenantBudget > 0 ? (mgr.budgetAvailable / 100) * mgr.tenantBudget : null;
+  const floorAmount = usage ? Math.max(usage.consumed, usage.keyFloorAmount) : null;
+  const floorPct =
+    floorAmount != null && mgr.tenantBudget > 0
+      ? (floorAmount / mgr.tenantBudget) * 100
+      : null;
+  const floorLabel =
+    floorAmount == null
+      ? "—"
+      : `${formatBudgetMoney(floorAmount, currency)}${
+          floorPct != null ? ` (${formatBudgetPct(floorPct)})` : ""
+        }`;
   const rangeValue = loading
     ? BUDGET_COPY.loading
-    : `${usage ? formatBudgetMoney(usage.consumed, currency) : "—"} – ${formatBudgetMoney(maximumAmount, currency)}`;
+    : `${floorLabel} – ${formatBudgetMoney(maximumAmount, currency)}`;
+  const keysBindFloor = usage != null && usage.keyFloorAmount > usage.consumed + 1e-6;
   const draftPct = Number(mgr.budgetDraft);
   const draftOk = mgr.budgetDraft.trim() !== "" && Number.isFinite(draftPct);
   const draftAmount =
@@ -132,7 +144,11 @@ export default function ApplicationBudgetModal({
           fillPct={draftOk ? draftPct : 0}
           error={mgr.budgetFieldError}
           notice={mgr.budgetStepperHint}
-          hint={FIELD_HINTS.application.budgetEdit.helper}
+          hint={
+            keysBindFloor
+              ? FIELD_HINTS.application.budgetEdit.helper
+              : FIELD_HINTS.application.budgetEdit.belowConsumed
+          }
         />
       </VStack>
     </StandardModal>
