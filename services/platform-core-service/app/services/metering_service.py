@@ -525,8 +525,14 @@ class MeteringService:
         """Request Volume points for an AbsoluteRange: full buckets from
         query_range (eval points at start+step ... start+n*step, each covering
         the step before it), then the partial tail bucket ending at
-        ``window.end`` as one instant query per series. Each point's ts is its
-        bucket's end, same as the preset chart.
+        ``window.end`` as one instant query per series.
+
+        Each point's ts is its bucket's START, the same as the OpenSearch
+        chart's date_histogram key, so a daily bucket is labelled with the
+        day it covers. query_range still evaluates at each bucket's end
+        (that's what makes the value cover the step before it); the returned
+        ts is shifted back one step. The partial tail is stamped at its own
+        start, so a range ending today shows today once.
 
         A bucket that starts before retention_edge() is emitted as 0 and not
         queried: each bucket reads the counter at its own start, and a pruned
@@ -558,17 +564,19 @@ class MeteringService:
                 coros.append(self._client.scalar(sum_over_window(metric, tail_range)))
         raw = await asyncio.gather(*coros, return_exceptions=True)
 
+        def _at_bucket_start(points: list[GraphPoint]) -> list[GraphPoint]:
+            return [GraphPoint(ts=p.ts - step_secs, value=p.value) for p in points]
+
         zeros = [
-            GraphPoint(ts=int(start_ts + i * step_secs), value=0.0) for i in range(1, skipped + 1)
+            GraphPoint(ts=int(start_ts + (i - 1) * step_secs), value=0.0) for i in range(1, skipped + 1)
         ]
-        succ_points = zeros + (_series_points(raw[0], 0) if queried else [])
-        fail_points = list(zeros) + (_series_points(raw[1], 0) if queried else [])
+        succ_points = zeros + (_at_bucket_start(_series_points(raw[0], 0)) if queried else [])
+        fail_points = list(zeros) + (_at_bucket_start(_series_points(raw[1], 0)) if queried else [])
+        tail_ts = int(tail_start.timestamp())
         if tail and not tail_retained:
-            tail_ts = int(window.end.timestamp())
             succ_points.append(GraphPoint(ts=tail_ts, value=0.0))
             fail_points.append(GraphPoint(ts=tail_ts, value=0.0))
         elif tail:
-            tail_ts = int(window.end.timestamp())
             succ_tail, fail_tail = raw[-2], raw[-1]
             if not isinstance(succ_tail, Exception):
                 succ_points.append(GraphPoint(ts=tail_ts, value=round(max(0.0, float(succ_tail)))))

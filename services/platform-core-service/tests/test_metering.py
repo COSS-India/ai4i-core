@@ -2776,7 +2776,8 @@ class TestAbsoluteRangeQueries:
         for q in tail_queries:
             assert "[43200s]" in q and " offset" not in q.split("unless")[0]
         points = chart.series[0].points
-        assert points[-1].ts == int(_NOW.timestamp()) and points[-1].value == 3
+        # stamped at the tail's own start, not at `to`
+        assert points[-1].ts == int((_NOW - _timedelta(hours=12)).timestamp()) and points[-1].value == 3
 
     async def test_request_volume_chart_shorter_than_one_step_is_tail_only(self):
         svc = _make_service(scalar_return=2.0)
@@ -2986,7 +2987,7 @@ class TestPastRetentionQueries:
         assert kwargs["end"] == start_ts + 20 * 86_400
         succ = next(s for s in chart.series if s.key == "successful")
         assert [p.value for p in succ.points[:6]] == [0.0] * 6
-        assert succ.points[0].ts == int(start_ts + 86_400)
+        assert succ.points[0].ts == int(start_ts)  # bucket start
 
     async def test_chart_fully_pruned_is_none_without_querying(self, retention_15d):
         svc = _make_service(range_return=[{"values": [[1, "3"]]}])
@@ -3196,3 +3197,57 @@ class TestChartSizeFromTheFloor:
         chart = await svc.request_volume_chart(AbsoluteRange(start=floor, end=_NOW), tenant=None)
         assert chart.step == "7d"
         assert all(len(s.points) <= 1_400 for s in chart.series)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("frozen_builder_now")
+class TestCustomRangeBarsStampedAtBucketStart:
+    """Review: bars were stamped at bucket END, so a daily bucket read as
+    the next day (01–03 Sep labelled Sep 2–4), and a range ending today
+    showed today twice. OpenSearch stamps the date_histogram key, the
+    bucket START; Prometheus now matches it."""
+
+    # 2026-09-20 00:00 IST
+    _START = _datetime(2026, 9, 19, 18, 30, tzinfo=_timezone.utc)
+
+    async def test_daily_bars_are_labelled_with_the_day_they_cover(self):
+        start_ts = self._START.timestamp()
+        ends = [start_ts + i * 86_400 for i in (1, 2, 3)]
+        svc = _make_service(range_return=[{"values": [[e, str(i)] for i, e in enumerate(ends, 1)]}])
+        r = AbsoluteRange(start=self._START, end=self._START + _timedelta(days=3))
+        chart = await svc.request_volume_chart(r, tenant=None)
+
+        succ = next(s for s in chart.series if s.key == "successful")
+        assert [p.ts for p in succ.points] == [int(start_ts + i * 86_400) for i in (0, 1, 2)]
+        # each value still covers the day after its ts
+        assert [p.value for p in succ.points] == [1, 2, 3]
+
+    async def test_range_ending_now_shows_each_day_once(self):
+        start = _datetime(2026, 9, 26, 18, 30, tzinfo=_timezone.utc)  # 27 Sep IST
+        start_ts = start.timestamp()
+        ends = [start_ts + 86_400, start_ts + 2 * 86_400]
+        svc = _make_service(range_return=[{"values": [[e, "2"] for e in ends]}], scalar_return=1.0)
+        chart = await svc.request_volume_chart(AbsoluteRange(start=start, end=_NOW), tenant=None)
+
+        ts = [p.ts for p in chart.series[0].points]
+        assert ts == [int(start_ts), int(start_ts + 86_400), int(start_ts + 2 * 86_400)]
+        assert len(set(ts)) == len(ts)
+
+    async def test_matches_the_opensearch_bucket_start(self):
+        """Same range through both backends: the first point is `from`."""
+        from app.services.metering_service_opensearch import OpenSearchMeteringService
+        start_ts = self._START.timestamp()
+        r = AbsoluteRange(start=self._START, end=self._START + _timedelta(days=3))
+
+        prom = _make_service(range_return=[{"values": [[start_ts + 86_400, "1"]]}])
+        prom_chart = await prom.request_volume_chart(r, tenant=None)
+
+        os_client = MagicMock()
+        os_client.aggregate = AsyncMock(return_value={"over_time": {"buckets": [
+            {"key": int(start_ts * 1000), "by_status": {"buckets": {
+                "success": {"doc_count": 1}, "failed": {"doc_count": 0},
+            }}},
+        ]}})
+        os_chart = await OpenSearchMeteringService(os_client=os_client).request_volume_chart(r, tenant=None)
+
+        assert prom_chart.series[0].points[0].ts == os_chart.series[0].points[0].ts == int(start_ts)
