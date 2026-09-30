@@ -201,7 +201,7 @@
     // and the target language to the model; the one output is the translated text,
     // returned to the caller as "target". "model_name" is the model's name on the server
     // that hosts it.
-    "version": "6.0",
+    "version": "1.0",
     "model_name": "nmt",
     "inputs": [
       {

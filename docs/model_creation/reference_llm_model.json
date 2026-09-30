@@ -4,10 +4,9 @@
   // ═══════════════════════════════════════════════════════════════════════
   // This is a filled-in example for one kind of model (a chat/LLM model). If you're
   // registering a different kind of model — a translator, a speech-to-text model, a
-  // text-to-speech model, and so on — scroll to the very bottom of this file. There's a
-  // "PICK YOUR MODEL TYPE" section with a ready-to-copy block for every other kind of
-  // model. Copy that block over the "task", "languages", "adapterConfig", and "schema"
-  // sections below, and leave everything else in this file as it is.
+  // text-to-speech model, and so on — use reference_nlp_models.json instead. Its
+  // "PICK YOUR MODEL TYPE" section at the bottom has a ready-to-copy block for every
+  // other kind of model.
   //
   // Fields marked "Required" must be filled in or the platform will refuse to save the
   // model. Fields marked "Optional" can be left out entirely (just delete the line).
@@ -18,7 +17,7 @@
   // Required. A short label for this version of the model, 1–20 characters.
   // Example: "v1", "v2.0"
 
-  "name": "test-llm-2",
+  "name": "google/gemma-4-31B-it",
   // Required. The name people will see for this model, 5–100 characters.
   // Letters, numbers, hyphens (-), and forward slashes (/) only — no spaces.
   // Example: "org/model-name"
@@ -177,9 +176,9 @@
     //   "shape"      — the size/dimensions of that input; [-1, 1] is a safe default for a
     //                  single text value.
     //   "value_path" — where to pull that value from in the request being sent. See the
-    //                  "PICK YOUR MODEL TYPE" section at the bottom for the exact paths
-    //                  each model type expects — using the wrong one means the model
-    //                  simply won't receive the value it needs.
+    //                  "PICK YOUR MODEL TYPE" section in reference_nlp_models.json for the
+    //                  exact paths each model type expects — using the wrong one means the
+    //                  model simply won't receive the value it needs.
     //
     // Each entry under "outputs" needs:
     //   "tensor"   — the exact output name the model returns.
@@ -198,7 +197,7 @@
     // each — the ones below are the standard placeholder every chat/AI model on this
     // platform uses.
     "version": "1.0",
-    "model_name": "google/gemma-5-E4B-it",
+    "model_name": "google/gemma-4-31B-it",
     "inputs": [
       {
         "tensor": "INPUT_TEXT",
@@ -227,30 +226,60 @@
     //
     // "taskType" MUST be the same value as "task" -> "type" further up this file.
     //
-    // "model_name" here is just an identifying label — for a chat/AI model any short
-    // name works; for other model types, it usually matches your model's real name.
+    // "model_name" here is an identifying label; for a chat/AI model, use the same value
+    // as "adapterConfig" -> "model_name".
     //
     // For chat/AI models (task "llm"), "request" and "response" look exactly like a
-    // normal AI chat message and reply, as shown below.
+    // normal AI chat message and the reply the AI server returned, as shown below.
     "taskType": "llm",
-    "model_name": "example-model",
+    "model_name": "google/gemma-4-31B-it",
     "request": {
-      "model": "google/gemma-5-E4B-it",
       "messages": [
         {
           "role": "user",
-          "content": "Hello"
+          "content": "Say hello in one line"
         }
-      ]
+      ],
+      "max_tokens": 256
     },
     "response": {
+      "id": "chatcmpl-ac15bfd6d66df036",
+      "object": "chat.completion",
+      "created": 1789465507,
+      "model": "google/gemma-4-31B-it",
       "choices": [
         {
+          "index": 0,
           "message": {
-            "content": "Hi there! How can I help you today?"
-          }
+            "role": "assistant",
+            "content": "Hello!",
+            "refusal": null,
+            "annotations": null,
+            "audio": null,
+            "function_call": null,
+            "reasoning": null
+          },
+          "logprobs": null,
+          "finish_reason": "stop",
+          "stop_reason": 106,
+          "token_ids": null,
+          "routed_experts": null
         }
-      ]
+      ],
+      "service_tier": null,
+      "system_fingerprint": "vllm-0.27.1-133468d7",
+      "usage": {
+        "prompt_tokens": 18,
+        "total_tokens": 21,
+        "completion_tokens": 3,
+        "prompt_tokens_details": null
+      },
+      "prompt_logprobs": null,
+      "prompt_token_ids": null,
+      "prompt_text": null,
+      "kv_transfer_params": null,
+      "ec_transfer_params": null,
+      "metrics": null
     }
   },
 
@@ -266,8 +295,8 @@
   // to use the model.
   //
   // For a chat/AI model (task "llm", like this example), leave this as null — it isn't
-  // needed. For every other kind of model, scroll to the "PICK YOUR MODEL TYPE" section
-  // at the bottom of this file and copy the exact value shown there for your model type
+  // needed. For every other kind of model, see the "PICK YOUR MODEL TYPE" section in
+  // reference_nlp_models.json and copy the exact value shown there for your model type
   // (e.g. "ASRTaskService" for a speech-to-text model). These are fixed labels — copy
   // them exactly as written, don't make up your own.
 
