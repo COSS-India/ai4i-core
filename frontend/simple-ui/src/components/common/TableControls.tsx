@@ -127,9 +127,12 @@ export function TableSortHeader({
   const descActive = active && direction === "desc";
 
   return (
-    <HStack spacing={1.5} align="center">
+    <HStack spacing={1.5} align="center" minW={0} maxW="100%">
       <Text
         as="span"
+        minW={0}
+        noOfLines={1}
+        title={label}
         fontSize="11.5px"
         letterSpacing="0.05em"
         color={active ? "ink.700" : "ink.400"}
@@ -141,6 +144,7 @@ export function TableSortHeader({
       {hint ? <InfoTip message={hint} /> : null}
       <Box
         as="span"
+        flexShrink={0}
         display="inline-flex"
         flexDirection="column"
         alignItems="center"

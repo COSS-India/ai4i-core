@@ -14,6 +14,7 @@ import {
   InputProps,
   Select,
   SelectProps,
+  Skeleton,
   Spinner,
   Table,
   TableCellProps,
@@ -52,6 +53,8 @@ import type {
 import {
   DATA_TABLE_CELL_MAX_W,
   TruncatingCellContent,
+  adminFixedCellProps,
+  adminFixedSize,
   getTruncateCellProps,
   shouldAutoTruncateColumn,
 } from "./dataTableUtils";
@@ -953,12 +956,15 @@ function AdminLayoutDataTable<T>({
     ...restTableContainerProps
   } = tableContainerProps ?? {};
 
+  const columnCount = columns.length + (rowChevron ? 1 : 0);
+
   const tableBody = (
     <TableContainer
       maxH={containerMaxH ?? maxHeight}
       overflowY="auto"
-      overflowX="auto"
+      overflowX="hidden"
       bg="white"
+      sx={{ scrollbarGutter: "stable" }}
       {...restTableContainerProps}
     >
       <Table
@@ -966,12 +972,13 @@ function AdminLayoutDataTable<T>({
         bg="white"
         size={size}
         w="100%"
-        sx={{ "th, td": { verticalAlign: "middle" } }}
+        aria-busy={isLoading || undefined}
+        aria-label={isLoading ? loadingMessage : undefined}
+        sx={{ tableLayout: "fixed", "th, td": { verticalAlign: "middle" } }}
       >
         <Thead bg="ink.50" position="sticky" top={0} zIndex={1}>
           <Tr>
             {columns.map((col) => {
-              const truncate = shouldAutoTruncateColumn(col);
               const headerSx = {
                 ...DATA_TABLE_HEADER_SX,
                 ...(col.isNumeric || col.align === "right"
@@ -979,15 +986,17 @@ function AdminLayoutDataTable<T>({
                   : {}),
                 ...(col.align === "center" ? { textAlign: "center" as const } : {}),
               };
+              const preservePixelSize = !shouldAutoTruncateColumn(col);
               return (
                 <Th
                   key={col.id}
                   py={3}
-                  w={col.width}
-                  minW={col.minWidth}
+                  overflow="hidden"
+                  w={preservePixelSize ? col.width : adminFixedSize(col.width)}
+                  minW={preservePixelSize ? col.minWidth : adminFixedSize(col.minWidth)}
+                  maxW={preservePixelSize ? col.maxW : adminFixedSize(col.maxW)}
                   sx={headerSx}
-                  {...getTruncateCellProps(truncate, col.maxW)}
-                  {...col.thProps}
+                  {...(preservePixelSize ? col.thProps : adminFixedCellProps(col.thProps))}
                 >
                   <AdminSortableHeader col={col} sort={sort} onSortChange={onSortChange} />
                 </Th>
@@ -997,7 +1006,37 @@ function AdminLayoutDataTable<T>({
           </Tr>
         </Thead>
         <Tbody>
-          {displayItems.map((row, index) => (
+          {isLoading ? (
+            loadingContent ? (
+              <Tr>
+                <Td colSpan={columnCount} py={0} px={0} borderBottomWidth={0}>
+                  {loadingContent}
+                </Td>
+              </Tr>
+            ) : (
+              Array.from({ length: 5 }, (_, rowIndex) => (
+                <Tr key={`loading-${rowIndex}`}>
+                  {columns.map((col) => (
+                    <Td key={col.id} py={4}>
+                      <Skeleton h="14px" borderRadius="sm" />
+                    </Td>
+                  ))}
+                  {rowChevron ? <Td py={4} /> : null}
+                </Tr>
+              ))
+            )
+          ) : showEmpty ? (
+            <Tr>
+              <Td colSpan={columnCount} py={6} overflow="visible">
+                {emptyContent ?? (
+                  <Alert status="info" borderRadius="md">
+                    <AlertIcon />
+                    <AlertDescription>{emptyText}</AlertDescription>
+                  </Alert>
+                )}
+              </Td>
+            </Tr>
+          ) : displayItems.map((row, index) => (
             <Tr
               key={getRowKey(row)}
               onClick={onRowClick ? () => onRowClick(row) : undefined}
@@ -1011,19 +1050,26 @@ function AdminLayoutDataTable<T>({
               {columns.map((col) => {
                 const truncate = shouldAutoTruncateColumn(col);
                 const content = col.cell(row, index);
+                const numeric = Boolean(col.isNumeric || col.align === "center" || col.align === "right");
                 return (
                   <Td
                     key={col.id}
                     py={4}
                     isNumeric={col.isNumeric}
                     textAlign={col.align}
-                    {...getTruncateCellProps(truncate, col.maxW)}
-                    {...col.tdProps}
+                    w={truncate ? adminFixedSize(col.width) : col.width}
+                    minW={truncate ? adminFixedSize(col.minWidth) : col.minWidth}
+                    maxW={truncate ? adminFixedSize(col.maxW) : col.maxW}
+                    sx={numeric ? { fontVariantNumeric: "tabular-nums" } : undefined}
+                    {...(truncate ? adminFixedCellProps(col.tdProps) : col.tdProps)}
+                    overflow="hidden"
                   >
                     {truncate ? (
                       <TruncatingCellContent>{content}</TruncatingCellContent>
                     ) : (
-                      content
+                      <Box minW={0} w="100%" maxW="100%">
+                        {content}
+                      </Box>
                     )}
                   </Td>
                 );
@@ -1070,23 +1116,8 @@ function AdminLayoutDataTable<T>({
     </Box>
   ) : null;
 
-  const tableSurface = isLoading ? (
-    loadingContent ?? (
-      <Center py={8}>
-        <VStack spacing={4}>
-          <Spinner size="lg" color="ink.600" />
-          <Text color="gray.600">{loadingMessage}</Text>
-        </VStack>
-      </Center>
-    )
-  ) : showEmpty ? (
-    emptyContent ?? (
-      <Alert status="info" borderRadius="md">
-        <AlertIcon />
-        <AlertDescription>{emptyText}</AlertDescription>
-      </Alert>
-    )
-  ) : (
+  const showPagination = !isLoading && !showEmpty;
+  const tableSurface = (
     <Box
       w="full"
       minW={0}
@@ -1096,9 +1127,9 @@ function AdminLayoutDataTable<T>({
       bg="white"
       overflow="hidden"
     >
-      {paginationPosition === "top" ? paginationBlock : null}
+      {showPagination && paginationPosition === "top" ? paginationBlock : null}
       {tableBody}
-      {paginationPosition === "bottom" ? paginationBlock : null}
+      {showPagination && paginationPosition === "bottom" ? paginationBlock : null}
     </Box>
   );
 

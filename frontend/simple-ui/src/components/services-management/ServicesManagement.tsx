@@ -1,7 +1,6 @@
-// Services Management: registry list, FormPage for create and view, FormDrawer for edit.
+// Services Management: registry list stays mounted. Create, edit, and view use FormDrawer.
 import {
   Badge,
-  Box,
   HStack,
   Text,
   VStack,
@@ -13,7 +12,7 @@ import ManagementPageHeader from "../common/ManagementPageHeader";
 import CreateButton from "../common/CreateButton";
 import FormActions from "../common/FormActions";
 import FormDrawer from "../common/FormDrawer";
-import FormPage from "../common/FormPage";
+import { useFormPageLeave } from "../common/FormPage";
 import { createActionsColumn, type DataTableColumn } from "../common/table";
 import type { Service } from "../../services/servicesManagementService";
 import ConfirmDialog from "../common/ConfirmDialog";
@@ -131,6 +130,11 @@ const ServicesManagement: React.FC = () => {
     confirmUnpublishService,
     cancelUnpublishRef,
   } = useServicesManagement();
+
+  const leaveCreateToCaller = useFormPageLeave(
+    createReturnTo ? { href: createReturnTo } : undefined,
+    releaseCreateForm,
+  );
 
   const serviceColumns = useMemo((): DataTableColumn<Service>[] => {
     return [
@@ -320,50 +324,12 @@ const ServicesManagement: React.FC = () => {
 
   const showServiceView = Boolean(isViewingService && selectedService);
   const showServiceEdit = Boolean(editingService) && !isRegistryReadOnly && !showServiceView;
+  const showServiceCreate = isCreateOpen && !showServiceEdit && !showServiceView;
 
-  const main = showServiceView && selectedService ? (
-    <ServiceDetailTab
-      selectedService={selectedService}
-      isRegistryReadOnly={isRegistryReadOnly}
-      isServiceModelDeprecated={isServiceModelDeprecated}
-      selectedServiceModelDeprecated={selectedServiceModelDeprecated}
-      viewServiceUnitType={viewServiceUnitType}
-      unpublishingServiceUuid={unpublishingServiceUuid}
-      publishingServiceUuid={publishingServiceUuid}
-      onRequestUnpublish={requestUnpublish}
-      onRequestPublish={requestPublish}
-      onBack={() => handleTabChange(0)}
-    />
-  ) : isCreateOpen && !showServiceEdit ? (
-    <FormPage
-      title="Create Service"
-      description="Register a service and map it to a model and tiers."
-      parent={{
-        label: "Services Management",
-        href: "/services-management",
-        onNavigate: closeCreateModal,
-      }}
-      returnTo={createReturnTo ? { href: createReturnTo } : undefined}
-      onLeave={releaseCreateForm}
-      footer={({ leave }) => (
-        <FormActions
-          cancelLabel="Cancel"
-          submitLabel="Create Service"
-          onCancel={createReturnTo ? leave : closeCreateModal}
-          submitType="submit"
-          form={CREATE_SERVICE_FORM_ID}
-          isLoading={isSubmitting}
-          loadingText="Creating..."
-          isDisabled={!canCreateService || isSubmitting}
-          justify="space-between"
-          pt={0}
-        />
-      )}
-    >
-      {serviceForm}
-    </FormPage>
-  ) : (
+  return (
+    <>
       <ManagementPageHeader
+        crumbs={false}
         title="Services Management"
         description={
           isRegistryReadOnly
@@ -376,12 +342,6 @@ const ServicesManagement: React.FC = () => {
           ) : undefined
         }
       />
-  );
-
-  const registryHidden = showServiceView || (isCreateOpen && !showServiceEdit);
-
-  const registry = (
-    <Box hidden={registryHidden}>
       <ServiceRegistryTab
         items={registryTableItems}
         columns={serviceColumns}
@@ -406,16 +366,49 @@ const ServicesManagement: React.FC = () => {
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearAllFilters}
       />
-    </Box>
-  );
-
-  return (
-    <>
-      {main}
-      {registry}
+      <FormDrawer
+        isOpen={showServiceCreate}
+        onClose={closeCreateModal}
+        lockDismiss={isSubmitting}
+        size="wide"
+        title="Create Service"
+        description="Register a service and map it to a model and tiers."
+        footer={
+          <FormActions
+            cancelLabel="Cancel"
+            submitLabel="Create Service"
+            onCancel={createReturnTo ? leaveCreateToCaller : closeCreateModal}
+            submitType="submit"
+            form={CREATE_SERVICE_FORM_ID}
+            isLoading={isSubmitting}
+            loadingText="Creating..."
+            isDisabled={!canCreateService || isSubmitting}
+            justify="space-between"
+            pt={0}
+          />
+        }
+      >
+        {showServiceCreate ? serviceForm : null}
+      </FormDrawer>
+      {showServiceView && selectedService ? (
+        <ServiceDetailTab
+          selectedService={selectedService}
+          isRegistryReadOnly={isRegistryReadOnly}
+          isServiceModelDeprecated={isServiceModelDeprecated}
+          selectedServiceModelDeprecated={selectedServiceModelDeprecated}
+          viewServiceUnitType={viewServiceUnitType}
+          unpublishingServiceUuid={unpublishingServiceUuid}
+          publishingServiceUuid={publishingServiceUuid}
+          onRequestUnpublish={requestUnpublish}
+          onRequestPublish={requestPublish}
+          onClose={() => handleTabChange(0)}
+        />
+      ) : null}
       <FormDrawer
         isOpen={showServiceEdit}
         onClose={handleCancelForm}
+        lockDismiss={isSubmitting}
+        size="wide"
         title={
           editingService?.name ||
           editingService?.serviceId ||

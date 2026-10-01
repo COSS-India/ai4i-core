@@ -17,7 +17,7 @@ import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import CreateButton from "../components/common/CreateButton";
 import FormActions from "../components/common/FormActions";
-import FormPage from "../components/common/FormPage";
+import FormDrawer from "../components/common/FormDrawer";
 import ModelExtraDetails from "../components/model-management/ModelDetails";
 import ModelForm from "../components/model-management/ModelForm";
 import {
@@ -847,132 +847,8 @@ const ModelManagementPage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-                {isViewingModel && selectedModel ? (
-                    <FormPage
-                      title={selectedModel.name}
-                      description="Model configuration."
-                      parent={{
-                        label: "Model Management",
-                        href: "/model-management",
-                        onNavigate: closeModelView,
-                      }}
-                      actions={
-                        <HStack spacing={2}>
-                          {isRegistryReadOnly ? (
-                            <Badge colorScheme="gray" fontSize="xs" px={2} py={0.5}>
-                              Read-only
-                            </Badge>
-                          ) : null}
-                          {!isRegistryReadOnly &&
-                            (selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && (
-                            <CreateButton
-                              size="sm"
-                              onClick={() => {
-                                const modelId = selectedModel.modelId;
-                                const returnTo = `/model-management?modelId=${encodeURIComponent(modelId)}`;
-                                router.push(
-                                  `/services-management?modelId=${encodeURIComponent(modelId)}&tab=create&returnTo=${encodeURIComponent(returnTo)}`,
-                                );
-                              }}
-                            >
-                              Create Service
-                            </CreateButton>
-                          )}
-                          {!isRegistryReadOnly &&
-                          (selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && !modelIdsWithPublishedService.has(selectedModel.modelId) ? (
-                            <Tooltip label="Deprecate model" placement="top" hasArrow>
-                              <Box as="span" display="inline-flex" alignItems="center">
-                                <Switch
-                                  size="md"
-                                  colorScheme="green"
-                                  isChecked={true}
-                                  onChange={() => openConfirmDialog("deprecate", selectedModel)}
-                                  isDisabled={updatingModelId !== null}
-                                />
-                              </Box>
-                            </Tooltip>
-                          ) : (selectedModel.versionStatus?.toLowerCase() !== "active" && selectedModel.versionStatus) ? (
-                            <Tooltip label="Activate model" placement="top" hasArrow>
-                              <Box as="span" display="inline-flex" alignItems="center">
-                                <Switch
-                                  size="md"
-                                  colorScheme="green"
-                                  isChecked={false}
-                                  onChange={() => openConfirmDialog("activate", selectedModel)}
-                                  isDisabled={updatingModelId !== null}
-                                />
-                              </Box>
-                            </Tooltip>
-                          ) : null}
-                        </HStack>
-                      }
-                      footer={<FormActions hideSubmit cancelLabel="Back" onCancel={closeModelView} pt={0} />}
-                    >
-                      <ModelForm
-                        mode="view"
-                        model={selectedModel}
-                        extra={
-                          <ModelExtraDetails
-                            trainingDataset={selectedModel.trainingDataset}
-                            adapterConfig={selectedModel.adapterConfig}
-                            schema={selectedModel.schema}
-                          />
-                        }
-                      />
-                    </FormPage>
-                ) : isCreateOpen && !isRegistryReadOnly ? (
-                    <FormPage
-                      title="Create Model"
-                      description="Upload a model definition to add it to the registry."
-                      parent={{
-                        label: "Model Management",
-                        href: "/model-management",
-                        onNavigate: closeCreateModal,
-                      }}
-                      footer={
-                        <FormActions
-                          submitLabel="Create Model"
-                          onCancel={closeCreateModal}
-                          onSubmit={() => void handleCreateModel()}
-                          isLoading={isUploading}
-                          loadingText="Creating..."
-                          isDisabled={!parsedModelData}
-                          justify="space-between"
-                          pt={0}
-                        />
-                      }
-                    >
-                      <ModelForm
-                        mode="create"
-                        model={parsedModelData}
-                        extra={
-                          parsedModelData ? (
-                            <ModelExtraDetails
-                              trainingDataset={parsedModelData.trainingDataset}
-                              adapterConfig={parsedModelData.adapterConfig}
-                              schema={parsedModelData.schema}
-                            />
-                          ) : null
-                        }
-                        fileInputRef={fileInputRef}
-                        onFileChange={handleFileUpload}
-                        onDownloadSample={handleDownloadSample}
-                        isUploading={isUploading}
-                        isValidating={isValidating}
-                        validationErrors={validationErrors}
-                        uploadError={uploadError}
-                        onClearUpload={handleClearUpload}
-                        createdModel={uploadedModelData}
-                        onCopyCreated={() => {
-                          void copy(
-                            JSON.stringify(uploadedModelData, null, 2),
-                            "Model data copied to clipboard",
-                          );
-                        }}
-                      />
-                    </FormPage>
-                ) : (
-                  <ManagementPageHeader
+                <ManagementPageHeader
+                    crumbs={false}
                     title="Model Management"
                     description={
                       isRegistryReadOnly
@@ -985,13 +861,6 @@ const ModelManagementPage: React.FC = () => {
                       ) : undefined
                     }
                   />
-                )}
-                <Box
-                  hidden={
-                    Boolean(isViewingModel && selectedModel) ||
-                    Boolean(isCreateOpen && !isRegistryReadOnly)
-                  }
-                >
                       <DataTable
                         layout="admin"
                         key={`${filterTaskType}-${filterVersionStatus}`}
@@ -1053,7 +922,131 @@ const ModelManagementPage: React.FC = () => {
                           },
                         ]}
                       />
-                </Box>
+        <FormDrawer
+          isOpen={Boolean(isViewingModel && selectedModel)}
+          onClose={closeModelView}
+          size="wide"
+          title={selectedModel?.name || "Model"}
+          description="Model configuration."
+          actions={
+            selectedModel ? (
+              <HStack spacing={2}>
+                {isRegistryReadOnly ? (
+                  <Badge colorScheme="gray" fontSize="xs" px={2} py={0.5}>
+                    Read-only
+                  </Badge>
+                ) : null}
+                {!isRegistryReadOnly &&
+                  (selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && (
+                  <CreateButton
+                    size="sm"
+                    onClick={() => {
+                      const modelId = selectedModel.modelId;
+                      const returnTo = `/model-management?modelId=${encodeURIComponent(modelId)}`;
+                      router.push(
+                        `/services-management?modelId=${encodeURIComponent(modelId)}&tab=create&returnTo=${encodeURIComponent(returnTo)}`,
+                      );
+                    }}
+                  >
+                    Create Service
+                  </CreateButton>
+                )}
+                {!isRegistryReadOnly &&
+                (selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && !modelIdsWithPublishedService.has(selectedModel.modelId) ? (
+                  <Tooltip label="Deprecate model" placement="top" hasArrow>
+                    <Box as="span" display="inline-flex" alignItems="center">
+                      <Switch
+                        size="md"
+                        colorScheme="green"
+                        isChecked={true}
+                        onChange={() => openConfirmDialog("deprecate", selectedModel)}
+                        isDisabled={updatingModelId !== null}
+                      />
+                    </Box>
+                  </Tooltip>
+                ) : (selectedModel.versionStatus?.toLowerCase() !== "active" && selectedModel.versionStatus) ? (
+                  <Tooltip label="Activate model" placement="top" hasArrow>
+                    <Box as="span" display="inline-flex" alignItems="center">
+                      <Switch
+                        size="md"
+                        colorScheme="green"
+                        isChecked={false}
+                        onChange={() => openConfirmDialog("activate", selectedModel)}
+                        isDisabled={updatingModelId !== null}
+                      />
+                    </Box>
+                  </Tooltip>
+                ) : null}
+              </HStack>
+            ) : undefined
+          }
+          footer={<FormActions hideSubmit cancelLabel="Close" onCancel={closeModelView} pt={0} />}
+        >
+          {selectedModel ? (
+            <ModelForm
+              mode="view"
+              model={selectedModel}
+              extra={
+                <ModelExtraDetails
+                  trainingDataset={selectedModel.trainingDataset}
+                  adapterConfig={selectedModel.adapterConfig}
+                  schema={selectedModel.schema}
+                />
+              }
+            />
+          ) : null}
+        </FormDrawer>
+        <FormDrawer
+          isOpen={isCreateOpen && !isRegistryReadOnly && !(isViewingModel && selectedModel)}
+          onClose={closeCreateModal}
+          lockDismiss={isUploading}
+          size="wide"
+          title="Create Model"
+          description="Upload a model definition to add it to the registry."
+          footer={
+            <FormActions
+              submitLabel="Create Model"
+              onCancel={closeCreateModal}
+              onSubmit={() => void handleCreateModel()}
+              isLoading={isUploading}
+              loadingText="Creating..."
+              isDisabled={!parsedModelData}
+              justify="space-between"
+              pt={0}
+            />
+          }
+        >
+          {isCreateOpen && !isRegistryReadOnly && !(isViewingModel && selectedModel) ? (
+          <ModelForm
+            mode="create"
+            model={parsedModelData}
+            extra={
+              parsedModelData ? (
+                <ModelExtraDetails
+                  trainingDataset={parsedModelData.trainingDataset}
+                  adapterConfig={parsedModelData.adapterConfig}
+                  schema={parsedModelData.schema}
+                />
+              ) : null
+            }
+            fileInputRef={fileInputRef}
+            onFileChange={handleFileUpload}
+            onDownloadSample={handleDownloadSample}
+            isUploading={isUploading}
+            isValidating={isValidating}
+            validationErrors={validationErrors}
+            uploadError={uploadError}
+            onClearUpload={handleClearUpload}
+            createdModel={uploadedModelData}
+            onCopyCreated={() => {
+              void copy(
+                JSON.stringify(uploadedModelData, null, 2),
+                "Model data copied to clipboard",
+              );
+            }}
+          />
+          ) : null}
+        </FormDrawer>
       </ContentLayout>
 
       <ConfirmDialog

@@ -132,8 +132,6 @@ export interface TenantManagementTabProps {
   isActive?: boolean;
   onRegisterCreateInstitution?: (open: () => void) => void;
   onInstitutionDetailChange?: (isDetail: boolean) => void;
-  /** Create FormPage is open. The page hides its list header. */
-  onInstitutionFormOpenChange?: (isOpen: boolean) => void;
 }
 
 const AVATAR_COLORS = [
@@ -267,7 +265,6 @@ export default function TenantManagementTab({
   isActive = false,
   onRegisterCreateInstitution,
   onInstitutionDetailChange,
-  onInstitutionFormOpenChange,
 }: TenantManagementTabProps) {
   const { user } = useAuth();
   const tm = useTenantManagement({ user });
@@ -308,10 +305,6 @@ export default function TenantManagementTab({
 
   const showInstitutionCreate =
     tm.isTenantModalOpen && !tm.isEditTenantModalOpen;
-
-  useEffect(() => {
-    onInstitutionFormOpenChange?.(showInstitutionCreate);
-  }, [onInstitutionFormOpenChange, showInstitutionCreate]);
 
   // Manage plan drawer (change tier + budget top-up/down)
   const {
@@ -1004,65 +997,54 @@ export default function TenantManagementTab({
     tm.closeTenantModal();
   };
 
-  const leaveInstitutionCreateToList = () => {
-    if (tm.isSubmittingTenant) return;
-    tm.closeTenantModal();
-    if (tm.tenantDetailView) tm.closeTenantDetailView();
-  };
-
   const closeInstitutionEdit = () => {
     if (tm.isSubmittingEditTenant) return;
     tm.closeEditTenantModal();
   };
 
-  const institutionCreatePage = showInstitutionCreate ? (
-    <FormPage
-      title={`Create ${INSTITUTION}`}
-      description={`Add a new ${INSTITUTION.toLowerCase()} to the platform.`}
-      parent={{
-        label: `${INSTITUTION} Management`,
-        href: "/institution-management",
-        onNavigate: leaveInstitutionCreateToList,
-      }}
-      footer={
-        <FormActions
-          cancelLabel="Cancel"
-          submitLabel={`Create ${INSTITUTION}`}
-          onCancel={closeInstitutionCreate}
-          submitType="submit"
-          form={CREATE_INSTITUTION_FORM_ID}
-          isLoading={tm.isSubmittingTenant}
-          loadingText="Creating..."
-          isDisabled={!tm.canSubmitTenantForm || !tenantConsentAccepted}
-          justify="space-between"
-          pt={0}
-        />
-      }
-    >
-      <CreateInstitutionForm
-        tm={tm}
-        hideActions
-        formId={CREATE_INSTITUTION_FORM_ID}
-        onConsentChange={setTenantConsentAccepted}
-      />
-    </FormPage>
-  ) : null;
-
   return (
     <Box>
-      {institutionCreatePage}
-
-      {isAdopterManager && !tm.tenantDetailView && (
-        <Box hidden={showInstitutionCreate}>{renderAdopterView()}</Box>
-      )}
+      {isAdopterManager && !tm.tenantDetailView && renderAdopterView()}
 
       {!isAdopterManager && !tm.tenantDetailView && renderInstitutionAdminView()}
 
       {tm.tenantDetailView && renderTenantDetail()}
 
       <FormDrawer
+        isOpen={showInstitutionCreate}
+        onClose={closeInstitutionCreate}
+        title={`Create ${INSTITUTION}`}
+        description={`Add a new ${INSTITUTION.toLowerCase()} to the platform.`}
+        lockDismiss={tm.isSubmittingTenant}
+        footer={
+          <FormActions
+            cancelLabel="Cancel"
+            submitLabel={`Create ${INSTITUTION}`}
+            onCancel={closeInstitutionCreate}
+            submitType="submit"
+            form={CREATE_INSTITUTION_FORM_ID}
+            isLoading={tm.isSubmittingTenant}
+            loadingText="Creating..."
+            isDisabled={!tm.canSubmitTenantForm || !tenantConsentAccepted}
+            justify="space-between"
+            pt={0}
+          />
+        }
+      >
+        {showInstitutionCreate ? (
+          <CreateInstitutionForm
+            tm={tm}
+            hideActions
+            formId={CREATE_INSTITUTION_FORM_ID}
+            onConsentChange={setTenantConsentAccepted}
+          />
+        ) : null}
+      </FormDrawer>
+
+      <FormDrawer
         isOpen={tm.isEditTenantModalOpen}
         onClose={closeInstitutionEdit}
+        lockDismiss={tm.isSubmittingEditTenant}
         title={tm.editTenantForm.organisation || `Edit ${INSTITUTION}`}
         description={`Update the ${INSTITUTION.toLowerCase()} details.`}
         footer={
@@ -1364,7 +1346,6 @@ export default function TenantManagementTab({
           href: "/institution-management",
           onNavigate: tm.closeTenantDetailView,
         }}
-        onLeave={tm.closeTenantDetailView}
         actions={
           <HStack spacing={2} flexShrink={0} flexWrap="wrap">
             {isDefaultTenant(t) && (
@@ -1397,9 +1378,6 @@ export default function TenantManagementTab({
             </Button>
           </HStack>
         }
-        footer={({ leave }) => (
-          <FormActions hideSubmit cancelLabel="Back" onCancel={leave} pt={0} />
-        )}
       >
           <Tabs
             colorScheme="blue"

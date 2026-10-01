@@ -28,13 +28,12 @@ import ApplicationIdentityFields from "./ApplicationIdentityFields";
 import FieldHint from "../common/FieldHint";
 import PercentageStepper from "../common/PercentageStepper";
 import { FIELD_HINTS } from "../../config/fieldHints";
-import { BUDGET_COPY, percentageBoundMessage } from "../../config/budgetMessages";
+import { APPLICATION_BUDGET_MANAGED_NOTE, BUDGET_COPY, editBudgetForName, percentageBoundMessage } from "../../config/budgetMessages";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
 import type { Application } from "../../types/application";
 import {
   ApplicationEmptyState,
   ApplicationIdentity,
-  ApplicationListSkeleton,
   ApplicationLoadError,
   ApplicationNoResults,
   ApplicationStatusText,
@@ -146,11 +145,14 @@ export default function ApplicationManagementTab({
     },
     {
       id: "actions",
-      header: "",
+      header: "Actions",
       align: "right",
       truncate: false,
       tdProps: { onClick: (e) => e.stopPropagation() },
-      cell: (app) => (
+      cell: (app) => {
+        const budgetActionLabel = editBudgetForName(app.name);
+        const budgetDisabled = app.status !== "ACTIVE";
+        return (
         <DataTableActions
           justify="flex-end"
           actions={[
@@ -166,22 +168,21 @@ export default function ApplicationManagementTab({
             },
             {
               id: "budget",
-              label: `Edit budget for ${app.name}`,
+              label: budgetActionLabel,
               icon: <FiSliders />,
-              tooltip:
-                app.status === "ACTIVE"
-                  ? `Edit budget for ${app.name}`
-                  : FIELD_HINTS.application.inactiveBudgetNotEditable,
-              "aria-label":
-                app.status === "ACTIVE"
-                  ? `Edit budget for ${app.name}`
-                  : FIELD_HINTS.application.inactiveBudgetNotEditable,
-              disabled: app.status !== "ACTIVE",
+              tooltip: budgetDisabled
+                ? FIELD_HINTS.application.inactiveBudgetNotEditable
+                : budgetActionLabel,
+              "aria-label": budgetDisabled
+                ? FIELD_HINTS.application.inactiveBudgetNotEditable
+                : budgetActionLabel,
+              disabled: budgetDisabled,
               onClick: () => mgr.openBudget(app),
             },
           ]}
         />
-      ),
+        );
+      },
     },
   ];
 
@@ -223,6 +224,19 @@ export default function ApplicationManagementTab({
       <FormDrawer
         isOpen={isEditing || isCreating || Boolean(viewApp)}
         onClose={closeDrawer}
+        lockDismiss={(isEditing || isCreating) && mgr.isSaving}
+        actions={
+          viewApp && !isEditing && !isCreating ? (
+            <Button
+              leftIcon={<FiEdit2 />}
+              size="sm"
+              variant="outline"
+              onClick={() => mgr.openEdit(viewApp)}
+            >
+              Edit
+            </Button>
+          ) : undefined
+        }
         title={
           isEditing
             ? mgr.form.name || mgr.selected?.name || "Edit Application"
@@ -248,7 +262,7 @@ export default function ApplicationManagementTab({
               onSubmit={() => void mgr.handleEdit()}
               isLoading={mgr.isSaving}
               loadingText="Saving..."
-              justify="flex-end"
+              justify="space-between"
               pt={0}
             />
           ) : isCreating ? (
@@ -259,11 +273,11 @@ export default function ApplicationManagementTab({
               onSubmit={() => void mgr.handleCreate()}
               isLoading={mgr.isSaving}
               loadingText="Creating..."
-              justify="flex-end"
+              justify="space-between"
               pt={0}
             />
           ) : (
-            <FormActions hideSubmit cancelLabel="Back" onCancel={closeDrawer} pt={0} />
+            <FormActions hideSubmit cancelLabel="Close" onCancel={closeDrawer} pt={0} />
           )
         }
       >
@@ -277,7 +291,7 @@ export default function ApplicationManagementTab({
               banner={mgr.formBanner}
             />
             <Text fontSize="sm" color="ink.500" mt={4}>
-              Budget is managed separately — use Edit Budget on the application row.
+              {APPLICATION_BUDGET_MANAGED_NOTE}
             </Text>
           </>
         ) : isCreating ? (
@@ -310,15 +324,6 @@ export default function ApplicationManagementTab({
           </>
         ) : viewApp ? (
           <>
-            <Button
-              leftIcon={<FiEdit2 />}
-              size="sm"
-              variant="outline"
-              mb={4}
-              onClick={() => mgr.openEdit(viewApp)}
-            >
-              Edit application
-            </Button>
             <ApplicationIdentityFields
               mode="view"
               form={{
@@ -434,7 +439,6 @@ export default function ApplicationManagementTab({
           onPageSizeChange: mgr.setPageSize,
         }}
         isLoading={mgr.isLoading && mgr.applications.length === 0 && !mgr.loadError}
-        loadingContent={<ApplicationListSkeleton />}
         emptyContent={
           mgr.searchInput.trim() ? (
             <ApplicationNoResults onClear={() => mgr.setSearchInput("")} />

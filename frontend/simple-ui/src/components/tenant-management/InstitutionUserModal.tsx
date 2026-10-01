@@ -66,6 +66,9 @@ export default function InstitutionUserModal({
     <FormDrawer
       isOpen={isEdit || isCreate || isView}
       onClose={closeActive}
+      lockDismiss={
+        (isEdit && tm.isSubmittingEditUser) || (isCreate && tm.isSubmittingUser)
+      }
       title={
         isEdit
           ? editTitle
@@ -113,7 +116,7 @@ export default function InstitutionUserModal({
             }}
           />
         ) : (
-          <FormActions hideSubmit cancelLabel="Back" onCancel={closeActive} pt={0} />
+          <FormActions hideSubmit cancelLabel="Close" onCancel={closeActive} pt={0} />
         )
       }
     >

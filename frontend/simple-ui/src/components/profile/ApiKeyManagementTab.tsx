@@ -27,7 +27,6 @@ import { FiSlash, FiSliders } from "react-icons/fi";
 import { EditIcon, ViewIcon } from "@chakra-ui/icons";
 import {
   ApplicationEmptyState,
-  ApplicationListSkeleton,
   ApplicationNoResults,
   EntityIdentity,
   InstitutionAllocationPanel,
@@ -52,9 +51,17 @@ import {
   API_KEY_FILTER_STATUS_LIST,
   formatApiKeyDisplayStatusLabel,
   formatApiKeyFilterStatusLabel,
-  getApiKeyDisplayStatusColorScheme,
 } from "../../config/constants";
 import { FIELD_HINTS } from "../../config/fieldHints";
+
+function apiKeyStatusTone(
+  status: string,
+): "success" | "warning" | "danger" | "neutral" {
+  if (status === API_KEY.DISPLAY_STATUS.ACTIVE) return "success";
+  if (status === API_KEY.DISPLAY_STATUS.INACTIVE) return "warning";
+  if (status === API_KEY.DISPLAY_STATUS.REVOKED) return "danger";
+  return "neutral";
+}
 
 export type ApiKeyPageActions = {
   refresh: () => void;
@@ -196,16 +203,11 @@ export default function ApiKeyManagementTab({
         cell: (key) => {
           const displayStatus = mgmt.resolveKeyDisplayStatus(key);
           const reason = mgmt.getKeyInactiveReason(key) ?? mgmt.getKeyRevokedReason(key);
-          const tone =
-            displayStatus === API_KEY.DISPLAY_STATUS.ACTIVE
-              ? "success"
-              : displayStatus === API_KEY.DISPLAY_STATUS.INACTIVE
-                ? "warning"
-                : displayStatus === API_KEY.DISPLAY_STATUS.REVOKED
-                  ? "danger"
-                  : "neutral";
           const indicator = (
-            <StatusDot label={formatApiKeyDisplayStatusLabel(displayStatus)} tone={tone} />
+            <StatusDot
+              label={formatApiKeyDisplayStatusLabel(displayStatus)}
+              tone={apiKeyStatusTone(displayStatus)}
+            />
           );
           return reason ? (
             <Tooltip label={reason} placement="top" hasArrow openDelay={300}>
@@ -250,6 +252,8 @@ export default function ApiKeyManagementTab({
         id: "actions",
         header: "Actions",
         align: "right",
+        width: "176px",
+        minWidth: "176px",
         tdProps: { onClick: (e) => e.stopPropagation() },
         cell: (key) => (
           <DataTableActions
@@ -348,7 +352,7 @@ export default function ApiKeyManagementTab({
         footer={
           <FormActions
             hideSubmit
-            cancelLabel="Back"
+            cancelLabel="Close"
             onCancel={mgmt.handleCloseViewModal}
             pt={0}
           />
@@ -372,7 +376,7 @@ export default function ApiKeyManagementTab({
             return visiblePerms.length > 0 ? (
               <HStack flexWrap="wrap" spacing={2}>
                 {visiblePerms.map((perm) => (
-                  <Badge key={String(perm)} colorScheme="blue" fontSize="sm" p={2}>
+                  <Badge key={String(perm)} colorScheme="gray" fontSize="xs" px={2} py={0.5}>
                     {mgmt.formatPermission(perm)}
                   </Badge>
                 ))}
@@ -398,15 +402,10 @@ export default function ApiKeyManagementTab({
             )}
         </ReadOnlyField>
         <ReadOnlyField label="Status">
-          <Badge
-            colorScheme={getApiKeyDisplayStatusColorScheme(
-              mgmt.resolveKeyDisplayStatus(viewKey)
-            )}
-            fontSize="sm"
-            p={2}
-          >
-            {formatApiKeyDisplayStatusLabel(mgmt.resolveKeyDisplayStatus(viewKey))}
-          </Badge>
+          <StatusDot
+            label={formatApiKeyDisplayStatusLabel(mgmt.resolveKeyDisplayStatus(viewKey))}
+            tone={apiKeyStatusTone(mgmt.resolveKeyDisplayStatus(viewKey))}
+          />
           {(mgmt.getKeyInactiveReason(viewKey) ?? mgmt.getKeyRevokedReason(viewKey)) && (
             <Text fontSize="xs" color="ink.500" mt={2}>
               {mgmt.getKeyInactiveReason(viewKey) ?? mgmt.getKeyRevokedReason(viewKey)}
@@ -476,7 +475,6 @@ export default function ApiKeyManagementTab({
             }
             onRowClick={mgmt.handleOpenViewModal}
             isLoading={mgmt.isLoadingAllApiKeys && mgmt.allApiKeys.length === 0}
-            loadingContent={<ApplicationListSkeleton />}
             loadingMessage="Loading API keys..."
             emptyContent={
               hasActiveFilters ? (
@@ -573,7 +571,7 @@ export default function ApiKeyManagementTab({
         description="Change this key's name and permissions."
         footer={
           <FormActions
-            submitLabel="Update"
+            submitLabel="Save Changes"
             onCancel={mgmt.handleCloseUpdateModal}
             onSubmit={mgmt.handleUpdateApiKey}
             isLoading={mgmt.isUpdating}
@@ -581,7 +579,7 @@ export default function ApiKeyManagementTab({
               !(mgmt.updateFormData.key_name ?? "").trim() ||
               !(mgmt.updateFormData.permissions?.length ?? 0)
             }
-            loadingText="Updating..."
+            loadingText="Saving..."
             justify="space-between"
             pt={0}
           />
