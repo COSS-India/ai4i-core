@@ -11,8 +11,10 @@ RESET, one Redis pipeline for all changes. Services that fire the same alert
 in one tick are sent as one email listing them all; each keeps its own
 ledger row, so its band and cooldown are tracked apart.
 
-A service missing from a result (no traffic, or under the minimum request
-count) causes no change: missing data never counts as recovery.
+A service missing from a successful result (no traffic, or under the minimum
+request count) is quiet: once its open incident is older than the cooldown,
+it is handed to the pipeline below every band, so the incident resets and
+the next breach fires again. A failed query changes nothing.
 """
 
 import asyncio
@@ -21,11 +23,12 @@ import math
 import time
 import uuid
 from decimal import Decimal
-from typing import Dict, List
+from typing import Dict, List, Set
 from zoneinfo import ZoneInfo
 
 import httpx
 from prometheus_client import Gauge, Histogram
+from sqlalchemy import text
 
 from ai4i_core.kafka import (
     BandItem,
@@ -158,6 +161,40 @@ def _group_details(parts: List[List[str]]) -> List:
     ]
 
 
+#: Open PLATFORM incidents past the cooldown, per notification row: the
+#: services a quiet tick may reset.
+_OPEN_INCIDENTS_SQL = text(
+    """
+    SELECT notification_id, subject->>'service_id' AS service_id
+      FROM ledger_notification_alert
+     WHERE notification_id = ANY(CAST(:ids AS bigint[]))
+       AND tenant_id       = :tenant_id
+       AND triggered       = true
+       AND triggered_at   <= now() - make_interval(secs => :cooldown_s)
+    """
+)
+
+
+async def _resettable_incidents(rt, ids: List[int]) -> Dict[int, Set[str]]:
+    """{notification_id: {service_id, ...}} of the open incidents a quiet
+    tick may reset. A read failure is logged and resets nothing."""
+    try:
+        async with rt.core_session_factory() as session:
+            result = await session.execute(
+                _OPEN_INCIDENTS_SQL,
+                {"ids": ids, "tenant_id": ntf.PLATFORM_TENANT_ID, "cooldown_s": rt.config.notif_monitor_cooldown_s},
+            )
+            rows = result.mappings().all()
+    except Exception:
+        logger.exception("Monitoring evaluator: reading open incidents failed")
+        return {}
+    incidents: Dict[int, Set[str]] = {}
+    for row in rows:
+        if row["service_id"]:
+            incidents.setdefault(row["notification_id"], set()).add(row["service_id"])
+    return incidents
+
+
 class _SourceError(Exception):
     def __init__(self, code: FailureCode, message: str):
         super().__init__(message)
@@ -214,13 +251,16 @@ async def run_tick(client: httpx.AsyncClient) -> List[uuid.UUID]:
     for name, (promql, unit) in queries.items():
         row = read.settings.get(name)
         if row is not None and row.bands and row.any_role_enabled():
-            wanted.append((name, promql, unit))
+            wanted.append((name, row, promql, unit))
     if not wanted:
         return []
 
-    results = await asyncio.gather(*(_query(client, promql) for _, promql, _ in wanted), return_exceptions=True)
+    results, incidents = await asyncio.gather(
+        asyncio.gather(*(_query(client, promql) for _, _, promql, _ in wanted), return_exceptions=True),
+        _resettable_incidents(rt, [row.id for _, row, _, _ in wanted]),
+    )
     items: List[BandItem] = []
-    for (name, _, unit), result in zip(wanted, results):
+    for (name, row, _, unit), result in zip(wanted, results):
         if isinstance(result, BaseException):
             code = result.code if isinstance(result, _SourceError) else FailureCode.PROMETHEUS_BAD_RESPONSE
             await rt.failures.record(
@@ -239,6 +279,17 @@ async def run_tick(client: httpx.AsyncClient) -> List[uuid.UUID]:
                     group_details=_group_details,
                 )
             )
+        # Quiet services: below every band, so the pipeline resets them.
+        if row.bands[0].value > 0:
+            for service_id in sorted(incidents.get(row.id, set()) - result.keys()):
+                items.append(
+                    BandItem(
+                        name=name,
+                        tenant_id=ntf.PLATFORM_TENANT_ID,
+                        subject=monitoring_subject(service_id),
+                        observed=Measurement(value=Decimal(0), unit=unit),
+                    )
+                )
     if not items:
         return []
     # Shielded: once claims start, the tick budget must not cancel the batch

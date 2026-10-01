@@ -2,8 +2,9 @@
 
 The PromQL per alert, parsing of Prometheus results (missing or non-finite
 values are dropped: no data never counts as recovery), mapping of
-Prometheus errors to SOURCE failure codes, and a tick that hands one BAND
-item per (alert, service) to the shared pipeline.
+Prometheus errors to SOURCE failure codes, a tick that hands one BAND
+item per (alert, service) to the shared pipeline, and quiet services whose
+open incident is past the cooldown handed in below every band so it resets.
 """
 
 from __future__ import annotations
@@ -22,6 +23,47 @@ from app.services.notification_management import monitoring_evaluator as ev
 
 def _client(handler):
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+def _row(row_id=1, *, roles=True, lowest="1"):
+    return SimpleNamespace(
+        id=row_id, bands=(SimpleNamespace(value=Decimal(lowest)),),
+        recipient_roles={"ADMIN": True} if roles else {}, any_role_enabled=lambda: roles,
+    )
+
+
+def _sessions(rows=(), error=None):
+    """core_session_factory whose session returns `rows` for the open
+    incidents read (or raises `error`); .calls records the parameters."""
+    calls = []
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def execute(self, statement, params):
+            calls.append(params)
+            if error is not None:
+                raise error
+            return SimpleNamespace(mappings=lambda: SimpleNamespace(all=lambda: list(rows)))
+
+    factory = _Session
+    factory.calls = calls
+    return factory
+
+
+def _runtime(rows_by_name, incidents=(), error=None):
+    runtime = MagicMock()
+    runtime.cache.read = AsyncMock(return_value=SimpleNamespace(
+        settings=SimpleNamespace(get=lambda n: rows_by_name.get(n.value))
+    ))
+    runtime.failures.record = AsyncMock()
+    runtime.core_session_factory = _sessions(incidents, error)
+    runtime.config.notif_monitor_cooldown_s = 1800
+    return runtime
 
 
 def _vector(*samples):
@@ -82,13 +124,8 @@ async def test_unreachable_prometheus(monkeypatch):
 @pytest.mark.asyncio
 async def test_tick_evaluates_only_alerts_with_bands_and_recipients(monkeypatch):
     monkeypatch.setattr(ev.settings, "prometheus_url", "http://prom")
-    ready = SimpleNamespace(bands=(object(),), recipient_roles={"ADMIN": True}, any_role_enabled=lambda: True)
-    no_recipients = SimpleNamespace(bands=(object(),), recipient_roles={}, any_role_enabled=lambda: False)
-    rows = {NotificationName.ERROR_RATE_5XX.value: ready, NotificationName.LATENCY_P95.value: no_recipients}
-    snapshot = SimpleNamespace(get=lambda name: rows.get(name.value))
-    runtime = MagicMock()
-    runtime.cache.read = AsyncMock(return_value=SimpleNamespace(settings=snapshot))
-    runtime.failures.record = AsyncMock()
+    rows = {NotificationName.ERROR_RATE_5XX.value: _row(), NotificationName.LATENCY_P95.value: _row(2, roles=False)}
+    runtime = _runtime(rows)
     monkeypatch.setattr(ev, "get_notification_runtime", lambda: runtime)
     emit = AsyncMock(return_value=["event-1"])
     monkeypatch.setattr(ev, "emit_band_batch", emit)
@@ -114,10 +151,7 @@ async def test_tick_evaluates_only_alerts_with_bands_and_recipients(monkeypatch)
 @pytest.mark.asyncio
 async def test_prometheus_failure_writes_a_throttled_source_row(monkeypatch):
     monkeypatch.setattr(ev.settings, "prometheus_url", "http://prom")
-    rows = {NotificationName.ERROR_RATE_4XX.value: SimpleNamespace(bands=(object(),), recipient_roles={"ADMIN": True}, any_role_enabled=lambda: True)}
-    runtime = MagicMock()
-    runtime.cache.read = AsyncMock(return_value=SimpleNamespace(settings=SimpleNamespace(get=lambda n: rows.get(n.value))))
-    runtime.failures.record = AsyncMock()
+    runtime = _runtime({NotificationName.ERROR_RATE_4XX.value: _row()})
     monkeypatch.setattr(ev, "get_notification_runtime", lambda: runtime)
     emit = AsyncMock()
     monkeypatch.setattr(ev, "emit_band_batch", emit)
@@ -151,11 +185,7 @@ async def test_services_breaching_in_one_tick_merge_into_one_list(monkeypatch):
     from datetime import datetime, timezone
 
     monkeypatch.setattr(ev.settings, "prometheus_url", "http://prom")
-    ready = SimpleNamespace(bands=(object(),), recipient_roles={"ADMIN": True}, any_role_enabled=lambda: True)
-    runtime = MagicMock()
-    runtime.cache.read = AsyncMock(return_value=SimpleNamespace(
-        settings=SimpleNamespace(get=lambda n: ready if n is NotificationName.ERROR_RATE_5XX else None)
-    ))
+    runtime = _runtime({NotificationName.ERROR_RATE_5XX.value: _row()})
     monkeypatch.setattr(ev, "get_notification_runtime", lambda: runtime)
     emit = AsyncMock(return_value=["event-1", "event-2"])
     monkeypatch.setattr(ev, "emit_band_batch", emit)
@@ -207,16 +237,107 @@ async def test_settings_unavailable_writes_a_settings_row(monkeypatch):
 @pytest.mark.asyncio
 async def test_source_rows_name_the_promql(monkeypatch):
     monkeypatch.setattr(ev.settings, "prometheus_url", "http://prom")
-    rows = {NotificationName.LATENCY_P99.value: SimpleNamespace(bands=(object(),), recipient_roles={"ADMIN": True}, any_role_enabled=lambda: True)}
-    runtime = MagicMock()
-    runtime.cache.read = AsyncMock(return_value=SimpleNamespace(settings=SimpleNamespace(get=lambda n: rows.get(n.value))))
-    runtime.failures.record = AsyncMock()
+    runtime = _runtime({NotificationName.LATENCY_P99.value: _row()})
     monkeypatch.setattr(ev, "get_notification_runtime", lambda: runtime)
 
     async with _client(lambda req: httpx.Response(500)) as c:
         await ev.run_tick(c)
 
     assert runtime.failures.record.await_args.kwargs["message"].startswith("L-0.99: ")
+
+
+@pytest.mark.asyncio
+async def test_quiet_service_with_an_open_incident_is_handed_in_below_every_band(monkeypatch):
+    """svc-old fired yesterday and has had no traffic since: missing from the
+    result, its incident past the cooldown is handed in at 0 so the pipeline
+    resets it. svc-a is in the result and is evaluated as usual, once."""
+    monkeypatch.setattr(ev.settings, "prometheus_url", "http://prom")
+    runtime = _runtime(
+        {NotificationName.LATENCY_P99.value: _row(14)},
+        incidents=[{"notification_id": 14, "service_id": "svc-old"}, {"notification_id": 14, "service_id": "svc-a"}],
+    )
+    monkeypatch.setattr(ev, "get_notification_runtime", lambda: runtime)
+    emit = AsyncMock(return_value=[])
+    monkeypatch.setattr(ev, "emit_band_batch", emit)
+
+    async with _client(lambda req: httpx.Response(200, json=_vector(("svc-a", "0.9")))) as c:
+        await ev.run_tick(c)
+
+    items = emit.await_args.args[0]
+    assert [(i.subject["service_id"], i.observed.value, i.observed.unit) for i in items] == [
+        ("svc-a", Decimal("0.9"), ThresholdUnit.SECONDS),
+        ("svc-old", Decimal(0), ThresholdUnit.SECONDS),
+    ]
+    assert items[1].details is None
+    assert runtime.core_session_factory.calls == [{"ids": [14], "tenant_id": "PLATFORM", "cooldown_s": 1800}]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_query_resets_nothing(monkeypatch):
+    """Missing data from a failed query is not quiet: the open incident stays."""
+    monkeypatch.setattr(ev.settings, "prometheus_url", "http://prom")
+    runtime = _runtime(
+        {NotificationName.ERROR_RATE_5XX.value: _row(11)},
+        incidents=[{"notification_id": 11, "service_id": "svc-old"}],
+    )
+    monkeypatch.setattr(ev, "get_notification_runtime", lambda: runtime)
+    emit = AsyncMock()
+    monkeypatch.setattr(ev, "emit_band_batch", emit)
+
+    async with _client(lambda req: httpx.Response(503)) as c:
+        assert await ev.run_tick(c) == []
+
+    emit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_incidents_of_one_alert_do_not_reset_another(monkeypatch):
+    monkeypatch.setattr(ev.settings, "prometheus_url", "http://prom")
+    runtime = _runtime(
+        {NotificationName.ERROR_RATE_4XX.value: _row(10), NotificationName.ERROR_RATE_5XX.value: _row(11)},
+        incidents=[{"notification_id": 10, "service_id": "svc-old"}],
+    )
+    monkeypatch.setattr(ev, "get_notification_runtime", lambda: runtime)
+    emit = AsyncMock(return_value=[])
+    monkeypatch.setattr(ev, "emit_band_batch", emit)
+
+    async with _client(lambda req: httpx.Response(200, json=_vector())) as c:
+        await ev.run_tick(c)
+
+    items = emit.await_args.args[0]
+    assert [(i.name, i.subject["service_id"]) for i in items] == [(NotificationName.ERROR_RATE_4XX, "svc-old")]
+
+
+@pytest.mark.asyncio
+async def test_a_band_at_zero_skips_the_quiet_reset(monkeypatch):
+    """0 would reach a band at 0 and fire, so quiet services are left alone."""
+    monkeypatch.setattr(ev.settings, "prometheus_url", "http://prom")
+    runtime = _runtime(
+        {NotificationName.ERROR_RATE_4XX.value: _row(10, lowest="0")},
+        incidents=[{"notification_id": 10, "service_id": "svc-old"}],
+    )
+    monkeypatch.setattr(ev, "get_notification_runtime", lambda: runtime)
+    emit = AsyncMock()
+    monkeypatch.setattr(ev, "emit_band_batch", emit)
+
+    async with _client(lambda req: httpx.Response(200, json=_vector())) as c:
+        assert await ev.run_tick(c) == []
+
+    emit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_an_incident_read_failure_still_evaluates_the_results(monkeypatch):
+    monkeypatch.setattr(ev.settings, "prometheus_url", "http://prom")
+    runtime = _runtime({NotificationName.ERROR_RATE_5XX.value: _row(11)}, error=RuntimeError("db down"))
+    monkeypatch.setattr(ev, "get_notification_runtime", lambda: runtime)
+    emit = AsyncMock(return_value=["event-1"])
+    monkeypatch.setattr(ev, "emit_band_batch", emit)
+
+    async with _client(lambda req: httpx.Response(200, json=_vector(("svc-a", "12")))) as c:
+        assert await ev.run_tick(c) == ["event-1"]
+
+    assert [i.subject["service_id"] for i in emit.await_args.args[0]] == ["svc-a"]
 
 
 def test_lock_expires_just_before_the_next_tick():
