@@ -262,7 +262,7 @@ export const FIELD_HINTS = {
       institutionBudgetAllocated:
         "Total Budget % assigned across all Applications after this change.",
       minimumAllowed:
-        "Lowest % allowed for this Application — the amount already allocated to its API Keys cannot be reduced.",
+        "Lowest % allowed for this Application — already-consumed usage cannot be reduced.",
       availableAtInstitution:
         "Maximum % you can assign without exceeding 100% across all Applications.",
     },

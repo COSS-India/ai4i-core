@@ -34,7 +34,6 @@ import {
   belowAllocatedToKeys,
   belowConsumedAmount,
   belowConsumedPct,
-  belowConsumedPctRaw,
   BUDGET_TOAST,
   BUDGET_VALIDATION,
   keyWouldDropBelowConsumed,
@@ -357,7 +356,6 @@ export function useApplicationManagement(
   const [isSaving, setIsSaving] = useState(false);
 
   const [budgetDraft, setBudgetDraft] = useState("");
-  const [budgetFloor, setBudgetFloor] = useState(0);
   const [budgetBanner, setBudgetBanner] = useState<string | null>(null);
   const [budgetStepperHint, setBudgetStepperHint] = useState<string | null>(null);
   /** Null unless usage detail succeeded. Never treat a failed load as ₹0. */
@@ -392,6 +390,8 @@ export function useApplicationManagement(
     tenantId: string;
     applications: Application[];
   } | null>(null);
+  /** Drops in-flight key loads when the bulk dialog is opened again. */
+  const bulkLoadGenerationRef = useRef(0);
 
   const loadAllocationSummary = useCallback(async () => {
     if (!tenantId) return;
@@ -461,6 +461,7 @@ export function useApplicationManagement(
 
   const loadKeysForRow = useCallback(async (applicationId: string) => {
     if (!tenantId) return;
+    const generation = bulkLoadGenerationRef.current;
     setBulkRows((prev) =>
       prev.map((row) =>
         row.application_id === applicationId
@@ -473,6 +474,7 @@ export function useApplicationManagement(
         tenantId,
         Number(applicationId),
       );
+      if (bulkLoadGenerationRef.current !== generation) return;
       const activeKeys = usageDetailToKeyRows(
         detail.apiKeys,
         detail.allocatedBudget.amount,
@@ -500,6 +502,7 @@ export function useApplicationManagement(
         }),
       );
     } catch (error) {
+      if (bulkLoadGenerationRef.current !== generation) return;
       const message = parseError(error).message;
       setBulkRows((prev) =>
         prev.map((row) =>
@@ -518,6 +521,8 @@ export function useApplicationManagement(
 
   const openBulkBudget = useCallback(async () => {
     if (!tenantId) return;
+    const generation = bulkLoadGenerationRef.current + 1;
+    bulkLoadGenerationRef.current = generation;
     setBulkBudgetOpen(true);
     setBulkBanner(null);
     setBulkLoading(true);
@@ -544,6 +549,7 @@ export function useApplicationManagement(
       } catch (usageError) {
         usageWarning = `Could not load consumption data: ${parseError(usageError).message}`;
       }
+      if (bulkLoadGenerationRef.current !== generation) return;
       const usageByAppId = new Map(
         usageRows.map((row) => [String(row.applicationId), row]),
       );
@@ -568,16 +574,27 @@ export function useApplicationManagement(
         ) {
           draft.resolvedAmount = roundMoney((effectiveBudget * draft.resolvedPct) / 100);
         }
+        if (isApplicationBudgetEditable(draft.status)) {
+          draft.keysLoading = true;
+        }
         return draft;
       });
       setBulkRows(drafts);
       if (usageWarning) setBulkBanner(usageWarning);
+      for (const draft of drafts) {
+        if (isApplicationBudgetEditable(draft.status)) {
+          void loadKeysForRow(draft.application_id);
+        }
+      }
     } catch (error) {
+      if (bulkLoadGenerationRef.current !== generation) return;
       setBulkBanner(mapApplicationAllocationError(error));
     } finally {
-      setBulkLoading(false);
+      if (bulkLoadGenerationRef.current === generation) {
+        setBulkLoading(false);
+      }
     }
-  }, [tenantId, institutionBudget]);
+  }, [tenantId, institutionBudget, loadKeysForRow]);
 
   const onBulkRowFocus = useCallback(
     (applicationId: string) => {
@@ -707,7 +724,6 @@ export function useApplicationManagement(
     setBudgetDraft(
       app.allocated_percentage == null ? "" : String(app.allocated_percentage),
     );
-    setBudgetFloor(0);
     setBudgetBanner(null);
     setBudgetStepperHint(null);
     setBudgetUsage(null);
@@ -718,15 +734,12 @@ export function useApplicationManagement(
     void fetchApplicationUsageDetail(tenantId, Number(app.application_id))
       .then((detail) => {
         if (budgetUsageRequestRef.current !== requestId) return;
-        const budget = institutionBudget ?? tenantBudget;
         const activeKeys = usageDetailToKeyRows(
           detail.apiKeys,
           detail.allocatedBudget.amount,
         );
         const keyHolders = allocatedKeyHolders(activeKeys);
         const keyFloorAmount = allocatedKeyFloorAmount(activeKeys);
-        const floorAmount = Math.max(detail.spendBudget.amount, keyFloorAmount);
-        setBudgetFloor(toInstitutionConsumedPct(floorAmount, budget) ?? 0);
         setBudgetUsage({
           allocated: detail.allocatedBudget.amount,
           consumed: detail.spendBudget.amount,
@@ -738,7 +751,6 @@ export function useApplicationManagement(
       })
       .catch(() => {
         if (budgetUsageRequestRef.current !== requestId) return;
-        setBudgetFloor(0);
         setBudgetUsage(null);
         setBudgetUsageState("error");
       });
@@ -778,16 +790,12 @@ export function useApplicationManagement(
       if (budgetUsage.consumed > 0 && enteredAmount < budgetUsage.consumed - tolerance) {
         return belowConsumedAmount(budgetUsage.consumed);
       }
-    } else if (budgetParsed != null && budgetFloor > 0 && budgetParsed < budgetFloor - 1e-6) {
-      return budgetUsage
-        ? belowConsumedAmount(budgetUsage.consumed)
-        : belowConsumedPctRaw(budgetFloor);
     }
     if (budgetLiveTotal > 100 + 1e-6) {
       return totalApplicationsOver100(budgetLiveTotal);
     }
     return null;
-  }, [budgetDraft, budgetParsed, budgetFloor, budgetLiveTotal, budgetUsage, currency, selected, tenantBudget]);
+  }, [budgetDraft, budgetParsed, budgetLiveTotal, budgetUsage, currency, selected, tenantBudget]);
 
   const validateCreate = (): boolean => {
     const errors: Record<string, string> = {};
@@ -985,7 +993,6 @@ export function useApplicationManagement(
     budgetStepperHint,
     budgetLiveTotal,
     budgetFieldError,
-    budgetFloor,
     budgetAvailable,
     budgetUsage,
     budgetUsageState,

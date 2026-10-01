@@ -199,6 +199,13 @@ export default function ApplicationBulkBudgetModal({
         id: "range",
         header: "Allowed range",
         cell: (row) => {
+          if (row.status === "ACTIVE" && !row.keysLoaded) {
+            return (
+              <Text fontSize="12px" fontWeight="700" color="ink.500">
+                {row.keysLoading ? BUDGET_COPY.loading : "—"}
+              </Text>
+            );
+          }
           const maximum = applicationHeadroomAmount(
             row,
             rowsRef.current,
