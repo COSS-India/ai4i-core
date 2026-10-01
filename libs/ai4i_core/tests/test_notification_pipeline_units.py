@@ -60,7 +60,7 @@ def test_every_catalog_name_has_a_spec():
     assert set(SPECS) == set(NotificationName)
     assert get_spec("NOPE") is None
     assert get_spec("QUOTA_THRESHOLD").period_key.value == "billing_month"
-    assert get_spec(NotificationName.BUDGET_EXHAUSTED).period_key.value == "budget_ceiling"
+    assert get_spec(NotificationName.BUDGET_EXHAUSTED).period_key.value == "budget_window"
     assert all(get_spec(n).resets for n in ("ERROR_RATE_4XX", "LATENCY_P99"))
     assert not get_spec("QUOTA_THRESHOLD").resets
 
@@ -78,6 +78,10 @@ def test_subject_validation():
             validate_subject(spec, bad)
     with pytest.raises(InvalidSubject):
         validate_subject(get_spec("BUDGET_THRESHOLD"), {"budget_ceiling": "5000"})
+    budget_spec = get_spec("BUDGET_THRESHOLD")
+    assert validate_subject(budget_spec, budget_subject(Decimal("5000"), None, None)) == {
+        "budget_ceiling": "5000.00", "budget_window": "none_none",
+    }
     assert validate_subject(get_spec("TIER_CHANGED"), {}) == {}
 
 
@@ -87,7 +91,16 @@ def test_keys_and_amounts():
     assert subject_key({}) == "_"
     assert ledger_key("QUOTA_THRESHOLD", "42", subject) == "ntf:v1:ledger:QUOTA_THRESHOLD:42:billing_month=2026-09,model_task_type=asr"
     assert kafka_message_key(NotificationName.TIER_CHANGED, "42", {}) == "TIER_CHANGED:42:_"
-    assert budget_subject(Decimal("5000")) == {"budget_ceiling": "5000.00"}
+    assert budget_subject(Decimal("5000")) == {"budget_ceiling": "5000.00", "budget_window": "none_none"}
+    from_dt = datetime(2026, 9, 17, tzinfo=timezone.utc)
+    to_dt = datetime(2026, 10, 10, tzinfo=timezone.utc)
+    assert budget_subject(Decimal("5000"), from_dt, to_dt) == {
+        "budget_ceiling": "5000.00", "budget_window": f"{from_dt.isoformat()}_{to_dt.isoformat()}",
+    }
+    # A renewed/extended window (same ceiling, new end date) is a different
+    # subject — the ledger row re-arms instead of staying claimed at the
+    # previous window's highest band.
+    assert budget_subject(Decimal("5000"), from_dt, to_dt) != budget_subject(Decimal("5000"), from_dt, datetime(2026, 9, 30, tzinfo=timezone.utc))
     assert format_amount("8000.5") == "8000.50"
 
 

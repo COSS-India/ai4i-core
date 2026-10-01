@@ -83,9 +83,21 @@ def quota_subject(billing_month: str, model_task_type: str) -> Dict[str, str]:
     }
 
 
-def budget_subject(allocated_budget) -> Dict[str, str]:
-    """Budget alerts' period key: the tenant's allocated_budget."""
-    return {SubjectKey.BUDGET_CEILING.value: format_amount(allocated_budget)}
+def budget_subject(allocated_budget, effective_from=None, effective_to=None) -> Dict[str, str]:
+    """Budget alerts' subject: the tenant's ceiling, plus its current budget
+    window (tenants.budget_effective_from/_to). The window makes a renewed
+    or reactivated window its own ledger row, the same way billing_month
+    gives quota a fresh row every month — without it, resetting spend or
+    extending the window's end date within the same window never re-arms
+    an already-triggered band, since nothing in the subject changed."""
+    return {
+        SubjectKey.BUDGET_CEILING.value: format_amount(allocated_budget),
+        SubjectKey.BUDGET_WINDOW.value: f"{_iso_or_none(effective_from)}_{_iso_or_none(effective_to)}",
+    }
+
+
+def _iso_or_none(moment) -> str:
+    return moment.isoformat() if moment is not None else "none"
 
 
 def monitoring_subject(service_id: str) -> Dict[str, str]:

@@ -371,7 +371,7 @@ async def _budget_items(ctx: BillingContext, core_db) -> list[BandItem]:
     if observed is None:
         return []
     measurement = Measurement(value=observed, unit=ThresholdUnit.PERCENT)
-    subject = budget_subject(tenant_budget.snap)
+    subject = budget_subject(tenant_budget.snap, tenant_budget.effective_from, tenant_budget.effective_to)
     details = {
         NotificationName.BUDGET_THRESHOLD: _threshold_details(),
         NotificationName.BUDGET_EXHAUSTED: lambda _: ["INR", format_amount(tenant_budget.snap)],

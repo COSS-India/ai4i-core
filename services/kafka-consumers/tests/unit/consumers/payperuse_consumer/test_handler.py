@@ -476,8 +476,12 @@ class TestPublishUsageCrossingEvents:
             calls["budget_reads"] += 1
             if tenant_budget is None:
                 return None
-            used, snap = tenant_budget
-            return TenantBudgetStatus(used=Decimal(used), snap=None if snap is None else Decimal(snap))
+            used, snap, *window = tenant_budget
+            effective_from, effective_to = (list(window) + [None, None])[:2]
+            return TenantBudgetStatus(
+                used=Decimal(used), snap=None if snap is None else Decimal(snap),
+                effective_from=effective_from, effective_to=effective_to,
+            )
 
         async def _emit(items):
             calls["items"].extend(items)
@@ -517,9 +521,36 @@ class TestPublishUsageCrossingEvents:
         assert set(by_name) == {NotificationName.BUDGET_THRESHOLD, NotificationName.BUDGET_EXHAUSTED}
         for item in by_name.values():
             assert item.tenant_id == "1"
-            # The tenant's allocated_budget is the period key; no api_key_id.
-            assert item.subject == {"budget_ceiling": "1000.00"}
+            # The tenant's allocated_budget and current window are the
+            # period key; no api_key_id. No window configured here, so
+            # budget_window is the "none_none" sentinel.
+            assert item.subject == {"budget_ceiling": "1000.00", "budget_window": "none_none"}
             assert item.observed.value == Decimal("82")
+
+    async def test_budget_window_change_is_part_of_the_subject(self, monkeypatch):
+        """A renewed/reactivated window (new effective_from/_to) must change
+        the ledger subject, the same way quota's billing_month does every
+        month — otherwise a window renewal can never re-arm an
+        already-triggered band (AI4IDS: Budget Threshold stayed silent
+        after a mid-window reset/renewal)."""
+        from datetime import datetime, timezone
+
+        from ai4i_core.kafka import NotificationName
+
+        calls = self._patch(monkeypatch, tenant_budget=(
+            "100", "1000", datetime(2026, 9, 17, tzinfo=timezone.utc), datetime(2026, 9, 30, tzinfo=timezone.utc),
+        ))
+        await self._run()
+        old_subject = next(i for i in calls["items"] if i.name == NotificationName.BUDGET_THRESHOLD).subject
+
+        calls = self._patch(monkeypatch, tenant_budget=(
+            "100", "1000", datetime(2026, 9, 17, tzinfo=timezone.utc), datetime(2026, 10, 10, tzinfo=timezone.utc),
+        ))
+        await self._run()
+        new_subject = next(i for i in calls["items"] if i.name == NotificationName.BUDGET_THRESHOLD).subject
+
+        assert old_subject["budget_ceiling"] == new_subject["budget_ceiling"]
+        assert old_subject["budget_window"] != new_subject["budget_window"]
 
     async def test_budget_details(self, monkeypatch):
         from ai4i_core.kafka import NotificationName
