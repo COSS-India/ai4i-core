@@ -165,6 +165,54 @@ def test_tenant_name_is_the_institution_not_the_contact():
     assert "t.name FROM tenants" not in _ONE_TENANT_SQL.text
 
 
+# ── for_tenant / for_tenants: recipient_roles["ADMIN"] still gates the
+# platform Admin (the Adopter Admin's own checkbox); the tenant's own
+# TENANT ADMIN users are unconditional now, regardless of that flag ──
+
+
+@pytest.mark.asyncio
+async def test_for_tenant_admin_role_true_includes_platform_admin():
+    db = _RowsDb([
+        {"id": 1, "email": "enc:admin@x.io", "full_name": "Admin", "tenant_name": "Acme"},
+    ])
+    people, _ = await _resolver().for_tenant(db, "7", {"ADMIN": True})
+    assert [r.email for r in people] == ["admin@x.io"]
+
+
+@pytest.mark.asyncio
+async def test_for_tenant_admin_role_false_excludes_admin_but_still_includes_tenant_admin():
+    # The fake DB doesn't filter by include_admin itself (that's Postgres's
+    # job in production); this pins that recipient_roles["ADMIN"] is what
+    # tells the query not to want an ADMIN row at all, via
+    # include_admin=False — while include_tenant_admin stays True either way.
+    captured = {}
+
+    class _CapturingDb(_RowsDb):
+        async def execute(self, stmt, params):
+            captured.update(params)
+            return await super().execute(stmt, params)
+
+    db = _CapturingDb([])
+    await _resolver().for_tenant(db, "7", {"ADMIN": False})
+    assert captured["include_admin"] is False
+    assert captured["include_tenant_admin"] is True
+
+
+@pytest.mark.asyncio
+async def test_for_tenant_admin_role_true_passes_include_admin_true():
+    captured = {}
+
+    class _CapturingDb(_RowsDb):
+        async def execute(self, stmt, params):
+            captured.update(params)
+            return await super().execute(stmt, params)
+
+    db = _CapturingDb([])
+    await _resolver().for_tenant(db, "7", {"ADMIN": True})
+    assert captured["include_admin"] is True
+    assert captured["include_tenant_admin"] is True
+
+
 # ── for_tenants: per-tenant grouping (Q-R2) ──
 
 
@@ -173,7 +221,7 @@ def _tenant_row(tenant_id, role, user_id, email):
 
 
 @pytest.mark.asyncio
-async def test_for_tenants_keeps_tenant_admins_and_extras_on_their_own_tenant():
+async def test_for_tenants_admin_role_true_keeps_platform_admin_and_extras_on_their_own_tenant():
     db = _RowsDb([
         _tenant_row("1", "ADMIN", "a", "admin@x.io"),
         _tenant_row("7", "TENANT ADMIN", "t7", "ta7@x.io"),
@@ -182,17 +230,27 @@ async def test_for_tenants_keeps_tenant_admins_and_extras_on_their_own_tenant():
         _tenant_row("8", "USER", "u8", "extra8@x.io"),
     ])
     out = await _resolver().for_tenants(
-        db, ["7", "8"], {"ADMIN": True, "TENANT ADMIN": True}, {"7": ["u7"], "8": ["u8"]}
+        db, ["7", "8"], {"ADMIN": True}, {"7": ["u7"], "8": ["u8"]}
     )
     assert [r.email for r in out["7"]] == ["admin@x.io", "extra7@x.io", "ta7@x.io"]
     assert [r.email for r in out["8"]] == ["admin@x.io", "extra8@x.io", "ta8@x.io"]
 
 
 @pytest.mark.asyncio
+async def test_for_tenants_admin_role_false_excludes_platform_admin_but_keeps_tenant_admin():
+    db = _RowsDb([
+        _tenant_row("1", "ADMIN", "a", "admin@x.io"),
+        _tenant_row("7", "TENANT ADMIN", "t7", "ta7@x.io"),
+    ])
+    out = await _resolver().for_tenants(db, ["7"], {"ADMIN": False}, {})
+    assert [r.email for r in out["7"]] == ["ta7@x.io"]
+
+
+@pytest.mark.asyncio
 async def test_for_tenants_extra_listed_by_another_tenant_is_not_leaked():
     # u8 is tenant 7's user row but only tenant 8's subscription lists it.
     db = _RowsDb([_tenant_row("7", "USER", "u8", "someone@x.io")])
-    out = await _resolver().for_tenants(db, ["7", "8"], {}, {"8": ["u8"]})
+    out = await _resolver().for_tenants(db, ["7", "8"], {"ADMIN": False}, {"8": ["u8"]})
     assert out == {"7": [], "8": []}
 
 
@@ -203,7 +261,7 @@ async def test_for_tenants_unselected_roles_are_left_out_and_duplicates_collapse
         _tenant_row("7", "TENANT ADMIN", "t7", "ta7@x.io"),
         _tenant_row("7", "TENANT ADMIN", "t7", "ta7@x.io"),
     ])
-    out = await _resolver().for_tenants(db, ["7"], {"TENANT ADMIN": True}, {})
+    out = await _resolver().for_tenants(db, ["7"], {"ADMIN": False}, {})
     assert [r.email for r in out["7"]] == ["ta7@x.io"]
 
 

@@ -108,19 +108,46 @@ def _enabled(row: SettingsRow, subs: Optional[TenantSubscriptions]) -> bool:
 
 
 def _gate_needs_subscription(row: SettingsRow) -> bool:
-    """INSTITUTION rows need `subscribed`; a row with no role flag needs the
-    tenant's extra recipients to know whether anyone is assigned."""
+    """Only an INSTITUTION row needs the tenant's subscription at this
+    early gate, for its own `subscribed` check (_enabled). A GLOBAL row's
+    gate (_enabled, _someone_assigned) never needs it here: GLOBAL is
+    always enabled and always has someone assigned (its own tenant's
+    TENANT ADMIN users are unconditional) regardless of subscription
+    state. Its extra recipients are still read before any FIRE claim —
+    emit_band_batch's own "missing" backfill handles that independently of
+    this gate — just never for a RESET, which resolves no recipients at
+    all and must not be dropped by a subscription read that FIRE alone
+    actually needed. MONITORING rows have no tenant subscription concept
+    at all — resolved by role at send time (Q-R3) — so they never need one
+    either."""
     if row.type is NotificationType.MONITORING:
         return False
-    return row.scope is NotificationScope.INSTITUTION or not row.any_role_enabled()
+    return row.scope is NotificationScope.INSTITUTION
 
 
 def _someone_assigned(row: SettingsRow, subs: Optional[TenantSubscriptions]) -> bool:
-    """A role flag is on, or the tenant listed extra recipients. Monitoring
-    rows need a selected role; its users are resolved at send time."""
+    """Who's assigned is decided by scope now, not a stored role flag,
+    for whether this tenant's own TENANT ADMIN users are included
+    (RecipientResolver.for_tenant/for_tenants) — GLOBAL always resolves
+    them, INSTITUTION resolves them once _enabled() has already confirmed
+    it's subscribed. Either way there is always someone in principle, so
+    this returns True unconditionally for NOTIFICATION/ALERT rows — the
+    one true "nobody left" case (e.g. a tenant with zero active Tenant
+    Admins and no extras) is caught downstream by _deliver()'s own
+    NO_RECIPIENTS failure once the live query comes back empty, not here.
+
+    Consequence worth knowing: an INSTITUTION row that's subscribed but has
+    neither an active Tenant Admin nor any extra recipient now still claims
+    the ledger row (claim_state/claim_band) before settling to
+    NO_RECIPIENTS, instead of being skipped before the claim. Because a
+    claim only re-fires on a changed state_hash (STATE) or an unreset band
+    (BAND), that one occurrence is not retried — an admin added to the
+    tenant afterwards does not receive it retroactively; only the next
+    genuinely new occurrence does. MONITORING is the one type still gated
+    on a role flag (its users are resolved by role at send time, Q-R3)."""
     if row.type is NotificationType.MONITORING:
         return row.any_role_enabled()
-    return row.any_role_enabled() or bool(subs is not None and subs.entry(row.name).recipients)
+    return True
 
 
 async def _details(
