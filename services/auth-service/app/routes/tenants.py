@@ -143,9 +143,9 @@ async def get_tenant(
         False,
         description=(
             "Return editable PII for the Edit Tenant form. Phone number is "
-            "always returned unmasked; the contact email is returned unmasked "
-            "only while the tenant is PENDING (before verification). List/view "
-            "screens must omit this flag so they keep showing masked values."
+            "returned unmasked; the contact email is always masked. While the "
+            "tenant is PENDING both stay masked. List/view screens must omit "
+            "this flag so they keep showing masked values."
         ),
     ),
     current_user: User = Depends(get_current_user),
