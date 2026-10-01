@@ -779,17 +779,13 @@ class TenantService:
         """Shape a tenant into its API dict, applying the PII-masking policy.
 
         Default (list/view): email and phone are masked. With ``unmask`` (Edit
-        Tenant form): the phone is always revealed and the contact email is
-        revealed only while the tenant is PENDING — i.e. before verification,
-        the only window in which the email may still be corrected.
+        Tenant form): the phone is revealed; the contact email always stays
+        masked. While the tenant is PENDING, both stay masked even with
+        ``unmask``.
         """
         data = to_response(tenant, TenantResponse)
-        if unmask:
-            return mask_pii_in_dict(
-                data,
-                mask_emails=tenant.status != TenantStatus.PENDING,
-                mask_phones=False,
-            )
+        if unmask and tenant.status != TenantStatus.PENDING:
+            return mask_pii_in_dict(data, mask_emails=True, mask_phones=False)
         return mask_pii_in_dict(data)
 
     @staticmethod

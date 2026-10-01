@@ -2,7 +2,8 @@
 
 Covers:
   * ``TenantService.build_tenant_response`` masking policy — default masks
-    both; ``unmask`` reveals the phone always and the email only while PENDING.
+    both; ``unmask`` reveals the phone only (email always masked), and nothing
+    is revealed while the tenant is PENDING.
   * Role gating for ``unmask``: only ADMIN / TENANT ADMIN may reveal cleartext
     PII. Moderators and plain tenant users are refused even though they can read
     the masked values.
@@ -68,13 +69,13 @@ class TestBuildTenantResponse:
         assert out["phone_number"] == "+919876543210"
         assert out["email"] == "j***@e***.com"
 
-    def test_unmask_pending_reveals_phone_and_email(self) -> None:
-        # PENDING → both revealed (email may still be corrected pre-verification).
+    def test_unmask_pending_keeps_phone_and_email_masked(self) -> None:
+        # PENDING → both stay masked even with unmask.
         out = TenantService.build_tenant_response(
             _tenant(TenantStatus.PENDING), unmask=True
         )
-        assert out["phone_number"] == "+919876543210"
-        assert out["email"] == "john.doe@example.com"
+        assert out["phone_number"] == "*********3210"
+        assert out["email"] == "j***@e***.com"
 
 
 class TestGetTenantUnmaskGating:
