@@ -124,6 +124,12 @@ const CalendarMonth: React.FC<CalendarMonthProps> = ({
     currentOptionRef.current?.scrollIntoView?.({ block: "center" });
   }, [view]);
 
+  // A month change from outside (the ‹ › arrows) closes an open year / month
+  // list, so the title and grid never show a stale year.
+  useEffect(() => {
+    setView("days");
+  }, [month.year, month.month]);
+
   // While the end is being picked, preview the range up to the hovered day.
   const rangeEnd = end ?? (start && hoverDay && hoverDay >= start ? hoverDay : null);
 

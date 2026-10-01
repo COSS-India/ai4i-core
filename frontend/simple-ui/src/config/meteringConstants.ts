@@ -100,8 +100,7 @@ export const METERING = {
     NEXT_MONTH: "Next month",
     /** Title hint: clicking the month title opens the year / month picker. */
     CHOOSE_MONTH_YEAR: "Choose month and year",
-    /** First year in the calendar's year list; there is no minimum date. */
-    MIN_YEAR: 1900,
+    MIN_YEAR: 2000,
     WEEKDAYS: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"],
   },
   TOP_N_OPTIONS: [10, 25] as const satisfies readonly MeteringTopN[],
