@@ -88,6 +88,7 @@ export default function ApplicationManagementTab({
     [mgr.applications, appSort],
   );
 
+  const hideKeys = { display: { base: "none", lg: "table-cell" } } as const;
   const columns: DataTableColumn<Application>[] = [
     {
       id: "name",
@@ -134,6 +135,8 @@ export default function ApplicationManagementTab({
       header: "Active API keys",
       sortable: true,
       sortAccessor: (app) => app.api_key_count ?? -1,
+      thProps: hideKeys,
+      tdProps: hideKeys,
       cell: (app) => (
         <Text fontSize="sm" color="ink.700">
           {app.api_key_count == null ? "—" : String(app.api_key_count)}
@@ -149,6 +152,7 @@ export default function ApplicationManagementTab({
       cell: (app) => <ApplicationStatusText status={app.status} />,
     },
     createActionsColumn<Application>({
+      align: "right",
       getActions: (app) => {
         const budgetActionLabel = editBudgetForName(app.name);
         const budgetDisabled = app.status !== "ACTIVE";

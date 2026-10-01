@@ -133,7 +133,7 @@ export async function createScopedApiKey(
   return normalizeKey(created);
 }
 
-/** Active means not revoked and not past expires_at — same rule as the API keys table. */
+/** Not revoked and not expired. */
 export function isApiKeyRecordActive(key: ApiKeyRecord): boolean {
   if (key.is_active === false || key.is_revoked === true) return false;
   return !isApiKeyExpired(key.expires_at);
@@ -146,7 +146,7 @@ export function isApiKeyRecordActive(key: ApiKeyRecord): boolean {
 export async function countActiveApiKeysForApplications(
   applicationIds: string[],
 ): Promise<Map<string, number | null>> {
-  const unique = [...new Set(applicationIds.map((id) => id.trim()).filter(Boolean))];
+  const unique = Array.from(new Set(applicationIds.map((id) => id.trim()).filter(Boolean)));
   const results = await Promise.allSettled(
     unique.map(async (id) => {
       const grouped = await listGroupedApiKeys("", { application_id: id });
