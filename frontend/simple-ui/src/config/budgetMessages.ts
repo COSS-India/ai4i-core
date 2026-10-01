@@ -1,6 +1,11 @@
 import { FIELD_HINTS } from "./fieldHints";
 import { parseError } from "../utils/errorHandler";
-import { roundMoney, roundPct } from "../utils/applicationBudgetPreview";
+import {
+  roundMoney,
+  roundPct,
+  type KeyAllocationHolder,
+} from "../utils/applicationBudgetPreview";
+import { formatSpendMoney } from "../utils/usageSpendHelpers";
 
 /** Labels and status copy shared by Application and API key budget dialogs. */
 export const BUDGET_COPY = {
@@ -15,6 +20,7 @@ export const BUDGET_COPY = {
   saving: "Saving...",
   bulkUpdateBudgets: "Bulk Update Budgets",
   remaining: "Remaining",
+  remainingInstitution: "Remaining (Institution)",
   leftForThisKey: "Left for this key",
   applicationPrefix: "Application:",
   apiKeyFallback: "API key",
@@ -69,6 +75,28 @@ export const BUDGET_TOAST = {
   applicationBudgetsUpdated: "Application budgets updated.",
   keyBudgetUpdated: (count: number) => `Budget updated for ${count} key(s).`,
 } as const;
+
+function formatSharePct(pct: number | null): string {
+  if (pct == null || !Number.isFinite(pct)) return "";
+  const rounded = roundPct(pct);
+  const text = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
+  return ` (${text}%)`;
+}
+
+/** Plain rejection when an Application would drop below what its API Keys already hold. */
+export function belowAllocatedToKeys(
+  applicationName: string,
+  floorAmount: number,
+  floorPct: number | null,
+  keys: KeyAllocationHolder[],
+  currency = "INR",
+): string {
+  const listed = keys
+    .map((key) => `${key.name}: ${formatSpendMoney(key.amount, currency)}`)
+    .join(", ");
+  const keyPart = listed ? ` (${listed})` : "";
+  return `${applicationName} cannot be reduced below ${formatSpendMoney(floorAmount, currency)}${formatSharePct(floorPct)}, the amount already allocated to its API Keys${keyPart}.`;
+}
 
 export function belowConsumedPct(pct: number): string {
   return `Allocation cannot be lower than ${roundPct(pct)}% already consumed.`;

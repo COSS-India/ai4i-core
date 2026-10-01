@@ -227,7 +227,8 @@ export const FIELD_HINTS = {
         "Optional. Percentage of the Institution's Budget. Leave blank for no ceiling.",
     },
     budgetEdit: {
-      helper:
+      helper: "Cannot be reduced below the amount allocated to its API Keys.",
+      belowConsumed:
         "Percentage of this Institution's total Budget. Cannot be reduced below already-consumed usage.",
     },
     institutionBudgetNotSet:

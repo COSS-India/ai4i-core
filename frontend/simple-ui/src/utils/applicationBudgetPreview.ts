@@ -24,6 +24,28 @@ export function roundPct(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
+export interface KeyAllocationHolder {
+  name: string;
+  amount: number;
+}
+
+/** Active keys that already hold a rupee allocation, in list order. */
+export function allocatedKeyHolders(
+  keys: { key_name: string; allocated_budget: number | null; is_active: boolean }[],
+): KeyAllocationHolder[] {
+  return keys
+    .filter((key) => key.is_active && (key.allocated_budget ?? 0) > 0)
+    .map((key) => ({ name: key.key_name, amount: key.allocated_budget ?? 0 }));
+}
+
+export function allocatedKeyFloorAmount(
+  keys: { key_name: string; allocated_budget: number | null; is_active: boolean }[],
+): number {
+  return roundMoney(
+    allocatedKeyHolders(keys).reduce((sum, key) => sum + key.amount, 0),
+  );
+}
+
 export interface ResolvedApplicationBudget {
   pct: number;
   /** Null when the Institution has no ₹ budget — % can still be edited in the UI. */

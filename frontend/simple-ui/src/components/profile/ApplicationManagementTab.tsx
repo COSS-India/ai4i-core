@@ -64,7 +64,7 @@ export default function ApplicationManagementTab({
   institutionBudget: number | null;
   currency?: string;
 }) {
-  const mgr = useApplicationManagement(tenantId, institutionBudget);
+  const mgr = useApplicationManagement(tenantId, institutionBudget, currency);
   const [boundHint, setBoundHint] = useState<string | null>(null);
 
   useEffect(() => {

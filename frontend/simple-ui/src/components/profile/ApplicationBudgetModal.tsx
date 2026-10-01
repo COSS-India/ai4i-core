@@ -28,20 +28,29 @@ export default function ApplicationBudgetModal({
   const consumedSub = loading ? undefined : usage ? formatBudgetMoney(usage.consumed, currency) : "—";
   const maximumAmount =
     mgr.tenantBudget > 0 ? (mgr.budgetAvailable / 100) * mgr.tenantBudget : null;
+  const floorAmount = usage ? Math.max(usage.consumed, usage.keyFloorAmount) : null;
+  const floorPct =
+    floorAmount != null && mgr.tenantBudget > 0
+      ? (floorAmount / mgr.tenantBudget) * 100
+      : null;
+  const floorLabel =
+    floorAmount == null
+      ? "—"
+      : `${formatBudgetMoney(floorAmount, currency)}${
+          floorPct != null ? ` (${formatBudgetPct(floorPct)})` : ""
+        }`;
   const rangeValue = loading
     ? BUDGET_COPY.loading
-    : `${usage ? formatBudgetMoney(usage.consumed, currency) : "—"} – ${formatBudgetMoney(maximumAmount, currency)}`;
+    : `${floorLabel} – ${formatBudgetMoney(maximumAmount, currency)}`;
+  const keysBindFloor = usage != null && usage.keyFloorAmount > usage.consumed + 1e-6;
   const draftPct = Number(mgr.budgetDraft);
   const draftOk = mgr.budgetDraft.trim() !== "" && Number.isFinite(draftPct);
   const draftAmount =
     draftOk && mgr.tenantBudget > 0 ? (draftPct / 100) * mgr.tenantBudget : null;
   const allocatedAmount = usage ? usage.allocated : mgr.selected?.allocated_budget;
-  const remainingAmount = usage ? usage.remaining : null;
-  const remainingPct =
-    remainingAmount != null && mgr.tenantBudget > 0
-      ? (remainingAmount / mgr.tenantBudget) * 100
-      : null;
-  const remainingNegative = remainingAmount != null && remainingAmount < 0;
+  const institutionRemainingPct = mgr.remainingPct;
+  const institutionRemainingAmount =
+    mgr.tenantBudget > 0 ? (institutionRemainingPct / 100) * mgr.tenantBudget : null;
   const close = () => mgr.setBudgetOpen(false);
 
   return (
@@ -97,28 +106,19 @@ export default function ApplicationBudgetModal({
             allocatedAmount={allocatedAmount}
             consumedLabel={consumedLabel}
             consumedSub={consumedSub}
-            remainingLabel={BUDGET_COPY.remaining}
+            remainingLabel={BUDGET_COPY.remainingInstitution}
             remainingValue={
-              loading
-                ? BUDGET_COPY.loading
-                : remainingPct != null
-                  ? formatBudgetPct(remainingPct)
-                  : remainingAmount != null
-                    ? formatBudgetMoney(remainingAmount, currency)
-                    : "—"
+              mgr.institutionBudgetUnset
+                ? "—"
+                : formatBudgetPct(institutionRemainingPct)
             }
             remainingSub={
-              loading || remainingAmount == null || remainingPct == null
+              institutionRemainingAmount == null
                 ? undefined
-                : formatBudgetMoney(remainingAmount, currency)
+                : formatBudgetMoney(institutionRemainingAmount, currency)
             }
-            remainingColor={
-              remainingNegative ? "red.600" : remainingAmount != null ? "green.700" : "ink.800"
-            }
-            remainingSubColor={
-              remainingNegative ? "red.600" : remainingAmount != null ? "green.700" : undefined
-            }
-            remainingNegative={remainingNegative}
+            remainingColor="green.700"
+            remainingSubColor="green.700"
             rangeLabel={rangeValue}
             currency={currency}
           />
@@ -132,7 +132,11 @@ export default function ApplicationBudgetModal({
           fillPct={draftOk ? draftPct : 0}
           error={mgr.budgetFieldError}
           notice={mgr.budgetStepperHint}
-          hint={FIELD_HINTS.application.budgetEdit.helper}
+          hint={
+            keysBindFloor
+              ? FIELD_HINTS.application.budgetEdit.helper
+              : FIELD_HINTS.application.budgetEdit.belowConsumed
+          }
         />
       </VStack>
     </StandardModal>
