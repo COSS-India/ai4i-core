@@ -3,10 +3,22 @@
 Monitoring recipients are not stored: Q-R3 resolves every active user who
 holds a selected role (ADMIN / MODERATOR) at send time.
 
-Runs only when an event fires. Role flags come from the settings row's
-recipient_roles; extra user ids come from the tenant's own subscription row,
-and are only ever matched inside that tenant. users.email is encrypted at
-rest and decrypted in-process; a recipient that fails to decrypt is skipped.
+Runs only when an event fires. For a GLOBAL/INSTITUTION row (Q-R1/Q-R2), the
+tenant's own TENANT ADMIN users are always included — that part is no longer
+a stored flag, it's unconditional. Whether the platform ADMIN is *also*
+included still comes from the row's own stored recipient_roles["ADMIN"] —
+the Adopter Admin's own "also receive a copy" checkbox (AdopterAdminCheckbox,
+CatalogToolbar.tsx) — which already encodes the scope rule itself:
+selectable while GLOBAL, forced off while INSTITUTION
+(catalog_service._apply_admin_recipient_scope_invariant). Deriving
+include_admin from scope directly, instead of reading that flag, would make
+the checkbox a no-op. Either way, the tenant's own extra recipients (its
+subscription row's own added user ids) are always included on top, and are
+only ever matched inside that tenant — recipients added while a row was
+INSTITUTION-scope survive a later revert to GLOBAL.
+
+users.email is encrypted at rest and decrypted in-process; a recipient that
+fails to decrypt is skipped.
 """
 
 import logging
@@ -104,33 +116,23 @@ class RecipientResolver:
         recipient_roles: Mapping[str, bool],
         extra_user_ids: Sequence[str] = (),
     ) -> Tuple[List[Recipient], Optional[str]]:
-        """Q-R1: recipients of one tenant and the institution name."""
+        """Q-R1: recipients of one tenant and the institution name. This
+        tenant's own TENANT ADMIN users are always included. The platform
+        ADMIN is included only when recipient_roles["ADMIN"] is set — the
+        Adopter Admin's own checkbox, already scope-aware by construction
+        (see module docstring)."""
         params = {
             "tenant_id": int(tenant_id),
             "include_admin": bool(recipient_roles.get(RecipientRole.ADMIN.value)),
-            "include_tenant_admin": bool(recipient_roles.get(RecipientRole.TENANT_ADMIN.value)),
+            "include_tenant_admin": True,
             "admin_role": RecipientRole.ADMIN.value,
             "tenant_admin_role": RecipientRole.TENANT_ADMIN.value,
             "extra_user_ids": [str(u) for u in extra_user_ids],
         }
         result = await session.execute(_ONE_TENANT_SQL, params)
         rows = result.mappings().all()
-        # TEMPORARY — AI4IDS budget-notification recipient-drop investigation.
-        # Remove once the "one of two Institution Admins missing" bug is
-        # root-caused; logs no PII beyond user ids already visible in the DB.
-        logger.warning(
-            "DEBUG_RECIPIENTS for_tenant tenant_id=%s include_admin=%s include_tenant_admin=%s "
-            "extra_user_ids=%r row_count=%d row_ids=%r",
-            tenant_id, params["include_admin"], params["include_tenant_admin"],
-            params["extra_user_ids"], len(rows), [str(r["id"]) for r in rows],
-        )
         tenant_name = rows[0]["tenant_name"] if rows else None
-        recipients = self._unique((str(r["id"]), r["email"], r["full_name"]) for r in rows)
-        logger.warning(
-            "DEBUG_RECIPIENTS for_tenant tenant_id=%s post_unique_count=%d",
-            tenant_id, len(recipients),
-        )
-        return recipients, tenant_name
+        return self._unique((str(r["id"]), r["email"], r["full_name"]) for r in rows), tenant_name
 
     async def for_tenants(
         self,
@@ -139,14 +141,16 @@ class RecipientResolver:
         recipient_roles: Mapping[str, bool],
         extra_user_ids: Mapping[str, Sequence[str]],
     ) -> Dict[str, List[Recipient]]:
-        """Q-R2: recipients of many tenants. ADMIN users go to every tenant; a
-        TENANT ADMIN only to their own tenant; an extra user id only to the
-        tenant whose subscription lists it."""
+        """Q-R2: recipients of many tenants. Each tenant's own TENANT ADMIN
+        users always go to their own tenant. The platform ADMIN goes to
+        every tenant, but only when recipient_roles["ADMIN"] is set (see
+        for_tenant). Either way, an extra user id only goes to the tenant
+        whose subscription lists it."""
         ids = [str(t) for t in tenant_ids]
         if not ids:
             return {}
         include_admin = bool(recipient_roles.get(RecipientRole.ADMIN.value))
-        include_tenant_admin = bool(recipient_roles.get(RecipientRole.TENANT_ADMIN.value))
+        include_tenant_admin = True
         extras = {str(t): {str(u) for u in users} for t, users in extra_user_ids.items()}
         result = await session.execute(
             _MANY_TENANTS_SQL,
