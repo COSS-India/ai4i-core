@@ -1059,6 +1059,7 @@ function PolicyFormModal({
     <FormDrawer
       isOpen={isOpen}
       onClose={onClose}
+      lockDismiss={saving}
       title={pageTitle}
       description={pageDescription}
       footer={

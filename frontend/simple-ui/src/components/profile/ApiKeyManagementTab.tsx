@@ -252,6 +252,8 @@ export default function ApiKeyManagementTab({
         id: "actions",
         header: "Actions",
         align: "right",
+        width: "176px",
+        minWidth: "176px",
         tdProps: { onClick: (e) => e.stopPropagation() },
         cell: (key) => (
           <DataTableActions

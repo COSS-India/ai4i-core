@@ -999,6 +999,7 @@ const ModelManagementPage: React.FC = () => {
         <FormDrawer
           isOpen={isCreateOpen && !isRegistryReadOnly && !(isViewingModel && selectedModel)}
           onClose={closeCreateModal}
+          lockDismiss={isUploading}
           size="wide"
           title="Create Model"
           description="Upload a model definition to add it to the registry."

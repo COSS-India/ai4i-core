@@ -369,6 +369,7 @@ const ServicesManagement: React.FC = () => {
       <FormDrawer
         isOpen={showServiceCreate}
         onClose={closeCreateModal}
+        lockDismiss={isSubmitting}
         size="wide"
         title="Create Service"
         description="Register a service and map it to a model and tiers."
@@ -406,6 +407,7 @@ const ServicesManagement: React.FC = () => {
       <FormDrawer
         isOpen={showServiceEdit}
         onClose={handleCancelForm}
+        lockDismiss={isSubmitting}
         size="wide"
         title={
           editingService?.name ||

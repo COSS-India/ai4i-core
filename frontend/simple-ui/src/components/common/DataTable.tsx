@@ -986,15 +986,17 @@ function AdminLayoutDataTable<T>({
                   : {}),
                 ...(col.align === "center" ? { textAlign: "center" as const } : {}),
               };
+              const preservePixelSize = !shouldAutoTruncateColumn(col);
               return (
                 <Th
                   key={col.id}
                   py={3}
                   overflow="hidden"
-                  w={adminFixedSize(col.width)}
-                  minW={adminFixedSize(col.minWidth)}
+                  w={preservePixelSize ? col.width : adminFixedSize(col.width)}
+                  minW={preservePixelSize ? col.minWidth : adminFixedSize(col.minWidth)}
+                  maxW={preservePixelSize ? col.maxW : adminFixedSize(col.maxW)}
                   sx={headerSx}
-                  {...adminFixedCellProps(col.thProps)}
+                  {...(preservePixelSize ? col.thProps : adminFixedCellProps(col.thProps))}
                 >
                   <AdminSortableHeader col={col} sort={sort} onSortChange={onSortChange} />
                 </Th>
@@ -1055,11 +1057,11 @@ function AdminLayoutDataTable<T>({
                     py={4}
                     isNumeric={col.isNumeric}
                     textAlign={col.align}
-                    w={adminFixedSize(col.width)}
-                    minW={adminFixedSize(col.minWidth)}
-                    maxW={adminFixedSize(col.maxW)}
+                    w={truncate ? adminFixedSize(col.width) : col.width}
+                    minW={truncate ? adminFixedSize(col.minWidth) : col.minWidth}
+                    maxW={truncate ? adminFixedSize(col.maxW) : col.maxW}
                     sx={numeric ? { fontVariantNumeric: "tabular-nums" } : undefined}
-                    {...adminFixedCellProps(col.tdProps)}
+                    {...(truncate ? adminFixedCellProps(col.tdProps) : col.tdProps)}
                     overflow="hidden"
                   >
                     {truncate ? (

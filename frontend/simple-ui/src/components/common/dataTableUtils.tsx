@@ -38,6 +38,7 @@ function isHardColumnSize(value: unknown): boolean {
  * Admin tables use fixed layout and share width equally.
  * Pixel widths are dropped so one long value cannot resize a column.
  * Percentage widths and responsive size objects are kept.
+ * Columns that do not truncate (action buttons) skip this and keep their pixel width.
  */
 export function adminFixedCellProps(props?: TableCellProps): TableCellProps {
   if (!props) return {};
