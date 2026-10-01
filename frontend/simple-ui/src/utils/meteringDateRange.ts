@@ -104,6 +104,25 @@ export function compareMonths(a: MeteringCalendarMonth, b: MeteringCalendarMonth
   return a.year * 12 + a.month - (b.year * 12 + b.month);
 }
 
+/** Clamp a month into [min, max] (inclusive). */
+export function clampMonth(
+  value: MeteringCalendarMonth,
+  min: MeteringCalendarMonth,
+  max: MeteringCalendarMonth,
+): MeteringCalendarMonth {
+  if (compareMonths(value, min) < 0) return min;
+  if (compareMonths(value, max) > 0) return max;
+  return value;
+}
+
+/**
+ * Short month name for a 0-based month, e.g. 7 → "Aug". Same names as the
+ * range label (Intl's en-GB would give "Sept").
+ */
+export function formatMonthName(month: number): string {
+  return MONTHS_SHORT[month];
+}
+
 export function formatCalendarMonth(value: MeteringCalendarMonth): string {
   return new Date(Date.UTC(value.year, value.month, 1)).toLocaleDateString("en-GB", {
     month: "long",
