@@ -4,7 +4,8 @@ The PromQL per alert, parsing of Prometheus results (missing or non-finite
 values are dropped: no data never counts as recovery), mapping of
 Prometheus errors to SOURCE failure codes, a tick that hands one BAND
 item per (alert, service) to the shared pipeline, and quiet services whose
-open incident is past the cooldown handed in below every band so it resets.
+open incident is past the cooldown handed in below every band so it resets
+(only with no traffic at all: under the minimum keeps the incident).
 """
 
 from __future__ import annotations
@@ -48,7 +49,9 @@ def _sessions(rows=(), error=None):
             calls.append(params)
             if error is not None:
                 raise error
-            return SimpleNamespace(mappings=lambda: SimpleNamespace(all=lambda: list(rows)))
+            return SimpleNamespace(mappings=lambda: iter(
+                {"notification_id": r["notification_id"], "subject": {"service_id": r["service_id"]}} for r in rows
+            ))
 
     factory = _Session
     factory.calls = calls
@@ -64,6 +67,10 @@ def _runtime(rows_by_name, incidents=(), error=None):
     runtime.core_session_factory = _sessions(incidents, error)
     runtime.config.notif_monitor_cooldown_s = 1800
     return runtime
+
+
+def _is_count(promql):
+    return promql == ev.request_count_query("5m")
 
 
 def _vector(*samples):
@@ -260,7 +267,12 @@ async def test_quiet_service_with_an_open_incident_is_handed_in_below_every_band
     emit = AsyncMock(return_value=[])
     monkeypatch.setattr(ev, "emit_band_batch", emit)
 
-    async with _client(lambda req: httpx.Response(200, json=_vector(("svc-a", "0.9")))) as c:
+    def handler(request):
+        if _is_count(request.url.params["query"]):
+            return httpx.Response(200, json=_vector(("svc-a", "25")))
+        return httpx.Response(200, json=_vector(("svc-a", "0.9")))
+
+    async with _client(handler) as c:
         await ev.run_tick(c)
 
     items = emit.await_args.args[0]
@@ -269,7 +281,41 @@ async def test_quiet_service_with_an_open_incident_is_handed_in_below_every_band
         ("svc-old", Decimal(0), ThresholdUnit.SECONDS),
     ]
     assert items[1].details is None
-    assert runtime.core_session_factory.calls == [{"ids": [14], "tenant_id": "PLATFORM", "cooldown_s": 1800}]
+    assert runtime.core_session_factory.calls == [{"notification_ids": [14], "tenant_id": "PLATFORM", "cooldown_s": 1800}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("count_response", [
+    httpx.Response(200, json=_vector(("svc-old", "7"))),   # traffic under the minimum
+    httpx.Response(503),                                   # count unknown
+])
+async def test_low_traffic_or_unknown_count_keeps_the_incident(monkeypatch, count_response):
+    """svc-old still has 7 requests (under 20), so it is not quiet: resetting
+    it would email again once per cooldown while it stays bad. A failed
+    count query resets nothing either. svc-a is still evaluated."""
+    monkeypatch.setattr(ev.settings, "prometheus_url", "http://prom")
+    runtime = _runtime(
+        {NotificationName.LATENCY_P99.value: _row(14)},
+        incidents=[{"notification_id": 14, "service_id": "svc-old"}],
+    )
+    monkeypatch.setattr(ev, "get_notification_runtime", lambda: runtime)
+    emit = AsyncMock(return_value=[])
+    monkeypatch.setattr(ev, "emit_band_batch", emit)
+
+    def handler(request):
+        if _is_count(request.url.params["query"]):
+            return count_response
+        return httpx.Response(200, json=_vector(("svc-a", "0.9")))
+
+    async with _client(handler) as c:
+        await ev.run_tick(c)
+
+    assert [i.subject["service_id"] for i in emit.await_args.args[0]] == ["svc-a"]
+
+
+def test_request_count_query_has_no_minimum():
+    promql = ev.request_count_query("5m")
+    assert promql == 'sum by (service_id) (increase(telemetry_obsv_requests_total{service_id!=""}[5m]))'
 
 
 @pytest.mark.asyncio
