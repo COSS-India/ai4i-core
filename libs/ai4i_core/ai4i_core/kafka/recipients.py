@@ -3,12 +3,16 @@
 Monitoring recipients are not stored: Q-R3 resolves every active user who
 holds a selected role (ADMIN / MODERATOR) at send time.
 
-Runs only when an event fires. For a GLOBAL/INSTITUTION row (Q-R1/Q-R2), who
-gets it is decided by scope, not a stored role flag: GLOBAL always resolves
-every platform ADMIN plus this tenant's own TENANT ADMIN users; INSTITUTION
-resolves only this tenant's own TENANT ADMIN users (the platform ADMIN is
-deliberately excluded — an Institution-scope row is never delivered to the
-Adopter Admin as such). Either way, the tenant's own extra recipients (its
+Runs only when an event fires. For a GLOBAL/INSTITUTION row (Q-R1/Q-R2), the
+tenant's own TENANT ADMIN users are always included — that part is no longer
+a stored flag, it's unconditional. Whether the platform ADMIN is *also*
+included still comes from the row's own stored recipient_roles["ADMIN"] —
+the Adopter Admin's own "also receive a copy" checkbox (AdopterAdminCheckbox,
+CatalogToolbar.tsx) — which already encodes the scope rule itself:
+selectable while GLOBAL, forced off while INSTITUTION
+(catalog_service._apply_admin_recipient_scope_invariant). Deriving
+include_admin from scope directly, instead of reading that flag, would make
+the checkbox a no-op. Either way, the tenant's own extra recipients (its
 subscription row's own added user ids) are always included on top, and are
 only ever matched inside that tenant — recipients added while a row was
 INSTITUTION-scope survive a later revert to GLOBAL.
@@ -22,7 +26,7 @@ from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, 
 
 from sqlalchemy import text
 
-from .constants import MONITORING_RECIPIENT_ROLES, NotificationScope, RecipientRole
+from .constants import MONITORING_RECIPIENT_ROLES, RecipientRole
 from .models import Recipient
 
 logger = logging.getLogger(__name__)
@@ -109,16 +113,17 @@ class RecipientResolver:
         self,
         session,
         tenant_id: str,
-        scope: NotificationScope,
+        recipient_roles: Mapping[str, bool],
         extra_user_ids: Sequence[str] = (),
     ) -> Tuple[List[Recipient], Optional[str]]:
-        """Q-R1: recipients of one tenant and the institution name. GLOBAL
-        includes every platform ADMIN; INSTITUTION never does (the Adopter
-        Admin is not a recipient of an Institution-scope row). Both include
-        this tenant's own TENANT ADMIN users and its extra recipients."""
+        """Q-R1: recipients of one tenant and the institution name. This
+        tenant's own TENANT ADMIN users are always included. The platform
+        ADMIN is included only when recipient_roles["ADMIN"] is set — the
+        Adopter Admin's own checkbox, already scope-aware by construction
+        (see module docstring)."""
         params = {
             "tenant_id": int(tenant_id),
-            "include_admin": scope is NotificationScope.GLOBAL,
+            "include_admin": bool(recipient_roles.get(RecipientRole.ADMIN.value)),
             "include_tenant_admin": True,
             "admin_role": RecipientRole.ADMIN.value,
             "tenant_admin_role": RecipientRole.TENANT_ADMIN.value,
@@ -133,18 +138,18 @@ class RecipientResolver:
         self,
         session,
         tenant_ids: Sequence[str],
-        scope: NotificationScope,
+        recipient_roles: Mapping[str, bool],
         extra_user_ids: Mapping[str, Sequence[str]],
     ) -> Dict[str, List[Recipient]]:
-        """Q-R2: recipients of many tenants. GLOBAL: every platform ADMIN
-        goes to every tenant, plus each tenant's own TENANT ADMIN users.
-        INSTITUTION: no platform ADMIN, only each tenant's own TENANT ADMIN
-        users. Either way, an extra user id only goes to the tenant whose
-        subscription lists it."""
+        """Q-R2: recipients of many tenants. Each tenant's own TENANT ADMIN
+        users always go to their own tenant. The platform ADMIN goes to
+        every tenant, but only when recipient_roles["ADMIN"] is set (see
+        for_tenant). Either way, an extra user id only goes to the tenant
+        whose subscription lists it."""
         ids = [str(t) for t in tenant_ids]
         if not ids:
             return {}
-        include_admin = scope is NotificationScope.GLOBAL
+        include_admin = bool(recipient_roles.get(RecipientRole.ADMIN.value))
         include_tenant_admin = True
         extras = {str(t): {str(u) for u in users} for t, users in extra_user_ids.items()}
         result = await session.execute(

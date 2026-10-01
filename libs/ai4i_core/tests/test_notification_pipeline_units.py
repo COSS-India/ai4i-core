@@ -272,7 +272,24 @@ async def test_names_that_can_fire_needs_enabled_bands_and_someone_assigned(monk
     subs.rows.clear()
     assert await pipeline.names_that_can_fire(names, "7") == [NotificationName.BUDGET_EXHAUSTED]
 
+    # Subscribed, but no role enabled and no extras added: _someone_assigned
+    # is unconditionally True for NOTIFICATION/ALERT rows now — scope alone
+    # decides who (this tenant's own Tenant Admins are always included),
+    # not a role flag or extras. This is the exact shape of the originally
+    # reported bug: an institution subscribed to a notification, with
+    # nobody individually added, must still be able to fire. Reverting
+    # _someone_assigned to the old `any_role_enabled() or extras` check
+    # must fail this assertion.
+    rows[NotificationName.BUDGET_THRESHOLD] = row(
+        NotificationName.BUDGET_THRESHOLD, c.NotificationScope.INSTITUTION, {"ADMIN": False, "TENANT ADMIN": False},
+    )
+    subs.rows[NotificationName.BUDGET_THRESHOLD.value] = SubscriptionEntry(subscribed=True, recipients=())
+    assert await pipeline.names_that_can_fire(names, "7") == list(names)
+
     # No active bands: nothing can fire.
+    rows[NotificationName.BUDGET_THRESHOLD] = row(
+        NotificationName.BUDGET_THRESHOLD, c.NotificationScope.INSTITUTION, {"ADMIN": False, "TENANT ADMIN": False}, bands=(),
+    )
     rows[NotificationName.BUDGET_EXHAUSTED] = row(
         NotificationName.BUDGET_EXHAUSTED, c.NotificationScope.GLOBAL, {"ADMIN": True}, bands=()
     )
