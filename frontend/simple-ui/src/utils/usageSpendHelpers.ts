@@ -57,25 +57,6 @@ export function billingPeriodValue(key: BillingPeriodKey): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-export function billingPeriodLabel(key: BillingPeriodKey): string {
-  return key === "current" ? "CURRENT MONTH" : "LAST MONTH";
-}
-
-export function formatBillingPeriodDisplay(yyyyMm: string): string {
-  const [yearStr, monthStr] = yyyyMm.split("-");
-  const year = Number(yearStr);
-  const month = Number(monthStr);
-  if (!year || !month) return yyyyMm;
-  return new Date(year, month - 1, 1).toLocaleDateString("en-IN", {
-    month: "long",
-    year: "numeric",
-  });
-}
-
-export function formatMonthFilterLabel(yyyyMm: string): string {
-  return `Month · ${formatBillingPeriodDisplay(yyyyMm)}`;
-}
-
 function formatBudgetDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
@@ -90,13 +71,6 @@ export function formatBudgetEffectiveRange(
   if (from) return `Effective from ${formatBudgetDate(from)}`;
   if (to) return `Effective until ${formatBudgetDate(to)}`;
   return null;
-}
-
-export function billingPeriodOptions(): { value: string; label: string }[] {
-  return (["current", "last"] as const).map((key) => {
-    const value = billingPeriodValue(key);
-    return { value, label: formatBillingPeriodDisplay(value) };
-  });
 }
 
 /** Budget and spend figures display as whole currency units — decimals rounded away. */

@@ -76,9 +76,9 @@ export interface TenantUsageItem {
   /** All-time institution spend — not scoped by billing_period. */
   spend: number;
   budget: TenantBudget;
-  /** Quota usage for the selected billing_period. */
+  /** All-time quota usage — not scoped by billing_period. */
   usage: TenantUsageAggregate;
-  /** Quota breakdown for the selected billing_period. */
+  /** All-time quota breakdown — not scoped by billing_period. */
   tierBreakdown: TenantTierBreakdown[];
 }
 

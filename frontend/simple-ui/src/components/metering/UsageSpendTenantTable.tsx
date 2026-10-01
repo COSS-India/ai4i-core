@@ -137,7 +137,7 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
           if (taskCount === 0) {
             return (
               <Text fontSize="12px" color="gray.500">
-                Not used this period
+                Not used
               </Text>
             );
           }

@@ -1,3 +1,4 @@
+import { isApiKeyExpired } from "../config/constants";
 import authService from "./authService";
 import type {
   ApiKeyGroupedListResult,
@@ -130,6 +131,37 @@ export async function createScopedApiKey(
   };
   const created = await authService.createApiKey(body);
   return normalizeKey(created);
+}
+
+/** Not revoked and not expired. */
+export function isApiKeyRecordActive(key: ApiKeyRecord): boolean {
+  if (key.is_active === false || key.is_revoked === true) return false;
+  return !isApiKeyExpired(key.expires_at);
+}
+
+/**
+ * Active key counts for the given applications, via GET /api-keys?application_id=.
+ * A failed lookup is null so the table can show "—" instead of a false zero.
+ */
+export async function countActiveApiKeysForApplications(
+  applicationIds: string[],
+): Promise<Map<string, number | null>> {
+  const unique = Array.from(new Set(applicationIds.map((id) => id.trim()).filter(Boolean)));
+  const results = await Promise.allSettled(
+    unique.map(async (id) => {
+      const grouped = await listGroupedApiKeys("", { application_id: id });
+      const count = grouped.groups
+        .flatMap((group) => group.api_keys)
+        .filter(isApiKeyRecordActive).length;
+      return count;
+    }),
+  );
+  const counts = new Map<string, number | null>();
+  unique.forEach((id, index) => {
+    const result = results[index];
+    counts.set(id, result?.status === "fulfilled" ? result.value : null);
+  });
+  return counts;
 }
 
 /** Flatten grouped list for table rendering. */

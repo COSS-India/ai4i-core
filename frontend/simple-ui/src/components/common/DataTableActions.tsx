@@ -72,6 +72,7 @@ export function DataTableActions({
     <HStack
       spacing={spacing}
       justify={justify}
+      w={justify ? "full" : undefined}
       className={className}
       onClick={stopPropagation ? (e) => e.stopPropagation() : undefined}
     >
@@ -139,6 +140,7 @@ export function createActionsColumn<T>(
   options: CreateActionsColumnOptions<T>,
 ): DataTableColumn<T> {
   const align = options.align ?? "left";
+  const justify = align === "right" ? "flex-end" : align === "center" ? "center" : undefined;
   return {
     id: options.id ?? "actions",
     header: options.header ?? "Actions",
@@ -151,7 +153,9 @@ export function createActionsColumn<T>(
       textAlign: align !== "left" ? align : undefined,
       onClick: (e) => e.stopPropagation(),
     },
-    cell: (row, index) => <DataTableActions actions={options.getActions(row, index)} />,
+    cell: (row, index) => (
+      <DataTableActions justify={justify} actions={options.getActions(row, index)} />
+    ),
   };
 }
 
