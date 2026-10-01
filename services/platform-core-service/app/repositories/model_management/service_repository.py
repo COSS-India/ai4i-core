@@ -56,6 +56,13 @@ class ServiceRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_name_by_service_id(self, service_id: str) -> Optional[str]:
+        """The service's display name, or None when there is no row.
+        Soft-deleted services keep their name: monitoring emails for a
+        service deleted after it fired still name it."""
+        result = await self._db.execute(select(Service.name).where(Service.service_id == service_id))
+        return result.scalar_one_or_none()
+
     async def get_by_name(self, name: str) -> Optional[Service]:
         result = await self._db.execute(select(Service).where(Service.name == name))
         return result.scalar_one_or_none()
