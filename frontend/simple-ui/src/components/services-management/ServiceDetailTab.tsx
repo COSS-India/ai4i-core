@@ -9,7 +9,7 @@ import {
 import { MdOutlineCheckCircle, MdOutlineUnpublished } from "react-icons/md";
 import React from "react";
 import FormActions from "../common/FormActions";
-import FormPage from "../common/FormPage";
+import FormDrawer from "../common/FormDrawer";
 import FormSection from "../common/FormSection";
 import ReadOnlyField from "../common/ReadOnlyField";
 import {
@@ -29,7 +29,7 @@ interface ServiceDetailTabProps {
   publishingServiceUuid: string | null;
   onRequestUnpublish: (service: Service) => void;
   onRequestPublish: (service: Service) => void;
-  onBack: () => void;
+  onClose: () => void;
 }
 
 const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
@@ -42,7 +42,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
   publishingServiceUuid,
   onRequestUnpublish,
   onRequestPublish,
-  onBack,
+  onClose,
 }) => {
   const taskType = resolveTaskType(selectedService);
   const modelId = selectedService.modelId || selectedService.model_id || "";
@@ -59,14 +59,12 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
     selectedServiceModelDeprecated === true;
 
   return (
-    <FormPage
+    <FormDrawer
+      isOpen
+      size="wide"
+      onClose={onClose}
       title={title}
       description="Service configuration."
-      parent={{
-        label: "Services Management",
-        href: "/services-management",
-        onNavigate: onBack,
-      }}
       actions={
         !isRegistryReadOnly ? (
           selectedService.isPublished === true ? (
@@ -114,7 +112,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
           )
         ) : undefined
       }
-      footer={<FormActions hideSubmit cancelLabel="Back" onCancel={onBack} pt={0} />}
+      footer={<FormActions hideSubmit cancelLabel="Close" onCancel={onClose} pt={0} />}
     >
       <FormSection title="Availability">
         <ReadOnlyField label="Status">
@@ -194,7 +192,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
           </ReadOnlyField>
         ) : null}
       </FormSection>
-    </FormPage>
+    </FormDrawer>
   );
 };
 

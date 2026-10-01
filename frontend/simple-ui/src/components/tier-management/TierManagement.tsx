@@ -3,13 +3,6 @@ import {
   Badge,
   Box,
   Button,
-  Drawer,
-  DrawerBody,
-  DrawerCloseButton,
-  DrawerContent,
-  DrawerFooter,
-  DrawerHeader,
-  DrawerOverlay,
   FormControl,
   FormErrorMessage,
   HStack,
@@ -43,9 +36,8 @@ import DataTable, {
 } from "../common/table";
 import ConfirmDialog from "../common/ConfirmDialog";
 import CreateButton from "../common/CreateButton";
-import CreateHeader from "../common/CreateHeader";
 import FormActions from "../common/FormActions";
-import FormPage from "../common/FormPage";
+import FormDrawer from "../common/FormDrawer";
 import FormSection from "../common/FormSection";
 import { FORM_LABEL_TO_INPUT_PT } from "../common/FormFieldsRow";
 import ManagementPageHeader from "../common/ManagementPageHeader";
@@ -1132,15 +1124,15 @@ const TierManagement: React.FC = () => {
   const pendingQuotas =
     viewTier?.quotas?.filter((q) => q.pendingLimit != null) ?? [];
 
-  const formPage = isCreateOpen ? (
-    <FormPage
+  const formPage = (
+    <>
+    <FormDrawer
+      isOpen={isCreateOpen}
+      onClose={onCreateClose}
+      size="wide"
+      lockDismiss={isSubmitting}
       title="Create Tier"
       description={`Configure access and usage limits for ${INSTITUTIONS.toLowerCase()}.`}
-      parent={{
-        label: "Tier Management",
-        href: "/tier-management",
-        onNavigate: onCreateClose,
-      }}
       footer={
         <FormActions
           cancelLabel="Cancel"
@@ -1156,20 +1148,17 @@ const TierManagement: React.FC = () => {
         />
       }
     >
-      {tierForm}
-    </FormPage>
-  ) : isViewOpen && viewTier ? (
-    <FormPage
-      title={viewTier.name}
+      {isCreateOpen ? tierForm : null}
+    </FormDrawer>
+    <FormDrawer
+      isOpen={Boolean(isViewOpen && viewTier) && !isCreateOpen}
+      onClose={onViewClose}
+      size="wide"
+      title={viewTier?.name || "Tier"}
       description="Tier details."
-      parent={{
-        label: "Tier Management",
-        href: "/tier-management",
-        onNavigate: onViewClose,
-      }}
-      footer={<FormActions hideSubmit cancelLabel="Back" onCancel={onViewClose} pt={0} />}
+      footer={<FormActions hideSubmit cancelLabel="Close" onCancel={onViewClose} pt={0} />}
     >
-      <TierForm
+      {viewTier ? <TierForm
         mode="view"
         formData={{
           name: viewTier.name,
@@ -1183,7 +1172,7 @@ const TierManagement: React.FC = () => {
         onChange={() => undefined}
         taskTypeNames={taskTypeNames}
         unitByTaskType={unitByTaskType}
-      />
+      /> : null}
       <FormSection title="Upcoming changes">
         {pendingQuotas.length ? (
           pendingQuotas.map((q) => (
@@ -1224,14 +1213,16 @@ const TierManagement: React.FC = () => {
           isLoading={isAssignedTenantsLoading}
         />
       </FormSection>
-    </FormPage>
-  ) : null;
+    </FormDrawer>
+    </>
+  );
 
   return (
     <Box>
       {formPage}
-      <Box hidden={Boolean(formPage)}>
+      <Box>
           <ManagementPageHeader
+            crumbs={false}
             title="Tier Management"
             description={`Configure tiers for ${INSTITUTION.toLowerCase()} access`}
             actions={
@@ -1301,25 +1292,24 @@ const TierManagement: React.FC = () => {
       />
       </Box>
 
-      <Drawer
+      <FormDrawer
         isOpen={isEditOpen}
         onClose={onEditClose}
-        placement="right"
-        size="lg"
-        closeOnOverlayClick={!isSubmitting}
-        closeOnEsc={!isSubmitting}
+        size="wide"
+        lockDismiss={isSubmitting}
+        title={editingTier?.name ? `Edit Tier: ${editingTier.name}` : "Edit Tier"}
+        footer={
+          <FormActions
+            submitLabel="Save Changes"
+            onCancel={onEditClose}
+            isLoading={isSubmitting}
+            loadingText="Saving..."
+            justify="space-between"
+            pt={0}
+            onSubmit={handleEditSubmit}
+          />
+        }
       >
-        <DrawerOverlay />
-        <DrawerContent maxW="640px">
-          <DrawerCloseButton isDisabled={isSubmitting} />
-          <DrawerHeader borderBottomWidth="1px" borderColor="ink.200">
-            <CreateHeader
-              title={
-                editingTier?.name ? `Edit Tier: ${editingTier.name}` : "Edit Tier"
-              }
-            />
-          </DrawerHeader>
-          <DrawerBody py={6}>
             <VStack align="stretch" spacing={6}>
               <TierForm
                 formData={formData}
@@ -1445,19 +1435,7 @@ const TierManagement: React.FC = () => {
                 </>
               ) : null}
             </VStack>
-          </DrawerBody>
-          <DrawerFooter borderTopWidth="1px" borderColor="ink.200">
-            <FormActions
-              submitLabel="Save Changes"
-              onCancel={onEditClose}
-              isLoading={isSubmitting}
-              loadingText="Saving..."
-              pt={0}
-              onSubmit={handleEditSubmit}
-            />
-          </DrawerFooter>
-        </DrawerContent>
-      </Drawer>
+      </FormDrawer>
 
       {/* Lifecycle status confirmation (activate / deactivate) */}
       <ConfirmDialog

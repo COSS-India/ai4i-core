@@ -397,32 +397,6 @@ export function InstitutionAllocationSkeleton() {
   );
 }
 
-export function ApplicationListSkeleton() {
-  return (
-    <Box overflow="hidden" aria-busy="true">
-      {Array.from({ length: 6 }, (_, index) => (
-        <HStack
-          key={index}
-          px={4}
-          py={3}
-          spacing={4}
-          borderTopWidth={index === 0 ? 0 : "1px"}
-          borderColor="ink.100"
-        >
-          <Skeleton w="32px" h="32px" borderRadius="md" flexShrink={0} />
-          <Box flex="1.4">
-            <Skeleton h="12px" w="40%" mb={2} />
-            <Skeleton h="10px" w="55%" />
-          </Box>
-          <Skeleton h="12px" w="64px" display={{ base: "none", md: "block" }} />
-          <Skeleton h="12px" w="72px" />
-          <Skeleton h="12px" w="56px" display={{ base: "none", lg: "block" }} />
-        </HStack>
-      ))}
-    </Box>
-  );
-}
-
 export function ApplicationEmptyState({
   onCreate,
   title = "No applications yet",

@@ -152,7 +152,7 @@ export default function ApplicationBulkBudgetModal({
             }
             return (
               <Text fontSize="sm" color="ink.400">
-                {row.keysLoading ? BUDGET_COPY.loading : "Focus row to load keys"}
+                {row.keysLoading ? BUDGET_COPY.loading : BUDGET_COPY.focusRowToLoadKeys}
               </Text>
             );
           }

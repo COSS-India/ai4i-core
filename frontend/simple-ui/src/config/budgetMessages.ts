@@ -26,16 +26,24 @@ export const BUDGET_COPY = {
   apiKeyFallback: "API key",
   inactiveKeyNotEditable: "This API key is not active, so its allocation cannot be edited.",
   keyHasNoApplication: "This key has no application",
+  focusRowToLoadKeys: "Focus row to load keys",
 } as const;
+
+/** Shown on application edit. Budget is changed from the row action, not this form. */
+export const APPLICATION_BUDGET_MANAGED_NOTE = `Budget is managed separately — use ${BUDGET_COPY.editBudget} on the application row.`;
 
 export function editBudgetTitle(name?: string | null): string {
   const trimmed = name?.trim();
-  return trimmed ? `Edit Budget — ${trimmed}` : BUDGET_COPY.editBudget;
+  return trimmed ? `${BUDGET_COPY.editBudget} — ${trimmed}` : BUDGET_COPY.editBudget;
+}
+
+export function editBudgetForName(name?: string | null, fallback?: string): string {
+  const trimmed = name?.trim() || fallback?.trim() || "";
+  return trimmed ? `Edit budget for ${trimmed}` : BUDGET_COPY.editBudget;
 }
 
 export function editBudgetForKey(name?: string | null): string {
-  const trimmed = name?.trim() || BUDGET_COPY.apiKeyFallback;
-  return `Edit budget for ${trimmed}`;
+  return editBudgetForName(name, BUDGET_COPY.apiKeyFallback);
 }
 
 /** Shared validation copy for budget percentage / amount fields. */
