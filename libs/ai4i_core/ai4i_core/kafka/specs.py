@@ -33,7 +33,11 @@ class NotificationSpec:
 
 _NO_SUBJECT: Tuple[SubjectKey, ...] = ()
 _QUOTA_SUBJECT = (SubjectKey.BILLING_MONTH, SubjectKey.MODEL_TASK_TYPE)
-_BUDGET_SUBJECT = (SubjectKey.BUDGET_CEILING,)
+# budget_window (the tenant's current budget_effective_from/_to) makes a
+# renewed or reactivated window its own ledger row, the same way
+# billing_month gives quota a fresh one every month — otherwise a reset or
+# renewal within the same window can never re-arm an already-triggered band.
+_BUDGET_SUBJECT = (SubjectKey.BUDGET_CEILING, SubjectKey.BUDGET_WINDOW)
 _MONITORING_SUBJECT = (SubjectKey.SERVICE_ID,)
 
 
@@ -61,9 +65,9 @@ SPECS: Dict[NotificationName, NotificationSpec] = {
         _state(NotificationName.BUDGET_UPDATED),
         _state(NotificationName.QUOTA_LIMIT_UPDATED, (SubjectKey.MODEL_TASK_TYPE,)),
         _usage(NotificationName.QUOTA_EXHAUSTED, NotificationType.NOTIFICATION, _QUOTA_SUBJECT, SubjectKey.BILLING_MONTH),
-        _usage(NotificationName.BUDGET_EXHAUSTED, NotificationType.NOTIFICATION, _BUDGET_SUBJECT, SubjectKey.BUDGET_CEILING),
+        _usage(NotificationName.BUDGET_EXHAUSTED, NotificationType.NOTIFICATION, _BUDGET_SUBJECT, SubjectKey.BUDGET_WINDOW),
         _usage(NotificationName.QUOTA_THRESHOLD, NotificationType.ALERT, _QUOTA_SUBJECT, SubjectKey.BILLING_MONTH),
-        _usage(NotificationName.BUDGET_THRESHOLD, NotificationType.ALERT, _BUDGET_SUBJECT, SubjectKey.BUDGET_CEILING),
+        _usage(NotificationName.BUDGET_THRESHOLD, NotificationType.ALERT, _BUDGET_SUBJECT, SubjectKey.BUDGET_WINDOW),
         _monitoring(NotificationName.ERROR_RATE_4XX),
         _monitoring(NotificationName.ERROR_RATE_5XX),
         _monitoring(NotificationName.LATENCY_P50),

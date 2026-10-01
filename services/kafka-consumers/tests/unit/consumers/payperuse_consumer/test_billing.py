@@ -740,7 +740,9 @@ class TestFetchTenantBudgetStatus:
         tenant-level state — 0 used, snap is still tenants.allocated_budget
         (not None): the ceiling is a property of the tenant, not of
         whether it has any keys yet."""
-        auth_db = _FakeAuthDb(rows=[_FakeRow(allocated_budget=Decimal("100000"), api_key_id=None)])
+        auth_db = _FakeAuthDb(
+            rows=[_FakeRow(allocated_budget=Decimal("100000"), budget_effective_from=None, budget_effective_to=None, api_key_id=None)]
+        )
         core_db = _FakeCoreDb(used_total=Decimal("0"))
 
         result = await fetch_tenant_budget_status(auth_db, core_db, "1")
@@ -755,9 +757,9 @@ class TestFetchTenantBudgetStatus:
         their spend must be pooled, not read off just one of them."""
         auth_db = _FakeAuthDb(
             rows=[
-                _FakeRow(allocated_budget=Decimal("1000"), api_key_id=1),
-                _FakeRow(allocated_budget=Decimal("1000"), api_key_id=2),
-                _FakeRow(allocated_budget=Decimal("1000"), api_key_id=3),
+                _FakeRow(allocated_budget=Decimal("1000"), budget_effective_from=None, budget_effective_to=None, api_key_id=1),
+                _FakeRow(allocated_budget=Decimal("1000"), budget_effective_from=None, budget_effective_to=None, api_key_id=2),
+                _FakeRow(allocated_budget=Decimal("1000"), budget_effective_from=None, budget_effective_to=None, api_key_id=3),
             ]
         )
         core_db = _FakeCoreDb(used_total=Decimal("750"))  # pre-summed by the fake DB's own SUM()
@@ -778,13 +780,33 @@ class TestFetchTenantBudgetStatus:
         when they undershoot it, so this is the common case, not an edge
         case. snap must still read 5000 — the tenant's real, dashboard-
         matching budget — not 2500 (that key's own allocation)."""
-        auth_db = _FakeAuthDb(rows=[_FakeRow(allocated_budget=Decimal("5000"), api_key_id=1)])
+        auth_db = _FakeAuthDb(rows=[_FakeRow(allocated_budget=Decimal("5000"), budget_effective_from=None, budget_effective_to=None, api_key_id=1)])
         core_db = _FakeCoreDb(used_total=Decimal("2500"))  # that one key, fully spent
 
         result = await fetch_tenant_budget_status(auth_db, core_db, "1")
 
         assert result.used == Decimal("2500")
         assert result.snap == Decimal("5000")
+
+    async def test_budget_window_is_carried_through(self):
+        """tenants.budget_effective_from/_to travel onto the result so
+        keys.budget_subject() can fold them into the ledger subject — a
+        renewed or reactivated window must be able to re-arm an
+        already-triggered band (AI4IDS: Budget Threshold stayed silent
+        after a mid-window reset because the old subject carried no window
+        information at all)."""
+        from datetime import datetime, timezone
+
+        start, end = datetime(2026, 9, 17, tzinfo=timezone.utc), datetime(2026, 10, 10, tzinfo=timezone.utc)
+        auth_db = _FakeAuthDb(
+            rows=[_FakeRow(allocated_budget=Decimal("5000"), budget_effective_from=start, budget_effective_to=end, api_key_id=1)]
+        )
+        core_db = _FakeCoreDb(used_total=Decimal("100"))
+
+        result = await fetch_tenant_budget_status(auth_db, core_db, "1")
+
+        assert result.effective_from == start
+        assert result.effective_to == end
 
     async def test_revoked_keys_are_not_excluded(self):
         """Same reasoning as auth-service's _sync_ppu_wallet_and_exhaustion:
@@ -793,8 +815,8 @@ class TestFetchTenantBudgetStatus:
         and must not gain one."""
         auth_db = _FakeAuthDb(
             rows=[
-                _FakeRow(allocated_budget=Decimal("1000"), api_key_id=1),
-                _FakeRow(allocated_budget=Decimal("1000"), api_key_id=2),  # revoked, still counted
+                _FakeRow(allocated_budget=Decimal("1000"), budget_effective_from=None, budget_effective_to=None, api_key_id=1),
+                _FakeRow(allocated_budget=Decimal("1000"), budget_effective_from=None, budget_effective_to=None, api_key_id=2),  # revoked, still counted
             ]
         )
         core_db = _FakeCoreDb(used_total=Decimal("900"))
@@ -808,7 +830,9 @@ class TestFetchTenantBudgetStatus:
         """ctx.tenant_id travels as a string (OTel attributes) — tenants.id
         is an integer column; binding the raw string would raise on the
         real driver even though this fake doesn't care."""
-        auth_db = _FakeAuthDb(rows=[_FakeRow(allocated_budget=Decimal("1"), api_key_id=None)])
+        auth_db = _FakeAuthDb(
+            rows=[_FakeRow(allocated_budget=Decimal("1"), budget_effective_from=None, budget_effective_to=None, api_key_id=None)]
+        )
         core_db = _FakeCoreDb(used_total=Decimal("0"))
 
         await fetch_tenant_budget_status(auth_db, core_db, "42")

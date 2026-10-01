@@ -2,6 +2,7 @@
 import json
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
@@ -34,9 +35,15 @@ class TenantBudgetStatus:
     tenants.allocated_budget"). ``used`` is always a real Decimal (0 when
     the tenant has no keys yet); ``snap`` mirrors
     BillingWriteResult.api_key_budget_snap's "None = no ceiling configured,
-    don't enforce" convention."""
+    don't enforce" convention. ``effective_from``/``effective_to`` are the
+    tenant's current budget window (tenants.budget_effective_from/_to,
+    nullable) — fed into keys.budget_subject() so a renewed or reactivated
+    window gets its own ledger row instead of staying claimed at whatever
+    band the previous window last reached."""
     used: Decimal
     snap: Optional[Decimal]
+    effective_from: Optional[datetime] = None
+    effective_to: Optional[datetime] = None
 
 
 async def fetch_tenant_budget_status(
@@ -100,7 +107,9 @@ async def fetch_tenant_budget_status(
     rows = (
         await auth_db.execute(
             text(
-                "SELECT t.allocated_budget AS allocated_budget, ak.id AS api_key_id"
+                "SELECT t.allocated_budget AS allocated_budget,"
+                "       t.budget_effective_from AS budget_effective_from,"
+                "       t.budget_effective_to AS budget_effective_to, ak.id AS api_key_id"
                 "  FROM tenants t"
                 "  LEFT JOIN applications a ON a.tenant_id = t.id"
                 "  LEFT JOIN api_key ak ON ak.application_id = a.id"
@@ -115,10 +124,14 @@ async def fetch_tenant_budget_status(
     allocated_budget = rows[0].allocated_budget
     if allocated_budget is None:
         return None
+    effective_from = rows[0].budget_effective_from
+    effective_to = rows[0].budget_effective_to
 
     key_ids = [row.api_key_id for row in rows if row.api_key_id is not None]
     if not key_ids:
-        return TenantBudgetStatus(used=Decimal("0"), snap=allocated_budget)
+        return TenantBudgetStatus(
+            used=Decimal("0"), snap=allocated_budget, effective_from=effective_from, effective_to=effective_to,
+        )
 
     used_row = (
         await core_db.execute(
@@ -130,7 +143,7 @@ async def fetch_tenant_budget_status(
         )
     ).first()
     used = used_row.total if used_row is not None else Decimal("0")
-    return TenantBudgetStatus(used=used, snap=allocated_budget)
+    return TenantBudgetStatus(used=used, snap=allocated_budget, effective_from=effective_from, effective_to=effective_to)
 
 
 @dataclass

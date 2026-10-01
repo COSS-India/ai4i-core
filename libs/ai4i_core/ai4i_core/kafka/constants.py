@@ -191,6 +191,7 @@ class SubjectKey(str, Enum):
     MODEL_TASK_TYPE = "model_task_type"
     BILLING_MONTH = "billing_month"
     BUDGET_CEILING = "budget_ceiling"
+    BUDGET_WINDOW = "budget_window"
     SERVICE_ID = "service_id"
 
 
