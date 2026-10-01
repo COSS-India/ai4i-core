@@ -54,18 +54,31 @@ _CLAIM_BAND_SQL = text(
     """
 )
 
+#: An open incident past the cooldown: what Q-L3 resets and Q-L9 lists.
+_RESETTABLE = "triggered = true AND triggered_at <= now() - make_interval(secs => :cooldown_s)"
+
 # Q-L3 — RESET, monitoring rows only
 _RESET_SQL = text(
-    """
+    f"""
     UPDATE ledger_notification_alert
        SET triggered  = false,
            updated_at = now()
      WHERE notification_id = :notification_id
        AND tenant_id       = :tenant_id
        AND subject         = CAST(:subject AS JSONB)
-       AND triggered       = true
-       AND triggered_at   <= now() - make_interval(secs => :cooldown_s)
+       AND {_RESETTABLE}
     RETURNING current_band, triggered, triggered_at
+    """
+)
+
+# Q-L9 — open incidents past the cooldown, monitoring quiet resets
+_RESETTABLE_SQL = text(
+    f"""
+    SELECT notification_id, subject
+      FROM ledger_notification_alert
+     WHERE notification_id = ANY(CAST(:notification_ids AS bigint[]))
+       AND tenant_id       = :tenant_id
+       AND {_RESETTABLE}
     """
 )
 
@@ -222,6 +235,26 @@ async def reset_band(session, notification_id: int, ref: LedgerRef, cooldown_s: 
     )
     row = result.mappings().first()
     return _state(row) if row is not None else None
+
+
+async def resettable_subjects(
+    session, notification_ids: Sequence[int], tenant_id: str, cooldown_s: int
+) -> Dict[int, List[Dict[str, str]]]:
+    """Q-L9. {notification_id: [subject, ...]} of the open incidents Q-L3
+    would reset now."""
+    if not notification_ids:
+        return {}
+    result = await session.execute(
+        _RESETTABLE_SQL,
+        {"notification_ids": list(notification_ids), "tenant_id": str(tenant_id), "cooldown_s": cooldown_s},
+    )
+    subjects: Dict[int, List[Dict[str, str]]] = {}
+    for row in result.mappings():
+        subject = row["subject"]
+        if isinstance(subject, str):
+            subject = json.loads(subject)
+        subjects.setdefault(row["notification_id"], []).append(dict(subject))
+    return subjects
 
 
 async def claim_state(

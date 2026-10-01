@@ -46,7 +46,7 @@ from .keys import (
 )
 from .models import Band, Measurement, Recipient, SettingsRow, SettingsSnapshot, TenantSubscriptions
 from .bands import band_for
-from .ledger import purge_old_quota_rows
+from .ledger import purge_old_quota_rows, resettable_subjects
 from .failure_log import producer_scope, purge_failures
 from .runtime import (
     configure as configure_notifications,
@@ -134,6 +134,7 @@ __all__ = [
     "refresh_subscriptions",
     # maintenance (daily cleanup)
     "purge_old_quota_rows",
+    "resettable_subjects",
     "producer_scope",
     "purge_failures",
 ]
