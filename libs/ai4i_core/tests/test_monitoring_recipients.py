@@ -213,7 +213,7 @@ async def test_for_tenant_admin_role_true_passes_include_admin_true():
     assert captured["include_tenant_admin"] is True
 
 
-# ── for_tenants: per-tenant grouping (Q-R2) ──
+# ── for_tenants: per-tenant grouping (Q-R2), admin returned separately ──
 
 
 def _tenant_row(tenant_id, role, user_id, email):
@@ -221,7 +221,7 @@ def _tenant_row(tenant_id, role, user_id, email):
 
 
 @pytest.mark.asyncio
-async def test_for_tenants_admin_role_true_keeps_platform_admin_and_extras_on_their_own_tenant():
+async def test_for_tenants_admin_role_true_returns_admin_once_not_per_tenant():
     db = _RowsDb([
         _tenant_row("1", "ADMIN", "a", "admin@x.io"),
         _tenant_row("7", "TENANT ADMIN", "t7", "ta7@x.io"),
@@ -229,11 +229,14 @@ async def test_for_tenants_admin_role_true_keeps_platform_admin_and_extras_on_th
         _tenant_row("7", "USER", "u7", "extra7@x.io"),
         _tenant_row("8", "USER", "u8", "extra8@x.io"),
     ])
-    out = await _resolver().for_tenants(
+    by_tenant, admins = await _resolver().for_tenants(
         db, ["7", "8"], {"ADMIN": True}, {"7": ["u7"], "8": ["u8"]}
     )
-    assert [r.email for r in out["7"]] == ["admin@x.io", "extra7@x.io", "ta7@x.io"]
-    assert [r.email for r in out["8"]] == ["admin@x.io", "extra8@x.io", "ta8@x.io"]
+    # Each tenant's own entry has only its own Tenant Admin and extra — the
+    # platform Admin is never duplicated into any of them.
+    assert [r.email for r in by_tenant["7"]] == ["extra7@x.io", "ta7@x.io"]
+    assert [r.email for r in by_tenant["8"]] == ["extra8@x.io", "ta8@x.io"]
+    assert [r.email for r in admins] == ["admin@x.io"]
 
 
 @pytest.mark.asyncio
@@ -242,16 +245,18 @@ async def test_for_tenants_admin_role_false_excludes_platform_admin_but_keeps_te
         _tenant_row("1", "ADMIN", "a", "admin@x.io"),
         _tenant_row("7", "TENANT ADMIN", "t7", "ta7@x.io"),
     ])
-    out = await _resolver().for_tenants(db, ["7"], {"ADMIN": False}, {})
-    assert [r.email for r in out["7"]] == ["ta7@x.io"]
+    by_tenant, admins = await _resolver().for_tenants(db, ["7"], {"ADMIN": False}, {})
+    assert [r.email for r in by_tenant["7"]] == ["ta7@x.io"]
+    assert admins == []
 
 
 @pytest.mark.asyncio
 async def test_for_tenants_extra_listed_by_another_tenant_is_not_leaked():
     # u8 is tenant 7's user row but only tenant 8's subscription lists it.
     db = _RowsDb([_tenant_row("7", "USER", "u8", "someone@x.io")])
-    out = await _resolver().for_tenants(db, ["7", "8"], {"ADMIN": False}, {"8": ["u8"]})
-    assert out == {"7": [], "8": []}
+    by_tenant, admins = await _resolver().for_tenants(db, ["7", "8"], {"ADMIN": False}, {"8": ["u8"]})
+    assert by_tenant == {"7": [], "8": []}
+    assert admins == []
 
 
 @pytest.mark.asyncio
@@ -261,12 +266,13 @@ async def test_for_tenants_unselected_roles_are_left_out_and_duplicates_collapse
         _tenant_row("7", "TENANT ADMIN", "t7", "ta7@x.io"),
         _tenant_row("7", "TENANT ADMIN", "t7", "ta7@x.io"),
     ])
-    out = await _resolver().for_tenants(db, ["7"], {"ADMIN": False}, {})
-    assert [r.email for r in out["7"]] == ["ta7@x.io"]
+    by_tenant, admins = await _resolver().for_tenants(db, ["7"], {"ADMIN": False}, {})
+    assert [r.email for r in by_tenant["7"]] == ["ta7@x.io"]
+    assert admins == []
 
 
 @pytest.mark.asyncio
 async def test_for_tenants_no_tenants_runs_no_query():
     db = _AuthDb()
-    assert await _resolver().for_tenants(db, [], {"ADMIN": True}, {}) == {}
+    assert await _resolver().for_tenants(db, [], {"ADMIN": True}, {}) == ({}, [])
     assert db.calls == 0

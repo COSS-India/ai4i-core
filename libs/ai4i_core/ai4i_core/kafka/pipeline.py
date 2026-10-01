@@ -353,7 +353,10 @@ async def emit_state_bulk(name, items: Sequence[StateItem], *, summary: str = ""
     """A STATE fan-out (every tenant x changed task type): one cache read,
     one bulk claim (Q-L5), one recipient query (Q-R2). `summary` (e.g. the
     tier id and change list) is the message of a failure row that covers the
-    whole fan-out. Returns the event ids handed to Kafka."""
+    whole fan-out. The platform ADMIN (when recipient_roles["ADMIN"] is set)
+    gets one consolidated copy per changed subject, listing every tenant that
+    fired for it, instead of one copy per tenant. Returns the event ids
+    handed to Kafka."""
     rt = get_runtime()
     spec = get_spec(name)
     if spec is None or not spec.is_state:
@@ -418,7 +421,7 @@ async def emit_state_bulk(name, items: Sequence[StateItem], *, summary: str = ""
     }
     try:
         async with rt.auth_session_factory() as session:
-            by_tenant = await rt.recipients.for_tenants(session, fired_tenants, row.recipient_roles, extras)
+            by_tenant, admins = await rt.recipients.for_tenants(session, fired_tenants, row.recipient_roles, extras)
     except Exception as exc:
         for claim in won:
             await rt.failures.record(
@@ -440,6 +443,31 @@ async def emit_state_bulk(name, items: Sequence[StateItem], *, summary: str = ""
         )
         if event_id is not None:
             sent.append(event_id)
+
+    if admins:
+        # One consolidated copy per changed subject (e.g. per model task
+        # type on a tier), not one per tenant — claims of one subject share
+        # the same details (subject carries no tenant), so only the
+        # affected tenants' names differ.
+        by_subject: Dict[Tuple[Tuple[str, str], ...], List[StateClaim]] = {}
+        for claim in won:
+            by_subject.setdefault(tuple(sorted(claim.subject.items())), []).append(claim)
+        for claims in by_subject.values():
+            head = by_event[claims[0].event_id]
+            institution_names = list(dict.fromkeys(
+                by_event[claim.event_id].tenant_name or claim.tenant_id for claim in claims
+            ))
+            if len(institution_names) == 1:
+                tenant_name, details = institution_names[0], list(head.details)
+            else:
+                tenant_name, details = "multiple institutions", list(head.details) + [institution_names]
+            event_id = await _deliver(
+                rt, row, tenant_id=PLATFORM_TENANT_ID, subject=claims[0].subject, event_id=uuid.uuid4(),
+                occurred_at=occurred_at, details=details, severity=Severity.INFO,
+                recipients=admins, tenant_name=tenant_name,
+            )
+            if event_id is not None:
+                sent.append(event_id)
     return sent
 
 
