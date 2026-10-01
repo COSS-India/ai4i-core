@@ -29,7 +29,6 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from prometheus_client import Gauge, Histogram
-from sqlalchemy import text
 
 from ai4i_core.kafka import (
     BandItem,
@@ -51,6 +50,7 @@ from ai4i_core.kafka import (
 from ai4i_core.kafka import constants as ntf
 
 from app.core.config import settings
+from app.repositories.model_management.service_repository import ServiceRepository
 
 logger = logging.getLogger(__name__)
 
@@ -170,9 +170,6 @@ def _group_details(parts: List[List[str]]) -> List:
     ]
 
 
-_SERVICE_NAME_SQL = text("SELECT name FROM mm_services WHERE service_id = :service_id")
-
-
 class _ServiceNames:
     """Service names for the emails of one tick, read only for services
     that fire. A missing row or a failed read gives None, so the email
@@ -186,8 +183,7 @@ class _ServiceNames:
         if service_id not in self._names:
             try:
                 async with self._rt.core_session_factory() as session:
-                    result = await session.execute(_SERVICE_NAME_SQL, {"service_id": service_id})
-                    self._names[service_id] = result.scalar_one_or_none()
+                    self._names[service_id] = await ServiceRepository(session).get_name_by_service_id(service_id)
             except Exception:
                 logger.warning("Monitoring evaluator: service name lookup failed for %s", service_id, exc_info=True)
                 self._names[service_id] = None

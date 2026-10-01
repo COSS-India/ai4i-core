@@ -33,11 +33,9 @@ def _row(row_id=1, *, roles=True, lowest="1"):
     )
 
 
-def _sessions(rows=(), error=None, names=None, name_error=None):
+def _sessions(rows=(), error=None):
     """core_session_factory whose session returns `rows` for the open
-    incidents read (or raises `error`) and `names` {service_id: name} for
-    the service name read (or raises `name_error`); .calls records the
-    parameters."""
+    incidents read (or raises `error`); .calls records the parameters."""
     calls = []
 
     class _Session:
@@ -49,10 +47,6 @@ def _sessions(rows=(), error=None, names=None, name_error=None):
 
         async def execute(self, statement, params):
             calls.append(params)
-            if "service_id" in params:
-                if name_error is not None:
-                    raise name_error
-                return SimpleNamespace(scalar_one_or_none=lambda: (names or {}).get(params["service_id"]))
             if error is not None:
                 raise error
             return SimpleNamespace(mappings=lambda: iter(
@@ -64,19 +58,39 @@ def _sessions(rows=(), error=None, names=None, name_error=None):
     return factory
 
 
-def _runtime(rows_by_name, incidents=(), error=None, names=None, name_error=None):
+def _runtime(rows_by_name, incidents=(), error=None):
     runtime = MagicMock()
     runtime.cache.read = AsyncMock(return_value=SimpleNamespace(
         settings=SimpleNamespace(get=lambda n: rows_by_name.get(n.value))
     ))
     runtime.failures.record = AsyncMock()
-    runtime.core_session_factory = _sessions(incidents, error, names, name_error)
+    runtime.core_session_factory = _sessions(incidents, error)
     runtime.config.notif_monitor_cooldown_s = 1800
     return runtime
 
 
 def _is_count(promql):
     return promql == ev.request_count_query("5m")
+
+
+@pytest.fixture(autouse=True)
+def service_names(monkeypatch):
+    """ServiceRepository stand-in: .names {service_id: name}, .error raised
+    by every read, .calls the service_ids read."""
+    state = SimpleNamespace(names={}, error=None, calls=[])
+
+    class _Repository:
+        def __init__(self, session):
+            pass
+
+        async def get_name_by_service_id(self, service_id):
+            state.calls.append(service_id)
+            if state.error is not None:
+                raise state.error
+            return state.names.get(service_id)
+
+    monkeypatch.setattr(ev, "ServiceRepository", _Repository)
+    return state
 
 
 def _vector(*samples):
@@ -235,35 +249,35 @@ def _context(service_id, band="5", value="6.25"):
 
 
 @pytest.mark.asyncio
-async def test_emails_name_the_service_not_its_id():
+async def test_emails_name_the_service_not_its_id(service_names):
     """de9a4570… fires: the email shows "indictrans-gpu-t4", read once per
     tick however many alerts fire for it."""
-    runtime = _runtime({}, names={"de9a4570f8c14f6859cb79c1934a4db9": "indictrans-gpu-t4"})
-    names = ev._ServiceNames(runtime)
+    service_names.names = {"de9a4570f8c14f6859cb79c1934a4db9": "indictrans-gpu-t4"}
+    names = ev._ServiceNames(_runtime({}))
 
     first = await names.details(_context("de9a4570f8c14f6859cb79c1934a4db9"))
     second = await names.details(_context("de9a4570f8c14f6859cb79c1934a4db9", band="10", value="12"))
 
     assert first == ["5", "01 Oct 2026, 01:30 PM IST", "6.25", "indictrans-gpu-t4"]
     assert second[3] == "indictrans-gpu-t4"
-    assert runtime.core_session_factory.calls == [{"service_id": "de9a4570f8c14f6859cb79c1934a4db9"}]
+    assert service_names.calls == ["de9a4570f8c14f6859cb79c1934a4db9"]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("names, name_error", [({}, None), (None, RuntimeError("db down"))])
-async def test_unknown_service_or_failed_lookup_shows_the_service_id(names, name_error):
-    runtime = _runtime({}, names=names, name_error=name_error)
+@pytest.mark.parametrize("error", [None, RuntimeError("db down")])
+async def test_unknown_service_or_failed_lookup_shows_the_service_id(service_names, error):
+    service_names.error = error
 
-    details = await ev._ServiceNames(runtime).details(_context("deepseek-r1-8b/sep23"))
+    details = await ev._ServiceNames(_runtime({})).details(_context("deepseek-r1-8b/sep23"))
 
     assert details[3] == "deepseek-r1-8b/sep23"
 
 
 @pytest.mark.asyncio
-async def test_merged_email_lists_service_names(monkeypatch):
+async def test_merged_email_lists_service_names(monkeypatch, service_names):
     monkeypatch.setattr(ev.settings, "prometheus_url", "http://prom")
-    runtime = _runtime({NotificationName.ERROR_RATE_5XX.value: _row()},
-                       names={"svc-a": "ASR Service", "svc-b": "TTS Service"})
+    service_names.names = {"svc-a": "ASR Service", "svc-b": "TTS Service"}
+    runtime = _runtime({NotificationName.ERROR_RATE_5XX.value: _row()})
     monkeypatch.setattr(ev, "get_notification_runtime", lambda: runtime)
     emit = AsyncMock(return_value=[])
     monkeypatch.setattr(ev, "emit_band_batch", emit)
