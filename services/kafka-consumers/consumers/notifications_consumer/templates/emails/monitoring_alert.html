@@ -3,7 +3,8 @@
    institution anywhere (unlike alert.html). From events/<event_name>.j2:
    event.name, event.unit ("%" or "s", appended to threshold and current
    value), event.threshold, event.alert_datetime, event.current_value,
-   event.affected_service ("" when the envelope carried none),
+   event.affected_service (the service name, or its service_id when the
+   name is unknown; "" when the envelope carried none),
    event.affected_services (two or more services that fired in one tick;
    they replace the Current Value / Affected Service lines). #}
 {% block title %}{{ event.name }} — Threshold {{ event.threshold }}{{ event.unit }}{% endblock %}

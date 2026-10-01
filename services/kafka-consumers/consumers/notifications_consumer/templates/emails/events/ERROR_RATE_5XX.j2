@@ -1,8 +1,9 @@
-{# details: [threshold, alert_datetime, current_value, service_id, affected_services]
-   — bare numbers, unit appended by the layout. affected_services, sent when several
-   services fired in one tick, is [[service_id, current_value, threshold], ...], worst
-   first; the four values before it are the worst service's. An envelope published
-   before service_id was added has three and renders without the service. #}
+{# details: [threshold, alert_datetime, current_value, service, affected_services]
+   — bare numbers, unit appended by the layout. service is the service's name, or its
+   service_id when the producer could not find the name. affected_services, sent when
+   several services fired in one tick, is [[service, current_value, threshold], ...],
+   worst first; the four values before it are the worst service's. An envelope
+   published before the service was added has three and renders without it. #}
 {% set layout = "monitoring_alert" %}
 {% set name = "5xx Error Rate" %}
 {% set unit = "%" %}
