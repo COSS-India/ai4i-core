@@ -20,6 +20,7 @@ export const BUDGET_COPY = {
   saving: "Saving...",
   bulkUpdateBudgets: "Bulk Update Budgets",
   remaining: "Remaining",
+  remainingInstitution: "Remaining (Institution)",
   leftForThisKey: "Left for this key",
   applicationPrefix: "Application:",
   apiKeyFallback: "API key",

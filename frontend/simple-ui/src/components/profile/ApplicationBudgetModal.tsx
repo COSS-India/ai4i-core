@@ -48,12 +48,9 @@ export default function ApplicationBudgetModal({
   const draftAmount =
     draftOk && mgr.tenantBudget > 0 ? (draftPct / 100) * mgr.tenantBudget : null;
   const allocatedAmount = usage ? usage.allocated : mgr.selected?.allocated_budget;
-  const remainingAmount = usage ? usage.remaining : null;
-  const remainingPct =
-    remainingAmount != null && mgr.tenantBudget > 0
-      ? (remainingAmount / mgr.tenantBudget) * 100
-      : null;
-  const remainingNegative = remainingAmount != null && remainingAmount < 0;
+  const institutionRemainingPct = mgr.remainingPct;
+  const institutionRemainingAmount =
+    mgr.tenantBudget > 0 ? (institutionRemainingPct / 100) * mgr.tenantBudget : null;
   const close = () => mgr.setBudgetOpen(false);
 
   return (
@@ -109,28 +106,19 @@ export default function ApplicationBudgetModal({
             allocatedAmount={allocatedAmount}
             consumedLabel={consumedLabel}
             consumedSub={consumedSub}
-            remainingLabel={BUDGET_COPY.remaining}
+            remainingLabel={BUDGET_COPY.remainingInstitution}
             remainingValue={
-              loading
-                ? BUDGET_COPY.loading
-                : remainingPct != null
-                  ? formatBudgetPct(remainingPct)
-                  : remainingAmount != null
-                    ? formatBudgetMoney(remainingAmount, currency)
-                    : "—"
+              mgr.institutionBudgetUnset
+                ? "—"
+                : formatBudgetPct(institutionRemainingPct)
             }
             remainingSub={
-              loading || remainingAmount == null || remainingPct == null
+              institutionRemainingAmount == null
                 ? undefined
-                : formatBudgetMoney(remainingAmount, currency)
+                : formatBudgetMoney(institutionRemainingAmount, currency)
             }
-            remainingColor={
-              remainingNegative ? "red.600" : remainingAmount != null ? "green.700" : "ink.800"
-            }
-            remainingSubColor={
-              remainingNegative ? "red.600" : remainingAmount != null ? "green.700" : undefined
-            }
-            remainingNegative={remainingNegative}
+            remainingColor="green.700"
+            remainingSubColor="green.700"
             rangeLabel={rangeValue}
             currency={currency}
           />
