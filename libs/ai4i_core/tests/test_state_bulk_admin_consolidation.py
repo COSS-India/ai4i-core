@@ -1,8 +1,9 @@
-"""emit_state_bulk: the platform ADMIN gets one consolidated copy per
-changed subject (e.g. per model task type on a tier), listing every tenant
-that fired for it, instead of one copy per tenant — AI4IDS: Quota Limit
-Updated sent the Adopter Admin once per institution on the tier instead of
-one email naming all of them."""
+"""emit_state_bulk: the platform ADMIN gets exactly one consolidated copy
+for the whole call — naming every tenant that fired and every change across
+every changed subject (e.g. every model task type on a tier) — instead of
+one copy per tenant or per subject. AI4IDS-3296: Quota Limit Updated sent
+the Adopter Admin once per institution on the tier instead of one email
+listing all of them."""
 
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -110,9 +111,10 @@ async def test_admin_gets_one_consolidated_email_not_one_per_institution(rt):
 
 
 @pytest.mark.asyncio
-async def test_admin_gets_one_consolidated_email_per_changed_task(rt):
-    """Two task types changed on the same tier: one admin email per task,
-    not one mega-email mixing both, and not one per (tenant, task) pair."""
+async def test_admin_gets_one_consolidated_email_across_changed_tasks(rt):
+    """Two task types changed on the same tier save: still exactly one
+    admin email for the whole call, not one per task type and not one per
+    (tenant, task) pair — its change list covers both tasks."""
     sent = await emit_state_bulk(
         NotificationName.QUOTA_LIMIT_UPDATED,
         [_item("7", "asr"), _item("8", "asr"), _item("7", "nmt"), _item("8", "nmt")],
@@ -120,12 +122,13 @@ async def test_admin_gets_one_consolidated_email_per_changed_task(rt):
 
     envelopes = _envelopes(rt)
     admin_envelopes = [e for e in envelopes if e.tenant_id == PLATFORM_TENANT_ID]
-    assert len(admin_envelopes) == 2
-    by_task = {e.subject["model_task_type"]: e for e in admin_envelopes}
-    assert set(by_task) == {"asr", "nmt"}
-    assert by_task["asr"].details[3] == ["Force India", "Mahindra India"]
-    assert by_task["nmt"].details[3] == ["Force India", "Mahindra India"]
-    assert len(sent) == 6  # 4 per-tenant + 2 consolidated admin
+    assert len(admin_envelopes) == 1
+    (admin_envelope,) = admin_envelopes
+    assert admin_envelope.subject == {}
+    assert admin_envelope.to_json()["subjects"] == [{"model_task_type": "asr"}, {"model_task_type": "nmt"}]
+    assert admin_envelope.details[1] == ["ASR: changed to 20000", "NMT: changed to 20000"]
+    assert admin_envelope.details[3] == ["Force India", "Mahindra India"]
+    assert len(sent) == 5  # 4 per-tenant + 1 consolidated admin
 
 
 @pytest.mark.asyncio
