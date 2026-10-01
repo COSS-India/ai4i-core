@@ -11,8 +11,11 @@ RESET, one Redis pipeline for all changes. Services that fire the same alert
 in one tick are sent as one email listing them all; each keeps its own
 ledger row, so its band and cooldown are tracked apart.
 
-A service missing from a result (no traffic, or under the minimum request
-count) causes no change: missing data never counts as recovery.
+A service missing from a successful result with no requests at all in the
+window is quiet: once its open incident is older than the cooldown, it is
+handed to the pipeline below every band, so the incident resets and the next
+breach fires again. A service with traffic under the minimum request count,
+or a failed query, changes nothing.
 """
 
 import asyncio
@@ -21,7 +24,7 @@ import math
 import time
 import uuid
 from decimal import Decimal
-from typing import Dict, List
+from typing import Dict, List, Optional, Set
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -42,6 +45,7 @@ from ai4i_core.kafka import (
     monitoring_subject,
     notifications_configured,
     producer_scope,
+    resettable_subjects,
 )
 from ai4i_core.kafka import constants as ntf
 
@@ -101,6 +105,12 @@ def _latency_query(quantile: str, window: str, min_requests: int) -> str:
     )
 
 
+def request_count_query(window: str) -> str:
+    """Requests per service in the window, without the minimum: tells a
+    service with no traffic (resettable) from one under the minimum."""
+    return f'sum by ({SERVICE_LABEL}) (increase({_REQUESTS}{{{SERVICE_LABEL}!=""}}[{window}]))'
+
+
 def build_queries(window: str, min_requests: int) -> Dict[NotificationName, tuple]:
     """PromQL and unit per monitoring alert."""
     return {
@@ -158,6 +168,24 @@ def _group_details(parts: List[List[str]]) -> List:
     ]
 
 
+async def _resettable_incidents(rt, ids: List[int]) -> Dict[int, Set[str]]:
+    """{notification_id: {service_id, ...}} of the open incidents a quiet
+    tick may reset. A read failure is logged and resets nothing."""
+    try:
+        async with rt.core_session_factory() as session:
+            subjects = await resettable_subjects(
+                session, ids, ntf.PLATFORM_TENANT_ID, rt.config.notif_monitor_cooldown_s
+            )
+    except Exception:
+        logger.exception("Monitoring evaluator: reading open incidents failed")
+        return {}
+    key = ntf.SubjectKey.SERVICE_ID.value
+    return {
+        notification_id: {subject[key] for subject in found if subject.get(key)}
+        for notification_id, found in subjects.items()
+    }
+
+
 class _SourceError(Exception):
     def __init__(self, code: FailureCode, message: str):
         super().__init__(message)
@@ -192,6 +220,17 @@ async def _query(client: httpx.AsyncClient, promql: str) -> Dict[str, float]:
         raise _SourceError(FailureCode.PROMETHEUS_BAD_RESPONSE, str(exc)) from exc
 
 
+async def _active_services(client: httpx.AsyncClient) -> Optional[Set[str]]:
+    """Services with any request in the window, or None when the count
+    query fails (then nothing resets)."""
+    try:
+        counts = await _query(client, request_count_query(settings.monitoring_window))
+    except _SourceError:
+        logger.warning("Monitoring evaluator: request count query failed; no quiet resets this tick", exc_info=True)
+        return None
+    return {service_id for service_id, count in counts.items() if count > 0}
+
+
 async def _try_lock(redis) -> bool:
     token = f"{get_notification_runtime().origin}:{uuid.uuid4()}"
     return bool(
@@ -214,13 +253,17 @@ async def run_tick(client: httpx.AsyncClient) -> List[uuid.UUID]:
     for name, (promql, unit) in queries.items():
         row = read.settings.get(name)
         if row is not None and row.bands and row.any_role_enabled():
-            wanted.append((name, promql, unit))
+            wanted.append((name, row, promql, unit))
     if not wanted:
         return []
 
-    results = await asyncio.gather(*(_query(client, promql) for _, promql, _ in wanted), return_exceptions=True)
+    results, incidents = await asyncio.gather(
+        asyncio.gather(*(_query(client, promql) for _, _, promql, _ in wanted), return_exceptions=True),
+        _resettable_incidents(rt, [row.id for _, row, _, _ in wanted]),
+    )
+    active_services = await _active_services(client) if incidents else set()
     items: List[BandItem] = []
-    for (name, _, unit), result in zip(wanted, results):
+    for (name, row, _, unit), result in zip(wanted, results):
         if isinstance(result, BaseException):
             code = result.code if isinstance(result, _SourceError) else FailureCode.PROMETHEUS_BAD_RESPONSE
             await rt.failures.record(
@@ -239,6 +282,18 @@ async def run_tick(client: httpx.AsyncClient) -> List[uuid.UUID]:
                     group_details=_group_details,
                 )
             )
+        # Services with no traffic: below every band, so the pipeline resets
+        # them. One with traffic under the minimum keeps its incident.
+        if active_services is not None and row.bands[0].value > 0:
+            for service_id in sorted(incidents.get(row.id, set()) - result.keys() - active_services):
+                items.append(
+                    BandItem(
+                        name=name,
+                        tenant_id=ntf.PLATFORM_TENANT_ID,
+                        subject=monitoring_subject(service_id),
+                        observed=Measurement(value=Decimal(0), unit=unit),
+                    )
+                )
     if not items:
         return []
     # Shielded: once claims start, the tick budget must not cancel the batch
