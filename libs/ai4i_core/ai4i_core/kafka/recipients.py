@@ -140,15 +140,18 @@ class RecipientResolver:
         tenant_ids: Sequence[str],
         recipient_roles: Mapping[str, bool],
         extra_user_ids: Mapping[str, Sequence[str]],
-    ) -> Dict[str, List[Recipient]]:
-        """Q-R2: recipients of many tenants. Each tenant's own TENANT ADMIN
-        users always go to their own tenant. The platform ADMIN goes to
-        every tenant, but only when recipient_roles["ADMIN"] is set (see
-        for_tenant). Either way, an extra user id only goes to the tenant
-        whose subscription lists it."""
+    ) -> Tuple[Dict[str, List[Recipient]], List[Recipient]]:
+        """Q-R2: recipients of many tenants, and the platform ADMIN
+        separately. Each tenant's own TENANT ADMIN users (plus its own
+        extras) go in its own entry, same as for_tenant. The platform ADMIN
+        is never put in any tenant's own entry here — when
+        recipient_roles["ADMIN"] is set, it comes back once, as its own
+        list, so a caller fanning one change out across many tenants (e.g.
+        a tier's quota update) can send it one consolidated copy instead of
+        duplicating it once per tenant."""
         ids = [str(t) for t in tenant_ids]
         if not ids:
-            return {}
+            return {}, []
         include_admin = bool(recipient_roles.get(RecipientRole.ADMIN.value))
         include_tenant_admin = True
         extras = {str(t): {str(u) for u in users} for t, users in extra_user_ids.items()}
@@ -175,7 +178,10 @@ class RecipientResolver:
                     per_tenant[tenant].append(entry)
                 if row["user_id"] in extras.get(tenant, ()):
                     per_tenant[tenant].append(entry)
-        return {tenant: self._unique(admins + rows) for tenant, rows in per_tenant.items()}
+        return (
+            {tenant: self._unique(rows) for tenant, rows in per_tenant.items()},
+            self._unique(admins),
+        )
 
     async def for_roles(self, session, roles: Sequence[str]) -> List[Recipient]:
         """Q-R3: monitoring recipients, resolved now from the selected roles,

@@ -75,6 +75,16 @@ CASES = [
         ["Tier: Gold", "ASR: changed from 10,000 to 15,000", "Effective Date: 2026-10-01"],
     ),
     (
+        # The Adopter Admin's one consolidated copy across several
+        # institutions (emit_state_bulk) carries a 4th details element:
+        # the list of affected institution names.
+        "QUOTA_LIMIT_UPDATED",
+        ["Gold", ["ASR: changed from 10,000 to 15,000"], "2026-10-01", ["Force India", "Mahindra India"]],
+        f"Quota Limit Updated — {TENANT}",
+        ["Tier: Gold", "ASR: changed from 10,000 to 15,000", "Effective Date: 2026-10-01",
+         "Institutions:", "Force India", "Mahindra India"],
+    ),
+    (
         "QUOTA_EXHAUSTED", ["Gold", ["ASR: Quota Limit 10,000, Resets on 2026-10-01"]],
         f"Quota Exhausted — {TENANT}",
         [f"The Quota for {TENANT} has been fully consumed.", "Tier: Gold",
