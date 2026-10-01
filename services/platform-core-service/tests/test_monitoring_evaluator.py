@@ -33,9 +33,11 @@ def _row(row_id=1, *, roles=True, lowest="1"):
     )
 
 
-def _sessions(rows=(), error=None):
+def _sessions(rows=(), error=None, names=None, name_error=None):
     """core_session_factory whose session returns `rows` for the open
-    incidents read (or raises `error`); .calls records the parameters."""
+    incidents read (or raises `error`) and `names` {service_id: name} for
+    the service name read (or raises `name_error`); .calls records the
+    parameters."""
     calls = []
 
     class _Session:
@@ -47,6 +49,10 @@ def _sessions(rows=(), error=None):
 
         async def execute(self, statement, params):
             calls.append(params)
+            if "service_id" in params:
+                if name_error is not None:
+                    raise name_error
+                return SimpleNamespace(scalar_one_or_none=lambda: (names or {}).get(params["service_id"]))
             if error is not None:
                 raise error
             return SimpleNamespace(mappings=lambda: iter(
@@ -58,13 +64,13 @@ def _sessions(rows=(), error=None):
     return factory
 
 
-def _runtime(rows_by_name, incidents=(), error=None):
+def _runtime(rows_by_name, incidents=(), error=None, names=None, name_error=None):
     runtime = MagicMock()
     runtime.cache.read = AsyncMock(return_value=SimpleNamespace(
         settings=SimpleNamespace(get=lambda n: rows_by_name.get(n.value))
     ))
     runtime.failures.record = AsyncMock()
-    runtime.core_session_factory = _sessions(incidents, error)
+    runtime.core_session_factory = _sessions(incidents, error, names, name_error)
     runtime.config.notif_monitor_cooldown_s = 1800
     return runtime
 
@@ -205,7 +211,7 @@ async def test_services_breaching_in_one_tick_merge_into_one_list(monkeypatch):
     when = datetime(2026, 9, 30, 6, 57, tzinfo=timezone.utc)
     items = emit.await_args.args[0]
     parts = [
-        item.details(SimpleNamespace(
+        await item.details(SimpleNamespace(
             subject=item.subject, observed=item.observed, occurred_at=when,
             band=SimpleNamespace(value=Decimal(bands[item.subject["service_id"]])),
         ))
@@ -213,10 +219,62 @@ async def test_services_breaching_in_one_tick_merge_into_one_list(monkeypatch):
     ]
     assert [(p[2], p[3]) for p in parts] == [("9.1", "asr-service"), ("6.2", "llm-service"), ("11.3", "tts-service")]
     assert {item.group_details for item in items} == {ev._group_details}
+    # No mm_services row in this test: each email shows the service_id.
     assert ev._group_details(parts) == [
         "5", "30 Sep 2026, 12:27 PM IST", "11.3", "tts-service",
         [["tts-service", "11.3", "10"], ["asr-service", "9.1", "5"], ["llm-service", "6.2", "5"]],
     ]
+
+
+def _context(service_id, band="5", value="6.25"):
+    from datetime import datetime, timezone
+    return SimpleNamespace(
+        subject={"service_id": service_id}, observed=SimpleNamespace(value=Decimal(value)),
+        band=SimpleNamespace(value=Decimal(band)), occurred_at=datetime(2026, 10, 1, 8, 0, tzinfo=timezone.utc),
+    )
+
+
+@pytest.mark.asyncio
+async def test_emails_name_the_service_not_its_id():
+    """de9a4570… fires: the email shows "indictrans-gpu-t4", read once per
+    tick however many alerts fire for it."""
+    runtime = _runtime({}, names={"de9a4570f8c14f6859cb79c1934a4db9": "indictrans-gpu-t4"})
+    names = ev._ServiceNames(runtime)
+
+    first = await names.details(_context("de9a4570f8c14f6859cb79c1934a4db9"))
+    second = await names.details(_context("de9a4570f8c14f6859cb79c1934a4db9", band="10", value="12"))
+
+    assert first == ["5", "01 Oct 2026, 01:30 PM IST", "6.25", "indictrans-gpu-t4"]
+    assert second[3] == "indictrans-gpu-t4"
+    assert runtime.core_session_factory.calls == [{"service_id": "de9a4570f8c14f6859cb79c1934a4db9"}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("names, name_error", [({}, None), (None, RuntimeError("db down"))])
+async def test_unknown_service_or_failed_lookup_shows_the_service_id(names, name_error):
+    runtime = _runtime({}, names=names, name_error=name_error)
+
+    details = await ev._ServiceNames(runtime).details(_context("deepseek-r1-8b/sep23"))
+
+    assert details[3] == "deepseek-r1-8b/sep23"
+
+
+@pytest.mark.asyncio
+async def test_merged_email_lists_service_names(monkeypatch):
+    monkeypatch.setattr(ev.settings, "prometheus_url", "http://prom")
+    runtime = _runtime({NotificationName.ERROR_RATE_5XX.value: _row()},
+                       names={"svc-a": "ASR Service", "svc-b": "TTS Service"})
+    monkeypatch.setattr(ev, "get_notification_runtime", lambda: runtime)
+    emit = AsyncMock(return_value=[])
+    monkeypatch.setattr(ev, "emit_band_batch", emit)
+
+    async with _client(lambda req: httpx.Response(200, json=_vector(("svc-a", "9.1"), ("svc-b", "11.3")))) as c:
+        await ev.run_tick(c)
+
+    items = emit.await_args.args[0]
+    parts = [await item.details(_context(item.subject["service_id"], value=str(item.observed.value))) for item in items]
+    assert ev._group_details(parts)[3:] == ["TTS Service", [["TTS Service", "11.3", "5"], ["ASR Service", "9.1", "5"]]]
+    assert [i.subject for i in items] == [{"service_id": "svc-a"}, {"service_id": "svc-b"}]
 
 
 def test_merge_sorts_by_value_not_text():

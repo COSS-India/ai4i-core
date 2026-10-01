@@ -29,6 +29,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from prometheus_client import Gauge, Histogram
+from sqlalchemy import text
 
 from ai4i_core.kafka import (
     BandItem,
@@ -138,34 +139,65 @@ def _bare(value) -> str:
     return text or "0"
 
 
-def _details(context: FireContext) -> List[str]:
+def _details(context: FireContext, service_name: Optional[str] = None) -> List[str]:
     """One service's part of the consumer's monitoring template contract:
     the usage alerts' shape plus the affected service, [threshold,
-    alert_datetime_ist, current_value, service_id]. It is the whole event
+    alert_datetime_ist, current_value, service]. service is the service's
+    name, or its service_id when the name is unknown. It is the whole event
     when this service fires alone in its tick. Severity travels in the
     envelope's severity."""
     return [
         _bare(context.band.value),
         context.occurred_at.astimezone(IST).strftime("%d %b %Y, %I:%M %p IST"),
         _bare(context.observed.value),
-        context.subject[ntf.SubjectKey.SERVICE_ID.value],
+        service_name or context.subject[ntf.SubjectKey.SERVICE_ID.value],
     ]
 
 
 def _group_details(parts: List[List[str]]) -> List:
     """Details of one event for every service that fired an alert in the
-    same tick: [threshold, alert_datetime_ist, current_value, service_id,
-    [[service_id, current_value, threshold], ...]]. The list is worst first;
+    same tick: [threshold, alert_datetime_ist, current_value, service,
+    [[service, current_value, threshold], ...]]. The list is worst first;
     the first four values are the worst service's, so a consumer that does
     not read the list still renders a complete email. threshold is the
     lowest band among them, which every listed service has reached."""
     parts = sorted(parts, key=lambda p: Decimal(p[2]), reverse=True)
     threshold = min((p[0] for p in parts), key=Decimal)
-    _, alert_datetime, current_value, service_id = parts[0]
+    _, alert_datetime, current_value, service = parts[0]
     return [
-        threshold, alert_datetime, current_value, service_id,
+        threshold, alert_datetime, current_value, service,
         [[p[3], p[2], p[0]] for p in parts],
     ]
+
+
+_SERVICE_NAME_SQL = text("SELECT name FROM mm_services WHERE service_id = :service_id")
+
+
+class _ServiceNames:
+    """Service names for the emails of one tick, read only for services
+    that fire. A missing row or a failed read gives None, so the email
+    shows the service_id instead."""
+
+    def __init__(self, rt):
+        self._rt = rt
+        self._names: Dict[str, Optional[str]] = {}
+
+    async def get(self, service_id: str) -> Optional[str]:
+        if service_id not in self._names:
+            try:
+                async with self._rt.core_session_factory() as session:
+                    result = await session.execute(_SERVICE_NAME_SQL, {"service_id": service_id})
+                    self._names[service_id] = result.scalar_one_or_none()
+            except Exception:
+                logger.warning("Monitoring evaluator: service name lookup failed for %s", service_id, exc_info=True)
+                self._names[service_id] = None
+        return self._names[service_id]
+
+    def details(self, context: FireContext):
+        async def load() -> List[str]:
+            service_id = context.subject[ntf.SubjectKey.SERVICE_ID.value]
+            return _details(context, await self.get(service_id))
+        return load()
 
 
 async def _resettable_incidents(rt, ids: List[int]) -> Dict[int, Set[str]]:
@@ -262,6 +294,7 @@ async def run_tick(client: httpx.AsyncClient) -> List[uuid.UUID]:
         _resettable_incidents(rt, [row.id for _, row, _, _ in wanted]),
     )
     active_services = await _active_services(client) if incidents else set()
+    names = _ServiceNames(rt)
     items: List[BandItem] = []
     for (name, row, _, unit), result in zip(wanted, results):
         if isinstance(result, BaseException):
@@ -278,7 +311,7 @@ async def run_tick(client: httpx.AsyncClient) -> List[uuid.UUID]:
                     tenant_id=ntf.PLATFORM_TENANT_ID,
                     subject=monitoring_subject(service_id),
                     observed=Measurement(value=_decimal(value), unit=unit),
-                    details=_details,
+                    details=names.details,
                     group_details=_group_details,
                 )
             )
