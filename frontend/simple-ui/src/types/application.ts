@@ -15,7 +15,7 @@ export interface Application {
   status: ApplicationStatus;
   created_at: string;
   updated_at?: string | null;
-  /** Null when the list API does not include key counts. */
+  /** Active, unexpired API keys, filled from the API keys list. Null until that load finishes. */
   api_key_count?: number | null;
 }
 

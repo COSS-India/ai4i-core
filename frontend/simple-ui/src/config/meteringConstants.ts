@@ -137,26 +137,17 @@ export const METERING = {
     TITLE: "My Usage",
   },
   USAGE_SPEND: {
-    BILLING_PERIOD: "BILLING PERIOD",
-    CURRENT_MONTH: "Current month",
-    LAST_MONTH: "Last month",
     BUDGET_SUMMARY: "BUDGET SUMMARY",
     BUDGET: "BUDGET",
     QUOTA_SUMMARY: "QUOTA SUMMARY",
     USAGE_BY_TASK_TYPE: "USAGE BY MODEL TASK TYPE",
-    USAGE_VS_MONTHLY_QUOTA: "USAGE VS. MONTHLY QUOTA",
     USAGE_VS_QUOTA_ALL_TIME: "USAGE VS. QUOTA (ALL-TIME)",
-    MONTHLY_QUOTA: "MONTHLY QUOTA",
-    MONTH_FILTER_PREFIX: "Month",
     /** @deprecated Use USAGE_BY_TASK_TYPE */
     SPEND_BY_TASK_TYPE: "USAGE BY MODEL TASK TYPE",
     TENANT_DETAIL_TITLE: "Institution Usage Details",
-    BUDGET_ALL_TIME_NOTE:
-      "All-time institution budget — not scoped by the month filter.",
-    QUOTA_MONTH_NOTE:
-      "Scoped to the selected billing month via the API usage block. Changes when you change the month.",
+    BUDGET_ALL_TIME_NOTE: "All-time institution budget.",
     TIER_BREAKDOWN_ALL_TIME_NOTE:
-      "Cumulative all-time quota usage per task type. This table does not change when you switch months.",
+      "Cumulative all-time quota usage per task type.",
     TOTAL_ALLOCATED: "TOTAL ALLOCATED",
     TOTAL_USED: "TOTAL USED",
     TOTAL_REMAINING: "TOTAL REMAINING",
@@ -164,22 +155,19 @@ export const METERING = {
       TOTAL_ALLOCATED: "Total budget allocated to institutions.",
       TOTAL_USED: "Total budget used by institutions.",
       TOTAL_REMAINING: "Total budget remaining across institutions.",
-      ALLOCATED_BUDGET: "Monetary budget assigned to this institution for the billing period.",
-      BUDGET:
-        "How much of the allocated budget has been spent versus what remains in this period.",
-      ALLOCATED_TOKENS: "Token allowance assigned to this institution for the billing period.",
-      USAGE: "Quota consumed versus remaining for this model task type in the selected billing month.",
-      ACTIVE_TENANTS: `${INSTITUTIONS} with spend recorded in the selected billing period.`,
-      VS_LAST_MONTH:
-        "Percentage change in total spend compared with the previous billing period.",
-      TASK_TYPES: `Number of model task types this ${INSTITUTION.toLowerCase()} consumed in the selected period.`,
+      ALLOCATED_BUDGET: "Monetary budget assigned to this institution.",
+      BUDGET: "How much of the allocated budget has been spent versus what remains.",
+      ALLOCATED_TOKENS: "Token allowance assigned to this institution.",
+      USAGE: "Quota consumed versus remaining for this model task type.",
+      ACTIVE_TENANTS: `${INSTITUTIONS} with spend recorded.`,
+      TASK_TYPES: `Number of model task types this ${INSTITUTION.toLowerCase()} has consumed.`,
     },
     TABLE_TASK_TYPES: "Task Types",
   },
   APPLICATION_USAGE: {
     TENANT_SUBTITLE: "Application usage · lifetime totals",
     LIFETIME_NOTE:
-      "Application budget figures are lifetime totals — not scoped to the time window or billing period used on other tabs.",
+      "Application budget figures are lifetime totals — not scoped to the time window used on other tabs.",
     SUMMARY: {
       TOTAL_APPLICATIONS: "TOTAL APPLICATIONS",
       ALLOCATED: "ALLOCATED BUDGET",

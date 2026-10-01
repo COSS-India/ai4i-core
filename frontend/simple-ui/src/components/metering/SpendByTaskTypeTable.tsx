@@ -28,8 +28,8 @@ interface SpendByTaskTypeTableProps {
 
 const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
   tierBreakdown,
-  emptyMessage = "No usage data for this period.",
-  usageColumnLabel = METERING.USAGE_SPEND.USAGE_VS_MONTHLY_QUOTA,
+  emptyMessage = "No usage data.",
+  usageColumnLabel = METERING.USAGE_SPEND.USAGE_VS_QUOTA_ALL_TIME,
 }) => {
   const multiTier = tierBreakdown.length > 1;
 

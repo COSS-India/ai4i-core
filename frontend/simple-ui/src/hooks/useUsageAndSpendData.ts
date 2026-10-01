@@ -17,7 +17,6 @@ interface UseUsageAndSpendDataArgs {
   refreshNonce: number;
   filterTierId: string;
   taskTypeNames: string[];
-  billingPeriod: string;
 }
 
 export function useUsageAndSpendData({
@@ -27,7 +26,6 @@ export function useUsageAndSpendData({
   refreshNonce,
   filterTierId,
   taskTypeNames,
-  billingPeriod,
 }: UseUsageAndSpendDataArgs) {
   const scopedId = (isTenantView ? tenantId : scopeTenantId)?.trim() || null;
   const isScoped = Boolean(scopedId);
@@ -35,10 +33,10 @@ export function useUsageAndSpendData({
   const enabledParam = taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
 
   const scopedQuery = useQuery({
-    queryKey: ["usage-tenant", scopedId, billingPeriod, enabledParam, refreshNonce],
+    queryKey: ["usage-tenant", scopedId, enabledParam, refreshNonce],
     queryFn: () => {
       if (!scopedId) throw new Error(`${INSTITUTION} id is required`);
-      return fetchTenantUsageById(scopedId, billingPeriod, enabledParam);
+      return fetchTenantUsageById(scopedId, undefined, enabledParam);
     },
     enabled: isScoped,
     staleTime: USAGE_SPEND_STALE_MS,
@@ -46,16 +44,9 @@ export function useUsageAndSpendData({
   });
 
   const tenantsQuery = useQuery({
-    queryKey: [
-      "usage-tenants",
-      billingPeriod,
-      filterTierId,
-      enabledParam,
-      refreshNonce,
-    ],
+    queryKey: ["usage-tenants", filterTierId, enabledParam, refreshNonce],
     queryFn: () =>
       fetchTenantUsageList({
-        billingPeriod,
         tierId: filterTierId || undefined,
         taskTypes: enabledParam,
         sortOrder: "desc",
@@ -84,7 +75,6 @@ export function useUsageAndSpendData({
   const hasNoTierAssigned = isScoped && scopedQuery.data?.tierId === "unassigned";
 
   return {
-    billingPeriod,
     isScoped,
     tenants,
     tiers: tiersQuery.data?.data ?? [],

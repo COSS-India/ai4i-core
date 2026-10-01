@@ -7,12 +7,14 @@ import {
   FormControl,
   FormErrorMessage,
   HStack,
+  Icon,
   Text,
   VStack,
 } from "@chakra-ui/react";
+import { EditIcon, ViewIcon } from "@chakra-ui/icons";
 import { FiEdit2, FiRefreshCw, FiSliders } from "react-icons/fi";
 import DataTable, {
-  DataTableActions,
+  createActionsColumn,
   DEFAULT_PAGE_SIZE_OPTIONS,
   FieldLabel,
   type DataTableColumn,
@@ -73,6 +75,7 @@ export default function ApplicationManagementTab({
   const appSortAccessors = useMemo(
     () => ({
       name: (app: Application) => app.name ?? "",
+      domain: (app: Application) => app.domain ?? "",
       budget: (app: Application) => app.allocated_percentage ?? -1,
       keys: (app: Application) => app.api_key_count ?? -1,
       status: (app: Application) => app.status ?? "",
@@ -85,7 +88,6 @@ export default function ApplicationManagementTab({
     [mgr.applications, appSort],
   );
 
-  const hideKeys = { display: { base: "none", lg: "table-cell" } } as const;
   const columns: DataTableColumn<Application>[] = [
     {
       id: "name",
@@ -94,11 +96,18 @@ export default function ApplicationManagementTab({
       sortAccessor: (app) => app.name ?? "",
       truncate: false,
       cell: (app) => (
-        <ApplicationIdentity
-          name={app.name}
-          description={app.description}
-          domain={app.domain}
-        />
+        <ApplicationIdentity name={app.name} description={app.description} />
+      ),
+    },
+    {
+      id: "domain",
+      header: "Domain",
+      sortable: true,
+      sortAccessor: (app) => app.domain ?? "",
+      cell: (app) => (
+        <Text fontSize="sm" color={app.domain ? "ink.700" : "ink.400"}>
+          {app.domain || "—"}
+        </Text>
       ),
     },
     {
@@ -122,16 +131,12 @@ export default function ApplicationManagementTab({
     },
     {
       id: "keys",
-      header: "API keys",
+      header: "Active API keys",
       sortable: true,
       sortAccessor: (app) => app.api_key_count ?? -1,
-      thProps: hideKeys,
-      tdProps: hideKeys,
       cell: (app) => (
         <Text fontSize="sm" color="ink.700">
-          {app.api_key_count == null
-            ? "—"
-            : `${app.api_key_count} ${app.api_key_count === 1 ? "key" : "keys"}`}
+          {app.api_key_count == null ? "—" : String(app.api_key_count)}
         </Text>
       ),
     },
@@ -143,47 +148,41 @@ export default function ApplicationManagementTab({
       truncate: false,
       cell: (app) => <ApplicationStatusText status={app.status} />,
     },
-    {
-      id: "actions",
-      header: "Actions",
-      align: "right",
-      truncate: false,
-      tdProps: { onClick: (e) => e.stopPropagation() },
-      cell: (app) => {
+    createActionsColumn<Application>({
+      getActions: (app) => {
         const budgetActionLabel = editBudgetForName(app.name);
         const budgetDisabled = app.status !== "ACTIVE";
-        return (
-        <DataTableActions
-          justify="flex-end"
-          actions={[
-            {
-              id: "view",
-              label: `View ${app.name}`,
-              onClick: () => mgr.openView(app),
-            },
-            {
-              id: "edit",
-              label: `Edit ${app.name}`,
-              onClick: () => mgr.openEdit(app),
-            },
-            {
-              id: "budget",
-              label: budgetActionLabel,
-              icon: <FiSliders />,
-              tooltip: budgetDisabled
-                ? FIELD_HINTS.application.inactiveBudgetNotEditable
-                : budgetActionLabel,
-              "aria-label": budgetDisabled
-                ? FIELD_HINTS.application.inactiveBudgetNotEditable
-                : budgetActionLabel,
-              disabled: budgetDisabled,
-              onClick: () => mgr.openBudget(app),
-            },
-          ]}
-        />
-        );
+        return [
+          {
+            id: "view",
+            label: "View",
+            icon: <ViewIcon />,
+            "aria-label": `View ${app.name}`,
+            onClick: () => mgr.openView(app),
+          },
+          {
+            id: "edit",
+            label: "Edit",
+            icon: <EditIcon />,
+            "aria-label": `Edit ${app.name}`,
+            onClick: () => mgr.openEdit(app),
+          },
+          {
+            id: "budget",
+            label: "Edit budget",
+            icon: <Icon as={FiSliders} />,
+            tooltip: budgetDisabled
+              ? FIELD_HINTS.application.inactiveBudgetNotEditable
+              : budgetActionLabel,
+            "aria-label": budgetDisabled
+              ? FIELD_HINTS.application.inactiveBudgetNotEditable
+              : budgetActionLabel,
+            disabled: budgetDisabled,
+            onClick: () => mgr.openBudget(app),
+          },
+        ];
       },
-    },
+    }),
   ];
 
   if (!tenantId) {
@@ -346,7 +345,7 @@ export default function ApplicationManagementTab({
                   ? ` · ${rupees(viewApp.allocated_budget, currency)}`
                   : ""}
               </ReadOnlyField>
-              <ReadOnlyField label="API keys">
+              <ReadOnlyField label="Active API keys">
                 {viewApp.api_key_count == null ? "—" : String(viewApp.api_key_count)}
               </ReadOnlyField>
             </FormSection>

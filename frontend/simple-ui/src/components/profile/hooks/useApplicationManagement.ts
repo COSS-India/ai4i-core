@@ -13,6 +13,7 @@ import {
   fetchApplicationUsageDetail,
   fetchApplicationUsageList,
 } from "../../../services/applicationUsageService";
+import { countActiveApiKeysForApplications } from "../../../services/apiKeyService";
 import { parseError } from "../../../utils/errorHandler";
 import {
   allocatedKeyFloorAmount,
@@ -370,6 +371,7 @@ export function useApplicationManagement(
     "loading",
   );
   const budgetUsageRequestRef = useRef<string | null>(null);
+  const tableRequestRef = useRef(0);
 
   const [bulkBudgetOpen, setBulkBudgetOpen] = useState(false);
   const [bulkLoading, setBulkLoading] = useState(false);
@@ -410,6 +412,7 @@ export function useApplicationManagement(
 
   const loadTable = useCallback(async () => {
     if (!tenantId) return;
+    const requestId = ++tableRequestRef.current;
     setIsLoading(true);
     setLoadError(null);
     try {
@@ -418,12 +421,25 @@ export function useApplicationManagement(
         page,
         size: pageSize,
       });
+      if (requestId !== tableRequestRef.current) return;
       setApplications(list.applications);
       setTotal(list.pagination.total);
+      setIsLoading(false);
+      const counts = await countActiveApiKeysForApplications(
+        list.applications.map((app) => app.application_id),
+      );
+      if (requestId !== tableRequestRef.current) return;
+      setApplications((prev) =>
+        prev.map((app) => {
+          const count = counts.get(app.application_id);
+          return count === undefined ? app : { ...app, api_key_count: count };
+        }),
+      );
     } catch (error) {
+      if (requestId !== tableRequestRef.current) return;
       setLoadError(parseError(error).message);
     } finally {
-      setIsLoading(false);
+      if (requestId === tableRequestRef.current) setIsLoading(false);
     }
   }, [tenantId, search, page, pageSize]);
 
