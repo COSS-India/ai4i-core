@@ -7,28 +7,20 @@ import {
   FormErrorMessage,
   HStack,
   IconButton,
-  Input,
   Menu,
   MenuButton,
   MenuItem,
   MenuList,
   Select,
   Skeleton,
-  Spinner,
   Text,
   Tooltip,
   VStack,
   NumberInput,
   NumberInputField,
-  Grid,
 } from "@chakra-ui/react";
-import {
-  AddIcon,
-  DeleteIcon,
-  EditIcon,
-  SmallCloseIcon,
-} from "@chakra-ui/icons";
-import { FiArrowUp, FiCalendar, FiMoreVertical, FiPause, FiPlay } from "react-icons/fi";
+import { DeleteIcon, EditIcon } from "@chakra-ui/icons";
+import { FiArrowUp, FiMoreVertical, FiPause, FiPlay } from "react-icons/fi";
 import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
   createActionsColumn,
@@ -39,9 +31,7 @@ import CreateButton from "../common/CreateButton";
 import FormActions from "../common/FormActions";
 import FormDrawer from "../common/FormDrawer";
 import FormSection from "../common/FormSection";
-import { FORM_LABEL_TO_INPUT_PT } from "../common/FormFieldsRow";
 import ManagementPageHeader from "../common/ManagementPageHeader";
-import ReadOnlyField from "../common/ReadOnlyField";
 import StandardModal from "../common/StandardModal";
 import {
   effectiveTierStatus,
@@ -50,59 +40,21 @@ import {
   type TierStatusActionKey,
 } from "../../hooks/useTierManagement";
 import type { Tier, TierStatus } from "../../services/tierManagementService";
-import type { TierFormData, TierFormQuota } from "../../types/tierManagement";
 import { INSTITUTION, INSTITUTIONS, formatModelTaskTypeLabel } from "../../config/constants";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import FieldHint from "../common/FieldHint";
 import FieldLabel from "../common/FieldLabel";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
-import { generateUUID } from "../../utils/uuid";
-import { QUOTA_LIMIT_MAX, validateQuotaLimit } from "./tierFormValidation";
+import { QUOTA_LIMIT_MAX } from "./tierFormValidation";
 import { useDeferredColumnSort } from "../../utils/tableSort";
+import { AssignedTenantsSection } from "./AssignedTenantsSection";
+import { ServicesMappedSection } from "./ServicesMappedSection";
+import { TierDetailDrawer } from "./TierDetailDrawer";
+import { TierForm } from "./TierForm";
+import { getTaskTypeBadgeColor } from "./tierDisplay";
 
 /** Flip to true to restore Remove from Tier in the tier edit drawer. */
 const TIER_REMOVAL_ENABLED = false;
-
-function getTaskTypeBadgeColor(taskType: string): string {
-  switch (taskType.toUpperCase()) {
-    case "LLM":
-      return "purple";
-    case "ASR":
-      return "orange";
-    case "NMT":
-      return "green";
-    case "TTS":
-      return "blue";
-    case "OCR":
-      return "teal";
-    case "PIPELINE":
-      return "pink";
-    case "NER":
-      return "red";
-    default:
-      return "gray";
-  }
-}
-
-function formatQuotaAmount(
-  limit: number,
-  unit?: string,
-): { boldText: string; suffixText: string } {
-  const trimmedUnit = (unit ?? "").trim();
-  const spaceIdx = trimmedUnit.indexOf(" ");
-  if (spaceIdx === -1) {
-    return {
-      boldText: limit.toLocaleString(),
-      suffixText: trimmedUnit ? `${trimmedUnit.toLowerCase()}/month` : "/month",
-    };
-  }
-  const prefix = trimmedUnit.slice(0, spaceIdx);
-  const rest = trimmedUnit.slice(spaceIdx + 1);
-  return {
-    boldText: `${limit.toLocaleString()}${prefix}`,
-    suffixText: `${rest.toLowerCase()}/month`,
-  };
-}
 
 // ─── Column cell renderers (defined outside TierManagement to avoid S6478) ───
 
@@ -321,549 +273,6 @@ function makeTierActionsColumn(
       ];
     },
   });
-}
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-interface QuotaEditorProps {
-  readonly quotas: TierFormQuota[];
-  readonly onChange: (quotas: TierFormQuota[]) => void;
-  readonly taskTypeNames: string[];
-  readonly unitByTaskType: Record<string, string>;
-  readonly onSchedule?: (quota: TierFormQuota) => void;
-  readonly onRemove?: (quota: TierFormQuota) => void;
-  readonly removingTaskType?: string | null;
-  readonly isEditMode?: boolean;
-  readonly mode?: "create" | "edit" | "view";
-  readonly showErrors?: boolean;
-}
-
-function isUnitInvalid(quota: TierFormQuota): boolean {
-  return !quota.unit.trim();
-}
-
-/**
- * Inline verdict for a quota row's limit. Delegates to the shared rule so the
- * form and `validateQuotas` (which gates submit) cannot drift apart.
- */
-function limitError(quota: TierFormQuota): string | null {
-  return validateQuotaLimit(quota.limit);
-}
-
-function showLimitError(quota: TierFormQuota, showErrors?: boolean): boolean {
-  return (showErrors || !!quota.limit.trim()) && !!limitError(quota);
-}
-
-function QuotaEditor({
-  quotas,
-  onChange,
-  taskTypeNames,
-  unitByTaskType,
-  onSchedule,
-  onRemove,
-  removingTaskType,
-  isEditMode,
-  showErrors,
-}: QuotaEditorProps) {
-  const handleQuotaChange = (
-    idx: number,
-    field: keyof TierFormQuota,
-    value: string,
-  ) => {
-    const updated = quotas.map((q, i) => {
-      if (i !== idx) return q;
-      if (field === "modelTaskType") {
-        return {
-          ...q,
-          modelTaskType: value,
-          unit: unitByTaskType[value] ?? "",
-        };
-      }
-      return { ...q, [field]: value };
-    });
-    onChange(updated);
-  };
-
-  const addQuota = () => {
-    onChange([
-      ...quotas,
-      {
-        _key: generateUUID(),
-        modelTaskType: "",
-        unit: "",
-        limit: "",
-      },
-    ]);
-  };
-
-  const removeQuota = (idx: number) =>
-    onChange(quotas.filter((_, i) => i !== idx));
-
-  // "Add Quota" only makes sense when there's more than one model task type
-  // to choose from, and only while there's an unused type left to add.
-  const canAddQuota =
-    taskTypeNames.length > 1 && quotas.length < taskTypeNames.length;
-
-  return (
-    <VStack align="stretch" spacing={3}>
-      <HStack justify="space-between">
-        <Text fontSize="sm" fontWeight="semibold" color="ink.700">
-          Quotas
-        </Text>
-        {!isEditMode && canAddQuota && (
-          <Button
-            size="xs"
-            leftIcon={<AddIcon />}
-            variant="outline"
-            colorScheme="blue"
-            onClick={addQuota}
-          >
-            Add Quota
-          </Button>
-        )}
-      </HStack>
-
-      <Box maxH="340px" overflowY="auto" pr={1}>
-        <VStack align="stretch" spacing={3}>
-          {quotas.map((quota, idx) => (
-            <Box
-              key={quota._key ?? `${quota.modelTaskType}-${idx}`}
-              p={3}
-              borderWidth="1px"
-              borderRadius="md"
-              borderColor="ink.200"
-              bg="ink.50"
-            >
-              <HStack align="flex-start" spacing={3}>
-                <Grid
-                  templateColumns={{
-                    base: "1fr",
-                    sm: "minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1fr)",
-                  }}
-                  gap={3}
-                  flex={1}
-                  minW={0}
-                  alignItems="start"
-                >
-                  <FormControl isRequired isDisabled={isEditMode} minW={0}>
-                    <FieldLabel formLabelProps={{ fontSize: "xs", mb: 1 }}>
-                      Model Task Type
-                    </FieldLabel>
-                    <Select
-                      size="sm"
-                      value={quota.modelTaskType}
-                      onChange={(e) =>
-                        handleQuotaChange(idx, "modelTaskType", e.target.value)
-                      }
-                    >
-                      <option value="" disabled>
-                        Select model task type
-                      </option>
-                      {taskTypeNames
-                        ?.filter((t) => {
-                          const selectedElsewhere = quotas
-                            .filter((_, i) => i !== idx)
-                            .map((q) => q.modelTaskType);
-                          return (
-                            !selectedElsewhere.includes(t) ||
-                            t === quota.modelTaskType
-                          );
-                        })
-                        .map((t) => (
-                          <option key={t} value={t}>
-                            {formatModelTaskTypeLabel(t)}
-                          </option>
-                        ))}
-                    </Select>
-                  </FormControl>
-
-                  <FormControl
-                    isRequired
-                    isInvalid={showErrors && isUnitInvalid(quota)}
-                    isDisabled={isEditMode}
-                    minW={0}
-                  >
-                    <FieldLabel formLabelProps={{ fontSize: "xs", mb: 1 }}>
-                      Unit
-                    </FieldLabel>
-                    <Input
-                      size="sm"
-                      value={quota.unit}
-                      isReadOnly
-                      placeholder="-"
-                      bg="ink.50"
-                      cursor="default"
-                    />
-                    <FormErrorMessage fontSize="xs">
-                      Unit is required.
-                    </FormErrorMessage>
-                    <FieldHint show={!(showErrors && isUnitInvalid(quota))}>
-                      {FIELD_HINTS.tier.quotaUnit.helper}
-                    </FieldHint>
-                  </FormControl>
-
-                  <FormControl
-                    isRequired
-                    isInvalid={showLimitError(quota, showErrors)}
-                    isDisabled={isEditMode}
-                    minW={0}
-                  >
-                    <FieldLabel formLabelProps={{ fontSize: "xs", mb: 1 }}>
-                      Limit
-                    </FieldLabel>
-                    <NumberInput
-                      size="sm"
-                      min={0}
-                      max={QUOTA_LIMIT_MAX}
-                      step={1}
-                      // An out-of-range value must survive blur so the inline
-                      // error can name it; clamping would silently rewrite it.
-                      clampValueOnBlur={false}
-                      value={quota.limit}
-                      onChange={(v) => handleQuotaChange(idx, "limit", v)}
-                    >
-                      <NumberInputField
-                        placeholder={FIELD_HINTS.tier.quotaLimit.placeholder}
-                      />
-                    </NumberInput>
-                    <FormErrorMessage fontSize="xs">
-                      {limitError(quota)}
-                    </FormErrorMessage>
-                    <FieldHint show={!showLimitError(quota, showErrors)}>
-                      {FIELD_HINTS.tier.quotaLimit.helper}
-                    </FieldHint>
-                  </FormControl>
-                </Grid>
-
-                {quota.isExisting && onSchedule && (
-                  <Tooltip label="Schedule a change" placement="top" hasArrow>
-                    <IconButton
-                      aria-label="Schedule a change"
-                      icon={<FiCalendar />}
-                      size="sm"
-                      variant="ghost"
-                      colorScheme="blue"
-                      onClick={() => onSchedule(quota)}
-                      mt={FORM_LABEL_TO_INPUT_PT}
-                    />
-                  </Tooltip>
-                )}
-
-                {!isEditMode && quota.isExisting && onRemove && (
-                  <Tooltip label="Remove quota" placement="top" hasArrow>
-                    <IconButton
-                      aria-label="Remove quota"
-                      icon={<SmallCloseIcon />}
-                      size="sm"
-                      variant="ghost"
-                      colorScheme="gray"
-                      isLoading={removingTaskType === quota.modelTaskType}
-                      isDisabled={
-                        !!removingTaskType &&
-                        removingTaskType !== quota.modelTaskType
-                      }
-                      onClick={() => onRemove(quota)}
-                      mt={FORM_LABEL_TO_INPUT_PT}
-                    />
-                  </Tooltip>
-                )}
-
-                {!isEditMode && !quota.isExisting && quotas.length > 1 && (
-                  <IconButton
-                    aria-label="Remove quota"
-                    icon={<DeleteIcon />}
-                    size="sm"
-                    variant="ghost"
-                    colorScheme="red"
-                    onClick={() => removeQuota(idx)}
-                    mt={FORM_LABEL_TO_INPUT_PT}
-                  />
-                )}
-              </HStack>
-            </Box>
-          ))}
-        </VStack>
-      </Box>
-    </VStack>
-  );
-}
-
-interface TierFormProps {
-  readonly formData: TierFormData;
-  readonly onChange: (data: TierFormData) => void;
-  readonly taskTypeNames: string[];
-  readonly unitByTaskType: Record<string, string>;
-  readonly onSchedule?: (quota: TierFormQuota) => void;
-  readonly onRemove?: (quota: TierFormQuota) => void;
-  readonly removingTaskType?: string | null;
-  readonly isEditMode?: boolean;
-  readonly mode?: "create" | "edit" | "view";
-  readonly showErrors?: boolean;
-}
-
-export function TierForm({
-  formData,
-  onChange,
-  taskTypeNames,
-  unitByTaskType,
-  onSchedule,
-  onRemove,
-  removingTaskType,
-  isEditMode,
-  mode,
-  showErrors,
-}: TierFormProps) {
-  const formMode = mode ?? (isEditMode ? "edit" : "create");
-  if (formMode === "view") {
-    return (
-      <>
-        <FormSection title="Basic information">
-          <ReadOnlyField label="Tier Name">{formData.name || "—"}</ReadOnlyField>
-          <ReadOnlyField label="Description">{formData.description || "—"}</ReadOnlyField>
-        </FormSection>
-        <FormSection title="Usage limits">
-          {formData.quotas.length ? (
-            formData.quotas.map((q) => {
-              const limit = Number(q.limit);
-              const { boldText, suffixText } = formatQuotaAmount(
-                Number.isFinite(limit) ? limit : 0,
-                q.unit,
-              );
-              return (
-                <ReadOnlyField
-                  key={q.modelTaskType}
-                  label={formatModelTaskTypeLabel(q.modelTaskType)}
-                >
-                  {boldText} {suffixText}
-                </ReadOnlyField>
-              );
-            })
-          ) : (
-            <ReadOnlyField label="Quotas">—</ReadOnlyField>
-          )}
-        </FormSection>
-      </>
-    );
-  }
-
-  return (
-    <VStack align="stretch" spacing={0}>
-      <FormSection title="Basic information">
-      <FormControl isRequired>
-        <FieldLabel>Tier Name</FieldLabel>
-        <Input
-          value={formData.name}
-          onChange={(e) => onChange({ ...formData, name: e.target.value })}
-          placeholder={FIELD_HINTS.tier.name.placeholder}
-          maxLength={100}
-        />
-        <FieldHint>{FIELD_HINTS.tier.name.helper}</FieldHint>
-      </FormControl>
-
-      <FormControl>
-        <FieldLabel>Description</FieldLabel>
-        <Input
-          value={formData.description}
-          onChange={(e) =>
-            onChange({ ...formData, description: e.target.value })
-          }
-          placeholder={FIELD_HINTS.tier.description.placeholder}
-        />
-        <FieldHint>{FIELD_HINTS.tier.description.helper}</FieldHint>
-      </FormControl>
-      </FormSection>
-
-      <FormSection title="Usage limits">
-      <QuotaEditor
-        quotas={formData.quotas}
-        onChange={(quotas) => onChange({ ...formData, quotas })}
-        taskTypeNames={taskTypeNames}
-        unitByTaskType={unitByTaskType}
-        onSchedule={onSchedule}
-        onRemove={onRemove}
-        removingTaskType={removingTaskType}
-        isEditMode={isEditMode}
-        showErrors={showErrors}
-      />
-      </FormSection>
-    </VStack>
-  );
-}
-
-interface AssignedTenant {
-  readonly tenantId: string;
-  readonly organisation: string;
-}
-
-const framedList = {
-  spacing: 0,
-  borderWidth: "1px",
-  borderColor: "ink.200",
-  borderRadius: "10px",
-  overflow: "hidden",
-};
-
-const framedRow = {
-  px: 3,
-  py: "11px",
-  borderBottomWidth: "1px",
-  borderColor: "ink.100",
-  _last: { borderBottomWidth: 0 },
-};
-
-const framedEmpty = {
-  textAlign: "center" as const,
-  py: 4,
-  px: 3,
-  borderWidth: "1px",
-  borderStyle: "dashed",
-  borderColor: "ink.200",
-  borderRadius: "10px",
-};
-
-interface AssignedTenantsSectionProps {
-  readonly tenants: AssignedTenant[];
-  readonly isLoading: boolean;
-  readonly tierControl?: (tenant: AssignedTenant) => React.ReactNode;
-  readonly pendingRow?: (tenant: AssignedTenant) => React.ReactNode | null;
-}
-
-function AssignedTenantsSection({
-  tenants,
-  isLoading,
-  tierControl,
-  pendingRow,
-}: AssignedTenantsSectionProps) {
-  if (isLoading) {
-    return (
-      <HStack spacing={2} color="ink.400">
-        <Spinner size="xs" />
-        <Text fontSize="sm">Loading {INSTITUTIONS.toLowerCase()}…</Text>
-      </HStack>
-    );
-  }
-  if (!tenants.length) {
-    return (
-      <Text
-        fontSize="sm"
-        color="ink.400"
-        {...(tierControl ? framedEmpty : null)}
-      >
-        No {INSTITUTIONS.toLowerCase()} assigned{tierControl ? "." : ""}
-      </Text>
-    );
-  }
-  return (
-    <VStack align="stretch" {...(tierControl ? framedList : { spacing: 1 })}>
-      {tenants.map((t) => {
-        const pending = pendingRow?.(t);
-        return (
-          <HStack
-            key={t.tenantId}
-            justify="space-between"
-            align="center"
-            {...(tierControl ? framedRow : null)}
-            bg={pending ? "blue.50" : undefined}
-          >
-            <Text fontSize="sm" color="ink.700" isTruncated minW={0}>
-              {t.organisation}
-            </Text>
-            {pending ?? (
-              <HStack spacing={3} flexShrink={0}>
-                <Text fontSize="xs" color="ink.500">
-                  ID: {t.tenantId}
-                </Text>
-                {tierControl?.(t)}
-              </HStack>
-            )}
-          </HStack>
-        );
-      })}
-    </VStack>
-  );
-}
-
-interface MappedService {
-  readonly serviceId: string;
-  readonly name: string;
-  readonly taskType: string;
-  readonly isPublished: boolean;
-}
-
-interface ServicesMappedSectionProps {
-  readonly services: MappedService[];
-  readonly isLoading: boolean;
-  readonly tierControl?: (service: MappedService) => React.ReactNode;
-  readonly pendingRow?: (service: MappedService) => React.ReactNode | null;
-}
-
-function ServicesMappedSection({
-  services,
-  isLoading,
-  tierControl,
-  pendingRow,
-}: ServicesMappedSectionProps) {
-  if (isLoading) {
-    return (
-      <HStack spacing={2} color="ink.400">
-        <Spinner size="xs" />
-        <Text fontSize="sm">Loading services…</Text>
-      </HStack>
-    );
-  }
-  if (!services.length) {
-    return (
-      <Text
-        fontSize="sm"
-        color="ink.400"
-        {...(tierControl ? framedEmpty : null)}
-      >
-        No services mapped{tierControl ? "." : ""}
-      </Text>
-    );
-  }
-  return (
-    <VStack align="stretch" {...(tierControl ? framedList : { spacing: 1 })}>
-      {services.map((s) => {
-        const pending = pendingRow?.(s);
-        return (
-          <HStack
-            key={s.serviceId || s.name}
-            justify="space-between"
-            align="center"
-            {...(tierControl ? framedRow : null)}
-          >
-            <Text fontSize="sm" color="ink.700" isTruncated minW={0}>
-              {s.name}
-            </Text>
-            {pending ?? (
-              <HStack spacing={1} flexShrink={0}>
-                {s.taskType && (
-                  <Badge
-                    colorScheme={getTaskTypeBadgeColor(s.taskType)}
-                    fontSize="xs"
-                    px={2}
-                    py={0.5}
-                  >
-                    {s.taskType}
-                  </Badge>
-                )}
-                <Badge
-                  colorScheme={s.isPublished ? "green" : "gray"}
-                  fontSize="xs"
-                  px={2}
-                  py={0.5}
-                >
-                  {s.isPublished ? "PUBLISHED" : "DRAFT"}
-                </Badge>
-                {tierControl?.(s)}
-              </HStack>
-            )}
-          </HStack>
-        );
-      })}
-    </VStack>
-  );
 }
 
 function RowActions({
@@ -1121,9 +530,6 @@ const TierManagement: React.FC = () => {
     />
   );
 
-  const pendingQuotas =
-    viewTier?.quotas?.filter((q) => q.pendingLimit != null) ?? [];
-
   const formPage = (
     <>
     <FormDrawer
@@ -1150,70 +556,20 @@ const TierManagement: React.FC = () => {
     >
       {isCreateOpen ? tierForm : null}
     </FormDrawer>
-    <FormDrawer
-      isOpen={Boolean(isViewOpen && viewTier) && !isCreateOpen}
-      onClose={onViewClose}
-      size="wide"
-      title={viewTier?.name || "Tier"}
-      description="Tier details."
-      footer={<FormActions hideSubmit cancelLabel="Close" onCancel={onViewClose} pt={0} />}
-    >
-      {viewTier ? <TierForm
-        mode="view"
-        formData={{
-          name: viewTier.name,
-          description: viewTier.description ?? "",
-          quotas: (viewTier.quotas ?? []).map((q) => ({
-            modelTaskType: q.modelTaskType,
-            unit: q.unit ?? "",
-            limit: String(q.limit ?? ""),
-          })),
-        }}
-        onChange={() => undefined}
-        taskTypeNames={taskTypeNames}
-        unitByTaskType={unitByTaskType}
-      /> : null}
-      <FormSection title="Upcoming changes">
-        {pendingQuotas.length ? (
-          pendingQuotas.map((q) => (
-            <HStack key={q.modelTaskType} justify="space-between" align="center">
-              <ReadOnlyField label={`${formatModelTaskTypeLabel(q.modelTaskType)} Quota`}>
-                {q.pendingLimit?.toLocaleString()} {q.unit} · effective next billing cycle
-              </ReadOnlyField>
-              <Button
-                variant="link"
-                size="xs"
-                colorScheme="red"
-                flexShrink={0}
-                isLoading={cancelingTaskType === q.modelTaskType}
-                isDisabled={
-                  cancelingTaskType !== null && cancelingTaskType !== q.modelTaskType
-                }
-                onClick={() => handleCancelPendingQuota(q.modelTaskType)}
-              >
-                Cancel
-              </Button>
-            </HStack>
-          ))
-        ) : (
-          <Text fontSize="sm" color="ink.400">
-            No upcoming changes.
-          </Text>
-        )}
-      </FormSection>
-      <FormSection title={`Services mapped · ${isServicesForViewTierLoading ? "…" : servicesForViewTier.length}`}>
-        <ServicesMappedSection
-          services={servicesForViewTier}
-          isLoading={isServicesForViewTierLoading}
-        />
-      </FormSection>
-      <FormSection title={`${INSTITUTIONS} assigned · ${isAssignedTenantsLoading ? "…" : assignedTenantsForViewTier.length}`}>
-        <AssignedTenantsSection
-          tenants={assignedTenantsForViewTier}
-          isLoading={isAssignedTenantsLoading}
-        />
-      </FormSection>
-    </FormDrawer>
+    <TierDetailDrawer
+      isViewOpen={isViewOpen}
+      isCreateOpen={isCreateOpen}
+      onViewClose={onViewClose}
+      viewTier={viewTier}
+      taskTypeNames={taskTypeNames}
+      unitByTaskType={unitByTaskType}
+      cancelingTaskType={cancelingTaskType}
+      handleCancelPendingQuota={handleCancelPendingQuota}
+      servicesForViewTier={servicesForViewTier}
+      isServicesForViewTierLoading={isServicesForViewTierLoading}
+      assignedTenantsForViewTier={assignedTenantsForViewTier}
+      isAssignedTenantsLoading={isAssignedTenantsLoading}
+    />
     </>
   );
 
