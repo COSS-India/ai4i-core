@@ -349,6 +349,7 @@ const InstitutionCatalogTab: React.FC<InstitutionCatalogTabProps> = ({
         onCancel={dirtyCount > 0 ? discard : undefined}
         onSubmit={() => void handleSubmit()}
         isLoading={isSubmitting}
+        isDisabled={dirtyCount === 0}
         justify="flex-end"
         pt={4}
       />

@@ -40,8 +40,8 @@ interface SubscriptionToggleProps {
  * The "My emails" pill. Unsubscribed rows show "Subscribe". Subscribed
  * optional rows show "Subscribed" and turn into a red "Unsubscribe" on
  * hover/focus, so the click's effect is visible before it happens.
- * Subscribe asks for confirmation first; the change still only lands in
- * the row draft, saved by the page's Submit.
+ * Subscribe and Unsubscribe both ask for confirmation first; the change
+ * still only lands in the row draft, saved by the page's Submit.
  * Mandatory rows are a disabled "Subscribed" with an explanatory tooltip.
  */
 export const SubscriptionToggle: React.FC<SubscriptionToggleProps> = ({
@@ -52,6 +52,7 @@ export const SubscriptionToggle: React.FC<SubscriptionToggleProps> = ({
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const confirmSubscribe = useDisclosure();
+  const confirmUnsubscribe = useDisclosure();
   const isOn = locked || subscribed;
   const showUnsubscribe = isOn && !locked && isHovered;
 
@@ -83,7 +84,7 @@ export const SubscriptionToggle: React.FC<SubscriptionToggleProps> = ({
         // pill, would instantly read "Unsubscribe".
         setIsHovered(false);
         if (subscribed) {
-          onChange(false);
+          confirmUnsubscribe.onOpen();
         } else {
           confirmSubscribe.onOpen();
         }
@@ -108,6 +109,18 @@ export const SubscriptionToggle: React.FC<SubscriptionToggleProps> = ({
           body="You'll start receiving this by email."
           confirmLabel="Subscribe"
           confirmColorScheme="blue"
+          isCentered
+        />
+        <ConfirmDialog
+          isOpen={confirmUnsubscribe.isOpen}
+          onClose={confirmUnsubscribe.onClose}
+          onConfirm={() => {
+            confirmUnsubscribe.onClose();
+            onChange(false);
+          }}
+          title={`Unsubscribe from "${rowLabel}"?`}
+          body="You and anyone you've added will stop receiving this by email."
+          confirmLabel="Unsubscribe"
           isCentered
         />
       </>
