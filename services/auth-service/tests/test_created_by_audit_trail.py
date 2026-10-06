@@ -154,7 +154,7 @@ class TestCreateTenantAndCreateTenantUserPassCreatedBy:
     @pytest.mark.asyncio
     async def test_create_tenant_passes_admin_id_to_provision_user(self) -> None:
         svc = _tenant_svc()
-        svc.provision_user = AsyncMock()
+        svc.provision_user = AsyncMock(return_value=("user-id-123", "setup-token-abc"))
         svc._allocate_unique_username = AsyncMock(return_value="jane.doe")
         admin = _admin_user()
 
@@ -479,7 +479,7 @@ class TestAssignPlanToTenantSetsCreatedBy:
             token_service=AsyncMock(),
             email_client=AsyncMock(),
         )
-        svc.provision_user = AsyncMock()
+        svc.provision_user = AsyncMock(return_value=("user-id-123", "setup-token-abc"))
         svc._allocate_unique_username = AsyncMock(return_value="jane.doe")
         admin = User(id=uuid4(), email="admin@example.invalid", username="admin")
 

@@ -17,6 +17,10 @@ export type {
   UpdateTierStatusPayload,
 } from "../types/tierManagement";
 
+/** RQ cache key for ACTIVE tiers (no task-type filter). Shared by Institution + Services Management. */
+export const ACTIVE_TIERS_QUERY_KEY = ["tiers", "ACTIVE"] as const;
+export const ACTIVE_TIERS_STALE_MS = 5 * 60 * 1000;
+
 export async function fetchTiers(
   modelTaskType?: string,
   status?: TierStatus,
@@ -85,6 +89,37 @@ export async function changeTenantTier(
   await apiClient.patch(apiEndpoints.tenants.tenantTier(tenantId), {
     tier_id: tierId,
   });
+}
+
+export interface TenantTierUnassignData {
+  tenant_id: number | string;
+  /** Present on success. Not required to be null; DELETE itself is the unassign. */
+  tier_id?: string | null;
+  previous_tier_id?: string | null;
+  updated_at?: string | null;
+  updated_by?: string | null;
+}
+
+export interface TenantTierUnassignResponse {
+  success: boolean;
+  data: TenantTierUnassignData;
+}
+
+/**
+ * DELETE /auth/tenants/{tenant_id}/tier — clear the institution's tier.
+ * Tenant id is the path parameter. No request body.
+ */
+export async function removeTenantFromTier(
+  tenantId: string,
+): Promise<TenantTierUnassignResponse> {
+  const response = await apiClient.delete<TenantTierUnassignResponse>(
+    apiEndpoints.tenants.tenantTier(tenantId),
+  );
+  const body = response.data;
+  if (!body?.success || body.data == null) {
+    throw new Error("Could not remove the institution from this tier.");
+  }
+  return body;
 }
 
 export interface TenantTierAssignment {

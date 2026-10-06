@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import List, Optional
 from uuid import UUID
 
@@ -14,9 +15,16 @@ from sqlalchemy.orm import selectinload
 from app.core.constants import TierStatus
 from app.core.exceptions import ValidationError
 from ai4i_core.kafka import (
-    publish_admin_event as publish_notification_event,
-    is_notification_enabled,
-    check_and_record_actions_bulk,
+    FailureCode,
+    FailureStage,
+    NotificationName,
+    Operation,
+    StateItem,
+    emit_state_bulk,
+    get_notification_runtime,
+    notifications_configured,
+    quota_limit_subject,
+    run_in_background,
 )
 from app.models.pay_per_use.tier import Tier, TierQuota
 from app.repositories.pay_per_use.usage_repository import update_tier_cache
@@ -227,8 +235,8 @@ async def create_tier(body: TierCreate, session: AsyncSession, created_by: Optio
 
 
 async def _fetch_tenant_ids_for_tier(tier_id, auth_db: Optional[AsyncSession]) -> list:
-    """Tenants currently on ``tier_id`` — for the best-effort
-    quota-limit-updated webhook to auth-service, so it knows who to notify.
+    """Tenants currently on ``tier_id`` — for the best-effort tier
+    reactivation webhook to auth-service, so it knows whose keys to reset.
 
     ppu_tenant_tier_assignments was dropped (AI4IDS-2923); tenants.tier_id
     (auth-service, via auth_db) is the sole source of truth now — no
@@ -288,13 +296,19 @@ async def _upsert_quotas(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Model task type '{q.modelTaskType}' does not exist in this tier. Adding new model task types is not allowed via update.",
             )
-        changes.append(
-            {
-                "inference_name": q.modelTaskType,
-                "previous": existing.monthly_quota,
-                "current": q.limit,
-            }
-        )
+        scheduled = existing.pending_monthly_quota if existing.pending_monthly_quota is not None else existing.monthly_quota
+        if q.limit != scheduled and q.limit != existing.monthly_quota:
+            # Last entry wins when a task type repeats in one body.
+            changes = [c for c in changes if c["inference_name"].lower() != q.modelTaskType.lower()]
+            changes.append(
+                {
+                    "inference_name": q.modelTaskType,
+                    "previous": existing.monthly_quota,
+                    "current": q.limit,
+                }
+            )
+        elif q.limit == existing.monthly_quota:
+            changes = [c for c in changes if c["inference_name"].lower() != q.modelTaskType.lower()]
         existing.pending_monthly_quota = q.limit
         existing.updated_by = updated_by
     return changes
@@ -321,27 +335,6 @@ async def _cancel_pending_quotas(
             row.updated_by = updated_by
 
 
-async def _notify_tier_updated(
-    tier: Tier,
-    auth_service_url: str,
-    http_client: Optional[httpx.AsyncClient],
-    auth_db: Optional[AsyncSession],
-) -> None:
-    if not (auth_service_url and http_client):
-        return
-
-    try:
-        tenant_ids = await _fetch_tenant_ids_for_tier(tier.id, auth_db)
-        resp = await http_client.post(
-            f"{auth_service_url}/internal/ppu/tier/quota-limit-updated",
-            json={"tier_name": tier.name, "tenant_ids": tenant_ids},
-            timeout=5.0,
-        )
-        resp.raise_for_status()
-    except Exception as exc:
-        logger.warning("quota-limit-updated notification failed for tier %s: %s", tier.id, exc)
-
-
 def _first_of_next_month(dt: datetime) -> str:
     """QUOTA_LIMIT_UPDATED's effective_date (design doc §9): the edit lands
     now, but _upsert_quotas only ever writes pending_monthly_quota — the
@@ -359,80 +352,70 @@ def _first_of_next_month(dt: datetime) -> str:
     return dt.replace(year=year, month=month, day=1).date().isoformat()
 
 
-async def _publish_quota_limit_updated(
-    tier: Tier,
-    quota_changes: List[dict],
-    updated_by: Optional[str],
-    auth_db: Optional[AsyncSession],
-    session: AsyncSession,
-) -> None:
-    """Fire QUOTA_LIMIT_UPDATED for every tenant on this tier, once per
-    changed model task type — best-effort, mirrors _notify_tier_updated's
-    framing so a Kafka outage never fails the tier update itself.
+# Q-D2 — tenants on a tier, with the institution name (tenants.organisation,
+# not tenants.name, the contact person) as tenant_name (ai4iplatform_auth)
+_TENANTS_ON_TIER_SQL = text(
+    "SELECT id::text AS tenant_id, organisation AS tenant_name FROM tenants WHERE tier_id = :tier_id"
+)
 
-    ledger_notification_alert (design doc §5-7) lives in this service's own
-    DB (``session``, not ``auth_db`` — that one is only for reading
-    tenants.tier_id) and is the atomic dedup guard, checked/updated once
-    for the whole (tenant_id, inference_name) fan-out via
-    check_and_record_actions_bulk — a single round trip and a single
-    commit, not one per pair (a tier with 200 tenants and 3 changed quotas
-    would otherwise be 600 commits before this PATCH can respond). All
-    pairs share the identical occurred_at, since they're all the same
-    admin action; publishing happens only after that one commit succeeds."""
-    if not await is_notification_enabled(session, "QUOTA_LIMIT_UPDATED"):
-        return
+
+def _quota_text(value) -> str:
+    return format(Decimal(str(value)).normalize(), "f")
+
+
+async def _publish_quota_limit_updated(tier_id, tier_name: str, quota_changes: List[dict]) -> None:
+    """QUOTA_LIMIT_UPDATED for every tenant on the tier x every changed model
+    task type, through the shared pipeline: one tenant lookup (Q-D2), one
+    bulk claim and one recipient query however many tenants are on the
+    tier. Runs in the background after the tier commit."""
+    rt = get_notification_runtime()
+    summary = f"tier {tier_id}: " + ", ".join(
+        f"{c['inference_name']} {_quota_text(c['previous'])}->{_quota_text(c['current'])}" for c in quota_changes
+    )
     try:
-        tenant_ids = await _fetch_tenant_ids_for_tier(tier.id, auth_db)
-        occurred_at_dt = datetime.now(timezone.utc)
-        occurred_at = occurred_at_dt.isoformat()
-        effective_date = _first_of_next_month(occurred_at_dt)
-        tenant_subjects = [
-            (str(tenant_id), {"model_task_type": change["inference_name"]})
-            for tenant_id in tenant_ids
-            for change in quota_changes
-        ]
-        fired_pairs = await check_and_record_actions_bulk(
-            session, "QUOTA_LIMIT_UPDATED", tenant_subjects, occurred_at, str(updated_by or "")
+        async with rt.auth_session_factory() as auth_session:
+            tenants = (await auth_session.execute(_TENANTS_ON_TIER_SQL, {"tier_id": tier_id})).mappings().all()
+    except Exception as exc:
+        await rt.failures.record(
+            FailureStage.SOURCE, FailureCode.TENANT_LOOKUP_FAILED,
+            notification_name=NotificationName.QUOTA_LIMIT_UPDATED, operation=Operation.TENANT_LOOKUP,
+            error=exc, message=summary,
         )
-        fired_set = {(tenant_id, subject["model_task_type"]) for tenant_id, subject in fired_pairs}
-        for tenant_id in tenant_ids:
-            for change in quota_changes:
-                if (str(tenant_id), change["inference_name"]) not in fired_set:
-                    continue
-                # Positional array per design doc §9.5, not the old
-                # {"inference_name", "previous", "current"} dict — emailer.py
-                # now indexes into it. changes is an array (one line per
-                # Model Task Type) even though this fan-out publishes one
-                # message per (tenant, task type): §9.5's own example
-                # (BUDGET_EXHAUSTED... TIER_CHANGED etc) shows a single-item
-                # array here, matching this event's model_task_type-scoped
-                # subject.
-                publish_notification_event(
-                    event_name="QUOTA_LIMIT_UPDATED",
-                    tenant_id=str(tenant_id),
-                    subject={"model_task_type": change["inference_name"]},
+        return
+    if not tenants:
+        return
+
+    effective_date = _first_of_next_month(datetime.now(timezone.utc))
+    items = []
+    for tenant in tenants:
+        for change in quota_changes:
+            task = change["inference_name"]
+            items.append(
+                StateItem(
+                    tenant_id=tenant["tenant_id"],
+                    tenant_name=tenant["tenant_name"],
+                    subject=quota_limit_subject(task),
+                    new_state={
+                        "tier_id": str(tier_id),
+                        "model_task_type": task.lower(),
+                        "from_quota": _quota_text(change["previous"]),
+                        "to_quota": _quota_text(change["current"]),
+                        "effective_date": effective_date,
+                    },
                     details=[
-                        tier.name,
-                        [
-                            f"{change['inference_name'].upper()}: changed from "
-                            f"{change['previous']:,.0f} to {change['current']:,.0f}"
-                        ],
+                        tier_name,
+                        [f"{task.upper()}: changed from {change['previous']:,.0f} to {change['current']:,.0f}"],
                         effective_date,
                     ],
-                    actor_id=str(updated_by or ""),
-                    occurred_at=occurred_at,
                 )
-    except Exception as exc:
-        logger.warning("QUOTA_LIMIT_UPDATED publish failed for tier %s: %s", tier.id, exc)
+            )
+    await emit_state_bulk(NotificationName.QUOTA_LIMIT_UPDATED, items, summary=summary)
 
 
 async def update_tier(
     body: TierUpdate,
     session: AsyncSession,
     updated_by: Optional[str] = None,
-    auth_service_url: str = "",
-    http_client: Optional[httpx.AsyncClient] = None,
-    auth_db: Optional[AsyncSession] = None,
 ) -> TierOut:
     tier = await _resolve_tier_for_update(body, session)
 
@@ -462,11 +445,8 @@ async def update_tier(
     await session.refresh(tier)
     update_tier_cache(tier.id, tier.name)
 
-    if body.quotas is not None or body.cancel_pending_quota:
-        await _notify_tier_updated(tier, auth_service_url, http_client, auth_db)
-
-    if quota_changes:
-        await _publish_quota_limit_updated(tier, quota_changes, updated_by, auth_db, session)
+    if quota_changes and notifications_configured():
+        run_in_background(_publish_quota_limit_updated(tier.id, tier.name, quota_changes))
 
     q_result = await session.execute(select(TierQuota).where(TierQuota.tier_id == tier.id))
     quotas = list(q_result.scalars().all())

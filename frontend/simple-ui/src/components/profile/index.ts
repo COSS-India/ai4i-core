@@ -4,8 +4,6 @@ export { default as InstitutionDetailsPanel } from "./InstitutionDetailsPanel";
 export type { InstitutionDetailsPanelProps } from "./InstitutionDetailsPanel";
 export { default as UserDetailsTab } from "./UserDetailsTab";
 export { default as ChangePasswordTab } from "./ChangePasswordTab";
-export { default as ApiKeyTab } from "./ApiKeyTab";
-export type { ApiKeyTabProps } from "./ApiKeyTab";
 export { default as DeleteAccountSection } from "./DeleteAccountSection";
 export { default as DeleteAccountModal } from "./DeleteAccountModal";
 export { default as RolesTab } from "./RolesTab";

@@ -26,6 +26,7 @@ export const catalogItemSchema = z
     module: z.enum(["TIER", "BUDGET", "QUOTA"]),
     channels: z.array(z.string()).min(1),
     recipient_roles: z.record(z.boolean()),
+    scope: z.enum(["GLOBAL", "INSTITUTION"]),
     /** ALERT rows only — null/omitted on NOTIFICATION rows. */
     thresholds: z.array(thresholdBandSchema).optional().nullable(),
   })
@@ -43,3 +44,61 @@ export const catalogUpdateResponseSchema =
 
 export type ApiCatalogItem = z.infer<typeof catalogItemSchema>;
 export type ApiThresholdBand = z.infer<typeof thresholdBandSchema>;
+
+/** Mirrors platform-core `MonitoringThresholdBand` — value is int or float. */
+export const monitoringThresholdBandSchema = z.object({
+  value: z.number(),
+  unit: z.enum(["PERCENT", "SECONDS"]),
+  active: z.boolean(),
+});
+
+/** A MONITORING row of `GET /catalog?type=MONITORING`. */
+export const monitoringCatalogItemSchema = z
+  .object({
+    id: z.number(),
+    name: z.string(),
+    display_name: z.string(),
+    description: z.string(),
+    type: z.literal("MONITORING"),
+    channels: z.array(z.string()).min(1),
+    recipient_roles: z.record(z.boolean()),
+    monitoring_thresholds: z.array(monitoringThresholdBandSchema).optional().nullable(),
+  })
+  .passthrough();
+
+export const monitoringCatalogListResponseSchema = notificationAlertSuccessEnvelopeSchema(
+  z.object({ items: z.array(monitoringCatalogItemSchema) }),
+);
+
+export const monitoringCatalogUpdateResponseSchema =
+  notificationAlertSuccessEnvelopeSchema(monitoringCatalogItemSchema);
+
+export type ApiMonitoringCatalogItem = z.infer<typeof monitoringCatalogItemSchema>;
+
+/**
+ * Mirrors platform-core `SubscriptionItem`. `description`/`thresholds` are
+ * optional so the UI keeps working before the BE starts sending them.
+ */
+export const subscriptionItemSchema = z
+  .object({
+    notification_id: z.number(),
+    name: z.string(),
+    display_name: z.string(),
+    description: z.string().optional().nullable(),
+    scope: z.enum(["GLOBAL", "INSTITUTION"]),
+    delivery_channel: z.array(z.string()),
+    subscribed: z.boolean(),
+    locked: z.boolean(),
+    recipients: z.array(z.string()),
+    thresholds: z.array(thresholdBandSchema).optional().nullable(),
+  })
+  .passthrough();
+
+export const subscriptionListResponseSchema = notificationAlertSuccessEnvelopeSchema(
+  z.object({ items: z.array(subscriptionItemSchema) }),
+);
+
+export const subscriptionUpdateResponseSchema =
+  notificationAlertSuccessEnvelopeSchema(subscriptionItemSchema);
+
+export type ApiSubscriptionItem = z.infer<typeof subscriptionItemSchema>;

@@ -5,248 +5,147 @@
  * the downloaded file — `JSON.stringify` would drop them, since they are only source
  * comments once an object is parsed. Users keep the comments while editing; the upload path
  * strips them again via `stripJsonComments` before parsing.
+ *
+ * Comments in this file are written for someone filling in the form who has no knowledge of
+ * how the platform is built internally — plain language, no code/file references, no
+ * internal class or function names.
  */
 export const SAMPLE_MODEL_JSON = `{
-  // ── Identity ───────────────────────────────────────────────────────────────
+  // Sample registration for a chat/LLM model. Comments starting with // are ignored
+  // on upload, so you can leave them in.
 
   "version": "v1",
-  // Required. Version for the model. 1–20 characters.
-  // Example: "v1", "v2.0"
+  // Required. Version for the model, 1–20 characters. Example: "v1", "v2.0"
 
-  "name": "test-llm-2",
-  // Required. Model name that you want your users to see. 5–100 characters.
-  // Alphanumeric, hyphens (-), and forward slashes (/) only — no spaces.
-  // Example: "org/model-name"
+  "name": "google/gemma-4-31B-it",
+  // Required. Name shown for this model, 5–100 characters.
+  // Letters, numbers, hyphens (-) and forward slashes (/) only — no spaces.
 
   "description": "A sample LLM model for demonstration purposes. Description must be at least 25 characters.",
-  // Required. Brief description about the model and its goal. 25–1000 characters.
-
-  "refUrl": "https://github.com/example/example-model",
-  // Optional. GitHub link or URL giving further info about the model. 5–200 characters.
-
-  // ── Task ───────────────────────────────────────────────────────────────────
+  // Required. What this model does, 25–1000 characters.
 
   "task": {
     "type": "llm"
-    // Required. The inference task this model performs.
-    // Enum — one of: nmt | tts | asr | llm | transliteration |
-    //   language-detection | speaker-diarization | audio-lang-detection |
-    //   language-diarization | ocr | ner
-    // Case-insensitive on input.
+    // Required. One of: nmt | tts | asr | llm | transliteration | language-detection |
+    //   speaker-diarization | audio-lang-detection | language-diarization | ocr | ner | pipeline
+    // Must be the same as "taskType" inside "schema" below.
   },
-
-  // ── Language support ───────────────────────────────────────────────────────
 
   "languages": [
     {
       "sourceLanguage": "hi",
-      // Required. Indic language code (ISO-639-1/2), or 'en'.
-      // Accepted values: en | hi | mr | ta | te | kn | gu | pa | bn | ml | as
-      //   and other ULCA-supported Indic codes.
-
       "sourceLanguageName": "Hindi",
-      // Optional. Human-readable name for the source language.
-
       "sourceScriptCode": "Deva",
-      // Optional (required for nmt / transliteration tasks). ISO-15924 script code.
-      // Enum — one of: Beng | Deva | Thaa | Gujr | Aran | Orya | Guru | Arab |
-      //   Sinh | Knda | Mlym | Taml | Telu | Mtei | Olck | Latn
-
       "targetLanguage": "en",
-      // Optional. Omit or set null for single-language models (ASR, TTS, OCR).
-      // Same values as sourceLanguage.
-
       "targetLanguageName": "English",
-      // Optional. Human-readable name for the target language.
-
       "targetScriptCode": "Latn"
-      // Optional (required for nmt / transliteration tasks). Same enum as sourceScriptCode.
+      // Language codes: en | hi | mr | ta | te | kn | gu | pa | bn | ml | as | ...
+      // Script codes: Beng | Deva | Thaa | Gujr | Aran | Orya | Guru | Arab |
+      //   Sinh | Knda | Mlym | Taml | Telu | Mtei | Olck | Latn
     }
   ],
 
-  "isLangDetectionEnabled": false,
-  // Optional. Default: false.
-  // Specify true if the same model is capable of detecting languages automatically
-  // without passing any additional parameters.
-
-  "isMultilingual": false,
-  // Optional. Default: false.
-  // Specify true if the same model is capable of handling multiple languages.
-
-  // ── Licensing ──────────────────────────────────────────────────────────────
-
   "license": "mit",
-  // Required. License under which this model is published.
-  // Enum — one of (case-insensitive):
-  //   cc-by-4.0 | cc-by-sa-4.0 | cc-by-nd-2.0 | cc-by-nd-4.0 |
-  //   cc-by-nc-3.0 | cc-by-nc-4.0 | cc-by-nc-sa-4.0 | cc0 | mit |
-  //   gpl-3.0 | bsd-3-clause | private-commercial | unknown-license | custom-license
-
-  "licenseUrl": "https://opensource.org/licenses/MIT",
-  // Optional. URL of the custom license text. Max 500 characters.
-  // Recommended when license is "custom-license".
-
-  // ── Domain ─────────────────────────────────────────────────────────────────
+  // Required. One of: cc-by-4.0 | cc-by-sa-4.0 | cc-by-nd-2.0 | cc-by-nd-4.0 |
+  //   cc-by-nc-3.0 | cc-by-nc-4.0 | cc-by-nc-sa-4.0 | cc0 | mit | gpl-3.0 |
+  //   bsd-3-clause | private-commercial | unknown-license | custom-license
 
   "domain": ["general"],
-  // Required. At least one value. Business area(s) this model covers.
-  // Enum — one or more of:
-  //   general | news | education | legal | government-press-release |
-  //   healthcare | agriculture | automobile | tourism | financial |
-  //   movies | subtitles | sports | technology | lifestyle | entertainment |
-  //   parliamentary | art-and-culture | economy | history | philosophy |
-  //   religion | national-security-and-defence | literature | geography
-
-  // ── Inference endpoint ─────────────────────────────────────────────────────
-
-  "callbackUrl": "https://inference.example.com/v2/models/example-model/infer",
-  // Required for inference. Full HTTP(S) URL where inference requests are POSTed.
-  // This is the hosted location that defines the endpoint of the model inference.
-
-  "inferenceApiKey": {
-    "name": "Authorization",
-    // Optional. HTTP header name the callbackUrl expects the API key under.
-    // "Authorization" is used as the default if value is provided without a name.
-    // Example: "apiKey"
-
-    "value": "<your-api-key>"
-    // Required if inferenceApiKey is provided.
-    // The API key / token value sent in that header to fetch output.
-  },
-
-  "isSyncApi": true,
-  // Optional. Boolean.
-  // Specify true if the inference is a sync API, false otherwise.
-  // When false, fill in asyncApiDetails below.
-
-  "asyncApiDetails": null,
-  // Optional. Required when isSyncApi is false. Replace null with:
-  // {
-  //   "pollingUrl":   "https://...",  // Required. Endpoint for polling in async calls.
-  //   "pollInterval": 1000            // Required. Polling interval in milliseconds.
-  // }
-
-  // ── Adapter config (platform-specific Triton mapping) ──────────────────────
+  // Required. One or more of: general | news | education | legal |
+  //   government-press-release | healthcare | agriculture | automobile | tourism |
+  //   financial | movies | subtitles | sports | technology | lifestyle | entertainment |
+  //   parliamentary | art-and-culture | economy | history | philosophy | religion |
+  //   national-security-and-defence | literature | geography
 
   "adapterConfig": {
-    // Optional. Platform-specific Triton I/O tensor mapping.
-    // When provided, must include both "inputs" and "outputs".
+    // How requests are built for the model. "version", at least one "inputs" entry and
+    // at least one "outputs" entry are required.
+    // For chat/LLM models, "model_name" is required and must exactly match the model name
+    // the AI server knows. The "inputs"/"outputs" below are the standard placeholders for
+    // chat/LLM models — keep them as they are.
     "version": "1.0",
-    "model_name": "example-model",
+    "model_name": "google/gemma-4-31B-it",
     "inputs": [
       {
-        "tensor": "INPUT_TEXT",      // Triton input tensor name.
-        "dtype": "BYTES",            // Tensor data type.
-        "shape": [-1, 1],            // Tensor shape; -1 denotes dynamic batch size.
-        "value_path": "input.source" // Dot-path into the ULCA request body to read from.
+        "tensor": "INPUT_TEXT",
+        "dtype": "BYTES",
+        "shape": [-1, 1],
+        "value_path": "input.source"
       }
     ],
     "outputs": [
       {
-        "tensor": "OUTPUT_TEXT",     // Triton output tensor name.
+        "tensor": "OUTPUT_TEXT",
         "dtype": "BYTES",
-        "maps_to": "target"          // Key in the ULCA response output object to write to.
+        "maps_to": "target"
       }
     ]
   },
 
-  // ── Schema ─────────────────────────────────────────────────────────────────
-
   "schema": {
-    // Required whenever "schema" is provided at all: "model_name",
-    // "taskType", "request", and "response" must ALL be present, or
-    // model registration is rejected. A Service later created against
-    // this model derives its own inferenceEndPoint.schema from these
-    // same four keys — an incomplete schema here can't be filled in
-    // afterward.
-    // taskType — discriminator: translation | transliteration | asr | tts |
-    //   ocr | txt-lang-detection | ner | llm
-    // "model_name" — used to construct the Triton URL.
+    // A real example request and the response it returned. Used to test the model.
+    // "taskType", "model_name", "request" and "response" are all required.
+    // "taskType" must be the same as "task" -> "type" above.
     "taskType": "llm",
+    "model_name": "google/gemma-4-31B-it",
     "request": {
-      "model": "google/gemma-5-E4B-it",
       "messages": [
         {
           "role": "user",
-          "content": "Hello"
+          "content": "Say hello in one line"
         }
-      ]
+      ],
+      "max_tokens": 256
     },
     "response": {
+      "id": "chatcmpl-ac15bfd6d66df036",
+      "object": "chat.completion",
+      "created": 1789465507,
+      "model": "google/gemma-4-31B-it",
       "choices": [
         {
+          "index": 0,
           "message": {
-            "content": "Hi there! How can I help you today?"
-          }
+            "role": "assistant",
+            "content": "Hello!",
+            "refusal": null,
+            "annotations": null,
+            "audio": null,
+            "function_call": null,
+            "reasoning": null
+          },
+          "logprobs": null,
+          "finish_reason": "stop",
+          "stop_reason": 106,
+          "token_ids": null,
+          "routed_experts": null
         }
-      ]
-    },
-    "model_name": "example-model",
-    "modelProcessingType": null
+      ],
+      "service_tier": null,
+      "system_fingerprint": "vllm-0.27.1-133468d7",
+      "usage": {
+        "prompt_tokens": 18,
+        "total_tokens": 21,
+        "completion_tokens": 3,
+        "prompt_tokens_details": null
+      },
+      "prompt_logprobs": null,
+      "prompt_token_ids": null,
+      "prompt_text": null,
+      "kv_transfer_params": null,
+      "ec_transfer_params": null,
+      "metrics": null
+    }
   },
-
-  // ── Training data ──────────────────────────────────────────────────────────
 
   "trainingDataset": {
-    "description": "Sample training dataset description for the example LLM model registration.",
-    // Required. Explain the dataset you used to train this model.
-
-    "datasetId": "example-LLM-corpus-v1"
-    // Optional. Dataset identifier exported from the ULCA system.
-    // Providing this enriches your model with further information for the community.
+    "description": "Sample training dataset description for the example LLM model registration."
+    // Required. The data this model was trained on.
   },
 
-  // ── Benchmarks ─────────────────────────────────────────────────────────────
-
-  "benchmarks": [
-    {
-      "benchmarkId": "example-benchmark-001",
-      "name": "Example Benchmark",
-      "description": "Sample benchmark for evaluation",
-      "domain": "general",
-      "createdOn": "2025-01-15T10:00:00.000Z", // ISO 8601 datetime string.
-      "languages": {
-        "sourceLanguage": "hi",
-        "targetLanguage": "en"
-      },
-      "score": [
-        {
-          "metricName": "WER", // Metric name, e.g. WER, BLEU, CER.
-          "score": "7.5"       // Score value as a string.
-        }
-      ]
-    }
-  ],
-  // Optional. Default: []. Performance benchmark entries for this model.
-
-  // ── Submitter ──────────────────────────────────────────────────────────────
-
   "submitter": {
-    "name": "Example Org",
-    // Required. Name of the model provider or organization. 3–50 characters.
-
-    "aboutMe": "An example organization",
-    // Optional. Short description of the submitter.
-
-    "team": [
-      {
-        "name": "John Doe",
-        // Required. Contributor name. 5–50 characters.
-
-        "aboutMe": "Lead Researcher",
-        // Optional. Short bio for this contributor.
-
-        "oauthId": {
-          "oauthId": "1234567890",
-          // Optional. Social/OAuth identifier returned after auth.
-
-          "provider": "google"
-          // Optional. Auth provider used.
-          // Enum — one of: custom | github | facebook | instagram | google | yahoo
-        }
-      }
-    ]
-    // Optional. Default: []. Contributors on the submitting team.
+    "name": "Example Org"
+    // Required. Person or organization submitting the model, 3–50 characters.
   }
 }
 `;

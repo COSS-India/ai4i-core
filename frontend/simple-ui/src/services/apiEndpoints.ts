@@ -66,7 +66,7 @@ export const apiEndpoints = {
       `${API_V1}/auth/tenants/${tenantId}/applications/${applicationId}`,
     /** GET — list tenant↔tier assignments (platform admin). */
     tierList: `${API_V1}/auth/tenants/tier/list`,
-    /** PATCH — assign or change tier for a tenant. */
+    /** PATCH assign or change a tenant's tier. DELETE removes it. */
     tenantTier: (tenantId: string) => `${API_V1}/auth/tenants/${tenantId}/tier`,
     /** PATCH — top-up / top-down tenant budget (delta, not edit total). */
     tenantBudget: (tenantId: string) => `${API_V1}/auth/tenants/${tenantId}/budget`,
@@ -102,6 +102,11 @@ export const apiEndpoints = {
     catalog: `${API_V1}/notification-alerts/catalog`,
     catalogByName: (name: string) =>
       `${API_V1}/notification-alerts/catalog/${encodeURIComponent(name)}`,
+    monitoringCatalogByName: (name: string) =>
+      `${API_V1}/notification-alerts/monitoring-catalog/${encodeURIComponent(name)}`,
+    subscriptions: `${API_V1}/notification-alerts/subscriptions`,
+    subscriptionById: (notificationId: number) =>
+      `${API_V1}/notification-alerts/subscriptions/${notificationId}`,
   },
 
   platform: {

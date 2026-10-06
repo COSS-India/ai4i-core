@@ -1,49 +1,30 @@
-// Services Management: wires useServicesManagement's state/handlers to the
-// Service Registry / Create-Edit Service / View Service tabs.
+// Services Management: registry list stays mounted. Create, edit, and view use FormDrawer.
 import {
   Badge,
-  Box,
-  Card,
-  Grid,
   HStack,
-  IconButton,
-  Tab,
-  TabList,
-  TabPanel,
-  TabPanels,
-  Tabs,
   Text,
-  Tooltip,
   VStack,
 } from "@chakra-ui/react";
-import { DeleteIcon, EditIcon, ViewIcon } from "@chakra-ui/icons";
+import { DeleteIcon, EditIcon } from "@chakra-ui/icons";
 import { MdOutlineCheckCircle, MdOutlineUnpublished } from "react-icons/md";
 import React, { useMemo } from "react";
 import ManagementPageHeader from "../common/ManagementPageHeader";
+import CreateButton from "../common/CreateButton";
+import FormActions from "../common/FormActions";
+import FormDrawer from "../common/FormDrawer";
+import { useFormPageLeave } from "../common/FormPage";
+import { createActionsColumn, type DataTableColumn } from "../common/table";
 import type { Service } from "../../services/servicesManagementService";
 import ConfirmDialog from "../common/ConfirmDialog";
-import { useAdminTableSurface, type DataTableColumn } from "../common/table";
 import { useServicesManagement } from "../../hooks/useServicesManagement";
 import ServiceRegistryTab from "./ServiceRegistryTab";
 import ServiceFormTab from "./ServiceFormTab";
 import ServiceDetailTab from "./ServiceDetailTab";
+import { getTaskColorScheme } from "../../config/constants";
 import { resolveTaskType } from "../../utils/platformService";
 
-function getTaskColor(taskType?: string) {
-  if (!taskType) return "gray";
-  switch (taskType.toLowerCase()) {
-    case "asr":
-      return "orange";
-    case "nmt":
-      return "green";
-    case "tts":
-      return "blue";
-    case "llm":
-      return "purple";
-    default:
-      return "gray";
-  }
-}
+const CREATE_SERVICE_FORM_ID = "create-service-form";
+const EDIT_SERVICE_FORM_ID = "edit-service-form";
 
 function isServiceModelDeprecated(
   service: Service | null | undefined,
@@ -61,10 +42,8 @@ function isServiceModelDeprecated(
 }
 
 const ServicesManagement: React.FC = () => {
-  const { cardBg, borderColor: cardBorder } = useAdminTableSurface();
   const {
     isRegistryReadOnly,
-    activeTab,
     handleTabChange,
     registryTableItems,
     totalServicesCount,
@@ -77,6 +56,9 @@ const ServicesManagement: React.FC = () => {
     filterTaskType,
     setFilterTaskType,
     taskTypeNames,
+    filterTier,
+    setFilterTier,
+    tierFilterOptions,
     hasActiveFilters,
     clearAllFilters,
     registrySort,
@@ -119,6 +101,11 @@ const ServicesManagement: React.FC = () => {
     isSubmitting,
     handleSubmit,
     handleCancelForm,
+    isCreateOpen,
+    openCreateModal,
+    closeCreateModal,
+    releaseCreateForm,
+    createReturnTo,
     selectedService,
     isViewingService,
     selectedServiceModelDeprecated,
@@ -144,6 +131,11 @@ const ServicesManagement: React.FC = () => {
     cancelUnpublishRef,
   } = useServicesManagement();
 
+  const leaveCreateToCaller = useFormPageLeave(
+    createReturnTo ? { href: createReturnTo } : undefined,
+    releaseCreateForm,
+  );
+
   const serviceColumns = useMemo((): DataTableColumn<Service>[] => {
     return [
       {
@@ -152,7 +144,7 @@ const ServicesManagement: React.FC = () => {
         sortable: true,
         sortAccessor: (service) => service.name ?? "",
         cell: (service) => (
-          <Text fontSize="sm" noOfLines={1} title={service.name}>
+          <Text fontSize="sm" fontWeight="medium" noOfLines={1} title={service.name}>
             {service.name || "N/A"}
           </Text>
         ),
@@ -163,7 +155,7 @@ const ServicesManagement: React.FC = () => {
         cell: (service) => {
           const taskType = resolveTaskType(service);
           return (
-            <Badge colorScheme={getTaskColor(taskType)} fontSize="sm" p={1}>
+            <Badge colorScheme={getTaskColorScheme(taskType)} fontSize="sm" p={1}>
               {taskType ? taskType.toUpperCase() : "N/A"}
             </Badge>
           );
@@ -179,7 +171,7 @@ const ServicesManagement: React.FC = () => {
           const names = service.tierNames;
           if (!names || names.length === 0) {
             return (
-              <Text fontSize="sm" color="gray.400">
+              <Text fontSize="sm" color="ink.400">
                 —
               </Text>
             );
@@ -221,116 +213,67 @@ const ServicesManagement: React.FC = () => {
         sortAccessor: (service) =>
           service.createdAt ? new Date(service.createdAt).getTime() : 0,
         cell: (service) => (
-          <Text fontSize="sm" color="gray.600">
+          <Text fontSize="sm" color="ink.600">
             {service.createdAt
               ? new Date(service.createdAt).toLocaleDateString()
               : "N/A"}
           </Text>
         ),
       },
-      {
-        id: "actions",
-        header: "Actions",
-        tdProps: { onClick: (e) => e.stopPropagation() },
-        cell: (service) => (
-          <HStack spacing={1}>
-            <Tooltip label="View" placement="top" hasArrow>
-              <IconButton
-                aria-label="View"
-                icon={<ViewIcon />}
-                size="sm"
-                variant="ghost"
-                colorScheme="blue"
-                _hover={{ bg: "blue.50" }}
-                onClick={() =>
-                  handleViewService(
-                    service.serviceId || service.service_id || "",
-                  )
+      createActionsColumn<Service>({
+        getActions: (service) => {
+          const publishBlocked = isServiceModelDeprecated(service);
+          const publishBusy =
+            unpublishingServiceUuid !== null || publishingServiceUuid !== null;
+          return [
+            {
+              id: "edit",
+              label: "Edit",
+              icon: <EditIcon />,
+              visible: !isRegistryReadOnly,
+              onClick: () =>
+                handleEditService(service.serviceId || service.service_id || ""),
+            },
+            service.isPublished === true
+              ? {
+                  id: "unpublish",
+                  label: "Unpublish",
+                  icon: <MdOutlineUnpublished />,
+                  visible: !isRegistryReadOnly,
+                  color: "red.500",
+                  hoverColor: "red.600",
+                  hoverBg: "red.50",
+                  onClick: () => requestUnpublish(service),
+                  isLoading: unpublishingServiceUuid === service.serviceId,
+                  disabled: publishBusy,
                 }
-              />
-            </Tooltip>
-            {!isRegistryReadOnly && (
-              <Tooltip label="Edit" placement="top" hasArrow>
-                <IconButton
-                  aria-label="Edit"
-                  icon={<EditIcon />}
-                  size="sm"
-                  variant="ghost"
-                  colorScheme="blue"
-                  _hover={{ bg: "blue.50" }}
-                  onClick={() =>
-                    handleEditService(
-                      service.serviceId || service.service_id || "",
-                    )
-                  }
-                />
-              </Tooltip>
-            )}
-            {!isRegistryReadOnly &&
-              (service.isPublished === true ? (
-                <Tooltip label="Unpublish" placement="top" hasArrow>
-                  <IconButton
-                    aria-label="Unpublish"
-                    icon={<MdOutlineUnpublished />}
-                    size="sm"
-                    variant="ghost"
-                    colorScheme="red"
-                    _hover={{ bg: "red.50" }}
-                    onClick={() => requestUnpublish(service)}
-                    isLoading={unpublishingServiceUuid === service.serviceId}
-                    isDisabled={
-                      unpublishingServiceUuid !== null ||
-                      publishingServiceUuid !== null
-                    }
-                  />
-                </Tooltip>
-              ) : (
-                <Tooltip
-                  label={
-                    isServiceModelDeprecated(service)
-                      ? "This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing."
-                      : "Publish"
-                  }
-                  hasArrow
-                  placement="top"
-                >
-                  <Box as="span" display="inline-block">
-                    <IconButton
-                      aria-label="Publish"
-                      icon={<MdOutlineCheckCircle />}
-                      size="sm"
-                      variant="ghost"
-                      colorScheme="green"
-                      _hover={{ bg: "green.50" }}
-                      onClick={() => requestPublish(service)}
-                      isLoading={publishingServiceUuid === service.serviceId}
-                      isDisabled={
-                        unpublishingServiceUuid !== null ||
-                        publishingServiceUuid !== null ||
-                        isServiceModelDeprecated(service)
-                      }
-                    />
-                  </Box>
-                </Tooltip>
-              ))}
-            {!isRegistryReadOnly && (
-              <Tooltip label="Delete" placement="top" hasArrow>
-                <IconButton
-                  aria-label="Delete"
-                  icon={<DeleteIcon />}
-                  size="sm"
-                  variant="ghost"
-                  colorScheme="red"
-                  _hover={{ bg: "red.50" }}
-                  onClick={() => handleDeleteClick(service)}
-                  isLoading={deletingServiceUuid === service.serviceId}
-                  isDisabled={deletingServiceUuid !== null}
-                />
-              </Tooltip>
-            )}
-          </HStack>
-        ),
-      },
+              : {
+                  id: "publish",
+                  label: "Publish",
+                  tooltip: publishBlocked
+                    ? "This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing."
+                    : "Publish",
+                  icon: <MdOutlineCheckCircle />,
+                  visible: !isRegistryReadOnly,
+                  color: "green.500",
+                  hoverColor: "green.600",
+                  hoverBg: "green.50",
+                  onClick: () => requestPublish(service),
+                  isLoading: publishingServiceUuid === service.serviceId,
+                  disabled: publishBusy || publishBlocked,
+                },
+            {
+              id: "delete",
+              label: "Delete",
+              icon: <DeleteIcon />,
+              visible: !isRegistryReadOnly,
+              onClick: () => handleDeleteClick(service),
+              isLoading: deletingServiceUuid === service.serviceId,
+              disabled: deletingServiceUuid !== null,
+            },
+          ];
+        },
+      }),
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -341,149 +284,154 @@ const ServicesManagement: React.FC = () => {
     availableTiers,
   ]);
 
+  const serviceForm = (
+    <ServiceFormTab
+      key={createFormEpoch}
+      editingService={editingService}
+      formData={formData}
+      onInputChange={handleInputChange}
+      onTaskTypeChange={handleTaskTypeChange}
+      onModelNameChange={handleModelNameChange}
+      taskTypeNames={taskTypeNames}
+      isLoadingModels={isLoadingModels}
+      filteredModelsForDropdown={filteredModelsForDropdown}
+      unitType={unitType}
+      pricePerUnit={pricePerUnit}
+      onPricePerUnitChange={setPricePerUnit}
+      pricePerUnitError={pricePerUnitError}
+      unitSize={unitSize}
+      onUnitSizeChange={setUnitSize}
+      currency={currency}
+      onCurrencyChange={setCurrency}
+      selectedTiers={selectedTiers}
+      onToggleTier={toggleTier}
+      availableTiers={availableTiers}
+      isCreateFormModelSelected={isCreateFormModelSelected}
+      isLlmTaskType={isLlmTaskType}
+      authToken={authToken}
+      onAuthTokenChange={setAuthToken}
+      hasAuthToken={hasAuthToken}
+      savedAuthTokenMask={savedAuthTokenMask}
+      serviceIdError={serviceIdError}
+      serviceIdLengthError={serviceIdLengthError}
+      serviceDescriptionError={serviceDescriptionError}
+      serviceNameError={serviceNameError}
+      hardwareDescriptionError={hardwareDescriptionError}
+      onSubmit={handleSubmit}
+      formId={editingService ? EDIT_SERVICE_FORM_ID : CREATE_SERVICE_FORM_ID}
+    />
+  );
+
+  const showServiceView = Boolean(isViewingService && selectedService);
+  const showServiceEdit = Boolean(editingService) && !isRegistryReadOnly && !showServiceView;
+  const showServiceCreate = isCreateOpen && !showServiceEdit && !showServiceView;
+
   return (
     <>
-      <VStack spacing={6} w="full">
-        <ManagementPageHeader
-          title="Services Management"
-          description={
-            isRegistryReadOnly
-              ? "View services in the registry (read-only)"
-              : "Manage and configure services"
-          }
+      <ManagementPageHeader
+        crumbs={false}
+        title="Services Management"
+        description={
+          isRegistryReadOnly
+            ? "Browse services in the registry. You can open a service to view its configuration."
+            : "Find a service, open it to view or edit, or create a new one. Publish when it should appear for users."
+        }
+        actions={
+          !isRegistryReadOnly && !isCreateServiceTabDisabled ? (
+            <CreateButton onClick={openCreateModal}>Create Service</CreateButton>
+          ) : undefined
+        }
+      />
+      <ServiceRegistryTab
+        items={registryTableItems}
+        columns={serviceColumns}
+        sort={registrySort.sort}
+        onSortChange={registrySort.onSortChange}
+        isLoading={isLoading}
+        totalServicesCount={totalServicesCount}
+        onRowClick={(service) =>
+          handleViewService(service.serviceId || service.service_id || "")
+        }
+        tableKey={tableKey}
+        searchQuery={searchQuery}
+        onSearchQueryChange={setSearchQuery}
+        filterStatus={filterStatus}
+        onFilterStatusChange={setFilterStatus}
+        filterTaskType={filterTaskType}
+        onFilterTaskTypeChange={setFilterTaskType}
+        taskTypeNames={taskTypeNames}
+        filterTier={filterTier}
+        onFilterTierChange={setFilterTier}
+        tierFilterOptions={tierFilterOptions}
+        hasActiveFilters={hasActiveFilters}
+        onClearFilters={clearAllFilters}
+      />
+      <FormDrawer
+        isOpen={showServiceCreate}
+        onClose={closeCreateModal}
+        lockDismiss={isSubmitting}
+        size="wide"
+        title="Create Service"
+        description="Register a service and map it to a model and tiers."
+        footer={
+          <FormActions
+            cancelLabel="Cancel"
+            submitLabel="Create Service"
+            onCancel={createReturnTo ? leaveCreateToCaller : closeCreateModal}
+            submitType="submit"
+            form={CREATE_SERVICE_FORM_ID}
+            isLoading={isSubmitting}
+            loadingText="Creating..."
+            isDisabled={!canCreateService || isSubmitting}
+            justify="space-between"
+            pt={0}
+          />
+        }
+      >
+        {showServiceCreate ? serviceForm : null}
+      </FormDrawer>
+      {showServiceView && selectedService ? (
+        <ServiceDetailTab
+          selectedService={selectedService}
+          isRegistryReadOnly={isRegistryReadOnly}
+          isServiceModelDeprecated={isServiceModelDeprecated}
+          selectedServiceModelDeprecated={selectedServiceModelDeprecated}
+          viewServiceUnitType={viewServiceUnitType}
+          unpublishingServiceUuid={unpublishingServiceUuid}
+          publishingServiceUuid={publishingServiceUuid}
+          onRequestUnpublish={requestUnpublish}
+          onRequestPublish={requestPublish}
+          onClose={() => handleTabChange(0)}
         />
-
-        <Grid gap={8} w="full" mx="auto">
-          <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px">
-            <Tabs
-              colorScheme="blue"
-              variant="enclosed"
-              index={activeTab}
-              onChange={handleTabChange}
-            >
-              <TabList>
-                <Tab fontWeight="semibold">Service Registry</Tab>
-                {!isRegistryReadOnly && (
-                  <Tab
-                    fontWeight="semibold"
-                    isDisabled={isCreateServiceTabDisabled}
-                    title={
-                      isCreateServiceTabDisabled
-                        ? "Create at least one Tier before creating a Service."
-                        : undefined
-                    }
-                  >
-                    {editingService ? "Edit Service" : "Create Service"}
-                  </Tab>
-                )}
-                {isViewingService && (
-                  <Tab fontWeight="semibold">View Service</Tab>
-                )}
-              </TabList>
-
-              <TabPanels>
-                {/* Service Registry Tab */}
-                <TabPanel px={0} pt={6}>
-                  <ServiceRegistryTab
-                    cardBg={cardBg}
-                    cardBorder={cardBorder}
-                    items={registryTableItems}
-                    columns={serviceColumns}
-                    sort={registrySort.sort}
-                    onSortChange={registrySort.onSortChange}
-                    isLoading={isLoading}
-                    totalServicesCount={totalServicesCount}
-                    onRowClick={(service) =>
-                      handleViewService(
-                        service.serviceId || service.service_id || "",
-                      )
-                    }
-                    tableKey={tableKey}
-                    searchQuery={searchQuery}
-                    onSearchQueryChange={setSearchQuery}
-                    filterStatus={filterStatus}
-                    onFilterStatusChange={setFilterStatus}
-                    filterTaskType={filterTaskType}
-                    onFilterTaskTypeChange={setFilterTaskType}
-                    taskTypeNames={taskTypeNames}
-                    hasActiveFilters={hasActiveFilters}
-                    onClearFilters={clearAllFilters}
-                  />
-                </TabPanel>
-
-                {/* Create/Edit Service Tab */}
-                {!isRegistryReadOnly && (
-                  <TabPanel px={0} pt={6}>
-                    <ServiceFormTab
-                      // Remount on reset/edit-load so no field is left
-                      // marked as blurred from the previous form.
-                      key={createFormEpoch}
-                      cardBg={cardBg}
-                      cardBorder={cardBorder}
-                      editingService={editingService}
-                      formData={formData}
-                      onInputChange={handleInputChange}
-                      onTaskTypeChange={handleTaskTypeChange}
-                      onModelNameChange={handleModelNameChange}
-                      taskTypeNames={taskTypeNames}
-                      isLoadingModels={isLoadingModels}
-                      filteredModelsForDropdown={filteredModelsForDropdown}
-                      unitType={unitType}
-                      pricePerUnit={pricePerUnit}
-                      onPricePerUnitChange={setPricePerUnit}
-                      pricePerUnitError={pricePerUnitError}
-                      unitSize={unitSize}
-                      onUnitSizeChange={setUnitSize}
-                      currency={currency}
-                      onCurrencyChange={setCurrency}
-                      selectedTiers={selectedTiers}
-                      onToggleTier={toggleTier}
-                      availableTiers={availableTiers}
-                      isCreateFormModelSelected={isCreateFormModelSelected}
-                      canCreateService={canCreateService}
-                      isLlmTaskType={isLlmTaskType}
-                      authToken={authToken}
-                      onAuthTokenChange={setAuthToken}
-                      hasAuthToken={hasAuthToken}
-                      savedAuthTokenMask={savedAuthTokenMask}
-                      serviceIdError={serviceIdError}
-                      serviceIdLengthError={serviceIdLengthError}
-                      serviceDescriptionError={serviceDescriptionError}
-                      serviceNameError={serviceNameError}
-                      hardwareDescriptionError={hardwareDescriptionError}
-                      isSubmitting={isSubmitting}
-                      onSubmit={handleSubmit}
-                      onCancel={handleCancelForm}
-                    />
-                  </TabPanel>
-                )}
-
-                {/* View Service Tab */}
-                {isViewingService && selectedService ? (
-                  <TabPanel px={0} pt={6}>
-                    <ServiceDetailTab
-                      cardBg={cardBg}
-                      cardBorder={cardBorder}
-                      selectedService={selectedService}
-                      isRegistryReadOnly={isRegistryReadOnly}
-                      getTaskColor={getTaskColor}
-                      isServiceModelDeprecated={isServiceModelDeprecated}
-                      selectedServiceModelDeprecated={
-                        selectedServiceModelDeprecated
-                      }
-                      viewServiceUnitType={viewServiceUnitType}
-                      unpublishingServiceUuid={unpublishingServiceUuid}
-                      publishingServiceUuid={publishingServiceUuid}
-                      onRequestUnpublish={requestUnpublish}
-                      onRequestPublish={requestPublish}
-                    />
-                  </TabPanel>
-                ) : null}
-              </TabPanels>
-            </Tabs>
-          </Card>
-        </Grid>
-      </VStack>
+      ) : null}
+      <FormDrawer
+        isOpen={showServiceEdit}
+        onClose={handleCancelForm}
+        lockDismiss={isSubmitting}
+        size="wide"
+        title={
+          editingService?.name ||
+          editingService?.serviceId ||
+          editingService?.service_id ||
+          "Edit Service"
+        }
+        description="Update pricing and tier mapping. Service metadata is read-only."
+        footer={
+          <FormActions
+            submitLabel="Save Changes"
+            onCancel={handleCancelForm}
+            submitType="submit"
+            form={EDIT_SERVICE_FORM_ID}
+            isLoading={isSubmitting}
+            loadingText="Saving..."
+            isDisabled={!canCreateService || isSubmitting}
+            justify="space-between"
+            pt={0}
+          />
+        }
+      >
+        {showServiceEdit ? serviceForm : null}
+      </FormDrawer>
 
       <ConfirmDialog
         isOpen={isOpen}

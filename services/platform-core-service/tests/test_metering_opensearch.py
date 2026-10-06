@@ -63,6 +63,15 @@ class TestOpenSearchLogClientAggregate:
         aggs = await client.aggregate({"match_all": {}}, {})
         assert aggs == {}
 
+    async def test_search_failure_is_empty_dict_by_default(self):
+        client = _client_with_search(side_effect=RuntimeError("cluster down"))
+        assert await client.aggregate({"match_all": {}}, {}) == {}
+
+    async def test_raise_on_error_reraises_search_failure(self):
+        client = _client_with_search(side_effect=RuntimeError("cluster down"))
+        with pytest.raises(RuntimeError, match="cluster down"):
+            await client.aggregate({"match_all": {}}, {}, raise_on_error=True)
+
 
 @pytest.mark.asyncio
 class TestOpenSearchLogClientCompositeAll:
@@ -489,26 +498,194 @@ class TestModelBreakdown:
 
 @pytest.mark.asyncio
 class TestModelUsageGrowthPct:
-    async def test_none_when_too_early_in_month(self):
-        svc, _ = _make_os_service()
-        with patch("app.services.metering_service_opensearch.datetime") as mock_dt:
-            from datetime import datetime, timezone
-            mock_dt.now.return_value = datetime(2026, 3, 1, 0, 0, 30, tzinfo=timezone.utc)
-            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-            assert await svc.model_usage_growth_pct() is None
-
-    async def test_none_when_no_previous_month_traffic(self):
+    async def test_none_when_no_previous_window_traffic(self):
         svc, os_client = _make_os_service()
         os_client.count = AsyncMock(side_effect=[10, 0])
         assert await svc.model_usage_growth_pct() is None
 
-    async def test_computes_growth_pct(self):
+    async def test_computes_growth_pct_from_rolling_30d_windows(self):
+        """Same rolling-window semantics as the Prometheus version
+        (metering_service.py): last 30 days vs the 30 days before that,
+        not calendar month vs calendar month."""
         svc, os_client = _make_os_service()
         os_client.count = AsyncMock(side_effect=[150, 100])
         result = await svc.model_usage_growth_pct()
         assert result == 50.0
 
+        cur_query, prev_query = (
+            os_client.count.call_args_list[0][0][0],
+            os_client.count.call_args_list[1][0][0],
+        )
+        cur_range = next(
+            f["range"]["@timestamp"] for f in cur_query["bool"]["filter"] if "range" in f
+        )
+        prev_range = next(
+            f["range"]["@timestamp"] for f in prev_query["bool"]["filter"] if "range" in f
+        )
+        # cur covers [now-30d, now]; prev covers [now-60d, now-30d) —
+        # back-to-back, fixed-width, not calendar-month boundaries.
+        assert cur_range["gte"] == prev_range["lt"]
+
+    async def test_computes_negative_growth_pct(self):
+        svc, os_client = _make_os_service()
+        os_client.count = AsyncMock(side_effect=[70, 100])
+        result = await svc.model_usage_growth_pct()
+        assert result == -30.0
+
     async def test_query_failure_returns_none(self):
         svc, os_client = _make_os_service()
         os_client.count = AsyncMock(side_effect=RuntimeError("boom"))
         assert await svc.model_usage_growth_pct() is None
+
+
+# ── Custom (AbsoluteRange) windows ───────────────────────────────────────────
+
+from datetime import datetime, timedelta, timezone
+
+from app.utils.metering_promql_builder import AbsoluteRange
+
+_RANGE = AbsoluteRange(
+    start=datetime(2026, 9, 20, 18, 30, tzinfo=timezone.utc),
+    end=datetime(2026, 9, 23, 18, 30, tzinfo=timezone.utc),
+)
+
+
+class TestWindowedQueryAbsolute:
+    def test_absolute_range_uses_explicit_iso_bounds(self):
+        query = OpenSearchMeteringService._windowed_query(_RANGE, [{"term": {"tenant_id": "7"}}])
+        filters = query["bool"]["filter"]
+        assert filters[0] == {"range": {"@timestamp": {
+            "gte": "2026-09-20T18:30:00+00:00", "lte": "2026-09-23T18:30:00+00:00",
+        }}}
+        assert filters[1] == {"term": {"tenant_id": "7"}}
+
+    def test_relative_window_still_uses_date_math(self):
+        query = OpenSearchMeteringService._windowed_query("7d", [])
+        assert query["bool"]["filter"][0]["range"]["@timestamp"] == {"gte": "now-7d", "lte": "now"}
+
+
+@pytest.mark.asyncio
+class TestAbsoluteRangeQueries:
+    async def test_request_total_splits_current_and_previous_at_range_start(self):
+        svc, os_client = _make_os_service(aggregate_return={
+            "by_period": {"buckets": {
+                "current": {"doc_count": 259_200, "by_status": {"buckets": {
+                    "success": {"doc_count": 259_200}, "failed": {"doc_count": 0},
+                }}},
+                "previous": {"doc_count": 0, "by_status": {"buckets": {}}},
+            }}
+        })
+        result = await svc.request_total(
+            inference_only=True, tenant=None, service_id=None, time_range=_RANGE,
+        )
+        query, aggs = os_client.aggregate.call_args.args
+        assert query["bool"]["filter"][0]["range"]["@timestamp"] == {
+            "gte": "2026-09-17T18:30:00+00:00", "lte": "2026-09-23T18:30:00+00:00",
+        }
+        periods = aggs["by_period"]["filters"]["filters"]
+        assert periods["current"]["range"]["@timestamp"] == {
+            "gte": "2026-09-20T18:30:00+00:00", "lte": "2026-09-23T18:30:00+00:00",
+        }
+        assert periods["previous"]["range"]["@timestamp"] == {
+            "gte": "2026-09-17T18:30:00+00:00", "lt": "2026-09-20T18:30:00+00:00",
+        }
+        # avg rps divides by the range length (3 days), not a preset's
+        assert result["avg_rps"]["value"] == 1.0
+
+    async def test_request_volume_chart_uses_epoch_millis_bounds(self):
+        """Exactly the picked range, with buckets offset to start at `from`
+        (IST midnight) rather than UTC midnight."""
+        svc, os_client = _make_os_service(aggregate_return={"over_time": {"buckets": []}})
+        await svc.request_volume_chart(_RANGE, tenant=None)
+        query, aggs = os_client.aggregate.call_args.args
+        start_ms = int(_RANGE.start.timestamp() * 1000)
+        end_ms = int(_RANGE.end.timestamp() * 1000)
+        assert query["bool"]["filter"][0]["range"]["@timestamp"] == {"gte": start_ms, "lt": end_ms}
+        hist = aggs["over_time"]["date_histogram"]
+        assert hist["fixed_interval"] == "1d"
+        assert hist["offset"] == f"{(18 * 3600 + 30 * 60) * 1000}ms"
+        assert hist["extended_bounds"] == {"min": start_ms, "max": end_ms - 1}
+
+    async def test_request_total_previous_is_none_past_retention(self, monkeypatch):
+        """Same guard as the Prometheus path: a previous window reaching
+        past retention reads mostly-deleted data."""
+        monkeypatch.setattr("app.services.metering_service.settings.prometheus_retention_days", 10)
+        svc, _ = _make_os_service(aggregate_return={
+            "by_period": {"buckets": {
+                "current": {"doc_count": 10, "by_status": {"buckets": {
+                    "success": {"doc_count": 10}, "failed": {"doc_count": 0},
+                }}},
+                "previous": {"doc_count": 2, "by_status": {"buckets": {
+                    "success": {"doc_count": 2}, "failed": {"doc_count": 0},
+                }}},
+            }}
+        })
+        now = datetime.now(timezone.utc)
+        r = AbsoluteRange(start=now - timedelta(days=8), end=now - timedelta(days=1))
+        result = await svc.request_total(inference_only=True, tenant=None, service_id=None, time_range=r)
+        assert result["total_requests"]["count"] == 10
+        assert result["total_requests"]["previous_count"] is None
+        assert result["total_requests"]["vs_previous_pct"] is None
+
+    async def test_usage_concentration_does_not_fall_back_to_all_time(self):
+        """TIME_RANGES.get(<AbsoluteRange>) is None — i.e. all-time — so the
+        windowed callers must go through _os_window instead."""
+        svc, os_client = _make_os_service(aggregate_return={"tenants": {"buckets": []}})
+        await svc.usage_concentration(limit=5, time_range=_RANGE)
+        query = os_client.aggregate.call_args.args[0]
+        assert query["bool"]["filter"][0]["range"]["@timestamp"]["gte"] == "2026-09-20T18:30:00+00:00"
+
+    async def test_model_breakdown_uses_range(self):
+        svc, os_client = _make_os_service(prom_client=_mock_prom_client())
+        with patch(
+            "app.services.metering_service_opensearch.inference_type_cache.get_unit_map_standalone",
+            AsyncMock(return_value={}),
+        ):
+            await svc.model_breakdown(tenant=None, time_range=_RANGE, task_types=["llm"])
+        query = os_client.composite_all.call_args.args[0]
+        assert query["bool"]["filter"][0]["range"]["@timestamp"]["lte"] == "2026-09-23T18:30:00+00:00"
+
+
+@pytest.mark.asyncio
+class TestFirstRequestAt:
+    async def test_min_timestamp_aggregation_without_time_filter(self):
+        svc, os_client = _make_os_service(aggregate_return={"first": {"value": 1_751_450_400_000}})
+        result = await svc.first_request_at(tenant="Acme Corp", tenant_id="7")
+        query, aggs = os_client.aggregate.call_args.args
+        assert aggs == {"first": {"min": {"field": "@timestamp"}}}
+        filters = query["bool"]["filter"]
+        assert {"term": {"tenant_id": "7"}} in filters
+        assert not any("range" in f for f in filters)
+        assert result == datetime(2025, 7, 2, 10, 0, tzinfo=timezone.utc)
+
+    async def test_opts_out_of_fail_soft(self):
+        """/overview caches this answer for an hour, so a cluster error must
+        raise rather than read as "no requests"."""
+        svc, os_client = _make_os_service(aggregate_return={"first": {"value": None}})
+        await svc.first_request_at(tenant=None)
+        assert os_client.aggregate.call_args.kwargs == {"raise_on_error": True}
+
+    async def test_search_failure_propagates(self):
+        svc, os_client = _make_os_service()
+        os_client.aggregate = AsyncMock(side_effect=RuntimeError("cluster down"))
+        with pytest.raises(RuntimeError, match="cluster down"):
+            await svc.first_request_at(tenant=None)
+
+    async def test_name_only_scope_is_none_without_querying(self):
+        """No tenant_id to filter on: querying would be platform-wide."""
+        svc, os_client = _make_os_service(aggregate_return={"first": {"value": 1_751_450_400_000}})
+        assert await svc.first_request_at(tenant="Acme Corp", tenant_id=None) is None
+        os_client.aggregate.assert_not_called()
+
+    async def test_platform_wide_still_queries(self):
+        svc, os_client = _make_os_service(aggregate_return={"first": {"value": 1_751_450_400_000}})
+        assert await svc.first_request_at(tenant=None, tenant_id=None) is not None
+        os_client.aggregate.assert_awaited_once()
+
+    async def test_no_documents_is_none(self):
+        svc, _ = _make_os_service(aggregate_return={"first": {"value": None}})
+        assert await svc.first_request_at(tenant=None) is None
+
+    async def test_missing_aggregation_is_none(self):
+        svc, _ = _make_os_service(aggregate_return={})
+        assert await svc.first_request_at(tenant=None) is None

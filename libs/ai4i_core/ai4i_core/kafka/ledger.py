@@ -1,255 +1,316 @@
-"""
-ledger_notification_alert dedup guard — the producer-side "should this
-actually be published" decision (design doc §5-7), used AFTER
-is_notification_enabled() has already said the notification is turned on.
+"""Producer-only ledger (ledger_notification_alert, ai4iplatform_core).
 
-One evolving row per (notification_id, tenant_id, subject, channel),
-updated in place rather than inserted per occurrence — see
-infrastructure/databases/migrations/postgres/alembic/versions/
-ai4iplatform_core/8f754a278bee_create_ledger_notification_alert_table.py.
-notification_id/channels come from the same cached configs_notification_alert
-row notification_settings_cache.py already loads (recipient_roles/
-threshold_bands live there too).
-
-Every status is the same envelope: {"value": ..., "delivery": "in_progress"
-| "sent" | "failed" | "skipped"}. The producer (this module) only ever
-writes "value" and sets "delivery" to "in_progress" — a fresh occurrence
-that hasn't been delivered yet. Advancing "delivery" to "sent"/"failed"/
-"skipped" is the consumer's job once it's actually acted on the row; this
-module never reads or writes that transition.
-
-Three "value" shapes, one per event category (design doc §6):
-  - THRESHOLD (BUDGET_THRESHOLD/QUOTA_THRESHOLD): the highest percent band
-    recorded as reached. A usage reset (a fresh, lower band) differs from
-    whatever was stored too, so it fires again without any special-cased
-    reset handling.
-  - EXHAUSTED (BUDGET_EXHAUSTED/QUOTA_EXHAUSTED): true — an on/off flag,
-    fires only on the false/absent -> true transition.
-  - Group A admin actions (TIER_ASSIGNED, TIER_CHANGED, BUDGET_ASSIGNED,
-    BUDGET_UPDATED, QUOTA_LIMIT_UPDATED): the occurred_at iso timestamp —
-    the same one threaded into the Kafka envelope, so two calls that
-    resolve to the exact same action (same precomputed timestamp) don't
-    double-publish.
-
-All three reduce to one guarded UPSERT: build the candidate `status` JSONB,
-INSERT ... ON CONFLICT DO UPDATE ... WHERE status->'value' IS DISTINCT FROM
-EXCLUDED.status->'value' RETURNING id. Comparing only the "value" key (not
-the whole status object) is what keeps this correct once the consumer
-starts changing "delivery" independently — a delivery-only change on the
-existing row must never look like "this is a new occurrence" and cause a
-duplicate publish; only a genuine value change does. A row coming back
-means "this is new, publish"; nothing coming back means "already recorded,
-skip". This runs as a real, atomic DB-level guard (not a pure in-memory
-decision) so two producer replicas racing the same event can never both
-"win" — the in-memory settings cache (notification_id/channels) and the
-ledger_cache fast-path below are both pre-checks only, never the source of
-truth for dedup.
-
-Before touching the DB at all, ledger_cache.matches_cached_status() is
-checked per channel (same "value"-only comparison) — a HIT (this process
-already knows the row is at exactly this value) skips the DB entirely for
-that channel; a miss/stale/different-value result falls through to the
-real UPSERT, which is always correct regardless of what the cache said.
-See ledger_cache.py's own docstring for why this can never cause a missed
-dedup or a duplicate publish, only an occasional unnecessary DB call.
-
-One row is written per channel configured for the notification — every
-channel shares the identical status value in one call, so any channel
-transitioning is enough to decide "publish" (all channels are written in the
-same transaction regardless, for the consumer's own per-channel delivery
-bookkeeping later).
+One row per (notification, tenant, subject). A BAND row holds current_band +
+triggered; a STATE row holds state_hash + triggered. The guarded UPSERT of a
+claim is the only authority for "fire": exactly one caller gets a row back.
 """
 
 import json
-import logging
-from typing import Any, Dict, List, Optional, Tuple
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 from sqlalchemy import text
 
-from .notification_settings_cache import get_channels, get_notification_id
-from .ledger_cache import matches_cached_status, set_cached_status
+from . import constants as c
+from .constants import Decision
+from .keys import subject_json, to_decimal
+from .models import NO_LEDGER_ROW, Band, LedgerRef, LedgerState
+from .specs import NotificationSpec
 
-logger = logging.getLogger(__name__)
+# Q-L1 — ledger state, batch read
+_READ_MANY_SQL = text(
+    """
+    SELECT l.notification_id, l.tenant_id, l.subject,
+           l.current_band, l.triggered, l.triggered_at
+      FROM ledger_notification_alert l
+      JOIN unnest(CAST(:notification_ids AS bigint[]),
+                  CAST(:tenant_ids       AS varchar[]),
+                  CAST(:subjects         AS jsonb[])) AS k(notification_id, tenant_id, subject)
+        ON l.notification_id = k.notification_id
+       AND l.tenant_id       = k.tenant_id
+       AND l.subject         = k.subject
+    """
+)
 
-_UPSERT_SQL = text(
+# Q-L2 — BAND claim
+_CLAIM_BAND_SQL = text(
     """
     INSERT INTO ledger_notification_alert
-        (notification_id, tenant_id, subject, channel, status, created_by, updated_by)
-    VALUES
-        (:notification_id, :tenant_id, CAST(:subject AS JSONB), :channel, CAST(:status AS JSONB), :actor, :actor)
-    ON CONFLICT (notification_id, tenant_id, subject, channel)
-    DO UPDATE SET
-        status = EXCLUDED.status,
-        updated_by = EXCLUDED.updated_by,
-        updated_at = now()
-    WHERE ledger_notification_alert.status->'value' IS DISTINCT FROM EXCLUDED.status->'value'
-    RETURNING id
+           (notification_id, tenant_id, subject, current_band,
+            triggered, triggered_at, last_event_id)
+    VALUES (:notification_id, :tenant_id, CAST(:subject AS JSONB), :band,
+            true, now(), :event_id)
+    ON CONFLICT (notification_id, tenant_id, subject) DO UPDATE
+       SET current_band  = EXCLUDED.current_band,
+           triggered     = true,
+           triggered_at  = EXCLUDED.triggered_at,
+           last_event_id = EXCLUDED.last_event_id,
+           updated_at    = now()
+     WHERE ledger_notification_alert.triggered = false
+        OR EXCLUDED.current_band > ledger_notification_alert.current_band
+    RETURNING current_band, triggered, triggered_at
+    """
+)
+
+#: An open incident past the cooldown: what Q-L3 resets and Q-L9 lists.
+_RESETTABLE = "triggered = true AND triggered_at <= now() - make_interval(secs => :cooldown_s)"
+
+# Q-L3 — RESET, monitoring rows only
+_RESET_SQL = text(
+    f"""
+    UPDATE ledger_notification_alert
+       SET triggered  = false,
+           updated_at = now()
+     WHERE notification_id = :notification_id
+       AND tenant_id       = :tenant_id
+       AND subject         = CAST(:subject AS JSONB)
+       AND {_RESETTABLE}
+    RETURNING current_band, triggered, triggered_at
+    """
+)
+
+# Q-L9 — open incidents past the cooldown, monitoring quiet resets
+_RESETTABLE_SQL = text(
+    f"""
+    SELECT notification_id, subject
+      FROM ledger_notification_alert
+     WHERE notification_id = ANY(CAST(:notification_ids AS bigint[]))
+       AND tenant_id       = :tenant_id
+       AND {_RESETTABLE}
+    """
+)
+
+# Q-L4 — STATE claim
+_CLAIM_STATE_SQL = text(
+    """
+    INSERT INTO ledger_notification_alert
+           (notification_id, tenant_id, subject, state_hash,
+            triggered, triggered_at, last_event_id)
+    VALUES (:notification_id, :tenant_id, CAST(:subject AS JSONB), :state_hash,
+            true, now(), :event_id)
+    ON CONFLICT (notification_id, tenant_id, subject) DO UPDATE
+       SET state_hash    = EXCLUDED.state_hash,
+           triggered     = true,
+           triggered_at  = EXCLUDED.triggered_at,
+           last_event_id = EXCLUDED.last_event_id,
+           updated_at    = now()
+     WHERE ledger_notification_alert.state_hash IS DISTINCT FROM EXCLUDED.state_hash
+    RETURNING last_event_id
+    """
+)
+
+# Q-L5 — STATE claim, bulk
+_CLAIM_STATE_BULK_SQL = text(
+    """
+    INSERT INTO ledger_notification_alert
+           (notification_id, tenant_id, subject, state_hash,
+            triggered, triggered_at, last_event_id)
+    SELECT :notification_id, k.tenant_id, k.subject, k.state_hash,
+           true, now(), k.event_id
+      FROM unnest(CAST(:tenant_ids   AS varchar[]),
+                  CAST(:subjects     AS jsonb[]),
+                  CAST(:state_hashes AS text[]),
+                  CAST(:event_ids    AS uuid[])) AS k(tenant_id, subject, state_hash, event_id)
+    ON CONFLICT (notification_id, tenant_id, subject) DO UPDATE
+       SET state_hash    = EXCLUDED.state_hash,
+           triggered     = true,
+           triggered_at  = EXCLUDED.triggered_at,
+           last_event_id = EXCLUDED.last_event_id,
+           updated_at    = now()
+     WHERE ledger_notification_alert.state_hash IS DISTINCT FROM EXCLUDED.state_hash
+    RETURNING tenant_id, subject, last_event_id
+    """
+)
+
+# Q-L6 — re-read one row, after a lost claim
+_REREAD_SQL = text(
+    """
+    SELECT current_band, state_hash, triggered, triggered_at, last_event_id
+      FROM ledger_notification_alert
+     WHERE notification_id = :notification_id
+       AND tenant_id       = :tenant_id
+       AND subject         = CAST(:subject AS JSONB)
+    """
+)
+
+# Q-L8 — quota ledger rows of past months
+_PURGE_QUOTA_SQL = text(
+    """
+    DELETE FROM ledger_notification_alert l
+     USING configs_notification_alert c
+     WHERE c.id = l.notification_id
+       AND c.name IN ('QUOTA_THRESHOLD', 'QUOTA_EXHAUSTED')
+       AND l.subject->>'billing_month'
+           < to_char(now() - make_interval(months => :months), 'YYYY-MM')
     """
 )
 
 
-async def _record(
-    db,
-    name: str,
-    tenant_id: str,
-    subject: Dict[str, Any],
-    status: Dict[str, Any],
-    actor: str = "",
-) -> bool:
-    """True if the ledger did not already reflect status["value"] for at
-    least one configured channel (i.e. this is new — go ahead and
-    publish). False on an unknown/not-yet-cached name (fail closed, same
-    reasoning as is_notification_enabled) or when every channel's value
-    already matched. `status` must already be the full {"value",
-    "delivery"} envelope — built by the three public wrappers below, never
-    constructed by a caller directly."""
-    notification_id = await get_notification_id(db, name)
-    channels: List[str] = await get_channels(db, name)
-    if notification_id is None or not channels:
-        logger.warning(
-            "Ledger check skipped for %s: notification_id/channels not in cache", name
-        )
-        return False
-
-    subject_json = json.dumps(subject, sort_keys=True)
-    status_json = json.dumps(status)
-
-    channels_to_check = [
-        channel for channel in channels
-        if not matches_cached_status(notification_id, tenant_id, subject_json, channel, status)
-    ]
-    if not channels_to_check:
-        # Every configured channel's cache already reflects this exact
-        # status — a confirmed miss, no need to touch the DB at all.
-        return False
-
-    fired = False
-    try:
-        for channel in channels_to_check:
-            result = await db.execute(
-                _UPSERT_SQL,
-                {
-                    "notification_id": notification_id,
-                    "tenant_id": tenant_id,
-                    "subject": subject_json,
-                    "channel": channel,
-                    "status": status_json,
-                    "actor": actor or None,
-                },
-            )
-            if result.first() is not None:
-                fired = True
-            # Whether the UPSERT changed the row or found it already
-            # matching, the DB now holds exactly `status` for this channel.
-            set_cached_status(notification_id, tenant_id, subject_json, channel, status)
-        await db.commit()
-    except Exception as exc:
-        logger.warning("Ledger upsert failed for %s/tenant=%s: %s", name, tenant_id, exc)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        return False
-    return fired
+def decide(
+    spec: NotificationSpec,
+    band: Optional[Band],
+    state: LedgerState,
+    now: datetime,
+    cooldown_s: int,
+) -> Decision:
+    """BAND rule (the decision table of §5.1.1)."""
+    open_incident = state.exists and state.triggered
+    if band is None:
+        if (
+            open_incident
+            and spec.resets
+            and state.triggered_at is not None
+            and now - state.triggered_at >= timedelta(seconds=cooldown_s)
+        ):
+            return Decision.RESET
+        return Decision.SKIP
+    if not open_incident:
+        return Decision.FIRE
+    if state.current_band is None or band.value > state.current_band:
+        return Decision.FIRE
+    return Decision.SKIP
 
 
-async def check_and_record_threshold(
-    db, name: str, tenant_id: str, subject: Dict[str, Any], percent: int, actor: str = ""
-) -> bool:
-    return await _record(db, name, tenant_id, subject, {"value": percent, "delivery": "in_progress"}, actor)
-
-
-async def check_and_record_exhaustion(
-    db, name: str, tenant_id: str, subject: Dict[str, Any], actor: str = ""
-) -> bool:
-    return await _record(db, name, tenant_id, subject, {"value": True, "delivery": "in_progress"}, actor)
-
-
-async def check_and_record_action(
-    db, name: str, tenant_id: str, subject: Dict[str, Any], occurred_at: str, actor: str = ""
-) -> bool:
-    return await _record(
-        db, name, tenant_id, subject, {"value": occurred_at, "delivery": "in_progress"}, actor
+def _state(row) -> LedgerState:
+    return LedgerState(
+        exists=True,
+        current_band=to_decimal(row["current_band"]) if row["current_band"] is not None else None,
+        triggered=bool(row["triggered"]),
+        triggered_at=row["triggered_at"],
     )
 
 
-async def check_and_record_actions_bulk(
-    db,
-    name: str,
-    tenant_subjects: List[Tuple[str, Dict[str, Any]]],
-    value: Any,
-    actor: str = "",
-) -> List[Tuple[str, Dict[str, Any]]]:
-    """Bulk variant of check_and_record_action for a fan-out where many
-    (tenant_id, subject) pairs share the identical action and the identical
-    `value` — e.g. one QUOTA_LIMIT_UPDATED admin action reaching every
-    tenant on a tier, once per changed quota. One round trip and one commit
-    for the whole batch instead of one per pair (a tier with 200 tenants and
-    3 changed quotas would otherwise be 600 commits before the caller's
-    request can respond).
-
-    Returns the subset of `tenant_subjects` that actually fired (go ahead
-    and publish for those) — same semantics as check_and_record_action
-    returning True/False per pair, just batched. Does not use ledger_cache
-    (that pre-check is a minor optimization for the common single-pair
-    call path; skipping it here only ever costs this batch one full DB
-    round trip either way, never a correctness issue)."""
-    if not tenant_subjects:
-        return []
-    notification_id = await get_notification_id(db, name)
-    channels: List[str] = await get_channels(db, name)
-    if notification_id is None or not channels:
-        logger.warning(
-            "Bulk ledger check skipped for %s: notification_id/channels not in cache", name
-        )
-        return []
-
-    status_json = json.dumps({"value": value, "delivery": "in_progress"})
-    subject_jsons = [json.dumps(subject, sort_keys=True) for _, subject in tenant_subjects]
-
-    rows_sql: List[str] = []
-    params: Dict[str, Any] = {
-        "notification_id": notification_id,
-        "status": status_json,
-        "actor": actor or None,
-    }
-    for i, ((tenant_id, _subject), subject_json) in enumerate(zip(tenant_subjects, subject_jsons)):
-        for j, channel in enumerate(channels):
-            key = f"{i}_{j}"
-            rows_sql.append(
-                f"(:notification_id, :tenant_id_{key}, CAST(:subject_{key} AS JSONB), "
-                f":channel_{key}, CAST(:status AS JSONB), :actor, :actor)"
-            )
-            params[f"tenant_id_{key}"] = tenant_id
-            params[f"subject_{key}"] = subject_json
-            params[f"channel_{key}"] = channel
-
-    sql = text(
-        "INSERT INTO ledger_notification_alert "
-        "(notification_id, tenant_id, subject, channel, status, created_by, updated_by) "
-        "VALUES " + ",".join(rows_sql) + " "
-        "ON CONFLICT (notification_id, tenant_id, subject, channel) "
-        "DO UPDATE SET status = EXCLUDED.status, updated_by = EXCLUDED.updated_by, updated_at = now() "
-        "WHERE ledger_notification_alert.status->'value' IS DISTINCT FROM EXCLUDED.status->'value' "
-        "RETURNING tenant_id, subject"
+async def read_states(session, refs: Sequence[Tuple[int, LedgerRef]]) -> Dict[str, LedgerState]:
+    """Q-L1 for (notification_id, ref) pairs. Refs without a row map to
+    NO_LEDGER_ROW (cached as exists: false)."""
+    if not refs:
+        return {}
+    by_identity = {(nid, ref.tenant_id, ref.subject_json): ref for nid, ref in refs}
+    states = {ref.key: NO_LEDGER_ROW for _, ref in refs}
+    result = await session.execute(
+        _READ_MANY_SQL,
+        {
+            "notification_ids": [nid for nid, _ in refs],
+            "tenant_ids": [ref.tenant_id for _, ref in refs],
+            "subjects": [ref.subject_json for _, ref in refs],
+        },
     )
+    for row in result.mappings():
+        subject = row["subject"]
+        subject_text = subject_json(subject) if isinstance(subject, Mapping) else subject_json(json.loads(subject))
+        ref = by_identity.get((int(row["notification_id"]), str(row["tenant_id"]), subject_text))
+        if ref is not None:
+            states[ref.key] = _state(row)
+    return states
 
-    try:
-        result = await db.execute(sql, params)
-        fired_keys = {
-            (row.tenant_id, json.dumps(row.subject, sort_keys=True)) for row in result.all()
-        }
-        await db.commit()
-    except Exception as exc:
-        logger.warning("Bulk ledger upsert failed for %s: %s", name, exc)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+
+async def claim_band(session, notification_id: int, ref: LedgerRef, band_value, event_id: uuid.UUID) -> Optional[LedgerState]:
+    """Q-L2. The new state when this caller won the claim, else None."""
+    result = await session.execute(
+        _CLAIM_BAND_SQL,
+        {
+            "notification_id": notification_id,
+            "tenant_id": ref.tenant_id,
+            "subject": ref.subject_json,
+            "band": to_decimal(band_value),
+            "event_id": event_id,
+        },
+    )
+    row = result.mappings().first()
+    return _state(row) if row is not None else None
+
+
+async def reset_band(session, notification_id: int, ref: LedgerRef, cooldown_s: int) -> Optional[LedgerState]:
+    """Q-L3. The re-armed state, or None when the row did not qualify."""
+    result = await session.execute(
+        _RESET_SQL,
+        {
+            "notification_id": notification_id,
+            "tenant_id": ref.tenant_id,
+            "subject": ref.subject_json,
+            "cooldown_s": cooldown_s,
+        },
+    )
+    row = result.mappings().first()
+    return _state(row) if row is not None else None
+
+
+async def resettable_subjects(
+    session, notification_ids: Sequence[int], tenant_id: str, cooldown_s: int
+) -> Dict[int, List[Dict[str, str]]]:
+    """Q-L9. {notification_id: [subject, ...]} of the open incidents Q-L3
+    would reset now."""
+    if not notification_ids:
+        return {}
+    result = await session.execute(
+        _RESETTABLE_SQL,
+        {"notification_ids": list(notification_ids), "tenant_id": str(tenant_id), "cooldown_s": cooldown_s},
+    )
+    subjects: Dict[int, List[Dict[str, str]]] = {}
+    for row in result.mappings():
+        subject = row["subject"]
+        if isinstance(subject, str):
+            subject = json.loads(subject)
+        subjects.setdefault(row["notification_id"], []).append(dict(subject))
+    return subjects
+
+
+async def claim_state(
+    session, notification_id: int, tenant_id: str, subject: Mapping[str, str], state_hash: str, event_id: uuid.UUID
+) -> bool:
+    """Q-L4. True when this caller won the claim."""
+    result = await session.execute(
+        _CLAIM_STATE_SQL,
+        {
+            "notification_id": notification_id,
+            "tenant_id": str(tenant_id),
+            "subject": subject_json(subject),
+            "state_hash": state_hash,
+            "event_id": event_id,
+        },
+    )
+    return result.first() is not None
+
+
+@dataclass(frozen=True)
+class StateClaim:
+    tenant_id: str
+    subject: Dict[str, str]
+    state_hash: str
+    event_id: uuid.UUID
+
+
+async def claim_state_bulk(session, notification_id: int, claims: Sequence[StateClaim]) -> List[StateClaim]:
+    """Q-L5. The claims this call won, in input order."""
+    if not claims:
         return []
+    result = await session.execute(
+        _CLAIM_STATE_BULK_SQL,
+        {
+            "notification_id": notification_id,
+            "tenant_ids": [claim.tenant_id for claim in claims],
+            "subjects": [subject_json(claim.subject) for claim in claims],
+            "state_hashes": [claim.state_hash for claim in claims],
+            "event_ids": [claim.event_id for claim in claims],
+        },
+    )
+    won = {row["last_event_id"] for row in result.mappings()}
+    return [claim for claim in claims if claim.event_id in won]
 
-    return [
-        (tenant_id, subject)
-        for (tenant_id, subject), subject_json in zip(tenant_subjects, subject_jsons)
-        if (tenant_id, subject_json) in fired_keys
-    ]
+
+async def reread(session, notification_id: int, ref: LedgerRef) -> LedgerState:
+    """Q-L6. The row as it is now (NO_LEDGER_ROW when absent)."""
+    result = await session.execute(
+        _REREAD_SQL,
+        {"notification_id": notification_id, "tenant_id": ref.tenant_id, "subject": ref.subject_json},
+    )
+    row = result.mappings().first()
+    return _state(row) if row is not None else NO_LEDGER_ROW
+
+
+async def purge_old_quota_rows(session, months: int = c.QUOTA_LEDGER_RETENTION_MONTHS) -> int:
+    """Q-L8: delete quota ledger rows of billing months older than `months`."""
+    result = await session.execute(_PURGE_QUOTA_SQL, {"months": months})
+    return result.rowcount or 0

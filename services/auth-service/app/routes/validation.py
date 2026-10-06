@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
+from app.core.constants import UNASSIGNED_TIER_ID
 from app.core.jwt_verifier import JWTExpiredError, JWTVerificationError
 from app.core.permission_checker import endpoint_permission_map_loaded, permission_checker
 from app.core.redis import get_redis
@@ -254,6 +255,18 @@ async def _validate_api_key(
     # API-key branch only; JWT emits an empty tier_id and skips this block.
     # Fails open: an unknown tier (cache not yet loaded) is treated as ACTIVE.
     _tier_id = result.get("tier_id")
+    # Tier explicitly removed (DELETE /auth/tenants/{id}/tier). Must be
+    # rejected here: passing it through would emit X-Tier-ID="", which
+    # inference-service treats as "no tier restriction". An ABSENT tier_id
+    # (legacy pre-tier key) is not this case and keeps being served.
+    if "tier_id" in result and _tier_id == UNASSIGNED_TIER_ID:
+        return JSONResponse(
+            status_code=403,
+            content=ValidateTokenErrorResponse(
+                error="NO_ACTIVE_TIER",
+                message="Your institution has no tier assigned. Please contact your administrator.",
+            ).model_dump(),
+        )
     if _tier_id and not tier_status_cache.is_active(_tier_id):
         return JSONResponse(
             status_code=403,

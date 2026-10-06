@@ -72,7 +72,7 @@ const TenantPreviewSelect: React.FC<TenantPreviewSelectProps> = ({
               </HStack>
             ) : (
               <Text fontSize="sm" color="gray.500">
-                Choose a tenant…
+                Choose {INSTITUTION_ARTICLE} {INSTITUTION.toLowerCase()}…
               </Text>
             )}
             <ChevronDownIcon color="gray.500" />

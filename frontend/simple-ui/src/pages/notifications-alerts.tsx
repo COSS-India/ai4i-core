@@ -1,22 +1,26 @@
-import { Box, Center, Spinner, Text, VStack } from "@chakra-ui/react";
+import { Center, Tab, TabList, TabPanel, TabPanels, Tabs } from "@chakra-ui/react";
 import Head from "next/head";
 import { useRouter } from "next/router";
 import React, { useEffect } from "react";
 import { useToastWithDeduplication } from "../utils/toast";
 import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
+import LoadingSpinner from "../components/common/LoadingSpinner";
+import MonitoringCatalogTab from "../components/notification-alerts/MonitoringCatalogTab";
 import NotificationAlertsManagement from "../components/notification-alerts/NotificationAlertsManagement";
 import { useAuth } from "../hooks/useAuth";
-import { useAdminTableSurface } from "../components/common/table";
 import { getPlatformName } from "../config/runtimeConfig";
+import { INSTITUTION } from "../config/constants";
+import { canAccessNotificationsAlerts, isPlatformAdminUser } from "../utils/rbac";
 
 const NotificationsAlertsPage: React.FC = () => {
   const router = useRouter();
   const toast = useToastWithDeduplication();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
-  const { cardBg, borderColor } = useAdminTableSurface();
 
-  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
+  const canAccess = canAccessNotificationsAlerts(user?.roles);
+  // A platform ADMIN who is also a Tenant Admin gets the catalog editor.
+  const view = isPlatformAdminUser(user?.roles) ? "adopter" : "institution";
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -32,7 +36,7 @@ const NotificationsAlertsPage: React.FC = () => {
   }, [authLoading, isAuthenticated, router, toast]);
 
   useEffect(() => {
-    if (!authLoading && isAuthenticated && !isAdmin) {
+    if (!authLoading && isAuthenticated && !canAccess) {
       toast({
         title: "Access Denied",
         description: "You do not have permission to access Notifications & Alerts.",
@@ -42,26 +46,23 @@ const NotificationsAlertsPage: React.FC = () => {
       });
       router.push("/");
     }
-  }, [authLoading, isAuthenticated, isAdmin, router, toast]);
+  }, [authLoading, isAuthenticated, canAccess, router, toast]);
 
   if (authLoading) {
     return (
       <ContentLayout>
         <Center h="400px">
-          <Spinner size="xl" color="blue.500" />
+          <LoadingSpinner size="xl" />
         </Center>
       </ContentLayout>
     );
   }
 
-  if (!isAuthenticated || !isAdmin) {
+  if (!isAuthenticated || !canAccess) {
     return (
       <ContentLayout>
         <Center h="400px">
-          <VStack spacing={4}>
-            <Spinner size="xl" color="blue.500" />
-            <Text color="gray.600">Redirecting...</Text>
-          </VStack>
+          <LoadingSpinner size="xl" label="Redirecting..." />
         </Center>
       </ContentLayout>
     );
@@ -70,7 +71,7 @@ const NotificationsAlertsPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>{`Notifications & Alerts - ${getPlatformName()}`}</title>
+        <title>{`Platform Settings - ${getPlatformName()}`}</title>
         <meta
           name="description"
           content="Configure system-seeded notifications and threshold alerts"
@@ -78,23 +79,35 @@ const NotificationsAlertsPage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <Box maxW="full" mx="auto" py={8} px={6}>
-          <ManagementPageHeader
-            title="Notifications & Alerts"
-            description="Configure system-seeded notification and alert catalog for Adopter Admin"
-          />
+        <ManagementPageHeader
+          title="Platform Settings"
+          description={
+            view === "adopter"
+              ? "Configure system-seeded notification and alert catalog for Adopter Admin"
+              : `Choose which notifications and alerts your ${INSTITUTION.toLowerCase()} receives, and who else should get them`
+          }
+        />
 
-          <Box
-            mt={6}
-            bg={cardBg}
-            borderWidth="1px"
-            borderColor={borderColor}
-            borderRadius="lg"
-            p={6}
-          >
-            <NotificationAlertsManagement />
-          </Box>
-        </Box>
+        {view === "adopter" ? (
+          // keepMounted: switching to Monitoring and back must not drop
+          // unsaved catalog edits.
+          <Tabs colorScheme="blue" isLazy lazyBehavior="keepMounted">
+            <TabList mb={5}>
+              <Tab fontWeight="semibold">Metering</Tab>
+              <Tab fontWeight="semibold">Monitoring</Tab>
+            </TabList>
+            <TabPanels>
+              <TabPanel px={0} py={0}>
+                <NotificationAlertsManagement view="adopter" />
+              </TabPanel>
+              <TabPanel px={0} py={0}>
+                <MonitoringCatalogTab />
+              </TabPanel>
+            </TabPanels>
+          </Tabs>
+        ) : (
+          <NotificationAlertsManagement view="institution" />
+        )}
       </ContentLayout>
     </>
   );

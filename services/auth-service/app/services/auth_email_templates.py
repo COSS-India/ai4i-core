@@ -28,7 +28,7 @@ def _display_name(user: User) -> str:
 
 
 def _platform_name() -> str:
-    """Adopter-configurable product name (PLATFORM_NAME / default AI4I Orchestrate)."""
+    """Adopter-configurable product name (PLATFORM_NAME, required)."""
     return settings.get_platform_name()
 
 
@@ -155,19 +155,6 @@ def render_password_changed(user: User, when: Optional[datetime] = None) -> Emai
         ctx={
             "display_name": _display_name(user),
             "when": when.strftime("%Y-%m-%d %H:%M:%S"),
-        },
-    )
-
-
-def render_quota_limit_updated(user: User, tier_name: str) -> EmailMessage:
-    name = _platform_name()
-    return _render(
-        "quota_limit_updated",
-        to=user.email,
-        subject=f"Tier quota limit updated — {name}",
-        ctx={
-            "display_name": _display_name(user),
-            "tier_name": tier_name,
         },
     )
 

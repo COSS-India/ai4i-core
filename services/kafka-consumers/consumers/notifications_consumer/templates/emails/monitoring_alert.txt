@@ -1,0 +1,31 @@
+{{ platform_name }}
+================================
+
+Dear {{ recipient_name }},
+
+{{ event.name }} has reached the configured threshold of {{ event.threshold }}{{ event.unit }} as of
+{{ event.alert_datetime }}.
+
+{% if event.affected_services | length > 1 %}
+Affected Services:
+{% for service, value, threshold in event.affected_services %}
+{{ " " ~ service }} — Current Value: {{ value }}{{ event.unit }}
+{%- if threshold != event.threshold %} (Threshold {{ threshold }}{{ event.unit }}){% endif %}
+
+{% endfor %}
+{% else %}
+Current Value: {{ event.current_value }}{{ event.unit }}
+{% if event.affected_service %}
+Affected Service: {{ event.affected_service }}
+{% endif %}
+{% endif %}
+
+{% if portal_url -%}
+Log in to the {{ platform_name }} Portal to view full details: {{ portal_url }}
+{%- else -%}
+Log in to the {{ platform_name }} Portal to view full details.
+{%- endif %}
+
+
+Regards,
+{{ platform_name }} Team

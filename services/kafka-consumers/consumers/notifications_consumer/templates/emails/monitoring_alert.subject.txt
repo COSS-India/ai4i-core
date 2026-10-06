@@ -1,0 +1,1 @@
+{{ event.name }} — Threshold {{ event.threshold }}{{ event.unit }}

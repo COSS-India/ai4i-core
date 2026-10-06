@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useToast } from "@chakra-ui/react";
 import {
   createApplication,
@@ -13,13 +13,17 @@ import {
   fetchApplicationUsageDetail,
   fetchApplicationUsageList,
 } from "../../../services/applicationUsageService";
+import { countActiveApiKeysForApplications } from "../../../services/apiKeyService";
 import { parseError } from "../../../utils/errorHandler";
 import {
+  allocatedKeyFloorAmount,
+  allocatedKeyHolders,
   previewKeyCascade,
   resolveApplicationBudget,
   roundMoney,
   roundPct,
   type ApplicationKeyPreview,
+  type KeyAllocationHolder,
 } from "../../../utils/applicationBudgetPreview";
 import type {
   AllocationUpdate,
@@ -28,9 +32,9 @@ import type {
 } from "../../../types/application";
 import {
   allocationErrorEntityId,
+  belowAllocatedToKeys,
   belowConsumedAmount,
   belowConsumedPct,
-  belowConsumedPctRaw,
   BUDGET_TOAST,
   BUDGET_VALIDATION,
   keyWouldDropBelowConsumed,
@@ -58,12 +62,15 @@ const EMPTY_FORM: ApplicationForm = {
   allocated_percentage: "",
 };
 
+/** Application-level amounts from the usage list. Null means that list did not supply them. */
 export type BulkBudgetDraft = {
   application_id: string;
   name: string;
   status: ApplicationStatus;
+  allocated_amount: number | null;
   consumed_percentage: number | null;
   consumed_budget: number | null;
+  remaining_budget: number | null;
   originalPct: number | null;
   pctInput: string;
   resolvedPct: number | null;
@@ -73,6 +80,8 @@ export type BulkBudgetDraft = {
   keys: ApplicationApiKeyRow[];
   keyPreviews: ApplicationKeyPreview[];
   rowError: string | null;
+  /** Rejected stepper attempt. Does not change the draft or block save. */
+  inputNotice: string | null;
 };
 
 function mapApplicationAllocationError(error: unknown): string {
@@ -102,7 +111,7 @@ function usageDetailToKeyRows(
       id: key.keyId,
       key_name: key.keyName,
       allocated_percentage:
-        appAllocatedAmount > 0
+        appAllocatedAmount > 0 && key.allocatedBudget.amount > 0
           ? roundPct((key.allocatedBudget.amount / appAllocatedAmount) * 100)
           : key.allocatedBudget.percentage,
       allocated_budget: key.allocatedBudget.amount,
@@ -179,8 +188,10 @@ function buildDraftFromApplication(app: Application): BulkBudgetDraft {
     application_id: app.application_id,
     name: app.name,
     status: app.status,
+    allocated_amount: null,
     consumed_percentage: app.consumed_percentage ?? null,
     consumed_budget: app.consumed_budget ?? null,
+    remaining_budget: null,
     originalPct: pct,
     pctInput: pctString(pct),
     resolvedPct: pct,
@@ -190,17 +201,31 @@ function buildDraftFromApplication(app: Application): BulkBudgetDraft {
     keys: [],
     keyPreviews: [],
     rowError: null,
+    inputNotice: null,
   };
 }
 
 function evaluateRowError(
   row: BulkBudgetDraft,
   tenantBudget: number,
+  currency = "INR",
 ): string | null {
+  if (row.pctInput.trim() === "" && row.originalPct != null) {
+    return BUDGET_VALIDATION.enterValidAllocationPercentage;
+  }
   if (row.resolvedPct == null) return null;
   if (row.resolvedPct < 0 || row.resolvedPct > 100) {
     return BUDGET_VALIDATION.percentageMustBeBetween0And100;
   }
+  const keyFloorError = belowKeyAllocationError(
+    row.name,
+    row.resolvedAmount,
+    allocatedKeyHolders(row.keys),
+    row.consumed_budget,
+    tenantBudget,
+    currency,
+  );
+  if (keyFloorError) return keyFloorError;
   if (
     row.consumed_percentage != null &&
     row.resolvedPct < row.consumed_percentage - 1e-6
@@ -224,10 +249,43 @@ function evaluateRowError(
   return null;
 }
 
+/** Server allows a cent of legacy drift per key before rejecting a reduction. */
+function allocationDriftTolerance(keyCount: number): number {
+  return 0.01 * Math.max(keyCount, 1);
+}
+
+function belowKeyAllocationError(
+  applicationName: string,
+  resolvedAmount: number | null,
+  holders: KeyAllocationHolder[],
+  consumedAmount: number | null,
+  tenantBudget: number,
+  currency: string,
+): string | null {
+  const keyFloor = roundMoney(holders.reduce((sum, key) => sum + key.amount, 0));
+  const consumed = consumedAmount ?? 0;
+  if (
+    holders.length === 0 ||
+    resolvedAmount == null ||
+    keyFloor <= consumed + 1e-6 ||
+    resolvedAmount >= keyFloor - allocationDriftTolerance(holders.length)
+  ) {
+    return null;
+  }
+  return belowAllocatedToKeys(
+    applicationName.trim() || "This Application",
+    keyFloor,
+    toInstitutionConsumedPct(keyFloor, tenantBudget),
+    holders,
+    currency,
+  );
+}
+
 function applyResolved(
   row: BulkBudgetDraft,
   tenantBudget: number,
   raw: string,
+  currency = "INR",
 ): BulkBudgetDraft {
   const trimmed = raw.trim();
   if (trimmed === "") {
@@ -238,12 +296,13 @@ function applyResolved(
       resolvedAmount: null,
       keyPreviews: [],
       rowError: null,
+      inputNotice: null,
     };
-    return { ...next, rowError: evaluateRowError(next, tenantBudget) };
+    return { ...next, rowError: evaluateRowError(next, tenantBudget, currency) };
   }
   const numeric = Number(trimmed);
   if (!Number.isFinite(numeric)) {
-    return { ...row, rowError: BUDGET_VALIDATION.enterValidNumber };
+    return { ...row, inputNotice: null, rowError: BUDGET_VALIDATION.enterValidAllocationPercentage };
   }
   const resolved = resolveApplicationBudget("percentage", numeric, tenantBudget);
   if (!resolved) {
@@ -261,13 +320,22 @@ function applyResolved(
     resolvedAmount: resolved.amount,
     keyPreviews,
     rowError: null,
+    inputNotice: null,
   };
-  return { ...next, rowError: evaluateRowError(next, tenantBudget) };
+  return { ...next, rowError: evaluateRowError(next, tenantBudget, currency) };
 }
 
-export function useApplicationManagement(tenantId: string, institutionBudget: number | null) {
+export function useApplicationManagement(
+  tenantId: string,
+  institutionBudget: number | null,
+  currency = "INR",
+) {
   const toast = useToast();
   const [applications, setApplications] = useState<Application[]>([]);
+  /** Count from the full budget list, so search does not change the overview. */
+  const [institutionApplicationCount, setInstitutionApplicationCount] = useState<number | null>(
+    null,
+  );
   const [totalAllocatedPct, setTotalAllocatedPct] = useState(0);
   const [tenantBudget, setTenantBudget] = useState(institutionBudget ?? 0);
   const [total, setTotal] = useState(0);
@@ -289,9 +357,21 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
   const [isSaving, setIsSaving] = useState(false);
 
   const [budgetDraft, setBudgetDraft] = useState("");
-  const [budgetFloor, setBudgetFloor] = useState(0);
   const [budgetBanner, setBudgetBanner] = useState<string | null>(null);
   const [budgetStepperHint, setBudgetStepperHint] = useState<string | null>(null);
+  /** Null unless usage detail succeeded. Never treat a failed load as ₹0. */
+  const [budgetUsage, setBudgetUsage] = useState<{
+    allocated: number;
+    consumed: number;
+    remaining: number;
+    keyFloorAmount: number;
+    keyHolders: KeyAllocationHolder[];
+  } | null>(null);
+  const [budgetUsageState, setBudgetUsageState] = useState<"loading" | "ready" | "error">(
+    "loading",
+  );
+  const budgetUsageRequestRef = useRef<string | null>(null);
+  const tableRequestRef = useRef(0);
 
   const [bulkBudgetOpen, setBulkBudgetOpen] = useState(false);
   const [bulkLoading, setBulkLoading] = useState(false);
@@ -308,11 +388,23 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     setTenantBudget(institutionBudget ?? 0);
   }, [institutionBudget]);
 
+  const budgetApplicationsRef = useRef<{
+    tenantId: string;
+    applications: Application[];
+  } | null>(null);
+  /** Drops in-flight key loads when the bulk dialog is opened again. */
+  const bulkLoadGenerationRef = useRef(0);
+
   const loadAllocationSummary = useCallback(async () => {
     if (!tenantId) return;
     try {
       const all = await listAllApplicationsForBudget(tenantId);
+      budgetApplicationsRef.current = {
+        tenantId,
+        applications: all.applications,
+      };
       setTotalAllocatedPct(sumAllocatedPercentage(all.applications));
+      setInstitutionApplicationCount(all.applications.length);
     } catch {
       // Keep the previous summary if the full fetch fails.
     }
@@ -320,6 +412,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
 
   const loadTable = useCallback(async () => {
     if (!tenantId) return;
+    const requestId = ++tableRequestRef.current;
     setIsLoading(true);
     setLoadError(null);
     try {
@@ -328,12 +421,25 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
         page,
         size: pageSize,
       });
+      if (requestId !== tableRequestRef.current) return;
       setApplications(list.applications);
       setTotal(list.pagination.total);
+      setIsLoading(false);
+      const counts = await countActiveApiKeysForApplications(
+        list.applications.map((app) => app.application_id),
+      );
+      if (requestId !== tableRequestRef.current) return;
+      setApplications((prev) =>
+        prev.map((app) => {
+          const count = counts.get(app.application_id);
+          return count === undefined ? app : { ...app, api_key_count: count };
+        }),
+      );
     } catch (error) {
+      if (requestId !== tableRequestRef.current) return;
       setLoadError(parseError(error).message);
     } finally {
-      setIsLoading(false);
+      if (requestId === tableRequestRef.current) setIsLoading(false);
     }
   }, [tenantId, search, page, pageSize]);
 
@@ -371,6 +477,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
 
   const loadKeysForRow = useCallback(async (applicationId: string) => {
     if (!tenantId) return;
+    const generation = bulkLoadGenerationRef.current;
     setBulkRows((prev) =>
       prev.map((row) =>
         row.application_id === applicationId
@@ -383,6 +490,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
         tenantId,
         Number(applicationId),
       );
+      if (bulkLoadGenerationRef.current !== generation) return;
       const activeKeys = usageDetailToKeyRows(
         detail.apiKeys,
         detail.allocatedBudget.amount,
@@ -406,10 +514,11 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
             ),
             consumed_budget: detail.spendBudget.amount,
           };
-          return { ...next, rowError: evaluateRowError(next, tenantBudget) };
+          return { ...next, rowError: evaluateRowError(next, tenantBudget, currency) };
         }),
       );
     } catch (error) {
+      if (bulkLoadGenerationRef.current !== generation) return;
       const message = parseError(error).message;
       setBulkRows((prev) =>
         prev.map((row) =>
@@ -424,16 +533,28 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
         ),
       );
     }
-  }, [tenantBudget, tenantId]);
+  }, [currency, tenantBudget, tenantId]);
 
   const openBulkBudget = useCallback(async () => {
     if (!tenantId) return;
+    const generation = bulkLoadGenerationRef.current + 1;
+    bulkLoadGenerationRef.current = generation;
     setBulkBudgetOpen(true);
     setBulkBanner(null);
     setBulkLoading(true);
     setBulkRows([]);
     try {
-      const list = await listAllApplicationsForBudget(tenantId);
+      const cached = budgetApplicationsRef.current;
+      const list =
+        cached?.tenantId === tenantId
+          ? { applications: cached.applications }
+          : await listAllApplicationsForBudget(tenantId);
+      if (cached?.tenantId !== tenantId) {
+        budgetApplicationsRef.current = {
+          tenantId,
+          applications: list.applications,
+        };
+      }
       let usageWarning: string | null = null;
       let usageRows: Awaited<
         ReturnType<typeof fetchApplicationUsageList>
@@ -444,6 +565,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
       } catch (usageError) {
         usageWarning = `Could not load consumption data: ${parseError(usageError).message}`;
       }
+      if (bulkLoadGenerationRef.current !== generation) return;
       const usageByAppId = new Map(
         usageRows.map((row) => [String(row.applicationId), row]),
       );
@@ -453,11 +575,13 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
         const draft = buildDraftFromApplication(app);
         const usageRow = usageByAppId.get(app.application_id);
         if (usageRow) {
+          draft.allocated_amount = usageRow.allocatedBudget.amount;
           draft.consumed_percentage = toInstitutionConsumedPct(
             usageRow.spendBudget.amount,
             effectiveBudget,
           );
           draft.consumed_budget = usageRow.spendBudget.amount;
+          draft.remaining_budget = usageRow.remainingBudget.amount;
         }
         if (
           draft.resolvedPct != null &&
@@ -466,16 +590,27 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
         ) {
           draft.resolvedAmount = roundMoney((effectiveBudget * draft.resolvedPct) / 100);
         }
+        if (isApplicationBudgetEditable(draft.status)) {
+          draft.keysLoading = true;
+        }
         return draft;
       });
       setBulkRows(drafts);
       if (usageWarning) setBulkBanner(usageWarning);
+      for (const draft of drafts) {
+        if (isApplicationBudgetEditable(draft.status)) {
+          void loadKeysForRow(draft.application_id);
+        }
+      }
     } catch (error) {
+      if (bulkLoadGenerationRef.current !== generation) return;
       setBulkBanner(mapApplicationAllocationError(error));
     } finally {
-      setBulkLoading(false);
+      if (bulkLoadGenerationRef.current === generation) {
+        setBulkLoading(false);
+      }
     }
-  }, [tenantId, institutionBudget]);
+  }, [tenantId, institutionBudget, loadKeysForRow]);
 
   const onBulkRowFocus = useCallback(
     (applicationId: string) => {
@@ -492,24 +627,24 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
         prev.map((row) => {
           if (row.application_id !== applicationId) return row;
           if (!isApplicationBudgetEditable(row.status)) return row;
-          const next = applyResolved(row, tenantBudget, value);
+          const next = applyResolved(row, tenantBudget, value, currency);
           if (row.keysLoaded && next.resolvedAmount != null) {
             next.keyPreviews = previewKeyCascade(next.resolvedAmount, row.keys);
-            next.rowError = evaluateRowError(next, tenantBudget);
+            next.rowError = evaluateRowError(next, tenantBudget, currency);
           }
           return next;
         }),
       );
       onBulkRowFocus(applicationId);
     },
-    [tenantBudget, onBulkRowFocus],
+    [currency, tenantBudget, onBulkRowFocus],
   );
 
   const onBulkPctBoundHit = useCallback((applicationId: string, bound: PercentageBound) => {
     setBulkRows((prev) =>
       prev.map((row) =>
         row.application_id === applicationId && isApplicationBudgetEditable(row.status)
-          ? { ...row, rowError: percentageBoundMessage(bound) }
+          ? { ...row, inputNotice: percentageBoundMessage(bound) }
           : row,
       ),
     );
@@ -605,17 +740,36 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     setBudgetDraft(
       app.allocated_percentage == null ? "" : String(app.allocated_percentage),
     );
-    setBudgetFloor(0);
     setBudgetBanner(null);
     setBudgetStepperHint(null);
+    setBudgetUsage(null);
+    setBudgetUsageState("loading");
     setBudgetOpen(true);
+    const requestId = app.application_id;
+    budgetUsageRequestRef.current = requestId;
     void fetchApplicationUsageDetail(tenantId, Number(app.application_id))
       .then((detail) => {
-        const budget = institutionBudget ?? tenantBudget;
-        const floor = toInstitutionConsumedPct(detail.spendBudget.amount, budget);
-        setBudgetFloor(floor ?? 0);
+        if (budgetUsageRequestRef.current !== requestId) return;
+        const activeKeys = usageDetailToKeyRows(
+          detail.apiKeys,
+          detail.allocatedBudget.amount,
+        );
+        const keyHolders = allocatedKeyHolders(activeKeys);
+        const keyFloorAmount = allocatedKeyFloorAmount(activeKeys);
+        setBudgetUsage({
+          allocated: detail.allocatedBudget.amount,
+          consumed: detail.spendBudget.amount,
+          remaining: detail.remainingBudget.amount,
+          keyFloorAmount,
+          keyHolders,
+        });
+        setBudgetUsageState("ready");
       })
-      .catch(() => setBudgetFloor(0));
+      .catch(() => {
+        if (budgetUsageRequestRef.current !== requestId) return;
+        setBudgetUsage(null);
+        setBudgetUsageState("error");
+      });
   };
 
   const budgetOthersAllocated = useMemo(() => {
@@ -630,19 +784,34 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
   const budgetAvailable = Math.max(0, 100 - budgetOthersAllocated);
 
   const budgetFieldError = useMemo(() => {
-    if (budgetParsed === "invalid") return BUDGET_VALIDATION.enterValidPercentage;
+    if (budgetDraft.trim() === "" || budgetParsed === "invalid") {
+      return BUDGET_VALIDATION.enterValidAllocationPercentage;
+    }
     if (budgetParsed != null && budgetParsed < 0) return BUDGET_VALIDATION.budgetCannotBeNegative;
     if (budgetParsed != null && budgetParsed > 100) {
       return BUDGET_VALIDATION.percentageMustBeBetween0And100;
     }
-    if (budgetParsed != null && budgetFloor > 0 && budgetParsed < budgetFloor - 1e-6) {
-      return belowConsumedPctRaw(budgetFloor);
+    if (budgetParsed != null && tenantBudget > 0 && budgetUsage) {
+      const enteredAmount = roundMoney((tenantBudget * budgetParsed) / 100);
+      const keyFloorError = belowKeyAllocationError(
+        selected?.name ?? "This Application",
+        enteredAmount,
+        budgetUsage.keyHolders,
+        budgetUsage.consumed,
+        tenantBudget,
+        currency,
+      );
+      if (keyFloorError) return keyFloorError;
+      const tolerance = allocationDriftTolerance(Math.max(budgetUsage.keyHolders.length, 1));
+      if (budgetUsage.consumed > 0 && enteredAmount < budgetUsage.consumed - tolerance) {
+        return belowConsumedAmount(budgetUsage.consumed);
+      }
     }
     if (budgetLiveTotal > 100 + 1e-6) {
       return totalApplicationsOver100(budgetLiveTotal);
     }
     return null;
-  }, [budgetParsed, budgetFloor, budgetLiveTotal]);
+  }, [budgetDraft, budgetParsed, budgetLiveTotal, budgetUsage, currency, selected, tenantBudget]);
 
   const validateCreate = (): boolean => {
     const errors: Record<string, string> = {};
@@ -771,6 +940,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
       });
       toast({ title: "Application updated.", status: "success", duration: 3000, isClosable: true });
       setEditOpen(false);
+      setViewOpen(false);
       await reload();
     } catch (error) {
       const code = getApplicationErrorCode(error);
@@ -804,6 +974,7 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     loadError,
     remainingPct,
     totalAllocatedPct,
+    institutionApplicationCount,
     tenantBudget,
     institutionBudgetUnset,
     createOpen,
@@ -838,8 +1009,9 @@ export function useApplicationManagement(tenantId: string, institutionBudget: nu
     budgetStepperHint,
     budgetLiveTotal,
     budgetFieldError,
-    budgetFloor,
     budgetAvailable,
+    budgetUsage,
+    budgetUsageState,
     budgetBanner,
     bulkBudgetOpen,
     setBulkBudgetOpen,

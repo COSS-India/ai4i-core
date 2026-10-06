@@ -1,18 +1,27 @@
 {% extends "_base.html" %}
-{% block title %}{{ notification_name }} — {{ institution_name }}{% endblock %}
-{% block preheader %}{{ notification_headline }}{% endblock %}
-{% block heading %}{{ notification_name }} — {{ institution_name }}{% endblock %}
+{# Standard Notification Email Template. From events/<event_name>.j2:
+   event.name, event.headline, event.lines — a line that is itself a list
+   renders as indented sub-lines. #}
+{% block title %}{{ event.name }} — {{ tenant_name }}{% endblock %}
+{% block preheader %}{{ event.headline }}{% endblock %}
+{% block heading %}{{ event.name }} — {{ tenant_name }}{% endblock %}
 {% block body %}
   <p style="margin:0 0 4px 0;">Dear {{ recipient_name }},</p>
-  <p style="margin:0 0 16px 0;">{{ notification_headline }}</p>
-  {% for line in notification_details %}
+  <p style="margin:0 0 16px 0;">{{ event.headline }}</p>
+  {% for line in event.lines %}
+  {% if line is string %}
   <p style="margin:0 0 4px 0;">{{ line }}</p>
+  {% else %}
+  {% for sub_line in line %}
+  <p style="margin:0 0 4px 0;"> {{ sub_line }}</p>
+  {% endfor %}
+  {% endif %}
   {% endfor %}
   <div style="margin-top:16px;">
     {% include "_portal_line.html" %}
   </div>
   <p style="margin:20px 0 0 0;">
     Regards,<br>
-    AI4I-Orchestrate Team
+    {{ platform_name }} Team
   </p>
 {% endblock %}

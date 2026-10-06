@@ -7,6 +7,7 @@ autouse fixture would run too late (after imports) and cause a ValidationError
 during collection.
 """
 
+import importlib.util
 import os
 import sys
 import time
@@ -24,6 +25,7 @@ from pydantic import BaseModel as _PydanticBaseModel, ConfigDict as _ConfigDict
 os.environ.setdefault("SERVICE_NAME", "platform-core-service")
 os.environ.setdefault("SERVICE_VERSION", "0.0.0-test")
 os.environ.setdefault("API_VERSION", "v1")
+os.environ.setdefault("PLATFORM_NAME", "Test Platform")
 os.environ.setdefault("NER_SERVICE_URL", "http://localhost:9001")
 os.environ.setdefault("PII_LLM_URL", "http://localhost:9002")
 os.environ.setdefault("REDIS_HOST", "localhost")
@@ -113,7 +115,18 @@ _ai4i_exc = _conftest_stub(
     success_response=_success_response,
     error_response=_error_response,
 )
-_conftest_stub("ai4i_core", exceptions=_ai4i_exc)
+# Found before "ai4i_core" is stubbed below, so find_spec locates the real
+# package on disk instead of reading the stub.
+_real_ai4i_core_spec = importlib.util.find_spec("ai4i_core")
+
+_ai4i_core_stub = _conftest_stub("ai4i_core", exceptions=_ai4i_exc)
+
+# Give the stub the real package's __path__ so an unstubbed submodule, such
+# as ai4i_core.kafka (the shared notification constants and pipeline), still
+# resolves to the real module. Submodules already stubbed by exact name
+# (.exceptions, .ppu, ...) keep using their fakes.
+if _real_ai4i_core_spec and _real_ai4i_core_spec.submodule_search_locations:
+    _ai4i_core_stub.__path__ = list(_real_ai4i_core_spec.submodule_search_locations)
 
 # The seeded catalogue. Must mirror the seed migration
 # (52eb3034332e_seed_inference_types.py) exactly — metering_service.py reads
@@ -208,6 +221,19 @@ _redis_stub.get_redis_client = MagicMock()
 # none of the catalogue path they exist to cover.
 
 import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _reset_metering_retention_cache():
+    """The Prometheus-reported retention is cached per process
+    (app.utils.metering_retention); start and end every test without one, so
+    a value one test discovers can't change what another test's queries
+    clamp to. Tests that set PROMETHEUS_RETENTION_DAYS get the fallback."""
+    from app.utils.metering_retention import reset_retention_cache
+
+    reset_retention_cache()
+    yield
+    reset_retention_cache()
 
 
 @pytest.fixture(autouse=True)

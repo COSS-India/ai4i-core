@@ -4,7 +4,6 @@ import {
   Box,
   Button,
   FormControl,
-  FormLabel,
   HStack,
   Switch,
   Text,
@@ -40,7 +39,7 @@ import {
 import { showToast } from "../utils/toast";
 import { INSTITUTION, INSTITUTIONS, INSTITUTION_ARTICLE, isTenantStatus, TENANT, formatModelTaskTypeLabel } from "../config/constants";
 import { useInferenceTypes } from "../hooks/useInferenceTypes";
-import { listTenants } from "../services/tenantService";
+import { useTenantsList } from "../hooks/useTenantsList";
 import DataTable, {
   useAdminTableSurface,
   type DataTableColumn,
@@ -50,6 +49,8 @@ import TelemetryTraceDetailModal from "@/components/observability/TelemetryTrace
 import { getPlatformName } from "../config/runtimeConfig";
 import { FIELD_HINTS } from "../config/fieldHints";
 import FieldHint from "../components/common/FieldHint";
+import FieldLabel from "../components/common/FieldLabel";
+import { isPlatformAdminUser, isTenantAdminUser, userHasRole } from "../utils/rbac";
 
 /** Auto-refresh interval when enabled (within 30–45s range). */
 const AUTO_REFRESH_MS = 37_000;
@@ -123,13 +124,13 @@ const LogsPage: React.FC = () => {
   const [isTraceModalOpen, setIsTraceModalOpen] = useState(false);
 
   // Check if user is admin (full ADMIN role — sees all tenants)
-  const isAdmin = user?.roles?.includes('ADMIN') || false;
+  const isAdmin = isPlatformAdminUser(user?.roles);
   // Check if user has USER role - hide logs UI for them
-  const isUser = user?.roles?.includes('USER') || false;
+  const isUser = userHasRole(user?.roles, "USER");
   // Check if user has GUEST role - hide logs UI for them
-  const isGuest = user?.roles?.includes('GUEST') || false;
+  const isGuest = userHasRole(user?.roles, "GUEST");
   // Check if user is a TENANT ADMIN — scoped to their own tenant only
-  const isTenantAdmin = user?.roles?.includes('TENANT ADMIN') || false;
+  const isTenantAdmin = isTenantAdminUser(user?.roles);
   const canPickTenant = isAdmin && !isTenantAdmin;
   const { cardBg, borderColor } = useAdminTableSurface();
 
@@ -196,12 +197,8 @@ const LogsPage: React.FC = () => {
   }, [isAuthenticated, authLoading, user, isUser, isGuest, isAdmin, isTenantAdmin, authTenantId, router]);
 
   // Fetch tenants list (for all admins - ADMIN or SUPER_ADMIN role)
-  const { data: tenantsData, isLoading: tenantsLoading, error: tenantsError } = useQuery({
-    queryKey: ["tenants-list"],
-    queryFn: () => listTenants(),
+  const { data: tenantsData, isLoading: tenantsLoading, error: tenantsError } = useTenantsList({
     enabled: isAuthenticated && canPickTenant,
-    staleTime: 5 * 60 * 1000, // 5 minutes
-    retry: 1, // Retry once on failure
   });
 
   // Fetch the current tenant's detail (subscriptions) for TENANT ADMIN role
@@ -432,12 +429,11 @@ const LogsPage: React.FC = () => {
       {
         id: "timestamp",
         header: "Timestamp",
-        thProps: { fontWeight: "semibold", color: "gray.700", py: 3 },
         sortable: true,
         sortAccessor: (row) =>
           row.timestamp ? new Date(row.timestamp).getTime() : 0,
         cell: (row) => (
-          <Text fontSize="sm" color="gray.600" py={3}>
+          <Text fontSize="sm" color="ink.600">
             {formatTimestamp(row.timestamp)}
           </Text>
         ),
@@ -445,7 +441,6 @@ const LogsPage: React.FC = () => {
       {
         id: "status",
         header: "Status",
-        thProps: { fontWeight: "semibold", color: "gray.700" },
         cell: (row) => (
           <Badge
             colorScheme={getStatusColor(row.status)}
@@ -462,9 +457,8 @@ const LogsPage: React.FC = () => {
       {
         id: "task_type",
         header: "Task Type",
-        thProps: { fontWeight: "semibold", color: "gray.700" },
         cell: (row) => (
-          <Text fontSize="sm" fontWeight="medium" color="gray.700">
+          <Text fontSize="sm" fontWeight="medium" color="ink.700">
             {row.task_type || "—"}
           </Text>
         ),
@@ -472,11 +466,10 @@ const LogsPage: React.FC = () => {
       {
         id: "url",
         header: "URL",
-        thProps: { fontWeight: "semibold", color: "gray.700" },
         sortable: true,
         sortAccessor: (row) => row.url ?? "",
         cell: (row) => (
-          <Text noOfLines={2} maxW="400px" fontSize="sm" color="gray.700" fontFamily="mono">
+          <Text noOfLines={2} maxW="400px" fontSize="sm" color="ink.700" fontFamily="mono">
             {row.url}
           </Text>
         ),
@@ -484,9 +477,8 @@ const LogsPage: React.FC = () => {
       {
         id: "tenant_id",
         header: INSTITUTION,
-        thProps: { fontWeight: "semibold", color: "gray.700" },
         cell: (row) => (
-          <Text fontSize="sm" color="gray.600">
+          <Text fontSize="sm" color="ink.600">
             {resolveTenantName(row.tenant_id)}
           </Text>
         ),
@@ -494,7 +486,6 @@ const LogsPage: React.FC = () => {
       {
         id: "actions",
         header: "Actions",
-        thProps: { fontWeight: "semibold", color: "gray.700" },
         cell: (row) =>
           row.trace_id ? (
             <Tooltip label="View trace" placement="top" hasArrow>
@@ -503,7 +494,7 @@ const LogsPage: React.FC = () => {
                 icon={<ViewIcon />}
                 size="sm"
                 variant="ghost"
-                color="gray.700"
+                color="ink.700"
                 _hover={{ color: "blue.500", bg: "blue.50" }}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -512,7 +503,7 @@ const LogsPage: React.FC = () => {
               />
             </Tooltip>
           ) : (
-            <Text color="gray.400" fontSize="sm">
+            <Text color="ink.400" fontSize="sm">
               —
             </Text>
           ),
@@ -539,10 +530,10 @@ const LogsPage: React.FC = () => {
             <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm" w="full">
               <CardBody>
                 <Flex direction="column" align="center" justify="center" py={12}>
-                  <Text fontSize="lg" color="gray.500" fontWeight="medium" mb={2}>
+                  <Text fontSize="lg" color="ink.500" fontWeight="medium" mb={2}>
                     Access Denied
                   </Text>
-                  <Text fontSize="sm" color="gray.400" textAlign="center">
+                  <Text fontSize="sm" color="ink.400" textAlign="center">
                     You do not have permission to view logs.
                   </Text>
                 </Flex>
@@ -588,13 +579,11 @@ const LogsPage: React.FC = () => {
                 border="1px"
                 borderColor={borderColor}
                 boxShadow="sm"
-                _hover={{ boxShadow: "md", transform: "translateY(-2px)" }}
-                transition="all 0.2s"
               >
                 <CardBody>
                   <Stat>
-                    <StatLabel fontSize="sm" color="gray.600" fontWeight="medium">Total Requests</StatLabel>
-                    <StatNumber fontSize="2xl" fontWeight="bold" color="gray.800">
+                    <StatLabel fontSize="sm" color="ink.600" fontWeight="medium">Total Requests</StatLabel>
+                    <StatNumber fontSize="2xl" fontWeight="bold" color="ink.800">
                       {aggregationStats.total.toLocaleString()}
                     </StatNumber>
                   </Stat>
@@ -605,12 +594,10 @@ const LogsPage: React.FC = () => {
                 border="1px"
                 borderColor="green.200"
                 boxShadow="sm"
-                _hover={{ boxShadow: "md", transform: "translateY(-2px)", borderColor: "green.300" }}
-                transition="all 0.2s"
               >
                 <CardBody>
                   <Stat>
-                    <StatLabel fontSize="sm" color="gray.600" fontWeight="medium">Success</StatLabel>
+                    <StatLabel fontSize="sm" color="ink.600" fontWeight="medium">Success</StatLabel>
                     <StatNumber fontSize="2xl" fontWeight="bold" color="green.500">
                       {aggregationStats.by_level.success.toLocaleString()}
                     </StatNumber>
@@ -622,12 +609,10 @@ const LogsPage: React.FC = () => {
                 border="1px"
                 borderColor="red.200"
                 boxShadow="sm"
-                _hover={{ boxShadow: "md", transform: "translateY(-2px)", borderColor: "red.300" }}
-                transition="all 0.2s"
               >
                 <CardBody>
                   <Stat>
-                    <StatLabel fontSize="sm" color="gray.600" fontWeight="medium">Failures</StatLabel>
+                    <StatLabel fontSize="sm" color="ink.600" fontWeight="medium">Failures</StatLabel>
                     <StatNumber fontSize="2xl" fontWeight="bold" color="red.500">
                       {aggregationStats.by_level.failure.toLocaleString()}
                     </StatNumber>
@@ -637,8 +622,6 @@ const LogsPage: React.FC = () => {
             </SimpleGrid>
               )}
 
-              <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm" w="full">
-            <CardBody>
               {!tracesError && (
                 <>
                   <DataTable
@@ -654,6 +637,7 @@ const LogsPage: React.FC = () => {
                       if (row.trace_id) openTraceDetail(row.trace_id);
                     }}
                     paginate="server"
+                    paginationPosition="bottom"
                     serverPagination={{
                       page,
                       pageSize,
@@ -665,7 +649,6 @@ const LogsPage: React.FC = () => {
                       },
                       pageSizeOptions: [10, 15, 25, 50, 100],
                     }}
-                    size="md"
                     isLoading={tracesLoading}
                     loadingMessage="Loading traces..."
                     emptyMessage="No traces found for the selected filters. Try adjusting the time range or removing filters."
@@ -765,16 +748,18 @@ const LogsPage: React.FC = () => {
                     filterToolbarRightContent={
                       <HStack spacing={3} flexWrap="wrap">
                         <FormControl display="flex" alignItems="center" w="auto">
-                          <FormLabel
-                            htmlFor="auto-refresh-toggle"
-                            mb="0"
-                            fontSize="sm"
-                            fontWeight="medium"
-                            mr={2}
-                            whiteSpace="nowrap"
+                          <FieldLabel
+                            formLabelProps={{
+                              htmlFor: "auto-refresh-toggle",
+                              mb: 0,
+                              fontSize: "sm",
+                              fontWeight: "medium",
+                              mr: 2,
+                              whiteSpace: "nowrap",
+                            }}
                           >
                             Auto-refresh
-                          </FormLabel>
+                          </FieldLabel>
                           <Switch
                             id="auto-refresh-toggle"
                             colorScheme="green"
@@ -801,8 +786,6 @@ const LogsPage: React.FC = () => {
                   />
                 </>
               )}
-            </CardBody>
-              </Card>
 
               <TelemetryTraceDetailModal
                 traceId={selectedTraceId}

@@ -10,7 +10,7 @@ both .env and OS-level vars are accepted.
 
 from typing import Optional
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -79,6 +79,15 @@ class CoreSettings(BaseSettings):
     default_receiver_emails: Optional[str] = None
     prometheus_url: Optional[str] = None
     prometheus_timeout: float = 10.0
+    # ── Monitoring alerts evaluator (ERROR_RATE_* / LATENCY_*) ──
+    # One tick per interval; only the pod that wins the evaluator lock runs it.
+    monitoring_eval_enabled: bool = True
+    monitoring_eval_interval_s: int = 60
+    # Services with fewer requests than this in the window are left out.
+    monitoring_min_requests: int = 20
+    monitoring_window: str = "5m"
+    # ── Daily notification cleanup (failure log retention, past quota ledger rows) ──
+    notification_cleanup_interval_s: int = 86400
     # Label carrying the HTTP path on telemetry_obsv_requests_total (and related
     # metrics). Scraped via a K8s Prometheus Operator ServiceMonitor, the target's
     # own "endpoint" label collides with the ServiceMonitor's port-name label of
@@ -119,19 +128,25 @@ class CoreSettings(BaseSettings):
     model_cache_ttl_seconds: int = 3600
     service_cache_ttl_seconds: int = 300
     metering_cache_ttl_seconds: int = 60
+    # /overview's metering-source first_request_at, cached per tenant scope on
+    # its own key: it's a full-retention subquery, and it only moves when a
+    # tenant sends its first request.
+    metering_first_usage_cache_ttl_seconds: int = 3600
     ppu_tier_cache_ttl_seconds: int = 600
     # Auto-refresh interval exposed to the dashboard (METERING_REFRESH_INTERVAL_SECONDS).
     metering_refresh_interval_seconds: int = 60
-    # How many days of history the deployment's Prometheus actually retains
-    # (its own --storage.tsdb.retention.time, or the effective window of a
-    # remote long-term-storage backend). Used by
-    # MeteringService.model_usage_growth_pct() to refuse a previous-month
-    # comparison it can't fully cover, rather than silently computing from
-    # whatever partial data survives retention. Defaults to Prometheus's own
-    # out-of-box default (15d) — deliberately conservative, since we can't
-    # know this repo's operator has raised it. Set
-    # PROMETHEUS_RETENTION_DAYS to match your actual retention (>= ~90d
-    # recommended) to get a real percentage instead of null.
+    # FALLBACK only: how many days of history the deployment's Prometheus
+    # retains, used when Prometheus doesn't report it itself. The metering
+    # code reads the real value from /api/v1/status/runtimeinfo
+    # (storageRetention; see app/utils/metering_retention.py) and uses it for
+    # the custom-range clamp, the vs-previous guard, the first-usage lookback
+    # and model_usage_growth_pct's 60-day guard. This setting applies when
+    # that endpoint is missing (a Thanos/Mimir proxy), the retention is
+    # size-only, or the read fails; set it to the real retention there.
+    # Defaults to 15, Prometheus's own default retention. Above the real
+    # retention, custom ranges read pruned data (each series' whole
+    # cumulative counter counted as usage); below it, days with data read
+    # zero.
     prometheus_retention_days: int = 15
 
     # ── Model management business rules ──
@@ -183,9 +198,21 @@ class CoreSettings(BaseSettings):
     auth_service_url: str = ""
     model_management_url: str = ""
     # Adopter-facing portal URL, linked from notification/alert emails
-    # ("Log in to the AI4I-Orchestrate Portal ..."). None → link renders as
+    # ("Log in to the <PLATFORM_NAME> Portal ..."). None → link renders as
     # plain text instead of an <a href>.
     portal_url: Optional[str] = None
+
+    # ── Branding (same PLATFORM_NAME / ADOPTER_LOGO_URL pair as auth-service
+    # and kafka-consumers — AI4IDS-3043), copied from the root .env by
+    # ./scripts/setup-env.sh. Product name in every notification/alert email;
+    # independent of the SMTP From display name (EMAIL_FROM_NAME, read by
+    # ai4i_core EmailSettings) — see resolve_smtp_from_name.
+    # Required, no in-code default: a missing/blank PLATFORM_NAME fails startup
+    # instead of silently sending emails under a baked-in name.
+    platform_name: str
+    # Absolute http(s) logo URL for email headers. Relative paths are ignored
+    # (email clients cannot resolve same-origin paths). Empty ⇒ text brand mark.
+    adopter_logo_url: Optional[str] = None
 
     # ── Logging / Observability ──
     log_level: str = "INFO"
@@ -218,6 +245,12 @@ class CoreSettings(BaseSettings):
         default="prometheus",
         description='Metering request-count KPI source: "prometheus" | "dual" | "opensearch"',
     )
+
+    # SAME value auth-service's own PII_ENCRYPTION_KEY uses — needed here to
+    # decrypt users.email when resolving a notification's recipients
+    # (ai4i_core.kafka.recipients), since auth-service is the only writer of
+    # that column but every producer of a notification now decrypts it.
+    pii_encryption_key: Optional[str] = Field(default=None, description="Must match auth-service's PII_ENCRYPTION_KEY.")
 
     # ── Derived helpers ──
 
@@ -259,6 +292,33 @@ class CoreSettings(BaseSettings):
     def get_opensearch_url(self) -> str:
         """Get OpenSearch URL from configuration."""
         return self.opensearch_url
+
+    def get_platform_name(self) -> str:
+        """Product name for email copy (PLATFORM_NAME, validated non-blank)."""
+        return self.platform_name
+
+    def get_adopter_logo_url(self) -> Optional[str]:
+        """Absolute http(s) logo for email headers; None when unset/invalid."""
+        raw = (self.adopter_logo_url or "").strip()
+        if raw.startswith(("http://", "https://")):
+            return raw
+        return None
+
+    def resolve_smtp_from_name(self, email_from_name: str) -> str:
+        """SMTP From display name: explicit EMAIL_FROM_NAME, else platform name.
+
+        The provider is built from ai4i_core EmailSettings, so
+        dependencies/services.py passes that value in and applies this result
+        when constructing the client."""
+        return (email_from_name or "").strip() or self.get_platform_name()
+
+    @field_validator("platform_name")
+    @classmethod
+    def validate_platform_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("PLATFORM_NAME must be set to the product name used in emails")
+        return v
 
 
 settings = CoreSettings()

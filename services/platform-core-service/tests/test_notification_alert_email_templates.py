@@ -29,7 +29,8 @@ _saved_ai4i_core_exceptions = sys.modules.pop("ai4i_core.exceptions", None)
 sys.modules.pop("ai4i_core.email", None)
 
 import app.services.notification_alert_email_templates as templates  # noqa: E402
-from app.core.config import settings  # noqa: E402
+from app.core.config import CoreSettings, settings  # noqa: E402
+from pydantic import ValidationError  # noqa: E402
 
 if _saved_ai4i_core is not None:
     sys.modules["ai4i_core"] = _saved_ai4i_core
@@ -42,6 +43,18 @@ def _no_portal_url(monkeypatch):
     """Default to no PORTAL_URL so the plain-text fallback wording is asserted
     consistently; test_portal_link_uses_configured_url overrides this."""
     monkeypatch.setattr(settings, "portal_url", None)
+
+
+# Supplied by tests/conftest.py as PLATFORM_NAME — the code itself has no default.
+BRAND = "Test Platform"
+
+
+@pytest.fixture(autouse=True)
+def _default_branding(monkeypatch):
+    """Pin the brand so a local .env's PLATFORM_NAME / ADOPTER_LOGO_URL can't
+    change what these tests assert; the branding tests below override it."""
+    monkeypatch.setattr(settings, "platform_name", BRAND)
+    monkeypatch.setattr(settings, "adopter_logo_url", None)
 
 
 # Each entry: (render fn, kwargs, substrings expected in BOTH html_body and text_body)
@@ -190,5 +203,99 @@ def test_portal_link_falls_back_to_plain_text_when_unset():
         to="a@b.com", recipient_name="Priya", institution_name="Acme Bank", currency="INR", budget_amount="500000",
     )
 
-    assert "Log in to the AI4I-Orchestrate Portal to view full details." in message.text_body
+    assert f"Log in to the {BRAND} Portal to view full details." in message.text_body
     assert "href=" not in message.text_body
+
+
+# ── Branding (PLATFORM_NAME / ADOPTER_LOGO_URL — same pair as auth-service / kafka-consumers) ──
+
+
+def _render_budget_assigned():
+    return templates.render_budget_assigned_email(
+        to="a@b.com", recipient_name="Priya", institution_name="Acme Bank", currency="INR", budget_amount="500000",
+    )
+
+
+def _render_quota_threshold():
+    return templates.render_quota_threshold_alert_email(
+        to="a@b.com", recipient_name="Priya", institution_name="Acme Bank",
+        threshold="80", alert_datetime="2026-09-10", current_value="81",
+    )
+
+
+@pytest.mark.parametrize("render", [_render_budget_assigned, _render_quota_threshold], ids=["notification", "alert"])
+def test_platform_name_comes_from_env_not_code(monkeypatch, render):
+    """The reported bug: _base.html hardcoded "AI Switch" in <title>, header and
+    footer. Every one of those must now be the configured PLATFORM_NAME."""
+    monkeypatch.setattr(settings, "platform_name", "MahaVistaar")
+
+    message = render()
+
+    assert "&copy; MahaVistaar" in message.html_body
+    for body in (message.html_body, message.text_body):
+        assert "Log in to the MahaVistaar Portal to view full details." in body
+        assert "MahaVistaar Team" in body
+        assert "AI Switch" not in body
+        assert "Orchestrate" not in body
+
+
+def test_no_template_hardcodes_a_product_name():
+    """Guards the exact reported line — _base.html's
+    <title>{% block title %}AI Switch{% endblock %}</title> — and every other
+    template: the name must only ever arrive as {{ platform_name }}."""
+    template_dir = templates._TEMPLATE_DIR
+    files = sorted(template_dir.glob("*.html")) + sorted(template_dir.glob("*.txt"))
+    assert files
+    for path in files:
+        source = path.read_text()
+        assert "AI Switch" not in source, path.name
+        assert "Orchestrate" not in source, path.name
+    assert "{% block title %}{{ platform_name }}{% endblock %}" in (template_dir / "_base.html").read_text()
+
+
+def test_logo_url_replaces_text_brand_mark_in_header(monkeypatch):
+    monkeypatch.setattr(settings, "adopter_logo_url", "https://cdn.example.com/logo.png")
+
+    message = _render_budget_assigned()
+
+    assert f'<img src="https://cdn.example.com/logo.png" alt="{BRAND}"' in message.html_body
+
+
+def test_relative_logo_url_is_ignored(monkeypatch):
+    monkeypatch.setattr(settings, "adopter_logo_url", "/logo.png")
+
+    assert "<img" not in _render_budget_assigned().html_body
+
+
+class TestPlatformNameRequired:
+    """No in-code default: a missing/blank PLATFORM_NAME must stop the service at
+    startup (settings = CoreSettings() at import), not send emails under a baked-in name."""
+
+    def test_missing_platform_name_fails(self, monkeypatch):
+        monkeypatch.delenv("PLATFORM_NAME", raising=False)
+        with pytest.raises(ValidationError, match="platform_name"):
+            CoreSettings(_env_file=None)
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_blank_platform_name_fails(self, monkeypatch, blank):
+        # setup-env.sh writes PLATFORM_NAME= (empty) when the root .env leaves it blank.
+        monkeypatch.setenv("PLATFORM_NAME", blank)
+        with pytest.raises(ValidationError, match="PLATFORM_NAME must be set"):
+            CoreSettings(_env_file=None)
+
+    def test_env_value_is_used_and_stripped(self, monkeypatch):
+        monkeypatch.setenv("PLATFORM_NAME", "  MahaVistaar  ")
+        assert CoreSettings(_env_file=None).get_platform_name() == "MahaVistaar"
+
+
+class TestResolveSmtpFromName:
+    """EMAIL_FROM_NAME (env.template: <PLATFORM_NAME>) stays independent of
+    PLATFORM_NAME; it only inherits it when blank."""
+
+    def test_keeps_explicit_from_name(self):
+        assert settings.resolve_smtp_from_name("COSS Support") == "COSS Support"
+
+    def test_inherits_platform_name_when_blank(self, monkeypatch):
+        monkeypatch.setattr(settings, "platform_name", "MahaVistaar")
+        assert settings.resolve_smtp_from_name("") == "MahaVistaar"
+        assert settings.resolve_smtp_from_name("   ") == "MahaVistaar"

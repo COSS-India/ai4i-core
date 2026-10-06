@@ -9,6 +9,7 @@ env-local-setup/
 .env.test.local
 .env.production.local
 .venv
+.venv-test
 
 # Python
 __pycache__/
@@ -194,3 +195,4 @@ scripts/llm-load-test-500-plus-tokens-results.csv
 scripts/llm-load-test-results.csv
 scripts/~$llm-load-test-runs.xlsx
 scripts/llm-load-test-runs.xlsx
+services/kafka-consumers/scripts/publish_test_notifications.py

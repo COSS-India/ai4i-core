@@ -10,10 +10,8 @@ import { fetchTenantUsageById } from "../../services/usageSpendService";
 import { INSTITUTION } from "../../config/constants";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { useUsageAndSpendData } from "../../hooks/useUsageAndSpendData";
-import { billingPeriodValue } from "../../utils/usageSpendHelpers";
 import type { TenantUsageDetail, TenantUsageItem } from "../../types/usageSpend";
 import InstitutionUsageDetailPanel from "./InstitutionUsageDetailPanel";
-import BillingMonthSelect from "./BillingMonthSelect";
 import UsageSpendTenantDrawer from "./UsageSpendTenantDrawer";
 import UsageSpendTenantTable from "./UsageSpendTenantTable";
 
@@ -33,7 +31,6 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
   refreshNonce = 0,
 }) => {
   const [filterTierId, setFilterTierId] = useState("");
-  const [billingPeriod, setBillingPeriod] = useState(() => billingPeriodValue("current"));
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selectedTenantId, setSelectedTenantId] = useState<string | null>(null);
   const [selectedTenant, setSelectedTenant] = useState<TenantUsageDetail | null>(null);
@@ -52,7 +49,6 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
     refreshNonce,
     filterTierId,
     taskTypeNames,
-    billingPeriod,
   });
 
   const tenantDetail = isTenantView || data.isScoped ? (data.tenants[0] ?? null) : null;
@@ -80,7 +76,7 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
     if (!isDetailOpen || !selectedTenantId) return;
     const requestId = ++detailRequestIdRef.current;
     setIsDetailLoading(true);
-    fetchTenantUsageById(selectedTenantId, billingPeriod, enabledTaskTypesParam)
+    fetchTenantUsageById(selectedTenantId, undefined, enabledTaskTypesParam)
       .then((detail) => {
         if (requestId !== detailRequestIdRef.current) return;
         setSelectedTenant(detail);
@@ -92,7 +88,7 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
       .finally(() => {
         if (requestId === detailRequestIdRef.current) setIsDetailLoading(false);
       });
-  }, [isDetailOpen, selectedTenantId, billingPeriod, enabledTaskTypesParam]);
+  }, [isDetailOpen, selectedTenantId, enabledTaskTypesParam]);
 
   const handleDetailClose = useCallback(() => {
     detailRequestIdRef.current += 1;
@@ -110,8 +106,6 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
           detail={tenantDetail}
           organisationLabel={organisationLabel}
           isLoading={data.isTenantsLoading}
-          billingPeriod={billingPeriod}
-          onBillingPeriodChange={setBillingPeriod}
         />
       </VStack>
     );
@@ -120,7 +114,6 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
   return (
     <VStack align="stretch" spacing={5}>
       <HStack spacing={3} flexWrap="wrap" align="center">
-        <BillingMonthSelect value={billingPeriod} onChange={setBillingPeriod} />
         <Select
           size="sm"
           w={{ base: "full", sm: "auto" }}
@@ -154,8 +147,8 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
       />
 
       <Text fontSize="12px" color="gray.500" lineHeight="1.6">
-        Month filter scopes which institutions appear in this list. Budget and per–task-type
-        usage are all-time — open an institution for the full breakdown.
+        Budget and per–task-type usage are all-time — open an institution for the full
+        breakdown.
       </Text>
 
       <UsageSpendTenantDrawer
@@ -163,8 +156,6 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
         onClose={handleDetailClose}
         detail={selectedTenant}
         isLoading={isDetailLoading}
-        billingPeriod={billingPeriod}
-        onBillingPeriodChange={setBillingPeriod}
       />
     </VStack>
   );

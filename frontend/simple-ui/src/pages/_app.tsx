@@ -93,7 +93,12 @@ export default function MyApp({
   );
 
   // Check if current route needs layout (exclude auth page)
-  const needsLayout = layoutRoutes.includes(router.pathname) && router.pathname !== '/auth';
+  const needsLayout =
+    layoutRoutes.some((route) =>
+      route === "/"
+        ? router.pathname === "/"
+        : router.pathname === route || router.pathname.startsWith(`${route}/`),
+    ) && router.pathname !== "/auth";
 
   return (
     <ChakraProvider theme={customTheme}>

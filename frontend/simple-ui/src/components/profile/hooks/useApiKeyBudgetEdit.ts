@@ -31,12 +31,16 @@ export type KeyBudgetDraft = {
   consumed_percentage: number | null;
   consumed_budget: number | null;
   originalPct: number | null;
+  /** Saved rupee allocation at open. Display only — save still uses the draft. */
+  originalAmount: number | null;
   pctInput: string;
   amountInput: string;
   resolvedPct: number | null;
   resolvedAmount: number | null;
   lastEditMode: "percentage" | "amount";
   rowError: string | null;
+  /** Rejected stepper attempt. Does not change the draft or block save. */
+  inputNotice: string | null;
 };
 
 function pctString(value: number | null): string {
@@ -62,7 +66,7 @@ function evaluateKeyRowError(
   applicationBudget: number,
 ): string | null {
   if (row.pctInput.trim() === "" && row.originalPct != null) {
-    return BUDGET_VALIDATION.enterBudgetAllocationPercentage;
+    return BUDGET_VALIDATION.enterValidAllocationPercentage;
   }
   if (row.resolvedPct == null) return null;
   if (row.resolvedPct < 0) return BUDGET_VALIDATION.budgetCannotBeNegative;
@@ -81,7 +85,7 @@ function evaluateKeyRowError(
     return belowConsumedAmount(row.consumed_budget);
   }
   if (applicationBudget <= 0 && row.resolvedAmount != null && row.resolvedAmount > 0) {
-    return BUDGET_VALIDATION.applicationBudgetNotAssigned;
+    return BUDGET_VALIDATION.applicationBudgetUnavailable;
   }
   return null;
 }
@@ -101,12 +105,20 @@ function applyResolved(
       resolvedPct: null,
       resolvedAmount: null,
       rowError: null,
+      inputNotice: null,
     };
     return { ...next, rowError: evaluateKeyRowError(next, applicationBudget) };
   }
   const numeric = Number(trimmed);
   if (!Number.isFinite(numeric)) {
-    return { ...row, rowError: BUDGET_VALIDATION.enterValidNumber };
+    return {
+      ...row,
+      inputNotice: null,
+      rowError:
+        mode === "percentage"
+          ? BUDGET_VALIDATION.enterValidAllocationPercentage
+          : BUDGET_VALIDATION.enterValidNumber,
+    };
   }
   const resolved = resolveApplicationBudget(mode, numeric, applicationBudget);
   if (!resolved) {
@@ -114,10 +126,11 @@ function applyResolved(
       return {
         ...row,
         amountInput: trimmed,
-        rowError: BUDGET_VALIDATION.amountRequiresApplicationBudget,
+        inputNotice: null,
+        rowError: BUDGET_VALIDATION.applicationBudgetUnavailable,
       };
     }
-    return { ...row, rowError: BUDGET_VALIDATION.enterValidNumber };
+    return { ...row, inputNotice: null, rowError: BUDGET_VALIDATION.enterValidAllocationPercentage };
   }
   const next: KeyBudgetDraft = {
     ...row,
@@ -126,6 +139,7 @@ function applyResolved(
     resolvedPct: resolved.pct,
     resolvedAmount: resolved.amount,
     rowError: null,
+    inputNotice: null,
   };
   return { ...next, rowError: evaluateKeyRowError(next, applicationBudget) };
 }
@@ -140,7 +154,7 @@ function buildDraftFromUsageKey(
   applicationBudget: number,
 ): KeyBudgetDraft {
   const pct =
-    applicationBudget > 0
+    applicationBudget > 0 && key.allocatedBudget.amount > 0
       ? roundPct((key.allocatedBudget.amount / applicationBudget) * 100)
       : key.allocatedBudget.percentage;
   const consumedPct =
@@ -153,13 +167,45 @@ function buildDraftFromUsageKey(
     consumed_percentage: consumedPct,
     consumed_budget: key.spendBudget.amount,
     originalPct: pct,
+    originalAmount: key.allocatedBudget.amount,
     pctInput: pctString(pct),
     amountInput: amountString(key.allocatedBudget.amount),
     resolvedPct: pct,
     resolvedAmount: key.allocatedBudget.amount,
     lastEditMode: "percentage",
     rowError: null,
+    inputNotice: null,
   };
+}
+
+/** Display figures for one key. Remaining is the saved allocation minus consumed. Percent headroom stays on the parent Application budget. */
+export function keyBudgetFigures(
+  row: KeyBudgetDraft,
+  rows: KeyBudgetDraft[],
+  applicationBudget: number,
+): {
+  allocated: number | null;
+  consumed: number | null;
+  remaining: number | null;
+  minimum: number | null;
+  maximum: number | null;
+} {
+  const allocated = row.originalAmount;
+  const consumed = row.consumed_budget;
+  const remaining =
+    allocated != null && consumed != null
+      ? Math.round((allocated - consumed) * 100) / 100
+      : null;
+  const othersPct = rows.reduce(
+    (sum, other) =>
+      other.api_key_id === row.api_key_id ? sum : sum + (other.resolvedPct ?? 0),
+    0,
+  );
+  const maximum =
+    applicationBudget > 0
+      ? Math.round(((applicationBudget * Math.max(0, 100 - othersPct)) / 100) * 100) / 100
+      : null;
+  return { allocated, consumed, remaining, minimum: consumed, maximum };
 }
 
 function mapBelowConsumedErrorForApiKey(message: string): string {
@@ -209,16 +255,16 @@ export function useApiKeyBudgetEdit({
   const [selectedApplicationId, setSelectedApplicationId] = useState("");
   const [applicationName, setApplicationName] = useState("");
   const [applicationBudget, setApplicationBudget] = useState(0);
-  const [applicationAllocatedPct, setApplicationAllocatedPct] = useState<number | null>(
-    null,
-  );
   const [applicationEchoAllocation, setApplicationEchoAllocation] =
     useState<AllocationValue | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
   const [rows, setRows] = useState<KeyBudgetDraft[]>([]);
+  const [focusedKeyId, setFocusedKeyId] = useState<number | null>(null);
+  const [focusedKeyName, setFocusedKeyName] = useState("");
   const pendingLoadApplicationIdRef = useRef<string | null>(null);
+  const focusedKeyIdRef = useRef<number | null>(null);
 
   const applicationBudgetUnset = applicationBudget <= 0;
 
@@ -262,14 +308,11 @@ export function useApiKeyBudgetEdit({
         const echo = resolveApplicationEcho(app);
         setApplicationName(detail.applicationName || app?.name || applicationId);
         setApplicationBudget(appAmount);
-        setApplicationAllocatedPct(
-          app?.allocated_percentage ?? detail.allocatedBudget.percentage ?? null,
-        );
         setApplicationEchoAllocation(echo);
         const activeKeys = detail.apiKeys.filter((k) => k.isActive);
         const drafts = activeKeys.map((key) => buildDraftFromUsageKey(key, appAmount));
         setRows(drafts);
-        if (activeKeys.length === 0) {
+        if (activeKeys.length === 0 && focusedKeyIdRef.current == null) {
           setBanner(FIELD_HINTS.apiKey.bulkBudgetEdit.empty);
         }
       } catch (error) {
@@ -285,26 +328,48 @@ export function useApiKeyBudgetEdit({
     [applications, tenantId],
   );
 
-  const open = useCallback(
-    (applicationId?: string) => {
-      const nextId = applicationId?.trim() || initialApplicationId?.trim() || "";
-      setSelectedApplicationId(nextId);
+  const beginOpen = useCallback(
+    (applicationId: string, focus: { id: number; name: string } | null) => {
+      focusedKeyIdRef.current = focus?.id ?? null;
+      setFocusedKeyId(focus?.id ?? null);
+      setFocusedKeyName(focus?.name ?? "");
+      setSelectedApplicationId(applicationId);
       setApplicationName("");
       setApplicationBudget(0);
-      setApplicationAllocatedPct(null);
       setApplicationEchoAllocation(null);
       setBanner(null);
       setRows([]);
       setIsOpen(true);
-      if (nextId) {
-        void loadKeysForApplication(nextId);
+      if (applicationId) {
+        void loadKeysForApplication(applicationId);
       }
     },
-    [initialApplicationId, loadKeysForApplication],
+    [loadKeysForApplication],
+  );
+
+  const open = useCallback(
+    (applicationId?: string) => {
+      const nextId = applicationId?.trim() || initialApplicationId?.trim() || "";
+      beginOpen(nextId, null);
+    },
+    [beginOpen, initialApplicationId],
+  );
+
+  const openForKey = useCallback(
+    (applicationId: string, apiKeyId: number, keyName?: string) => {
+      beginOpen(applicationId.trim(), {
+        id: apiKeyId,
+        name: keyName?.trim() || "",
+      });
+    },
+    [beginOpen],
   );
 
   const close = useCallback(() => {
+    focusedKeyIdRef.current = null;
     setIsOpen(false);
+    setFocusedKeyId(null);
+    setFocusedKeyName("");
     setBanner(null);
     setRows([]);
   }, []);
@@ -318,7 +383,6 @@ export function useApiKeyBudgetEdit({
         setRows([]);
         setApplicationName("");
         setApplicationBudget(0);
-        setApplicationAllocatedPct(null);
         setApplicationEchoAllocation(null);
       }
     },
@@ -345,7 +409,7 @@ export function useApiKeyBudgetEdit({
     setRows((prev) =>
       prev.map((row) =>
         row.api_key_id === apiKeyId
-          ? { ...row, rowError: percentageBoundMessage(bound) }
+          ? { ...row, inputNotice: percentageBoundMessage(bound) }
           : row,
       ),
     );
@@ -418,12 +482,14 @@ export function useApiKeyBudgetEdit({
   return {
     isOpen,
     open,
+    openForKey,
     close,
+    focusedKeyId,
+    focusedKeyName,
     selectedApplicationId,
     onApplicationChange,
     applicationName,
     applicationBudget,
-    applicationAllocatedPct,
     applicationBudgetUnset,
     applications,
     isLoading,

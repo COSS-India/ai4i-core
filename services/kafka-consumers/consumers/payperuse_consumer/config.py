@@ -64,8 +64,15 @@ class Settings(BaseSettings):
         "the api_key ids under a tenant — both live in auth-service's own database, "
         "not this consumer's default (platform-core's ai4iplatform_core). Same "
         "Postgres instance/credentials as the default connection — only the "
-        "database name differs. Mirrors notifications_consumer/config.py's own "
-        "AUTH_SERVICE_DB field exactly.",
+        "database name differs.",
+    )
+    PII_ENCRYPTION_KEY: str | None = Field(
+        default=None,
+        description="MUST match auth-service's own PII_ENCRYPTION_KEY exactly — "
+        "handed to ai4i_core.pii_crypto.configure_key() at startup so "
+        "ai4i_core.kafka.recipients can decrypt users.email when resolving a "
+        "QUOTA_THRESHOLD/QUOTA_EXHAUSTED/BUDGET_THRESHOLD/BUDGET_EXHAUSTED "
+        "notification's recipients.",
     )
 
     class Config:

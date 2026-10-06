@@ -14,7 +14,7 @@ const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
   size = 'md',
   label,
   fullScreen = false,
-  color = 'orange.500',
+  color = 'blue.600',
 }) => {
   const spinner = (
     <VStack spacing={4}>

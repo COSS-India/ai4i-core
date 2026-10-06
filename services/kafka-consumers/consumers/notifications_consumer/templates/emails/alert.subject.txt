@@ -1,0 +1,1 @@
+{{ event.name }} at {{ event.threshold }}% — {{ tenant_name }}

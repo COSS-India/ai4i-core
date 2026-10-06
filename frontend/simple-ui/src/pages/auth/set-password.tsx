@@ -11,6 +11,7 @@ import {
   CardBody,
   Container,
   FormControl,
+  FormErrorMessage,
   FormLabel,
   Heading,
   Input,
@@ -275,11 +276,9 @@ const SetPasswordPage: React.FC = () => {
                           minLength={PASSWORD_POLICY.MIN_LENGTH}
                           maxLength={PASSWORD_POLICY.MAX_LENGTH}
                         />
-                        {confirmPassword.length > 0 && confirmPassword !== newPassword && (
-                          <Text color="red.500" fontSize="sm" mt={1}>
-                            Passwords do not match.
-                          </Text>
-                        )}
+                        <FormErrorMessage>
+                          Passwords do not match.
+                        </FormErrorMessage>
                       </FormControl>
                       {phase.kind === "error" && (
                         <Alert status="error" rounded="md">

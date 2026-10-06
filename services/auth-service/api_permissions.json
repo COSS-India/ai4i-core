@@ -45,6 +45,7 @@
 
     { "endpoint": "GET:/api/v1/auth/tenants/tier/list",                    "permissionRequired": 145, "description": "List tenants with an assigned tier (ppu.tenant.read); replaces GET /pay-per-use/tenant/tier" },
     { "endpoint": "PATCH:/api/v1/auth/tenants/{tenant_id}/tier",           "permissionRequired": 144, "description": "Assign/reassign a tenant's tier (ppu.tenant.assign); replaces POST /pay-per-use/tenant/tier and PATCH .../tier/reassign" },
+    { "endpoint": "DELETE:/api/v1/auth/tenants/{tenant_id}/tier",          "permissionRequired": 144, "description": "Remove a tenant's tier assignment, tier_id → null (ppu.tenant.assign); same permission as assign/reassign" },
     { "endpoint": "PATCH:/api/v1/auth/tenants/{tenant_id}/budget",         "permissionRequired": 144, "description": "Revise tenant budget, top-up/top-down (ppu.tenant.assign); replaces PATCH /pay-per-use/tenant/budget" },
 
     { "endpoint": "GET:/api/v1/services",                                  "permissionRequired": 51, "description": "List all services (service.read)" },
@@ -136,9 +137,9 @@
     { "endpoint": "GET:/api/v1/pay-per-use/usage-tenants",                             "permissionRequired": 134, "description": "PPU usage tenant list (usage.read); admin only (platform-wide)" },
     { "endpoint": "GET:/api/v1/pay-per-use/usage-tenant",                              "permissionRequired": 135, "description": "PPU usage single-tenant detail (usage.tenant_read); admin platform-wide, role 5 own tenant only" },
 
-    { "endpoint": "GET:/api/v1/pay-per-use/usage-applications-summary",                "permissionRequired": 146, "description": "Metering dashboard Applications tab — institution summary (usage.application_read); admin platform-wide, role 5 own tenant only" },
-    { "endpoint": "GET:/api/v1/pay-per-use/usage-applications",                        "permissionRequired": 146, "description": "Metering dashboard Applications tab — per-application list (usage.application_read); admin platform-wide, role 5 own tenant only" },
-    { "endpoint": "GET:/api/v1/pay-per-use/usage-application",                         "permissionRequired": 146, "description": "Metering dashboard Applications tab — spend by API key (usage.application_read); admin platform-wide, role 5 own tenant only" },
+    { "endpoint": "GET:/api/v1/pay-per-use/usage-applications-summary",                "permissionRequired": 146, "description": "Metering dashboard Applications tab — institution summary (usage.application_read); admin and usage viewer platform-wide, role 5 own tenant only" },
+    { "endpoint": "GET:/api/v1/pay-per-use/usage-applications",                        "permissionRequired": 146, "description": "Metering dashboard Applications tab — per-application list (usage.application_read); admin and usage viewer platform-wide, role 5 own tenant only" },
+    { "endpoint": "GET:/api/v1/pay-per-use/usage-application",                         "permissionRequired": 146, "description": "Metering dashboard Applications tab — spend by API key (usage.application_read); admin and usage viewer platform-wide, role 5 own tenant only" },
 
     { "endpoint": "POST:/api/v1/alerts/definitions",                       "permissionRequired": 117, "description": "Create alert definition (alerts.create)" },
     { "endpoint": "GET:/api/v1/alerts/definitions",                        "permissionRequired": 116, "description": "List alert definitions (alerts.read)" },
@@ -160,6 +161,11 @@
     { "endpoint": "GET:/api/v1/alerts/history",                            "permissionRequired": 116, "description": "List alert history (alerts.read)" },
 
     { "endpoint": "GET:/api/v1/notification-alerts/catalog",              "permissionRequired": 1,   "description": "List notification/alert catalog (admin sentinel — ADMIN only)" },
-    { "endpoint": "PATCH:/api/v1/notification-alerts/catalog/{name}",     "permissionRequired": 1,   "description": "Update notification/alert catalog entry (admin sentinel — ADMIN only)" }
+    { "endpoint": "PATCH:/api/v1/notification-alerts/catalog/{name}",     "permissionRequired": 1,   "description": "Update notification/alert catalog entry (admin sentinel — ADMIN only)" },
+    { "endpoint": "PATCH:/api/v1/notification-alerts/monitoring-catalog/{name}", "permissionRequired": 1, "description": "Update monitoring alert recipients/thresholds (admin sentinel — ADMIN only)" },
+
+    { "endpoint": "GET:/api/v1/notification-alerts/subscriptions",                       "permissionRequired": 148, "description": "View an institution's metering-notification subscriptions (notification.subscription.read); admin platform-wide, role 5 own tenant only" },
+    { "endpoint": "PATCH:/api/v1/notification-alerts/subscriptions/{notification_id}",    "permissionRequired": 149, "description": "Subscribe/unsubscribe an institution to a notification (notification.subscription.update); admin platform-wide, role 5 own tenant only" },
+    { "endpoint": "PUT:/api/v1/notification-alerts/subscriptions/{notification_id}",      "permissionRequired": 149, "description": "Replace an institution's notification recipients (notification.subscription.update); admin platform-wide, role 5 own tenant only" }
   ]
 }

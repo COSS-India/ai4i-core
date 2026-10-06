@@ -14,7 +14,7 @@ const SubmitButton: React.FC<SubmitButtonProps> = ({
 }) => (
   <Button
     leftIcon={icon as React.ReactElement | undefined}
-    colorScheme="orange"
+    colorScheme="ink"
     size="lg"
     onClick={onClick}
     isLoading={isLoading}

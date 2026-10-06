@@ -48,6 +48,17 @@ function unwrapTenantView(payload: unknown): TenantView {
   return tenantViewSchema.parse(parsed);
 }
 
+/**
+ * RQ cache key for the full tenant directory.
+ * Shared by Logs, Metering, Institution Management, Profile, Policy, Alerts, and Tier view.
+ */
+export const TENANTS_LIST_QUERY_KEY = ["tenants-list"] as const;
+/** Auth-service tenants list is capped at 500 (`le=500`); default without this is 100. */
+export const TENANTS_DIRECTORY_LIMIT = 500;
+/** Safety stop for the page walk. 40 pages is 20,000 institutions. */
+const MAX_TENANT_DIRECTORY_PAGES = 40;
+export const TENANTS_LIST_STALE_MS = 5 * 60 * 1000;
+
 export async function listTenants(params?: {
   status?: TenantStatus;
   offset?: number;
@@ -64,6 +75,32 @@ export async function listTenants(params?: {
   const root = response.data as { data?: TenantView[] };
   const tenants = Array.isArray(root?.data) ? root.data : [];
   return { count: tenants.length, tenants };
+}
+
+/**
+ * Full tenant directory. The route returns at most 500 rows and no total,
+ * so this walks `offset` until a short page.
+ */
+export async function fetchTenantsDirectory(): Promise<ListTenantsResponse> {
+  const tenants: ListTenantsResponse["tenants"] = [];
+  let offset = 0;
+
+  for (let page = 0; page < MAX_TENANT_DIRECTORY_PAGES; page++) {
+    const batch = await listTenants({
+      limit: TENANTS_DIRECTORY_LIMIT,
+      offset,
+    });
+    const rows = batch.tenants ?? [];
+    tenants.push(...rows);
+    if (rows.length < TENANTS_DIRECTORY_LIMIT) {
+      return { count: tenants.length, tenants };
+    }
+    offset += TENANTS_DIRECTORY_LIMIT;
+  }
+
+  throw new Error(
+    "Tenant directory exceeded the page walk. The list was not loaded.",
+  );
 }
 
 export async function getViewTenant(
@@ -168,6 +205,28 @@ export async function listUsers(
     responseSchema: tenantSuccessEnvelopeSchema(z.array(tenantUserViewSchema)),
   });
   const users = response.data.data ?? [];
+  return { count: users.length, users };
+}
+
+/** BE max page size for GET /tenants/{id}/users (`limit` le=500). */
+const LIST_USERS_PAGE_SIZE = 500;
+
+/**
+ * Every user in the tenant — walks `offset` until a short page, since
+ * `listUsers` only returns the BE's default first page (100).
+ */
+export async function listAllUsers(tenant_id: string): Promise<ListUsersResponse> {
+  const users: ListUsersResponse['users'] = [];
+  for (let offset = 0; ; offset += LIST_USERS_PAGE_SIZE) {
+    const response = await apiService.get(`${BASE}/${tenant_id}/users`, {
+      params: { offset, limit: LIST_USERS_PAGE_SIZE },
+      suppressErrorAlert: true,
+      responseSchema: tenantSuccessEnvelopeSchema(z.array(tenantUserViewSchema)),
+    });
+    const batch = response.data.data ?? [];
+    users.push(...batch);
+    if (batch.length < LIST_USERS_PAGE_SIZE) break;
+  }
   return { count: users.length, users };
 }
 

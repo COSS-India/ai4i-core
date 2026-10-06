@@ -5,6 +5,8 @@ import { useSessionExpiry } from "./useSessionExpiry";
 import { useToastWithDeduplication } from "../utils/toast";
 import { extractErrorInfo } from "../utils/errorHandler";
 import {
+  changeTenantTier,
+  removeTenantFromTier,
   fetchTiers,
   createTier,
   updateTier,
@@ -14,16 +16,42 @@ import {
   type Tier,
   type TierStatus,
 } from "../services/tierManagementService";
-import { listTenants } from "../services/tenantService";
+import { fetchTenantsDirectory, TENANTS_LIST_QUERY_KEY } from "../services/tenantService";
 import { INSTITUTION } from "../config/constants";
-import { fetchAllServicesMatchingFilters } from "../services/servicesManagementService";
+import {
+  fetchAllServicesMatchingFilters,
+  updateService,
+  type Service,
+} from "../services/servicesManagementService";
 import { useInferenceTypes } from "./useInferenceTypes";
 import { generateUUID } from "../utils/uuid";
-import { resolveTaskType } from "../utils/platformService";
+import { resolveServiceId, resolveTaskType } from "../utils/platformService";
 import type { TierFormData, TierFormQuota } from "../types/tierManagement";
 import { validateQuotaLimit } from "../components/tier-management/tierFormValidation";
 
 const TIER_QUERY_KEY = "tiers";
+
+/**
+ * `status` is optional on `Tier`; a missing one reads as INACTIVE. Shared with
+ * the Status badge so a row cannot show one status and filter as another.
+ */
+export function effectiveTierStatus(tier: Pick<Tier, "status">): TierStatus {
+  return tier.status ?? "INACTIVE";
+}
+
+/**
+ * Matched by id, falling back to name. Shared by the Services count column and
+ * the View Tier modal so the number cannot disagree with the list behind it.
+ */
+export function serviceBelongsToTier(
+  service: { tierIds?: string[] | null; tierNames?: string[] | null },
+  tier: Pick<Tier, "id" | "name">,
+): boolean {
+  return (
+    (service.tierIds ?? []).includes(tier.id) ||
+    (service.tierNames ?? []).includes(tier.name)
+  );
+}
 
 const TIER_STATUS_ACTIONS = {
   INACTIVE: {
@@ -69,6 +97,76 @@ export type TierStatusActionKey = keyof typeof TIER_STATUS_ACTIONS;
 export function getTierStatusAction(status: TierStatus | undefined) {
   if (!status) return null;
   return TIER_STATUS_ACTIONS[status as TierStatusActionKey] ?? null;
+}
+
+type StagedTierTargets = Record<string, string>;
+
+function withoutKeys(map: StagedTierTargets, keys: string[]): StagedTierTargets {
+  if (!keys.length) return map;
+  const next = { ...map };
+  for (const key of keys) delete next[key];
+  return next;
+}
+
+/** Shown when the tier write succeeded and a later staged change did not. */
+function partialSaveDescription(
+  tierName: string,
+  applied: number,
+  pending: number,
+  errorMessage: string,
+): string {
+  const appliedText =
+    applied === 1
+      ? "1 staged change was applied"
+      : `${applied} staged changes were applied`;
+  const pendingText =
+    pending === 1 ? "1 is still pending" : `${pending} are still pending`;
+  return `"${tierName}" was saved. ${appliedText} and ${pendingText}. ${errorMessage}`;
+}
+
+function listServicesOnTier(
+  items: Service[] | undefined,
+  tier: Pick<Tier, "id" | "name"> | null,
+) {
+  if (!tier || !items) return [];
+  return items
+    .filter((service) => serviceBelongsToTier(service, tier))
+    .map((service) => ({
+      serviceId: resolveServiceId(service),
+      name: service.name,
+      taskType: resolveTaskType(service),
+      isPublished: !!service.isPublished,
+    }));
+}
+
+/** Swap this tier's id for the target. Every other id on the service stays. */
+function tierIdsReplacing(
+  service: { tierIds?: string[] | null; tierNames?: string[] | null },
+  from: Pick<Tier, "id" | "name">,
+  toId: string,
+): string[] {
+  const ids = (service.tierIds ?? []).map(String);
+  const names = service.tierNames ?? [];
+  const next = ids.map((id, index) =>
+    id === String(from.id) || names[index] === from.name ? toId : id,
+  );
+  const unique = next.filter((id, index) => next.indexOf(id) === index);
+  return unique.length > 0 ? unique : [toId];
+}
+
+function stageTarget(
+  current: StagedTierTargets,
+  id: string,
+  targetTierId: string,
+): StagedTierTargets {
+  if (!targetTierId) {
+    if (!(id in current)) return current;
+    const next = { ...current };
+    delete next[id];
+    return next;
+  }
+  if (current[id] === targetTierId) return current;
+  return { ...current, [id]: targetTierId };
 }
 
 function newQuota(): TierFormQuota {
@@ -118,6 +216,8 @@ export function useTierManagement() {
   const cancelRef = useRef<HTMLButtonElement>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterTaskType, setFilterTaskType] = useState("");
+  /** "" = all. Client-side: the tiers query is fetched without a status param. */
+  const [filterStatus, setFilterStatus] = useState("");
   const didInitTaskTypeFilter = useRef(false);
   const [taskTypeFilterReady, setTaskTypeFilterReady] = useState(false);
   useEffect(() => {
@@ -140,6 +240,9 @@ export function useTierManagement() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showQuotaErrors, setShowQuotaErrors] = useState(false);
   const [editingTier, setEditingTier] = useState<Tier | null>(null);
+  const [stagedServiceTiers, setStagedServiceTiers] = useState<StagedTierTargets>({});
+  const [stagedInstitutionTiers, setStagedInstitutionTiers] = useState<StagedTierTargets>({});
+  const [stagedInstitutionRemovals, setStagedInstitutionRemovals] = useState<Record<string, true>>({});
 
   const [scheduleTarget, setScheduleTarget] = useState<TierFormQuota | null>(
     null,
@@ -194,16 +297,20 @@ export function useTierManagement() {
   const enabledTaskTypesParam =
     taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
 
+  // One list for the table and for reassignment targets. Task type, status,
+  // and search are applied in `filteredTiers`. The query key must not include
+  // `filterTaskType`, or Edit would miss active tiers outside the table filter
+  // and changing the filter would refetch.
   const tiersQuery = useQuery({
-    queryKey: [TIER_QUERY_KEY, filterTaskType || enabledTaskTypesParam || "all"],
-    queryFn: () =>
-      fetchTiers(filterTaskType || enabledTaskTypesParam || undefined),
+    queryKey: [TIER_QUERY_KEY, enabledTaskTypesParam || "all"],
+    queryFn: () => fetchTiers(enabledTaskTypesParam || undefined),
     staleTime: 30 * 1000,
     retry: 1,
     enabled: taskTypeFilterReady,
   });
 
-  const tiers = tiersQuery.data?.data ?? [];
+  // Memoized: the count maps, sort accessors and column defs all key off it.
+  const tiers = useMemo(() => tiersQuery.data?.data ?? [], [tiersQuery.data]);
 
   const viewTier = useMemo(
     () => tiers.find((t) => t.id === viewTierId) ?? null,
@@ -212,21 +319,42 @@ export function useTierManagement() {
 
   // Tenant→tier assignments. Shares the ["tenant-tiers"] query key with the
   // Tenant Management tab so assigning a tier there keeps this view in sync.
+  // Ungated: backs the Institutions count column, and one response covers
+  // every tier.
   const tenantTiersQuery = useQuery({
     queryKey: ["tenant-tiers"],
     queryFn: () => fetchTenantTiers(),
     staleTime: 30 * 1000,
-    enabled: !!viewTierId,
   });
 
   // Tenant directory, used to resolve tenant_id → organisation name for display.
-  // limit is capped at 500 by the auth-service tenants endpoint (le=500).
+  // Shares TENANTS_LIST_QUERY_KEY with Institution Management. The fetch walks
+  // pages of 500. Still gated on the View modal: the count column needs ids, not names.
   const tenantsDirectoryQuery = useQuery({
-    queryKey: ["tenants-directory"],
-    queryFn: () => listTenants({ limit: 500 }),
+    queryKey: TENANTS_LIST_QUERY_KEY,
+    queryFn: fetchTenantsDirectory,
     staleTime: 5 * 60 * 1000,
     enabled: !!viewTierId,
   });
+
+  /**
+   * tier id -> assigned institutions. Counts every status, since
+   * `list_with_tier` filters only on `tier_id IS NOT NULL` — same as the
+   * View modal's list.
+   */
+  const institutionCountByTierId = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const assignment of tenantTiersQuery.data?.data ?? []) {
+      const tierId = String(assignment.tier_id ?? "");
+      if (!tierId) continue;
+      counts.set(tierId, (counts.get(tierId) ?? 0) + 1);
+    }
+    return counts;
+  }, [tenantTiersQuery.data]);
+
+  /** Counts are unknown, not zero, until the assignments resolve. */
+  const isInstitutionCountLoading = tenantTiersQuery.isPending;
+  const hasInstitutionCountError = tenantTiersQuery.isError;
 
   const assignedTenantsForViewTier = useMemo(() => {
     if (!viewTier) return [];
@@ -255,37 +383,104 @@ export function useTierManagement() {
     !!viewTierId &&
     (tenantTiersQuery.isLoading || tenantsDirectoryQuery.isLoading);
 
-  // Services carry their tier mapping as an array of tier UUIDs (tierIds).
-  // There's no server-side tier filter, so fetch all services and filter here.
+  // No server-side tier filter and no count on TierOut, so the registry is
+  // fetched once and counted here — one request, not one per tier row. The key
+  // is shared with Institution Management's identical fetch. Gated on
+  // `taskTypeFilterReady` so it is not fetched unscoped and then refetched.
   const servicesQuery = useQuery({
     queryKey: ["services-for-tiers", enabledTaskTypesParam ?? "all"],
     queryFn: () =>
       fetchAllServicesMatchingFilters({ taskTypes: enabledTaskTypesParam }),
     staleTime: 60 * 1000,
-    enabled: !!viewTierId,
+    enabled: taskTypeFilterReady,
   });
 
-  const servicesForViewTier = useMemo(() => {
-    if (!viewTier) return [];
+  /** tier id -> mapped services. O(tiers × services); both are small. */
+  const serviceCountByTierId = useMemo(() => {
     const services = servicesQuery.data?.items ?? [];
-    return services
-      .filter(
-        (s) =>
-          (s.tierIds ?? []).includes(viewTier.id) ||
-          (s.tierNames ?? []).includes(viewTier.name),
-      )
-      .map((s) => {
-        const taskType = resolveTaskType(s);
-        return {
-          serviceId: s.serviceId ?? s.service_id ?? "",
-          name: s.name,
-          taskType,
-          isPublished: !!s.isPublished,
-        };
-      });
-  }, [viewTier, servicesQuery.data]);
+    const counts = new Map<string, number>();
+    for (const tier of tiers) {
+      counts.set(
+        tier.id,
+        services.filter((s) => serviceBelongsToTier(s, tier)).length,
+      );
+    }
+    return counts;
+  }, [tiers, servicesQuery.data]);
+
+  /** Counts are unknown, not zero, until the registry resolves. */
+  const isServiceCountLoading = servicesQuery.isPending;
+  const hasServiceCountError = servicesQuery.isError;
+
+  const servicesForViewTier = useMemo(
+    () => listServicesOnTier(servicesQuery.data?.items, viewTier),
+    [viewTier, servicesQuery.data],
+  );
 
   const isServicesForViewTierLoading = !!viewTierId && servicesQuery.isLoading;
+
+  const servicesForEditingTier = useMemo(
+    () => listServicesOnTier(servicesQuery.data?.items, editingTier),
+    [editingTier, servicesQuery.data],
+  );
+
+  const institutionsForEditingTier = useMemo(() => {
+    if (!editingTier) return [];
+    return (tenantTiersQuery.data?.data ?? [])
+      .filter((assignment) => String(assignment.tier_id) === String(editingTier.id))
+      .map((assignment) => ({
+        tenantId: String(assignment.tenant_id),
+        organisation:
+          assignment.tenant_name ?? `${INSTITUTION} ${assignment.tenant_id}`,
+      }));
+  }, [editingTier, tenantTiersQuery.data]);
+
+  const otherActiveTiers = useMemo(
+    () =>
+      tiers.filter(
+        (tier) =>
+          effectiveTierStatus(tier) === "ACTIVE" &&
+          tier.id !== editingTier?.id,
+      ),
+    [tiers, editingTier?.id],
+  );
+
+  const stageServiceTier = useCallback((serviceId: string, targetTierId: string) => {
+    setStagedServiceTiers((current) => stageTarget(current, serviceId, targetTierId));
+  }, []);
+
+  const stageInstitutionTier = useCallback((tenantId: string, targetTierId: string) => {
+    setStagedInstitutionTiers((current) => stageTarget(current, tenantId, targetTierId));
+    if (!targetTierId) return;
+    setStagedInstitutionRemovals((current) => {
+      if (!(tenantId in current)) return current;
+      const next = { ...current };
+      delete next[tenantId];
+      return next;
+    });
+  }, []);
+
+  const stageInstitutionRemoval = useCallback((tenantId: string) => {
+    setStagedInstitutionTiers((current) => stageTarget(current, tenantId, ""));
+    setStagedInstitutionRemovals((current) =>
+      current[tenantId] ? current : { ...current, [tenantId]: true },
+    );
+  }, []);
+
+  const undoInstitutionRemoval = useCallback((tenantId: string) => {
+    setStagedInstitutionRemovals((current) => {
+      if (!(tenantId in current)) return current;
+      const next = { ...current };
+      delete next[tenantId];
+      return next;
+    });
+  }, []);
+
+  const discardStagedReassignments = useCallback(() => {
+    setStagedServiceTiers({});
+    setStagedInstitutionTiers({});
+    setStagedInstitutionRemovals({});
+  }, []);
 
   const filteredTiers = useMemo(() => {
     let result = tiers;
@@ -296,25 +491,39 @@ export function useTierManagement() {
         ),
       );
     }
+    if (filterStatus) {
+      result = result.filter((t) => effectiveTierStatus(t) === filterStatus);
+    }
     const q = searchQuery.trim().toLowerCase();
     if (q) {
       result = result.filter((t) => t.name.toLowerCase().includes(q));
     }
     return result;
-  }, [tiers, searchQuery, filterTaskType]);
+  }, [tiers, searchQuery, filterTaskType, filterStatus]);
 
   const showTaskTypeAllOption = taskTypeNames.length > 1;
   const hasActiveFilters =
     searchQuery.trim() !== "" ||
-    (showTaskTypeAllOption && filterTaskType !== "");
+    (showTaskTypeAllOption && filterTaskType !== "") ||
+    filterStatus !== "";
 
   const clearFilters = useCallback(() => {
     setSearchQuery("");
     setFilterTaskType(taskTypeNames.length === 1 ? taskTypeNames[0] : "");
+    setFilterStatus("");
   }, [taskTypeNames]);
 
   const refreshTiers = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: [TIER_QUERY_KEY] });
+  }, [queryClient]);
+
+  const refreshReassignmentQueries = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["services-for-tiers"] });
+    queryClient.invalidateQueries({ queryKey: ["tenant-tiers"] });
+  }, [queryClient]);
+
+  const refreshTenantDirectory = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: TENANTS_LIST_QUERY_KEY });
   }, [queryClient]);
 
   const handleDeleteClick = useCallback(
@@ -415,7 +624,7 @@ export function useTierManagement() {
   }, [onCreateOpen]);
 
   const handleCreateSubmit = useCallback(async () => {
-    if (!checkSessionExpiry()) return;
+    if (!checkSessionExpiry()) return false;
     if (!formData.name.trim()) {
       toast({
         title: "Tier name is required",
@@ -423,7 +632,7 @@ export function useTierManagement() {
         duration: 3000,
         isClosable: true,
       });
-      return;
+      return false;
     }
     if (formData.name.trim().length < 2) {
       toast({
@@ -432,7 +641,7 @@ export function useTierManagement() {
         duration: 3000,
         isClosable: true,
       });
-      return;
+      return false;
     }
     const quotaError = validateQuotas(formData.quotas);
     if (quotaError) {
@@ -443,7 +652,7 @@ export function useTierManagement() {
         duration: 3000,
         isClosable: true,
       });
-      return;
+      return false;
     }
     setIsSubmitting(true);
     try {
@@ -465,6 +674,7 @@ export function useTierManagement() {
       });
       onCreateClose();
       refreshTiers();
+      return true;
     } catch (error: any) {
       const {
         title: errTitle,
@@ -478,6 +688,7 @@ export function useTierManagement() {
         duration: 5000,
         isClosable: true,
       });
+      return false;
     } finally {
       setIsSubmitting(false);
     }
@@ -487,6 +698,9 @@ export function useTierManagement() {
     (tier: Tier) => {
       if (!checkSessionExpiry()) return;
       setShowQuotaErrors(false);
+      setStagedServiceTiers({});
+      setStagedInstitutionTiers({});
+      setStagedInstitutionRemovals({});
       setEditingTier(tier);
       setFormData({
         name: tier.name,
@@ -537,9 +751,18 @@ export function useTierManagement() {
       });
       return;
     }
+    if (!editingTier) return;
     setIsSubmitting(true);
+    const appliedServiceIds: string[] = [];
+    const appliedTenantIds: string[] = [];
+    const appliedRemovalIds: string[] = [];
+    let tierSaved = false;
+    const hadReassignments =
+      Object.keys(stagedServiceTiers).length > 0 ||
+      Object.keys(stagedInstitutionTiers).length > 0 ||
+      Object.keys(stagedInstitutionRemovals).length > 0;
     try {
-      await updateTier(editingTier!.id, {
+      await updateTier(editingTier.id, {
         name: formData.name.trim(),
         description: formData.description.trim() || undefined,
         quotas: formData.quotas.map((q) => ({
@@ -547,6 +770,60 @@ export function useTierManagement() {
           limit: Number(q.limit),
         })),
       });
+      tierSaved = true;
+
+      const serviceRows = servicesQuery.data?.items ?? [];
+      for (const [serviceId, targetTierId] of Object.entries(stagedServiceTiers)) {
+        if (!targetTierId || targetTierId === editingTier.id) {
+          appliedServiceIds.push(serviceId);
+          continue;
+        }
+        const service = serviceRows.find(
+          (row) => resolveServiceId(row) === serviceId,
+        );
+        if (!service) {
+          throw new Error(`Service ${serviceId} is no longer available.`);
+        }
+        const tierIds = tierIdsReplacing(service, editingTier, targetTierId);
+        await updateService({
+          serviceId,
+          task_type: resolveTaskType(service),
+          costPerUnit: service.costPerUnit,
+          unitSize: service.unitSize,
+          tierIds,
+        });
+        appliedServiceIds.push(serviceId);
+      }
+
+      const assignments = tenantTiersQuery.data?.data ?? [];
+      for (const [tenantId, targetTierId] of Object.entries(stagedInstitutionTiers)) {
+        const assignment = assignments.find(
+          (row) => String(row.tenant_id) === tenantId,
+        );
+        const currentTierId = assignment ? String(assignment.tier_id) : "";
+        if (currentTierId === targetTierId) {
+          appliedTenantIds.push(tenantId);
+          continue;
+        }
+        if (!targetTierId || currentTierId !== String(editingTier.id)) {
+          throw new Error(`${INSTITUTION} ${tenantId} is no longer on this tier.`);
+        }
+        await changeTenantTier(tenantId, targetTierId);
+        appliedTenantIds.push(tenantId);
+      }
+
+      for (const tenantId of Object.keys(stagedInstitutionRemovals)) {
+        const assignment = assignments.find(
+          (row) => String(row.tenant_id) === tenantId,
+        );
+        const currentTierId = assignment ? String(assignment.tier_id) : "";
+        if (currentTierId !== String(editingTier.id)) {
+          throw new Error(`${INSTITUTION} ${tenantId} is no longer on this tier.`);
+        }
+        await removeTenantFromTier(tenantId);
+        appliedRemovalIds.push(tenantId);
+      }
+
       toast({
         title: "Tier updated",
         description: `"${formData.name.trim()}" has been updated.`,
@@ -554,26 +831,91 @@ export function useTierManagement() {
         duration: 4000,
         isClosable: true,
       });
+      discardStagedReassignments();
       onEditClose();
       setEditingTier(null);
       refreshTiers();
+      if (hadReassignments) refreshReassignmentQueries();
+      if (appliedRemovalIds.length) refreshTenantDirectory();
     } catch (error: any) {
+      if (tierSaved) {
+        setStagedServiceTiers((current) => withoutKeys(current, appliedServiceIds));
+        setStagedInstitutionTiers((current) => withoutKeys(current, appliedTenantIds));
+        if (appliedRemovalIds.length) {
+          setStagedInstitutionRemovals((current) => {
+            const next = { ...current };
+            for (const id of appliedRemovalIds) delete next[id];
+            return next;
+          });
+        }
+        refreshTiers();
+        if (appliedServiceIds.length || appliedTenantIds.length || appliedRemovalIds.length) {
+          refreshReassignmentQueries();
+        }
+        if (appliedRemovalIds.length) refreshTenantDirectory();
+      }
       const {
         title: errTitle,
         message: errMsg,
         showOnlyMessage,
       } = extractErrorInfo(error);
-      toast({
-        title: showOnlyMessage ? undefined : errTitle,
-        description: errMsg,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      const appliedCount =
+        appliedServiceIds.length +
+        appliedTenantIds.length +
+        appliedRemovalIds.length;
+      const pendingCount = Math.max(
+        0,
+        Object.keys(stagedServiceTiers).length +
+          Object.keys(stagedInstitutionTiers).length +
+          Object.keys(stagedInstitutionRemovals).length -
+          appliedCount,
+      );
+      toast(
+        tierSaved
+          ? {
+              title: "Tier saved",
+              description: partialSaveDescription(
+                formData.name.trim(),
+                appliedCount,
+                pendingCount,
+                errMsg,
+              ),
+              status: "error",
+              duration: 8000,
+              isClosable: true,
+            }
+          : {
+              title: showOnlyMessage ? undefined : errTitle,
+              description: errMsg,
+              status: "error",
+              duration: 5000,
+              isClosable: true,
+            },
+      );
     } finally {
       setIsSubmitting(false);
     }
-  }, [checkSessionExpiry, formData, toast, onEditClose, refreshTiers]);
+  }, [
+    checkSessionExpiry,
+    editingTier,
+    formData,
+    stagedServiceTiers,
+    stagedInstitutionTiers,
+    stagedInstitutionRemovals,
+    servicesQuery.data,
+    tenantTiersQuery.data,
+    toast,
+    onEditClose,
+    discardStagedReassignments,
+    refreshTiers,
+    refreshReassignmentQueries,
+    refreshTenantDirectory,
+  ]);
+
+  const handleEditClose = useCallback(() => {
+    discardStagedReassignments();
+    onEditClose();
+  }, [discardStagedReassignments, onEditClose]);
 
   const handleRemoveQuota = useCallback(
     async (modelTaskType: string) => {
@@ -756,6 +1098,8 @@ export function useTierManagement() {
     setSearchQuery,
     filterTaskType,
     setFilterTaskType,
+    filterStatus,
+    setFilterStatus,
     hasActiveFilters,
     clearFilters,
     // Tiers data
@@ -786,9 +1130,21 @@ export function useTierManagement() {
     // Edit
     editingTier,
     isEditOpen,
-    onEditClose,
+    onEditClose: handleEditClose,
     handleOpenEdit,
     handleEditSubmit,
+    servicesForEditingTier,
+    institutionsForEditingTier,
+    otherActiveTiers,
+    isActiveTiersLoading: tiersQuery.isLoading,
+    hasActiveTiersError: tiersQuery.isError,
+    stagedServiceTiers,
+    stagedInstitutionTiers,
+    stagedInstitutionRemovals,
+    stageServiceTier,
+    stageInstitutionTier,
+    stageInstitutionRemoval,
+    undoInstitutionRemoval,
     removingTaskType,
     handleRemoveQuota,
     // Schedule quota change
@@ -812,6 +1168,12 @@ export function useTierManagement() {
     isAssignedTenantsLoading,
     servicesForViewTier,
     isServicesForViewTierLoading,
+    serviceCountByTierId,
+    isServiceCountLoading,
+    hasServiceCountError,
+    institutionCountByTierId,
+    isInstitutionCountLoading,
+    hasInstitutionCountError,
     // Shared form
     formData,
     setFormData,

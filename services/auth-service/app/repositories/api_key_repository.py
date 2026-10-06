@@ -175,7 +175,7 @@ class APIKeyRepository(BaseRepository):
         return list(result.scalars().all())
 
     async def patch_cached_data_field_for_tenant(
-        self, tenant_id: int, field: str, value: str
+        self, tenant_id: int, field: str, value: str, *, only_if_present: bool = False
     ) -> int:
         """Set one top-level field inside cached_data for every active,
         non-expired, already-backfilled key belonging to tenant_id's
@@ -183,17 +183,25 @@ class APIKeyRepository(BaseRepository):
         Keys with no cached_data snapshot yet are skipped (nothing to patch
         until the backfill/an update populates one). Returns rows touched.
 
+        ``only_if_present`` further skips keys whose cached_data has no
+        ``field`` at all (JSONB ``?``), leaving them untouched rather than
+        adding the field — the counterpart of
+        CacheService.patch_api_key_cache_field_if_present.
+
         Mirrors the same field this call's Redis counterpart
         (CacheService.patch_api_key_cache_field) writes, so budget/quota
         flags survive a cache eviction instead of resetting on rehydrate.
         """
+        conditions = [
+            APIKey.application_id == Application.id,
+            Application.tenant_id == tenant_id,
+            *self._active_key_conditions(require_cached_data=True),
+        ]
+        if only_if_present:
+            conditions.append(APIKey.cached_data.has_key(field))
         result = await self._db.execute(
             update(APIKey)
-            .where(
-                APIKey.application_id == Application.id,
-                Application.tenant_id == tenant_id,
-                *self._active_key_conditions(require_cached_data=True),
-            )
+            .where(*conditions)
             .values(
                 cached_data=func.jsonb_set(
                     APIKey.cached_data, cast([field], ARRAY(TEXT)), func.to_jsonb(value)

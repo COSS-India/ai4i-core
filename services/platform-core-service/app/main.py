@@ -21,15 +21,18 @@ from app.core.database import (
     init_database,
 )
 from app.core.exceptions import register_exception_handlers
+from app.core.database import get_auth_session_factory
 from app.core.database import get_primary_session_factory as _get_pii_session_factory
 from app.core.redis import close_redis, get_redis_client, init_redis
 from ai4i_core.kafka import (
+    Producer,
     init_kafka_producer,
     close_kafka_producer,
-    refresh_notification_settings_cache,
-    start_notification_settings_listener,
-    stop_notification_settings_listener,
+    configure_notifications,
+    start_notifications,
+    stop_notifications,
 )
+from ai4i_core import pii_crypto
 from app.routes import api_router, versioning
 # services/model-management/ is hyphenated; importlib is the only way to pull symbols out.
 import importlib as _importlib
@@ -150,16 +153,40 @@ async def lifespan(app: FastAPI):
         topic=settings.topic_notification,
         enabled=settings.kafka_enabled,
     )
-    # configs_notification_alert lives in this service's own primary DB —
-    # is_notification_enabled()/get_threshold_bands() back the "should this
-    # even be published" check before QUOTA_LIMIT_UPDATED.
-    async with _get_pii_session_factory()() as _notif_db:
-        await refresh_notification_settings_cache(_notif_db)
-    start_notification_settings_listener(app.state.redis_client)
+    # Shared notification pipeline (ai4i_core.kafka): its settings, ledger
+    # and failure log live in this service's own primary DB; recipients in
+    # ai4iplatform_auth. users.email there is encrypted, so this service
+    # needs the SAME PII_ENCRYPTION_KEY auth-service uses (see
+    # app.core.config.settings.pii_encryption_key). Fail fast on a
+    # missing/malformed key, mirroring auth-service's own validate_key().
+    pii_crypto.configure_key(settings.pii_encryption_key)
+    pii_crypto.validate_key()
+    notification_tasks = []
+    auth_session_factory = get_auth_session_factory()
+    if auth_session_factory is None:
+        logger.warning("Notifications disabled: auth DB not configured.")
+    else:
+        configure_notifications(
+            producer=Producer.PLATFORM_CORE_SERVICE,
+            core_session_factory=_get_pii_session_factory(),
+            auth_session_factory=auth_session_factory,
+            redis=app.state.redis_client,
+            decrypt_email=pii_crypto.decrypt_email,
+            topic=settings.topic_notification,
+        )
+        await start_notifications()
+        from app.services.notification_management import monitoring_evaluator, notification_cleanup
+
+        if settings.monitoring_eval_enabled:
+            notification_tasks.append(asyncio.create_task(monitoring_evaluator.run_forever()))
+        notification_tasks.append(asyncio.create_task(notification_cleanup.run_forever()))
 
     yield
 
-    await stop_notification_settings_listener()
+    for task in notification_tasks:
+        task.cancel()
+    await asyncio.gather(*notification_tasks, return_exceptions=True)
+    await stop_notifications()
     close_kafka_producer()
 
     sync_task = getattr(app.state, "alert_sync_task", None)

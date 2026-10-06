@@ -56,6 +56,7 @@ class UserListResponse(BaseSchema):
     full_name: Optional[str] = None
     is_active: bool
     creation_type: Optional[CreationType] = None
+    created_at: Optional[datetime] = None
 
 
 class UserProfileData(BaseSchema):

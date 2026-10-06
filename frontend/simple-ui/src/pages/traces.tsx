@@ -31,6 +31,7 @@ import { useQuery } from "@tanstack/react-query";
 import { SearchIcon, CheckCircleIcon } from "@chakra-ui/icons";
 import { FiCheckCircle, FiClock, FiShield, FiCpu, FiDatabase, FiGlobe, FiSettings, FiEye, FiEyeOff, FiInfo, FiImage, FiLayers } from "react-icons/fi";
 import ContentLayout from "../components/common/ContentLayout";
+import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import { useAuth } from "../hooks/useAuth";
 import { useRouter } from "next/router";
 import {
@@ -2176,15 +2177,10 @@ const TracesPage: React.FC = () => {
 
       <ContentLayout>
         <VStack spacing={6} w="full" align="stretch" maxW="100%">
-          {/* Page Header */}
-          <Box textAlign="center" mb={2}>
-            <Heading size="lg" color="gray.800" mb={1}>
-              Trace Viewer
-            </Heading>
-            <Text color="gray.600" fontSize="sm">
-              View and analyze request execution traces
-            </Text>
-          </Box>
+          <ManagementPageHeader
+            title="Trace Viewer"
+            description="View and analyze request execution traces"
+          />
 
           {/* Show auth warning if not authenticated */}
           {!authLoading && !isAuthenticated && (

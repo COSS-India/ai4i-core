@@ -99,106 +99,135 @@ class TestFetchTenantIdsForTier:
         assert auth_db.execute.await_args.args[1] == {"tier_id": tier_id}
 
 
-class TestNotifyTierUpdated:
+class _SessionContext:
+    def __init__(self, session):
+        self.session = session
+
+    async def __aenter__(self):
+        return self.session
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def _runtime_with_tenants(rows=None, error=None):
+    auth_session = AsyncMock()
+    if error is not None:
+        auth_session.execute = AsyncMock(side_effect=error)
+    else:
+        result = MagicMock()
+        result.mappings.return_value.all.return_value = rows or []
+        auth_session.execute = AsyncMock(return_value=result)
+    runtime = MagicMock()
+    runtime.auth_session_factory = lambda: _SessionContext(auth_session)
+    runtime.failures.record = AsyncMock()
+    return runtime
+
+
+class TestPublishQuotaLimitUpdated:
+    """QUOTA_LIMIT_UPDATED: one STATE pair per tenant on the tier x changed
+    model task type, handed to the shared pipeline (emit_state_bulk)."""
+
     @pytest.mark.asyncio
-    async def test_missing_auth_service_url_or_client_skips_entirely(self):
-        """No notification configured — must not touch auth_db at all."""
-        tier = _tier()
-        auth_db = AsyncMock()
+    async def test_fans_out_one_pair_per_tenant_and_changed_task_type(self, monkeypatch):
+        runtime = _runtime_with_tenants(rows=[
+            {"tenant_id": "1", "tenant_name": "IIT Madras"},
+            {"tenant_id": "2", "tenant_name": "IISc"},
+        ])
+        monkeypatch.setattr(tier_service, "get_notification_runtime", lambda: runtime)
+        emit = AsyncMock()
+        monkeypatch.setattr(tier_service, "emit_state_bulk", emit)
 
-        await tier_service._notify_tier_updated(tier, "", None, auth_db)
-
-        auth_db.execute.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_auth_db_query_failure_degrades_without_raising(self):
-        """Regression: previously an UndefinedTableError from the dropped
-        table propagated straight out of this function (only the HTTP call
-        was try/except'd), turning a best-effort notification into a hard
-        500 for the whole tier update. The DB read must now be covered by
-        the same best-effort guard as the HTTP call."""
-        tier = _tier()
-        auth_db = AsyncMock()
-        auth_db.execute = AsyncMock(side_effect=RuntimeError("relation does not exist"))
-        http_client = AsyncMock()
-
-        await tier_service._notify_tier_updated(
-            tier, "http://auth-service", http_client, auth_db
+        await tier_service._publish_quota_limit_updated(
+            "tier-1", "Gold",
+            [{"inference_name": "ASR", "previous": 1000, "current": 2000},
+             {"inference_name": "nmt", "previous": 500, "current": 800}],
         )
 
-        http_client.post.assert_not_awaited()
+        name, items = emit.await_args.args
+        assert name.value == "QUOTA_LIMIT_UPDATED"
+        assert len(items) == 4
+        first = items[0]
+        assert first.tenant_id == "1" and first.tenant_name == "IIT Madras"
+        assert first.subject == {"model_task_type": "asr"}
+        assert first.new_state["from_quota"] == "1000" and first.new_state["to_quota"] == "2000"
+        assert first.new_state["tier_id"] == "tier-1"
+        assert first.details[0] == "Gold"
+        assert first.details[1] == ["ASR: changed from 1,000 to 2,000"]
+        assert "tier tier-1" in emit.await_args.kwargs["summary"]
+
+    def test_tenant_name_is_the_institution_not_the_contact(self):
+        """Q-D2's tenant_name fills the email subject and headline: it must be
+        tenants.organisation (the institution), never tenants.name (the contact)."""
+        sql = tier_service._TENANTS_ON_TIER_SQL.text
+        assert "organisation AS tenant_name" in sql
+        assert " name AS tenant_name" not in sql
 
     @pytest.mark.asyncio
-    async def test_notifies_with_resolved_tenant_ids(self):
-        tier = _tier(name="Platinum")
-        row = MagicMock(id=7)
-        auth_db = AsyncMock()
-        auth_db.execute = AsyncMock(return_value=_mock_result(all_rows=[row]))
-        http_client = AsyncMock()
-        http_client.post = AsyncMock(return_value=MagicMock(raise_for_status=MagicMock()))
+    async def test_tenant_lookup_failure_is_a_source_failure_row(self, monkeypatch):
+        runtime = _runtime_with_tenants(error=RuntimeError("auth db down"))
+        monkeypatch.setattr(tier_service, "get_notification_runtime", lambda: runtime)
+        emit = AsyncMock()
+        monkeypatch.setattr(tier_service, "emit_state_bulk", emit)
 
-        await tier_service._notify_tier_updated(
-            tier, "http://auth-service", http_client, auth_db
+        await tier_service._publish_quota_limit_updated(
+            "tier-1", "Gold", [{"inference_name": "asr", "previous": 1, "current": 2}]
         )
 
-        http_client.post.assert_awaited_once()
-        _, kwargs = http_client.post.await_args
-        assert kwargs["json"]["tenant_ids"] == [7]
-        assert kwargs["json"]["tier_name"] == "Platinum"
+        emit.assert_not_awaited()
+        stage, code = runtime.failures.record.await_args.args
+        assert stage.value == "SOURCE" and code.value == "TENANT_LOOKUP_FAILED"
+
+    @pytest.mark.asyncio
+    async def test_no_tenants_on_the_tier_sends_nothing(self, monkeypatch):
+        runtime = _runtime_with_tenants(rows=[])
+        monkeypatch.setattr(tier_service, "get_notification_runtime", lambda: runtime)
+        emit = AsyncMock()
+        monkeypatch.setattr(tier_service, "emit_state_bulk", emit)
+
+        await tier_service._publish_quota_limit_updated(
+            "tier-1", "Gold", [{"inference_name": "asr", "previous": 1, "current": 2}]
+        )
+
+        emit.assert_not_awaited()
 
 
 class TestUpdateTier:
     @pytest.mark.asyncio
     async def test_quota_change_notification_failure_does_not_fail_the_update(self):
-        """End-to-end: a quota change on update_tier triggers the
-        notification path; even if auth_db blows up fetching tenant_ids,
-        update_tier itself must still return successfully (the tier write
-        already committed by that point)."""
+        """The notification runs in the background after the tier commit, so
+        update_tier returns successfully whatever happens to it."""
         tier_id = uuid4()
         tier = _tier(tier_id=tier_id)
         session = AsyncMock()
         session.execute = AsyncMock(return_value=_mock_result(scalar=tier, all_rows=[]))
         session.commit = AsyncMock()
         session.refresh = AsyncMock()
-
-        auth_db = AsyncMock()
-        auth_db.execute = AsyncMock(side_effect=RuntimeError("relation does not exist"))
-        http_client = AsyncMock()
 
         body = TierUpdate(tier_id=str(tier_id), cancel_pending_quota=["llm"])
 
-        result = await tier_service.update_tier(
-            body,
-            session,
-            updated_by="admin",
-            auth_service_url="http://auth-service",
-            http_client=http_client,
-            auth_db=auth_db,
-        )
+        result = await tier_service.update_tier(body, session, updated_by="admin")
 
         assert result.id == str(tier_id)
-        http_client.post.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_no_quota_change_skips_notification_entirely(self):
-        """A name/description-only update must not touch auth_db at all —
-        confirms the notification path (and its auth_db dependency) is only
-        reached when actually needed."""
+    async def test_no_quota_change_skips_notification_entirely(self, monkeypatch):
+        """A name/description-only update never schedules QUOTA_LIMIT_UPDATED."""
         tier_id = uuid4()
         tier = _tier(tier_id=tier_id)
         session = AsyncMock()
         session.execute = AsyncMock(return_value=_mock_result(scalar=tier, all_rows=[]))
         session.commit = AsyncMock()
         session.refresh = AsyncMock()
-        auth_db = AsyncMock()
+        scheduled = []
+        monkeypatch.setattr(tier_service, "notifications_configured", lambda: True)
+        monkeypatch.setattr(tier_service, "run_in_background", scheduled.append)
 
         body = TierUpdate(tier_id=str(tier_id), name="Renamed")
 
-        await tier_service.update_tier(
-            body, session, updated_by="admin", auth_db=auth_db
-        )
+        await tier_service.update_tier(body, session, updated_by="admin")
 
-        auth_db.execute.assert_not_awaited()
+        assert scheduled == []
 
 
 class TestDeleteTier:
@@ -361,3 +390,61 @@ class TestNotifyTierReactivated:
 
         assert http_client.post.await_count == tier_service._REACTIVATE_NOTIFY_MAX_ATTEMPTS
         assert any("failed after" in r.message for r in caplog.records if r.levelno >= logging.ERROR)
+
+
+class TestUpsertQuotasReportsOnlyChanges:
+    """QUOTA_LIMIT_UPDATED is sent only for quotas that actually change,
+    once per task type (a repeated type in one body would otherwise put
+    two rows with the same key into one bulk claim)."""
+
+    @staticmethod
+    def _session(existing):
+        from types import SimpleNamespace
+
+        rows = dict(existing)
+
+        async def execute(stmt):
+            type_id = next(
+                clause.right.value for clause in stmt.whereclause.clauses
+                if clause.left.key == "inference_type_id"
+            )
+            return SimpleNamespace(scalar_one_or_none=lambda: rows.get(type_id))
+
+        return SimpleNamespace(execute=execute)
+
+    @staticmethod
+    def _quota(task, limit):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(modelTaskType=task, limit=limit)
+
+    @staticmethod
+    def _existing(monthly, pending=None):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(monthly_quota=monthly, pending_monthly_quota=pending, updated_by=None)
+
+    @pytest.mark.asyncio
+    async def test_unchanged_quota_is_not_reported(self):
+        asr = self._existing(1000)
+        changes = await tier_service._upsert_quotas(
+            self._session({2: asr}), Tier(id=uuid4(), name="Gold"), [self._quota("ASR", 1000)], "admin"
+        )
+        assert changes == []
+        assert asr.pending_monthly_quota == 1000
+
+    @pytest.mark.asyncio
+    async def test_resending_an_already_scheduled_quota_is_not_reported_again(self):
+        changes = await tier_service._upsert_quotas(
+            self._session({2: self._existing(1000, pending=2000)}), Tier(id=uuid4(), name="Gold"),
+            [self._quota("asr", 2000)], "admin",
+        )
+        assert changes == []
+
+    @pytest.mark.asyncio
+    async def test_changed_quota_is_reported_once_per_task_type(self):
+        changes = await tier_service._upsert_quotas(
+            self._session({2: self._existing(1000), 3: self._existing(500)}), Tier(id=uuid4(), name="Gold"),
+            [self._quota("ASR", 1500), self._quota("asr", 2000), self._quota("nmt", 500)], "admin",
+        )
+        assert changes == [{"inference_name": "asr", "previous": 1000, "current": 2000}]

@@ -130,7 +130,7 @@ async def _key_items_for_response(svc: APIKeyService, keys) -> list[APIKeyItem]:
     status_code=status.HTTP_201_CREATED,
     response_model=CreateAPIKeyResponse,
     summary="Create API key",
-    responses=error_responses(403, 404),
+    responses=error_responses(403, 404, 422),
 )
 async def create_api_key(
     body: CreateAPIKeyRequest,
@@ -153,6 +153,17 @@ async def create_api_key(
     against the tenant row (not the Redis flag `/auth/validate` reads), so
     it can't lag behind an expiry that hasn't yet been picked up by a
     billed request.
+
+    Budget Allocation is mandatory: give exactly one of
+    `allocated_percentage` / `budget`, positive and within the
+    Application's available Budget. Omitting both returns 422
+    ALLOCATION_REQUIRED (the Application's remaining Budget is never
+    assigned automatically); 0 returns 422 BUDGET_TOO_SMALL; an Application
+    with no Budget (unset or ₹0) returns 422 APPLICATION_BUDGET_NOT_SET; an
+    allocation beyond what is available returns 422
+    ALLOCATION_TOTAL_EXCEEDED or BUDGET_OVERCOMMITTED. The positive-
+    allocation rule also applies to later edits via the Budget Allocation
+    endpoints (PUT .../budget-allocation).
     """
     caller_tenant_id = _resolve_caller_tenant_scope(request, current_user)
     raw_key, api_key, budget_exhausted = await svc.create_api_key(

@@ -1,10 +1,9 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { showError } from "../../../utils/errorHandler";
 import { showToast } from "../../../utils/toast";
 import { BUDGET_VALIDATION } from "../../../config/budgetMessages";
 import { INSTITUTION } from "../../../config/constants";
-import authService from "../../../services/authService";
-import { listApplications } from "../../../services/applicationService";
 import {
   createScopedApiKey,
   getApiKeyErrorCode,
@@ -13,6 +12,13 @@ import {
 import type { Application } from "../../../types/application";
 import type { Permission } from "../../../types/auth";
 import { useInferenceTypes } from "../../../hooks/useInferenceTypes";
+import {
+  API_KEY_CATALOG_STALE_MS,
+  API_KEY_PERMISSIONS_QUERY_KEY,
+  fetchPermissionCatalog,
+  fetchTenantApplications,
+  tenantApplicationsQueryKey,
+} from "./apiKeyCatalogQueries";
 import { formatSpendMoney } from "../../../utils/usageSpendHelpers";
 
 export interface UseCreateApiKeyTabOptions {
@@ -64,6 +70,7 @@ export function useCreateApiKeyTab({
   tenantId,
   onApiKeyCreated,
 }: UseCreateApiKeyTabOptions) {
+  const queryClient = useQueryClient();
   const { taskTypeNames, inferenceTypes } = useInferenceTypes();
   const [allPermissions, setAllPermissions] = useState<Permission[]>([]);
   const [isLoadingPermissions, setIsLoadingPermissions] = useState(false);
@@ -76,6 +83,16 @@ export function useCreateApiKeyTab({
     application_id?: string;
     budget?: string;
   }>({});
+
+  /** Drop a submit-time error once the admin edits that field. */
+  const clearFieldError = useCallback((field: "application_id" | "budget") => {
+    setFieldErrors((prev) => {
+      if (prev[field] == null) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  }, []);
 
   const permissions = useMemo(() => {
     if (taskTypeNames.length === 0) return allPermissions;
@@ -153,8 +170,12 @@ export function useCreateApiKeyTab({
   const handleLoadPermissions = async () => {
     setIsLoadingPermissions(true);
     try {
-      const fetchedPermissions = await authService.getAllPermissions();
-      setAllPermissions(Array.isArray(fetchedPermissions) ? fetchedPermissions : []);
+      const fetchedPermissions = await queryClient.fetchQuery({
+        queryKey: API_KEY_PERMISSIONS_QUERY_KEY,
+        queryFn: fetchPermissionCatalog,
+        staleTime: API_KEY_CATALOG_STALE_MS,
+      });
+      setAllPermissions(fetchedPermissions);
     } catch (error) {
       showError(error);
     } finally {
@@ -170,8 +191,12 @@ export function useCreateApiKeyTab({
     }
     setIsLoadingApplications(true);
     try {
-      const result = await listApplications(id);
-      setApplications(result.applications.filter((a) => a.status === "ACTIVE"));
+      const applicationsForTenant = await queryClient.fetchQuery({
+        queryKey: tenantApplicationsQueryKey(id),
+        queryFn: () => fetchTenantApplications(id),
+        staleTime: API_KEY_CATALOG_STALE_MS,
+      });
+      setApplications(applicationsForTenant.filter((a) => a.status === "ACTIVE"));
     } catch (error) {
       showError(error);
       setApplications([]);
@@ -225,39 +250,57 @@ export function useCreateApiKeyTab({
     }
 
     const rawBudget = apiKeyForm.allocated_percentage.trim();
-    let allocatedPct: number | undefined;
-    if (rawBudget) {
-      const pct = Number(rawBudget);
-      if (!Number.isFinite(pct) || pct < 0) {
-        setFieldErrors((prev) => ({
-          ...prev,
-          budget: BUDGET_VALIDATION.budgetCannotBeNegative,
-        }));
-        return;
-      }
-      if (pct > 100) {
-        setFieldErrors((prev) => ({
-          ...prev,
-          budget: BUDGET_VALIDATION.percentageMustBeBetween0And100,
-        }));
-        return;
-      }
-      if (pct === 0) {
-        setFieldErrors((prev) => ({
-          ...prev,
-          budget: BUDGET_VALIDATION.budgetMustBeGreaterThanZero,
-        }));
-        return;
-      }
-      if (pct > availablePct + 1e-6) {
-        setFieldErrors((prev) => ({
-          ...prev,
-          budget: `Budget can't exceed ${formatPct(availablePct)}% — that's all that's unallocated within this Application.`,
-        }));
-        return;
-      }
-      allocatedPct = pct;
+    if (!rawBudget) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        budget: BUDGET_VALIDATION.enterBudgetAllocationPercentage,
+      }));
+      return;
     }
+    if (selectedApplication?.allocated_budget == null) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        budget: BUDGET_VALIDATION.applicationBudgetNotAssigned,
+      }));
+      return;
+    }
+    const pct = Number(rawBudget);
+    if (!Number.isFinite(pct)) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        budget: BUDGET_VALIDATION.enterValidPercentage,
+      }));
+      return;
+    }
+    if (pct < 0) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        budget: BUDGET_VALIDATION.budgetCannotBeNegative,
+      }));
+      return;
+    }
+    if (pct > 100) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        budget: BUDGET_VALIDATION.percentageMustBeBetween0And100,
+      }));
+      return;
+    }
+    if (pct === 0) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        budget: BUDGET_VALIDATION.budgetMustBeGreaterThanZero,
+      }));
+      return;
+    }
+    if (pct > availablePct + 1e-6) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        budget: `Budget can't exceed ${formatPct(availablePct)}% — that's all that's unallocated within this Application.`,
+      }));
+      return;
+    }
+    const allocatedPct = pct;
 
     const tid = tenantId?.trim();
     if (!tid) {
@@ -272,7 +315,7 @@ export function useCreateApiKeyTab({
         permissions: selectedPermissions,
         expires_days: Number(apiKeyForm.expires_days) || 30,
         application_id: apiKeyForm.application_id,
-        ...(allocatedPct != null ? { allocated_percentage: allocatedPct } : {}),
+        allocated_percentage: allocatedPct,
       });
       onApiKeyCreated?.();
       if (createdKey.api_key) {
@@ -400,6 +443,7 @@ export function useCreateApiKeyTab({
     uncappedHoldsRemainder,
     formBannerError,
     fieldErrors,
+    clearFieldError,
     formatAvailablePct: () => formatPct(availablePct),
   };
 }

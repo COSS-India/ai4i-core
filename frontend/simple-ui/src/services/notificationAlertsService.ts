@@ -3,21 +3,29 @@ import { apiEndpoints } from "./apiEndpoints";
 import {
   catalogListResponseSchema,
   catalogUpdateResponseSchema,
+  monitoringCatalogListResponseSchema,
+  monitoringCatalogUpdateResponseSchema,
+  subscriptionListResponseSchema,
+  subscriptionUpdateResponseSchema,
   type ApiCatalogItem,
+  type ApiMonitoringCatalogItem,
+  type ApiSubscriptionItem,
 } from "./dto/schemas/notificationAlerts";
 import type {
   CatalogUpdatePayload,
+  MonitoringCatalogItem,
+  MonitoringCatalogUpdatePayload,
   NotificationAlertCatalogItem,
   NotificationAlertType,
+  NotificationSubscriptionItem,
 } from "../types/notificationAlerts";
 import {
-  isCatalogItemEnabled,
+  normalizeMonitoringRecipientRoles,
   normalizeRecipientRoles,
 } from "../types/notificationAlerts";
 import { replaceTenantCopy } from "../utils/replaceTenantCopy";
 
 function fromApiItem(item: ApiCatalogItem): NotificationAlertCatalogItem {
-  const recipient_roles = normalizeRecipientRoles(item.recipient_roles);
   return {
     id: item.id,
     name: item.name,
@@ -26,14 +34,12 @@ function fromApiItem(item: ApiCatalogItem): NotificationAlertCatalogItem {
     type: item.type,
     module: item.module,
     channels: [...item.channels],
-    recipient_roles,
+    recipient_roles: normalizeRecipientRoles(item.recipient_roles),
+    scope: item.scope,
     thresholds:
       item.thresholds == null
         ? undefined
         : item.thresholds.map((band) => ({ ...band })),
-    enabled: isCatalogItemEnabled(item.recipient_roles),
-    // Catalog is system-seeded only in v1 (no custom create API).
-    origin: "seeded",
   };
 }
 
@@ -58,6 +64,7 @@ async function updateCatalogApi(
   if (payload.recipient_roles) {
     body.recipient_roles = { ...payload.recipient_roles };
   }
+  if (payload.scope) body.scope = payload.scope;
   // Wholesale replacement — the BE has no per-band merge (percentage itself
   // is editable, so a band has no stable key to merge against).
   if (payload.thresholds) {
@@ -72,7 +79,119 @@ async function updateCatalogApi(
   return fromApiItem(parsed.data);
 }
 
-/** Catalog service — GET/PATCH `/api/v1/notification-alerts/catalog`. */
+function fromApiMonitoringItem(item: ApiMonitoringCatalogItem): MonitoringCatalogItem {
+  return {
+    id: item.id,
+    name: item.name,
+    display_name: replaceTenantCopy(item.display_name),
+    description: replaceTenantCopy(item.description),
+    channels: [...item.channels],
+    recipient_roles: normalizeMonitoringRecipientRoles(item.recipient_roles),
+    monitoring_thresholds: (item.monitoring_thresholds ?? []).map((band) => ({
+      ...band,
+    })),
+  };
+}
+
+async function listMonitoringCatalogApi(
+  signal?: AbortSignal,
+): Promise<MonitoringCatalogItem[]> {
+  const response = await apiClient.get(apiEndpoints.notificationAlerts.catalog, {
+    params: { type: "MONITORING" },
+    signal,
+  });
+  const parsed = monitoringCatalogListResponseSchema.parse(response.data);
+  return parsed.data.items.map(fromApiMonitoringItem);
+}
+
+async function updateMonitoringCatalogApi(
+  name: string,
+  payload: MonitoringCatalogUpdatePayload,
+): Promise<MonitoringCatalogItem> {
+  const body: MonitoringCatalogUpdatePayload = {};
+  if (payload.recipient_roles) {
+    body.recipient_roles = { ...payload.recipient_roles };
+  }
+  // Wholesale replacement, same as the metering thresholds.
+  if (payload.monitoring_thresholds) {
+    body.monitoring_thresholds = payload.monitoring_thresholds.map((band) => ({
+      ...band,
+    }));
+  }
+
+  const response = await apiClient.patch(
+    apiEndpoints.notificationAlerts.monitoringCatalogByName(name),
+    body,
+  );
+  const parsed = monitoringCatalogUpdateResponseSchema.parse(response.data);
+  return fromApiMonitoringItem(parsed.data);
+}
+
+function fromApiSubscription(item: ApiSubscriptionItem): NotificationSubscriptionItem {
+  return {
+    notification_id: item.notification_id,
+    name: item.name,
+    display_name: replaceTenantCopy(item.display_name),
+    description: replaceTenantCopy(item.description ?? ""),
+    scope: item.scope,
+    channels: [...item.delivery_channel],
+    subscribed: item.subscribed,
+    locked: item.locked,
+    recipients: [...item.recipients],
+    thresholds:
+      item.thresholds == null
+        ? undefined
+        : item.thresholds.map((band) => ({ ...band })),
+  };
+}
+
+async function listSubscriptionsApi(
+  tenantId: string,
+  type: NotificationAlertType,
+  signal?: AbortSignal,
+): Promise<NotificationSubscriptionItem[]> {
+  const response = await apiClient.get(apiEndpoints.notificationAlerts.subscriptions, {
+    params: { tenant_id: tenantId, type },
+    signal,
+  });
+  const parsed = subscriptionListResponseSchema.parse(response.data);
+  return parsed.data.items.map(fromApiSubscription);
+}
+
+async function updateSubscriptionStateApi(
+  tenantId: string,
+  notificationId: number,
+  subscribed: boolean,
+): Promise<NotificationSubscriptionItem> {
+  const response = await apiClient.patch(
+    apiEndpoints.notificationAlerts.subscriptionById(notificationId),
+    { subscribed },
+    { params: { tenant_id: tenantId } },
+  );
+  const parsed = subscriptionUpdateResponseSchema.parse(response.data);
+  return fromApiSubscription(parsed.data);
+}
+
+async function updateSubscriptionRecipientsApi(
+  tenantId: string,
+  notificationId: number,
+  recipients: string[],
+): Promise<NotificationSubscriptionItem> {
+  const response = await apiClient.put(
+    apiEndpoints.notificationAlerts.subscriptionById(notificationId),
+    { recipients: [...recipients] },
+    { params: { tenant_id: tenantId } },
+  );
+  const parsed = subscriptionUpdateResponseSchema.parse(response.data);
+  return fromApiSubscription(parsed.data);
+}
+
+/**
+ * Catalog service — GET/PATCH `/api/v1/notification-alerts/catalog` (Adopter
+ * Admin), PATCH `/api/v1/notification-alerts/monitoring-catalog` (Adopter
+ * Admin) and GET/PATCH/PUT `/api/v1/notification-alerts/subscriptions`
+ * (Institution Admin).
+ */
 export const notificationAlertsService = {
   async listCatalog(
     type: NotificationAlertType,
@@ -86,5 +205,45 @@ export const notificationAlertsService = {
     payload: CatalogUpdatePayload,
   ): Promise<NotificationAlertCatalogItem> {
     return updateCatalogApi(name, payload);
+  },
+
+  async listMonitoringCatalog(
+    signal?: AbortSignal,
+  ): Promise<MonitoringCatalogItem[]> {
+    return listMonitoringCatalogApi(signal);
+  },
+
+  /** Monitoring rows only — the metering PATCH 404s on them, and vice versa. */
+  async updateMonitoringCatalog(
+    name: string,
+    payload: MonitoringCatalogUpdatePayload,
+  ): Promise<MonitoringCatalogItem> {
+    return updateMonitoringCatalogApi(name, payload);
+  },
+
+  async listSubscriptions(
+    tenantId: string,
+    type: NotificationAlertType,
+    signal?: AbortSignal,
+  ): Promise<NotificationSubscriptionItem[]> {
+    return listSubscriptionsApi(tenantId, type, signal);
+  },
+
+  /** 409 on a locked (GLOBAL) row — callers must not send those. */
+  async updateSubscriptionState(
+    tenantId: string,
+    notificationId: number,
+    subscribed: boolean,
+  ): Promise<NotificationSubscriptionItem> {
+    return updateSubscriptionStateApi(tenantId, notificationId, subscribed);
+  },
+
+  /** Wholesale replacement of the row's additional recipients. */
+  async updateSubscriptionRecipients(
+    tenantId: string,
+    notificationId: number,
+    recipients: string[],
+  ): Promise<NotificationSubscriptionItem> {
+    return updateSubscriptionRecipientsApi(tenantId, notificationId, recipients);
   },
 };

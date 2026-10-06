@@ -5,17 +5,21 @@ import asyncio
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Literal, Optional, Union
+from zoneinfo import ZoneInfo
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.database import get_db
 from app.core.exceptions import InsufficientPermissionsError
 from app.core.redis import get_redis
 from app.dependencies.services import get_metering_service
+from app.repositories.pay_per_use.usage_repository import UsageRepository
 from app.schemas.metering import (
     Cell,
     HighestFailureModel,
@@ -37,7 +41,11 @@ from app.schemas.metering import (
     UsageConcentration,
 )
 from app.services.metering_service import MeteringService
-from app.utils.metering_promql_builder import API_KEY_AUTH_TYPE, SERVICE_BREAKDOWN_CONFIG
+from app.utils.metering_promql_builder import (
+    API_KEY_AUTH_TYPE,
+    SERVICE_BREAKDOWN_CONFIG,
+    AbsoluteRange,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +56,7 @@ _ROLE_MODERATOR = 2
 _ROLE_TENANT_ADMIN = 5
 
 _CACHE_TTL = settings.metering_cache_ttl_seconds
+_FIRST_USAGE_CACHE_TTL = settings.metering_first_usage_cache_ttl_seconds
 
 
 # ── Auth helpers ─────────────────────────────────────────────────────────────
@@ -131,6 +140,219 @@ def _parse_task_types(task_types: Optional[str]) -> Optional[list[str]]:
     return values
 
 
+# A naive from/to (no offset) is read as IST — the dashboard's display
+# timezone, same as how the payperuse consumer assigns billing months.
+_IST = ZoneInfo("Asia/Kolkata")
+# How far past the server's clock an explicit `to` may land before it's
+# rejected as a future date — absorbs client/server clock skew when the
+# frontend sends its own "now".
+_FUTURE_TO_TOLERANCE = timedelta(seconds=60)
+# Earliest `from` a custom range uses; an earlier one is silently clamped to
+# it (see _parse_from_to). The platform has no data before it, and without a
+# floor an absurd `from` (e.g. year 1) overflows datetime arithmetic and asks
+# the chart for ~100k zero-filled weekly buckets.
+_FROM_FLOOR = datetime(2000, 1, 1, tzinfo=_IST).astimezone(timezone.utc)
+
+
+def _floor_to_cache_ttl(now: datetime) -> datetime:
+    """``now`` floored to a multiple of the metering cache TTL. A range that
+    ends "now" is clamped to this instead of the exact second, so every
+    caller within the same TTL bucket shares one cache key (and one set of
+    backend queries) rather than each request minting its own."""
+    step = max(1, _CACHE_TTL)
+    return datetime.fromtimestamp(int(now.timestamp()) // step * step, tz=timezone.utc)
+
+
+# A `+HH:MM` offset sent without URL-encoding arrives with the `+` decoded
+# to a space ("...T10:00:00 05:30"); put it back before parsing.
+_UNENCODED_OFFSET = re.compile(r"(T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?) (\d{2}:?\d{2})$")
+
+
+def _to_utc(name: str, dt: datetime) -> datetime:
+    """``dt`` in UTC. A value so far out that UTC falls outside datetime's
+    range (year 1 in a positive offset, year 9999 in a negative one) can't
+    overflow into a 500: an ancient one becomes the floor (clamped anyway),
+    a far-future one is the usual future-date 422."""
+    try:
+        return dt.astimezone(timezone.utc)
+    except OverflowError:
+        if dt.year < _FROM_FLOOR.year:
+            return _FROM_FLOOR
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"`{name}` must not be in the future.",
+        ) from None
+
+
+def _parse_range_bound(name: str, raw: str) -> tuple[datetime, bool]:
+    """Parse one from/to value to (UTC datetime, is_date_only)."""
+    value = _UNENCODED_OFFSET.sub(r"\1+\2", raw.strip())
+    try:
+        day = date.fromisoformat(value)
+    except ValueError:
+        day = None
+    if day is not None:
+        return _to_utc(name, datetime.combine(day, time(), tzinfo=_IST)), True
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"`{name}` must be an ISO-8601 date or datetime, got {raw!r}.",
+        ) from None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_IST)
+    return _to_utc(name, dt), False
+
+
+def _parse_from_to(from_: Optional[str], to: Optional[str]) -> Optional[AbsoluteRange]:
+    """Parse the ``from``/``to`` query params into an AbsoluteRange, or None
+    when neither is given (the caller then falls back to ``window``).
+
+    - Both or neither: exactly one of them is a 422.
+    - A value with no UTC offset is read as IST; one with an offset is kept
+      as given. Both are normalized to UTC.
+    - A date-only ``to`` (e.g. "2026-09-20") covers that whole day, so
+      from=to=<same date> is a one-day range; it's capped at now when the day
+      is today.
+    - A ``to`` capped at now is floored to the cache TTL (_floor_to_cache_ttl),
+      unless that would leave the range empty.
+    - ``from`` must be before ``to``, and ``to`` must not be in the future.
+      Not validated against first_usage_at — a range before it just comes
+      back sparse/empty.
+    - ``from`` may be as far back as the caller likes. Data older than a
+      source's retention is simply not counted: the Prometheus queries clamp
+      the range to what's retained (metering_promql_builder.retained_range)
+      rather than erroring or counting lifetime counters.
+    - A ``from`` before _FROM_FLOOR (2000-01-01 IST) is silently clamped to
+      it, and a range entirely before it becomes the one day starting at the
+      floor (no data, so zeros). Never a 422: an absurd ``from`` would
+      otherwise overflow datetime arithmetic (a 500, or the previous-period
+      window before year 1) and zero-fill ~100k chart buckets. Scope echoes
+      the clamped range.
+    """
+    if from_ is None and to is None:
+        return None
+    if from_ is None or to is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="`from` and `to` must be supplied together.",
+        )
+    start, _ = _parse_range_bound("from", from_)
+    end, to_date_only = _parse_range_bound("to", to)
+    now = datetime.now(timezone.utc)
+
+    if to_date_only:
+        if end > now:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="`to` must not be in the future.",
+            )
+        end += timedelta(days=1)
+    elif end > now + _FUTURE_TO_TOLERANCE:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="`to` must not be in the future.",
+        )
+    if start < _FROM_FLOOR:
+        start = _FROM_FLOOR
+        if end <= start:
+            end = start + timedelta(days=1)
+    open_end = _floor_to_cache_ttl(now)
+    if end > open_end:
+        # Fall back to the exact now when the floor would cut off the whole
+        # range (a `from` inside the current cache bucket).
+        end = open_end if open_end > start else now
+
+    if start >= end:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="`from` must be earlier than `to`.",
+        )
+    return AbsoluteRange(start=start, end=end)
+
+
+def _iso_utc(dt: datetime) -> str:
+    """UTC ISO-8601 in the same shape as every response's generated_at."""
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _range_cache_part(window: str, custom_range: Optional[AbsoluteRange]) -> str:
+    if custom_range is None:
+        return window
+    return f"custom:{int(custom_range.start.timestamp())}-{int(custom_range.end.timestamp())}"
+
+
+def _scope_range_fields(window: str, custom_range: Optional[AbsoluteRange]) -> dict:
+    """Scope's window/from/to: the raw preset, or "custom" plus the
+    effective (validated, clamped) bounds when a custom range was applied."""
+    if custom_range is None:
+        return {"window": window}
+    return {
+        "window": "custom",
+        "from_": _iso_utc(custom_range.start),
+        "to": _iso_utc(custom_range.end),
+    }
+
+
+async def _first_usage_at(
+    db: AsyncSession, tenant_id: Optional[str], tenant_name: Optional[str] = None,
+) -> tuple[Optional[datetime], bool]:
+    """(first billed usage from quota_usage, ok). Best-effort, like the
+    auth-DB lookups: a failure logs, rolls the session back and yields
+    (None, False) rather than failing the whole response. ok=False tells the
+    caller not to cache that None, which would otherwise read as "no usage
+    yet" for the whole TTL.
+
+    A name-only scope (a tenant admin with X-Tenant-Name but no X-Tenant-Id)
+    is skipped: quota_usage is keyed by tenant id, so tenant_id=None would
+    take the MIN over every tenant and hand the platform's earliest usage to
+    one tenant. _resolve_tenant_scope refuses to widen scope the same way.
+    The Prometheus lookup filters by name and still covers this case."""
+    if tenant_id is None and tenant_name is not None:
+        return None, True
+    try:
+        first = await UsageRepository(db).get_first_usage_at(tenant_id)
+    except Exception:
+        logger.warning("first_usage_at lookup failed for tenant_id=%s", tenant_id, exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            logger.warning("Core DB rollback after failed first_usage_at lookup also failed", exc_info=True)
+        return None, False
+    return first, True
+
+
+def _first_usage_cache_key(scope_tenant: Optional[str], scope_tenant_name: Optional[str]) -> str:
+    """first_request_at depends only on the tenant scope, not on the window,
+    task types, role or limit the overview key varies by. Both parts are in
+    the key because first_request_at filters on the id when there is one and
+    on the name otherwise; a name-only scope must not share the "all" entry.
+
+    v2: v1 also cached a None result, which must not be served after deploy.
+    v3: the Prometheus lookback no longer stops at PROMETHEUS_RETENTION_DAYS,
+    so a v2 value found with the shorter lookback may be too late.
+    v4: the lookback is now capped at the retention Prometheus reports, so a
+    v3 value found by the fixed 400-day lookback may lie past it."""
+    if not (scope_tenant or scope_tenant_name):
+        return "metering:first-usage:v4:all"
+    return f"metering:first-usage:v4:{scope_tenant or ''}:{scope_tenant_name or ''}"
+
+
+def _parse_cached_first_request(cached: dict) -> Optional[datetime]:
+    value = cached.get("first_request_at")
+    return datetime.fromisoformat(value.replace("Z", "+00:00")) if value else None
+
+
+def _combine_first_usage(*candidates: Optional[datetime]) -> Optional[str]:
+    """/overview's first_usage_at: the earliest of quota_usage's first billed
+    usage (outlives metering retention, but misses untiered traffic) and the
+    metering source's first API-key request (covers untiered traffic, but only
+    within retention). None when neither has anything."""
+    present = [c for c in candidates if c is not None]
+    return _iso_utc(min(present)) if present else None
+
+
 # ── Cache helpers ─────────────────────────────────────────────────────────────
 
 
@@ -142,9 +364,9 @@ async def _cache_get(redis: aioredis.Redis, key: str) -> Optional[dict]:
         return None
 
 
-async def _cache_set(redis: aioredis.Redis, key: str, data: dict) -> None:
+async def _cache_set(redis: aioredis.Redis, key: str, data: dict, ttl: int = _CACHE_TTL) -> None:
     try:
-        await redis.set(key, json.dumps(data), ex=_CACHE_TTL)
+        await redis.set(key, json.dumps(data), ex=ttl)
     except Exception:
         pass
 
@@ -429,10 +651,22 @@ WindowParam = Literal["1h", "24h", "7d", "30d"]
 # ── Tab 1: Overview ───────────────────────────────────────────────────────────
 
 
+_FROM_DESCRIPTION = (
+    "Custom range start, ISO-8601 date or datetime (no offset = IST). Must be "
+    "sent together with `to`; overrides `window` when both are given."
+)
+_TO_DESCRIPTION = (
+    "Custom range end, ISO-8601 date or datetime (no offset = IST). A date-only "
+    "value covers that whole day. Must not be in the future."
+)
+
+
 @router.get("/overview", response_model=OverviewResponse)
 async def get_overview(
     request: Request,
     window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
+    from_: Optional[str] = Query(None, alias="from", description=_FROM_DESCRIPTION),
+    to: Optional[str] = Query(None, description=_TO_DESCRIPTION),
     limit: int = Query(10, ge=1, le=50, description="Max tenants in usage concentration ranking"),
     tenant_id: Optional[int] = Query(None, ge=1, description="Narrow to a specific tenant (admin only)"),
     task_types: Optional[str] = Query(
@@ -442,9 +676,12 @@ async def get_overview(
     ),
     svc: MeteringService = Depends(get_metering_service),
     redis: aioredis.Redis = Depends(get_redis),
+    db: AsyncSession = Depends(get_db),
 ):
     _require_metering_access(request)
 
+    custom_range = _parse_from_to(from_, to)
+    time_range = custom_range or window
     is_admin = _is_platform_admin(request)
     scope_tenant, scope_tenant_name = await _resolve_tenant_scope(request, svc, tenant_id, is_admin)
     task_type_filter = _parse_task_types(task_types)
@@ -454,14 +691,18 @@ async def get_overview(
     auth_type_filter = API_KEY_AUTH_TYPE
 
     ranking_active = is_admin and not scope_tenant
+    # v5: earliest_from dropped from the payload (v4 carried it).
     cache_key = (
-        f"metering:overview:v2:{window}:{scope_tenant_name or 'all'}:"
+        f"metering:overview:v5:{_range_cache_part(window, custom_range)}:{scope_tenant_name or 'all'}:"
         f"{_caller_role_label(request)}:{','.join(task_type_filter) if task_type_filter else 'all'}"
         + (f":{limit}" if ranking_active else "")
     )
     cached = await _cache_get(redis, cache_key)
     if cached:
         return cached
+    # How far back Prometheus holds data, for the custom-range clamp and the
+    # first-usage lookback (cached per process; see metering_retention).
+    await svc.refresh_retention()
 
     # tenant_count()/active_tenants() all touch self._auth_db (a single
     # AsyncSession — NOT safe for concurrent use), so they're fetched via
@@ -470,23 +711,72 @@ async def get_overview(
     # that caused (sqlalchemy.exc.InvalidRequestError: "This session is
     # provisioning a new connection").
     tc, active_by_range = await svc.overview_tenant_data(["24h", "7d", "30d"])
+    # Core-DB session is shared with the metering service's repositories, so
+    # this stays out of the gather() below (AsyncSession isn't safe for
+    # concurrent use — same reasoning as overview_tenant_data above).
+    quota_first_usage, first_usage_ok = await _first_usage_at(db, scope_tenant, scope_tenant_name)
+    first_usage_key = _first_usage_cache_key(scope_tenant, scope_tenant_name)
+    first_request_cached = await _cache_get(redis, first_usage_key)
 
     results = await asyncio.gather(
         svc.request_total(
-            inference_only=True, tenant=scope_tenant_name, service_id=None, time_range=window,
+            inference_only=True, tenant=scope_tenant_name, service_id=None, time_range=time_range,
             task_types=task_type_filter, tenant_id=scope_tenant, auth_type=auth_type_filter,
         ),
         svc.request_volume_chart(
-            window, scope_tenant_name, task_type_filter,
+            time_range, scope_tenant_name, task_type_filter,
             tenant_id=scope_tenant, auth_type=auth_type_filter,
         ),
         # Usage Concentration is platform-wide; hide it when a tenant filter is applied.
-        svc.usage_concentration(limit=limit, time_range=window, task_types=task_type_filter)
+        svc.usage_concentration(limit=limit, time_range=time_range, task_types=task_type_filter)
         if ranking_active else asyncio.sleep(0),
         # Key Metrics KPI #7 (model_usage_growth_pct) is admin-only, fixed
-        # calendar-month comparison — independent of `window`.
+        # calendar-month comparison — independent of `window` and from/to.
         svc.model_usage_growth_pct() if is_admin else asyncio.sleep(0),
+        # Other half of first_usage_at, from its own longer-lived cache when
+        # possible; kept out of _partition_results below.
+        svc.first_request_at(scope_tenant_name, scope_tenant)
+        if first_request_cached is None else asyncio.sleep(0),
         return_exceptions=True,
+    )
+    *results, metering_first_request = results
+    if first_request_cached is not None:
+        metering_first_request = _parse_cached_first_request(first_request_cached)
+        metering_source = "cache_hit"
+    elif isinstance(metering_first_request, Exception):
+        metering_source = "failed"
+        # Falls back to the quota value alone. Not degraded, and not cached
+        # under its own key, so the next overview miss retries it. The
+        # overview itself is still cached: blocking that too would make
+        # every load pay for the slow query again while Prometheus struggles.
+        logger.warning("first_request_at lookup failed: %s", metering_first_request)
+        metering_first_request = None
+    elif metering_first_request is None:
+        metering_source = "none"
+    else:
+        metering_source = "queried"
+        # Only a real timestamp is cached. A None (no API-key requests yet)
+        # would stick for the whole TTL, and for a tenant on untiered keys
+        # quota_usage has nothing either, so first_usage_at would stay null
+        # for up to an hour after its first request. Not caching it costs
+        # one retry per overview miss until that first request shows up.
+        await _cache_set(
+            redis, first_usage_key,
+            {"first_request_at": _iso_utc(metering_first_request)},
+            ttl=_FIRST_USAGE_CACHE_TTL,
+        )
+    first_usage_at = _combine_first_usage(quota_first_usage, metering_first_request)
+    # Traces a null first_usage_at to the half that produced it without a
+    # debugger: INFO only when it is null (the case worth looking at), DEBUG
+    # otherwise, so routine overview misses don't add log volume. The tenant
+    # id is enough to trace; the organisation name stays out of the logs.
+    logger.log(
+        logging.INFO if first_usage_at is None else logging.DEBUG,
+        "first_usage_at tenant_id=%s quota=%s quota_ok=%s metering=%s metering_source=%s result=%s",
+        scope_tenant,
+        _iso_utc(quota_first_usage) if quota_first_usage else None, first_usage_ok,
+        _iso_utc(metering_first_request) if metering_first_request else None, metering_source,
+        first_usage_at,
     )
     # Merge both result sets through one _partition_results call so a failure
     # in either half still degrades the response instead of raising —
@@ -509,18 +799,21 @@ async def get_overview(
     response = OverviewResponse(
         scope=Scope(
             role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org,
-            window=window, task_types=task_type_filter,
+            task_types=task_type_filter, **_scope_range_fields(window, custom_range),
         ),
         kpis=kpis,
         platform_adoption=platform_adoption,
         usage_concentration=usage_conc,
         request_volume=chart,
+        first_usage_at=first_usage_at,
         degraded=degraded,
         generated_at=generated_at,
     )
 
-    if not degraded:
-        await _cache_set(redis, cache_key, response.model_dump())
+    # A failed first_usage_at lookup doesn't degrade the response, but its
+    # None mustn't be cached as if the tenant had no usage.
+    if not degraded and first_usage_ok:
+        await _cache_set(redis, cache_key, response.model_dump(by_alias=True))
 
     return response
 
@@ -628,7 +921,7 @@ async def get_tenant_consumption(
     )
 
     if not degraded:
-        await _cache_set(redis, cache_key, response.model_dump())
+        await _cache_set(redis, cache_key, response.model_dump(by_alias=True))
 
     return response
 
@@ -703,7 +996,7 @@ async def get_service_consumption(
     )
 
     if not degraded:
-        await _cache_set(redis, cache_key, response.model_dump())
+        await _cache_set(redis, cache_key, response.model_dump(by_alias=True))
 
     return response
 
@@ -715,6 +1008,8 @@ async def get_service_consumption(
 async def get_model_consumption(
     request: Request,
     window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
+    from_: Optional[str] = Query(None, alias="from", description=_FROM_DESCRIPTION),
+    to: Optional[str] = Query(None, description=_TO_DESCRIPTION),
     tenant_id: Optional[int] = Query(None, ge=1, description="Narrow to a specific tenant (admin only)"),
     limit: int = Query(10, ge=1, le=25, description="Max models to return in top_models"),
     task_types: Optional[str] = Query(
@@ -727,6 +1022,7 @@ async def get_model_consumption(
 ):
     _require_metering_access(request)
 
+    custom_range = _parse_from_to(from_, to)
     is_admin = _is_platform_admin(request)
     scope_tenant, scope_tenant_name = await _resolve_tenant_scope(request, svc, tenant_id, is_admin)
     task_type_filter = _parse_task_types(task_types)
@@ -736,16 +1032,19 @@ async def get_model_consumption(
     # payload cached under the old LLM-only behavior can't be served back
     # under the new default.
     cache_key = (
-        f"metering:model-consumption:v4:{window}:{limit}:{scope_tenant_name or 'all'}:"
+        f"metering:model-consumption:v4:{_range_cache_part(window, custom_range)}:{limit}:"
+        f"{scope_tenant_name or 'all'}:"
         f"{','.join(task_type_filter) if task_type_filter else 'all'}:{_caller_role_label(request)}"
     )
     cached = await _cache_get(redis, cache_key)
     if cached:
         return cached
+    # For the custom-range clamp (cached per process; see metering_retention).
+    await svc.refresh_retention()
 
     results = await asyncio.gather(
         svc.model_breakdown(
-            tenant=scope_tenant_name, time_range=window, tenant_id=scope_tenant,
+            tenant=scope_tenant_name, time_range=custom_range or window, tenant_id=scope_tenant,
             task_types=task_type_filter,
         ),
         return_exceptions=True,
@@ -776,8 +1075,8 @@ async def get_model_consumption(
 
     response = ModelConsumptionResponse(
         scope=Scope(
-            role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window,
-            task_types=task_type_filter,
+            role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org,
+            task_types=task_type_filter, **_scope_range_fields(window, custom_range),
         ),
         summary=summary,
         top_models=top_models,
@@ -805,6 +1104,6 @@ async def get_model_consumption(
     )
 
     if not degraded:
-        await _cache_set(redis, cache_key, response.model_dump())
+        await _cache_set(redis, cache_key, response.model_dump(by_alias=True))
 
     return response

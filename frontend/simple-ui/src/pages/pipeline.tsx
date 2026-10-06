@@ -214,7 +214,7 @@ const PipelinePage: React.FC = () => {
         <Button
           size="sm"
           variant="outline"
-          colorScheme="orange"
+          colorScheme="ink"
           onClick={() => router.push("/pipeline-builder")}
           ml={4}
         >

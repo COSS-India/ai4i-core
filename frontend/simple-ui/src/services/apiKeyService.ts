@@ -1,3 +1,4 @@
+import { isApiKeyExpired } from "../config/constants";
 import authService from "./authService";
 import type {
   ApiKeyGroupedListResult,
@@ -86,12 +87,21 @@ function normalizeGroupedList(payload: unknown): ApiKeyGroupedListResult {
 
 export function getApiKeyErrorCode(error: unknown): string | null {
   const err = error as {
-    response?: { data?: { detail?: { error?: string } | string; code?: string; error?: string } };
+    response?: {
+      data?: {
+        detail?: { error?: string; code?: string } | string;
+        code?: string;
+        error?: string;
+      };
+    };
   };
   const data = err.response?.data;
   if (!data) return null;
   const detail = data.detail;
-  if (typeof detail === "object" && detail?.error) return detail.error;
+  if (typeof detail === "object" && detail !== null) {
+    const code = detail.error ?? detail.code;
+    if (code) return code;
+  }
   if (typeof detail === "string") return detail;
   return data.code ?? data.error ?? null;
 }
@@ -117,12 +127,41 @@ export async function createScopedApiKey(
     permissions: payload.permissions,
     expires_days: payload.expires_days,
     application_id: String(applicationId),
+    allocated_percentage: payload.allocated_percentage,
   };
-  if (payload.allocated_percentage != null) {
-    body.allocated_percentage = payload.allocated_percentage;
-  }
   const created = await authService.createApiKey(body);
   return normalizeKey(created);
+}
+
+/** Not revoked and not expired. */
+export function isApiKeyRecordActive(key: ApiKeyRecord): boolean {
+  if (key.is_active === false || key.is_revoked === true) return false;
+  return !isApiKeyExpired(key.expires_at);
+}
+
+/**
+ * Active key counts for the given applications, via GET /api-keys?application_id=.
+ * A failed lookup is null so the table can show "—" instead of a false zero.
+ */
+export async function countActiveApiKeysForApplications(
+  applicationIds: string[],
+): Promise<Map<string, number | null>> {
+  const unique = Array.from(new Set(applicationIds.map((id) => id.trim()).filter(Boolean)));
+  const results = await Promise.allSettled(
+    unique.map(async (id) => {
+      const grouped = await listGroupedApiKeys("", { application_id: id });
+      const count = grouped.groups
+        .flatMap((group) => group.api_keys)
+        .filter(isApiKeyRecordActive).length;
+      return count;
+    }),
+  );
+  const counts = new Map<string, number | null>();
+  unique.forEach((id, index) => {
+    const result = results[index];
+    counts.set(id, result?.status === "fulfilled" ? result.value : null);
+  });
+  return counts;
 }
 
 /** Flatten grouped list for table rendering. */

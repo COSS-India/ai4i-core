@@ -66,7 +66,7 @@ class TestCreateTenantEffectiveWindowValidation:
     async def test_both_omitted_is_allowed(self) -> None:
         """No window assigned at creation — unchanged, existing behavior."""
         svc = _svc()
-        svc.provision_user = AsyncMock()
+        svc.provision_user = AsyncMock(return_value=("user-id-123", "setup-token-abc"))
         svc._allocate_unique_username = AsyncMock(return_value="jane.doe")
 
         await svc.create_tenant(_body(), _current_user(), MagicMock())
@@ -79,7 +79,7 @@ class TestCreateTenantEffectiveWindowValidation:
     @pytest.mark.asyncio
     async def test_both_given_and_valid_is_allowed(self) -> None:
         svc = _svc()
-        svc.provision_user = AsyncMock()
+        svc.provision_user = AsyncMock(return_value=("user-id-123", "setup-token-abc"))
         svc._allocate_unique_username = AsyncMock(return_value="jane.doe")
 
         await svc.create_tenant(

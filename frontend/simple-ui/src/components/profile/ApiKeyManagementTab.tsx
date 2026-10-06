@@ -1,13 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
-  Button,
-  Card,
-  CardBody,
-  CardHeader,
   FormControl,
-  FormLabel,
-  Heading,
   Input,
   HStack,
   Text,
@@ -16,70 +10,106 @@ import {
   AlertIcon,
   AlertDescription,
   SimpleGrid,
-  AlertDialog,
-  AlertDialogBody,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogContent,
-  AlertDialogOverlay,
   Checkbox,
   CheckboxGroup,
   Tooltip,
-  IconButton,
   Badge,
 } from "@chakra-ui/react";
 import { useAuth } from "../../hooks/useAuth";
 import { useApiKeyManagementTab, type ApiKeyTableRow } from "./hooks/useApiKeyManagementTab";
 import { useApiKeyBudgetEdit } from "./hooks/useApiKeyBudgetEdit";
+import { BUDGET_COPY, editBudgetForKey } from "../../config/budgetMessages";
 import ApiKeyBulkBudgetModal from "./ApiKeyBulkBudgetModal";
+import ApiKeyBudgetModal from "./ApiKeyBudgetModal";
+import { RevokeBudgetBreakdown } from "./budgetVisuals";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
-import { FiSlash } from "react-icons/fi";
-import { ViewIcon, EditIcon } from "@chakra-ui/icons";
+import { FiSlash, FiSliders } from "react-icons/fi";
+import { EditIcon, ViewIcon } from "@chakra-ui/icons";
+import {
+  ApplicationEmptyState,
+  ApplicationNoResults,
+  EntityIdentity,
+  InstitutionAllocationPanel,
+  InstitutionAllocationSkeleton,
+  StatusDot,
+} from "./applicationSurface";
 import DataTable, {
-  useAdminTableSurface,
+  DataTableActions,
+  DEFAULT_PAGE_SIZE_OPTIONS,
+  FieldLabel,
   type DataTableColumn,
 } from "../common/table";
 import { useDeferredColumnSort } from "../../utils/tableSort";
-import StandardModal from "../common/StandardModal";
+import ConfirmDialog from "../common/ConfirmDialog";
+import FormActions from "../common/FormActions";
+import FormDrawer from "../common/FormDrawer";
+import FormSection from "../common/FormSection";
+import ReadOnlyField from "../common/ReadOnlyField";
+import FieldHint from "../common/FieldHint";
 import {
   API_KEY,
   API_KEY_FILTER_STATUS_LIST,
   formatApiKeyDisplayStatusLabel,
   formatApiKeyFilterStatusLabel,
-  getApiKeyDisplayStatusColorScheme,
 } from "../../config/constants";
 import { FIELD_HINTS } from "../../config/fieldHints";
+
+function apiKeyStatusTone(
+  status: string,
+): "success" | "warning" | "danger" | "neutral" {
+  if (status === API_KEY.DISPLAY_STATUS.ACTIVE) return "success";
+  if (status === API_KEY.DISPLAY_STATUS.INACTIVE) return "warning";
+  if (status === API_KEY.DISPLAY_STATUS.REVOKED) return "danger";
+  return "neutral";
+}
+
+export type ApiKeyPageActions = {
+  refresh: () => void;
+  openBulk: () => void;
+  bulkDisabled: boolean;
+  refreshing: boolean;
+};
 
 export interface ApiKeyManagementTabProps {
   /** When true, tab is visible; used to fetch data when user switches to this tab */
   isActive?: boolean;
   /** Parent can trigger refresh after keys are created on another tab */
   onRegisterRefresh?: (refresh: () => Promise<void>) => void;
+  onCreate?: () => void;
+  onBindPageActions?: (actions: ApiKeyPageActions) => void;
 }
 
 export default function ApiKeyManagementTab({
   isActive = false,
   onRegisterRefresh,
+  onCreate,
+  onBindPageActions,
 }: ApiKeyManagementTabProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
   const { user } = useAuth();
-  const { cardBg, borderColor: cardBorder } = useAdminTableSurface();
 
   const mgmt = useApiKeyManagementTab({
     user: user ?? null,
   });
 
-  const budgetEdit = useApiKeyBudgetEdit({
+  const bulkBudget = useApiKeyBudgetEdit({
     tenantId: user?.tenant_id,
     applications: mgmt.applications,
     initialApplicationId:
       mgmt.filterApplication !== "all" ? mgmt.filterApplication : undefined,
     onSaved: mgmt.handleFetchAllApiKeys,
   });
+  const singleBudget = useApiKeyBudgetEdit({
+    tenantId: user?.tenant_id,
+    applications: mgmt.applications,
+    onSaved: mgmt.handleFetchAllApiKeys,
+  });
 
   const keySortAccessors = useMemo(
     () => ({
       key_name: (a: ApiKeyTableRow) => a.key_name ?? "",
+      application: (a: ApiKeyTableRow) =>
+        a.application_name ?? a.application_id ?? "",
       budget: (a: ApiKeyTableRow) =>
         a.allocated_percentage ?? a.allocated_budget ?? -1,
       created: (a: ApiKeyTableRow) =>
@@ -102,27 +132,28 @@ export default function ApiKeyManagementTab({
     mgmt.filterActive !== "all" ||
     mgmt.keyNameSearch.trim() !== "";
 
+  const openBulkBudget = bulkBudget.open;
+  const openSingleKeyBudget = singleBudget.openForKey;
+  const refreshApiKeys = mgmt.handleFetchAllApiKeys;
+  const apiKeyApplicationCount = mgmt.applications.length;
+  const apiKeysRefreshing = mgmt.isLoadingAllApiKeys;
+
   const apiKeyColumns = useMemo((): DataTableColumn<ApiKeyTableRow>[] => {
     return [
       {
         id: "key_name",
-        header: "Key Name",
+        header: "Key",
         sortable: true,
         sortAccessor: (key) => key.key_name ?? "",
         cell: (key) => (
-          <Box>
-            <Text fontWeight="semibold">{key.key_name}</Text>
-            {key.api_key && (
-              <Text fontSize="xs" color="gray.500" fontFamily="mono">
-                {key.api_key}
-              </Text>
-            )}
-          </Box>
+          <EntityIdentity name={key.key_name || "API key"} meta={key.api_key} />
         ),
       },
       {
         id: "application",
         header: "Application",
+        sortable: true,
+        sortAccessor: (key) => key.application_name ?? key.application_id ?? "",
         cell: (key) => (
           <Text fontSize="sm">{key.application_name ?? key.application_id ?? "—"}</Text>
         ),
@@ -130,42 +161,35 @@ export default function ApiKeyManagementTab({
       {
         id: "permissions",
         header: "Permissions",
+        thProps: { display: { base: "none", xl: "table-cell" } },
+        tdProps: { display: { base: "none", xl: "table-cell" } },
         cell: (key) => {
-          const visiblePerms = mgmt.visiblePermissionsForKey(key);
+          const count = mgmt.visiblePermissionsForKey(key).length;
           return (
-            <HStack flexWrap="wrap" spacing={1}>
-              {visiblePerms.slice(0, 3).map((perm) => (
-                <Badge key={String(perm)} colorScheme="blue" fontSize="xs">
-                  {mgmt.formatPermission(perm)}
-                </Badge>
-              ))}
-              {visiblePerms.length > 3 && (
-                <Badge colorScheme="gray" fontSize="xs">
-                  +{visiblePerms.length - 3}
-                </Badge>
-              )}
-            </HStack>
+            <Text fontSize="sm" color="ink.600">
+              {count === 0 ? "—" : `${count} ${count === 1 ? "permission" : "permissions"}`}
+            </Text>
           );
         },
       },
       {
         id: "budget",
-        header: "Budget",
+        header: "Allocation",
         sortable: true,
         sortAccessor: (key) =>
           key.allocated_percentage ?? key.allocated_budget ?? -1,
         cell: (key) => {
           const pctLabel = mgmt.formatBudgetPct(key);
           if (pctLabel === "—") {
-            return <Text fontSize="sm" color="gray.500">—</Text>;
+            return <Text fontSize="sm" color="ink.500">—</Text>;
           }
           return (
             <Box>
-              <Text fontSize="sm" fontWeight="semibold" color="blue.600">
+              <Text fontSize="sm" fontWeight="700" color="ink.800">
                 {pctLabel}
               </Text>
               {key.allocated_budget != null && (
-                <Text fontSize="xs" color="gray.500">
+                <Text fontSize="xs" color="ink.500">
                   {formatSpendMoney(key.allocated_budget, "INR")}
                 </Text>
               )}
@@ -178,25 +202,29 @@ export default function ApiKeyManagementTab({
         header: "Status",
         cell: (key) => {
           const displayStatus = mgmt.resolveKeyDisplayStatus(key);
-          const badgeTooltip =
-            mgmt.getKeyInactiveReason(key) ?? mgmt.getKeyRevokedReason(key);
-          const badge = (
-            <Badge colorScheme={getApiKeyDisplayStatusColorScheme(displayStatus)}>
-              {formatApiKeyDisplayStatusLabel(displayStatus)}
-            </Badge>
+          const reason = mgmt.getKeyInactiveReason(key) ?? mgmt.getKeyRevokedReason(key);
+          const indicator = (
+            <StatusDot
+              label={formatApiKeyDisplayStatusLabel(displayStatus)}
+              tone={apiKeyStatusTone(displayStatus)}
+            />
           );
-          return badgeTooltip ? (
-            <Tooltip label={badgeTooltip} placement="top" hasArrow openDelay={300}>
-              {badge}
+          return reason ? (
+            <Tooltip label={reason} placement="top" hasArrow openDelay={300}>
+              <Box as="span" tabIndex={0} display="inline-flex">
+                {indicator}
+              </Box>
             </Tooltip>
           ) : (
-            badge
+            indicator
           );
         },
       },
       {
         id: "created",
         header: "Created",
+        thProps: { display: { base: "none", xl: "table-cell" } },
+        tdProps: { display: { base: "none", xl: "table-cell" } },
         sortable: true,
         sortAccessor: (key) =>
           key.created_at ? new Date(key.created_at).getTime() : 0,
@@ -208,7 +236,7 @@ export default function ApiKeyManagementTab({
       },
       {
         id: "expires",
-        header: "Expires",
+        header: "Expiry",
         sortable: true,
         sortAccessor: (key) =>
           key.expires_at
@@ -223,74 +251,88 @@ export default function ApiKeyManagementTab({
       {
         id: "actions",
         header: "Actions",
+        align: "right",
+        width: "176px",
+        minWidth: "176px",
         tdProps: { onClick: (e) => e.stopPropagation() },
         cell: (key) => (
-          <HStack spacing={1}>
-            <Tooltip label="View details" hasArrow placement="top">
-              <IconButton
-                aria-label="View API key"
-                icon={<ViewIcon />}
-                size="sm"
-                variant="ghost"
-                colorScheme="blue"
-                _hover={{ bg: "blue.50" }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  mgmt.handleOpenViewModal(key);
-                }}
-              />
-            </Tooltip>
-            <Tooltip
-              hasArrow
-              label={
-                mgmt.isKeyEffectivelyActive(key)
+          <DataTableActions
+            justify="flex-end"
+            actions={[
+              {
+                id: "view",
+                label: "View API key",
+                tooltip: "View",
+                icon: <ViewIcon />,
+                onClick: () => mgmt.handleOpenViewModal(key),
+              },
+              {
+                id: "edit",
+                label: "Update API key",
+                tooltip: mgmt.isKeyEffectivelyActive(key)
                   ? "Update key"
                   : mgmt.isKeyRevocable(key)
                     ? "Only effectively active API keys can be updated."
-                    : "This API key has been revoked and cannot be updated."
-              }
-            >
-              <IconButton
-                aria-label="Update API key"
-                icon={<EditIcon />}
-                size="sm"
-                variant="ghost"
-                colorScheme="green"
-                _hover={{ bg: "green.50" }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  mgmt.handleOpenUpdateModal(key);
-                }}
-                isDisabled={!mgmt.isKeyEffectivelyActive(key)}
-              />
-            </Tooltip>
-            <Tooltip
-              hasArrow
-              label={mgmt.isKeyRevocable(key) ? "Revoke key" : "Already revoked"}
-            >
-              <IconButton
-                aria-label="Revoke API key"
-                icon={<FiSlash />}
-                size="sm"
-                variant="ghost"
-                colorScheme="orange"
-                _hover={{ bg: "orange.50" }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  mgmt.handleOpenRevokeModal(key);
-                }}
-                isDisabled={!mgmt.isKeyRevocable(key)}
-              />
-            </Tooltip>
-          </HStack>
+                    : "This API key has been revoked and cannot be updated.",
+                icon: <EditIcon />,
+                disabled: !mgmt.isKeyEffectivelyActive(key),
+                onClick: () => mgmt.handleOpenUpdateModal(key),
+              },
+              {
+                id: "budget",
+                label: "Edit budget",
+                tooltip: !key.application_id
+                  ? BUDGET_COPY.keyHasNoApplication
+                  : mgmt.isKeyEffectivelyActive(key)
+                    ? BUDGET_COPY.editBudget
+                    : mgmt.isKeyRevocable(key)
+                      ? "Only effectively active API keys can have their budget edited."
+                      : "This API key has been revoked and cannot have its budget edited.",
+                "aria-label": editBudgetForKey(key.key_name),
+                icon: <FiSliders />,
+                disabled: !key.application_id || !mgmt.isKeyEffectivelyActive(key),
+                onClick: () => {
+                  if (key.application_id) {
+                    openSingleKeyBudget(key.application_id, key.id, key.key_name);
+                  }
+                },
+              },
+              {
+                id: "revoke",
+                label: "Revoke API key",
+                tooltip: mgmt.isKeyRevocable(key) ? "Revoke key" : "Already revoked",
+                icon: <FiSlash />,
+                color: "red.500",
+                hoverColor: "red.600",
+                hoverBg: "red.50",
+                disabled: !mgmt.isKeyRevocable(key),
+                onClick: () => mgmt.handleOpenRevokeModal(key),
+              },
+            ]}
+          />
         ),
       },
     ];
-  }, [mgmt]);
+  }, [mgmt, openSingleKeyBudget]);
 
   useEffect(() => {
     onRegisterRefresh?.(mgmt.handleFetchAllApiKeys);
   }, [onRegisterRefresh, mgmt.handleFetchAllApiKeys]);
+
+  useEffect(() => {
+    onBindPageActions?.({
+      refresh: () => void refreshApiKeys(),
+      openBulk: () => openBulkBudget(),
+      bulkDisabled: apiKeyApplicationCount === 0,
+      refreshing: apiKeysRefreshing,
+    });
+  }, [
+    apiKeyApplicationCount,
+    apiKeysRefreshing,
+    onBindPageActions,
+    openBulkBudget,
+    refreshApiKeys,
+  ]);
 
   useEffect(() => {
     if (isActive) {
@@ -298,72 +340,186 @@ export default function ApiKeyManagementTab({
     }
   }, [isActive, mgmt.handleFetchAllApiKeys]);
 
+  const viewKey = mgmt.selectedKeyForView;
+
   return (
     <>
-      <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
-        <CardHeader>
-          <HStack justify="space-between">
-            <Heading size="md" color="gray.700" userSelect="none" cursor="default">
-              Your API Keys
-            </Heading>
-            <HStack spacing={2}>
-              <Button
-                size="sm"
-                variant="outline"
-                colorScheme="blue"
-                onClick={() => budgetEdit.open()}
-                isDisabled={mgmt.applications.length === 0}
-              >
-                Edit Budget
-              </Button>
-              <Button
-                size="sm"
-                colorScheme="blue"
-                onClick={() => void mgmt.handleFetchAllApiKeys()}
-                isLoading={mgmt.isLoadingAllApiKeys}
-                loadingText="Loading..."
-              >
-                Refresh
-              </Button>
-            </HStack>
-          </HStack>
-        </CardHeader>
-        <CardBody>
-          <DataTable
+      <FormDrawer
+        isOpen={Boolean(mgmt.isViewModalOpen && viewKey)}
+        onClose={mgmt.handleCloseViewModal}
+        title={viewKey?.key_name || "API Key"}
+        description="View this key's application, budget, and permissions."
+        footer={
+          <FormActions
+            hideSubmit
+            cancelLabel="Close"
+            onCancel={mgmt.handleCloseViewModal}
+            pt={0}
+          />
+        }
+      >
+        {viewKey ? (
+          <>
+      <FormSection title="API Key">
+        <ReadOnlyField label="Key Name">{viewKey.key_name}</ReadOnlyField>
+        <ReadOnlyField label="Key ID">
+          <Text fontSize="sm" fontFamily="mono" color="ink.700" wordBreak="break-all">
+            {mgmt.formatKeyId(viewKey)}
+          </Text>
+        </ReadOnlyField>
+        <ReadOnlyField label="Application">
+          {viewKey.application_name ?? viewKey.application_id ?? "—"}
+        </ReadOnlyField>
+        <ReadOnlyField label="Permissions" fullWidth>
+          {(() => {
+            const visiblePerms = mgmt.visiblePermissionsForKey(viewKey);
+            return visiblePerms.length > 0 ? (
+              <HStack flexWrap="wrap" spacing={2}>
+                {visiblePerms.map((perm) => (
+                  <Badge key={String(perm)} colorScheme="gray" fontSize="xs" px={2} py={0.5}>
+                    {mgmt.formatPermission(perm)}
+                  </Badge>
+                ))}
+              </HStack>
+            ) : (
+              <Text fontSize="sm" color="ink.500">
+                No permissions assigned
+              </Text>
+            );
+          })()}
+        </ReadOnlyField>
+      </FormSection>
+      <FormSection title="Record">
+        <ReadOnlyField label="Budget">
+          <Text fontSize="sm" color="ink.800">
+            {mgmt.formatBudgetPct(viewKey)}
+          </Text>
+          {viewKey.allocated_budget != null &&
+            mgmt.formatBudgetPct(viewKey) !== "—" && (
+              <Text fontSize="sm" color="ink.500">
+                {formatSpendMoney(viewKey.allocated_budget, "INR")}
+              </Text>
+            )}
+        </ReadOnlyField>
+        <ReadOnlyField label="Status">
+          <StatusDot
+            label={formatApiKeyDisplayStatusLabel(mgmt.resolveKeyDisplayStatus(viewKey))}
+            tone={apiKeyStatusTone(mgmt.resolveKeyDisplayStatus(viewKey))}
+          />
+          {(mgmt.getKeyInactiveReason(viewKey) ?? mgmt.getKeyRevokedReason(viewKey)) && (
+            <Text fontSize="xs" color="ink.500" mt={2}>
+              {mgmt.getKeyInactiveReason(viewKey) ?? mgmt.getKeyRevokedReason(viewKey)}
+            </Text>
+          )}
+        </ReadOnlyField>
+        <ReadOnlyField label="Created At">
+          {viewKey.created_at
+            ? new Date(viewKey.created_at).toLocaleString()
+            : "—"}
+        </ReadOnlyField>
+        {viewKey.expires_at ? (
+          <ReadOnlyField label="Expires At">
+            {new Date(viewKey.expires_at).toLocaleString()}
+          </ReadOnlyField>
+        ) : null}
+        {viewKey.last_used ? (
+          <ReadOnlyField label="Last Used">
+            {new Date(viewKey.last_used).toLocaleString()}
+          </ReadOnlyField>
+        ) : null}
+      </FormSection>
+          </>
+        ) : null}
+      </FormDrawer>
+      <VStack align="stretch" spacing={5}>
+        {mgmt.isLoadingAllApiKeys && mgmt.allApiKeys.length === 0 ? (
+          <InstitutionAllocationSkeleton />
+        ) : mgmt.allocationOverview.comparable &&
+          mgmt.allocationOverview.allocatedPct != null &&
+          mgmt.allocationOverview.availablePct != null ? (
+          <InstitutionAllocationPanel
+            applicationCount={mgmt.allocationOverview.keyCount}
+            countLabel="API keys"
+            countSub="Across applications"
+            allocatedPct={mgmt.allocationOverview.allocatedPct}
+            availablePct={mgmt.allocationOverview.availablePct}
+            institutionBudget={mgmt.allocationOverview.pool}
+            currency="INR"
+            overAllocated={mgmt.allocationOverview.allocatedPct > 100 + 1e-6}
+            allocatedCaption="assigned to active keys"
+            availableCaption="unassigned in applications"
+            overMessage="Allocation exceeds the application budgets."
+          />
+        ) : (
+          <InstitutionAllocationPanel
+            applicationCount={mgmt.allocationOverview.keyCount}
+            countLabel="API keys"
+            countSub="Across applications"
+            figures="amount"
+            allocatedAmount={mgmt.allocationOverview.allocatedAmount}
+            institutionBudget={0}
+            currency="INR"
+            showAvailable={false}
+            showBar={false}
+            allocatedCaption="assigned to active keys"
+          />
+        )}
+      <DataTable
             layout="admin"
+            toolbarAttached
+            showRowChevron={false}
             items={sortedApiKeys}
             columns={apiKeyColumns}
             getRowKey={(key) =>
               key.api_key ?? `id-${key.id ?? ""}-${key.application_id ?? ""}-${key.key_name}`
             }
             onRowClick={mgmt.handleOpenViewModal}
-            isLoading={mgmt.isLoadingAllApiKeys}
+            isLoading={mgmt.isLoadingAllApiKeys && mgmt.allApiKeys.length === 0}
             loadingMessage="Loading API keys..."
-            emptyMessage="No API keys found. Click 'Refresh' to load API keys."
+            emptyContent={
+              hasActiveFilters ? (
+                <ApplicationNoResults
+                  onClear={mgmt.handleResetFilters}
+                  title="No matching API keys"
+                  body="Try another name or filter."
+                  actionLabel="Clear filters"
+                />
+              ) : (
+                <ApplicationEmptyState
+                  onCreate={() => onCreate?.()}
+                  title="No API keys yet"
+                  body="Create an API key to grant application access."
+                  actionLabel="Create API Key"
+                />
+              )
+            }
+            emptyMessage="No API keys yet."
             noResultsMessage="No API keys match the current filters."
             unfilteredCount={mgmt.visibleApiKeysCount}
             hasActiveFilters={hasActiveFilters}
             onClearFilters={mgmt.handleResetFilters}
-            showFiltersHeading
-            filtersHeading="Filters"
             sort={keySort.sort}
             onSortChange={keySort.onSortChange}
+            paginate="client"
+            paginationPosition="bottom"
+            pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
             search={{
-              label: "Key Name",
+              label: "Search API keys",
+              hideLabel: true,
               value: mgmt.keyNameSearch,
               onChange: mgmt.setKeyNameSearch,
-              placeholder: FIELD_HINTS.apiKey.search.placeholder,
+              placeholder: "Search API keys...",
               fields: ["key_name"],
             }}
             filterDefs={[
               {
                 id: "application",
                 label: "Application",
+                hideLabel: true,
                 type: "select",
                 param: "application_id",
                 value: mgmt.filterApplication,
                 onChange: mgmt.setFilterApplication,
-                width: { base: "full", md: "280px" },
                 options: [
                   { label: "All Applications", value: "all" },
                   ...mgmt.applications.map((app) => ({
@@ -375,11 +531,11 @@ export default function ApiKeyManagementTab({
               {
                 id: "permission",
                 label: "Permission",
+                hideLabel: true,
                 type: "select",
                 param: "permission",
                 value: mgmt.filterPermission,
                 onChange: mgmt.setFilterPermission,
-                width: { base: "full", md: "320px" },
                 options: [
                   { label: "All Permissions", value: "all" },
                   ...mgmt.permissionFilterOptions.map((perm) => ({
@@ -391,11 +547,11 @@ export default function ApiKeyManagementTab({
               {
                 id: "status",
                 label: "Status",
+                hideLabel: true,
                 type: "select",
                 param: "status",
                 value: mgmt.filterActive,
                 onChange: mgmt.setFilterActive,
-                width: { base: "full", sm: "160px" },
                 options: [
                   { label: "All", value: API_KEY.FILTER_STATUS.ALL },
                   ...API_KEY_FILTER_STATUS_LIST.map((s) => ({
@@ -406,177 +562,32 @@ export default function ApiKeyManagementTab({
               },
             ]}
           />
-        </CardBody>
-      </Card>
+      </VStack>
 
-      {/* View API Key Modal */}
-      <StandardModal
-        isOpen={mgmt.isViewModalOpen}
-        onClose={mgmt.handleCloseViewModal}
-        size="2xl"
-        title="API Key Details"
-        footer={<Button onClick={mgmt.handleCloseViewModal}>Close</Button>}
-        contentProps={{ maxW: "900px", maxH: "600px" }}
-        bodyProps={{ overflowY: "auto" }}
-      >
-            {mgmt.selectedKeyForView && (
-              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                    Key Name
-                  </Text>
-                  <Text fontSize="md">{mgmt.selectedKeyForView.key_name}</Text>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                    Key ID
-                  </Text>
-                  <Text
-                    fontSize="sm"
-                    fontFamily="mono"
-                    color="gray.700"
-                    wordBreak="break-all"
-                  >
-                    {mgmt.formatKeyId(mgmt.selectedKeyForView)}
-                  </Text>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                    Application
-                  </Text>
-                  <Text fontSize="md">
-                    {mgmt.selectedKeyForView.application_name ??
-                      mgmt.selectedKeyForView.application_id ??
-                      "—"}
-                  </Text>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                    Budget
-                  </Text>
-                  <Text fontSize="md">{mgmt.formatBudgetPct(mgmt.selectedKeyForView)}</Text>
-                  {mgmt.selectedKeyForView.allocated_budget != null &&
-                    mgmt.formatBudgetPct(mgmt.selectedKeyForView) !== "—" && (
-                      <Text fontSize="sm" color="gray.500">
-                        {formatSpendMoney(mgmt.selectedKeyForView.allocated_budget, "INR")}
-                      </Text>
-                    )}
-                </Box>
-                <Box gridColumn={{ base: "span 1", md: "span 2" }}>
-                  <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={2}>
-                    Permissions
-                  </Text>
-                  {(() => {
-                    const visiblePerms = mgmt.visiblePermissionsForKey(
-                      mgmt.selectedKeyForView,
-                    );
-                    return visiblePerms.length > 0 ? (
-                      <HStack flexWrap="wrap" spacing={2}>
-                        {visiblePerms.map((perm) => (
-                          <Badge key={String(perm)} colorScheme="blue" fontSize="sm" p={2}>
-                            {mgmt.formatPermission(perm)}
-                          </Badge>
-                        ))}
-                      </HStack>
-                    ) : (
-                      <Text fontSize="sm" color="gray.500">
-                        No permissions assigned
-                      </Text>
-                    );
-                  })()}
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                    Status
-                  </Text>
-                  <Badge
-                    colorScheme={getApiKeyDisplayStatusColorScheme(
-                      mgmt.resolveKeyDisplayStatus(mgmt.selectedKeyForView)
-                    )}
-                    fontSize="sm"
-                    p={2}
-                  >
-                    {formatApiKeyDisplayStatusLabel(
-                      mgmt.resolveKeyDisplayStatus(mgmt.selectedKeyForView)
-                    )}
-                  </Badge>
-                  {(mgmt.getKeyInactiveReason(mgmt.selectedKeyForView) ??
-                    mgmt.getKeyRevokedReason(mgmt.selectedKeyForView)) && (
-                    <Text fontSize="xs" color="gray.500" mt={2}>
-                      {mgmt.getKeyInactiveReason(mgmt.selectedKeyForView) ??
-                        mgmt.getKeyRevokedReason(mgmt.selectedKeyForView)}
-                    </Text>
-                  )}
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                    Created At
-                  </Text>
-                  <Text fontSize="sm">
-                    {mgmt.selectedKeyForView.created_at
-                      ? new Date(mgmt.selectedKeyForView.created_at).toLocaleString()
-                      : "—"}
-                  </Text>
-                </Box>
-                {mgmt.selectedKeyForView.expires_at && (
-                  <Box>
-                    <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                      Expires At
-                    </Text>
-                    <Text fontSize="sm">
-                      {new Date(mgmt.selectedKeyForView.expires_at).toLocaleString()}
-                    </Text>
-                  </Box>
-                )}
-                {mgmt.selectedKeyForView.last_used && (
-                  <Box>
-                    <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                      Last Used
-                    </Text>
-                    <Text fontSize="sm">
-                      {new Date(mgmt.selectedKeyForView.last_used).toLocaleString()}
-                    </Text>
-                  </Box>
-                )}
-              </SimpleGrid>
-            )}
-      </StandardModal>
-
-      {/* Update API Key Modal */}
-      <StandardModal
+      <FormDrawer
         isOpen={mgmt.isUpdateModalOpen}
         onClose={mgmt.handleCloseUpdateModal}
-        size="lg"
         title="Update API Key"
+        description="Change this key's name and permissions."
         footer={
-          <>
-            <Button
-              variant="ghost"
-              mr={3}
-              onClick={mgmt.handleCloseUpdateModal}
-              isDisabled={mgmt.isUpdating}
-            >
-              Cancel
-            </Button>
-            <Button
-              colorScheme="blue"
-              onClick={mgmt.handleUpdateApiKey}
-              isLoading={mgmt.isUpdating}
-              loadingText="Updating..."
-              isDisabled={
-                mgmt.isUpdating ||
-                !(mgmt.updateFormData.key_name ?? "").trim() ||
-                !(mgmt.updateFormData.permissions?.length ?? 0)
-              }
-            >
-              Update
-            </Button>
-          </>
+          <FormActions
+            submitLabel="Save Changes"
+            onCancel={mgmt.handleCloseUpdateModal}
+            onSubmit={mgmt.handleUpdateApiKey}
+            isLoading={mgmt.isUpdating}
+            isDisabled={
+              !(mgmt.updateFormData.key_name ?? "").trim() ||
+              !(mgmt.updateFormData.permissions?.length ?? 0)
+            }
+            loadingText="Saving..."
+            justify="space-between"
+            pt={0}
+          />
         }
       >
         <VStack spacing={4} align="stretch">
-              <FormControl>
-                <FormLabel fontWeight="semibold">Key Name</FormLabel>
+              <FormControl isRequired>
+                <FieldLabel>Key Name</FieldLabel>
                 <Input
                   value={mgmt.updateFormData.key_name || ""}
                   onChange={(e) =>
@@ -585,11 +596,8 @@ export default function ApiKeyManagementTab({
                   bg="white"
                 />
               </FormControl>
-              <FormControl>
-                <FormLabel fontWeight="semibold">Permissions</FormLabel>
-                <Text fontSize="sm" color="gray.600" mb={3}>
-                  Select permissions for this API key
-                </Text>
+              <FormControl isRequired>
+                <FieldLabel>Permissions</FieldLabel>
                 {mgmt.permissionFilterOptions.length > 0 ? (
                   <Box
                     borderWidth="1px"
@@ -626,118 +634,98 @@ export default function ApiKeyManagementTab({
                     </AlertDescription>
                   </Alert>
                 )}
+                <FieldHint>{FIELD_HINTS.apiKey.permissions.helper}</FieldHint>
               </FormControl>
               {mgmt.selectedKeyForUpdate?.api_key && (
-                <Text fontSize="xs" color="gray.500">
+                <Text fontSize="xs" color="ink.500">
                   Key: {mgmt.selectedKeyForUpdate.api_key.slice(0, 8)}…
                   {mgmt.selectedKeyForUpdate.api_key.slice(-4)}
                 </Text>
               )}
         </VStack>
-      </StandardModal>
+      </FormDrawer>
 
-      {/* Revoke API Key Alert Dialog */}
-      <AlertDialog
+      <ConfirmDialog
         isOpen={mgmt.isRevokeModalOpen}
-        leastDestructiveRef={cancelRef}
         onClose={mgmt.handleCloseRevokeModal}
-      >
-        <AlertDialogOverlay>
-          <AlertDialogContent>
-            <AlertDialogHeader fontSize="lg" fontWeight="bold">
-              Revoke API Key
-            </AlertDialogHeader>
-            <AlertDialogBody>
-              <VStack align="stretch" spacing={3}>
-                <Text>
-                  Are you sure you want to revoke the API key &quot;{mgmt.keyToRevoke?.key_name}
-                  &quot;?
-                </Text>
-                <Box>
-                  <Text fontWeight="semibold" fontSize="sm" color="gray.700" mb={2}>
-                    Key Details:
-                  </Text>
-                  <VStack align="start" spacing={1} fontSize="sm">
-                    <Text>
-                      <strong>Key:</strong>{" "}
-                      {mgmt.keyToRevoke?.api_key
-                        ? `${mgmt.keyToRevoke.api_key.slice(0, 8)}…${mgmt.keyToRevoke.api_key.slice(-4)}`
-                        : mgmt.keyToRevoke?.id != null
-                          ? String(mgmt.keyToRevoke.id)
-                          : "—"}
-                    </Text>
-                    <Text>
-                      <strong>Created:</strong>{" "}
-                      {mgmt.keyToRevoke?.created_at
-                        ? new Date(mgmt.keyToRevoke.created_at).toLocaleString()
-                        : "N/A"}
-                    </Text>
-                  </VStack>
-                </Box>
-                {mgmt.keyToRevoke && (mgmt.keyToRevoke.permissions ?? []).length > 0 && (
-                  <Box>
-                    <Text fontWeight="semibold" fontSize="sm" color="gray.700" mb={2}>
-                      Permissions (will be revoked):
-                    </Text>
-                    <HStack flexWrap="wrap" spacing={2}>
-                      {(mgmt.keyToRevoke.permissions ?? []).map((perm) => (
-                        <Badge key={String(perm)} colorScheme="orange" fontSize="xs">
-                          {mgmt.formatPermission(perm)}
-                        </Badge>
-                      ))}
-                    </HStack>
-                  </Box>
-                )}
-                <Alert status="warning" borderRadius="md" mt={2}>
-                  <AlertIcon />
-                  <AlertDescription fontSize="sm">
-                    This action will revoke the API key. Revoked keys cannot be reactivated.
-                  </AlertDescription>
-                </Alert>
-              </VStack>
-            </AlertDialogBody>
-            <AlertDialogFooter>
-              <Button
-                ref={cancelRef}
-                onClick={mgmt.handleCloseRevokeModal}
-                isDisabled={mgmt.isRevoking}
-              >
-                Cancel
-              </Button>
-              <Button
-                colorScheme="red"
-                onClick={mgmt.handleRevokeApiKey}
-                ml={3}
-                isLoading={mgmt.isRevoking}
-                loadingText="Revoking..."
-              >
-                Revoke
-              </Button>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialogOverlay>
-      </AlertDialog>
+        onConfirm={mgmt.handleRevokeApiKey}
+        title={
+          mgmt.keyToRevoke?.key_name
+            ? `Revoke ${mgmt.keyToRevoke.key_name}`
+            : "Revoke API Key"
+        }
+        body={
+          <VStack align="stretch" spacing={4}>
+            <Text fontSize="sm" color="ink.700" lineHeight="1.5">
+              Revoking <Text as="b">{mgmt.keyToRevoke?.key_name}</Text> stops it from working
+              immediately. This can&apos;t be undone.
+            </Text>
+            <RevokeBudgetBreakdown
+              status={mgmt.revokeBudget?.status ?? "loading"}
+              allocated={
+                mgmt.revokeBudget?.status === "ready" ? mgmt.revokeBudget.allocated : undefined
+              }
+              consumed={
+                mgmt.revokeBudget?.status === "ready" ? mgmt.revokeBudget.consumed : undefined
+              }
+              unused={
+                mgmt.revokeBudget?.status === "ready" ? mgmt.revokeBudget.unused : undefined
+              }
+              applicationName={
+                mgmt.revokeBudget?.status === "ready"
+                  ? mgmt.revokeBudget.applicationName
+                  : undefined
+              }
+            />
+          </VStack>
+        }
+        confirmLabel="Revoke API Key"
+        cancelLabel="Cancel"
+        confirmColorScheme="red"
+        isConfirmLoading={mgmt.isRevoking}
+        isConfirmDisabled={mgmt.revokeBudget?.status === "loading"}
+        confirmLoadingText="Revoking..."
+        leastDestructiveRef={cancelRef}
+      />
+
+      <ApiKeyBudgetModal
+        isOpen={singleBudget.isOpen}
+        onClose={singleBudget.close}
+        isLoading={singleBudget.isLoading}
+        isSaving={singleBudget.isSaving}
+        banner={singleBudget.banner}
+        applicationName={singleBudget.applicationName}
+        applicationBudget={singleBudget.applicationBudget}
+        applicationBudgetUnset={singleBudget.applicationBudgetUnset}
+        liveTotalPct={singleBudget.liveTotalPct}
+        rows={singleBudget.rows}
+        focusedKeyId={singleBudget.focusedKeyId}
+        focusedKeyName={singleBudget.focusedKeyName}
+        onPctChange={singleBudget.onPctChange}
+        onPctBoundHit={singleBudget.onPctBoundHit}
+        onSave={() => void singleBudget.save()}
+        canSave={singleBudget.canSave}
+      />
 
       <ApiKeyBulkBudgetModal
-        isOpen={budgetEdit.isOpen}
-        onClose={budgetEdit.close}
-        isLoading={budgetEdit.isLoading}
-        isSaving={budgetEdit.isSaving}
-        banner={budgetEdit.banner}
-        applications={budgetEdit.applications}
-        selectedApplicationId={budgetEdit.selectedApplicationId}
-        onApplicationChange={budgetEdit.onApplicationChange}
-        applicationName={budgetEdit.applicationName}
-        applicationBudget={budgetEdit.applicationBudget}
-        applicationAllocatedPct={budgetEdit.applicationAllocatedPct}
-        applicationBudgetUnset={budgetEdit.applicationBudgetUnset}
-        liveTotalPct={budgetEdit.liveTotalPct}
-        rows={budgetEdit.rows}
-        onPctChange={budgetEdit.onPctChange}
-        onPctBoundHit={budgetEdit.onPctBoundHit}
-        onAmountChange={budgetEdit.onAmountChange}
-        onSave={() => void budgetEdit.save()}
-        canSave={budgetEdit.canSave}
+        isOpen={bulkBudget.isOpen}
+        onClose={bulkBudget.close}
+        isLoading={bulkBudget.isLoading}
+        isSaving={bulkBudget.isSaving}
+        banner={bulkBudget.banner}
+        applications={bulkBudget.applications}
+        selectedApplicationId={bulkBudget.selectedApplicationId}
+        onApplicationChange={bulkBudget.onApplicationChange}
+        applicationName={bulkBudget.applicationName}
+        applicationBudget={bulkBudget.applicationBudget}
+        applicationBudgetUnset={bulkBudget.applicationBudgetUnset}
+        liveTotalPct={bulkBudget.liveTotalPct}
+        rows={bulkBudget.rows}
+        onPctChange={bulkBudget.onPctChange}
+        onPctBoundHit={bulkBudget.onPctBoundHit}
+        onAmountChange={bulkBudget.onAmountChange}
+        onSave={() => void bulkBudget.save()}
+        canSave={bulkBudget.canSave}
       />
     </>
   );

@@ -172,7 +172,7 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
   if (isLoading && !detail) {
     body = (
       <Center py={12}>
-        <Spinner color="blue.500" />
+        <Spinner />
       </Center>
     );
   } else if (errorMessage) {
@@ -229,7 +229,7 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
         <Box position="relative" opacity={isLoading ? 0.55 : 1}>
           {isLoading ? (
             <Center position="absolute" inset={0} zIndex={1}>
-              <Spinner color="blue.500" size="sm" />
+              <Spinner size="sm" />
             </Center>
           ) : null}
           <Text fontSize="11.5px" letterSpacing="0.05em" color="gray.500" fontWeight="bold" mb="10px">

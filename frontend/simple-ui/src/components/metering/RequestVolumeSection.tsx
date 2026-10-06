@@ -3,12 +3,14 @@ import React, { useMemo } from "react";
 import { Bar, BarChart, CartesianGrid, Tooltip, XAxis, YAxis } from "recharts";
 import { METERING } from "../../config/meteringConstants";
 import { useMeteringChartColors } from "../../hooks/useMeteringChartColors";
-import type { MeteringGraph, MeteringWindow } from "../../types/metering";
+import type { MeteringGraph, MeteringScope } from "../../types/metering";
 import {
   buildRequestVolumeChartData,
   formatCompactNumber,
   formatMeteringTooltipLabel,
   formatMeteringYTick,
+  resolveMeteringChartScale,
+  type MeteringChartScale,
   type RequestVolumeChartPoint,
 } from "../../utils/meteringFormatters";
 import MeteringChartPanel, {
@@ -20,13 +22,13 @@ import MeteringSectionCard from "./MeteringSectionCard";
 const RequestVolumeTooltip: React.FC<{
   active?: boolean;
   payload?: ReadonlyArray<{ payload: RequestVolumeChartPoint }>;
-  timeWindow: MeteringWindow;
-}> = ({ active, payload, timeWindow }) => {
+  scale: MeteringChartScale;
+}> = ({ active, payload, scale }) => {
   if (!active || !payload?.length) return null;
   const p = payload[0].payload;
   return (
     <Box bg="white" border="1px solid" borderColor="gray.200" borderRadius="lg" px={3} py={2.5} shadow="md" fontSize="sm" minW="140px">
-      <Text fontWeight="semibold" color="gray.800" mb={1.5}>{formatMeteringTooltipLabel(p.ts, timeWindow)}</Text>
+      <Text fontWeight="semibold" color="gray.800" mb={1.5}>{formatMeteringTooltipLabel(p.ts, scale)}</Text>
       <Text color="green.500" fontWeight="medium">{formatCompactNumber(p.successful)} successful</Text>
       <Text color="red.500" fontWeight="medium">{formatCompactNumber(p.failed)} failed</Text>
       <Text color="gray.600" mt={1}>{formatCompactNumber(p.requests)} total</Text>
@@ -34,12 +36,15 @@ const RequestVolumeTooltip: React.FC<{
   );
 };
 
-const RequestVolumeSection: React.FC<{ graph?: MeteringGraph | null; timeWindow: MeteringWindow }> = ({
-  graph, timeWindow,
-}) => {
+const RequestVolumeSection: React.FC<{
+  graph?: MeteringGraph | null;
+  /** Scope of the response `graph` came from; drives the label format. */
+  scope: MeteringScope;
+}> = ({ graph, scope }) => {
   const colors = useMeteringChartColors();
   const section = METERING.SECTIONS.REQUEST_VOLUME;
-  const chartData = useMemo(() => buildRequestVolumeChartData(graph, timeWindow), [graph, timeWindow]);
+  const scale = useMemo(() => resolveMeteringChartScale(scope), [scope]);
+  const chartData = useMemo(() => buildRequestVolumeChartData(graph, scale), [graph, scale]);
 
   return (
     <MeteringSectionCard title={section.TITLE} subtitle={section.SUBTITLE} sectionLabel>
@@ -58,7 +63,7 @@ const RequestVolumeSection: React.FC<{ graph?: MeteringGraph | null; timeWindow:
                   tickFormatter={formatMeteringYTick}
                   label={{ value: section.Y_AXIS_REQUESTS, angle: -90, position: "insideLeft", style: { fontSize: 10, fill: colors.axis, fontWeight: 600 } }}
                 />
-                <Tooltip cursor={{ fill: "rgba(148, 163, 184, 0.15)" }} content={<RequestVolumeTooltip timeWindow={timeWindow} />} />
+                <Tooltip cursor={{ fill: "rgba(148, 163, 184, 0.15)" }} content={<RequestVolumeTooltip scale={scale} />} />
                 <Bar dataKey="successful" stackId="volume" fill={colors.successFill} maxBarSize={48} />
                 <Bar dataKey="failed" stackId="volume" fill={colors.failureStroke} radius={[4, 4, 0, 0]} maxBarSize={48} />
               </BarChart>

@@ -1,32 +1,27 @@
-// View Service tab: read-only detail view with publish/unpublish actions
+// View Service: same form sections as create/edit, read-only, plus lifecycle actions.
 import {
   Badge,
   Box,
-  Card,
-  CardBody,
-  CardHeader,
-  Heading,
   HStack,
   IconButton,
-  SimpleGrid,
-  Text,
   Tooltip,
-  VStack,
 } from "@chakra-ui/react";
 import { MdOutlineCheckCircle, MdOutlineUnpublished } from "react-icons/md";
 import React from "react";
+import FormActions from "../common/FormActions";
+import FormDrawer from "../common/FormDrawer";
+import FormSection from "../common/FormSection";
+import ReadOnlyField from "../common/ReadOnlyField";
 import {
   resolveHasAuthToken,
   type Service,
 } from "../../services/servicesManagementService";
 import { resolveTaskType } from "../../utils/platformService";
+import ServiceFormTab from "./ServiceFormTab";
 
 interface ServiceDetailTabProps {
-  cardBg: string;
-  cardBorder: string;
   selectedService: Service;
   isRegistryReadOnly: boolean;
-  getTaskColor: (taskType?: string) => string;
   isServiceModelDeprecated: (service: Service | null | undefined) => boolean;
   selectedServiceModelDeprecated: boolean | null;
   viewServiceUnitType: string;
@@ -34,14 +29,12 @@ interface ServiceDetailTabProps {
   publishingServiceUuid: string | null;
   onRequestUnpublish: (service: Service) => void;
   onRequestPublish: (service: Service) => void;
+  onClose: () => void;
 }
 
 const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
-  cardBg,
-  cardBorder,
   selectedService,
   isRegistryReadOnly,
-  getTaskColor,
   isServiceModelDeprecated,
   selectedServiceModelDeprecated,
   viewServiceUnitType,
@@ -49,293 +42,157 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
   publishingServiceUuid,
   onRequestUnpublish,
   onRequestPublish,
+  onClose,
 }) => {
   const taskType = resolveTaskType(selectedService);
+  const modelId = selectedService.modelId || selectedService.model_id || "";
+  const tierIds = selectedService.tierIds?.length
+    ? selectedService.tierIds
+    : (selectedService.tierNames ?? []);
+  const title =
+    selectedService.name ||
+    selectedService.serviceId ||
+    selectedService.service_id ||
+    "Service";
+  const publishBlocked =
+    isServiceModelDeprecated(selectedService) ||
+    selectedServiceModelDeprecated === true;
+
   return (
-    <Card
-      bg={cardBg}
-      borderColor={cardBorder}
-      borderWidth="1px"
-      boxShadow="none"
-    >
-      <CardHeader>
-        <Heading size="md" color="gray.700" userSelect="none" cursor="default">
-          {selectedService.name ||
-            selectedService.serviceId ||
-            selectedService.service_id}
-        </Heading>
-      </CardHeader>
-      <CardBody>
-        {/* View Mode - Display service details */}
-        <VStack spacing={6} align="stretch">
-          {isRegistryReadOnly && (
-            <Badge
-              colorScheme="gray"
-              alignSelf="flex-start"
-              fontSize="sm"
-              px={2}
-              py={1}
+    <FormDrawer
+      isOpen
+      size="wide"
+      onClose={onClose}
+      title={title}
+      description="Service configuration."
+      actions={
+        !isRegistryReadOnly ? (
+          selectedService.isPublished === true ? (
+            <Tooltip label="Unpublish" placement="top" hasArrow>
+              <IconButton
+                aria-label="Unpublish"
+                icon={<MdOutlineUnpublished />}
+                size="sm"
+                colorScheme="red"
+                variant="outline"
+                onClick={() => onRequestUnpublish(selectedService)}
+                isLoading={unpublishingServiceUuid === selectedService.serviceId}
+                isDisabled={
+                  unpublishingServiceUuid !== null || publishingServiceUuid !== null
+                }
+              />
+            </Tooltip>
+          ) : (
+            <Tooltip
+              label={
+                publishBlocked
+                  ? "This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing."
+                  : "Publish"
+              }
+              hasArrow
+              placement="top"
             >
-              Read-only
-            </Badge>
-          )}
-          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Service ID
-              </Text>
-              <Text fontSize="md">
-                {selectedService.serviceId ||
-                  selectedService.service_id ||
-                  "N/A"}
-              </Text>
-            </Box>
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Name
-              </Text>
-              <Text fontSize="md">{selectedService.name || "N/A"}</Text>
-            </Box>
-          </SimpleGrid>
-
-          <Box>
-            <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-              Description
-            </Text>
-            <Text fontSize="md">
-              {selectedService.serviceDescription ||
-                selectedService.description ||
-                "N/A"}
-            </Text>
-          </Box>
-
-          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Model Task Type
-              </Text>
-              <Badge
-                colorScheme={getTaskColor(taskType)}
-                fontSize="sm"
-                p={2}
-              >
-                {taskType ? taskType.toUpperCase() : "N/A"}
-              </Badge>
-            </Box>
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Status (Publish/Unpublish)
-              </Text>
-              <HStack spacing={2} align="center" flexWrap="wrap">
-                <Badge
-                  colorScheme={
-                    selectedService.isPublished === true ? "green" : "gray"
+              <Box as="span" display="inline-block">
+                <IconButton
+                  aria-label="Publish"
+                  icon={<MdOutlineCheckCircle />}
+                  size="sm"
+                  colorScheme="green"
+                  variant="outline"
+                  onClick={() => onRequestPublish(selectedService)}
+                  isLoading={publishingServiceUuid === selectedService.serviceId}
+                  isDisabled={
+                    unpublishingServiceUuid !== null ||
+                    publishingServiceUuid !== null ||
+                    publishBlocked
                   }
-                  fontSize="sm"
-                  p={2}
-                >
-                  {selectedService.isPublished === true
-                    ? "Published"
-                    : "Unpublished"}
-                </Badge>
-                {!isRegistryReadOnly &&
-                  (selectedService.isPublished === true ? (
-                    <Tooltip label="Unpublish" placement="top" hasArrow>
-                      <IconButton
-                        aria-label="Unpublish"
-                        icon={<MdOutlineUnpublished />}
-                        size="sm"
-                        colorScheme="red"
-                        variant="outline"
-                        onClick={() => onRequestUnpublish(selectedService)}
-                        isLoading={
-                          unpublishingServiceUuid === selectedService.serviceId
-                        }
-                        isDisabled={
-                          unpublishingServiceUuid !== null ||
-                          publishingServiceUuid !== null
-                        }
-                      />
-                    </Tooltip>
-                  ) : (
-                    <Tooltip
-                      label={
-                        isServiceModelDeprecated(selectedService) ||
-                        selectedServiceModelDeprecated === true
-                          ? "This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing."
-                          : "Publish"
-                      }
-                      hasArrow
-                      placement="top"
-                    >
-                      <Box as="span" display="inline-block">
-                        <IconButton
-                          aria-label="Publish"
-                          icon={<MdOutlineCheckCircle />}
-                          size="sm"
-                          colorScheme="green"
-                          variant="outline"
-                          onClick={() => onRequestPublish(selectedService)}
-                          isLoading={
-                            publishingServiceUuid === selectedService.serviceId
-                          }
-                          isDisabled={
-                            unpublishingServiceUuid !== null ||
-                            publishingServiceUuid !== null ||
-                            isServiceModelDeprecated(selectedService) ||
-                            selectedServiceModelDeprecated === true
-                          }
-                        />
-                      </Box>
-                    </Tooltip>
-                  ))}
-              </HStack>
-            </Box>
-          </SimpleGrid>
+                />
+              </Box>
+            </Tooltip>
+          )
+        ) : undefined
+      }
+      footer={<FormActions hideSubmit cancelLabel="Close" onCancel={onClose} pt={0} />}
+    >
+      <FormSection title="Availability">
+        <ReadOnlyField label="Status">
+          <HStack spacing={2}>
+            {isRegistryReadOnly ? (
+              <Badge colorScheme="gray" fontSize="xs" px={2} py={0.5}>
+                Read-only
+              </Badge>
+            ) : null}
+            <Badge
+              colorScheme={selectedService.isPublished === true ? "green" : "gray"}
+              fontSize="xs"
+              px={2}
+              py={0.5}
+            >
+              {selectedService.isPublished === true ? "Published" : "Unpublished"}
+            </Badge>
+          </HStack>
+        </ReadOnlyField>
+      </FormSection>
 
-          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Model ID
-              </Text>
-              <Text fontSize="md">
-                {selectedService.modelId || selectedService.model_id || "N/A"}
-              </Text>
-            </Box>
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Endpoint
-              </Text>
-              <Text fontSize="md" wordBreak="break-all">
-                {selectedService.endpoint ||
-                  selectedService.endpoint_url ||
-                  "N/A"}
-              </Text>
-            </Box>
-          </SimpleGrid>
+      <ServiceFormTab
+        mode="view"
+        editingService={selectedService}
+        formData={{
+          name: selectedService.name || "",
+          serviceId: selectedService.serviceId || selectedService.service_id || "",
+          serviceDescription:
+            selectedService.serviceDescription || selectedService.description || "",
+          hardwareDescription: selectedService.hardwareDescription || "",
+          modelId,
+          modelName: selectedService.model?.name || modelId,
+          endpoint: selectedService.endpoint || selectedService.endpoint_url || "",
+          task_type: taskType,
+          modelSubmissionDate: selectedService.modelSubmissionDate,
+        }}
+        onInputChange={() => undefined}
+        onTaskTypeChange={() => undefined}
+        onModelNameChange={() => undefined}
+        taskTypeNames={taskType ? [taskType] : []}
+        isLoadingModels={false}
+        filteredModelsForDropdown={[]}
+        unitType={viewServiceUnitType}
+        pricePerUnit={
+          selectedService.costPerUnit != null ? String(selectedService.costPerUnit) : ""
+        }
+        onPricePerUnitChange={() => undefined}
+        unitSize={selectedService.unitSize != null ? String(selectedService.unitSize) : ""}
+        onUnitSizeChange={() => undefined}
+        currency="INR"
+        onCurrencyChange={() => undefined}
+        selectedTiers={tierIds}
+        onToggleTier={() => undefined}
+        availableTiers={[]}
+        isCreateFormModelSelected={Boolean(modelId)}
+        isLlmTaskType={taskType.trim().toLowerCase() === "llm"}
+        authToken=""
+        onAuthTokenChange={() => undefined}
+        hasAuthToken={resolveHasAuthToken(selectedService)}
+        onSubmit={(e) => e.preventDefault()}
+      />
 
-          {taskType.trim().toLowerCase() === "llm" && (
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Authentication Token
-              </Text>
-              <Text fontSize="md">
-                {resolveHasAuthToken(selectedService)
-                  ? "Configured"
-                  : "Not configured"}
-              </Text>
-            </Box>
-          )}
-
-          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Hardware Description
-              </Text>
-              <Text fontSize="md">
-                {selectedService.hardwareDescription || "N/A"}
-              </Text>
-            </Box>
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Published On
-              </Text>
-              <Text fontSize="md">
-                {selectedService.publishedOn
-                  ? new Date(
-                      selectedService.publishedOn * 1000,
-                    ).toLocaleString()
-                  : "N/A"}
-              </Text>
-            </Box>
-          </SimpleGrid>
-
-          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Unit Type
-              </Text>
-              <Text fontSize="md">{viewServiceUnitType || "N/A"}</Text>
-            </Box>
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Price per unit size
-              </Text>
-              <Text fontSize="md">
-                {selectedService.costPerUnit != null
-                  ? selectedService.costPerUnit
-                  : "N/A"}
-              </Text>
-            </Box>
-          </SimpleGrid>
-
-          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Currency
-              </Text>
-              <Text fontSize="md">INR</Text>
-            </Box>
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Unit Size
-              </Text>
-              <Text fontSize="md">
-                {selectedService.unitSize != null
-                  ? selectedService.unitSize
-                  : "N/A"}
-              </Text>
-            </Box>
-          </SimpleGrid>
-
-          <Box>
-            <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-              Tier
-            </Text>
-            {selectedService.tierNames &&
-            selectedService.tierNames.length > 0 ? (
-              <HStack spacing={1} flexWrap="wrap">
-                {selectedService.tierNames.map((name) => (
-                  <Badge
-                    key={name}
-                    colorScheme="gray"
-                    fontSize="xs"
-                    px={2}
-                    py={0.5}
-                  >
-                    {name}
-                  </Badge>
-                ))}
-              </HStack>
-            ) : (
-              <Text fontSize="md">N/A</Text>
-            )}
-          </Box>
-
-          {selectedService.created_at && (
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Created At
-              </Text>
-              <Text fontSize="md">
-                {new Date(selectedService.created_at).toLocaleString()}
-              </Text>
-            </Box>
-          )}
-
-          {selectedService.updated_at && (
-            <Box>
-              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Updated At
-              </Text>
-              <Text fontSize="md">
-                {new Date(selectedService.updated_at).toLocaleString()}
-              </Text>
-            </Box>
-          )}
-        </VStack>
-      </CardBody>
-    </Card>
+      <FormSection title="Record">
+        <ReadOnlyField label="Published On">
+          {selectedService.publishedOn
+            ? new Date(selectedService.publishedOn * 1000).toLocaleString()
+            : "N/A"}
+        </ReadOnlyField>
+        {selectedService.created_at ? (
+          <ReadOnlyField label="Created At">
+            {new Date(selectedService.created_at).toLocaleString()}
+          </ReadOnlyField>
+        ) : null}
+        {selectedService.updated_at ? (
+          <ReadOnlyField label="Updated At">
+            {new Date(selectedService.updated_at).toLocaleString()}
+          </ReadOnlyField>
+        ) : null}
+      </FormSection>
+    </FormDrawer>
   );
 };
 

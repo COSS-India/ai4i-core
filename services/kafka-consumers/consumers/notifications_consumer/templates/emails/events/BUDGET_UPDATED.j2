@@ -1,0 +1,8 @@
+{# details: [currency, previous_value, new_value, effective_date] #}
+{% set layout = "notification" %}
+{% set name = "Budget Revised" %}
+{% set headline = "The Budget for " ~ tenant_name ~ " has been revised." %}
+{% set lines = [
+    "Budget changed from " ~ details[0] ~ " " ~ details[1] ~ " to " ~ details[0] ~ " " ~ details[2],
+    "Effective Date: " ~ details[3],
+] %}

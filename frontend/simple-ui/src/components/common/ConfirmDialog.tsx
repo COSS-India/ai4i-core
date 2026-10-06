@@ -29,6 +29,8 @@ export interface ConfirmDialogProps {
   confirmColorScheme?: string;
   /** When true, confirm button shows a spinner and is disabled. */
   isConfirmLoading?: boolean;
+  /** When true, confirm stays disabled without a spinner. Cancel still works. */
+  isConfirmDisabled?: boolean;
   /** Optional text to show while confirm is loading. */
   confirmLoadingText?: string;
   /**
@@ -36,6 +38,8 @@ export interface ConfirmDialogProps {
    * so screen readers and focus behave correctly.
    */
   leastDestructiveRef?: RefObject<HTMLButtonElement>;
+  /** Centre the dialog vertically instead of pinning it near the top. */
+  isCentered?: boolean;
 }
 
 /**
@@ -52,8 +56,10 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   cancelLabel = "Cancel",
   confirmColorScheme = "red",
   isConfirmLoading = false,
+  isConfirmDisabled = false,
   confirmLoadingText,
   leastDestructiveRef: leastDestructiveRefProp,
+  isCentered = false,
 }) => {
   const dialogBg = useColorModeValue("white", "gray.800");
   const fallbackRef = useRef<HTMLButtonElement>(null);
@@ -63,7 +69,12 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
     <AlertDialog
       isOpen={isOpen}
       leastDestructiveRef={leastDestructiveRef}
-      onClose={onClose}
+      isCentered={isCentered}
+      onClose={() => {
+        if (!isConfirmLoading) onClose();
+      }}
+      closeOnOverlayClick={!isConfirmLoading}
+      closeOnEsc={!isConfirmLoading}
     >
       <AlertDialogOverlay>
         <AlertDialogContent bg={dialogBg}>
@@ -77,6 +88,7 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
               onClick={onClose}
               mr={3}
               variant="outline"
+              isDisabled={isConfirmLoading}
             >
               {cancelLabel}
             </Button>
@@ -84,6 +96,7 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
               colorScheme={confirmColorScheme}
               onClick={onConfirm}
               isLoading={isConfirmLoading}
+              isDisabled={isConfirmDisabled || isConfirmLoading}
               loadingText={confirmLoadingText}
             >
               {confirmLabel}

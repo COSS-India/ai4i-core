@@ -3,12 +3,18 @@
  */
 import React, { useEffect } from 'react';
 import { useRouter } from 'next/router';
-import { Spinner, Center } from '@chakra-ui/react';
+import { Center } from '@chakra-ui/react';
+import LoadingSpinner from '../common/LoadingSpinner';
 import { useAuth } from '../../hooks/useAuth';
-import { canAccessUsageDashboard, isUsageViewerUser, userMayManageApiKeys } from '../../utils/rbac';
+import { canAccessNotificationsAlerts, canAccessUsageDashboard, isPlatformAdminUser, isUsageViewerUser, userMayManageApiKeys } from '../../utils/rbac';
 
-interface AuthGuardProps {
-  children: React.ReactNode;
+function routeMatches(pathname: string, route: string): boolean {
+  if (route === "/") return pathname === "/";
+  return pathname === route || pathname.startsWith(`${route}/`);
+}
+
+function matchesRouteSet(pathname: string, routes: Set<string>): boolean {
+  return Array.from(routes).some((route) => routeMatches(pathname, route));
 }
 
 // Routes that require authentication
@@ -24,7 +30,10 @@ const protectedRoutes = new Set([
 
 // Routes that require ADMIN role
 // Legacy Alerts Management removed — restore '/alerts-management' when re-enabling
-const adminOnlyRoutes = new Set<string>(['/notifications-alerts']);
+const adminOnlyRoutes = new Set<string>([]);
+
+// Platform ADMIN edits the catalog; Institution Admin manages its own subscriptions.
+const notificationsAlertsRoutes = new Set(['/notifications-alerts']);
 
 // Routes limited to Usage Dashboard eligible roles (Adopter Admin, Tenant Admin, platform ADMIN)
 const usageDashboardRoutes = new Set(['/usage-dashboard']);
@@ -40,23 +49,33 @@ const tryItRoutes = new Set(['/llm', '/nmt']);
 // else (including '/') redirects to the Usage Dashboard.
 const usageViewerAllowedRoutes = new Set(['/usage-dashboard', '/profile']);
 
+interface AuthGuardProps {
+  children: React.ReactNode;
+}
+
 const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
   const router = useRouter();
   const { isAuthenticated, isLoading, user } = useAuth();
 
   // Check if current route requires authentication
-  const isProtectedRoute = protectedRoutes.has(router.pathname);
-  const isAdminOnlyRoute = adminOnlyRoutes.has(router.pathname);
-  const isUsageDashboardRoute = usageDashboardRoutes.has(router.pathname);
-  const isApiKeyManagementRoute = apiKeyManagementRoutes.has(router.pathname);
-  const isTryItRoute = tryItRoutes.has(router.pathname);
+  const isProtectedRoute = matchesRouteSet(router.pathname, protectedRoutes);
+  const isAdminOnlyRoute = matchesRouteSet(router.pathname, adminOnlyRoutes);
+  const isUsageDashboardRoute = matchesRouteSet(router.pathname, usageDashboardRoutes);
+  const isApiKeyManagementRoute = matchesRouteSet(router.pathname, apiKeyManagementRoutes);
+  const isNotificationsAlertsRoute = matchesRouteSet(router.pathname, notificationsAlertsRoutes);
+  const isTryItRoute = matchesRouteSet(router.pathname, tryItRoutes);
 
-  // Check if user is ADMIN
-  const isAdmin = user?.roles?.includes('ADMIN') || false;
+  // Check if user is platform ADMIN
+  const isAdmin = isPlatformAdminUser(user?.roles);
   const canAccessUsage = canAccessUsageDashboard(user?.roles);
   const canManageApiKeys = userMayManageApiKeys(user?.roles);
+  const canAccessNotifications = canAccessNotificationsAlerts(user?.roles);
   const isUsageViewer = isUsageViewerUser(user?.roles);
-  const isBlockedForUsageViewer = isUsageViewer && !usageViewerAllowedRoutes.has(router.pathname);
+  const isBlockedForUsageViewer =
+    isUsageViewer &&
+    !Array.from(usageViewerAllowedRoutes).some((route) =>
+      routeMatches(router.pathname, route),
+    );
 
   // Redirect to auth page if accessing protected route without authentication
   // Allow access to try-it routes (like /nmt) for anonymous users
@@ -74,6 +93,13 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
       router.push('/');
     }
   }, [isLoading, isAdminOnlyRoute, isAuthenticated, isAdmin, router]);
+
+  // Redirect users who can't reach Notifications & Alerts
+  useEffect(() => {
+    if (!isLoading && isNotificationsAlertsRoute && isAuthenticated && !canAccessNotifications) {
+      router.push('/');
+    }
+  }, [isLoading, isNotificationsAlertsRoute, isAuthenticated, canAccessNotifications, router]);
 
   // Redirect users without Usage Dashboard access
   useEffect(() => {
@@ -103,7 +129,7 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
   if (isLoading) {
     return (
       <Center h="100vh">
-        <Spinner size="xl" color="orange.500" />
+        <LoadingSpinner size="xl" />
       </Center>
     );
   }
@@ -125,6 +151,10 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
   }
 
   if (isApiKeyManagementRoute && isAuthenticated && !canManageApiKeys) {
+    return null;
+  }
+
+  if (isNotificationsAlertsRoute && isAuthenticated && !canAccessNotifications) {
     return null;
   }
 

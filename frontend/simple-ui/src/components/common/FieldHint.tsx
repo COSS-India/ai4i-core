@@ -2,9 +2,9 @@ import type { ReactNode } from "react";
 import { FormHelperText, type FormHelperTextProps } from "@chakra-ui/react";
 
 const TONE = {
-  muted: "gray.500",
-  success: "green.600",
-  error: "red.500",
+  muted: "ink.500",
+  success: "green.700",
+  error: "red.600",
 } as const;
 
 export type FieldHintTone = keyof typeof TONE;

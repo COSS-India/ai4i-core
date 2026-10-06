@@ -35,6 +35,8 @@ from app.schemas.tenant import (
     TenantTierAssignData,
     TenantTierAssignRequest,
     TenantTierAssignResponse,
+    TenantTierUnassignData,
+    TenantTierUnassignResponse,
     TenantUpdate,
     TenantUserCreate,
     TenantUserCreateResponse,
@@ -141,9 +143,9 @@ async def get_tenant(
         False,
         description=(
             "Return editable PII for the Edit Tenant form. Phone number is "
-            "always returned unmasked; the contact email is returned unmasked "
-            "only while the tenant is PENDING (before verification). List/view "
-            "screens must omit this flag so they keep showing masked values."
+            "returned unmasked; the contact email is always masked. While the "
+            "tenant is PENDING both stay masked. List/view screens must omit "
+            "this flag so they keep showing masked values."
         ),
     ),
     current_user: User = Depends(get_current_user),
@@ -229,6 +231,39 @@ async def assign_tenant_tier(
         data=TenantTierAssignData(
             tenant_id=tenant.id,
             tier_id=tenant.tier_id,
+            updated_at=tenant.updated_at,
+            updated_by=tenant.updated_by,
+        )
+    )
+
+
+@router.delete(
+    "/{tenant_id}/tier",
+    response_model=TenantTierUnassignResponse,
+    responses=error_responses(403, 404),
+)
+async def unassign_tenant_tier(
+    tenant_id: int,
+    current_user: User = Depends(get_current_user),
+    svc: TenantService = Depends(get_tenant_service),
+):
+    """Remove a tenant's tier assignment (tenants.tier_id → null). ADMIN-only.
+
+    Idempotent: a tenant that is already unassigned returns 200 with
+    ``previous_tier_id: null`` and nothing is written. The tenant drops out
+    of ``GET /tenants/tier/list`` immediately. Its existing API keys that
+    were issued under a tier are rejected by /auth/validate with 403
+    NO_ACTIVE_TIER until a tier is assigned again via
+    ``PATCH /tenants/{id}/tier`` — the same state create_api_key already
+    refuses to issue keys in. Legacy keys issued before tiers existed carry
+    no tier and are not affected.
+    """
+    tenant, previous_tier_id = await svc.unassign_tenant_tier(current_user, tenant_id)
+    return TenantTierUnassignResponse(
+        data=TenantTierUnassignData(
+            tenant_id=tenant.id,
+            tier_id=tenant.tier_id,
+            previous_tier_id=previous_tier_id,
             updated_at=tenant.updated_at,
             updated_by=tenant.updated_by,
         )

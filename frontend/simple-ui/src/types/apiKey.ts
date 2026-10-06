@@ -33,7 +33,7 @@ export interface CreateApiKeyPayload {
   permissions: string[];
   expires_days?: number;
   application_id: string;
-  allocated_percentage?: number;
+  allocated_percentage: number;
 }
 
 export interface ListApiKeysParams {

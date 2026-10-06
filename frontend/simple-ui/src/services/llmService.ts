@@ -16,7 +16,8 @@ import { getAnonymousSessionId, isAnonymousUser } from '../utils/anonymousSessio
 /** Model name that needs agrinet-specific chat/completions fields. */
 export const AGRINET_MODEL = 'agrinet-model';
 
-export const LLM_CHAT_DEFAULT_SOURCE_LANGUAGE = 'en';
+// Both blank: user must select; no default to avoid implicit preference.
+export const LLM_CHAT_DEFAULT_SOURCE_LANGUAGE = '';
 export const LLM_CHAT_DEFAULT_TARGET_LANGUAGE = '';
 
 export interface LLMServiceDetailsResponse {

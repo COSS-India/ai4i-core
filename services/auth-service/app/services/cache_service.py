@@ -25,6 +25,17 @@ REDIS_API_KEY_PREFIX = "auth:apikey:"
 # Access tokens issued before this timestamp are considered revoked.
 REDIS_LOGOUT_PREFIX = "auth:logout:"
 
+# HSET only when the field already exists on the hash — one atomic step, so
+# a hash evicted between the check and the write is never recreated as a
+# partial, TTL-less entry. Returns 1 if written, 0 otherwise.
+_HSET_IF_FIELD_EXISTS = """
+if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 1 then
+  redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+  return 1
+end
+return 0
+"""
+
 
 class CacheService(_BaseCacheService):
     """Extends shared CacheService with auth-specific token caching."""
@@ -100,6 +111,20 @@ class CacheService(_BaseCacheService):
                 return False
             return True
         return False
+
+    async def patch_api_key_cache_field_if_present(
+        self, api_key: str, field: str, value: str
+    ) -> bool:
+        """Like patch_api_key_cache_field, but only overwrites ``field`` when
+        the hash already has it — a hash without the field is left exactly
+        as it is. Returns True only when the field was written."""
+        key = f"{REDIS_API_KEY_PREFIX}{api_key}"
+        try:
+            return bool(await self._redis.eval(_HSET_IF_FIELD_EXISTS, 1, key, field, value))
+        except ResponseError:
+            logger.warning("Skipping HSET on non-hash key %s — stale/legacy data, deleting", key)
+            await self._redis.delete(key)
+            return False
 
     async def delete_api_key_cache_field(self, api_key: str, field: str) -> None:
         """Remove a single field from an existing API key hash (e.g. quota-* on month rollover)."""

@@ -1,14 +1,13 @@
 import {
   Box,
   Center,
-  Spinner,
-  Text,
-  VStack,
 } from "@chakra-ui/react";
 import Head from "next/head";
 import React, { useEffect, useMemo } from "react";
 import { useRouter } from "next/router";
 import ContentLayout from "../components/common/ContentLayout";
+import LoadingSpinner from "../components/common/LoadingSpinner";
+import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import UsageDashboard from "../components/metering/UsageDashboard";
 import { useAuth } from "../hooks/useAuth";
 import { showToast } from "../utils/toast";
@@ -54,7 +53,7 @@ const UsageDashboardPage: React.FC = () => {
     return (
       <ContentLayout>
         <Center h="400px">
-          <Spinner size="xl" color="orange.500" />
+          <LoadingSpinner size="xl" />
         </Center>
       </ContentLayout>
     );
@@ -64,10 +63,7 @@ const UsageDashboardPage: React.FC = () => {
     return (
       <ContentLayout>
         <Center h="400px">
-          <VStack spacing={4}>
-            <Spinner size="xl" color="orange.500" />
-            <Text color="gray.600">Redirecting...</Text>
-          </VStack>
+          <LoadingSpinner size="xl" label="Redirecting..." />
         </Center>
       </ContentLayout>
     );
@@ -85,6 +81,10 @@ const UsageDashboardPage: React.FC = () => {
 
       <ContentLayout>
         <Box maxW="7xl" mx="auto" py={4} px={2}>
+          <ManagementPageHeader
+            title="Usage Dashboard"
+            description={`Monitor consumption and spend across ${INSTITUTION.toLowerCase()}s and applications.`}
+          />
           <UsageDashboard
             userRoles={user?.roles}
             tenantId={tenantId}

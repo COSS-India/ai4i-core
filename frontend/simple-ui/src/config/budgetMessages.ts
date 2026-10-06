@@ -1,6 +1,50 @@
 import { FIELD_HINTS } from "./fieldHints";
 import { parseError } from "../utils/errorHandler";
-import { roundMoney, roundPct } from "../utils/applicationBudgetPreview";
+import {
+  roundMoney,
+  roundPct,
+  type KeyAllocationHolder,
+} from "../utils/applicationBudgetPreview";
+import { formatSpendMoney } from "../utils/usageSpendHelpers";
+
+/** Labels and status copy shared by Application and API key budget dialogs. */
+export const BUDGET_COPY = {
+  loading: "Loading…",
+  currentBudget: "Current budget",
+  newAllocation: "New allocation",
+  atThisPercentage: "at this percentage",
+  previousValueKept: "The previous value was kept.",
+  editBudget: "Edit Budget",
+  saveChanges: "Save Changes",
+  saveAllChanges: "Save All Changes",
+  saving: "Saving...",
+  bulkUpdateBudgets: "Bulk Update Budgets",
+  remaining: "Remaining",
+  remainingInstitution: "Remaining (Institution)",
+  leftForThisKey: "Left for this key",
+  applicationPrefix: "Application:",
+  apiKeyFallback: "API key",
+  inactiveKeyNotEditable: "This API key is not active, so its allocation cannot be edited.",
+  keyHasNoApplication: "This key has no application",
+  focusRowToLoadKeys: "Focus row to load keys",
+} as const;
+
+/** Shown on application edit. Budget is changed from the row action, not this form. */
+export const APPLICATION_BUDGET_MANAGED_NOTE = `Budget is managed separately — use ${BUDGET_COPY.editBudget} on the application row.`;
+
+export function editBudgetTitle(name?: string | null): string {
+  const trimmed = name?.trim();
+  return trimmed ? `${BUDGET_COPY.editBudget} — ${trimmed}` : BUDGET_COPY.editBudget;
+}
+
+export function editBudgetForName(name?: string | null, fallback?: string): string {
+  const trimmed = name?.trim() || fallback?.trim() || "";
+  return trimmed ? `Edit budget for ${trimmed}` : BUDGET_COPY.editBudget;
+}
+
+export function editBudgetForKey(name?: string | null): string {
+  return editBudgetForName(name, BUDGET_COPY.apiKeyFallback);
+}
 
 /** Shared validation copy for budget percentage / amount fields. */
 export const BUDGET_VALIDATION = {
@@ -11,6 +55,9 @@ export const BUDGET_VALIDATION = {
   percentageMustBeBetween0And100: "Enter a percentage between 0 and 100.",
   enterValidNumber: "Enter a valid number.",
   enterValidPercentage: "Enter a valid percentage.",
+  enterValidAllocationPercentage: "Enter a valid allocation percentage.",
+  applicationBudgetUnavailable:
+    "Application budget is unavailable. Allocation cannot be calculated.",
   applicationBudgetNotAssigned: "This Application has no Budget (₹) assigned yet.",
   amountRequiresApplicationBudget:
     "Enter a Budget amount after this Application has a Budget (₹) assigned.",
@@ -37,16 +84,38 @@ export const BUDGET_TOAST = {
   keyBudgetUpdated: (count: number) => `Budget updated for ${count} key(s).`,
 } as const;
 
+function formatSharePct(pct: number | null): string {
+  if (pct == null || !Number.isFinite(pct)) return "";
+  const rounded = roundPct(pct);
+  const text = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
+  return ` (${text}%)`;
+}
+
+/** Plain rejection when an Application would drop below what its API Keys already hold. */
+export function belowAllocatedToKeys(
+  applicationName: string,
+  floorAmount: number,
+  floorPct: number | null,
+  keys: KeyAllocationHolder[],
+  currency = "INR",
+): string {
+  const listed = keys
+    .map((key) => `${key.name}: ${formatSpendMoney(key.amount, currency)}`)
+    .join(", ");
+  const keyPart = listed ? ` (${listed})` : "";
+  return `${applicationName} cannot be reduced below ${formatSpendMoney(floorAmount, currency)}${formatSharePct(floorPct)}, the amount already allocated to its API Keys${keyPart}.`;
+}
+
 export function belowConsumedPct(pct: number): string {
-  return `Cannot go below ${roundPct(pct)}% already consumed.`;
+  return `Allocation cannot be lower than ${roundPct(pct)}% already consumed.`;
 }
 
 export function belowConsumedAmount(amount: number): string {
-  return `Cannot go below ${roundMoney(amount)} already consumed.`;
+  return `Allocation cannot be lower than ${roundMoney(amount)} already consumed.`;
 }
 
 export function belowConsumedPctRaw(floor: number): string {
-  return `Cannot go below ${floor}% already consumed.`;
+  return `Allocation cannot be lower than ${floor}% already consumed.`;
 }
 
 export function keyWouldDropBelowConsumed(keyName: string): string {
@@ -54,19 +123,11 @@ export function keyWouldDropBelowConsumed(keyName: string): string {
 }
 
 export function totalApplicationsOver100(totalPct: number): string {
-  return `Total across Applications would be ${totalPct.toFixed(2)}% — over 100%.`;
-}
-
-export function totalApplicationsExceeds100(totalPct: number): string {
-  return `Total across Applications is ${totalPct.toFixed(2)}% — cannot exceed 100%.`;
+  return `Allocation exceeds the available institution budget (${totalPct.toFixed(2)}%).`;
 }
 
 export function totalApiKeysExceeds100(totalPct: number): string {
-  return `Total across active keys is ${totalPct.toFixed(2)}% — cannot exceed 100% of this Application's Budget.`;
-}
-
-export function editKeyBudgetTitle(applicationName?: string): string {
-  return applicationName ? `Edit Key Budget — ${applicationName}` : "Edit Key Budget";
+  return `Total API key allocation cannot exceed 100% of this application's budget (${totalPct.toFixed(2)}%).`;
 }
 
 export type BelowConsumedContext = "application" | "apiKey";

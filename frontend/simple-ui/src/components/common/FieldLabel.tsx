@@ -44,7 +44,7 @@ export default function FieldLabel({
 
   if (variant === "form") {
     return (
-      <FormLabel fontSize="sm" fontWeight="medium" mb={1} {...formLabelProps}>
+      <FormLabel fontSize="sm" fontWeight="600" mb={1} {...formLabelProps}>
         <HStack as="span" spacing={spacing} display="inline-flex" align="center">
           <Text as="span" color="inherit">
             {children}
@@ -66,7 +66,7 @@ export default function FieldLabel({
         <Text
           fontSize="11.5px"
           fontWeight="700"
-          color="blue.500"
+          color="ink.500"
           letterSpacing="0.5px"
           textTransform="uppercase"
           {...textProps}
@@ -92,7 +92,7 @@ export default function FieldLabel({
   // inline
   return (
     <HStack spacing={spacing} align="center">
-      <Text fontSize="sm" color="gray.500" {...textProps}>
+      <Text fontSize="sm" color="ink.500" {...textProps}>
         {children}
       </Text>
       {tipNode}

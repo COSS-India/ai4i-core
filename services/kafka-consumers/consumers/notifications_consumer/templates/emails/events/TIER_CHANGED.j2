@@ -1,0 +1,10 @@
+{# details: [current_tier_name, new_tier_name, new_tier_description, quota_lines] #}
+{% set layout = "notification" %}
+{% set name = "Tier Reassignment" %}
+{% set headline = "The Tier for " ~ tenant_name ~ " has been reassigned." %}
+{% set lines = [
+    "Current Tier: " ~ details[0] ~ " → New Tier: " ~ details[1],
+    "New Tier Description: " ~ details[2],
+    "New Tier Quota Limits:",
+    details[3],
+] %}

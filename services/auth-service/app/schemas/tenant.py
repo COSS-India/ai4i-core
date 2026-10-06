@@ -85,10 +85,6 @@ class TenantUserRole(str, Enum):
 
     USER = RoleName.USER.value
     TENANT_ADMIN = RoleName.TENANT_ADMIN.value
-    USAGE_VIEWER = RoleName.USAGE_VIEWER.value
-    MODERATOR = RoleName.MODERATOR.value
-
-
 
 _TENANT_CREATE_EXAMPLE = {
     "contact_name": "Jane Doe",
@@ -339,6 +335,7 @@ class TenantUserResponse(BaseSchema):
     # from one who never set a password (Pending Activation).
     is_activated: Optional[bool] = None
     creation_type: Optional[CreationType] = None
+    created_at: Optional[datetime] = None
     roles: list[str]
 
 
@@ -380,6 +377,20 @@ class TenantTierAssignRequest(BaseSchema):
 class TenantTierAssignData(BaseSchema):
     tenant_id: int
     tier_id: UUID
+    updated_at: Optional[datetime] = None
+    updated_by: Optional[UUID] = None
+
+
+class TenantTierUnassignData(BaseSchema):
+    tenant_id: int
+    # Always null after a successful unassign — present so the response
+    # shape matches TenantTierAssignData's and the caller reads the new
+    # state directly instead of inferring it.
+    tier_id: Optional[UUID] = None
+    # The tier the tenant was removed from, so the caller knows whose
+    # assigned-tenant count changed. null when the tenant was already
+    # unassigned (idempotent no-op).
+    previous_tier_id: Optional[UUID] = None
     updated_at: Optional[datetime] = None
     updated_by: Optional[UUID] = None
 
@@ -559,6 +570,12 @@ class TenantTierAssignResponse(SuccessResponse):
     """PATCH /auth/tenants/{tenant_id}/tier"""
 
     data: TenantTierAssignData
+
+
+class TenantTierUnassignResponse(SuccessResponse):
+    """DELETE /auth/tenants/{tenant_id}/tier"""
+
+    data: TenantTierUnassignData
 
 
 class ListTenantTiersResponse(SuccessResponse):

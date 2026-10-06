@@ -24,6 +24,7 @@ from ai4i_core.ppu import configure_catalogue, get_catalogue
 from app.core.database import (
     close_database,
     close_platform_core_database,
+    get_engine,
     get_platform_core_session_factory,
     init_database,
     init_platform_core_database,
@@ -33,12 +34,14 @@ from app.core.redis import close_redis, get_redis_client, init_redis
 from app.core.security import key_manager
 from app.dependencies.auth import init_jwt_verifier
 from ai4i_core.kafka import (
+    Producer,
     init_kafka_producer,
     close_kafka_producer,
-    refresh_notification_settings_cache,
-    start_notification_settings_listener,
-    stop_notification_settings_listener,
+    configure_notifications,
+    start_notifications,
+    stop_notifications,
 )
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.routes import api_router, versioning
 from app.services.role_permission_cache import role_permission_cache
 from app.services.tenant_name_cache import tenant_name_cache
@@ -70,24 +73,29 @@ async def _configure_catalogue():
         logger.warning("Inference type catalogue warm-up skipped: %s", exc)
 
 
-async def _configure_notification_settings_cache():
-    # is_notification_enabled()/get_threshold_bands() back the "should this
-    # even be published" check before TIER_ASSIGNED/TIER_CHANGED/
-    # BUDGET_ASSIGNED/BUDGET_UPDATED — read from configs_notification_alert
-    # (platform-core's DB), same cross-service dependency _configure_catalogue
-    # already has. Best-effort, same reasoning: an unreachable cache must not
-    # stop auth-service booting, it degrades to treating every notification
-    # as disabled (safe default — never publish when we can't tell).
-    session_factory = get_platform_core_session_factory()
-    if session_factory is None:
-        logger.warning("Notification settings cache skipped: platform-core DB not configured.")
+async def _configure_notifications():
+    # TIER_ASSIGNED/TIER_CHANGED/BUDGET_ASSIGNED/BUDGET_UPDATED run through
+    # the shared producer pipeline (ai4i_core.kafka). Its settings, ledger
+    # and failure log live in platform-core's DB; recipients in this
+    # service's own DB. Best-effort, same reasoning as _configure_catalogue:
+    # without the platform-core DB, auth-service still boots and simply
+    # sends no notifications.
+    core_session_factory = get_platform_core_session_factory()
+    if core_session_factory is None:
+        logger.warning("Notifications disabled: platform-core DB not configured.")
         return
     try:
-        async with session_factory() as db:
-            await refresh_notification_settings_cache(db)
-        start_notification_settings_listener(get_redis_client())
+        configure_notifications(
+            producer=Producer.AUTH_SERVICE,
+            core_session_factory=core_session_factory,
+            auth_session_factory=async_sessionmaker(get_engine(), class_=AsyncSession, expire_on_commit=False),
+            redis=get_redis_client(),
+            decrypt_email=lambda token: pii_crypto.decrypt(token, pii_crypto.EMAIL_CONTEXT),
+            topic=settings.topic_notification,
+        )
+        await start_notifications()
     except Exception as exc:
-        logger.warning("Notification settings cache warm-up skipped: %s", exc)
+        logger.warning("Notification pipeline start-up skipped: %s", exc)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -125,11 +133,11 @@ async def lifespan(app: FastAPI):
         topic=settings.topic_notification,
         enabled=settings.kafka_enabled,
     )
-    await _configure_notification_settings_cache()
+    await _configure_notifications()
 
     yield
 
-    await stop_notification_settings_listener()
+    await stop_notifications()
     close_kafka_producer()
     await tier_status_cache.stop()
     await tenant_name_cache.stop()

@@ -422,3 +422,57 @@ class TestGetTenantBudgets:
 
         with pytest.raises(RuntimeError, match="transaction aborted"):
             await repo.get_tenant_budgets("2026-08", ["2"], auth_db)
+
+
+def _make_min_db(created_at, billing_month) -> AsyncMock:
+    """Fake AsyncSession whose execute() returns the single
+    (MIN(created_at), MIN(billing_month)) row get_first_usage_at selects."""
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=SimpleNamespace(one=lambda: (created_at, billing_month)))
+    return db
+
+
+def _compiled_sql(db: AsyncMock) -> str:
+    stmt = db.execute.call_args.args[0]
+    return str(stmt.compile(compile_kwargs={"literal_binds": True}))
+
+
+@pytest.mark.asyncio
+class TestGetFirstUsageAt:
+    async def test_tenant_filter_applied(self):
+        db = _make_min_db(datetime(2026, 5, 10, 8, 0, tzinfo=timezone.utc), "2026-05")
+        await UsageRepository(db).get_first_usage_at("7")
+        sql = _compiled_sql(db)
+        assert "WHERE" in sql and "tenant_id = '7'" in sql
+
+    async def test_no_tenant_filter_for_platform_wide(self):
+        db = _make_min_db(datetime(2026, 5, 10, 8, 0, tzinfo=timezone.utc), "2026-05")
+        await UsageRepository(db).get_first_usage_at(None)
+        assert "WHERE" not in _compiled_sql(db)
+
+    async def test_no_rows_returns_none(self):
+        db = _make_min_db(None, None)
+        assert await UsageRepository(db).get_first_usage_at("7") is None
+
+    async def test_created_at_inside_first_billing_month_is_used(self):
+        created = datetime(2026, 5, 10, 8, 0, tzinfo=timezone.utc)
+        db = _make_min_db(created, "2026-05")
+        assert await UsageRepository(db).get_first_usage_at("7") == created
+
+    async def test_backfilled_created_at_falls_back_to_billing_month_start(self):
+        """A created_at months after MIN(billing_month) can only be a
+        migration backfill — the month's start (IST midnight) wins."""
+        db = _make_min_db(datetime(2026, 8, 1, tzinfo=timezone.utc), "2026-03")
+        result = await UsageRepository(db).get_first_usage_at("7")
+        assert result == datetime(2026, 2, 28, 18, 30, tzinfo=timezone.utc)
+
+    async def test_created_at_on_last_ist_day_of_month_still_counts(self):
+        # 2026-05-31 23:00 IST = 17:30 UTC — still inside billing month 2026-05.
+        created = datetime(2026, 5, 31, 17, 30, tzinfo=timezone.utc)
+        db = _make_min_db(created, "2026-05")
+        assert await UsageRepository(db).get_first_usage_at("7") == created
+
+    async def test_naive_created_at_is_treated_as_utc(self):
+        db = _make_min_db(datetime(2026, 5, 10, 8, 0), "2026-05")
+        result = await UsageRepository(db).get_first_usage_at("7")
+        assert result == datetime(2026, 5, 10, 8, 0, tzinfo=timezone.utc)

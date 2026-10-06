@@ -1,0 +1,3 @@
+{# Subject line — the layout's .subject.txt, filled from events/<event_name>.j2. #}
+{% import "events/" ~ event_name ~ ".j2" as event with context %}
+{% extends event.layout ~ ".subject.txt" %}

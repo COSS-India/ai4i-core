@@ -20,12 +20,14 @@ from confluent_kafka import KafkaError, KafkaException, Message
 
 from ai4i_core.bootstrap import get_redis_client
 from ai4i_core.kafka import (
+    Producer,
     init_kafka_producer,
     close_kafka_producer,
-    refresh_notification_settings_cache,
-    start_notification_settings_listener,
-    stop_notification_settings_listener,
+    configure_notifications,
+    start_notifications,
+    stop_notifications,
 )
+from ai4i_core import pii_crypto
 from bootstrap.config import get_db_settings, get_kafka_settings
 from bootstrap.consumers import CommitMode, ManagedConsumer
 from bootstrap.lifecycle import add_database, infra, session_scope, shutdown_event
@@ -55,8 +57,7 @@ async def run() -> None:
         # now fire on the tenant's pooled budget, not one API key's own
         # allocation — see handler.py's _publish_usage_crossing_events).
         # Opened once here, not per-message; infra()'s own teardown closes it
-        # alongside the default connection. Mirrors notifications_consumer/
-        # main.py's identical second connection exactly.
+        # alongside the default connection.
         await add_database("auth", db_name=settings.AUTH_SERVICE_DB)
 
         init_kafka_producer(
@@ -64,9 +65,26 @@ async def run() -> None:
             topic=settings.TOPIC_NOTIFICATION,
             enabled=settings.NOTIFICATION_PRODUCER_ENABLED,
         )
-        async with session_scope() as _db:
-            await refresh_notification_settings_cache(_db)
-        start_notification_settings_listener(get_redis_client())
+        # Recipient resolution decrypts ai4iplatform_auth.users.email itself —
+        # needs the exact same key auth-service's own PII_ENCRYPTION_KEY is
+        # set to (see config.py's field docstring and env.template's
+        # PII_ENCRYPTION_KEY entry). A missing/wrong key here is silent at
+        # startup — configure_key(None) doesn't raise until an encrypted
+        # value is actually decrypted.
+        pii_crypto.configure_key(settings.PII_ENCRYPTION_KEY)
+        # QUOTA_THRESHOLD/QUOTA_EXHAUSTED/BUDGET_THRESHOLD/BUDGET_EXHAUSTED run
+        # through the shared producer pipeline (ai4i_core.kafka): settings,
+        # ledger and failure log in ai4iplatform_core (the default
+        # connection), recipients in ai4iplatform_auth (the "auth" one).
+        configure_notifications(
+            producer=Producer.PAYPERUSE_CONSUMER,
+            core_session_factory=lambda: session_scope(),
+            auth_session_factory=lambda: session_scope(name="auth"),
+            redis=get_redis_client(),
+            decrypt_email=pii_crypto.decrypt_email,
+            topic=settings.TOPIC_NOTIFICATION,
+        )
+        await start_notifications()
         consumer = ManagedConsumer.build_bulk_message_consumer(
             group_id=GROUP_ID,
             topic=settings.TOPIC_PAY_PER_USE,
@@ -151,7 +169,7 @@ async def run() -> None:
                     )
         finally:
             consumer.shutdown()
-            await stop_notification_settings_listener()
+            await stop_notifications()
             close_kafka_producer()
 
 

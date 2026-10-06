@@ -1,34 +1,25 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Badge,
   Box,
   Button,
-  Drawer,
-  DrawerOverlay,
-  DrawerContent,
-  DrawerCloseButton,
-  DrawerHeader,
-  DrawerBody,
-  DrawerFooter,
   FormControl,
   FormErrorMessage,
-  FormLabel,
   HStack,
   IconButton,
   Input,
+  Menu,
+  MenuButton,
+  MenuItem,
+  MenuList,
   Select,
+  Skeleton,
   Spinner,
-  Tab,
-  TabList,
-  TabPanel,
-  TabPanels,
-  Tabs,
   Text,
   Tooltip,
   VStack,
   NumberInput,
   NumberInputField,
-  Divider,
   Grid,
 } from "@chakra-ui/react";
 import {
@@ -36,30 +27,41 @@ import {
   DeleteIcon,
   EditIcon,
   SmallCloseIcon,
-  ViewIcon,
 } from "@chakra-ui/icons";
-import { FiArrowUp, FiCalendar, FiPause, FiPlay } from "react-icons/fi";
+import { FiArrowUp, FiCalendar, FiMoreVertical, FiPause, FiPlay } from "react-icons/fi";
 import DataTable, {
+  DEFAULT_PAGE_SIZE_OPTIONS,
   createActionsColumn,
   type DataTableColumn,
 } from "../common/table";
 import ConfirmDialog from "../common/ConfirmDialog";
-import FormFieldsRow, { FORM_LABEL_TO_INPUT_PT } from "../common/FormFieldsRow";
+import CreateButton from "../common/CreateButton";
+import FormActions from "../common/FormActions";
+import FormDrawer from "../common/FormDrawer";
+import FormSection from "../common/FormSection";
+import { FORM_LABEL_TO_INPUT_PT } from "../common/FormFieldsRow";
+import ManagementPageHeader from "../common/ManagementPageHeader";
+import ReadOnlyField from "../common/ReadOnlyField";
 import StandardModal from "../common/StandardModal";
 import {
+  effectiveTierStatus,
   getTierStatusAction,
   useTierManagement,
   type TierStatusActionKey,
 } from "../../hooks/useTierManagement";
 import type { Tier, TierStatus } from "../../services/tierManagementService";
 import type { TierFormData, TierFormQuota } from "../../types/tierManagement";
-import { INSTITUTIONS, formatModelTaskTypeLabel } from "../../config/constants";
+import { INSTITUTION, INSTITUTIONS, formatModelTaskTypeLabel } from "../../config/constants";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import FieldHint from "../common/FieldHint";
+import FieldLabel from "../common/FieldLabel";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { generateUUID } from "../../utils/uuid";
 import { QUOTA_LIMIT_MAX, validateQuotaLimit } from "./tierFormValidation";
 import { useDeferredColumnSort } from "../../utils/tableSort";
+
+/** Flip to true to restore Remove from Tier in the tier edit drawer. */
+const TIER_REMOVAL_ENABLED = false;
 
 function getTaskTypeBadgeColor(taskType: string): string {
   switch (taskType.toUpperCase()) {
@@ -130,14 +132,23 @@ const TIER_STATUS_BADGE: Record<
   DELETED: { label: "Deleted", colorScheme: "red" },
 };
 
+/**
+ * DELETED is absent because `list_tiers` excludes deleted tiers from every
+ * response, so the option would always return nothing. It stays in
+ * TIER_STATUS_BADGE only because that map is keyed by the full union.
+ */
+const TIER_FILTER_STATUSES: TierStatus[] = [
+  "ACTIVE",
+  "INACTIVE",
+  "DEACTIVATED",
+];
+
 const TIER_STATUS_COLUMN: DataTableColumn<Tier> = {
   id: "status",
   header: "Status",
   thProps: { w: "240px" },
   cell: (tier) => {
-    const badge = tier.status
-      ? TIER_STATUS_BADGE[tier.status]
-      : TIER_STATUS_BADGE.INACTIVE;
+    const badge = TIER_STATUS_BADGE[effectiveTierStatus(tier)];
     return (
       <Badge
         colorScheme={badge.colorScheme}
@@ -188,7 +199,7 @@ const TIER_TASK_TYPES_COLUMN: DataTableColumn<Tier> = {
         </Badge>
       )}
       {!tier.quotas?.length && (
-        <Text fontSize="sm" color="gray.400">
+        <Text fontSize="sm" color="ink.400">
           —
         </Text>
       )}
@@ -196,28 +207,83 @@ const TIER_TASK_TYPES_COLUMN: DataTableColumn<Tier> = {
   ),
 };
 
+/**
+ * A per-tier count column. Counts are aggregated in the hook from one fetch,
+ * and render blank rather than `0` until it settles — "0" and "not loaded yet"
+ * read very differently.
+ */
+function makeTierCountColumn(
+  id: string,
+  header: string,
+  countByTierId: Map<string, number>,
+  isLoading: boolean,
+  hasError: boolean,
+  errorLabel: string,
+): DataTableColumn<Tier> {
+  return {
+    id,
+    header,
+    thProps: { w: "140px" },
+    sortable: true,
+    align: "center",
+    cell: (tier) => {
+      if (isLoading) {
+        // `mx="auto"`: a fixed-width block is not moved by textAlign.
+        return (
+          <Skeleton height="20px" width="28px" borderRadius="md" mx="auto" />
+        );
+      }
+      if (hasError) {
+        return (
+          <Tooltip label={errorLabel} placement="top" hasArrow>
+            <Text fontSize="sm" color="gray.400">
+              —
+            </Text>
+          </Tooltip>
+        );
+      }
+      // Non-zero gets a neutral chip so tiers in use stand out; zero stays a
+      // bare number, or an empty tier would carry the same weight as a used
+      // one. `minW` keeps 1- and 2-digit chips even in the centred column.
+      const count = countByTierId.get(tier.id) ?? 0;
+      if (count === 0) {
+        return (
+          <Text fontSize="sm" color="gray.500">
+            0
+          </Text>
+        );
+      }
+      return (
+        <Badge
+          colorScheme="gray"
+          fontSize="xs"
+          fontWeight="bold"
+          px={2}
+          py={0.5}
+          borderRadius="md"
+          minW="28px"
+          textAlign="center"
+        >
+          {count}
+        </Badge>
+      );
+    },
+  };
+}
+
 function makeTierActionsColumn(
   deletingId: string | null,
   updatingStatusId: string | null,
-  onView: (tier: Tier) => void,
   onEdit: (tier: Tier) => void,
   onDelete: (tier: Tier) => void,
   onStatusChange: (tier: Tier) => void,
 ): DataTableColumn<Tier> {
   return createActionsColumn<Tier>({
-    align: "center",
     getActions: (tier) => {
       const statusAction = getTierStatusAction(tier.status);
       const canDelete = tier.status === "DEACTIVATED";
       const busy = deletingId !== null || updatingStatusId !== null;
       return [
-        {
-          id: "view",
-          label: "View",
-          icon: <ViewIcon />,
-          onClick: () => onView(tier),
-          "aria-label": "View tier",
-        },
         {
           id: "edit",
           label: "Edit",
@@ -268,6 +334,7 @@ interface QuotaEditorProps {
   readonly onRemove?: (quota: TierFormQuota) => void;
   readonly removingTaskType?: string | null;
   readonly isEditMode?: boolean;
+  readonly mode?: "create" | "edit" | "view";
   readonly showErrors?: boolean;
 }
 
@@ -340,7 +407,7 @@ function QuotaEditor({
   return (
     <VStack align="stretch" spacing={3}>
       <HStack justify="space-between">
-        <Text fontSize="sm" fontWeight="semibold" color="gray.700">
+        <Text fontSize="sm" fontWeight="semibold" color="ink.700">
           Quotas
         </Text>
         {!isEditMode && canAddQuota && (
@@ -364,8 +431,8 @@ function QuotaEditor({
               p={3}
               borderWidth="1px"
               borderRadius="md"
-              borderColor="gray.200"
-              bg="gray.50"
+              borderColor="ink.200"
+              bg="ink.50"
             >
               <HStack align="flex-start" spacing={3}>
                 <Grid
@@ -379,9 +446,9 @@ function QuotaEditor({
                   alignItems="start"
                 >
                   <FormControl isRequired isDisabled={isEditMode} minW={0}>
-                    <FormLabel fontSize="xs" mb={1}>
+                    <FieldLabel formLabelProps={{ fontSize: "xs", mb: 1 }}>
                       Model Task Type
-                    </FormLabel>
+                    </FieldLabel>
                     <Select
                       size="sm"
                       value={quota.modelTaskType}
@@ -416,15 +483,15 @@ function QuotaEditor({
                     isDisabled={isEditMode}
                     minW={0}
                   >
-                    <FormLabel fontSize="xs" mb={1}>
+                    <FieldLabel formLabelProps={{ fontSize: "xs", mb: 1 }}>
                       Unit
-                    </FormLabel>
+                    </FieldLabel>
                     <Input
                       size="sm"
                       value={quota.unit}
                       isReadOnly
                       placeholder="-"
-                      bg="gray.50"
+                      bg="ink.50"
                       cursor="default"
                     />
                     <FormErrorMessage fontSize="xs">
@@ -441,9 +508,9 @@ function QuotaEditor({
                     isDisabled={isEditMode}
                     minW={0}
                   >
-                    <FormLabel fontSize="xs" mb={1}>
+                    <FieldLabel formLabelProps={{ fontSize: "xs", mb: 1 }}>
                       Limit
-                    </FormLabel>
+                    </FieldLabel>
                     <NumberInput
                       size="sm"
                       min={0}
@@ -530,10 +597,11 @@ interface TierFormProps {
   readonly onRemove?: (quota: TierFormQuota) => void;
   readonly removingTaskType?: string | null;
   readonly isEditMode?: boolean;
+  readonly mode?: "create" | "edit" | "view";
   readonly showErrors?: boolean;
 }
 
-function TierForm({
+export function TierForm({
   formData,
   onChange,
   taskTypeNames,
@@ -542,12 +610,47 @@ function TierForm({
   onRemove,
   removingTaskType,
   isEditMode,
+  mode,
   showErrors,
 }: TierFormProps) {
+  const formMode = mode ?? (isEditMode ? "edit" : "create");
+  if (formMode === "view") {
+    return (
+      <>
+        <FormSection title="Basic information">
+          <ReadOnlyField label="Tier Name">{formData.name || "—"}</ReadOnlyField>
+          <ReadOnlyField label="Description">{formData.description || "—"}</ReadOnlyField>
+        </FormSection>
+        <FormSection title="Usage limits">
+          {formData.quotas.length ? (
+            formData.quotas.map((q) => {
+              const limit = Number(q.limit);
+              const { boldText, suffixText } = formatQuotaAmount(
+                Number.isFinite(limit) ? limit : 0,
+                q.unit,
+              );
+              return (
+                <ReadOnlyField
+                  key={q.modelTaskType}
+                  label={formatModelTaskTypeLabel(q.modelTaskType)}
+                >
+                  {boldText} {suffixText}
+                </ReadOnlyField>
+              );
+            })
+          ) : (
+            <ReadOnlyField label="Quotas">—</ReadOnlyField>
+          )}
+        </FormSection>
+      </>
+    );
+  }
+
   return (
-    <VStack align="stretch" spacing={4}>
+    <VStack align="stretch" spacing={0}>
+      <FormSection title="Basic information">
       <FormControl isRequired>
-        <FormLabel fontWeight="semibold">Tier Name</FormLabel>
+        <FieldLabel>Tier Name</FieldLabel>
         <Input
           value={formData.name}
           onChange={(e) => onChange({ ...formData, name: e.target.value })}
@@ -558,7 +661,7 @@ function TierForm({
       </FormControl>
 
       <FormControl>
-        <FormLabel fontWeight="semibold">Description</FormLabel>
+        <FieldLabel>Description</FieldLabel>
         <Input
           value={formData.description}
           onChange={(e) =>
@@ -568,9 +671,9 @@ function TierForm({
         />
         <FieldHint>{FIELD_HINTS.tier.description.helper}</FieldHint>
       </FormControl>
+      </FormSection>
 
-      <Divider />
-
+      <FormSection title="Usage limits">
       <QuotaEditor
         quotas={formData.quotas}
         onChange={(quotas) => onChange({ ...formData, quotas })}
@@ -582,6 +685,7 @@ function TierForm({
         isEditMode={isEditMode}
         showErrors={showErrors}
       />
+      </FormSection>
     </VStack>
   );
 }
@@ -591,60 +695,91 @@ interface AssignedTenant {
   readonly organisation: string;
 }
 
+const framedList = {
+  spacing: 0,
+  borderWidth: "1px",
+  borderColor: "ink.200",
+  borderRadius: "10px",
+  overflow: "hidden",
+};
+
+const framedRow = {
+  px: 3,
+  py: "11px",
+  borderBottomWidth: "1px",
+  borderColor: "ink.100",
+  _last: { borderBottomWidth: 0 },
+};
+
+const framedEmpty = {
+  textAlign: "center" as const,
+  py: 4,
+  px: 3,
+  borderWidth: "1px",
+  borderStyle: "dashed",
+  borderColor: "ink.200",
+  borderRadius: "10px",
+};
+
 interface AssignedTenantsSectionProps {
   readonly tenants: AssignedTenant[];
   readonly isLoading: boolean;
-  readonly pt?: number;
+  readonly tierControl?: (tenant: AssignedTenant) => React.ReactNode;
+  readonly pendingRow?: (tenant: AssignedTenant) => React.ReactNode | null;
 }
 
 function AssignedTenantsSection({
   tenants,
   isLoading,
-  pt,
+  tierControl,
+  pendingRow,
 }: AssignedTenantsSectionProps) {
-  return (
-    <Box pt={pt}>
+  if (isLoading) {
+    return (
+      <HStack spacing={2} color="ink.400">
+        <Spinner size="xs" />
+        <Text fontSize="sm">Loading {INSTITUTIONS.toLowerCase()}…</Text>
+      </HStack>
+    );
+  }
+  if (!tenants.length) {
+    return (
       <Text
-        fontSize="xs"
-        fontWeight="semibold"
-        color="gray.500"
-        textTransform="uppercase"
-        mb={1}
+        fontSize="sm"
+        color="ink.400"
+        {...(tierControl ? framedEmpty : null)}
       >
-        {INSTITUTIONS} Assigned · {isLoading ? "…" : tenants.length}
+        No {INSTITUTIONS.toLowerCase()} assigned{tierControl ? "." : ""}
       </Text>
-      {(() => {
-        if (isLoading) {
-          return (
-            <HStack spacing={2} color="gray.400">
-              <Spinner size="xs" />
-              <Text fontSize="sm">Loading {INSTITUTIONS.toLowerCase()}…</Text>
-            </HStack>
-          );
-        }
-        if (!tenants.length) {
-          return (
-            <Text fontSize="sm" color="gray.400">
-              No {INSTITUTIONS.toLowerCase()} assigned
-            </Text>
-          );
-        }
+    );
+  }
+  return (
+    <VStack align="stretch" {...(tierControl ? framedList : { spacing: 1 })}>
+      {tenants.map((t) => {
+        const pending = pendingRow?.(t);
         return (
-          <VStack align="stretch" spacing={1}>
-            {tenants.map((t) => (
-              <HStack key={t.tenantId} justify="space-between">
-                <Text fontSize="sm" color="gray.700" isTruncated>
-                  {t.organisation}
-                </Text>
-                <Text fontSize="xs" color="gray.500" flexShrink={0}>
+          <HStack
+            key={t.tenantId}
+            justify="space-between"
+            align="center"
+            {...(tierControl ? framedRow : null)}
+            bg={pending ? "blue.50" : undefined}
+          >
+            <Text fontSize="sm" color="ink.700" isTruncated minW={0}>
+              {t.organisation}
+            </Text>
+            {pending ?? (
+              <HStack spacing={3} flexShrink={0}>
+                <Text fontSize="xs" color="ink.500">
                   ID: {t.tenantId}
                 </Text>
+                {tierControl?.(t)}
               </HStack>
-            ))}
-          </VStack>
+            )}
+          </HStack>
         );
-      })()}
-    </Box>
+      })}
+    </VStack>
   );
 }
 
@@ -658,72 +793,138 @@ interface MappedService {
 interface ServicesMappedSectionProps {
   readonly services: MappedService[];
   readonly isLoading: boolean;
+  readonly tierControl?: (service: MappedService) => React.ReactNode;
+  readonly pendingRow?: (service: MappedService) => React.ReactNode | null;
 }
 
 function ServicesMappedSection({
   services,
   isLoading,
+  tierControl,
+  pendingRow,
 }: ServicesMappedSectionProps) {
-  return (
-    <Box>
+  if (isLoading) {
+    return (
+      <HStack spacing={2} color="ink.400">
+        <Spinner size="xs" />
+        <Text fontSize="sm">Loading services…</Text>
+      </HStack>
+    );
+  }
+  if (!services.length) {
+    return (
       <Text
-        fontSize="xs"
-        fontWeight="semibold"
-        color="gray.500"
-        textTransform="uppercase"
-        mb={1}
+        fontSize="sm"
+        color="ink.400"
+        {...(tierControl ? framedEmpty : null)}
       >
-        Services Mapped · {isLoading ? "…" : services.length}
+        No services mapped{tierControl ? "." : ""}
       </Text>
-      {(() => {
-        if (isLoading) {
-          return (
-            <HStack spacing={2} color="gray.400">
-              <Spinner size="xs" />
-              <Text fontSize="sm">Loading services…</Text>
-            </HStack>
-          );
-        }
-        if (!services.length) {
-          return (
-            <Text fontSize="sm" color="gray.400">
-              No services mapped
-            </Text>
-          );
-        }
+    );
+  }
+  return (
+    <VStack align="stretch" {...(tierControl ? framedList : { spacing: 1 })}>
+      {services.map((s) => {
+        const pending = pendingRow?.(s);
         return (
-          <VStack align="stretch" spacing={1}>
-            {services.map((s) => (
-              <HStack key={s.serviceId || s.name} justify="space-between">
-                <Text fontSize="sm" color="gray.700" isTruncated>
-                  {s.name}
-                </Text>
-                <HStack spacing={1} flexShrink={0}>
-                  {s.taskType && (
-                    <Badge
-                      colorScheme={getTaskTypeBadgeColor(s.taskType)}
-                      fontSize="xs"
-                      px={2}
-                      py={0.5}
-                    >
-                      {s.taskType}
-                    </Badge>
-                  )}
+          <HStack
+            key={s.serviceId || s.name}
+            justify="space-between"
+            align="center"
+            {...(tierControl ? framedRow : null)}
+          >
+            <Text fontSize="sm" color="ink.700" isTruncated minW={0}>
+              {s.name}
+            </Text>
+            {pending ?? (
+              <HStack spacing={1} flexShrink={0}>
+                {s.taskType && (
                   <Badge
-                    colorScheme={s.isPublished ? "green" : "gray"}
+                    colorScheme={getTaskTypeBadgeColor(s.taskType)}
                     fontSize="xs"
                     px={2}
                     py={0.5}
                   >
-                    {s.isPublished ? "PUBLISHED" : "DRAFT"}
+                    {s.taskType}
                   </Badge>
-                </HStack>
+                )}
+                <Badge
+                  colorScheme={s.isPublished ? "green" : "gray"}
+                  fontSize="xs"
+                  px={2}
+                  py={0.5}
+                >
+                  {s.isPublished ? "PUBLISHED" : "DRAFT"}
+                </Badge>
+                {tierControl?.(s)}
               </HStack>
-            ))}
-          </VStack>
+            )}
+          </HStack>
         );
-      })()}
-    </Box>
+      })}
+    </VStack>
+  );
+}
+
+function RowActions({
+  label,
+  isDisabled,
+  items,
+}: {
+  label: string;
+  isDisabled?: boolean;
+  items: { label: string; onClick: () => void; danger?: boolean }[];
+}) {
+  return (
+    <Menu placement="bottom-end" isLazy>
+      <MenuButton
+        as={IconButton}
+        aria-label={label}
+        icon={<FiMoreVertical />}
+        size="sm"
+        variant="ghost"
+        isDisabled={isDisabled}
+      />
+      <MenuList minW="170px" zIndex={1600}>
+        {items.map((item) => (
+          <MenuItem
+            key={item.label}
+            onClick={item.onClick}
+            color={item.danger ? "red.600" : undefined}
+          >
+            {item.label}
+          </MenuItem>
+        ))}
+      </MenuList>
+    </Menu>
+  );
+}
+
+function PendingMove({
+  label,
+  danger,
+  onUndo,
+  isDisabled,
+}: {
+  label: string;
+  danger?: boolean;
+  onUndo: () => void;
+  isDisabled?: boolean;
+}) {
+  return (
+    <HStack spacing={2} flexShrink={0}>
+      <Text
+        fontSize="sm"
+        fontWeight="semibold"
+        color={danger ? "red.600" : "blue.600"}
+        whiteSpace="nowrap"
+      >
+        {label}
+      </Text>
+      <Button size="xs" variant="ghost" onClick={onUndo} isDisabled={isDisabled}>
+        Undo
+      </Button>
+    </HStack>
   );
 }
 
@@ -737,8 +938,16 @@ const TierManagement: React.FC = () => {
     setSearchQuery,
     filterTaskType,
     setFilterTaskType,
+    filterStatus,
+    setFilterStatus,
     hasActiveFilters,
     clearFilters,
+    serviceCountByTierId,
+    isServiceCountLoading,
+    hasServiceCountError,
+    institutionCountByTierId,
+    isInstitutionCountLoading,
+    hasInstitutionCountError,
     filteredTiers,
     tiers,
     isLoading,
@@ -764,6 +973,18 @@ const TierManagement: React.FC = () => {
     onEditClose,
     handleOpenEdit,
     handleEditSubmit,
+    servicesForEditingTier,
+    institutionsForEditingTier,
+    otherActiveTiers,
+    isActiveTiersLoading,
+    hasActiveTiersError,
+    stagedServiceTiers,
+    stagedInstitutionTiers,
+    stagedInstitutionRemovals,
+    stageServiceTier,
+    stageInstitutionTier,
+    stageInstitutionRemoval,
+    undoInstitutionRemoval,
     removingTaskType,
     handleRemoveQuota,
     scheduleTarget,
@@ -792,6 +1013,31 @@ const TierManagement: React.FC = () => {
     cancelRef,
   } = useTierManagement();
 
+  const [moveDialog, setMoveDialog] = useState<
+    | { kind: "service"; id: string; name: string; taskType: string }
+    | { kind: "institution"; id: string; name: string }
+    | null
+  >(null);
+  const [moveTargetId, setMoveTargetId] = useState("");
+  const [removeDialog, setRemoveDialog] = useState<{ id: string; name: string } | null>(
+    null,
+  );
+
+  const closeMoveDialog = () => {
+    setMoveDialog(null);
+    setMoveTargetId("");
+  };
+
+  const confirmMove = () => {
+    if (!moveDialog || !moveTargetId) return;
+    if (moveDialog.kind === "service") stageServiceTier(moveDialog.id, moveTargetId);
+    else stageInstitutionTier(moveDialog.id, moveTargetId);
+    closeMoveDialog();
+  };
+
+  const tierName = (id: string) =>
+    otherActiveTiers.find((tier) => tier.id === id)?.name ?? "another tier";
+
   /**
    * An untouched New Quota Limit is empty rather than wrong, so the hint stays
    * until the admin has actually typed something the backend would reject.
@@ -801,8 +1047,11 @@ const TierManagement: React.FC = () => {
   const tierSortAccessors = useMemo(
     () => ({
       name: (tier: Tier) => tier.name ?? "",
+      // This table owns its sort, so a column's own `sortAccessor` is ignored.
+      services: (tier: Tier) => serviceCountByTierId.get(tier.id) ?? 0,
+      institutions: (tier: Tier) => institutionCountByTierId.get(tier.id) ?? 0,
     }),
-    [],
+    [serviceCountByTierId, institutionCountByTierId],
   );
   const tierSort = useDeferredColumnSort("name", tierSortAccessors);
   const sortedTiers = useMemo(
@@ -815,10 +1064,25 @@ const TierManagement: React.FC = () => {
       TIER_NAME_COLUMN,
       TIER_STATUS_COLUMN,
       TIER_TASK_TYPES_COLUMN,
+      makeTierCountColumn(
+        "services",
+        "Services",
+        serviceCountByTierId,
+        isServiceCountLoading,
+        hasServiceCountError,
+        "Could not load services",
+      ),
+      makeTierCountColumn(
+        "institutions",
+        INSTITUTIONS,
+        institutionCountByTierId,
+        isInstitutionCountLoading,
+        hasInstitutionCountError,
+        `Could not load ${INSTITUTIONS.toLowerCase()}`,
+      ),
       makeTierActionsColumn(
         deletingId,
         updatingStatusId,
-        handleViewClick,
         handleOpenEdit,
         handleDeleteClick,
         handleStatusClick,
@@ -829,39 +1093,150 @@ const TierManagement: React.FC = () => {
       updatingStatusId,
       handleDeleteClick,
       handleOpenEdit,
-      handleViewClick,
       handleStatusClick,
+      serviceCountByTierId,
+      isServiceCountLoading,
+      hasServiceCountError,
+      institutionCountByTierId,
+      isInstitutionCountLoading,
+      hasInstitutionCountError,
     ],
   );
 
-  const tierFormFooter = (
-    <HStack justify="flex-end" spacing={3}>
-      <Button
-        variant="outline"
-        onClick={isCreateOpen ? onCreateClose : onEditClose}
-      >
-        Cancel
-      </Button>
-      <Button
-        colorScheme="blue"
-        isLoading={isSubmitting}
-        loadingText={isCreateOpen ? "Creating..." : "Saving..."}
-        onClick={isCreateOpen ? handleCreateSubmit : handleEditSubmit}
-      >
-        {isCreateOpen ? "Create Tier" : "Save Changes"}
-      </Button>
-    </HStack>
+  const tierForm = (
+    <TierForm
+      formData={formData}
+      onChange={setFormData}
+      taskTypeNames={taskTypeNames}
+      unitByTaskType={unitByTaskType}
+      onSchedule={isEditOpen ? handleOpenSchedule : undefined}
+      onRemove={
+        isEditOpen
+          ? (quota) => handleRemoveQuota(quota.modelTaskType)
+          : undefined
+      }
+      removingTaskType={removingTaskType}
+      isEditMode={isEditOpen}
+      showErrors={showQuotaErrors}
+    />
+  );
+
+  const pendingQuotas =
+    viewTier?.quotas?.filter((q) => q.pendingLimit != null) ?? [];
+
+  const formPage = (
+    <>
+    <FormDrawer
+      isOpen={isCreateOpen}
+      onClose={onCreateClose}
+      size="wide"
+      lockDismiss={isSubmitting}
+      title="Create Tier"
+      description={`Configure access and usage limits for ${INSTITUTIONS.toLowerCase()}.`}
+      footer={
+        <FormActions
+          cancelLabel="Cancel"
+          submitLabel="Create Tier"
+          onCancel={onCreateClose}
+          isLoading={isSubmitting}
+          loadingText="Creating..."
+          onSubmit={() => {
+            void handleCreateSubmit();
+          }}
+          justify="space-between"
+          pt={0}
+        />
+      }
+    >
+      {isCreateOpen ? tierForm : null}
+    </FormDrawer>
+    <FormDrawer
+      isOpen={Boolean(isViewOpen && viewTier) && !isCreateOpen}
+      onClose={onViewClose}
+      size="wide"
+      title={viewTier?.name || "Tier"}
+      description="Tier details."
+      footer={<FormActions hideSubmit cancelLabel="Close" onCancel={onViewClose} pt={0} />}
+    >
+      {viewTier ? <TierForm
+        mode="view"
+        formData={{
+          name: viewTier.name,
+          description: viewTier.description ?? "",
+          quotas: (viewTier.quotas ?? []).map((q) => ({
+            modelTaskType: q.modelTaskType,
+            unit: q.unit ?? "",
+            limit: String(q.limit ?? ""),
+          })),
+        }}
+        onChange={() => undefined}
+        taskTypeNames={taskTypeNames}
+        unitByTaskType={unitByTaskType}
+      /> : null}
+      <FormSection title="Upcoming changes">
+        {pendingQuotas.length ? (
+          pendingQuotas.map((q) => (
+            <HStack key={q.modelTaskType} justify="space-between" align="center">
+              <ReadOnlyField label={`${formatModelTaskTypeLabel(q.modelTaskType)} Quota`}>
+                {q.pendingLimit?.toLocaleString()} {q.unit} · effective next billing cycle
+              </ReadOnlyField>
+              <Button
+                variant="link"
+                size="xs"
+                colorScheme="red"
+                flexShrink={0}
+                isLoading={cancelingTaskType === q.modelTaskType}
+                isDisabled={
+                  cancelingTaskType !== null && cancelingTaskType !== q.modelTaskType
+                }
+                onClick={() => handleCancelPendingQuota(q.modelTaskType)}
+              >
+                Cancel
+              </Button>
+            </HStack>
+          ))
+        ) : (
+          <Text fontSize="sm" color="ink.400">
+            No upcoming changes.
+          </Text>
+        )}
+      </FormSection>
+      <FormSection title={`Services mapped · ${isServicesForViewTierLoading ? "…" : servicesForViewTier.length}`}>
+        <ServicesMappedSection
+          services={servicesForViewTier}
+          isLoading={isServicesForViewTierLoading}
+        />
+      </FormSection>
+      <FormSection title={`${INSTITUTIONS} assigned · ${isAssignedTenantsLoading ? "…" : assignedTenantsForViewTier.length}`}>
+        <AssignedTenantsSection
+          tenants={assignedTenantsForViewTier}
+          isLoading={isAssignedTenantsLoading}
+        />
+      </FormSection>
+    </FormDrawer>
+    </>
   );
 
   return (
     <Box>
-      <DataTable
+      {formPage}
+      <Box>
+          <ManagementPageHeader
+            crumbs={false}
+            title="Tier Management"
+            description={`Configure tiers for ${INSTITUTION.toLowerCase()} access`}
+            actions={
+              <CreateButton onClick={handleOpenCreate}>Create Tier</CreateButton>
+            }
+          />
+          <DataTable
         layout="admin"
         items={sortedTiers}
         columns={columns}
         getRowKey={(tier) => tier.id}
         sort={tierSort.sort}
         onSortChange={tierSort.onSortChange}
+        onRowClick={handleViewClick}
         isLoading={isLoading}
         loadingMessage="Loading tiers..."
         emptyMessage="No tiers found. Create your first tier to get started."
@@ -870,17 +1245,9 @@ const TierManagement: React.FC = () => {
         onClearFilters={clearFilters}
         unfilteredCount={tiers.length}
         paginate="client"
+        paginationPosition="bottom"
+        pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
         filterToolbarAlign="flex-start"
-        filterToolbarRightContent={
-          <Button
-            leftIcon={<AddIcon />}
-            colorScheme="blue"
-            size="sm"
-            onClick={handleOpenCreate}
-          >
-            Create Tier
-          </Button>
-        }
         search={{
           value: searchQuery,
           onChange: setSearchQuery,
@@ -895,6 +1262,7 @@ const TierManagement: React.FC = () => {
             param: "model_task_type",
             value: filterTaskType,
             onChange: setFilterTaskType,
+            width: { base: "full", sm: "200px" },
             options: [
               ...(taskTypeNames.length > 1 ? [{ label: "All", value: "" }] : []),
               ...taskTypeNames.map((t) => ({
@@ -903,8 +1271,171 @@ const TierManagement: React.FC = () => {
               })),
             ],
           },
+          {
+            id: "status",
+            label: "Status",
+            // No `param`: client-side, since fetching by status would make
+            // `unfilteredCount` the filtered count.
+            type: "select",
+            value: filterStatus,
+            onChange: setFilterStatus,
+            options: [
+              { label: "All", value: "" },
+              // Labels from the badge map, so dropdown and column agree.
+              ...TIER_FILTER_STATUSES.map((s) => ({
+                label: TIER_STATUS_BADGE[s].label,
+                value: s,
+              })),
+            ],
+          },
         ]}
       />
+      </Box>
+
+      <FormDrawer
+        isOpen={isEditOpen}
+        onClose={onEditClose}
+        size="wide"
+        lockDismiss={isSubmitting}
+        title={editingTier?.name ? `Edit Tier: ${editingTier.name}` : "Edit Tier"}
+        footer={
+          <FormActions
+            submitLabel="Save Changes"
+            onCancel={onEditClose}
+            isLoading={isSubmitting}
+            loadingText="Saving..."
+            justify="space-between"
+            pt={0}
+            onSubmit={handleEditSubmit}
+          />
+        }
+      >
+            <VStack align="stretch" spacing={6}>
+              <TierForm
+                formData={formData}
+                onChange={setFormData}
+                taskTypeNames={taskTypeNames}
+                unitByTaskType={unitByTaskType}
+                onSchedule={handleOpenSchedule}
+                onRemove={(quota) => handleRemoveQuota(quota.modelTaskType)}
+                removingTaskType={removingTaskType}
+                isEditMode
+                showErrors={showQuotaErrors}
+              />
+              {editingTier ? (
+                <>
+                  {hasActiveTiersError ? (
+                    <Text fontSize="sm" color="red.500">
+                      Could not load active tiers.
+                    </Text>
+                  ) : null}
+                  <FormSection
+                    title={`Services mapped · ${isServiceCountLoading ? "…" : servicesForEditingTier.length}`}
+                  >
+                    <ServicesMappedSection
+                      services={servicesForEditingTier}
+                      isLoading={isServiceCountLoading}
+                      pendingRow={(service) => {
+                        const targetId = stagedServiceTiers[service.serviceId];
+                        if (!targetId) return null;
+                        return (
+                          <PendingMove
+                            label={`Moving to ${tierName(targetId)}`}
+                            onUndo={() => stageServiceTier(service.serviceId, "")}
+                            isDisabled={isSubmitting}
+                          />
+                        );
+                      }}
+                      tierControl={(service) => (
+                        <RowActions
+                          label={`Actions for ${service.name}`}
+                          isDisabled={isSubmitting || !service.serviceId}
+                          items={[
+                            {
+                              label: "Reassign Tier",
+                              onClick: () => {
+                                setMoveTargetId("");
+                                setMoveDialog({
+                                  kind: "service",
+                                  id: service.serviceId,
+                                  name: service.name,
+                                  taskType: service.taskType,
+                                });
+                              },
+                            },
+                          ]}
+                        />
+                      )}
+                    />
+                  </FormSection>
+                  <FormSection
+                    title={`${INSTITUTIONS} assigned · ${isInstitutionCountLoading ? "…" : institutionsForEditingTier.length}`}
+                  >
+                    <AssignedTenantsSection
+                      tenants={institutionsForEditingTier}
+                      isLoading={isInstitutionCountLoading}
+                      pendingRow={(institution) => {
+                        if (
+                          TIER_REMOVAL_ENABLED &&
+                          stagedInstitutionRemovals[institution.tenantId]
+                        ) {
+                          return (
+                            <PendingMove
+                              label="Removing"
+                              danger
+                              onUndo={() => undoInstitutionRemoval(institution.tenantId)}
+                              isDisabled={isSubmitting}
+                            />
+                          );
+                        }
+                        const targetId = stagedInstitutionTiers[institution.tenantId];
+                        if (!targetId) return null;
+                        return (
+                          <PendingMove
+                            label={`Moving to ${tierName(targetId)}`}
+                            onUndo={() => stageInstitutionTier(institution.tenantId, "")}
+                            isDisabled={isSubmitting}
+                          />
+                        );
+                      }}
+                      tierControl={(institution) => (
+                        <RowActions
+                          label={`Actions for ${institution.organisation}`}
+                          isDisabled={isSubmitting}
+                          items={[
+                            {
+                              label: "Change Tier",
+                              onClick: () => {
+                                setMoveTargetId("");
+                                setMoveDialog({
+                                  kind: "institution",
+                                  id: institution.tenantId,
+                                  name: institution.organisation,
+                                });
+                              },
+                            },
+                            ...(TIER_REMOVAL_ENABLED
+                              ? [
+                                  {
+                                    label: "Remove from Tier",
+                                    danger: true,
+                                    onClick: () =>
+                                      setRemoveDialog({
+                                        id: institution.tenantId,
+                                        name: institution.organisation,
+                                      }),
+                                  },
+                                ]
+                              : []),
+                          ]}
+                        />
+                      )}
+                    />
+                  </FormSection>
+                </>
+              ) : null}
+            </VStack>
+      </FormDrawer>
 
       {/* Lifecycle status confirmation (activate / deactivate) */}
       <ConfirmDialog
@@ -943,67 +1474,132 @@ const TierManagement: React.FC = () => {
         leastDestructiveRef={cancelRef}
       />
 
-      {/* Create Tier drawer */}
-      <Drawer
-        isOpen={isCreateOpen}
-        onClose={onCreateClose}
-        placement="right"
-        size="lg"
-        closeOnOverlayClick={!isSubmitting}
+      <StandardModal
+        isOpen={!!moveDialog}
+        onClose={closeMoveDialog}
+        title={`Reassign "${moveDialog?.name ?? ""}"`}
+        size="sm"
+        footer={
+          <HStack justify="flex-end" spacing={3} w="full">
+            <Button variant="outline" onClick={closeMoveDialog}>
+              Cancel
+            </Button>
+            <Button
+              colorScheme="blue"
+              isDisabled={!moveTargetId || isActiveTiersLoading || hasActiveTiersError}
+              onClick={confirmMove}
+            >
+              Set target
+            </Button>
+          </HStack>
+        }
       >
-        <DrawerOverlay />
-        <DrawerContent>
-          <DrawerCloseButton />
-          <DrawerHeader borderBottomWidth="1px" borderColor="gray.200">
-            Create Tier
-          </DrawerHeader>
-          <DrawerBody py={6}>
-            <TierForm
-              formData={formData}
-              onChange={setFormData}
-              taskTypeNames={taskTypeNames}
-              unitByTaskType={unitByTaskType}
-              showErrors={showQuotaErrors}
-            />
-          </DrawerBody>
-          <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
-            {tierFormFooter}
-          </DrawerFooter>
-        </DrawerContent>
-      </Drawer>
+        <VStack align="stretch" spacing={3}>
+          <Text fontSize="sm" color="ink.600">
+            Currently on:{" "}
+            <Text as="span" fontWeight="semibold" color="ink.800">
+              {editingTier?.name}
+            </Text>
+            {moveDialog?.kind === "service" && moveDialog.taskType
+              ? ` · ${moveDialog.taskType}`
+              : ""}
+          </Text>
+          <FormControl isRequired>
+            <FieldLabel>Move to tier</FieldLabel>
+            <Select
+              placeholder="Select a tier…"
+              value={moveTargetId}
+              onChange={(event) => setMoveTargetId(event.target.value)}
+            >
+              {otherActiveTiers.map((tier) => (
+                <option key={tier.id} value={tier.id}>
+                  {tier.name}
+                </option>
+              ))}
+            </Select>
+          </FormControl>
+          {moveDialog?.kind === "service" && editingTier
+            ? (() => {
+                const remaining = servicesForEditingTier.filter(
+                  (service) =>
+                    service.taskType === moveDialog.taskType &&
+                    service.serviceId !== moveDialog.id &&
+                    !stagedServiceTiers[service.serviceId],
+                ).length;
+                const institutionsLeft = institutionsForEditingTier.filter(
+                  (institution) =>
+                    !stagedInstitutionRemovals[institution.tenantId] &&
+                    !stagedInstitutionTiers[institution.tenantId],
+                ).length;
+                const isOnlyService = remaining === 0;
+                return (
+                  <Text fontSize="sm" color={isOnlyService ? "red.600" : "ink.600"}>
+                    {isOnlyService
+                      ? `This is the only ${moveDialog.taskType} service on ${editingTier.name}. Moving it away leaves ${institutionsLeft} institution(s) with no ${moveDialog.taskType} service to route to.`
+                      : `${editingTier.name} will still have ${remaining} other ${moveDialog.taskType} service(s) after this move.`}
+                  </Text>
+                );
+              })()
+            : null}
+          {moveDialog?.kind === "institution" ? (
+            <Text fontSize="sm" color="ink.600">
+              {moveTargetId
+                ? "Quota changes once you save. The institution's quota changes with the tier."
+                : "Select a target tier to see the quota change."}
+            </Text>
+          ) : null}
+          {moveDialog?.kind === "institution" && moveTargetId && editingTier
+            ? otherActiveTiers
+                .find((tier) => tier.id === moveTargetId)
+                ?.quotas.map((quota) => {
+                  const current = editingTier.quotas.find(
+                    (item) => item.modelTaskType === quota.modelTaskType,
+                  );
+                  return (
+                    <Text key={quota.modelTaskType} fontSize="xs" color="ink.600">
+                      {quota.modelTaskType}: {current ? current.limit : "—"} → {quota.limit}
+                      {quota.unit ? ` ${quota.unit}` : ""}/mo
+                    </Text>
+                  );
+                })
+            : null}
+        </VStack>
+      </StandardModal>
 
-      {/* Edit Tier drawer */}
-      <Drawer
-        isOpen={isEditOpen}
-        onClose={onEditClose}
-        placement="right"
-        size="lg"
-        closeOnOverlayClick={!isSubmitting}
-      >
-        <DrawerOverlay />
-        <DrawerContent>
-          <DrawerCloseButton />
-          <DrawerHeader borderBottomWidth="1px" borderColor="gray.200">
-            {`Edit Tier: ${editingTier?.name ?? ""}`}
-          </DrawerHeader>
-          <DrawerBody py={6}>
-            <TierForm
-              formData={formData}
-              onChange={setFormData}
-              taskTypeNames={taskTypeNames}
-              unitByTaskType={unitByTaskType}
-              onSchedule={handleOpenSchedule}
-              onRemove={(quota) => handleRemoveQuota(quota.modelTaskType)}
-              removingTaskType={removingTaskType}
-              isEditMode
-              showErrors={showQuotaErrors}
-            />
-          </DrawerBody>
-          <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
-            {tierFormFooter}
-          </DrawerFooter>
-        </DrawerContent>
-      </Drawer>
+      {TIER_REMOVAL_ENABLED ? (
+        <StandardModal
+          isOpen={!!removeDialog}
+          onClose={() => setRemoveDialog(null)}
+          title={
+            removeDialog
+              ? `Remove "${removeDialog.name}" from ${editingTier?.name ?? "this tier"}?`
+              : "Remove from Tier"
+          }
+          size="sm"
+          footer={
+            <HStack justify="flex-end" spacing={3} w="full">
+              <Button variant="outline" onClick={() => setRemoveDialog(null)}>
+                Cancel
+              </Button>
+              <Button
+                colorScheme="red"
+                onClick={() => {
+                  if (!removeDialog) return;
+                  stageInstitutionRemoval(removeDialog.id);
+                  setRemoveDialog(null);
+                }}
+              >
+                Remove on save
+              </Button>
+            </HStack>
+          }
+        >
+          <Text fontSize="sm" color="red.600">
+            Once saved, this institution will have no tier assigned. It won’t be able
+            to consume any metered service until a new tier is set.
+          </Text>
+        </StandardModal>
+      ) : null}
 
       {/* Schedule quota change modal */}
       <StandardModal
@@ -1013,40 +1609,36 @@ const TierManagement: React.FC = () => {
         size="sm"
         closeOnOverlayClick={!isScheduling}
         footer={
-          <HStack justify="flex-end" spacing={3}>
-            <Button variant="outline" onClick={handleScheduleClose}>
-              Cancel
-            </Button>
-            <Button
-              colorScheme="blue"
-              isLoading={isScheduling}
-              loadingText="Scheduling..."
-              isDisabled={!!scheduleLimitError}
-              onClick={handleScheduleConfirm}
-            >
-              Confirm Schedule
-            </Button>
-          </HStack>
+          <FormActions
+            submitLabel="Confirm Schedule"
+            onCancel={handleScheduleClose}
+            onSubmit={() => void handleScheduleConfirm()}
+            isLoading={isScheduling}
+            loadingText="Scheduling..."
+            isDisabled={!!scheduleLimitError}
+            justify="flex-end"
+            pt={0}
+          />
         }
       >
         {scheduleTarget && (
           <VStack align="stretch" spacing={4}>
             <HStack justify="space-between">
-              <Text fontSize="sm" fontWeight="semibold" color="gray.700">
+              <Text fontSize="sm" fontWeight="semibold" color="ink.700">
                 {formatModelTaskTypeLabel(scheduleTarget.modelTaskType)}
               </Text>
-              <Text fontSize="sm" color="gray.600">
+              <Text fontSize="sm" color="ink.600">
                 Current:{" "}
-                <Text as="span" fontWeight="semibold" color="gray.800">
+                <Text as="span" fontWeight="semibold" color="ink.800">
                   {scheduleTarget.limit} {scheduleTarget.unit}
                 </Text>
               </Text>
             </HStack>
 
             <FormControl isRequired isInvalid={showScheduleLimitError}>
-              <FormLabel fontSize="sm">
+              <FieldLabel formLabelProps={{ fontSize: "sm" }}>
                 New Quota Limit ({scheduleTarget.unit})
-              </FormLabel>
+              </FieldLabel>
               <NumberInput
                 size="sm"
                 min={0}
@@ -1067,212 +1659,13 @@ const TierManagement: React.FC = () => {
               )}
             </FormControl>
 
-            <Text fontSize="xs" color="gray.500">
+            <Text fontSize="xs" color="ink.500">
               Takes effect from the next billing cycle.
             </Text>
           </VStack>
         )}
       </StandardModal>
 
-      {/* View Tier drawer */}
-      <Drawer
-        isOpen={isViewOpen}
-        onClose={onViewClose}
-        placement="right"
-        size="md"
-      >
-        <DrawerOverlay />
-        <DrawerContent>
-          <DrawerCloseButton />
-          <DrawerHeader borderBottomWidth="1px" borderColor="gray.200">
-            {`Tier Details — ${viewTier?.name ?? ""}`}
-          </DrawerHeader>
-          <DrawerBody py={6}>
-            {viewTier && (
-              <VStack align="stretch" spacing={5}>
-                {/* Name + description */}
-                <Box>
-                  <Text fontSize="lg" fontWeight="bold" color="gray.800">
-                    {viewTier.name}
-                  </Text>
-                  {viewTier.description && (
-                    <Text fontSize="sm" color="gray.500" mt={0.5}>
-                      {viewTier.description}
-                    </Text>
-                  )}
-                </Box>
-
-                <Tabs colorScheme="blue" size="sm">
-                  <TabList>
-                    <Tab>Current</Tab>
-                    <Tab>Upcoming</Tab>
-                  </TabList>
-                  <TabPanels>
-                    <TabPanel px={0}>
-                      <VStack align="stretch" spacing={4}>
-                        <HStack justify="space-between" align="flex-start">
-                          <Text fontSize="sm" color="gray.600">
-                            Tier Name
-                          </Text>
-                          <Text
-                            fontSize="sm"
-                            fontWeight="semibold"
-                            color="gray.800"
-                          >
-                            {viewTier.name}
-                          </Text>
-                        </HStack>
-
-                        <HStack justify="space-between" align="flex-start">
-                          <Text fontSize="sm" color="gray.600">
-                            Description
-                          </Text>
-                          <Text
-                            fontSize="sm"
-                            color="gray.700"
-                            textAlign="right"
-                          >
-                            {viewTier.description || "—"}
-                          </Text>
-                        </HStack>
-
-                        <Divider />
-
-                        <Box>
-                          <Text
-                            fontSize="xs"
-                            fontWeight="semibold"
-                            color="gray.500"
-                            textTransform="uppercase"
-                            mb={2}
-                          >
-                            Quota by Model Task Type
-                          </Text>
-                          <VStack align="stretch" spacing={2}>
-                            {viewTier.quotas?.length ? (
-                              viewTier.quotas.map((q) => {
-                                const { boldText, suffixText } =
-                                  formatQuotaAmount(q.limit, q.unit);
-                                return (
-                                  <HStack
-                                    key={q.modelTaskType}
-                                    justify="space-between"
-                                  >
-                                    <Text fontSize="sm" color="gray.700">
-                                      {formatModelTaskTypeLabel(
-                                        q.modelTaskType,
-                                      )}
-                                    </Text>
-                                    <Text fontSize="sm">
-                                      <Text
-                                        as="span"
-                                        fontWeight="semibold"
-                                        color="gray.800"
-                                      >
-                                        {boldText}
-                                      </Text>{" "}
-                                      <Text as="span" color="gray.600">
-                                        {suffixText}
-                                      </Text>
-                                    </Text>
-                                  </HStack>
-                                );
-                              })
-                            ) : (
-                              <Text fontSize="sm" color="gray.400">
-                                —
-                              </Text>
-                            )}
-                          </VStack>
-                        </Box>
-
-                        <ServicesMappedSection
-                          services={servicesForViewTier}
-                          isLoading={isServicesForViewTierLoading}
-                        />
-
-                        <AssignedTenantsSection
-                          tenants={assignedTenantsForViewTier}
-                          isLoading={isAssignedTenantsLoading}
-                        />
-                      </VStack>
-                    </TabPanel>
-
-                    <TabPanel px={0}>
-                      <VStack align="stretch" spacing={3}>
-                        {(() => {
-                          const pendingQuotas =
-                            viewTier.quotas?.filter(
-                              (q) => q.pendingLimit != null,
-                            ) ?? [];
-                          if (!pendingQuotas.length) {
-                            return (
-                              <Text fontSize="sm" color="gray.400">
-                                No upcoming changes.
-                              </Text>
-                            );
-                          }
-                          return pendingQuotas.map((q) => (
-                            <HStack
-                              key={q.modelTaskType}
-                              justify="space-between"
-                            >
-                              <Text fontSize="sm" color="gray.700">
-                                {formatModelTaskTypeLabel(q.modelTaskType)}{" "}
-                                Quota
-                              </Text>
-                              <HStack spacing={3}>
-                                <Text fontSize="sm" color="gray.600">
-                                  <Text
-                                    as="span"
-                                    fontWeight="semibold"
-                                    color="gray.800"
-                                  >
-                                    {q.pendingLimit?.toLocaleString()} {q.unit}
-                                  </Text>{" "}
-                                  · effective next billing cycle
-                                </Text>
-                                <Button
-                                  variant="link"
-                                  size="xs"
-                                  colorScheme="red"
-                                  isLoading={
-                                    cancelingTaskType === q.modelTaskType
-                                  }
-                                  isDisabled={
-                                    cancelingTaskType !== null &&
-                                    cancelingTaskType !== q.modelTaskType
-                                  }
-                                  onClick={() =>
-                                    handleCancelPendingQuota(q.modelTaskType)
-                                  }
-                                >
-                                  Cancel
-                                </Button>
-                              </HStack>
-                            </HStack>
-                          ));
-                        })()}
-
-                        <AssignedTenantsSection
-                          tenants={assignedTenantsForViewTier}
-                          isLoading={isAssignedTenantsLoading}
-                          pt={2}
-                        />
-                      </VStack>
-                    </TabPanel>
-                  </TabPanels>
-                </Tabs>
-              </VStack>
-            )}
-          </DrawerBody>
-          <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
-            <Button variant="outline" onClick={onViewClose}>
-              Close
-            </Button>
-          </DrawerFooter>
-        </DrawerContent>
-      </Drawer>
     </Box>
   );
 };

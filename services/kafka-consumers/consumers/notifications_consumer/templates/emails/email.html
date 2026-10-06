@@ -1,0 +1,6 @@
+{# Entry template of every notification / alert email. events/<event_name>.j2
+   holds the event's wording and maps the envelope's details onto it; its
+   `layout` picks notification, alert or monitoring_alert. #}
+{% import "events/" ~ event_name ~ ".j2" as event with context %}
+{% set recipient_name = recipient_name or "there" %}
+{% extends event.layout ~ ".html" %}

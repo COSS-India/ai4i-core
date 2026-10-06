@@ -1,11 +1,13 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
-from pydantic import BaseModel, StrictBool, field_validator
+from pydantic import BaseModel, StrictBool, StrictFloat, StrictInt, field_validator
 
 from app.schemas.common import MessageMeta, SuccessResponse, SuccessResponseWithMeta
 from app.schemas.enums.notification_management import (
+    MonitoringThresholdUnit,
     NotificationChannel,
     NotificationModule,
+    NotificationScope,
     NotificationType,
 )
 
@@ -21,8 +23,20 @@ class ThresholdBand(BaseModel):
 
     percentage: int
     # Strict: pydantic's default lax bool coercion would otherwise accept
-    # "true"/"false" (string) and silently coerce them instead of 422ing —
-    # see CatalogUpdate.recipient_roles for the same fix on that field.
+    # "true"/"false" (string) and silently coerce them instead of 422ing.
+    active: StrictBool
+
+
+class MonitoringThresholdBand(BaseModel):
+    """One configurable band on a MONITORING row: the value it fires at
+    (``>=``), its unit (PERCENT for error rates, SECONDS for latencies) and
+    whether it's currently turned on. Stored as a row of
+    notification_alert_threshold."""
+
+    # Strict so a string ("5") or a bool (True is an int) 422s instead of
+    # being silently coerced — same reasoning as ``active`` below.
+    value: Union[StrictInt, StrictFloat]
+    unit: MonitoringThresholdUnit
     active: StrictBool
 
 
@@ -30,8 +44,20 @@ class CatalogItem(BaseModel):
     """One row of the notification/alert catalog, decorated with its
     code-side display metadata (see catalog_metadata.py). ``thresholds`` is
     omitted entirely on a NOTIFICATION row (``None``, dropped from the JSON
-    response) rather than sent as an always-empty ``[]`` — that key only
-    ever exists in ``config`` for ALERT-type rows (design section 6.1)."""
+    response) rather than sent as an always-empty ``[]`` — only ALERT-type
+    rows have admin-editable percentage bands.
+
+    ``scope`` is GLOBAL (applies platform-wide, no per-institution
+    opt-out) or INSTITUTION (available for an institution to subscribe to
+    — see app.routes.notification_subscription). ``recipient_roles`` is
+    the stored column as-is: which roles receive this row (ADMIN / TENANT
+    ADMIN, or ADMIN / MODERATOR on a MONITORING row). Migration 0c96d7881ce5
+    starts every flag at false, so nobody is assigned until an admin picks
+    recipients. Its ``"ADMIN"`` key is never re-derived from ``scope`` on
+    read: PATCH forces it off while INSTITUTION and leaves it selectable
+    while GLOBAL (catalog_service._apply_admin_recipient_scope_invariant),
+    and the send path reads this same column, so what is shown here is what
+    is sent."""
 
     id: int
     name: str
@@ -41,7 +67,10 @@ class CatalogItem(BaseModel):
     module: NotificationModule
     channels: List[NotificationChannel]
     recipient_roles: Dict[str, bool]
+    scope: NotificationScope
     thresholds: Optional[List[ThresholdBand]] = None
+    # MONITORING rows only; None (dropped from the response) otherwise.
+    monitoring_thresholds: Optional[List[MonitoringThresholdBand]] = None
 
 
 class CatalogResponse(BaseModel):
@@ -50,11 +79,16 @@ class CatalogResponse(BaseModel):
 
 class CatalogUpdate(BaseModel):
     """PATCH /notification-alerts/catalog/{name} body. Every field optional — only the fields
-    present are changed; recipient_roles/thresholds each replace their own
-    column/config-key wholesale (the mockup's checkbox group sends its whole
-    current state) without disturbing the other, unset one.
+    present are changed; recipient_roles/scope/thresholds each replace
+    their own value wholesale (the mockup's checkbox group
+    sends its whole current state) without disturbing the other, unset
+    one.
 
-    ``thresholds``, when present, must be the complete set of exactly
+    ``recipient_roles["ADMIN"]`` (the Adopter Admin's own recipient toggle)
+    is enforced against the row's effective ``scope`` regardless of what's
+    sent here — see catalog_service._apply_admin_recipient_scope_invariant.
+
+    ``thresholds``, when present, must be the complete set of
     THRESHOLD_BAND_COUNT bands — there is no partial/per-band PATCH, since a
     band has no stable key to merge against once its own ``percentage`` is
     editable. Renaming/reordering has no meaning either (bands are unnamed);
@@ -67,6 +101,7 @@ class CatalogUpdate(BaseModel):
     # real bool instead of 422ing — silently masking a loosely-typed
     # caller's bug instead of failing fast (per this endpoint's spec).
     recipient_roles: Optional[Dict[str, StrictBool]] = None
+    scope: Optional[NotificationScope] = None
     thresholds: Optional[List[ThresholdBand]] = None
 
     @field_validator("channels")
@@ -80,17 +115,41 @@ class CatalogUpdate(BaseModel):
         return v
 
 
+class MonitoringCatalogUpdate(BaseModel):
+    """PATCH /notification-alerts/monitoring-catalog/{name} body. Every field
+    optional — only the fields present are changed. No ``scope`` (monitoring
+    alerts are platform-level, never per-institution) and no ``channels``
+    (Email is the only delivery channel).
+
+    ``recipient_roles`` is a partial-update dict over ADMIN / MODERATOR —
+    only the key(s) that changed need sending. Only the selection is
+    stored; the users it means are resolved at send time.
+
+    ``monitoring_thresholds``, when present, must be the complete set of
+    bands, same wholesale-replace semantics as CatalogUpdate.thresholds."""
+
+    recipient_roles: Optional[Dict[str, StrictBool]] = None
+    monitoring_thresholds: Optional[List[MonitoringThresholdBand]] = None
+
+
 # ── Route response envelopes — ``{"success": true, "data": ...}`` ──
 
 
 class ListCatalogResponse(SuccessResponse):
-    """GET /notification-alerts/catalog?type=NOTIFICATION|ALERT"""
+    """GET /notification-alerts/catalog?type=NOTIFICATION|ALERT|MONITORING"""
 
     data: CatalogResponse
 
 
 class UpdateCatalogResponse(SuccessResponseWithMeta):
     """PATCH /notification-alerts/catalog/{name}"""
+
+    data: CatalogItem
+    meta: MessageMeta
+
+
+class UpdateMonitoringCatalogResponse(SuccessResponseWithMeta):
+    """PATCH /notification-alerts/monitoring-catalog/{name}"""
 
     data: CatalogItem
     meta: MessageMeta

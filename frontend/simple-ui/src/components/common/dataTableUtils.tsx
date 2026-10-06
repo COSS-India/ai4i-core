@@ -26,6 +26,36 @@ export function getTruncateCellProps(truncate: boolean, maxW?: TableCellProps["m
   };
 }
 
+const HARD_SIZE_KEYS = ["w", "width", "minW", "maxW", "minWidth", "maxWidth"] as const;
+
+function isHardColumnSize(value: unknown): boolean {
+  if (typeof value === "number") return true;
+  if (typeof value !== "string") return false;
+  return !value.trim().endsWith("%");
+}
+
+/**
+ * Admin tables use fixed layout and share width equally.
+ * Pixel widths are dropped so one long value cannot resize a column.
+ * Percentage widths and responsive size objects are kept.
+ * Columns that do not truncate (action buttons) skip this and keep their pixel width.
+ */
+export function adminFixedCellProps(props?: TableCellProps): TableCellProps {
+  if (!props) return {};
+  const next: TableCellProps = { ...props };
+  for (const key of HARD_SIZE_KEYS) {
+    if (isHardColumnSize(next[key])) {
+      delete next[key];
+    }
+  }
+  return next;
+}
+
+export function adminFixedSize(value: TableCellProps["w"] | undefined): TableCellProps["w"] | undefined {
+  if (value == null || isHardColumnSize(value)) return undefined;
+  return value;
+}
+
 /**
  * Clip overflowing cell content; native `title` tooltip when truncated.
  * No Chakra Tooltip wrapper — that was collapsing some cell layouts (e.g. Name).

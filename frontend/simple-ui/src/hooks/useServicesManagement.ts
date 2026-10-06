@@ -2,7 +2,8 @@
 // (Service Registry / Create-Edit Service / View Service tabs).
 import { useDisclosure } from "@chakra-ui/react";
 import { useRouter } from "next/router";
-import { useQueryClient } from "@tanstack/react-query";
+import { safeFormReturnHref } from "../components/common/FormPage";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDeferredColumnSort } from "../utils/tableSort";
 import { resolveTaskType } from "../utils/platformService";
@@ -13,13 +14,23 @@ import {
   getServiceById,
   updateService,
   deleteService,
+  SERVICES_ALL_QUERY_KEY,
   sanitizeService,
   resolveMaskedAuthToken,
   Service,
 } from "../services/servicesManagementService";
-import { getAllModels, getModelById } from "../services/modelManagementService";
-import { fetchTiers } from "../services/tierManagementService";
-import type { Tier } from "../types/tierManagement";
+import {
+  getAllModels,
+  getModelById,
+  MODELS_ALL_QUERY_KEY,
+  MODELS_ALL_STALE_MS,
+} from "../services/modelManagementService";
+import {
+  fetchTiers,
+  ACTIVE_TIERS_QUERY_KEY,
+  ACTIVE_TIERS_STALE_MS,
+} from "../services/tierManagementService";
+import type { ModelDetails } from "../types/platform";
 import {
   SERVICE_NAME_MAX_LEN,
   sanitizeServiceId,
@@ -29,14 +40,14 @@ import {
   validateServiceIdLength,
   validateServiceName,
 } from "../components/services-management/serviceFormValidation";
-import type { ModelDetails } from "../types/platform";
 import { useAuth } from "./useAuth";
-import { isRegistryReadOnlyUser } from "../utils/rbac";
+import { isRegistryReadOnlyUser, userHasRole } from "../utils/rbac";
 import { useSessionExpiry } from "./useSessionExpiry";
 import { showError } from "../utils/errorHandler";
 import { showToast } from "../utils/toast";
 import { refreshUntil } from "../utils/postMutationRefresh";
 import { useInferenceTypes } from "./useInferenceTypes";
+import { SERVICE_TIER } from "../config/constants";
 
 /** Query keys of per-task service lists that must refresh after registry mutations. */
 const SERVICE_QUERY_KEYS = [
@@ -51,6 +62,8 @@ const SERVICE_QUERY_KEYS = [
   "language-detection-services",
   "language-diarization-services",
   "audioLanguageDetectionServices",
+  "services-all",
+  "services-for-tiers",
 ];
 
 const emptyServiceForm = (): Partial<Service> => ({
@@ -67,6 +80,59 @@ const emptyServiceForm = (): Partial<Service> => ({
   modelVersion: "1.0",
   tiers: [],
 });
+
+export type ServiceTierFilterOption = { id: string; name: string };
+
+/**
+ * Tier options: every tier in `catalog` (ACTIVE, task-type-scoped), so a tier
+ * with no service mapped yet is still filterable, plus any tier the loaded rows
+ * carry that the catalog omits (inactive, other task type, or newer than the
+ * cache), so every badge in the Tiers column is filterable too. `tierNames` is
+ * positionally aligned with `tierIds` server-side. `pinnedId` keeps the active
+ * selection listed when a refetch leaves no source carrying it, so the filter
+ * stays clearable.
+ */
+const buildTierFilterOptions = (
+  catalog: ServiceTierFilterOption[],
+  services: Service[],
+  pinnedId: string,
+  pinnedName?: string,
+): ServiceTierFilterOption[] => {
+  const byId = new Map<string, string>();
+  for (const tier of catalog) {
+    if (tier.id) byId.set(String(tier.id), tier.name?.trim() || String(tier.id));
+  }
+  for (const service of services) {
+    const ids = service.tierIds ?? [];
+    const names = service.tierNames ?? [];
+    ids.forEach((id, index) => {
+      if (!id) return;
+      const key = String(id);
+      const name = names[index];
+      if (!byId.has(key) || (name && byId.get(key) === key)) {
+        byId.set(key, name?.trim() || key);
+      }
+    });
+  }
+  if (
+    pinnedId &&
+    pinnedId !== SERVICE_TIER.FILTER.NONE &&
+    !byId.has(pinnedId)
+  ) {
+    byId.set(pinnedId, pinnedName?.trim() || pinnedId);
+  }
+  return Array.from(byId, ([id, name]) => ({ id, name })).sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+  );
+};
+
+/** Client-side tier filter: a service carries many tiers, so this is membership. */
+const serviceMatchesTier = (service: Service, filterTierId: string): boolean => {
+  if (filterTierId === SERVICE_TIER.FILTER.ALL) return true;
+  const ids = (service.tierIds ?? []).filter(Boolean).map(String);
+  if (filterTierId === SERVICE_TIER.FILTER.NONE) return ids.length === 0;
+  return ids.includes(String(filterTierId));
+};
 
 const formatModelSubmissionDate = (value?: string | number | null): string => {
   if (value == null || value === "") return "";
@@ -87,12 +153,11 @@ const formatModelSubmissionDate = (value?: string | number | null): string => {
 
 export function useServicesManagement() {
   const [services, setServices] = useState<Service[]>([]);
-  const [models, setModels] = useState<ModelDetails[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [isLoadingModelDetails, setIsLoadingModelDetails] = useState(false);
   const [selectedService, setSelectedService] = useState<Service | null>(null);
   const [isViewingService, setIsViewingService] = useState(false);
-  /** Service being edited in the Create Service tab; null = create mode */
+  /** Service being edited in the Edit Service tab; null in create-modal mode. */
   const [editingService, setEditingService] = useState<Service | null>(null);
   const [formData, setFormData] = useState<Partial<Service>>(emptyServiceForm);
   /** Typed token kept out of Service objects so list/detail never hold the secret. */
@@ -105,15 +170,10 @@ export function useServicesManagement() {
    * over the real credential.
    */
   const [savedAuthTokenMask, setSavedAuthTokenMask] = useState("");
-  /** All existing serviceIds (unfiltered) — used to flag duplicates in the create form */
-  const [existingServiceIds, setExistingServiceIds] = useState<string[]>([]);
   const [pricePerUnit, setPricePerUnit] = useState<string>("");
   const [unitSize, setUnitSize] = useState<string>("");
   const [currency, setCurrency] = useState<string>("INR");
   const [selectedTiers, setSelectedTiers] = useState<string[]>([]);
-  const [availableTiers, setAvailableTiers] = useState<Tier[]>([]);
-  /** True after a successful tiers list fetch (used to gate Create Service). */
-  const [tiersLoaded, setTiersLoaded] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [createFormEpoch, setCreateFormEpoch] = useState(0);
@@ -131,6 +191,13 @@ export function useServicesManagement() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<string>("");
   const [filterTaskType, setFilterTaskType] = useState<string>("");
+  const [filterTier, setFilterTierValue] = useState<string>(
+    SERVICE_TIER.FILTER.ALL,
+  );
+  /** The selected tier's option, kept so it stays listed across refetches. */
+  const [pinnedTier, setPinnedTier] = useState<ServiceTierFilterOption | null>(
+    null,
+  );
   const {
     taskTypeNames,
     unitByTaskType,
@@ -172,33 +239,91 @@ export function useServicesManagement() {
     onOpen: onUnpublishConfirmOpen,
     onClose: onUnpublishConfirmClose,
   } = useDisclosure();
+  const {
+    isOpen: isCreateOpen,
+    onOpen: onCreateOpen,
+    onClose: onCreateClose,
+  } = useDisclosure();
   const cancelPublishRef = useRef<HTMLButtonElement>(null);
   const cancelUnpublishRef = useRef<HTMLButtonElement>(null);
   const { user } = useAuth();
   const isRegistryReadOnly = isRegistryReadOnlyUser(user?.roles);
-  const viewTabIndex = isRegistryReadOnly ? 1 : 2;
+  // View is always the second tab. Edit is a StandardModal, not a tab.
+  const viewTabIndex = 1;
 
-  // Client-side name filter + multi-column sort over the full fetched registry list.
+  // Name + tier filter, then sort, over the full fetched list. Tier is
+  // client-side because GET /services takes no tier param.
   const registryTableItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    const filtered = q
+    let filtered = q
       ? services.filter((s) => (s.name ?? "").toLowerCase().includes(q))
       : services;
+    if (filterTier !== SERVICE_TIER.FILTER.ALL) {
+      filtered = filtered.filter((s) => serviceMatchesTier(s, filterTier));
+    }
     return registrySort.apply(filtered);
-  }, [services, searchQuery, registrySort]);
+  }, [services, searchQuery, filterTier, registrySort]);
+
+  const tiersQuery = useQuery({
+    queryKey: ACTIVE_TIERS_QUERY_KEY,
+    queryFn: () => fetchTiers(undefined, "ACTIVE"),
+    staleTime: ACTIVE_TIERS_STALE_MS,
+    enabled: !isLoadingTaskTypes,
+  });
+  const availableTiers = useMemo(() => {
+    const all = tiersQuery.data?.data ?? [];
+    if (taskTypeNames.length === 0) return all;
+    const enabled = new Set(taskTypeNames.map((n) => n.trim().toLowerCase()));
+    return all.filter((t) =>
+      t.quotas?.some((q) => enabled.has(q.modelTaskType.toLowerCase())),
+    );
+  }, [tiersQuery.data, taskTypeNames]);
+  const tiersLoaded = tiersQuery.isSuccess;
+
+  const tierFilterOptions = useMemo(
+    () =>
+      buildTierFilterOptions(
+        availableTiers,
+        services,
+        filterTier,
+        pinnedTier?.name,
+      ),
+    [availableTiers, services, filterTier, pinnedTier],
+  );
+
+  /** Remembers the label as it is picked, so a later refetch cannot orphan it. */
+  const setFilterTier = useCallback(
+    (next: string) => {
+      setPinnedTier(
+        next && next !== SERVICE_TIER.FILTER.NONE
+          ? (tierFilterOptions.find((o) => o.id === next) ?? null)
+          : null,
+      );
+      setFilterTierValue(next);
+    },
+    [tierFilterOptions],
+  );
 
   const showTaskTypeAllOption = taskTypeNames.length > 1;
   const hasActiveFilters =
     filterStatus !== "" ||
     (showTaskTypeAllOption && filterTaskType !== "") ||
+    filterTier !== SERVICE_TIER.FILTER.ALL ||
     searchQuery.trim() !== "";
   const clearAllFilters = () => {
     setSearchQuery("");
     setFilterStatus("");
     setFilterTaskType(taskTypeNames.length === 1 ? taskTypeNames[0] : "");
+    setFilterTier(SERVICE_TIER.FILTER.ALL);
   };
 
   const router = useRouter();
+  const routerRef = useRef(router);
+  routerRef.current = router;
+  const routerQueryRef = useRef(router.query);
+  routerQueryRef.current = router.query;
+  /** Invalidates in-flight create-entry URL writes after Cancel, breadcrumb, or success. */
+  const createRouteGenRef = useRef(0);
   const queryClient = useQueryClient();
 
   const { checkSessionExpiry } = useSessionExpiry();
@@ -209,7 +334,7 @@ export function useServicesManagement() {
 
   // Check if user is GUEST or USER and redirect if so
   useEffect(() => {
-    if (user?.roles?.includes("GUEST") || user?.roles?.includes("USER")) {
+    if (userHasRole(user?.roles, "GUEST") || userHasRole(user?.roles, "USER")) {
       showToast({
         type: "error",
         message: "You do not have access to Services Management.",
@@ -218,6 +343,7 @@ export function useServicesManagement() {
     }
   }, [user, router]);
   // Model fetched by ID when navigating from a deprecated model's "Create Service" (not in active list)
+  const [createReturnTo, setCreateReturnTo] = useState<string | null>(null);
   const [preselectedModelFromQuery, setPreselectedModelFromQuery] =
     useState<ModelDetails | null>(null);
 
@@ -225,6 +351,40 @@ export function useServicesManagement() {
   // Primitive dep (joined string), not the array — an unstable array ref would
   // re-create fetchServices every render and re-fire the fetch effect below.
   const enabledTaskTypesParam = taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
+
+  /**
+   * Service ids from the last registry fetch that was not narrowed by the
+   * table's task-type or publish filter. That fetch is still limited to task
+   * types enabled in the UI.
+   */
+  const [fullServiceIds, setFullServiceIds] = useState<string[] | null>(null);
+
+  /**
+   * Unfiltered ids for the create-form duplicate check. An id registered under
+   * a task type the registry does not list would otherwise pass here and only
+   * fail as a 409 on submit.
+   */
+  const allServiceIdsQuery = useQuery({
+    queryKey: ["all-service-ids"],
+    queryFn: fetchExistingServiceIds,
+    enabled: isCreateOpen && !editingService,
+    staleTime: 30 * 1000,
+  });
+
+  const modelsQuery = useQuery({
+    queryKey: MODELS_ALL_QUERY_KEY,
+    queryFn: getAllModels,
+    staleTime: MODELS_ALL_STALE_MS,
+  });
+  const models = useMemo(
+    () =>
+      (modelsQuery.data ?? []).filter(
+        (model) =>
+          model.versionStatus?.toLowerCase() === "active" || !model.versionStatus,
+      ),
+    [modelsQuery.data],
+  );
+  const isLoadingModels = modelsQuery.isLoading || isLoadingModelDetails;
 
   const fetchServices = useCallback(async (options?: {
     silent?: boolean;
@@ -253,7 +413,24 @@ export function useServicesManagement() {
         taskTypes: enabledTaskTypesParam,
         isPublished: isPublishedFilter,
       });
-      if (commit) setServices(result.items);
+      if (commit) {
+        setServices(result.items);
+        const statusNarrows = statusFilter === "published" || statusFilter === "unpublished";
+        const onlyEnabledTask =
+          taskTypeNames.length === 1 && taskTypeFilter === taskTypeNames[0];
+        const taskNarrows = Boolean(taskTypeFilter) && !onlyEnabledTask;
+        const ids = result.items
+          .map((s) => s.serviceId || s.service_id || "")
+          .filter((id): id is string => Boolean(id));
+        if (!statusNarrows && !taskNarrows) {
+          setFullServiceIds(ids);
+        } else {
+          setFullServiceIds((prev) => {
+            const merged = new Set([...(prev ?? []), ...ids]);
+            return Array.from(merged);
+          });
+        }
+      }
       return result.items;
     } catch (error: any) {
       console.error("Failed to fetch services:", error);
@@ -263,7 +440,7 @@ export function useServicesManagement() {
     } finally {
       if (!options?.silent && commit) setIsLoading(false);
     }
-  }, [filterTaskType, filterStatus, enabledTaskTypesParam]);
+  }, [filterTaskType, filterStatus, enabledTaskTypesParam, taskTypeNames]);
 
   const serviceKey = (s: Pick<Service, "serviceId"> & { service_id?: string }) =>
     s.serviceId || s.service_id || "";
@@ -325,71 +502,60 @@ export function useServicesManagement() {
     fetchServices();
   }, [fetchServices, taskTypeFilterReady]);
 
-  // Fetch all existing serviceIds (unfiltered) for duplicate detection in the create form
-  const loadExistingServiceIds = useCallback(async () => {
-    try {
-      const ids = await fetchExistingServiceIds();
-      setExistingServiceIds(ids);
-    } catch (error) {
-      console.error("Failed to fetch existing service ids:", error);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadExistingServiceIds();
-  }, [loadExistingServiceIds]);
-
-  // Fetch models on component mount (for dropdown)
-  useEffect(() => {
-    const fetchModels = async () => {
-      setIsLoadingModels(true);
-      try {
-        const fetchedModels = await getAllModels();
-        // Filter to only show ACTIVE models
-        const activeModels = fetchedModels.filter(
-          (model) =>
-            model.versionStatus?.toLowerCase() === "active" ||
-            !model.versionStatus,
-        );
-        setModels(activeModels);
-      } catch (error: any) {
-        console.error("Failed to fetch models:", error);
-        // Don't show toast for models - it's not critical for the page to work
-        setModels([]);
-      } finally {
-        setIsLoadingModels(false);
-      }
-    };
-
-    fetchModels();
-  }, []);
-
-  useEffect(() => {
-    if (isLoadingTaskTypes) return;
-    setTiersLoaded(false);
-    fetchTiers(enabledTaskTypesParam, "ACTIVE")
-      .then((res) => {
-        setAvailableTiers(res.data ?? []);
-        setTiersLoaded(true);
-      })
-      .catch(() => {
-        // Leave create tab enabled on fetch failure; form validation still requires tiers.
-        setAvailableTiers([]);
-        setTiersLoaded(false);
-      });
-  }, [isLoadingTaskTypes, enabledTaskTypesParam]);
-
   /** AI4IDS-2949: block Create Service when the platform has no tiers. Edit remains allowed. */
   const isCreateServiceTabDisabled =
     !editingService && tiersLoaded && availableTiers.length === 0;
 
-  // Sync URL tab param to activeTab (e.g. when header back clears tab=2, show list)
+  // Sync URL tab param to activeTab.
   useEffect(() => {
     const t = router.query.tab;
     const hasEditDeepLink =
       typeof router.query.editServiceId === "string" &&
       !!router.query.editServiceId;
+    const isCreateDeepLink = (t === "1" || t === "create") && !hasEditDeepLink;
+
+    if (isCreateDeepLink && !isRegistryReadOnly) {
+      if (isCreateServiceTabDisabled) {
+        setActiveTab(0);
+        showToast({ type: "warning", message: "No tiers configured" });
+        const rawReturn = router.query.returnTo;
+        const dest =
+          typeof rawReturn === "string" ? safeFormReturnHref(rawReturn) : null;
+        if (dest) {
+          createRouteGenRef.current += 1;
+          setCreateReturnTo(null);
+          void router.replace(dest);
+          return;
+        }
+        if (router.query.tab || router.query.modelId) {
+          createRouteGenRef.current += 1;
+          const q = { ...router.query } as Record<string, string>;
+          delete q.tab;
+          delete q.modelId;
+          delete q.returnTo;
+          router.replace(
+            { pathname: "/services-management", query: q },
+            undefined,
+            { shallow: true },
+          );
+        }
+        return;
+      }
+      onCreateOpen();
+      if (router.query.tab) {
+        const q = { ...router.query } as Record<string, string>;
+        delete q.tab;
+        router.replace(
+          { pathname: "/services-management", query: q },
+          undefined,
+          { shallow: true },
+        );
+      }
+      return;
+    }
+
     if (isRegistryReadOnly && (t === "1" || t === "create")) {
+      createRouteGenRef.current += 1;
       setActiveTab(0);
       if (
         router.query.tab ||
@@ -408,28 +574,10 @@ export function useServicesManagement() {
       }
       return;
     }
-    // No tiers → keep users off the Create Service deep link (edit deep links still work).
-    if (
-      isCreateServiceTabDisabled &&
-      (t === "1" || t === "create") &&
-      !hasEditDeepLink
-    ) {
-      setActiveTab(0);
-      if (router.query.tab || router.query.modelId) {
-        const q = { ...router.query } as Record<string, string>;
-        delete q.tab;
-        delete q.modelId;
-        router.replace(
-          { pathname: "/services-management", query: q },
-          undefined,
-          { shallow: true },
-        );
-      }
-      return;
-    }
+    // tab=1 without editServiceId already opened Create and returned.
+    // tab=1 with editServiceId opens the edit modal; stay on the registry.
     if (t === "2") setActiveTab(viewTabIndex);
-    else if (t === "1" || t === "create") setActiveTab(1);
-    else if (t !== "1" && t !== "2") setActiveTab(0);
+    else setActiveTab(0);
   }, [
     router.query.tab,
     router.query.editServiceId,
@@ -438,74 +586,80 @@ export function useServicesManagement() {
     isCreateServiceTabDisabled,
     router,
     viewTabIndex,
+    onCreateOpen,
   ]);
 
-  // Handle query parameters for pre-selecting model from model-management page
+  // Handle query parameters for pre-selecting model from model-management page.
+  // Only `modelId` is removed. `returnTo` and `editServiceId` stay so Cancel and edit deep links survive.
   useEffect(() => {
     if (isRegistryReadOnly) return;
     const { modelId, tab } = router.query;
     if (!modelId || typeof modelId !== "string") return;
+    if ((tab === "create" || tab === "1") && isCreateServiceTabDisabled) return;
+
+    const gen = createRouteGenRef.current;
+    let cancelled = false;
+
+    const stripModelIdFromUrl = () => {
+      if (cancelled || gen !== createRouteGenRef.current) return;
+      if (routerRef.current.pathname !== "/services-management") return;
+      const current = routerQueryRef.current;
+      if (typeof current.modelId !== "string") return;
+      const nextQuery: Record<string, string> = {};
+      for (const [key, value] of Object.entries(current)) {
+        if (key === "modelId" || typeof value !== "string") continue;
+        if (key === "returnTo") {
+          const path = safeFormReturnHref(value);
+          if (!path) continue;
+          nextQuery[key] = path;
+          continue;
+        }
+        nextQuery[key] = value;
+      }
+      routerRef.current.replace(
+        { pathname: "/services-management", query: nextQuery },
+        undefined,
+        { shallow: true },
+      );
+    };
 
     const runPreselect = async () => {
-      // Switch to Create Service tab if specified (blocked when no tiers exist)
-      if (tab === "create") {
-        if (isCreateServiceTabDisabled) {
-          setActiveTab(0);
-        } else {
-          setActiveTab(1);
-        }
-      }
-
       const inActiveList = models.some(
         (m) => (m.modelId || m.model_id) === modelId,
       );
-      if (inActiveList && formData.modelId !== modelId) {
-        handleModelNameChange(modelId);
-        // Preserve current tab (e.g. ?tab=create) while clearing modelId from URL
-        const { tab: currentTab } = router.query;
-        const nextQuery: Record<string, string> = {};
-        if (typeof currentTab === "string") {
-          nextQuery.tab = currentTab;
+      if (inActiveList) {
+        if (formData.modelId !== modelId) {
+          handleModelNameChange(modelId);
         }
-        router.replace(
-          { pathname: "/services-management", query: nextQuery },
-          undefined,
-          { shallow: true },
-        );
+        stripModelIdFromUrl();
         return;
       }
 
       // Model not in active list - only add to dropdown if not deprecated (deprecated models must not appear in Create Service)
-      if (!inActiveList) {
-        try {
-          const modelDetails = await getModelById(modelId);
-          const isDeprecated =
-            modelDetails?.versionStatus?.toLowerCase() === "deprecated";
-          if (modelDetails && !isDeprecated) {
-            setPreselectedModelFromQuery(modelDetails);
-            if (formData.modelId !== modelId) {
-              handleModelNameChange(modelId);
-            }
+      try {
+        const modelDetails = await getModelById(modelId);
+        if (cancelled || gen !== createRouteGenRef.current) return;
+        const isDeprecated =
+          modelDetails?.versionStatus?.toLowerCase() === "deprecated";
+        if (modelDetails && !isDeprecated) {
+          setPreselectedModelFromQuery(modelDetails);
+          if (formData.modelId !== modelId) {
+            handleModelNameChange(modelId);
           }
-        } catch (e) {
-          console.error("Failed to load preselected model:", e);
         }
-        const { tab: currentTab } = router.query;
-        const nextQuery: Record<string, string> = {};
-        if (typeof currentTab === "string") {
-          nextQuery.tab = currentTab;
-        }
-        router.replace(
-          { pathname: "/services-management", query: nextQuery },
-          undefined,
-          { shallow: true },
-        );
+      } catch (e) {
+        if (cancelled || gen !== createRouteGenRef.current) return;
+        console.error("Failed to load preselected model:", e);
       }
+      stripModelIdFromUrl();
     };
 
     if (models.length > 0) {
-      runPreselect();
+      void runPreselect();
     }
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router.query, models, isCreateServiceTabDisabled]);
 
@@ -576,7 +730,7 @@ export function useServicesManagement() {
     if (!checkSessionExpiry()) return;
     if (modelId) {
       try {
-        setIsLoadingModels(true);
+        setIsLoadingModelDetails(true);
         const modelDetails = await getModelById(modelId);
 
         // Extract model version (required field after migration)
@@ -606,26 +760,29 @@ export function useServicesManagement() {
         setFormData((prev) => {
           const task_type = resolvedModelTaskType || prev.task_type || "";
           const taskIsLlm = task_type.trim().toLowerCase() === "llm";
-          // Every task type pre-fills "{modelName}/"; the admin adds the suffix
-          // ("[model-name]/[GPU]"), so two services on one model cannot clash.
+          // Every task type pre-fills "{modelName}"; the admin may add a suffix
+          // ("[model-name]/[GPU]") so two services on one model cannot clash.
           // LLM sanitizes tighter — its Service ID is sent as the name too.
           const sanitizeId = (s: string) => sanitizeServiceId(s, taskIsLlm);
-          const modelPrefix = modelName ? `${sanitizeId(modelName)}/` : "";
+          const modelPrefix = modelName ? sanitizeId(modelName) : "";
           let nextServiceId = prev.serviceId || "";
           if (!editingService) {
             const prevPrefix = prev.modelName
-              ? `${sanitizeId(prev.modelName)}/`
+              ? sanitizeId(prev.modelName)
               : "";
+            // Suffix must start at a "/" boundary, so "llama2-x" is not
+            // mistaken for the auto-filled "llama" plus a suffix.
+            const hasPrevSuffix =
+              !!prevPrefix && nextServiceId.startsWith(`${prevPrefix}/`);
             if (
               !nextServiceId ||
               nextServiceId === prevPrefix ||
-              (prevPrefix && nextServiceId.startsWith(prevPrefix))
+              hasPrevSuffix
             ) {
               // Still on the auto-generated prefix pattern — swap prefix, keep suffix
-              const suffix =
-                prevPrefix && nextServiceId.startsWith(prevPrefix)
-                  ? nextServiceId.slice(prevPrefix.length)
-                  : "";
+              const suffix = hasPrevSuffix
+                ? nextServiceId.slice(prevPrefix.length)
+                : "";
               nextServiceId = `${modelPrefix}${sanitizeId(suffix)}`;
             }
             // else: user hand-edited away from the previous model prefix — preserve
@@ -650,7 +807,7 @@ export function useServicesManagement() {
               : "Failed to fetch model details",
         });
       } finally {
-        setIsLoadingModels(false);
+        setIsLoadingModelDetails(false);
       }
     } else {
       // Clear model fields if no model selected (keep task_type)
@@ -683,6 +840,46 @@ export function useServicesManagement() {
     setSelectedTiers([]);
     setPreselectedModelFromQuery(null);
   };
+
+  const openCreateModal = () => {
+    if (isRegistryReadOnly || isCreateServiceTabDisabled) return;
+    createRouteGenRef.current += 1;
+    setCreateReturnTo(null);
+    setEditingService(null);
+    resetCreateForm();
+    onCreateOpen();
+  };
+
+  const clearCreateEntryQuery = useCallback(() => {
+    if (!router.query.returnTo && !router.query.modelId && !router.query.tab) return;
+    const q = { ...router.query } as Record<string, string>;
+    delete q.returnTo;
+    delete q.modelId;
+    delete q.tab;
+    router.replace({ pathname: "/services-management", query: q }, undefined, {
+      shallow: true,
+    });
+  }, [router]);
+
+  const releaseCreateForm = () => {
+    createRouteGenRef.current += 1;
+    setCreateReturnTo(null);
+    resetCreateForm();
+    onCreateClose();
+  };
+
+  const closeCreateModal = () => {
+    releaseCreateForm();
+    clearCreateEntryQuery();
+  };
+
+  useEffect(() => {
+    const raw = router.query.returnTo;
+    if (typeof raw !== "string") return;
+    const path = safeFormReturnHref(raw);
+    if (!path) return;
+    setCreateReturnTo(path);
+  }, [router.query.returnTo]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -795,9 +992,12 @@ export function useServicesManagement() {
       }
 
       invalidateServiceQueries();
+      createRouteGenRef.current += 1;
       setEditingService(null);
       resetCreateForm();
+      setCreateReturnTo(null);
       setActiveTab(0);
+      onCreateClose();
       router.replace(
         { pathname: "/services-management", query: {} },
         undefined,
@@ -847,7 +1047,7 @@ export function useServicesManagement() {
       } else {
         await fetchServices({ silent: true });
       }
-      await loadExistingServiceIds();
+      await queryClient.invalidateQueries({ queryKey: SERVICES_ALL_QUERY_KEY });
     } catch (error: any) {
       showError(error);
     } finally {
@@ -881,11 +1081,17 @@ export function useServicesManagement() {
    */
   const pricePerUnitError = validatePricePerUnit(pricePerUnit);
 
-  // Duplicate serviceId check — only in create mode (serviceId is read-only when editing)
+  // Duplicate serviceId check — only in create mode (serviceId is read-only when editing).
+  // Union the registry ids so a clash still shows while the unfiltered list loads.
+  const existingServiceIds = useMemo(() => {
+    const ids = new Set(fullServiceIds ?? []);
+    for (const id of allServiceIdsQuery.data ?? []) ids.add(id);
+    return ids;
+  }, [fullServiceIds, allServiceIdsQuery.data]);
   const serviceIdExists =
     !editingService &&
     !!formData.serviceId?.trim() &&
-    existingServiceIds.includes(formData.serviceId.trim());
+    existingServiceIds.has(formData.serviceId.trim());
 
   /**
    * ULCA length rules — create only. PATCH does not carry them, so an edit
@@ -961,29 +1167,43 @@ export function useServicesManagement() {
     setSelectedServiceModelDeprecated(null);
     try {
       const service = await getServiceById(serviceId);
+      if (editingService) {
+        setEditingService(null);
+        resetCreateForm();
+      }
       setSelectedService(service);
       setIsViewingService(true);
       setActiveTab(viewTabIndex);
+      const q = { ...router.query } as Record<string, string>;
+      delete q.editServiceId;
+      q.tab = "2";
       router.replace(
-        {
-          pathname: "/services-management",
-          query: { ...router.query, tab: "2" },
-        },
+        { pathname: "/services-management", query: q },
         undefined,
         { shallow: true },
       );
       // Fetch model to know if deprecated (detail API may not include model.versionStatus)
       const modelId = service.modelId || service.model_id;
       if (modelId) {
-        try {
-          const modelDetails = await getModelById(modelId);
-          const deprecated =
-            modelDetails?.versionStatus &&
-            typeof modelDetails.versionStatus === "string" &&
-            modelDetails.versionStatus.toLowerCase() === "deprecated";
-          setSelectedServiceModelDeprecated(!!deprecated);
-        } catch {
-          setSelectedServiceModelDeprecated(false);
+        const cachedModel = (modelsQuery.data ?? []).find(
+          (model) => model.modelId === modelId,
+        );
+        if (cachedModel) {
+          const status = cachedModel.versionStatus;
+          setSelectedServiceModelDeprecated(
+            typeof status === "string" && status.toLowerCase() === "deprecated",
+          );
+        } else {
+          try {
+            const modelDetails = await getModelById(modelId);
+            const deprecated =
+              modelDetails?.versionStatus &&
+              typeof modelDetails.versionStatus === "string" &&
+              modelDetails.versionStatus.toLowerCase() === "deprecated";
+            setSelectedServiceModelDeprecated(!!deprecated);
+          } catch {
+            setSelectedServiceModelDeprecated(false);
+          }
         }
       } else {
         setSelectedServiceModelDeprecated(false);
@@ -994,13 +1214,14 @@ export function useServicesManagement() {
   };
 
   /**
-   * Load a service into the Create Service tab in edit mode, pre-populating
+   * Load a service into the Edit Service modal, pre-populating
    * the shared form state with the service's current values.
    */
   const handleEditService = async (serviceId: string) => {
     // Check session expiry before loading the service into the edit form
     if (!checkSessionExpiry()) return;
     try {
+      onCreateClose();
       const service = await getServiceById(serviceId);
       const modelId = service.modelId || service.model_id || "";
       setFormData({
@@ -1039,7 +1260,7 @@ export function useServicesManagement() {
       if (modelId) {
         handleModelNameChange(modelId);
       }
-      setActiveTab(1);
+      setActiveTab(0);
       router.replace(
         {
           pathname: "/services-management",
@@ -1071,23 +1292,23 @@ export function useServicesManagement() {
   };
 
   const handleTabChange = (index: number) => {
-    if (isRegistryReadOnly && index === 1) return;
-    // AI4IDS-2949: Create Service is unavailable until at least one Tier exists
-    if (index === 1 && isCreateServiceTabDisabled) return;
+    const isViewTab = index === viewTabIndex;
     setActiveTab(index);
-    if (index !== viewTabIndex) {
+    if (!isViewTab) {
       setIsViewingService(false);
       setSelectedService(null);
       setSelectedServiceModelDeprecated(null);
     }
-    if (index !== 1 && editingService) {
+    if (editingService) {
       setEditingService(null);
       resetCreateForm();
     }
     const q = { ...router.query } as Record<string, string>;
-    if (index === 0) delete q.tab;
-    else q.tab = String(index);
-    if (index !== 1) delete q.editServiceId;
+    delete q.tab;
+    delete q.editServiceId;
+    if (isViewTab) {
+      q.tab = "2";
+    }
     router.replace({ pathname: "/services-management", query: q }, undefined, {
       shallow: true,
     });
@@ -1303,13 +1524,17 @@ export function useServicesManagement() {
     registryTableItems,
     totalServicesCount: services.length,
     isLoading,
-    tableKey: `${filterStatus}-${filterTaskType}-${registryEpoch}`,
+    // Remounts the table so client pagination returns to page 1 on a filter change.
+    tableKey: `${filterStatus}-${filterTaskType}-${filterTier}-${registryEpoch}`,
     searchQuery,
     setSearchQuery,
     filterStatus,
     setFilterStatus,
     filterTaskType,
     setFilterTaskType,
+    filterTier,
+    setFilterTier,
+    tierFilterOptions,
     taskTypeNames,
     hasActiveFilters,
     clearAllFilters,
@@ -1319,7 +1544,7 @@ export function useServicesManagement() {
     handleDeleteClick,
     deletingServiceUuid,
 
-    // Create/Edit form tab
+    // Create/Edit form
     editingService,
     formData,
     handleInputChange,
@@ -1355,6 +1580,11 @@ export function useServicesManagement() {
     isSubmitting,
     handleSubmit,
     handleCancelForm,
+    isCreateOpen,
+    openCreateModal,
+    closeCreateModal,
+    releaseCreateForm,
+    createReturnTo,
 
     // View tab
     selectedService,

@@ -1,0 +1,14 @@
+{# details: [threshold, alert_datetime, current_value, service, affected_services]
+   — bare numbers, unit appended by the layout. service is the service's name, or its
+   service_id when the producer could not find the name. affected_services, sent when
+   several services fired in one tick, is [[service, current_value, threshold], ...],
+   worst first; the four values before it are the worst service's. An envelope
+   published before the service was added has three and renders without it. #}
+{% set layout = "monitoring_alert" %}
+{% set name = "P99 Latency" %}
+{% set unit = "s" %}
+{% set threshold = details[0] %}
+{% set alert_datetime = details[1] %}
+{% set current_value = details[2] %}
+{% set affected_service = details[3] if details | length > 3 else "" %}
+{% set affected_services = details[4] if details | length > 4 else [] %}

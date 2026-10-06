@@ -14,6 +14,7 @@ import {
   InputProps,
   Select,
   SelectProps,
+  Skeleton,
   Spinner,
   Table,
   TableCellProps,
@@ -52,6 +53,8 @@ import type {
 import {
   DATA_TABLE_CELL_MAX_W,
   TruncatingCellContent,
+  adminFixedCellProps,
+  adminFixedSize,
   getTruncateCellProps,
   shouldAutoTruncateColumn,
 } from "./dataTableUtils";
@@ -69,7 +72,7 @@ export type {
 export const DATA_TABLE_HEADER_SX = {
   fontSize: "11.5px",
   letterSpacing: "0.05em",
-  color: "gray.500",
+  color: "ink.400",
   textTransform: "uppercase" as const,
 } as const;
 
@@ -184,6 +187,11 @@ export interface DataTableAdminProps<T> extends DataTableSharedProps<T> {
   onClearFilters?: () => void;
   filterToolbarAlign?: "flex-start" | "center";
   filterToolbarRightContent?: React.ReactNode;
+  /**
+   * Draw the toolbar as the top of the table surface.
+   * Default leaves the toolbar above a separate table card.
+   */
+  toolbarAttached?: boolean;
   showFiltersHeading?: boolean;
   filtersHeading?: string;
   /**
@@ -196,7 +204,11 @@ export interface DataTableAdminProps<T> extends DataTableSharedProps<T> {
   pageSizeOptions?: readonly number[];
   serverPagination?: UseAdminDataTableServerOptions;
   loadingMessage?: string;
+  /** Replaces the default spinner. Other admin tables keep the spinner when omitted. */
+  loadingContent?: React.ReactNode;
   emptyMessage?: string;
+  /** Replaces the default empty alert. Other admin tables keep the alert when omitted. */
+  emptyContent?: React.ReactNode;
   noResultsMessage?: string;
   unfilteredCount?: number;
   maxHeight?: string;
@@ -246,6 +258,7 @@ export function TableSearchField({
   placeholder,
   helper,
   hint,
+  hideLabel = false,
   debounceMs,
   formControlProps,
   inputGroupProps,
@@ -257,6 +270,7 @@ export function TableSearchField({
   placeholder?: string;
   helper?: string;
   hint?: string;
+  hideLabel?: boolean;
   debounceMs?: number;
   formControlProps?: FormControlProps;
   inputGroupProps?: Omit<InputGroupProps, "children">;
@@ -296,7 +310,9 @@ export function TableSearchField({
 
   return (
     <FormControl w={{ base: "full", md: "320px" }} {...formControlProps}>
-      <FieldLabel hint={hint}>{label}</FieldLabel>
+      <FieldLabel hint={hint} formLabelProps={hideLabel ? { srOnly: true, mb: 0 } : undefined}>
+        {label}
+      </FieldLabel>
       <InputGroup size="sm" {...inputGroupProps}>
         <InputLeftElement pointerEvents="none">
           <SearchIcon color="gray.400" />
@@ -413,6 +429,7 @@ export function TableSelectField({
   hint,
   formControlProps,
   selectProps,
+  hideLabel = false,
 }: {
   label: string;
   value: string;
@@ -422,11 +439,14 @@ export function TableSelectField({
   hint?: string;
   formControlProps?: FormControlProps;
   selectProps?: Omit<SelectProps, "value" | "onChange" | "children">;
+  hideLabel?: boolean;
 }) {
   const { resetPage, inputBg } = useDataTableFilterContext();
   return (
     <FormControl w={{ base: "full", sm: "200px" }} {...formControlProps}>
-      <FieldLabel hint={hint}>{label}</FieldLabel>
+      <FieldLabel hint={hint} formLabelProps={hideLabel ? { srOnly: true, mb: 0 } : undefined}>
+        {label}
+      </FieldLabel>
       <Select
         size="sm"
         value={value}
@@ -461,6 +481,7 @@ function ConfigDrivenFilters({
           onChange={search.onChange}
           placeholder={search.placeholder}
           helper={search.helper}
+          hideLabel={search.hideLabel}
           debounceMs={search.debounceMs}
         />
       ) : null}
@@ -477,6 +498,7 @@ function ConfigDrivenFilters({
               value={def.value}
               onChange={def.onChange}
               helper={def.helper}
+              hideLabel={def.hideLabel}
               formControlProps={widthProps ? { w: widthProps.w } : undefined}
             >
               {(def.options ?? []).map((opt) => (
@@ -598,7 +620,7 @@ function CardLayoutDataTable<T>({
   showFooter = false,
   variant = "default",
   borderRadius = variant === "compact" ? "10px" : "14px",
-  theadBg = "#FAFBFD",
+  theadBg = "ink.50",
   cellPy = variant === "compact" ? 3 : 4,
   tableMinWidth,
   containerMt = variant === "compact" ? 0 : 1,
@@ -637,7 +659,7 @@ function CardLayoutDataTable<T>({
       overflowX="auto"
       mt={containerMt}
       borderWidth="1px"
-      borderColor="gray.300"
+      borderColor="ink.200"
       borderRadius={borderRadius}
       bg="white"
     >
@@ -695,7 +717,7 @@ function CardLayoutDataTable<T>({
                   cursor: "pointer" as const,
                   _hover: {
                     bg: "#FAFBFE",
-                    "& .data-table-chevron": { color: "blue.500" },
+                    "& .data-table-chevron": { color: "ink.600" },
                   },
                   onClick: () => onRowClick?.(row),
                   onKeyDown: (e: React.KeyboardEvent) => {
@@ -750,7 +772,7 @@ function CardLayoutDataTable<T>({
   if (isLoading) {
     return (
       <Center h={asyncStateHeight}>
-        <Spinner size="lg" color="orange.500" />
+        <Spinner size="lg" color="ink.600" />
       </Center>
     );
   }
@@ -767,7 +789,7 @@ function CardLayoutDataTable<T>({
   if (isEmpty) {
     return (
       <Center h={asyncStateHeight}>
-        <Text color="gray.500">{emptyMessage}</Text>
+        <Text color="ink.500">{emptyMessage}</Text>
       </Center>
     );
   }
@@ -785,6 +807,7 @@ function AdminLayoutDataTable<T>({
   onClearFilters,
   filterToolbarAlign = "flex-start",
   filterToolbarRightContent,
+  toolbarAttached = false,
   showFiltersHeading = false,
   filtersHeading = "Filters",
   sort,
@@ -795,7 +818,9 @@ function AdminLayoutDataTable<T>({
   serverPagination,
   isLoading = false,
   loadingMessage = "Loading…",
+  loadingContent,
   emptyMessage = "No items found.",
+  emptyContent,
   noResultsMessage = "No items match the current filters.",
   unfilteredCount,
   onRowClick,
@@ -908,14 +933,17 @@ function AdminLayoutDataTable<T>({
         onLast={pagination.onLast}
         canPrev={pagination.canPrev}
         canNext={pagination.canNext}
-        borderColor="gray.300"
-        bg="#FAFBFD"
+        borderColor="ink.200"
+        bg="ink.50"
         variant="attached"
         placement={paginationPosition}
       />
     ) : null;
 
   const hasFilterToolbar = Boolean(search || (filterDefs && filterDefs.length > 0));
+  const toolbarLabelsVisible =
+    Boolean(search && !search.hideLabel) ||
+    (filterDefs ?? []).some((def) => !def.hideLabel);
 
   // Outer shell owns border/radius; strip chrome overrides from container props.
   const {
@@ -928,12 +956,15 @@ function AdminLayoutDataTable<T>({
     ...restTableContainerProps
   } = tableContainerProps ?? {};
 
+  const columnCount = columns.length + (rowChevron ? 1 : 0);
+
   const tableBody = (
     <TableContainer
       maxH={containerMaxH ?? maxHeight}
       overflowY="auto"
-      overflowX="auto"
+      overflowX="hidden"
       bg="white"
+      sx={{ scrollbarGutter: "stable" }}
       {...restTableContainerProps}
     >
       <Table
@@ -941,12 +972,13 @@ function AdminLayoutDataTable<T>({
         bg="white"
         size={size}
         w="100%"
-        sx={{ "th, td": { verticalAlign: "middle" } }}
+        aria-busy={isLoading || undefined}
+        aria-label={isLoading ? loadingMessage : undefined}
+        sx={{ tableLayout: "fixed", "th, td": { verticalAlign: "middle" } }}
       >
-        <Thead bg="#FAFBFD" position="sticky" top={0} zIndex={1}>
+        <Thead bg="ink.50" position="sticky" top={0} zIndex={1}>
           <Tr>
             {columns.map((col) => {
-              const truncate = shouldAutoTruncateColumn(col);
               const headerSx = {
                 ...DATA_TABLE_HEADER_SX,
                 ...(col.isNumeric || col.align === "right"
@@ -954,15 +986,17 @@ function AdminLayoutDataTable<T>({
                   : {}),
                 ...(col.align === "center" ? { textAlign: "center" as const } : {}),
               };
+              const preservePixelSize = !shouldAutoTruncateColumn(col);
               return (
                 <Th
                   key={col.id}
                   py={3}
-                  w={col.width}
-                  minW={col.minWidth}
+                  overflow="hidden"
+                  w={preservePixelSize ? col.width : adminFixedSize(col.width)}
+                  minW={preservePixelSize ? col.minWidth : adminFixedSize(col.minWidth)}
+                  maxW={preservePixelSize ? col.maxW : adminFixedSize(col.maxW)}
                   sx={headerSx}
-                  {...getTruncateCellProps(truncate, col.maxW)}
-                  {...col.thProps}
+                  {...(preservePixelSize ? col.thProps : adminFixedCellProps(col.thProps))}
                 >
                   <AdminSortableHeader col={col} sort={sort} onSortChange={onSortChange} />
                 </Th>
@@ -972,33 +1006,70 @@ function AdminLayoutDataTable<T>({
           </Tr>
         </Thead>
         <Tbody>
-          {displayItems.map((row, index) => (
+          {isLoading ? (
+            loadingContent ? (
+              <Tr>
+                <Td colSpan={columnCount} py={0} px={0} borderBottomWidth={0}>
+                  {loadingContent}
+                </Td>
+              </Tr>
+            ) : (
+              Array.from({ length: 5 }, (_, rowIndex) => (
+                <Tr key={`loading-${rowIndex}`}>
+                  {columns.map((col) => (
+                    <Td key={col.id} py={4}>
+                      <Skeleton h="14px" borderRadius="sm" />
+                    </Td>
+                  ))}
+                  {rowChevron ? <Td py={4} /> : null}
+                </Tr>
+              ))
+            )
+          ) : showEmpty ? (
+            <Tr>
+              <Td colSpan={columnCount} py={6} overflow="visible">
+                {emptyContent ?? (
+                  <Alert status="info" borderRadius="md">
+                    <AlertIcon />
+                    <AlertDescription>{emptyText}</AlertDescription>
+                  </Alert>
+                )}
+              </Td>
+            </Tr>
+          ) : displayItems.map((row, index) => (
             <Tr
               key={getRowKey(row)}
               onClick={onRowClick ? () => onRowClick(row) : undefined}
               cursor={onRowClick ? "pointer" : undefined}
               _hover={{
                 bg: "#FAFBFE",
-                ...(rowChevron ? { "& .data-table-chevron": { color: "blue.500" } } : {}),
+                ...(rowChevron ? { "& .data-table-chevron": { color: "ink.600" } } : {}),
               }}
               transition="background 0.15s"
             >
               {columns.map((col) => {
                 const truncate = shouldAutoTruncateColumn(col);
                 const content = col.cell(row, index);
+                const numeric = Boolean(col.isNumeric || col.align === "center" || col.align === "right");
                 return (
                   <Td
                     key={col.id}
                     py={4}
                     isNumeric={col.isNumeric}
                     textAlign={col.align}
-                    {...getTruncateCellProps(truncate, col.maxW)}
-                    {...col.tdProps}
+                    w={truncate ? adminFixedSize(col.width) : col.width}
+                    minW={truncate ? adminFixedSize(col.minWidth) : col.minWidth}
+                    maxW={truncate ? adminFixedSize(col.maxW) : col.maxW}
+                    sx={numeric ? { fontVariantNumeric: "tabular-nums" } : undefined}
+                    {...(truncate ? adminFixedCellProps(col.tdProps) : col.tdProps)}
+                    overflow="hidden"
                   >
                     {truncate ? (
                       <TruncatingCellContent>{content}</TruncatingCellContent>
                     ) : (
-                      content
+                      <Box minW={0} w="100%" maxW="100%">
+                        {content}
+                      </Box>
                     )}
                   </Td>
                 );
@@ -1019,53 +1090,65 @@ function AdminLayoutDataTable<T>({
     </TableContainer>
   );
 
+  const toolbar = hasFilterToolbar ? (
+    <Box
+      px={toolbarAttached ? 4 : 0}
+      py={toolbarAttached ? 3 : 0}
+      borderBottomWidth={toolbarAttached ? "1px" : 0}
+      borderColor="ink.100"
+    >
+      <VStack spacing={4} align="stretch">
+        {showFiltersHeading ? (
+          <Text fontSize="sm" fontWeight="semibold" color="gray.700" userSelect="none">
+            {filtersHeading}
+          </Text>
+        ) : null}
+        <TableFilterToolbar
+          hasActiveFilters={hasActiveFilters}
+          onClear={onClearFilters ? handleClearFilters : undefined}
+          align={filterToolbarAlign}
+          alignActionsToInputs={toolbarLabelsVisible}
+          rightContent={filterToolbarRightContent}
+        >
+          <ConfigDrivenFilters search={search} filterDefs={filterDefs} />
+        </TableFilterToolbar>
+      </VStack>
+    </Box>
+  ) : null;
+
+  const showPagination = !isLoading && !showEmpty;
+  const tableSurface = (
+    <Box
+      w="full"
+      minW={0}
+      borderWidth={toolbarAttached ? 0 : "1px"}
+      borderColor="ink.200"
+      borderRadius={toolbarAttached ? 0 : "14px"}
+      bg="white"
+      overflow="hidden"
+    >
+      {showPagination && paginationPosition === "top" ? paginationBlock : null}
+      {tableBody}
+      {showPagination && paginationPosition === "bottom" ? paginationBlock : null}
+    </Box>
+  );
+
+  const stack = (
+    <VStack spacing={toolbarAttached ? 0 : 4} align="stretch" w="full" minW={0}>
+      {toolbar}
+      {tableSurface}
+    </VStack>
+  );
+
   return (
     <DataTableFilterContext.Provider value={filterContextValue}>
-      <VStack spacing={4} align="stretch" w="100%">
-        {hasFilterToolbar ? (
-          <VStack spacing={4} align="stretch">
-            {showFiltersHeading ? (
-              <Text fontSize="sm" fontWeight="semibold" color="gray.700" userSelect="none">
-                {filtersHeading}
-              </Text>
-            ) : null}
-            <TableFilterToolbar
-              hasActiveFilters={hasActiveFilters}
-              onClear={onClearFilters ? handleClearFilters : undefined}
-              align={filterToolbarAlign}
-              rightContent={filterToolbarRightContent}
-            >
-              <ConfigDrivenFilters search={search} filterDefs={filterDefs} />
-            </TableFilterToolbar>
-          </VStack>
-        ) : null}
-
-        {isLoading ? (
-          <Center py={8}>
-            <VStack spacing={4}>
-              <Spinner size="lg" color="blue.500" />
-              <Text color="gray.600">{loadingMessage}</Text>
-            </VStack>
-          </Center>
-        ) : showEmpty ? (
-          <Alert status="info" borderRadius="md">
-            <AlertIcon />
-            <AlertDescription>{emptyText}</AlertDescription>
-          </Alert>
-        ) : (
-          <Box
-            borderWidth="1px"
-            borderColor="gray.300"
-            borderRadius="14px"
-            bg="white"
-            overflow="hidden"
-          >
-            {paginationPosition === "top" ? paginationBlock : null}
-            {tableBody}
-            {paginationPosition === "bottom" ? paginationBlock : null}
-          </Box>
-        )}
-      </VStack>
+      {toolbarAttached ? (
+        <Box w="full" minW={0} borderWidth="1px" borderColor="ink.200" borderRadius="lg" bg="white" overflow="hidden">
+          {stack}
+        </Box>
+      ) : (
+        stack
+      )}
     </DataTableFilterContext.Provider>
   );
 }
