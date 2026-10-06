@@ -8,7 +8,7 @@ import {
   formatTenantUserStatusLabel,
   isTenantStatus,
 } from "../../config/constants";
-import { useTenantManagement } from "../profile/hooks/useTenantManagement";
+import { useTenantManagement } from "./hooks/useTenantManagement";
 
 type InstitutionConfirmDialogsProps = {
   tm: ReturnType<typeof useTenantManagement>;

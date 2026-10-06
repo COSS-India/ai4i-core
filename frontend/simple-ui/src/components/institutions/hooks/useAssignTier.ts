@@ -11,7 +11,7 @@ import {
   dateInputToStartOfDayIso,
   todayDateInputValue,
 } from "../../../utils/helpers";
-import type { ServiceMappingsStatus } from "../types";
+import type { ServiceMappingsStatus } from "../../profile/types";
 import type { TenantView } from "../../../types/tenant";
 
 /** Mirrors auth-service's MAX_TENANT_BUDGET (NUMERIC(15, 2) -> 10^13 - 0.01). */

@@ -25,7 +25,7 @@ import {
   isDefaultTenant,
 } from "../../utils/defaultTenant";
 import { TENANT_USER_ROLE_OPTIONS } from "../profile/types";
-import { useTenantManagement } from "../profile/hooks/useTenantManagement";
+import { useTenantManagement } from "./hooks/useTenantManagement";
 
 export type InstitutionUserFormMode = "create" | "edit" | "view";
 

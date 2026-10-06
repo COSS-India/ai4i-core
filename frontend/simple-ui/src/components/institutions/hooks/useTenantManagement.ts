@@ -48,7 +48,7 @@ import type {
   EditUserFormState,
   StatusUpdateTargetUnion,
   DeleteUserTarget,
-} from "../types";
+} from "../../profile/types";
 import {
   normalizeTenantUserRow,
   normalizeTenantUserRoles,
@@ -77,7 +77,7 @@ import {
   syncDefaultOrgUserRole,
 } from "../../../utils/defaultOrgUserRoles";
 import type { TenantAssignableRole } from "../../../types/tenant";
-import type { TenantUserFormRole } from "../types";
+import type { TenantUserFormRole } from "../../profile/types";
 import {
   applyTenantPendingSoftDeleteFlags,
   isPendingSoftDeletedTenant,

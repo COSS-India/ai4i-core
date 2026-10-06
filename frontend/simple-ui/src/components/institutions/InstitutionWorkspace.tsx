@@ -30,7 +30,7 @@ import CreateButton from "../common/CreateButton";
 import FormPage from "../common/FormPage";
 import FormSection from "../common/FormSection";
 import ReadOnlyField from "../common/ReadOnlyField";
-import ApplicationManagementTab from "./ApplicationManagementTab";
+import ApplicationManagementTab from "../profile/ApplicationManagementTab";
 import InstitutionForm from "./InstitutionForm";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 import {

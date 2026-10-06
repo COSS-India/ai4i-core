@@ -13,7 +13,7 @@ import FormActions from "../common/FormActions";
 import FormDrawer from "../common/FormDrawer";
 import FormSection from "../common/FormSection";
 import ReadOnlyField from "../common/ReadOnlyField";
-import { useTenantManagement } from "../profile/hooks/useTenantManagement";
+import { useTenantManagement } from "./hooks/useTenantManagement";
 import type { TenantUserView } from "../../types/tenant";
 import InstitutionUserForm from "./InstitutionUserForm";
 
