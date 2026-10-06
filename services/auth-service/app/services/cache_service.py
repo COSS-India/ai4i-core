@@ -25,12 +25,28 @@ REDIS_API_KEY_PREFIX = "auth:apikey:"
 # Access tokens issued before this timestamp are considered revoked.
 REDIS_LOGOUT_PREFIX = "auth:logout:"
 
+# Redis key pattern: core:tier:{tier_id} -> HASH status, rate_limit (field absent = no limit), no TTL.
+# platform-core (tier_redis.py) writes it on every tier change; auth-service only
+# repairs a missing key from the platform-core DB (tier_lookup.py) with
+# _HSET_IF_KEY_ABSENT, so it can never overwrite what platform-core wrote.
+REDIS_TIER_PREFIX = "core:tier:"
+
 # HSET only when the field already exists on the hash — one atomic step, so
 # a hash evicted between the check and the write is never recreated as a
 # partial, TTL-less entry. Returns 1 if written, 0 otherwise.
 _HSET_IF_FIELD_EXISTS = """
 if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 1 then
   redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+  return 1
+end
+return 0
+"""
+
+# HSET the whole hash only when the key does not exist yet — Redis has no
+# whole-key NX for hashes. ARGV is field, value, field, value, ...
+_HSET_IF_KEY_ABSENT = """
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  redis.call('HSET', KEYS[1], unpack(ARGV))
   return 1
 end
 return 0
@@ -74,6 +90,37 @@ class CacheService(_BaseCacheService):
             except (json.JSONDecodeError, ValueError):
                 data["permissions"] = []
         return data
+
+    async def get_tier_cache(self, tier_id: str) -> Optional[tuple[str, Optional[int]]]:
+        """``(status, rate_limit)`` from Redis, or None when the key is absent.
+
+        A Redis error or an unparseable value also reads as None, so the caller
+        falls through to the DB instead of failing validation.
+        """
+        try:
+            status, rate_limit = await self._redis.hmget(f"{REDIS_TIER_PREFIX}{tier_id}", "status", "rate_limit")
+            if status is None:
+                return None
+            return status, int(rate_limit) if rate_limit is not None else None
+        except Exception as exc:
+            logger.warning("Tier %s Redis read failed: %s", tier_id, exc)
+            return None
+
+    async def set_tier_cache(self, tier_id: str, status: str, rate_limit: Optional[int]) -> None:
+        """Write back a tier read from the DB, only if the key is still absent.
+
+        platform-core's own write is authoritative; the absent-only script
+        guarantees a slow DB read here can never overwrite a status change that
+        landed in between. Best-effort: a failure only means the next request
+        misses again.
+        """
+        fields = ["status", status]
+        if rate_limit is not None:
+            fields += ["rate_limit", str(rate_limit)]
+        try:
+            await self._redis.eval(_HSET_IF_KEY_ABSENT, 1, f"{REDIS_TIER_PREFIX}{tier_id}", *fields)
+        except Exception as exc:
+            logger.warning("Tier %s Redis write-back failed: %s", tier_id, exc)
 
     async def delete_api_key_cache(self, api_key: str) -> None:
         """Immediately invalidate an API key — used on revocation."""

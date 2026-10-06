@@ -24,6 +24,14 @@ def _mock_request() -> MagicMock:
     return request
 
 
+def _tier_cache(status=None, rate_limit=None) -> MagicMock:
+    """CacheService stand-in for the core:tier:{id} read; default is an unknown tier."""
+    cache = MagicMock()
+    cache.get_tier_cache = AsyncMock(return_value=(status, rate_limit) if status is not None else None)
+    cache.set_tier_cache = AsyncMock()
+    return cache
+
+
 @pytest.mark.asyncio
 class TestValidateApiKeyInvalidFormat:
     async def test_malformed_key_returns_401_not_valid_true(self):
@@ -34,7 +42,7 @@ class TestValidateApiKeyInvalidFormat:
         }
         response = Response()
 
-        result = await _validate_api_key("not-a-hex-key", _mock_request(), response, api_key_svc)
+        result = await _validate_api_key("not-a-hex-key", _mock_request(), response, api_key_svc, _tier_cache())
 
         assert result.status_code == 401
         # Generic body by design (see validation.py's _unauthenticated) — the
@@ -60,7 +68,7 @@ class TestValidateApiKeyInvalidFormat:
         }
         response = Response()
 
-        result = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc)
+        result = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc, _tier_cache())
 
         assert result.valid is True
         assert "X-User-ID" not in response.headers

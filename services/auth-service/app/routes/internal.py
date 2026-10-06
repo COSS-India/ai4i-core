@@ -3,14 +3,13 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from app.core.exceptions import EntityNotFoundError
 from app.dependencies.services import get_api_key_service, get_tenant_service
 from app.schemas.quota import TierReactivatedRequest
 from app.services.api_key_service import APIKeyService
 from app.services.tenant_service import TenantService
-from app.services.tier_status_cache import tier_status_cache
 
 logger = logging.getLogger(__name__)
 
@@ -145,28 +144,11 @@ async def notify_tier_reactivated(
     body: TierReactivatedRequest,
     svc: APIKeyService = Depends(get_api_key_service),
 ):
-    """Update status cache and clear quota-* exhaustion flags for the reactivated tier.
+    """Clear quota-* exhaustion flags for the reactivated tier's tenants.
 
     Called by platform-core-service after a DEACTIVATED → ACTIVE transition so
-    that auth-service stops issuing 403s immediately and tenants don't keep
-    receiving 429s from stale quota-exhausted flags set before the tier was paused.
+    tenants don't keep receiving 429s from stale quota-exhausted flags set
+    before the tier was paused. The tier status itself is read from Redis.
     """
-    tier_status_cache.set_status(body.tier_id, "ACTIVE")
     for tenant_id in body.tenant_ids:
         await svc.clear_quota_flags_for_tenant(tenant_id)
-
-
-class TierDeactivatedRequest(BaseModel):
-    tier_id: str = Field(..., description="UUID of the deactivated tier.")
-
-
-@router.post("/ppu/tier/deactivated", status_code=status.HTTP_204_NO_CONTENT)
-async def notify_tier_deactivated(body: TierDeactivatedRequest):
-    """Immediately reflect a tier deactivation in the local status cache.
-
-    Called by platform-core-service after an ACTIVE → DEACTIVATED transition.
-    Without this push, auth-service would continue issuing 200s for up to
-    tier_status_cache_refresh_interval_seconds before the periodic reload picks
-    up the new status. The periodic reload remains as a backstop.
-    """
-    tier_status_cache.set_status(body.tier_id, "DEACTIVATED")

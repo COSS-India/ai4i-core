@@ -93,18 +93,26 @@ def _mock_request() -> MagicMock:
     return request
 
 
+def _tier_cache(status=None, rate_limit=None) -> MagicMock:
+    """CacheService stand-in for the core:tier:{id} read; default is an unknown tier."""
+    cache = MagicMock()
+    cache.get_tier_cache = AsyncMock(return_value=(status, rate_limit) if status is not None else None)
+    cache.set_tier_cache = AsyncMock()
+    return cache
+
+
 def _validate_result(**overrides) -> dict:
     base = {"id": 42, "application_id": "7", "tenant_id": "1", "permissions": [1, 2, 3]}
     base.update(overrides)
     return base
 
 
-async def _validate(result: dict):
+async def _validate(result: dict, tier_cache: MagicMock | None = None):
     api_key_svc = AsyncMock()
     api_key_svc.validate_api_key.return_value = result
     response = Response()
     with patch("app.routes.validation._resolve_service", AsyncMock(return_value=None)):
-        out = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc)
+        out = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc, tier_cache or _tier_cache())
     return out, response
 
 
@@ -356,8 +364,7 @@ class TestValidateRejectsUnassignedTier:
 
     async def test_assigned_key_is_unchanged(self) -> None:
         tier = str(uuid4())
-        with patch("app.routes.validation.tier_status_cache.is_active", return_value=True):
-            out, response = await _validate(_validate_result(tier_id=tier))
+        out, response = await _validate(_validate_result(tier_id=tier), _tier_cache("ACTIVE"))
 
         assert getattr(out, "status_code", 200) == 200
         assert response.headers["X-Tier-ID"] == tier
