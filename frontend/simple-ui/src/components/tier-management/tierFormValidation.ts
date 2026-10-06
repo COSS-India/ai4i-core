@@ -44,3 +44,35 @@ export const validateQuotaLimit = (value: string): string | null => {
   }
   return null;
 };
+
+/** `rateLimit` — upper bound of the `tiers.rate_limit` INTEGER column (`le=2_147_483_647`). */
+export const RATE_LIMIT_MAX = 2_147_483_647;
+
+/**
+ * Rate limit is optional: empty means "no tier limit" (the gateway default
+ * applies). When set, mirrors `TierCreate`/`TierUpdate.rateLimit` (`gt=0`, int).
+ */
+export const validateRateLimit = (value: string): string | null => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const num = Number(trimmed);
+  if (!Number.isFinite(num)) {
+    return "Rate limit must be a number.";
+  }
+  if (num <= 0) {
+    return "Rate limit must be greater than 0.";
+  }
+  if (!Number.isInteger(num)) {
+    return "Rate limit must be a whole number.";
+  }
+  if (num > RATE_LIMIT_MAX) {
+    return `Rate limit must not exceed ${RATE_LIMIT_MAX.toLocaleString("en-US")}.`;
+  }
+  return null;
+};
+
+/** Form string → API value: empty means no limit (null). Call after validation. */
+export const parseRateLimit = (value: string): number | null =>
+  value.trim() ? Number(value.trim()) : null;
