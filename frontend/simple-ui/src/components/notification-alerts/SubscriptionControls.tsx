@@ -145,6 +145,11 @@ interface RecipientsPickerProps {
    */
   alreadyNotifiedIds: ReadonlySet<string>;
   isLoadingUsers: boolean;
+  /**
+   * `users` holds a successful load, so a saved id missing from it really
+   * is inactive (not just not loaded yet) and can be dropped.
+   */
+  usersLoaded: boolean;
   /** Set when loading `users` failed; shown in the drawer with a Retry. */
   usersError: string | null;
   /** `users` is empty only because everyone left is an Institution Admin. */
@@ -165,8 +170,8 @@ const CHANNEL_LABELS: Record<string, string> = { EMAIL: "Email" };
  * drawer listing the institution's active users. Picks are staged inside
  * the drawer and only reach the row draft on Done (Cancel drops them);
  * the page's Submit then saves them. Saved ids that are no longer in
- * `users` (deactivated since) stay listed so they can be removed — the API
- * rejects a PUT that still contains one.
+ * `users` (deactivated since) are hidden, left out of the counts, and
+ * dropped on Done — the API rejects a PUT that still contains one.
  */
 export const RecipientsPicker: React.FC<RecipientsPickerProps> = ({
   value,
@@ -174,6 +179,7 @@ export const RecipientsPicker: React.FC<RecipientsPickerProps> = ({
   users,
   alreadyNotifiedIds,
   isLoadingUsers,
+  usersLoaded,
   usersError,
   onlyAdminsLeft,
   onOpen,
@@ -192,7 +198,10 @@ export const RecipientsPicker: React.FC<RecipientsPickerProps> = ({
 
   const selected = useMemo(() => new Set(staged), [staged]);
   const knownIds = useMemo(() => new Set(users.map((u) => u.user_id)), [users]);
-  const unknownIds = staged.filter((id) => !knownIds.has(id));
+  // Until `users` has loaded, every saved id would look unknown — keep them all.
+  const dropInactive = (ids: string[]) =>
+    usersLoaded ? ids.filter((id) => knownIds.has(id)) : ids;
+  const activeStaged = dropInactive(staged);
 
   const visibleUsers = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -213,7 +222,7 @@ export const RecipientsPicker: React.FC<RecipientsPickerProps> = ({
   };
 
   const apply = () => {
-    onChange([...hiddenIds, ...staged]);
+    onChange([...hiddenIds, ...activeStaged]);
     drawer.onClose();
   };
 
@@ -221,7 +230,7 @@ export const RecipientsPicker: React.FC<RecipientsPickerProps> = ({
     setStaged((prev) => (checked ? [...prev, id] : prev.filter((v) => v !== id)));
   };
 
-  const count = addedIds.length;
+  const count = dropInactive(addedIds).length;
   const label = count === 0 ? "Add people" : `${count} added`;
 
   return (
@@ -298,13 +307,6 @@ export const RecipientsPicker: React.FC<RecipientsPickerProps> = ({
               </VStack>
             ) : (
               <VStack align="stretch" spacing={0}>
-                {unknownIds.map((id) => (
-                  <Checkbox key={id} isChecked onChange={() => toggle(id, false)} py={2.5} px={1}>
-                    <Text as="span" fontSize="sm" color="ink.600">
-                      Inactive user — untick to remove
-                    </Text>
-                  </Checkbox>
-                ))}
                 {visibleUsers.map((user) => (
                   <Checkbox
                     key={user.user_id}
@@ -321,7 +323,7 @@ export const RecipientsPicker: React.FC<RecipientsPickerProps> = ({
                     </Text>
                   </Checkbox>
                 ))}
-                {visibleUsers.length === 0 && unknownIds.length === 0 ? (
+                {visibleUsers.length === 0 ? (
                   <Text fontSize="sm" color="ink.600" py={2}>
                     {users.length > 0
                       ? "No people match your search."
@@ -336,7 +338,7 @@ export const RecipientsPicker: React.FC<RecipientsPickerProps> = ({
 
           <DrawerFooter borderTopWidth="1px" borderColor="ink.200" justifyContent="space-between">
             <Text fontSize="sm" color="ink.600">
-              {staged.length} selected
+              {activeStaged.length} selected
             </Text>
             <HStack spacing={2}>
               <Button variant="ghost" onClick={drawer.onClose}>

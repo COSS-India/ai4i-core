@@ -188,6 +188,7 @@ const InstitutionCatalogTab: React.FC<InstitutionCatalogTabProps> = ({
               users={pickableUsers}
               alreadyNotifiedIds={alreadyNotifiedIds}
               isLoadingUsers={usersQuery.isFetching}
+              usersLoaded={usersQuery.isSuccess}
               usersError={usersError}
               onlyAdminsLeft={onlyAdminsLeft}
               onOpen={reloadUsers}
