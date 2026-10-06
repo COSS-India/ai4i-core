@@ -1,16 +1,9 @@
-"""Tier status and rate limit in Redis, for auth-service's /auth/validate.
+"""Tier status and rate limit in Redis, read by auth-service's /auth/validate.
 
-Layout (one key per tier, no TTL):
+    core:tier:<tier_id>   HASH   status, rate_limit (absent = no limit), no TTL
 
-    core:tier:<tier_id>   HASH   status, rate_limit (field absent when the tier has no limit)
-
-    redis-cli HGETALL core:tier:<tier_id>
-
-Postgres stays the source of truth. platform-core writes these keys after every
-tier commit and rebuilds them all at startup. auth-service reads them and, on a
-miss, repairs the key from the DB only if it is still absent, so a value written
-here is never overwritten by auth. A write failure is logged, not raised: the
-tier change is already committed and the next startup rebuild repairs the key.
+Written after every tier commit and rebuilt at startup. A write failure is
+logged, not raised: the tier change is already committed.
 """
 import logging
 from typing import Optional

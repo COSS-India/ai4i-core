@@ -25,10 +25,8 @@ REDIS_API_KEY_PREFIX = "auth:apikey:"
 # Access tokens issued before this timestamp are considered revoked.
 REDIS_LOGOUT_PREFIX = "auth:logout:"
 
-# Redis key pattern: core:tier:{tier_id} -> HASH status, rate_limit (field absent = no limit), no TTL.
-# platform-core (tier_redis.py) writes it on every tier change; auth-service only
-# repairs a missing key from the platform-core DB (tier_lookup.py) with
-# _HSET_IF_KEY_ABSENT, so it can never overwrite what platform-core wrote.
+# Redis key pattern: core:tier:{tier_id} -> HASH status, rate_limit (absent = no limit).
+# Written by platform-core (tier_redis.py); auth only repairs a missing key.
 REDIS_TIER_PREFIX = "core:tier:"
 
 # HSET only when the field already exists on the hash — one atomic step, so
@@ -42,8 +40,7 @@ end
 return 0
 """
 
-# HSET the whole hash only when the key does not exist yet — Redis has no
-# whole-key NX for hashes. ARGV is field, value, field, value, ...
+# HSET only when the key does not exist yet — hashes have no whole-key NX.
 _HSET_IF_KEY_ABSENT = """
 if redis.call('EXISTS', KEYS[1]) == 0 then
   redis.call('HSET', KEYS[1], unpack(ARGV))
@@ -92,11 +89,7 @@ class CacheService(_BaseCacheService):
         return data
 
     async def get_tier_cache(self, tier_id: str) -> Optional[tuple[str, Optional[int]]]:
-        """``(status, rate_limit)`` from Redis, or None when the key is absent.
-
-        A Redis error or an unparseable value also reads as None, so the caller
-        falls through to the DB instead of failing validation.
-        """
+        """``(status, rate_limit)``, or None on a miss, Redis error or bad value."""
         try:
             status, rate_limit = await self._redis.hmget(f"{REDIS_TIER_PREFIX}{tier_id}", "status", "rate_limit")
             if status is None:
@@ -107,13 +100,8 @@ class CacheService(_BaseCacheService):
             return None
 
     async def set_tier_cache(self, tier_id: str, status: str, rate_limit: Optional[int]) -> None:
-        """Write back a tier read from the DB, only if the key is still absent.
-
-        platform-core's own write is authoritative; the absent-only script
-        guarantees a slow DB read here can never overwrite a status change that
-        landed in between. Best-effort: a failure only means the next request
-        misses again.
-        """
+        """Write back a tier read from the DB, only if the key is still absent,
+        so it never overwrites platform-core. Best-effort."""
         fields = ["status", status]
         if rate_limit is not None:
             fields += ["rate_limit", str(rate_limit)]

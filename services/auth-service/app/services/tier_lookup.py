@@ -1,14 +1,8 @@
 """Tier status and rate limit for /auth/validate: Redis first, DB on a miss.
 
-platform-core writes ``core:tier:{tier_id}`` on every tier change and at its
-startup; this module only has to repair a missing key (flush, LRU eviction,
-auth deployed first). The repair is one SELECT per tier per miss, written back
-with SET NX so it can never overwrite what platform-core wrote. The hot path
-stays DB-free on every hit, the same cache-aside shape as the API-key hash in
-APIKeyService.validate_api_key.
-
-Fail-open is deliberate and the same as before: an unknown tier (no key AND no
-DB row, or the DB unreachable) is treated as ACTIVE with no rate limit.
+platform-core writes ``core:tier:{tier_id}``; this only repairs a missing key
+(flush, eviction, auth deployed first) with one SELECT, written back only if the
+key is still absent. A tier unknown to both is treated as ACTIVE with no limit.
 """
 import logging
 from typing import Optional

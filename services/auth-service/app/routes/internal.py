@@ -148,7 +148,7 @@ async def notify_tier_reactivated(
 
     Called by platform-core-service after a DEACTIVATED → ACTIVE transition so
     tenants don't keep receiving 429s from stale quota-exhausted flags set
-    before the tier was paused. The tier status itself is read from Redis.
+    before the tier was paused.
     """
     for tenant_id in body.tenant_ids:
         await svc.clear_quota_flags_for_tenant(tenant_id)

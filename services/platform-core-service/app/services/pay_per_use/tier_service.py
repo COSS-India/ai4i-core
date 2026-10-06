@@ -192,14 +192,7 @@ async def create_tier(body: TierCreate, session: AsyncSession, created_by: Optio
             detail=f"Tier with name '{body.name}' already exists",
         )
 
-    tier = Tier(
-        name=body.name,
-        description=body.description,
-        rate_limit=body.rateLimit,
-        status=TierStatus.INACTIVE,
-        created_by=created_by,
-        updated_by=created_by,
-    )
+    tier = Tier(name=body.name, description=body.description, rate_limit=body.rateLimit, status=TierStatus.INACTIVE, created_by=created_by, updated_by=created_by)
     session.add(tier)
     await session.flush()
 
@@ -559,10 +552,9 @@ async def update_tier_status(
     await session.commit()
     await session.refresh(tier)
     update_tier_cache(tier.id, tier.name)
-    # auth-service reads the status from here, so this is what enforces it.
     await tier_redis.write_tier(tier)
 
-    # Post-commit (best-effort): clear stale quota-exhausted flags on reactivation.
+    # Post-commit notifications (best-effort).
     if target_status == TierStatus.ACTIVE and previous_status == TierStatus.DEACTIVATED:
         await _notify_tier_reactivated(tier, auth_service_url, http_client, auth_db)
 

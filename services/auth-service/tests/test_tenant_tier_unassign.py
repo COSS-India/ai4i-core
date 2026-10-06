@@ -93,11 +93,10 @@ def _mock_request() -> MagicMock:
     return request
 
 
-def _tier_cache(status=None, rate_limit=None) -> MagicMock:
-    """CacheService stand-in for the core:tier:{id} read; default is an unknown tier."""
+def _tier_cache(status=None) -> MagicMock:
+    """CacheService stand-in for the core:tier:{id} read; default is no key."""
     cache = MagicMock()
-    cache.get_tier_cache = AsyncMock(return_value=(status, rate_limit) if status is not None else None)
-    cache.set_tier_cache = AsyncMock()
+    cache.get_tier_cache = AsyncMock(return_value=(status, None) if status else None)
     return cache
 
 
