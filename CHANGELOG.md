@@ -6,6 +6,70 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/).
 
 
+## [2.8.0] - 2026-10-06
+
+> Notification pipeline, monitoring alerts and UI revamp release, 58 PRs merged
+
+### Added
+- Scope-based notification subscriptions. Each catalog item is `GLOBAL` (platform-wide, no opt-out) or `INSTITUTION` (an institution subscribes to it), with a `tenant_notification_subscription` table seeded per institution and Institution Admin endpoints at `GET /api/v1/notification-alerts/subscriptions` and `PATCH`/`PUT /api/v1/notification-alerts/subscriptions/{notification_id}` (AI4IDS-3200, AI4IDS-3202, AI4IDS-3236, AI4IDS-3237)
+- Platform monitoring alerts: five default alerts seeded into the catalog, threshold bands in seconds or percent, `PATCH /api/v1/notification-alerts/monitoring-catalog/{name}`, a monitoring evaluator in platform-core that checks Prometheus on a fixed interval, a standard monitoring email template, and the Monitoring Alerts tab in the UI (AI4IDS-3183, AI4IDS-3186, AI4IDS-3246)
+- One shared notification pipeline in `ai4i_core.kafka`. Tier, budget, quota, usage and monitoring producers share one tiered cache (in-memory, Redis, Postgres), one ledger, one failure log and one Kafka envelope. A notification problem never fails or slows the business request (AI4IDS-3226)
+- Producer-side recipient resolution. auth-service and platform-core resolve and decrypt recipients before publishing, and the Kafka envelope carries a `recipients` list (AI4IDS-3201)
+- Institution tier unassignment at `DELETE /auth/tenants/{id}/tier`, admin-only. API keys under the institution are blocked until a tier is reassigned (AI4IDS-3256)
+- Custom date range on the Usage Dashboard. `/metering/overview` and `/metering/model-consumption` take optional `from` and `to`, validated against the Prometheus retention floor, and the overview reports `first_usage_at` (AI4IDS-3240, AI4IDS-3267)
+- Model creation checks for fields that previously failed only at inference time: `adapterConfig` tensors, dtypes and mappings, `classInstance` for every task type except LLM and pipeline, `schema.taskType` matching `task.type`, and `asyncApiDetails` when `isSyncApi` is false (AI4IDS-3152)
+- Model creation guide and adapter config quick and technical guides under `docs/model_creation/`, with a trimmed sample model JSON in the UI (AI4IDS-3243, AI4IDS-3249)
+- Revamped Tier Management Edit Tier with service and institution mapping (AI4IDS-3162)
+- Domain column and active API key count on Application Management
+
+### Changed
+- UI revamp onto a unified design system: Institution, Tier, Model and Service Management, API Key Management, Logs, Notifications, Explore and Profile, with shared create, edit and view form pages, full-width layouts and standardised navigation (AI4IDS-3195, AI4IDS-3196, AI4IDS-3197, AI4IDS-3198, AI4IDS-3217, AI4IDS-3225, AI4IDS-3227, AI4IDS-3229, AI4IDS-3281 to AI4IDS-3286)
+- Budget Allocation is mandatory when creating an API key. Omitting both `allocated_percentage` and `budget` returns 422 `ALLOCATION_REQUIRED`, zero returns 422 `BUDGET_TOO_SMALL`, and the server no longer gives a key the Application's leftover budget (AI4IDS-3218, AI4IDS-3167)
+- Resizing an Application budget no longer moves its API keys' allocations. Only `allocated_percentage` is recomputed, and a decrease that would not cover existing key allocations is rejected (AI4IDS-3168)
+- Application budget editing revamped, with clearer validation and minimum allocation messages (AI4IDS-3166, AI4IDS-3262)
+- Tenant user create and update accept only `USER` and `TENANT_ADMIN`. `USAGE_VIEWER` and `MODERATOR` stay assignable through platform role assignment (AI4IDS-3169)
+- `USAGE VIEWER` granted `usage.application_read` (AI4IDS-3239)
+- The notification catalog `GET` and `PATCH` are Adopter Admin only, and catalog items carry `scope` and, for monitoring rows, `monitoring_thresholds`
+- notifications_consumer only maps and sends. It no longer reads the auth database or the ledger, and skips a Kafka redelivery through a Redis claim on `event_id` (AI4IDS-3228)
+- Notification and alert emails use `PLATFORM_NAME` and `ADOPTER_LOGO_URL` for branding across auth-service, platform-core and notifications_consumer. The `env.template` default for `PLATFORM_NAME` is now `AI Switch`
+- Model Usage Growth compares rolling 30-day windows instead of calendar months, and the card is back in Key Metrics (AI4IDS-3157, AI4IDS-3170)
+- platform-core reads Prometheus retention from Prometheus itself, with `PROMETHEUS_RETENTION_DAYS` as the fallback
+- The billing-month filter removed from the Budget tab, whose figures are all-time
+- KPI card and Usage Concentration wording made consistent (AI4IDS-3133, AI4IDS-3134)
+- Demo feedback changes (AI4IDS-3135)
+
+### Fixed
+- Institution Admins did not reliably receive INSTITUTION-scope notifications such as Budget Revised. Recipients are now derived from scope (AI4IDS-3273)
+- Quota Limit Updated sent the Adopter Admin one email per institution on the tier instead of one (AI4IDS-3296)
+- Budget Threshold did not fire lower bands again after a budget window was renewed with the same ceiling (AI4IDS-3299)
+- A monitoring alert stayed open forever once a service's traffic stopped, so later spikes sent no email (AI4IDS-3294)
+- SMTP send deadline too short for real servers (AI4IDS-3273)
+- Monitoring alert emails showed the service ID instead of the service name
+- No option to add or edit thresholds in the Alerts Catalog (AI4IDS-3128)
+- Create API Key turned a negative Budget Allocation positive and created the key (AI4IDS-3252)
+- Tier filter in Services and Institution Management listed only mapped tiers (AI4IDS-3244)
+- LLM Service and Source Language dropdowns preselected a value instead of "Select" (AI4IDS-3131, AI4IDS-3132)
+- Created date missing for institution users (AI4IDS-3143)
+- A pending tenant's details shown unmasked in edit mode (AI4IDS-3003)
+- Active API key count type error, and the Application table layout restored
+
+### Removed
+- The internal `POST /internal/ppu/tier/quota-limit-updated` webhook on auth-service. platform-core publishes Quota Limit Updated through the shared pipeline instead
+- The temporary `DEBUG_RECIPIENTS` logging added during AI4IDS-3273 was removed before release
+
+### Upgrade notes
+- Shared library `ai4i-core` 1.0.31 to 1.0.46. auth-service, platform-core, inference and kafka-consumers all pin 1.0.46
+- Eleven migrations: two on the auth database (notification subscription permissions, and `usage.application_read` for USAGE VIEWER) and nine on the core database (catalog `scope`, the subscription table and its seed, monitoring alert types and seed, a monitoring recipient table that a later migration drops again, the notification schema refactor, and a failure log enum value)
+- Migration `0c96d7881ce5` resets every catalog recipient-role flag to false and rebuilds `ledger_notification_alert` empty. Until an admin assigns recipients in the catalog, monitoring alerts go to nobody and the Adopter Admin receives no tier, budget or quota email. Institution Tenant Admins still receive theirs. Send history from 2.7 is not kept, and existing threshold bands are copied into `notification_alert_threshold`
+- `PLATFORM_NAME` is now required on auth-service, platform-core and notifications_consumer. Each fails at startup if it is blank. Run `./scripts/setup-env.sh` or set it per service, and set `ADOPTER_LOGO_URL` for the email header logo
+- `PII_ENCRYPTION_KEY` moves. platform-core and payperuse_consumer now need it, set to the same value auth-service uses. Without it, encrypted email addresses fail to decrypt and quota and budget notifications are silently dropped. notifications_consumer no longer needs it, nor `AUTH_SERVICE_DB`
+- Creating an API key without a budget allocation now returns 422. Callers that relied on the server assigning the Application's leftover budget must send `allocated_percentage` or `budget`
+- Model creation rejects configurations it previously accepted. The checks run on create only, so existing models and model updates are unaffected
+- Optional tuning: `MONITORING_EVAL_ENABLED`, `MONITORING_EVAL_INTERVAL_S`, `MONITORING_MIN_REQUESTS`, `MONITORING_WINDOW`, `NOTIFICATION_CLEANUP_INTERVAL_S`, `METERING_FIRST_USAGE_CACHE_TTL_SECONDS` and the `NOTIF_*` cache and cooldown settings. All have defaults
+- inference-service still logs request payloads at INFO, as in 2.7.2. Prompts, text, audio and image content reach the logs and OpenSearch
+
+---
+
 ## [2.7.2] - 2026-09-22
 
 > Hotfix on the 2.7 line, 1 PR merged. Tagged as `v2.7.2-hotfix`
@@ -452,7 +516,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-[Unreleased]: https://github.com/COSS-India/ai4i-core/compare/v2.7.2-hotfix...HEAD
+[Unreleased]: https://github.com/COSS-India/ai4i-core/compare/v2.8...HEAD
+[2.8.0]: https://github.com/COSS-India/ai4i-core/compare/v2.7.2-hotfix...v2.8
 [2.7.2]: https://github.com/COSS-India/ai4i-core/compare/v2.7.1-hotfix...v2.7.2-hotfix
 [2.7.1]: https://github.com/COSS-India/ai4i-core/compare/v2.7...v2.7.1-hotfix
 [2.7.0]: https://github.com/COSS-India/ai4i-core/compare/v2.6...v2.7
