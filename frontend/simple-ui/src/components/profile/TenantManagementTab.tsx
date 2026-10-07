@@ -1,29 +1,13 @@
 // Tenant Management tab — backed by auth-service tenant endpoints.
 
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  Alert,
-  AlertDescription,
-  AlertIcon,
-  Badge,
   Box,
-  Button,
-  Card,
-  Center,
-  HStack,
-  Tab,
-  TabList,
-  TabPanel,
-  TabPanels,
-  Tabs,
-  Text,
-  Tooltip,
-  VStack,
   useColorModeValue,
   useDisclosure,
+  useToast,
 } from "@chakra-ui/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useToast } from "@chakra-ui/react";
 import {
   changeTenantTier,
   fetchTenantTiers,
@@ -35,34 +19,16 @@ import {
 } from "../../services/tierManagementService";
 import * as tenantService from "../../services/tenantService";
 import { fetchAllServicesMatchingFilters } from "../../services/servicesManagementService";
-import {
-  FiEdit2,
-  FiMail,
-} from "react-icons/fi";
 import { useAuth } from "../../hooks/useAuth";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 import { useOwnInstitutionDetails } from "./hooks/useOwnInstitutionDetails";
-import InstitutionDetailsPanel from "./InstitutionDetailsPanel";
-import ApplicationManagementTab from "./ApplicationManagementTab";
-import DataTable, {
-  DEFAULT_PAGE_SIZE_OPTIONS,
-  type DataTableColumn,
-} from "../common/table";
-import TenantUserRoleBadges from "../common/TenantUserRoleBadges";
 import AssignTierModal from "./AssignTierModal";
 import { type ServiceMappingsStatus } from "./types";
 import {
   INSTITUTION,
-  INSTITUTIONS,
   INSTITUTION_ARTICLE,
   TENANT,
-  TENANT_STATUS_LIST,
-  TENANT_USER_STATUS_LIST,
-  formatTenantStatusLabel,
-  formatTenantUserStatusLabel,
-  getTenantStatusColorScheme,
-  isTenantStatus,
   resolveTenantUserDisplayStatus,
 } from "../../config/constants";
 import { replaceTenantCopy } from "../../utils/replaceTenantCopy";
@@ -71,27 +37,15 @@ import {
   isPlatformAdminUser,
 } from "../../utils/rbac";
 import { useDeferredColumnSort } from "../../utils/tableSort";
-import CreateButton from "../common/CreateButton";
 import FormActions from "../common/FormActions";
 import FormDrawer from "../common/FormDrawer";
-import FormPage from "../common/FormPage";
-import FormSection from "../common/FormSection";
-import ReadOnlyField from "../common/ReadOnlyField";
 import CreateInstitutionForm, {
   CREATE_INSTITUTION_FORM_ID,
 } from "./CreateInstitutionForm";
 import InstitutionForm from "./InstitutionForm";
 import InstitutionUserModal from "../tenant-management/InstitutionUserModal";
 import InstitutionConfirmDialogs from "../tenant-management/InstitutionConfirmDialogs";
-import {
-  InstitutionTenantRowActions,
-  InstitutionUserRowActions,
-} from "../tenant-management/InstitutionRowActions";
 import ManageTierDrawer from "../tenant-management/ManageTierDrawer";
-import {
-  isDefaultTenant,
-} from "../../utils/defaultTenant";
-import { dash, fmtDate } from "../../utils/valueFormatters";
 import {
   budgetWindowToMinDate,
   dateInputToEndOfDayIso,
@@ -100,6 +54,17 @@ import {
   todayDateInputValue,
 } from "../../utils/helpers";
 import type { TenantUserView, TenantView } from "../../types/tenant";
+import { InstitutionAdopterList } from "./InstitutionAdopterList";
+import { InstitutionAdminHome } from "./InstitutionAdminHome";
+import { InstitutionUsersTable } from "./InstitutionUsersTable";
+import { InstitutionWorkspace } from "./InstitutionWorkspace";
+import {
+  formatRupees,
+  resolveTenantTierName,
+  resolveTierLabel,
+  tenantBudgetNumber,
+  type TierOption,
+} from "./institutionDisplay";
 
 /** Shown when assigning/reassigning a tier that has no mapped services. */
 const TIER_NO_SERVICES_MSG =
@@ -132,64 +97,6 @@ export interface TenantManagementTabProps {
   isActive?: boolean;
   onRegisterCreateInstitution?: (open: () => void) => void;
   onInstitutionDetailChange?: (isDetail: boolean) => void;
-}
-
-const AVATAR_COLORS = [
-  "blue.500",
-  "green.500",
-  "purple.500",
-  "teal.500",
-  "orange.500",
-  "pink.500",
-];
-
-function getTenantInitials(name: string): string {
-  const words = name.trim().split(/\s+/);
-  if (words.length >= 2) return `${words[0][0]}${words[1][0]}`.toUpperCase();
-  return name.slice(0, 2).toUpperCase();
-}
-
-function getTenantAvatarBg(name: string): string {
-  let sum = 0;
-  for (let i = 0; i < name.length; i++) sum += name.codePointAt(i) ?? 0;
-  return AVATAR_COLORS[sum % AVATAR_COLORS.length];
-}
-
-type TierOption = { id: string; name: string };
-
-function tenantBudgetNumber(t: TenantView): number | null {
-  if (t.allocated_budget == null) return null;
-  const n = Number(t.allocated_budget);
-  return Number.isFinite(n) ? n : null;
-}
-
-function resolveTierLabel(
-  tierId: string | null | undefined,
-  tierOptions: TierOption[],
-  fallbackName?: string | null,
-): string {
-  if (fallbackName?.trim()) return fallbackName.trim();
-  if (!tierId) return "—";
-  const match = tierOptions.find((tier) => String(tier.id) === String(tierId));
-  return match?.name ?? tierId;
-}
-
-/**
- * Keyed off `tenant.tier_id` alone, the same field the Tier filter matches on,
- * so a row cannot show a tier yet filter as "No tier assigned". The name falls
- * back to the assignment list, which covers a tier newer than the cached catalog.
- */
-function resolveTenantTierName(
-  tenant: TenantView,
-  tierOptions: TierOption[],
-  assignmentsByTenantId: Map<string, TenantTierAssignment>,
-): string | null {
-  const tierId = tenant.tier_id;
-  if (!tierId) return null;
-  const match = tierOptions.find((tier) => String(tier.id) === String(tierId));
-  if (match?.name?.trim()) return match.name.trim();
-  const assignment = assignmentsByTenantId.get(String(tenant.tenant_id));
-  return assignment?.tier_name?.trim() || tenant.tier_name?.trim() || null;
 }
 
 /**
@@ -232,11 +139,6 @@ function buildTierFilterOptions(
       a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
     ),
   ];
-}
-
-function formatRupees(amount: number | null | undefined): string {
-  if (amount == null) return "—";
-  return `₹${amount.toLocaleString("en-IN")}`;
 }
 
 function resolveTenantTierAssignment(
@@ -765,232 +667,14 @@ export default function TenantManagementTab({
     [tm.filteredTenantUsers, userSort],
   );
 
-  const tenantColumns = useMemo((): DataTableColumn<TenantView>[] => {
-    return [
-      {
-        id: "organisation",
-        header: INSTITUTION,
-        thProps: { w: "420px", maxW: "420px" },
-        tdProps: { maxW: "420px" },
-        sortable: true,
-        sortAccessor: (t) => t.organisation ?? "",
-        cell: (t) => (
-          <HStack spacing={3} minW={0}>
-            <Center
-              w={8}
-              h={8}
-              borderRadius="full"
-              bg={getTenantAvatarBg(t.organisation)}
-              color="white"
-              fontSize="xs"
-              fontWeight="bold"
-              flexShrink={0}
-            >
-              {getTenantInitials(t.organisation)}
-            </Center>
-            <Tooltip
-              label={t.organisation}
-              placement="top"
-              hasArrow
-              openDelay={300}
-            >
-              <HStack spacing={2} minW={0} maxW="340px">
-                <Text fontWeight="medium" fontSize="sm" isTruncated>
-                  {t.organisation}
-                </Text>
-                {isDefaultTenant(t) && (
-                  <Badge
-                    colorScheme="purple"
-                    fontSize="0.65rem"
-                    flexShrink={0}
-                    textTransform="none"
-                  >
-                    Default
-                  </Badge>
-                )}
-              </HStack>
-            </Tooltip>
-          </HStack>
-        ),
-      },
-      {
-        id: "contact",
-        header: "Contact",
-        thProps: { w: "280px", maxW: "280px" },
-        tdProps: { maxW: "280px" },
-        sortable: true,
-        sortAccessor: (t) => t.contact_name ?? "",
-        cell: (t) => (
-          <Tooltip
-            label={dash(t.contact_name)}
-            placement="top"
-            hasArrow
-            openDelay={300}
-          >
-            <Text fontSize="sm" isTruncated maxW="260px">
-              {dash(t.contact_name)}
-            </Text>
-          </Tooltip>
-        ),
-      },
-      {
-        id: "email",
-        header: "Email",
-        sortable: true,
-        sortAccessor: (t) => t.email ?? "",
-        cell: (t) => dash(t.email),
-      },
-      {
-        id: "status",
-        header: "Status",
-        cell: (t) => (
-          <Badge colorScheme={getTenantStatusColorScheme(t.status)}>
-            {formatTenantStatusLabel(t.status)}
-          </Badge>
-        ),
-      },
-      // ADMIN-only: both tier queries are gated on `isAdmin`, so anyone else
-      // would see a column of dashes reading as "no tier assigned".
-      ...((isAdmin
-        ? [
-            {
-              id: "tier",
-              header: "Tier",
-              thProps: { w: "180px", maxW: "180px" },
-              tdProps: { maxW: "180px" },
-              sortable: true,
-              // Badge treatment mirrors the Service Registry "Tiers" column.
-              truncate: false,
-              cell: (t) => {
-                const name = resolveTenantTierName(
-                  t,
-                  tierOptions,
-                  tenantTierAssignmentsById,
-                );
-                if (!name) {
-                  return (
-                    <Text fontSize="sm" color="gray.400">
-                      —
-                    </Text>
-                  );
-                }
-                return (
-                  <Tooltip
-                    label={name}
-                    placement="top"
-                    hasArrow
-                    openDelay={300}
-                  >
-                    <Badge
-                      colorScheme="gray"
-                      fontSize="xs"
-                      px={2}
-                      py={0.5}
-                      maxW="100%"
-                      isTruncated
-                    >
-                      {name}
-                    </Badge>
-                  </Tooltip>
-                );
-              },
-            },
-          ]
-        : []) as DataTableColumn<TenantView>[]),
-      {
-        id: "created",
-        header: "Onboarded",
-        sortable: true,
-        sortAccessor: (t) =>
-          t.created_at ? new Date(t.created_at).getTime() : 0,
-        cell: (t) => fmtDate(t.created_at),
-      },
-      {
-        id: "actions",
-        header: "Actions",
-        tdProps: { onClick: (e) => e.stopPropagation() },
-        cell: (t) => (
-          <InstitutionTenantRowActions
-            tm={tm}
-            tenant={t}
-            onOpenPlan={openTenantPlan}
-          />
-        ),
-      },
-    ];
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tm, isAdmin, tierOptions, tenantTierAssignmentsById]);
-
-  const userColumns = useMemo((): DataTableColumn<TenantUserView>[] => {
-    return [
-      {
-        id: "username",
-        header: "Username",
-        sortable: true,
-        sortAccessor: (u) => u.username ?? u.email ?? "",
-        cell: (u) => (
-          <Text fontWeight="medium" fontSize="sm">
-            {u.username ?? dash(u.email)}
-          </Text>
-        ),
-      },
-      {
-        id: "email",
-        header: "Email",
-        sortable: true,
-        sortAccessor: (u) => u.email ?? "",
-        cell: (u) => dash(u.email),
-      },
-      {
-        id: "full_name",
-        header: "Full Name",
-        sortable: true,
-        sortAccessor: (u) => u.full_name ?? "",
-        cell: (u) => dash(u.full_name),
-      },
-      {
-        id: "roles",
-        header: "Roles",
-        cell: (u) => <TenantUserRoleBadges role={u.role} roles={u.roles} />,
-      },
-      {
-        id: "status",
-        header: "Status",
-        cell: (u) => (
-          <Badge
-            colorScheme={getTenantStatusColorScheme(
-              resolveUserDisplayStatus(u),
-            )}
-          >
-            {formatTenantUserStatusLabel(resolveUserDisplayStatus(u))}
-          </Badge>
-        ),
-      },
-      {
-        id: "created",
-        header: "Created",
-        sortable: true,
-        sortAccessor: (u) => {
-          const created = (u as { created_at?: string }).created_at;
-          return created ? new Date(created).getTime() : 0;
-        },
-        cell: (u) => fmtDate((u as { created_at?: string }).created_at),
-      },
-      {
-        id: "actions",
-        header: "",
-        tdProps: { onClick: (e) => e.stopPropagation() },
-        cell: (u) => (
-          <InstitutionUserRowActions
-            tm={tm}
-            user={u}
-            resolveUserDisplayStatus={resolveUserDisplayStatus}
-          />
-        ),
-      },
-    ];
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tm]);
+  const usersTable = (
+    <InstitutionUsersTable
+      tm={tm}
+      sortedTenantUsers={sortedTenantUsers}
+      userSort={userSort}
+      resolveUserDisplayStatus={resolveUserDisplayStatus}
+    />
+  );
 
   const closeInstitutionCreate = () => {
     if (tm.isSubmittingTenant) return;
@@ -1002,13 +686,43 @@ export default function TenantManagementTab({
     tm.closeEditTenantModal();
   };
 
+
   return (
     <Box>
-      {isAdopterManager && !tm.tenantDetailView && renderAdopterView()}
+      {isAdopterManager && !tm.tenantDetailView && (
+        <InstitutionAdopterList
+          tm={tm}
+          sortedTenants={sortedTenants}
+          tenantSort={tenantSort}
+          isAdmin={isAdmin}
+          tierOptions={tierOptions}
+          tenantTierAssignmentsById={tenantTierAssignmentsById}
+          tierFilterOptions={tierFilterOptions}
+          handleTierFilterChange={handleTierFilterChange}
+          openTenantPlan={openTenantPlan}
+        />
+      )}
 
-      {!isAdopterManager && !tm.tenantDetailView && renderInstitutionAdminView()}
+      {!isAdopterManager && !tm.tenantDetailView && (
+        <InstitutionAdminHome
+          tabCardBg={tabCardBg}
+          tabCardBorder={tabCardBorder}
+          ownInstitution={ownInstitution}
+          tenantId={user?.tenant_id ?? ""}
+          onAddUser={tm.openUserModal}
+          usersTable={usersTable}
+        />
+      )}
 
-      {tm.tenantDetailView && renderTenantDetail()}
+      {tm.tenantDetailView && (
+        <InstitutionWorkspace
+          tm={tm}
+          tenant={tm.tenantDetailView}
+          tierOptions={tierOptions}
+          tenantTierAssignments={tenantTierAssignments}
+          usersTable={usersTable}
+        />
+      )}
 
       <FormDrawer
         isOpen={showInstitutionCreate}
@@ -1129,377 +843,4 @@ export default function TenantManagementTab({
       />
     </Box>
   );
-
-  // ── Tenants list (Adopter Admin) ────────────────────────────────────────
-  function renderAdopterView() {
-    return (
-          <DataTable
-            layout="admin"
-            items={sortedTenants}
-            columns={tenantColumns}
-            getRowKey={(t) => t.tenant_id}
-            sort={tenantSort.sort}
-            onSortChange={tenantSort.onSortChange}
-            onRowClick={tm.handleViewTenant}
-            isLoading={tm.isLoadingTenants}
-            emptyMessage={`No ${INSTITUTIONS.toLowerCase()} found.`}
-            noResultsMessage={`No ${INSTITUTIONS.toLowerCase()} match the current filters.`}
-            unfilteredCount={tm.tenants.length}
-            hasActiveFilters={
-              tm.tenantFilterStatus !== "all" ||
-              tm.tenantFilterTier !== TENANT.TIER_FILTER.ALL ||
-              tm.tenantSearch.trim() !== ""
-            }
-            onClearFilters={() => {
-              tm.setTenantFilterStatus("all");
-              handleTierFilterChange(TENANT.TIER_FILTER.ALL);
-              tm.setTenantSearch("");
-            }}
-            paginate="client"
-            paginationPosition="bottom"
-            pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
-            search={{
-              value: tm.tenantSearch,
-              onChange: tm.setTenantSearch,
-              placeholder: `Search by organisation or ${INSTITUTION.toLowerCase()} ID`,
-              fields: ["organisation", "tenant_id"],
-            }}
-            filterDefs={[
-              {
-                id: "status",
-                label: "Status",
-                type: "select",
-                param: "status",
-                value: tm.tenantFilterStatus,
-                onChange: tm.setTenantFilterStatus,
-                width: { base: "full", sm: "200px" },
-                options: [
-                  { label: "All statuses", value: "all" },
-                  ...TENANT_STATUS_LIST.map((s) => ({
-                    label: formatTenantStatusLabel(s),
-                    value: s,
-                  })),
-                ],
-              },
-              // ADMIN-only, for the same reason as the Tier column: without
-              // the catalog there are no names to populate the options with.
-              ...(isAdmin
-                ? [
-                    {
-                      id: "tier",
-                      label: "Tier",
-                      // Filtered client-side — GET /tenants takes only `status`.
-                      type: "select" as const,
-                      value: tm.tenantFilterTier,
-                      onChange: handleTierFilterChange,
-                      width: { base: "full", sm: "200px" },
-                      options: [
-                        { label: "All tiers", value: TENANT.TIER_FILTER.ALL },
-                        ...tierFilterOptions.map((tier) => ({
-                          label: tier.name,
-                          value: String(tier.id),
-                        })),
-                        {
-                          label: "No tier assigned",
-                          value: TENANT.TIER_FILTER.NONE,
-                        },
-                      ],
-                    },
-                  ]
-                : []),
-            ]}
-          />
-    );
-  }
-
-  // ── Institution Admin landing view (own institution + its users) ────────
-  // One institution, so no list to drill into — tabs are the first screen.
-  function renderInstitutionAdminView() {
-    return (
-      <Card bg={tabCardBg} borderColor={tabCardBorder} borderWidth="1px">
-        <Tabs colorScheme="blue" variant="enclosed">
-          <TabList>
-            <Tab fontWeight="semibold">{`My ${INSTITUTION}`}</Tab>
-            <Tab fontWeight="semibold">Users</Tab>
-            <Tab fontWeight="semibold">Applications</Tab>
-          </TabList>
-          <TabPanels>
-            <TabPanel px={6} pt={6} pb={6}>
-              <InstitutionDetailsPanel
-                institution={ownInstitution.institution}
-                tierName={ownInstitution.tierName}
-                budgetLimit={ownInstitution.budgetLimit}
-                currency={ownInstitution.currency}
-                isLoading={ownInstitution.isLoading}
-                errorMessage={ownInstitution.errorMessage}
-                tierBudgetErrorMessage={ownInstitution.tierBudgetErrorMessage}
-              />
-            </TabPanel>
-            <TabPanel px={6} pt={6} pb={6}>{renderTenantView()}</TabPanel>
-            <TabPanel px={6} pt={6} pb={6}>
-              <ApplicationManagementTab
-                tenantId={user?.tenant_id ?? ""}
-                institutionBudget={ownInstitution.budgetLimit}
-                currency={ownInstitution.currency}
-              />
-            </TabPanel>
-          </TabPanels>
-        </Tabs>
-      </Card>
-    );
-  }
-
-  // ── Tenant users list (Tenant Admin or detail view) ─────────────────────
-  function renderTenantView() {
-    return (
-      <>
-        <HStack justify="flex-end" mb={4}>
-          <CreateButton onClick={tm.openUserModal}>Add User</CreateButton>
-        </HStack>
-        {renderTenantUsersTable()}
-      </>
-    );
-  }
-
-  function renderTenantUsersTable() {
-    return (
-      <DataTable
-        layout="admin"
-        key={tm.tenantDetailView?.tenant_id ?? "tenant-users"}
-        items={sortedTenantUsers}
-        columns={userColumns}
-        getRowKey={(u) => u.user_id}
-        sort={userSort.sort}
-        onSortChange={userSort.onSortChange}
-        onRowClick={tm.handleViewUser}
-        isLoading={tm.isLoadingTenantUsers}
-        emptyMessage={`No users in this ${INSTITUTION.toLowerCase()}.`}
-        noResultsMessage="No users match the current filters."
-        unfilteredCount={tm.tenantUsers.length}
-        hasActiveFilters={
-          tm.userFilterStatus !== "all" ||
-          tm.userFilterRole !== "all" ||
-          tm.userSearch.trim() !== ""
-        }
-        onClearFilters={tm.handleResetUserFilters}
-        paginate="client"
-        paginationPosition="bottom"
-        pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
-        search={{
-          value: tm.userSearch,
-          onChange: tm.setUserSearch,
-          placeholder: "Search by username, email, or full name",
-          fields: ["username", "email", "full_name"],
-        }}
-        filterDefs={[
-          {
-            id: "status",
-            label: "Status",
-            type: "select",
-            param: "status",
-            value: tm.userFilterStatus,
-            onChange: tm.setUserFilterStatus,
-            width: { base: "full", sm: "200px" },
-            options: [
-              { label: "All statuses", value: "all" },
-              ...TENANT_USER_STATUS_LIST.map((s) => ({
-                label: formatTenantUserStatusLabel(s),
-                value: s,
-              })),
-            ],
-          },
-          {
-            id: "role",
-            label: "Role",
-            type: "select",
-            param: "role",
-            value: tm.userFilterRole,
-            onChange: tm.setUserFilterRole,
-            width: { base: "full", sm: "200px" },
-            options: [
-              { label: "All roles", value: "all" },
-              ...tm.tenantUserRoleFilterOptions.map((opt) => ({
-                label: opt.label,
-                value: opt.value,
-              })),
-            ],
-          },
-        ]}
-      />
-    );
-  }
-
-  // ── Tenant detail view ──────────────────────────────────────────────────
-  function renderTenantDetail() {
-    const t = tm.tenantDetailView!;
-    const tierAssignment =
-      tenantTierAssignments.find(
-        (a) => String(a.tenant_id) === String(t.tenant_id),
-      ) ?? null;
-    return (
-      <FormPage
-        maxW="full"
-        title={t.organisation}
-        description="Institution details."
-        parent={{
-          label: `${INSTITUTION} Management`,
-          href: "/institution-management",
-          onNavigate: tm.closeTenantDetailView,
-        }}
-        actions={
-          <HStack spacing={2} flexShrink={0} flexWrap="wrap">
-            {isDefaultTenant(t) && (
-              <Badge colorScheme="purple" textTransform="none">
-                Default
-              </Badge>
-            )}
-            <Badge colorScheme={getTenantStatusColorScheme(t.status)}>
-              {formatTenantStatusLabel(t.status)}
-            </Badge>
-            {isTenantStatus(t.status, TENANT.STATUS.PENDING) && (
-              <Button
-                leftIcon={<FiMail />}
-                size="sm"
-                variant="outline"
-                colorScheme="blue"
-                isLoading={tm.resendVerificationTenantId === t.tenant_id}
-                loadingText="Sending..."
-                onClick={() => void tm.handleResendTenantVerificationEmail(t)}
-              >
-                Resend Verification Email
-              </Button>
-            )}
-            <Button
-              leftIcon={<FiEdit2 />}
-              size="sm"
-              onClick={() => tm.handleOpenEditTenant(t)}
-            >
-              Edit
-            </Button>
-          </HStack>
-        }
-      >
-          <Tabs
-            colorScheme="blue"
-            variant="enclosed"
-            index={
-              tm.tenantDetailSubTab === "overview"
-                ? 0
-                : tm.tenantDetailSubTab === "users"
-                  ? 1
-                  : 2
-            }
-            onChange={(idx) =>
-              tm.setTenantDetailSubTab(
-                idx === 0 ? "overview" : idx === 1 ? "users" : "applications",
-              )
-            }
-          >
-            <TabList>
-              <Tab fontWeight="semibold">Overview</Tab>
-              <Tab fontWeight="semibold">Users</Tab>
-              <Tab fontWeight="semibold">Applications</Tab>
-            </TabList>
-            <TabPanels>
-              <TabPanel px={0} pt={6}>
-                {isTenantStatus(t.status, TENANT.STATUS.PENDING) && (
-                  <Alert
-                    status="info"
-                    variant="left-accent"
-                    borderRadius="md"
-                    mb={4}
-                  >
-                    <AlertIcon />
-                    <Box flex="1">
-                      <AlertDescription fontSize="sm">
-                        This tenant is awaiting activation. The contact must
-                        complete the email verification link. If the link
-                        expired or was not received, resend it below.
-                      </AlertDescription>
-                      <Button
-                        mt={3}
-                        size="sm"
-                        leftIcon={<FiMail />}
-                        colorScheme="blue"
-                        variant="outline"
-                        isLoading={
-                          tm.resendVerificationTenantId === t.tenant_id
-                        }
-                        loadingText="Sending..."
-                        onClick={() =>
-                          void tm.handleResendTenantVerificationEmail(t)
-                        }
-                      >
-                        Resend Verification Email
-                      </Button>
-                    </Box>
-                  </Alert>
-                )}
-                <InstitutionForm
-                  mode="view"
-                  showOrganisation={false}
-                  values={{
-                    organisation: t.organisation,
-                    contact_name: t.contact_name ?? "",
-                    email: t.email ?? "",
-                    phone_number: t.phone_number ?? "",
-                  }}
-                />
-                <FormSection title="Record">
-                    <ReadOnlyField label={`${INSTITUTION} ID`}>
-                      <Text fontFamily="mono" fontSize="sm">{t.tenant_id}</Text>
-                    </ReadOnlyField>
-                    <ReadOnlyField label="Status">
-                      <Badge colorScheme={getTenantStatusColorScheme(t.status)}>
-                        {formatTenantStatusLabel(t.status)}
-                      </Badge>
-                    </ReadOnlyField>
-                    <ReadOnlyField label="Created">{fmtDate(t.created_at)}</ReadOnlyField>
-                    <ReadOnlyField label="Tier">
-                      {resolveTierLabel(
-                        t.tier_id ?? tierAssignment?.tier_id,
-                        tierOptions,
-                        t.tier_name ?? tierAssignment?.tier_name,
-                      )}
-                    </ReadOnlyField>
-                    <ReadOnlyField label="Budget">
-                      {formatRupees(
-                        tenantBudgetNumber(t) ??
-                          (tierAssignment
-                            ? Number(tierAssignment.allocated_budget)
-                            : null),
-                      )}
-                    </ReadOnlyField>
-                    {(t.budget_effective_from || t.budget_effective_to) ? (
-                      <ReadOnlyField label="Budget period">
-                        {fmtDate(t.budget_effective_from)} — {fmtDate(t.budget_effective_to)}
-                      </ReadOnlyField>
-                    ) : null}
-                  </FormSection>
-              </TabPanel>
-              <TabPanel px={6} pt={6} pb={6}>
-                <HStack justify="flex-end" mb={4}>
-                  <CreateButton onClick={() => tm.openAddUserForTenant(t.tenant_id)}>
-                    Add User
-                  </CreateButton>
-                </HStack>
-                {renderTenantUsersTable()}
-              </TabPanel>
-              <TabPanel px={6} pt={6} pb={6}>
-                <ApplicationManagementTab
-                  tenantId={t.tenant_id}
-                  institutionBudget={
-                    tenantBudgetNumber(t) ??
-                    (tierAssignment
-                      ? Number(tierAssignment.allocated_budget)
-                      : null)
-                  }
-                  currency="INR"
-                />
-              </TabPanel>
-            </TabPanels>
-          </Tabs>
-      </FormPage>
-    );
-  }
 }
