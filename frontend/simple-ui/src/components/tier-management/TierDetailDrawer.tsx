@@ -53,6 +53,7 @@ export function TierDetailDrawer({
         formData={{
           name: viewTier.name,
           description: viewTier.description ?? "",
+          rateLimit: viewTier.rateLimit != null ? String(viewTier.rateLimit) : "",
           quotas: (viewTier.quotas ?? []).map((q) => ({
             modelTaskType: q.modelTaskType,
             unit: q.unit ?? "",

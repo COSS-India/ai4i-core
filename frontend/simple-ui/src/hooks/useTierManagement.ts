@@ -27,7 +27,11 @@ import { useInferenceTypes } from "./useInferenceTypes";
 import { generateUUID } from "../utils/uuid";
 import { resolveServiceId, resolveTaskType } from "../utils/platformService";
 import type { TierFormData, TierFormQuota } from "../types/tierManagement";
-import { validateQuotaLimit } from "../components/tier-management/tierFormValidation";
+import {
+  parseRateLimit,
+  validateQuotaLimit,
+  validateRateLimit,
+} from "../components/tier-management/tierFormValidation";
 
 const TIER_QUERY_KEY = "tiers";
 
@@ -179,7 +183,7 @@ function newQuota(): TierFormQuota {
 }
 
 function defaultFormData(): TierFormData {
-  return { name: "", description: "", quotas: [newQuota()] };
+  return { name: "", description: "", rateLimit: "", quotas: [newQuota()] };
 }
 
 /**
@@ -643,6 +647,16 @@ export function useTierManagement() {
       });
       return false;
     }
+    const rateLimitError = validateRateLimit(formData.rateLimit);
+    if (rateLimitError) {
+      toast({
+        title: rateLimitError,
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return false;
+    }
     const quotaError = validateQuotas(formData.quotas);
     if (quotaError) {
       setShowQuotaErrors(true);
@@ -659,6 +673,7 @@ export function useTierManagement() {
       await createTier({
         name: formData.name.trim(),
         description: formData.description.trim() || undefined,
+        rateLimit: parseRateLimit(formData.rateLimit) ?? undefined,
         quotas: formData.quotas.map((q) => ({
           modelTaskType: q.modelTaskType,
           limit: Number(q.limit),
@@ -705,6 +720,7 @@ export function useTierManagement() {
       setFormData({
         name: tier.name,
         description: tier.description ?? "",
+        rateLimit: tier.rateLimit != null ? String(tier.rateLimit) : "",
         quotas: tier.quotas?.length
           ? tier.quotas.map((q) => ({
               _key: generateUUID(),
@@ -740,6 +756,16 @@ export function useTierManagement() {
       });
       return;
     }
+    const rateLimitError = validateRateLimit(formData.rateLimit);
+    if (rateLimitError) {
+      toast({
+        title: rateLimitError,
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
     const quotaError = validateQuotas(formData.quotas);
     if (quotaError) {
       setShowQuotaErrors(true);
@@ -765,6 +791,8 @@ export function useTierManagement() {
       await updateTier(editingTier.id, {
         name: formData.name.trim(),
         description: formData.description.trim() || undefined,
+        // Always sent from the form: a cleared field (null) removes the limit.
+        rateLimit: parseRateLimit(formData.rateLimit),
         quotas: formData.quotas.map((q) => ({
           modelTaskType: q.modelTaskType,
           limit: Number(q.limit),
