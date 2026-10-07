@@ -153,9 +153,9 @@ interface RecipientsPickerProps {
   /** Active users of this institution that may be picked. */
   users: TenantUserView[];
   /**
-   * Deactivated users of this institution, all listed greyed and locked.
-   * Saved ones stay ticked and counted; the page's Submit leaves them out
-   * of the save.
+   * Deactivated users of this institution, all listed greyed, unticked and
+   * locked. Saved ones stay in the draft but are not counted; the page's
+   * Submit leaves them out of the save.
    */
   inactiveUsers: TenantUserView[];
   /**
@@ -189,9 +189,10 @@ const CHANNEL_LABELS: Record<string, string> = { EMAIL: "Email" };
  * "Also Notify In Your Org" — the row's trigger button plus a right-side
  * drawer listing the institution's active users. Picks are staged inside
  * the drawer and only reach the row draft on Done (Cancel drops them);
- * the page's Submit then saves them. Inactive users are all shown greyed
- * and locked — ticked and counted if saved, unticked otherwise; ids not found at all
- * (deleted) are hidden, left out of the counts, and dropped on Done.
+ * the page's Submit then saves them. Inactive users are all shown greyed,
+ * unticked and locked, and left out of the counts (saved ones stay in the
+ * draft); ids not found at all (deleted) are hidden, left out of the counts,
+ * and dropped on Done.
  */
 export const RecipientsPicker: React.FC<RecipientsPickerProps> = ({
   value,
@@ -226,6 +227,11 @@ export const RecipientsPicker: React.FC<RecipientsPickerProps> = ({
   const dropUnknown = (ids: string[]) =>
     usersLoaded ? ids.filter((id) => knownIds.has(id)) : ids;
   const keptStaged = dropUnknown(staged);
+  const inactiveIds = useMemo(
+    () => new Set(inactiveUsers.map((u) => u.user_id)),
+    [inactiveUsers],
+  );
+  const countActive = (ids: string[]) => ids.filter((id) => !inactiveIds.has(id)).length;
 
   const matchesQuery = (u: TenantUserView) => {
     const q = query.trim().toLowerCase();
@@ -237,7 +243,7 @@ export const RecipientsPicker: React.FC<RecipientsPickerProps> = ({
     );
   };
   const visibleUsers = users.filter(matchesQuery);
-  // All listed but locked: saved ones stay ticked, the rest can't be picked.
+  // All listed but unticked and locked — none of them can be picked.
   const visibleInactive = inactiveUsers.filter(matchesQuery);
 
   const open = () => {
@@ -256,7 +262,7 @@ export const RecipientsPicker: React.FC<RecipientsPickerProps> = ({
     setStaged((prev) => (checked ? [...prev, id] : prev.filter((v) => v !== id)));
   };
 
-  const count = dropUnknown(addedIds).length;
+  const count = countActive(dropUnknown(addedIds));
   const label = count === 0 ? "Add people" : `${count} added`;
 
   return (
@@ -336,7 +342,7 @@ export const RecipientsPicker: React.FC<RecipientsPickerProps> = ({
                 {visibleInactive.map((user) => (
                   <Checkbox
                     key={user.user_id}
-                    isChecked={addedIds.includes(user.user_id)}
+                    isChecked={false}
                     isDisabled
                     py={2.5}
                     px={1}
@@ -386,7 +392,7 @@ export const RecipientsPicker: React.FC<RecipientsPickerProps> = ({
 
           <DrawerFooter borderTopWidth="1px" borderColor="ink.200" justifyContent="space-between">
             <Text fontSize="sm" color="ink.600">
-              {keptStaged.length} selected
+              {countActive(keptStaged)} selected
             </Text>
             <HStack spacing={2}>
               <Button variant="ghost" onClick={drawer.onClose}>

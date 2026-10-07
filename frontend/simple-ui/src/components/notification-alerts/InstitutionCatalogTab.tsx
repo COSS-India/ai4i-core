@@ -111,7 +111,7 @@ const InstitutionCatalogTab: React.FC<InstitutionCatalogTabProps> = ({
     [alreadyNotifiedIds, usersQuery.data],
   );
 
-  // Deactivated since being added: shown greyed and still counted, but never
+  // Deactivated users: shown greyed, unticked and uncounted; saved ones are never
   // emailed and left out of the save (the API rejects inactive ids).
   const inactiveUsers = useMemo(
     () =>

@@ -174,7 +174,7 @@ export function useNotificationSubscriptions(
 
   /**
    * `inactiveIds`: recipients deactivated since they were saved. They stay
-   * in the draft (shown greyed, still counted) but are left out of the PUT
+   * in the draft (shown greyed and unticked, not counted) but are left out of the PUT
    * — the API rejects an inactive id, and the send path skips them anyway.
    */
   const submit = useCallback(async (
