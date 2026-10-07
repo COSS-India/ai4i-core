@@ -1,9 +1,9 @@
-import { INSTITUTION } from "../../../config/constants";
-import type { TenantView } from "../../../types/tenant";
+import { INSTITUTION } from "../config/constants";
+import type { TenantView } from "../types/tenant";
 import {
   validateTenantContactEmail,
   validateTenantUserEmail,
-} from "../../../utils/tenantEmailValidation";
+} from "./tenantEmailValidation";
 import {
   validateContactName,
   validateE164Phone,
@@ -11,7 +11,7 @@ import {
   validateOptionalPersonName,
   validateOrganisation,
   validateOrganisationUnique,
-} from "../../../utils/tenantFormValidation";
+} from "./tenantFormValidation";
 
 export function collectCreateTenantErrors(input: {
   organisation: string;

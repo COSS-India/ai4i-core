@@ -20,7 +20,7 @@ import {
   collectCreateTenantErrors,
   collectEditTenantErrors,
   collectEditUserErrors,
-} from "./tenantManagementValidation";
+} from "../../../utils/tenantManagementValidation";
 import {
   setFieldError,
   validateContactName,

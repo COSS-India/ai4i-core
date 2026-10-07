@@ -3,14 +3,11 @@
 import {
   ADOPTER_ADMIN_GUIDE_HREF,
   INSTITUTION_ADMIN_GUIDE_HREF,
-  ONBOARDING_GUIDE_PLATFORM_NAME_PARAM,
   PRE_LOGIN_GUIDE_OPTIONS,
   canSeeOnboardingGuide,
   getOnboardingGuideHref,
   getPreLoginGuideOptions,
-  withPlatformNameQuery,
 } from "../../src/config/onboardingGuide";
-import { applyRuntimeConfig, EMPTY_RUNTIME_CONFIG } from "../../src/config/runtimeConfig";
 
 describe("PRE_LOGIN_GUIDE_OPTIONS", () => {
   it("exposes both guide paths for the signed-out chooser", () => {
@@ -21,33 +18,11 @@ describe("PRE_LOGIN_GUIDE_OPTIONS", () => {
   });
 });
 
-describe("withPlatformNameQuery", () => {
-  it("appends platformName from runtime config by default", () => {
-    applyRuntimeConfig({ ...EMPTY_RUNTIME_CONFIG, platformName: "Acme AI" });
-    expect(withPlatformNameQuery(ADOPTER_ADMIN_GUIDE_HREF)).toBe(
-      `${ADOPTER_ADMIN_GUIDE_HREF}?${ONBOARDING_GUIDE_PLATFORM_NAME_PARAM}=Acme%20AI`,
-    );
-  });
-
-  it("encodes special characters in the platform name", () => {
-    expect(withPlatformNameQuery(INSTITUTION_ADMIN_GUIDE_HREF, "A&B")).toBe(
-      `${INSTITUTION_ADMIN_GUIDE_HREF}?${ONBOARDING_GUIDE_PLATFORM_NAME_PARAM}=A%26B`,
-    );
-  });
-});
-
 describe("getPreLoginGuideOptions", () => {
-  it("returns both guides with platformName query", () => {
-    const options = getPreLoginGuideOptions("Custom Portal");
-    expect(options).toEqual([
-      {
-        label: "Adopter Admin Guide",
-        href: withPlatformNameQuery(ADOPTER_ADMIN_GUIDE_HREF, "Custom Portal"),
-      },
-      {
-        label: "Institution Admin Guide",
-        href: withPlatformNameQuery(INSTITUTION_ADMIN_GUIDE_HREF, "Custom Portal"),
-      },
+  it("returns both guides without a platform name query", () => {
+    expect(getPreLoginGuideOptions()).toEqual([
+      { label: "Adopter Admin Guide", href: ADOPTER_ADMIN_GUIDE_HREF },
+      { label: "Institution Admin Guide", href: INSTITUTION_ADMIN_GUIDE_HREF },
     ]);
   });
 });
@@ -78,29 +53,23 @@ describe("canSeeOnboardingGuide", () => {
 });
 
 describe("getOnboardingGuideHref", () => {
-  const brand = "Test Brand";
-
   it.each([
     { roles: ["ADMIN"] },
-    { roles: ["MODERATOR"] },
     { roles: ["admin"] },
     { roles: ["ADMIN", "TENANT ADMIN"] },
-  ])("routes $roles to the Adopter Admin guide with platformName", ({ roles }) => {
-    expect(getOnboardingGuideHref(roles, brand)).toBe(
-      withPlatformNameQuery(ADOPTER_ADMIN_GUIDE_HREF, brand),
-    );
+  ])("routes $roles to the Adopter Admin guide", ({ roles }) => {
+    expect(getOnboardingGuideHref(roles)).toBe(ADOPTER_ADMIN_GUIDE_HREF);
   });
 
   it.each([
+    { roles: ["MODERATOR"] },
     { roles: ["TENANT ADMIN"] },
     { roles: ["TENANT_ADMIN"] },
     { roles: ["USER"] },
     { roles: ["USAGE VIEWER"] },
     { roles: undefined },
     { roles: [] as string[] },
-  ])("routes $roles to the Institution Admin guide with platformName", ({ roles }) => {
-    expect(getOnboardingGuideHref(roles, brand)).toBe(
-      withPlatformNameQuery(INSTITUTION_ADMIN_GUIDE_HREF, brand),
-    );
+  ])("routes $roles to the Institution Admin guide", ({ roles }) => {
+    expect(getOnboardingGuideHref(roles)).toBe(INSTITUTION_ADMIN_GUIDE_HREF);
   });
 });
