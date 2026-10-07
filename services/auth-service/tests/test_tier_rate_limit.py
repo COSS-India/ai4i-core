@@ -43,8 +43,8 @@ class TestTierCache:
 
         first, second = redis.eval.await_args_list
         assert first.args[0] is cache_service._HSET_IF_KEY_ABSENT
-        assert first.args[1:] == (1, "core:tier:t1", "status", "ACTIVE", "rate_limit", "100")
-        assert second.args[1:] == (1, "core:tier:t2", "status", "ACTIVE")
+        assert first.args[1:] == (1, "core:tier:t1", 600, "status", "ACTIVE", "rate_limit", "100")
+        assert second.args[1:] == (1, "core:tier:t2", 600, "status", "ACTIVE")
 
 
 def _cache(cached=None) -> MagicMock:

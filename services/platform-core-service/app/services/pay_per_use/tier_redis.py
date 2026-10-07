@@ -1,9 +1,10 @@
 """Tier status and rate limit in Redis, read by auth-service's /auth/validate.
 
-    core:tier:<tier_id>   HASH   status, rate_limit (absent = no limit), no TTL
+    core:tier:<tier_id>   HASH   status, rate_limit (absent = no limit), 10-min TTL
 
 Written after every tier commit and rebuilt at startup. A write failure is
-logged, not raised: the tier change is already committed.
+logged, not raised: the tier change is already committed, and the TTL bounds
+how long auth-service can read the old value before re-reading the DB.
 """
 import logging
 from typing import Optional
@@ -17,6 +18,7 @@ from app.models.pay_per_use.tier import Tier
 logger = logging.getLogger(__name__)
 
 KEY_PREFIX = "core:tier:"
+TTL_SECONDS = 10 * 60
 
 
 def _key(tier_id) -> str:
@@ -45,6 +47,7 @@ def _queue_write(pipe, tier: Tier) -> None:
     # pipeline is a MULTI, so readers never see the key absent in between.
     pipe.delete(_key(tier.id))
     pipe.hset(_key(tier.id), mapping=_mapping(tier))
+    pipe.expire(_key(tier.id), TTL_SECONDS)
 
 
 async def write_tier(tier: Tier) -> None:

@@ -27,7 +27,9 @@ REDIS_LOGOUT_PREFIX = "auth:logout:"
 
 # Redis key pattern: core:tier:{tier_id} -> HASH status, rate_limit (absent = no limit).
 # Written by platform-core (tier_redis.py); auth only repairs a missing key.
+# Same TTL as platform-core's write, so a stale value self-corrects from the DB.
 REDIS_TIER_PREFIX = "core:tier:"
+REDIS_TIER_TTL_SECONDS = 10 * 60
 
 # HSET only when the field already exists on the hash — one atomic step, so
 # a hash evicted between the check and the write is never recreated as a
@@ -40,10 +42,12 @@ end
 return 0
 """
 
-# HSET only when the key does not exist yet — hashes have no whole-key NX.
+# HSET + EXPIRE only when the key does not exist yet — hashes have no whole-key
+# NX. ARGV[1] is the TTL, the rest are field/value pairs.
 _HSET_IF_KEY_ABSENT = """
 if redis.call('EXISTS', KEYS[1]) == 0 then
-  redis.call('HSET', KEYS[1], unpack(ARGV))
+  redis.call('HSET', KEYS[1], unpack(ARGV, 2))
+  redis.call('EXPIRE', KEYS[1], ARGV[1])
   return 1
 end
 return 0
@@ -106,7 +110,9 @@ class CacheService(_BaseCacheService):
         if rate_limit is not None:
             fields += ["rate_limit", str(rate_limit)]
         try:
-            await self._redis.eval(_HSET_IF_KEY_ABSENT, 1, f"{REDIS_TIER_PREFIX}{tier_id}", *fields)
+            await self._redis.eval(
+                _HSET_IF_KEY_ABSENT, 1, f"{REDIS_TIER_PREFIX}{tier_id}", REDIS_TIER_TTL_SECONDS, *fields
+            )
         except Exception as exc:
             logger.warning("Tier %s Redis write-back failed: %s", tier_id, exc)
 

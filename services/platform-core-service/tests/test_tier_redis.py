@@ -43,6 +43,7 @@ class TestWriteTier:
         key = f"core:tier:{tier.id}"
         pipe.delete.assert_called_once_with(key)
         pipe.hset.assert_called_once_with(key, mapping={"status": "ACTIVE", "rate_limit": "100"})
+        pipe.expire.assert_called_once_with(key, 600)
         pipe.execute.assert_awaited_once()
 
     async def test_no_rate_limit_field_when_unset(self, monkeypatch):
