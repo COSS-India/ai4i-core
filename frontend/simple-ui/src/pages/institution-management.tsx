@@ -7,7 +7,7 @@ import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import CreateButton from "../components/common/CreateButton";
 import LoadingSpinner from "../components/common/LoadingSpinner";
 import { useAuth } from "../hooks/useAuth";
-import TenantManagementTab from "../components/profile/TenantManagementTab";
+import TenantManagementTab from "../components/institutions/TenantManagementTab";
 import { INSTITUTION, INSTITUTIONS } from "../config/constants";
 import { getPlatformName } from "../config/runtimeConfig";
 import {

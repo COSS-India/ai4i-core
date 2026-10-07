@@ -17,7 +17,7 @@ import FormActions from "../common/FormActions";
 import StandardModal from "../common/StandardModal";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import { useAssignTier } from "./hooks/useAssignTier";
-import type { ServiceMappingsStatus } from "./types";
+import type { ServiceMappingsStatus } from "../profile/types";
 import type { Tier } from "../../types/tierManagement";
 import type { TenantView } from "../../types/tenant";
 

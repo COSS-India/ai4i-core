@@ -24,7 +24,7 @@ import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 import { useOwnInstitutionDetails } from "./hooks/useOwnInstitutionDetails";
 import AssignTierModal from "./AssignTierModal";
-import { type ServiceMappingsStatus } from "./types";
+import { type ServiceMappingsStatus } from "../profile/types";
 import {
   INSTITUTION,
   INSTITUTION_ARTICLE,
@@ -43,9 +43,9 @@ import CreateInstitutionForm, {
   CREATE_INSTITUTION_FORM_ID,
 } from "./CreateInstitutionForm";
 import InstitutionForm from "./InstitutionForm";
-import InstitutionUserModal from "../tenant-management/InstitutionUserModal";
-import InstitutionConfirmDialogs from "../tenant-management/InstitutionConfirmDialogs";
-import ManageTierDrawer from "../tenant-management/ManageTierDrawer";
+import InstitutionUserModal from "./InstitutionUserModal";
+import InstitutionConfirmDialogs from "./InstitutionConfirmDialogs";
+import ManageTierDrawer from "./ManageTierDrawer";
 import {
   budgetWindowToMinDate,
   dateInputToEndOfDayIso,

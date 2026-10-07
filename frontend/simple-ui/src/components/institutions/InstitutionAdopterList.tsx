@@ -5,7 +5,7 @@ import DataTable, {
   type DataTableColumn,
   type DataTableSortState,
 } from "../common/table";
-import { InstitutionTenantRowActions } from "../tenant-management/InstitutionRowActions";
+import { InstitutionTenantRowActions } from "./InstitutionRowActions";
 import {
   INSTITUTION,
   INSTITUTIONS,

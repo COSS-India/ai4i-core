@@ -2,7 +2,7 @@ import React from "react";
 import { Card, HStack, Tab, TabList, TabPanel, TabPanels, Tabs } from "@chakra-ui/react";
 import { INSTITUTION } from "../../config/constants";
 import CreateButton from "../common/CreateButton";
-import ApplicationManagementTab from "./ApplicationManagementTab";
+import ApplicationManagementTab from "../profile/ApplicationManagementTab";
 import InstitutionDetailsPanel from "./InstitutionDetailsPanel";
 import { useOwnInstitutionDetails } from "./hooks/useOwnInstitutionDetails";
 

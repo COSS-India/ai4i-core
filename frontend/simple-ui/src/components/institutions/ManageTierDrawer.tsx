@@ -27,7 +27,7 @@ import {
 } from "../../utils/helpers";
 import FieldHint from "../common/FieldHint";
 import FieldLabel from "../common/FieldLabel";
-import TierSelect from "../profile/TierSelect";
+import TierSelect from "./TierSelect";
 
 type ManageTierDrawerProps = {
   isOpen: boolean;

@@ -24,7 +24,7 @@ import {
 } from "../../config/constants";
 import { isDefaultTenant } from "../../utils/defaultTenant";
 import type { TenantUserView, TenantView } from "../../types/tenant";
-import { useTenantManagement } from "../profile/hooks/useTenantManagement";
+import { useTenantManagement } from "./hooks/useTenantManagement";
 
 type TenantManagement = ReturnType<typeof useTenantManagement>;
 

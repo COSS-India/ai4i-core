@@ -6,7 +6,7 @@ import DataTable, {
   type DataTableSortState,
 } from "../common/table";
 import TenantUserRoleBadges from "../common/TenantUserRoleBadges";
-import { InstitutionUserRowActions } from "../tenant-management/InstitutionRowActions";
+import { InstitutionUserRowActions } from "./InstitutionRowActions";
 import {
   INSTITUTION,
   TENANT_USER_STATUS_LIST,
