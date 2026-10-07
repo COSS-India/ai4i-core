@@ -40,6 +40,13 @@ def _mock_request() -> MagicMock:
     return request
 
 
+def _tier_cache() -> MagicMock:
+    """CacheService stand-in: no tier key in Redis."""
+    cache = MagicMock()
+    cache.get_tier_cache = AsyncMock(return_value=None)
+    return cache
+
+
 def _result(**overrides) -> dict:
     base = {
         "id": 42,
@@ -62,7 +69,7 @@ class TestValidateBudgetExpired:
         api_key_svc.validate_api_key.return_value = _result(budget_effective_to=past.isoformat())
         response = Response()
 
-        result = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc)
+        result = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc, _tier_cache())
 
         assert result.status_code == 403
         assert b"BUDGET_EXPIRED" in result.body
@@ -80,7 +87,7 @@ class TestValidateBudgetExpired:
         api_key_svc.validate_api_key.return_value = _result(budget_effective_to=past.isoformat())
         response = Response()
 
-        result = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc)
+        result = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc, _tier_cache())
 
         assert result.status_code == 403
         assert b"BUDGET_EXPIRED" in result.body
@@ -97,7 +104,7 @@ class TestValidateBudgetExpired:
         )
         response = Response()
 
-        result = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc)
+        result = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc, _tier_cache())
 
         assert result.status_code == 403
         assert b"BUDGET_EXPIRED" in result.body
@@ -108,7 +115,7 @@ class TestValidateBudgetExpired:
         api_key_svc.validate_api_key.return_value = _result(budget_effective_to=future.isoformat())
         response = Response()
 
-        result = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc)
+        result = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc, _tier_cache())
 
         assert result.valid is True
 
@@ -120,7 +127,7 @@ class TestValidateBudgetExpired:
         api_key_svc.validate_api_key.return_value = _result(budget_effective_to="")
         response = Response()
 
-        result = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc)
+        result = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc, _tier_cache())
 
         assert result.valid is True
 
@@ -132,7 +139,7 @@ class TestValidateBudgetExpired:
         api_key_svc.validate_api_key.return_value = _result()
         response = Response()
 
-        result = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc)
+        result = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc, _tier_cache())
 
         assert result.valid is True
 
@@ -144,7 +151,7 @@ class TestValidateBudgetExpired:
         api_key_svc.validate_api_key.return_value = _result(budget_effective_to="not-a-date")
         response = Response()
 
-        result = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc)
+        result = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc, _tier_cache())
 
         assert result.valid is True
 
@@ -164,6 +171,6 @@ class TestValidateBudgetExpired:
         api_key_svc.validate_api_key = _validate_right_now
         response = Response()
 
-        result = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc)
+        result = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc, _tier_cache())
 
         assert result.valid is True
