@@ -153,11 +153,23 @@ interface RecipientsPickerProps {
   /** Active users of this institution that may be picked. */
   users: TenantUserView[];
   /**
+   * Deactivated users of this institution, all listed greyed, unticked and
+   * locked. Saved ones stay in the draft but are not counted; the page's
+   * Submit leaves them out of the save.
+   */
+  inactiveUsers: TenantUserView[];
+  /**
    * Users the send path emails regardless (Institution Admins). Ids of
    * theirs already in `value` are hidden, not counted, and kept on apply.
    */
   alreadyNotifiedIds: ReadonlySet<string>;
   isLoadingUsers: boolean;
+  /**
+   * `users` holds a successful load, so a saved id missing from both
+   * `users` and `inactiveUsers` really is gone (not just not loaded yet)
+   * and can be dropped.
+   */
+  usersLoaded: boolean;
   /** Set when loading `users` failed; shown in the drawer with a Retry. */
   usersError: string | null;
   /** `users` is empty only because everyone left is an Institution Admin. */
@@ -177,16 +189,19 @@ const CHANNEL_LABELS: Record<string, string> = { EMAIL: "Email" };
  * "Also Notify In Your Org" — the row's trigger button plus a right-side
  * drawer listing the institution's active users. Picks are staged inside
  * the drawer and only reach the row draft on Done (Cancel drops them);
- * the page's Submit then saves them. Saved ids that are no longer in
- * `users` (deactivated since) stay listed so they can be removed — the API
- * rejects a PUT that still contains one.
+ * the page's Submit then saves them. Inactive users are all shown greyed,
+ * unticked and locked, and left out of the counts (saved ones stay in the
+ * draft); ids not found at all (deleted) are hidden, left out of the counts,
+ * and dropped on Done.
  */
 export const RecipientsPicker: React.FC<RecipientsPickerProps> = ({
   value,
   onChange,
   users,
+  inactiveUsers,
   alreadyNotifiedIds,
   isLoadingUsers,
+  usersLoaded,
   usersError,
   onlyAdminsLeft,
   onOpen,
@@ -204,19 +219,32 @@ export const RecipientsPicker: React.FC<RecipientsPickerProps> = ({
   const [staged, setStaged] = useState<string[]>(addedIds);
 
   const selected = useMemo(() => new Set(staged), [staged]);
-  const knownIds = useMemo(() => new Set(users.map((u) => u.user_id)), [users]);
-  const unknownIds = staged.filter((id) => !knownIds.has(id));
+  const knownIds = useMemo(
+    () => new Set([...users, ...inactiveUsers].map((u) => u.user_id)),
+    [users, inactiveUsers],
+  );
+  // Until `users` has loaded, every saved id would look unknown — keep them all.
+  const dropUnknown = (ids: string[]) =>
+    usersLoaded ? ids.filter((id) => knownIds.has(id)) : ids;
+  const keptStaged = dropUnknown(staged);
+  const inactiveIds = useMemo(
+    () => new Set(inactiveUsers.map((u) => u.user_id)),
+    [inactiveUsers],
+  );
+  const countActive = (ids: string[]) => ids.filter((id) => !inactiveIds.has(id)).length;
 
-  const visibleUsers = useMemo(() => {
+  const matchesQuery = (u: TenantUserView) => {
     const q = query.trim().toLowerCase();
-    if (!q) return users;
-    return users.filter(
-      (u) =>
-        (u.full_name ?? "").toLowerCase().includes(q) ||
-        (u.username ?? "").toLowerCase().includes(q) ||
-        (u.email ?? "").toLowerCase().includes(q),
+    return (
+      !q ||
+      (u.full_name ?? "").toLowerCase().includes(q) ||
+      (u.username ?? "").toLowerCase().includes(q) ||
+      (u.email ?? "").toLowerCase().includes(q)
     );
-  }, [query, users]);
+  };
+  const visibleUsers = users.filter(matchesQuery);
+  // All listed but unticked and locked — none of them can be picked.
+  const visibleInactive = inactiveUsers.filter(matchesQuery);
 
   const open = () => {
     setStaged(addedIds);
@@ -226,7 +254,7 @@ export const RecipientsPicker: React.FC<RecipientsPickerProps> = ({
   };
 
   const apply = () => {
-    onChange([...hiddenIds, ...staged]);
+    onChange([...hiddenIds, ...keptStaged]);
     drawer.onClose();
   };
 
@@ -234,7 +262,7 @@ export const RecipientsPicker: React.FC<RecipientsPickerProps> = ({
     setStaged((prev) => (checked ? [...prev, id] : prev.filter((v) => v !== id)));
   };
 
-  const count = addedIds.length;
+  const count = countActive(dropUnknown(addedIds));
   const label = count === 0 ? "Add people" : `${count} added`;
 
   return (
@@ -311,10 +339,25 @@ export const RecipientsPicker: React.FC<RecipientsPickerProps> = ({
               </VStack>
             ) : (
               <VStack align="stretch" spacing={0}>
-                {unknownIds.map((id) => (
-                  <Checkbox key={id} isChecked onChange={() => toggle(id, false)} py={2.5} px={1}>
-                    <Text as="span" fontSize="sm" color="ink.600">
-                      Inactive user — untick to remove
+                {visibleInactive.map((user) => (
+                  <Checkbox
+                    key={user.user_id}
+                    isChecked={false}
+                    isDisabled
+                    py={2.5}
+                    px={1}
+                    sx={{
+                      ".chakra-checkbox__label[data-disabled]": { opacity: 1 },
+                      ".chakra-checkbox__control[data-disabled]": { borderColor: "ink.400" },
+                    }}
+                  >
+                    <HStack as="span" spacing={2}>
+                      <Text as="span" fontSize="sm" fontWeight="semibold" color="ink.600" noOfLines={1}>
+                        {userDisplayName(user)}
+                      </Text>
+                    </HStack>
+                    <Text as="span" display="block" fontSize="xs" color="ink.500" noOfLines={1}>
+                      {user.email}
                     </Text>
                   </Checkbox>
                 ))}
@@ -334,7 +377,7 @@ export const RecipientsPicker: React.FC<RecipientsPickerProps> = ({
                     </Text>
                   </Checkbox>
                 ))}
-                {visibleUsers.length === 0 && unknownIds.length === 0 ? (
+                {visibleUsers.length === 0 && visibleInactive.length === 0 ? (
                   <Text fontSize="sm" color="ink.600" py={2}>
                     {users.length > 0
                       ? "No people match your search."
@@ -349,7 +392,7 @@ export const RecipientsPicker: React.FC<RecipientsPickerProps> = ({
 
           <DrawerFooter borderTopWidth="1px" borderColor="ink.200" justifyContent="space-between">
             <Text fontSize="sm" color="ink.600">
-              {staged.length} selected
+              {countActive(keptStaged)} selected
             </Text>
             <HStack spacing={2}>
               <Button variant="ghost" onClick={drawer.onClose}>

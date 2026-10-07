@@ -111,6 +111,20 @@ const InstitutionCatalogTab: React.FC<InstitutionCatalogTabProps> = ({
     [alreadyNotifiedIds, usersQuery.data],
   );
 
+  // Deactivated users: shown greyed, unticked and uncounted; saved ones are never
+  // emailed and left out of the save (the API rejects inactive ids).
+  const inactiveUsers = useMemo(
+    () =>
+      (usersQuery.data?.users ?? []).filter(
+        (u) => !u.is_active && !alreadyNotifiedIds.has(u.user_id),
+      ),
+    [alreadyNotifiedIds, usersQuery.data],
+  );
+  const inactiveIds = useMemo(
+    () => new Set(inactiveUsers.map((u) => u.user_id)),
+    [inactiveUsers],
+  );
+
   // Loaded on mount so the "N added" counts are right, and re-fetched every
   // time a drawer opens so a user added in Institution Management shows up
   // without a page reload.
@@ -186,8 +200,10 @@ const InstitutionCatalogTab: React.FC<InstitutionCatalogTabProps> = ({
               value={draft.recipients}
               onChange={(recipients) => setRecipients(item.name, recipients)}
               users={pickableUsers}
+              inactiveUsers={inactiveUsers}
               alreadyNotifiedIds={alreadyNotifiedIds}
               isLoadingUsers={usersQuery.isFetching}
+              usersLoaded={usersQuery.isSuccess}
               usersError={usersError}
               onlyAdminsLeft={onlyAdminsLeft}
               onOpen={reloadUsers}
@@ -234,6 +250,7 @@ const InstitutionCatalogTab: React.FC<InstitutionCatalogTabProps> = ({
     getDraft,
     nameColumnHeader,
     alreadyNotifiedIds,
+    inactiveUsers,
     onlyAdminsLeft,
     pickableUsers,
     reloadUsers,
@@ -242,10 +259,11 @@ const InstitutionCatalogTab: React.FC<InstitutionCatalogTabProps> = ({
     setSubscribed,
     showThresholds,
     usersQuery.isFetching,
+    usersQuery.isSuccess,
   ]);
 
   const handleSubmit = async () => {
-    const result = await submit();
+    const result = await submit(inactiveIds);
     const saved = result.succeeded.length;
 
     if (result.failed) {
