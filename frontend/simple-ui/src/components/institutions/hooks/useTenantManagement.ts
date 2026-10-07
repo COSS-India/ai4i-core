@@ -13,10 +13,14 @@ import {
   collectUserEmails,
   normalizeEmail,
   validateEmailFormatOnly,
-  validateTenantContactEmail,
-  validateTenantUserEmail,
 } from "../../../utils/tenantEmailValidation";
 import { useEmailAvailabilityField } from "./useEmailAvailabilityField";
+import {
+  collectAddUserErrors,
+  collectCreateTenantErrors,
+  collectEditTenantErrors,
+  collectEditUserErrors,
+} from "../../../utils/tenantManagementValidation";
 import {
   setFieldError,
   validateContactName,
@@ -786,99 +790,16 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     patchEditUserFormError("phone_number", validateE164Phone(phone_number));
   };
 
-  const collectCreateTenantErrors = (): Record<string, string> => {
-    const errors: Record<string, string> = {};
-    const orgError = validateOrganisation(tenantForm.organisation);
-    if (orgError) errors.organisation = orgError;
-    else {
-      const dupError = validateOrganisationUnique(
-        tenantForm.organisation,
-        tenants,
-      );
-      if (dupError) errors.organisation = dupError;
-    }
-    const contactError = validateContactName(tenantForm.contact_name);
-    if (contactError) errors.contact_name = contactError;
-    const emailError = validateTenantContactEmail(
-      tenantForm.email,
-      knownTenantEmails,
-      knownUserEmails,
-    );
-    if (emailError) errors.email = emailError;
-    const phoneError = validateE164Phone(tenantForm.phone_number);
-    if (phoneError) errors.phone_number = phoneError;
-    return errors;
-  };
-
-  const collectAddUserErrors = (): Record<string, string> => {
-    const errors: Record<string, string> = {};
-    const tenantId = lockedUserFormTenantId ?? userForm.tenant_id?.trim() ?? "";
-    if (!tenantId) errors.tenant_id = `${INSTITUTION} is required.`;
-    const fullNameError = validateFullName(userForm.full_name);
-    if (fullNameError) errors.full_name = fullNameError;
-    const emailError = validateTenantUserEmail(
-      userForm.email,
-      knownTenantEmails,
-      knownUserEmails,
-    );
-    if (emailError) errors.email = emailError;
-    const phoneError = validateE164Phone(userForm.phone_number);
-    if (phoneError) errors.phone_number = phoneError;
-    return errors;
-  };
-
-  const collectEditTenantErrors = (): Record<string, string> => {
-    const errors: Record<string, string> = {};
-    const orgError = validateOrganisation(editTenantForm.organisation ?? "");
-    if (orgError) errors.organisation = orgError;
-    else {
-      const dupError = validateOrganisationUnique(
-        editTenantForm.organisation ?? "",
-        tenants,
-        editTenantForm.tenant_id,
-      );
-      if (dupError) errors.organisation = dupError;
-    }
-    const contactError = validateOptionalPersonName(
-      editTenantForm.contact_name ?? "",
-    );
-    if (contactError) errors.contact_name = contactError;
-    if (isEditTenantEmailEditable) {
-      const emailError = validateTenantContactEmail(
-        editTenantForm.email ?? "",
-        knownTenantEmails,
-        knownUserEmails,
-        {
-          excludeTenantEmail: editTenantRow?.email,
-          excludeUserEmail: editTenantRow?.email,
-        },
-      );
-      if (emailError) errors.email = emailError;
-    }
-    const phoneError = validateE164Phone(editTenantForm.phone_number ?? "");
-    if (phoneError) errors.phone_number = phoneError;
-    return errors;
-  };
-
-  const collectEditUserErrors = (): Record<string, string> => {
-    const errors: Record<string, string> = {};
-    if (
-      !editUserForm.username?.trim() ||
-      editUserForm.username.trim().length < 3
-    ) {
-      errors.username = "Username must be at least 3 characters.";
-    }
-    const fullNameError = validateOptionalPersonName(
-      editUserForm.full_name ?? "",
-    );
-    if (fullNameError) errors.full_name = fullNameError;
-    const phoneError = validateE164Phone(editUserForm.phone_number ?? "");
-    if (phoneError) errors.phone_number = phoneError;
-    return errors;
-  };
-
   const handleRegisterTenant = async (): Promise<boolean> => {
-    const errors = collectCreateTenantErrors();
+    const errors = collectCreateTenantErrors({
+      organisation: tenantForm.organisation,
+      contact_name: tenantForm.contact_name,
+      email: tenantForm.email,
+      phone_number: tenantForm.phone_number,
+      tenants,
+      knownTenantEmails,
+      knownUserEmails,
+    });
     delete errors.email;
     const emailOk = await createTenantEmailAvailability.verifyNow();
     if (!emailOk) return false;
@@ -980,7 +901,15 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   };
 
   const handleRegisterUser = async () => {
-    const errors = collectAddUserErrors();
+    const errors = collectAddUserErrors({
+      lockedUserFormTenantId,
+      tenant_id: userForm.tenant_id,
+      full_name: userForm.full_name,
+      email: userForm.email,
+      phone_number: userForm.phone_number,
+      knownTenantEmails,
+      knownUserEmails,
+    });
     delete errors.email;
     const emailOk = await addUserEmailAvailability.verifyNow();
     if (!emailOk) return;
@@ -1088,7 +1017,19 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     ) {
       return false;
     }
-    return Object.keys(collectCreateTenantErrors()).length === 0;
+    return (
+      Object.keys(
+        collectCreateTenantErrors({
+          organisation: tenantForm.organisation,
+          contact_name: tenantForm.contact_name,
+          email: tenantForm.email,
+          phone_number: tenantForm.phone_number,
+          tenants,
+          knownTenantEmails,
+          knownUserEmails,
+        }),
+      ).length === 0
+    );
   }, [
     isSubmittingTenant,
     isLoadingKnownEmails,
@@ -1114,7 +1055,19 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     ) {
       return false;
     }
-    return Object.keys(collectAddUserErrors()).length === 0;
+    return (
+      Object.keys(
+        collectAddUserErrors({
+          lockedUserFormTenantId,
+          tenant_id: userForm.tenant_id,
+          full_name: userForm.full_name,
+          email: userForm.email,
+          phone_number: userForm.phone_number,
+          knownTenantEmails,
+          knownUserEmails,
+        }),
+      ).length === 0
+    );
   }, [
     isSubmittingUser,
     isLoadingKnownEmails,
@@ -1175,7 +1128,18 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   const handleSaveEditTenant = async () => {
     if (!editTenantForm.tenant_id) return;
-    const errors = collectEditTenantErrors();
+    const errors = collectEditTenantErrors({
+      organisation: editTenantForm.organisation,
+      contact_name: editTenantForm.contact_name,
+      email: editTenantForm.email,
+      phone_number: editTenantForm.phone_number,
+      tenant_id: editTenantForm.tenant_id,
+      tenants,
+      isEditTenantEmailEditable,
+      knownTenantEmails,
+      knownUserEmails,
+      editTenantEmail: editTenantRow?.email,
+    });
     if (isEditTenantEmailEditable) {
       delete errors.email;
       const emailOk = await editTenantEmailAvailability.verifyNow();
@@ -1262,7 +1226,22 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         return false;
       }
     }
-    return Object.keys(collectEditTenantErrors()).length === 0;
+    return (
+      Object.keys(
+        collectEditTenantErrors({
+          organisation: editTenantForm.organisation,
+          contact_name: editTenantForm.contact_name,
+          email: editTenantForm.email,
+          phone_number: editTenantForm.phone_number,
+          tenant_id: editTenantForm.tenant_id,
+          tenants,
+          isEditTenantEmailEditable,
+          knownTenantEmails,
+          knownUserEmails,
+          editTenantEmail: editTenantRow?.email,
+        }),
+      ).length === 0
+    );
   }, [
     isSubmittingEditTenant,
     isLoadingKnownEmails,
@@ -1281,7 +1260,15 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   const canSubmitEditUserForm = useMemo(() => {
     if (isSubmittingEditUser) return false;
-    return Object.keys(collectEditUserErrors()).length === 0;
+    return (
+      Object.keys(
+        collectEditUserErrors({
+          username: editUserForm.username,
+          full_name: editUserForm.full_name,
+          phone_number: editUserForm.phone_number,
+        }),
+      ).length === 0
+    );
   }, [
     isSubmittingEditUser,
     editUserForm.username,
@@ -1588,7 +1575,11 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   const handleSaveEditUser = async () => {
     if (!editUserForm.tenant_id || !editUserForm.user_id) return;
-    const errors = collectEditUserErrors();
+    const errors = collectEditUserErrors({
+      username: editUserForm.username,
+      full_name: editUserForm.full_name,
+      phone_number: editUserForm.phone_number,
+    });
     if (Object.keys(errors).length > 0) {
       setEditUserFormErrors(errors);
       return;
