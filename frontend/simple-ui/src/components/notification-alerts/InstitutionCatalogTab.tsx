@@ -120,12 +120,10 @@ const InstitutionCatalogTab: React.FC<InstitutionCatalogTabProps> = ({
       ),
     [alreadyNotifiedIds, usersQuery.data],
   );
-  console.log("inactiveUsers", inactiveUsers);
   const inactiveIds = useMemo(
     () => new Set(inactiveUsers.map((u) => u.user_id)),
     [inactiveUsers],
   );
-  console.log("inactiveIds", inactiveIds);
 
   // Loaded on mount so the "N added" counts are right, and re-fetched every
   // time a drawer opens so a user added in Institution Management shows up
