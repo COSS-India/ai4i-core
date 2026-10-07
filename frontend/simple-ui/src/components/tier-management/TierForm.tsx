@@ -1,4 +1,11 @@
-import { FormControl, Input, VStack } from "@chakra-ui/react";
+import {
+  FormControl,
+  FormErrorMessage,
+  Input,
+  NumberInput,
+  NumberInputField,
+  VStack,
+} from "@chakra-ui/react";
 import FormSection from "../common/FormSection";
 import ReadOnlyField from "../common/ReadOnlyField";
 import FieldHint from "../common/FieldHint";
@@ -7,6 +14,7 @@ import { formatModelTaskTypeLabel } from "../../config/constants";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import type { TierFormData, TierFormQuota } from "../../types/tierManagement";
 import { QuotaEditor } from "./QuotaEditor";
+import { validateRateLimit } from "./tierFormValidation";
 
 function formatQuotaAmount(
   limit: number,
@@ -54,6 +62,7 @@ export function TierForm({
   showErrors,
 }: TierFormProps) {
   const formMode = mode ?? (isEditMode ? "edit" : "create");
+  const rateLimitError = validateRateLimit(formData.rateLimit);
   if (formMode === "view") {
     return (
       <>
@@ -62,6 +71,11 @@ export function TierForm({
           <ReadOnlyField label="Description">{formData.description || "—"}</ReadOnlyField>
         </FormSection>
         <FormSection title="Usage limits">
+          <ReadOnlyField label="Rate Limit (per minute)">
+            {formData.rateLimit
+              ? Number(formData.rateLimit).toLocaleString("en-US")
+              : "Platform default"}
+          </ReadOnlyField>
           {formData.quotas.length ? (
             formData.quotas.map((q) => {
               const limit = Number(q.limit);
@@ -114,6 +128,22 @@ export function TierForm({
       </FormSection>
 
       <FormSection title="Usage limits">
+      <FormControl isInvalid={!!rateLimitError}>
+        <FieldLabel>Rate Limit (per minute)</FieldLabel>
+        <NumberInput
+          min={1}
+          step={1}
+          // Keep an out-of-range value on blur so the inline error can name it.
+          clampValueOnBlur={false}
+          value={formData.rateLimit}
+          onChange={(v) => onChange({ ...formData, rateLimit: v })}
+        >
+          <NumberInputField placeholder={FIELD_HINTS.tier.rateLimit.placeholder} />
+        </NumberInput>
+        <FormErrorMessage>{rateLimitError}</FormErrorMessage>
+        <FieldHint show={!rateLimitError}>{FIELD_HINTS.tier.rateLimit.helper}</FieldHint>
+      </FormControl>
+
       <QuotaEditor
         quotas={formData.quotas}
         onChange={(quotas) => onChange({ ...formData, quotas })}

@@ -162,6 +162,10 @@ export const FIELD_HINTS = {
       helper: "e.g. Enterprise tier for high usage.",
     },
     quotaUnit: { helper: "Auto-filled based on Model Task Type (e.g., tokens for LLM)" },
+    rateLimit: {
+      placeholder: "Enter rate limit",
+      helper: "Requests per minute across all inference APIs. Leave empty to use the platform default.",
+    },
     quotaLimit: {
       placeholder: "Enter quota limit",
       helper: `e.g. 10000. Whole number between 1 and ${QUOTA_LIMIT_MAX_LABEL}`,

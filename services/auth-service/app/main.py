@@ -45,7 +45,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.routes import api_router, versioning
 from app.services.role_permission_cache import role_permission_cache
 from app.services.tenant_name_cache import tenant_name_cache
-from app.services.tier_status_cache import tier_status_cache
 
 from ai4i_core.logging import configure_logging, RequestMiddleware
 
@@ -127,7 +126,6 @@ async def lifespan(app: FastAPI):
     await role_permission_cache.start()
     await tenant_name_cache.start()
 
-    await tier_status_cache.start()
     init_kafka_producer(
         bootstrap_servers=settings.kafka_server,
         topic=settings.topic_notification,
@@ -139,7 +137,6 @@ async def lifespan(app: FastAPI):
 
     await stop_notifications()
     close_kafka_producer()
-    await tier_status_cache.stop()
     await tenant_name_cache.stop()
     await role_permission_cache.stop()
     await close_redis()
