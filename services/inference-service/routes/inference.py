@@ -3,7 +3,6 @@ Main inference router with unified /inference endpoint.
 Handles all inference requests regardless of task type.
 Integrates orchestration, factory, and telemetry.
 """
-import json
 import logging
 from typing import Any, Dict, Optional, Tuple
 
@@ -12,6 +11,7 @@ from ai4i_core.context import (
     get_llm_usage_model_id,
     get_llm_usage_model_name,
     get_llm_usage_output_tokens,
+    set_request_tags,
 )
 from fastapi import (
     APIRouter, Body, Depends, File, Form, HTTPException, Request, Response, UploadFile,
@@ -24,6 +24,7 @@ from models.common import ChatCompletionResponse, GenericInferenceResponse
 from orchestrator import Orchestrator
 from services.llm_service import OpenAIProxyService
 from trace.request_span import traced_span, get_context_attributes
+from trace.request_tags import strip_caller_tags, validate_request_tags
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["inference"])
@@ -633,6 +634,33 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
     is_stream_enabled = True if (isinstance(payload, dict) and payload.get("stream")) else False
     service_id = payload.get("model", "")
     request.state.service_id = service_id
+
+    # Caller tags (OpenAI `user` / `metadata`) are checked before anything is
+    # proxied: a rejection here never opens an ai-inference span, so it is
+    # never billed. Like the tier-gate/404 rejections in proxy_traced(), it
+    # still emits request + model spans so the failure shows up in traces.
+    tag_error = validate_request_tags(payload)
+    if tag_error:
+        param, message = tag_error
+        with traced_span("request", root=True, classify_status=True) as req_attrs:
+            req_attrs["url"] = request.url.path
+            req_attrs["method"] = request.method
+            req_attrs.update(get_context_attributes())
+            req_attrs["status"] = "failure"
+            req_attrs["status_code"] = 400
+            with traced_span("model") as model_attrs:
+                OpenAIProxyService._seed_model_attrs(
+                    model_attrs, service_id, failure_status_code=400,
+                )
+        _bridge_llm_usage_to_request(request)
+        return _openai_error(400, message=message, param=param)
+
+    # Every span of this request picks the tags up via get_context_attributes().
+    # Set unconditionally (even when empty) so nothing from an earlier set in
+    # the same context can carry over.
+    set_request_tags(user=payload.get("user"), metadata=payload.get("metadata"))
+    payload = strip_caller_tags(payload)
+
     if is_stream_enabled:
         return await _run_llm_chat_stream(request, payload, path)
     return await _run_llm_chat_consolidated(request, payload, path)
@@ -648,8 +676,7 @@ async def chat_completions(
     request: Request,
     payload: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
 ) -> Response:
-    """OpenAI-compatible chat completions, proxied verbatim to the upstream LLM."""
-    logger.info(f"In routes method chat/completions payload={json.dumps(payload)}")
+    """OpenAI-compatible chat completions, proxied to the upstream LLM (minus `user`/`metadata`)."""
     return await _run_llm_chat(request, payload, path="/v1/chat/completions")
 
 
@@ -663,7 +690,7 @@ async def chat(
     request: Request,
     payload: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
 ) -> Response:
-    """Alias of /chat/completions; proxied verbatim to the upstream LLM."""
+    """Alias of /chat/completions; proxied to the upstream LLM (minus `user`/`metadata`)."""
     return await _run_llm_chat(request, payload, path="/v1/chat/completions")
 
 
@@ -679,7 +706,7 @@ async def chat(
 _AUDIO_MAX_BYTES = 25 * 1024 * 1024  # OpenAI's documented cap for /audio/*
 
 
-def _audio_error(
+def _openai_error(
     status: int,
     *,
     message: str,
@@ -748,7 +775,7 @@ async def _proxy_audio_upload(
             OpenAIProxyService._seed_model_attrs(
                 model_attrs, data.get("model", "") or "", failure_status_code=413,
             )
-        return _audio_error(
+        return _openai_error(
             413,
             message=(
                 f"File exceeds the 25 MB limit "
