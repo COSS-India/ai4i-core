@@ -1,16 +1,5 @@
 """add pii policy tables
 
-Creates the policy data model declared in
-services/platform-core-service/app/models/policy_management/: category,
-sub_category, policy_type, policy and audit_log.
-
-The companion column applications.policy_id lives in the auth DB and is
-added by ai4iplatform_auth/51379ee0d696_add_policy_id_to_applications.py.
-
-Postgres has no foreign keys on array elements, so policy.policy_type_id
-(-> policy_type.id) and audit_log.policy_id (-> policy.id) are not enforced
-by the database; the application layer must validate them.
-
 Revision ID: e3df9d24b593
 Revises: 7a3c9e1f5b2d
 Create Date: 2026-10-08 17:10:11.004129
@@ -74,7 +63,7 @@ def upgrade() -> None:
     sa.Column('description', sa.Text(), nullable=True),
     sa.Column('domain', postgresql.ARRAY(sa.Text()), nullable=False),
     sa.Column('guardrail_scope', sa.Enum('input', 'output', 'both', name='guardrail_scope_enum'), nullable=False),
-    sa.Column('is_global', sa.Boolean(), server_default=sa.text('false'), nullable=True),
+    sa.Column('is_global', sa.Boolean(), server_default=sa.text('false'), nullable=False),
     sa.Column('sub_category_id', sa.Integer(), nullable=False),
     sa.Column('is_active', sa.Boolean(), server_default=sa.text('false'), nullable=False),
     sa.Column('policy_type_id', postgresql.ARRAY(sa.Integer()), nullable=True),

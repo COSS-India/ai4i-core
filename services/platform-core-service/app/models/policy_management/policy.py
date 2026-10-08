@@ -37,7 +37,7 @@ class Policy(Base):
         ),
         nullable=False,
     )
-    is_global = Column(Boolean, nullable=True, server_default=text("false"))
+    is_global = Column(Boolean, nullable=False, server_default=text("false"))
     sub_category_id = Column(
         Integer,
         ForeignKey("sub_category.id", name="fk_policy_sub_category_id", ondelete="RESTRICT"),

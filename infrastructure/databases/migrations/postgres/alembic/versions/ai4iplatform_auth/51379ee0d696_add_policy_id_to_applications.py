@@ -1,9 +1,5 @@
 """add policy_id to applications
 
-Links applications to PII policies. The policy table lives in the core DB
-(ai4iplatform_core/e3df9d24b593_add_pii_policy_tables.py), so there is no
-foreign key; the application layer must validate the ids.
-
 Revision ID: 51379ee0d696
 Revises: a4e3128bdf70
 Create Date: 2026-10-08 17:10:04.344399
