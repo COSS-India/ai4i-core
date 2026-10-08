@@ -46,6 +46,12 @@ class SubCategoryCreate(BaseModel):
         return v.strip() or None
 
 
+class SubCategoryStatusUpdate(BaseModel):
+    """Enable or disable a sub-category without deleting it."""
+
+    is_active: bool
+
+
 # ── Route response envelopes ──
 
 
@@ -57,6 +63,13 @@ class ListSubCategoryResponse(SuccessResponse):
 
 class CreateSubCategoryResponse(SuccessResponseWithMeta):
     """POST /policies/sub-categories"""
+
+    data: SubCategoryItem
+    meta: MessageMeta
+
+
+class UpdateSubCategoryStatusResponse(SuccessResponseWithMeta):
+    """PUT /policies/sub-categories/{sub_category_id}"""
 
     data: SubCategoryItem
     meta: MessageMeta

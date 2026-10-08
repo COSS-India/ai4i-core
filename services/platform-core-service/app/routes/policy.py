@@ -3,11 +3,16 @@
 Categories are the top level of the policy hierarchy; a category is created
 before any sub-categories or policies exist under it. Each sub-category
 belongs to exactly one category.
+
+Categories and sub-categories are enabled/disabled via PUT rather than
+deleted, so their policies and history survive a disable. A disabled
+category disables every sub-category under it at enforcement time; their own
+is_active flags are left as-is.
 """
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Path, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -17,14 +22,18 @@ from app.schemas.common import MessageMeta, error_responses
 from app.schemas.policy_management.category import (
     CategoryCreate,
     CategoryListData,
+    CategoryStatusUpdate,
     CreateCategoryResponse,
     ListCategoryResponse,
+    UpdateCategoryStatusResponse,
 )
 from app.schemas.policy_management.sub_category import (
     CreateSubCategoryResponse,
     ListSubCategoryResponse,
     SubCategoryCreate,
     SubCategoryListData,
+    SubCategoryStatusUpdate,
+    UpdateSubCategoryStatusResponse,
 )
 from app.services.policy_management import category_service, sub_category_service
 
@@ -67,6 +76,29 @@ async def create_category(
     )
 
 
+@router.put(
+    "/categories/{category_id}",
+    response_model=UpdateCategoryStatusResponse,
+    responses=error_responses(403, 404),
+)
+async def update_category_status(
+    payload: CategoryStatusUpdate,
+    request: Request,
+    category_id: int = Path(..., gt=0),
+    session: AsyncSession = Depends(get_db),
+) -> UpdateCategoryStatusResponse:
+    """Enable or disable a category; 404 if it does not exist. Disabling
+    does not delete it or touch its sub-categories' own flags, so
+    re-enabling resumes everything as configured. Adopter Admin only."""
+    if not is_admin(request):
+        raise InsufficientPermissionsError()
+    item = await category_service.update_category_status(session, category_id, payload)
+    state = "enabled" if item.is_active else "disabled"
+    return UpdateCategoryStatusResponse(
+        success=True, data=item, meta=MessageMeta(message=f"Category '{item.name}' {state}.")
+    )
+
+
 @router.get(
     "/sub-categories", response_model=ListSubCategoryResponse, responses=error_responses(403, 404)
 )
@@ -102,4 +134,27 @@ async def create_sub_category(
     item = await sub_category_service.create_sub_category(session, payload)
     return CreateSubCategoryResponse(
         success=True, data=item, meta=MessageMeta(message=f"Sub-category '{item.name}' created.")
+    )
+
+
+@router.put(
+    "/sub-categories/{sub_category_id}",
+    response_model=UpdateSubCategoryStatusResponse,
+    responses=error_responses(403, 404),
+)
+async def update_sub_category_status(
+    payload: SubCategoryStatusUpdate,
+    request: Request,
+    sub_category_id: int = Path(..., gt=0),
+    session: AsyncSession = Depends(get_db),
+) -> UpdateSubCategoryStatusResponse:
+    """Enable or disable a sub-category; 404 if it does not exist. The
+    parent category and sibling sub-categories are unaffected. Adopter
+    Admin only."""
+    if not is_admin(request):
+        raise InsufficientPermissionsError()
+    item = await sub_category_service.update_sub_category_status(session, sub_category_id, payload)
+    state = "enabled" if item.is_active else "disabled"
+    return UpdateSubCategoryStatusResponse(
+        success=True, data=item, meta=MessageMeta(message=f"Sub-category '{item.name}' {state}.")
     )

@@ -170,7 +170,9 @@
 
     { "endpoint": "GET:/api/v1/policies/categories",                      "permissionRequired": 1,   "description": "List policy categories (admin sentinel — ADMIN only)" },
     { "endpoint": "POST:/api/v1/policies/categories",                     "permissionRequired": 1,   "description": "Create a policy category (admin sentinel — ADMIN only)" },
+    { "endpoint": "PUT:/api/v1/policies/categories/{category_id}",        "permissionRequired": 1,   "description": "Enable/disable a policy category (admin sentinel — ADMIN only)" },
     { "endpoint": "GET:/api/v1/policies/sub-categories",                  "permissionRequired": 1,   "description": "List policy sub-categories (admin sentinel — ADMIN only)" },
-    { "endpoint": "POST:/api/v1/policies/sub-categories",                 "permissionRequired": 1,   "description": "Create a policy sub-category (admin sentinel — ADMIN only)" }
+    { "endpoint": "POST:/api/v1/policies/sub-categories",                 "permissionRequired": 1,   "description": "Create a policy sub-category (admin sentinel — ADMIN only)" },
+    { "endpoint": "PUT:/api/v1/policies/sub-categories/{sub_category_id}", "permissionRequired": 1,  "description": "Enable/disable a policy sub-category (admin sentinel — ADMIN only)" }
   ]
 }

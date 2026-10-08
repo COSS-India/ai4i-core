@@ -4,6 +4,10 @@
 Names are unique case-insensitively (uq_category_name_lower). The
 pre-insert check gives a clean 409; the IntegrityError fallback covers two
 concurrent creates of the same name.
+
+Disabling a category only flips its own is_active; its sub-categories keep
+their flags, so re-enabling restores them as they were. Enforcement must
+treat a sub-category as disabled whenever its parent category is.
 """
 
 from typing import List
@@ -12,9 +16,13 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import DuplicateEntityError
+from app.core.exceptions import DuplicateEntityError, EntityNotFoundError
 from app.models.policy_management.category import Category
-from app.schemas.policy_management.category import CategoryCreate, CategoryItem
+from app.schemas.policy_management.category import (
+    CategoryCreate,
+    CategoryItem,
+    CategoryStatusUpdate,
+)
 
 
 async def list_categories(session: AsyncSession) -> List[CategoryItem]:
@@ -36,5 +44,17 @@ async def create_category(session: AsyncSession, body: CategoryCreate) -> Catego
     except IntegrityError:
         await session.rollback()
         raise DuplicateEntityError(f"Category '{body.name}'")
+    await session.refresh(row)
+    return CategoryItem.model_validate(row)
+
+
+async def update_category_status(
+    session: AsyncSession, category_id: int, body: CategoryStatusUpdate
+) -> CategoryItem:
+    row = await session.get(Category, category_id)
+    if row is None:
+        raise EntityNotFoundError(f"Category {category_id}")
+    row.is_active = body.is_active
+    await session.commit()
     await session.refresh(row)
     return CategoryItem.model_validate(row)
