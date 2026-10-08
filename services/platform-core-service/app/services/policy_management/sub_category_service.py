@@ -6,18 +6,21 @@ Names are unique case-insensitively across all categories, not just within
 one (uq_sub_category_name_lower). The pre-insert checks give a clean 404/409;
 the IntegrityError fallback covers a concurrent create of the same name.
 
-Disabling a sub-category only flips its own is_active; the parent category
-and sibling sub-categories are untouched.
+Enabling or disabling a sub-category writes the same is_active to every
+policy under it; the parent category and sibling sub-categories are
+untouched. A sub-category cannot be enabled
+while its category is disabled (409) — enable the category instead.
 """
 
 from typing import List, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import DuplicateEntityError, EntityNotFoundError
+from app.core.exceptions import AppError, DuplicateEntityError, EntityNotFoundError
 from app.models.policy_management.category import Category
+from app.models.policy_management.policy import Policy
 from app.models.policy_management.sub_category import SubCategory
 from app.schemas.policy_management.sub_category import (
     SubCategoryCreate,
@@ -69,7 +72,21 @@ async def update_sub_category_status(
     row = await session.get(SubCategory, sub_category_id)
     if row is None:
         raise EntityNotFoundError(f"Sub-category {sub_category_id}")
+    if body.is_active:
+        category = await session.get(Category, row.category_id)
+        if not category.is_active:
+            raise AppError(
+                f"Category '{category.name}' is disabled; enable it before enabling "
+                f"sub-category '{row.name}'.",
+                code="CATEGORY_DISABLED",
+                status_code=409,
+            )
     row.is_active = body.is_active
+    await session.execute(
+        update(Policy)
+        .where(Policy.sub_category_id == sub_category_id)
+        .values(is_active=body.is_active)
+    )
     await session.commit()
     await session.refresh(row)
     return SubCategoryItem.model_validate(row)

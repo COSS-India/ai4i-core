@@ -1,15 +1,9 @@
 """Policy reads for the policy hierarchy (Category -> SubCategory -> Policy).
 
 A policy is enforced only when it, its sub-category and that sub-category's
-category are all active. The effective status is derived from the three
-is_active flags at read time rather than copied down on every toggle, so
-disabling a category or sub-category never overwrites a policy's own flag:
-re-enabling the parent resumes exactly the policies that were active before,
-and a policy the admin had switched off individually stays off.
-
-Anything that enforces or reports policy status should go through
-``is_enforced`` / ``enforced_policies_query`` instead of reading
-``Policy.is_active`` alone.
+category are all active. Toggling a category or sub-category already writes
+is_active down to its policies; checking all three flags here as well keeps
+enforcement correct for a policy that is enabled on its own later.
 """
 
 from typing import List, Optional
