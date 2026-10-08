@@ -369,7 +369,8 @@ async def search_traces_opensearch(
         max_length=256, description="Exact end-user ID the caller sent as OpenAI `user`",
     )] = None,
     metadata_key: Annotated[Optional[str], Query(
-        min_length=1, max_length=64, description="Caller metadata key; requires metadata_value",
+        min_length=1, max_length=64, pattern=r"^[^=]+$",
+        description="Caller metadata key (no '='); requires metadata_value",
     )] = None,
     metadata_value: Annotated[Optional[str], Query(
         max_length=512, description="Exact value for metadata_key",
@@ -449,7 +450,12 @@ async def search_traces_opensearch(
         if user is not None:
             filter_clauses.append(_exact_attribute_match("enduser.id", user))
         if metadata_key is not None:
-            filter_clauses.append(_exact_attribute_match(f"metadata.{metadata_key}", metadata_value))
+            # inference-service stores all metadata in one list attribute of
+            # "key=value" entries (so tenant keys never become index field
+            # names); an entry matches one exact pair.
+            filter_clauses.append(
+                _exact_attribute_match("metadata_kv", f"{metadata_key}={metadata_value}")
+            )
 
         # Step 1: Find trace_ids that match the filters
         if filter_clauses:

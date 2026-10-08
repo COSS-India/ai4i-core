@@ -67,7 +67,7 @@ def _client(matching_trace_ids):
                     "context": {"trace_id": tid},
                     "attributes": {
                         "tenantId": "181", "status": "success", "task_type": "llm",
-                        "enduser.id": "customer-8812", "metadata.session_id": "s-77",
+                        "enduser.id": "customer-8812", "metadata_kv": ["session_id=s-77"],
                     },
                     "service_name": "ai4x-inference",
                 }})
@@ -118,7 +118,7 @@ def test_search_by_metadata_key_and_value():
 
     _search(client, metadata_key="session_id", metadata_value="s-77")
 
-    assert _exact("metadata.session_id", "s-77") in _clauses(client)
+    assert _exact("metadata_kv", "session_id=s-77") in _clauses(client)
 
 
 def test_tag_search_stays_scoped_to_the_callers_tenant():
@@ -142,7 +142,7 @@ def test_user_and_metadata_filters_combine_with_and():
 
     clauses = _clauses(client)
     assert _exact("enduser.id", "customer-8812") in clauses
-    assert _exact("metadata.session_id", "s-77") in clauses
+    assert _exact("metadata_kv", "session_id=s-77") in clauses
     assert {"match_phrase": {"attributes.task_type": "llm"}} in clauses
 
 
@@ -153,7 +153,7 @@ def test_no_tag_params_adds_no_tag_clauses():
     _search(client, task_types="llm")
 
     flat = str(_clauses(client))
-    assert "enduser.id" not in flat and "metadata." not in flat
+    assert "enduser.id" not in flat and "metadata_kv" not in flat
 
 
 # ── Exactness ────────────────────────────────────────────────────────────────
@@ -166,7 +166,18 @@ def test_value_over_keyword_cap_falls_back_to_match_phrase():
 
     _search(client, metadata_key="note", metadata_value=long_value)
 
-    assert {"match_phrase": {"attributes.metadata.note": long_value}} in _clauses(client)
+    assert {"match_phrase": {"attributes.metadata_kv": "note=" + long_value}} in _clauses(client)
+
+
+def test_pair_crossing_keyword_cap_falls_back_even_when_value_alone_fits():
+    """The cap applies to the stored entry "key=value", not the value alone:
+    10 + 1 + 250 = 261 chars is past it, so term on .keyword would miss."""
+    client = _client(["t1"])
+
+    _search(client, metadata_key="k" * 10, metadata_value="v" * 250)
+
+    entry = "k" * 10 + "=" + "v" * 250
+    assert {"match_phrase": {"attributes.metadata_kv": entry}} in _clauses(client)
 
 
 def test_value_at_keyword_cap_still_uses_exact_term():
@@ -191,7 +202,7 @@ def test_search_ignores_case_of_the_typed_value(typed):
 
     clauses = _clauses(client)
     assert _exact("enduser.id", typed) in clauses
-    assert _exact("metadata.session", typed) in clauses
+    assert _exact("metadata_kv", f"session={typed}") in clauses
 
 
 def test_case_insensitive_search_is_still_exact_not_partial():
@@ -241,7 +252,7 @@ def test_http_query_params_reach_opensearch():
     assert response.status_code == 200, response.text
     clauses = _clauses(client)
     assert _exact("enduser.id", "customer-8812") in clauses
-    assert _exact("metadata.session_id", "s-77") in clauses
+    assert _exact("metadata_kv", "session_id=s-77") in clauses
 
 
 @pytest.mark.parametrize("params", [
@@ -249,6 +260,7 @@ def test_http_query_params_reach_opensearch():
     {"metadata_key": "k" * 65, "metadata_value": "v"},
     {"metadata_key": "", "metadata_value": "v"},
     {"metadata_key": "k", "metadata_value": "v" * 513},
+    {"metadata_key": "a=b", "metadata_value": "c"},
 ])
 def test_http_rejects_values_beyond_the_ingest_limits(params):
     """Nothing longer than the ingest rules allow can exist in a span."""

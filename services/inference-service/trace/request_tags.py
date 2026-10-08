@@ -29,7 +29,15 @@ RESERVED_KEY_PREFIX = "orch_"
 # the caller's end user — deliberately not `userId`, which means the platform
 # user (the API key's creator, from X-User-ID).
 END_USER_ATTR = "enduser.id"
-METADATA_ATTR_PREFIX = "metadata."
+# All metadata goes into ONE attribute, a list of "key=value" strings. Span
+# attribute names become field names in the shared daily traces-* index, which
+# caps fields (index.mapping.total_fields.limit, default 1000); one attribute
+# per tenant key would let tenants' free-form keys exhaust it, after which
+# every span introducing a new field is rejected — for all tenants. Keys as
+# values also can't trip OpenSearch's per-field type detection (a date-like
+# first value mapping the field as date) or dot-as-nesting.
+METADATA_ATTR = "metadata_kv"
+METADATA_KV_SEPARATOR = "="
 
 # Fields stripped from the payload before it is forwarded upstream: vLLM
 # doesn't use them, and the tenant's end-user ID has no reason to reach its logs.
@@ -60,20 +68,19 @@ def validate_request_tags(payload: Dict[str, Any]) -> Optional[Tuple[str, str]]:
             f"'metadata' must have at most {MAX_METADATA_KEYS} keys, got {len(metadata)}."
         )
     for key, value in metadata.items():
-        # An empty key would become the span attribute "metadata.", which
-        # OpenSearch rejects as an empty field name — the whole span would be lost.
         if not key:
             return "metadata", "'metadata' keys must not be empty."
         if len(key) > MAX_METADATA_KEY_LENGTH:
             return "metadata", (
                 f"'metadata' keys must be at most {MAX_METADATA_KEY_LENGTH} characters."
             )
-        # OpenSearch reads a dot in a field name as nesting, so "order.id"
-        # turns `order` into an object — and every later span (from any
-        # tenant) with a plain "order" key fails to index for that whole
-        # daily traces-* index.
-        if "." in key:
-            return "metadata", f"'metadata' key '{key}' must not contain '.'."
+        # The separator in a key would make entries ambiguous: {"a=b": "c"} and
+        # {"a": "b=c"} would both be stored as "a=b=c". Values may contain it,
+        # since the key ends at the first separator.
+        if METADATA_KV_SEPARATOR in key:
+            return "metadata", (
+                f"'metadata' key '{key}' must not contain '{METADATA_KV_SEPARATOR}'."
+            )
         if key.startswith(RESERVED_KEY_PREFIX):
             return "metadata", (
                 f"'metadata' key '{key}' uses the reserved prefix '{RESERVED_KEY_PREFIX}'."
@@ -88,16 +95,22 @@ def validate_request_tags(payload: Dict[str, Any]) -> Optional[Tuple[str, str]]:
     return None
 
 
-def get_request_tag_attributes() -> Dict[str, str]:
+def metadata_kv_entry(key: str, value: str) -> str:
+    """One metadata pair as stored in (and searched against) the metadata_kv attribute."""
+    return f"{key}{METADATA_KV_SEPARATOR}{value}"
+
+
+def get_request_tag_attributes() -> Dict[str, Any]:
     """Span attributes for the current request's caller tags; {} when none were set."""
     tags = get_request_tags()
     if not tags:
         return {}
-    attrs: Dict[str, str] = {}
+    attrs: Dict[str, Any] = {}
     if tags.get("user"):
         attrs[END_USER_ATTR] = tags["user"]
-    for key, value in tags.get("metadata", {}).items():
-        attrs[f"{METADATA_ATTR_PREFIX}{key}"] = value
+    metadata = tags.get("metadata") or {}
+    if metadata:
+        attrs[METADATA_ATTR] = [metadata_kv_entry(k, v) for k, v in metadata.items()]
     return attrs
 
 

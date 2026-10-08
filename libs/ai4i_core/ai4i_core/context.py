@@ -125,10 +125,6 @@ def get_request_tags() -> Optional[Dict[str, Any]]:
     return _request_tags_var.get()
 
 
-def reset_request_tags(token: contextvars.Token) -> None:
-    _request_tags_var.reset(token)
-
-
 def set_llm_usage_input_tokens(input_tokens: Optional[int]) -> contextvars.Token:
     return _llm_usage_input_tokens_var.set(input_tokens)
 

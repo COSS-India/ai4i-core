@@ -121,11 +121,15 @@ def _spans_by_name(exporter):
     return spans
 
 
+def _kv(attrs):
+    """The metadata_kv span attribute as a list (OTel stores sequences as tuples)."""
+    return list(attrs.get("metadata_kv", ()))
+
+
 def _assert_tagged(span):
     attrs = span.attributes
     assert attrs.get("enduser.id") == "customer-8812", span.name
-    assert attrs.get("metadata.session_id") == "s-77", span.name
-    assert attrs.get("metadata.feature") == "order-help", span.name
+    assert _kv(attrs) == ["session_id=s-77", "feature=order-help"], span.name
     assert attrs.get("app_id") == "app-42", span.name
     # Platform-derived tags still present alongside the caller's.
     assert attrs.get("tenantId") == "181", span.name
@@ -178,7 +182,7 @@ async def test_untagged_request_succeeds_with_platform_tags_only(exporter, upstr
     for span in exporter.get_finished_spans():
         attrs = span.attributes
         assert "enduser.id" not in attrs, span.name
-        assert not [k for k in attrs if k.startswith("metadata.")], span.name
+        assert "metadata_kv" not in attrs, span.name
         assert attrs.get("tenantId") == "181", span.name
         assert attrs.get("app_id") == "app-42", span.name
     assert upstream[0]["messages"] == body["messages"]
@@ -207,7 +211,7 @@ async def test_tags_do_not_leak_into_the_next_request_in_the_same_context(export
     assert response.status_code == 200
     for span in exporter.get_finished_spans():
         assert "enduser.id" not in span.attributes, span.name
-        assert "metadata.session_id" not in span.attributes, span.name
+        assert "metadata_kv" not in span.attributes, span.name
 
 
 @pytest.mark.asyncio
@@ -232,7 +236,7 @@ _INVALID = [
     ("nested value", {"metadata": {"k": {"a": "b"}}}, "metadata"),
     ("orch_ prefix", {"metadata": {"orch_tenant_id": "999"}}, "metadata"),
     ("empty key", {"metadata": {"": "v"}}, "metadata"),
-    ("dotted key", {"metadata": {"order.id": "55"}}, "metadata"),
+    ("= in key", {"metadata": {"a=b": "c"}}, "metadata"),
     ("metadata not an object", {"metadata": ["a", "b"]}, "metadata"),
     ("metadata string", {"metadata": "session=s-77"}, "metadata"),
     ("user not a string", {"user": 8812}, "user"),
@@ -268,7 +272,7 @@ async def test_invalid_tags_return_openai_400_and_are_never_proxied_or_billed(
     # Rejected tags must not reach the spans either.
     for span in exporter.get_finished_spans():
         assert "enduser.id" not in span.attributes
-        assert not [k for k in span.attributes if k.startswith("metadata.")]
+        assert "metadata_kv" not in span.attributes
     # ...but the platform-derived app_id must: it comes from the gateway, not
     # the rejected body, so the failure is still attributable to the app.
     assert spans["request"][0].attributes.get("app_id") == "app-42"
@@ -286,8 +290,65 @@ async def test_values_exactly_at_every_limit_are_accepted(exporter, upstream):
     assert response.status_code == 200
     attrs = _spans_by_name(exporter)["ai-inference"][0].attributes
     assert attrs["enduser.id"] == "u" * 256
-    assert attrs["metadata." + "k" * 64] == "v" * 512
-    assert len([k for k in attrs if k.startswith("metadata.")]) == 16
+    assert "k" * 64 + "=" + "v" * 512 in _kv(attrs)
+    assert len(_kv(attrs)) == 16
+
+
+# ── Tenant keys must never become OpenSearch field names ─────────────────────
+
+@pytest.mark.asyncio
+async def test_new_metadata_keys_never_add_new_span_attribute_names(exporter, upstream):
+    """The reviewer's scenario: every span attribute name becomes a field in the
+    shared daily traces-* index (limit 1000), so if each distinct metadata key
+    were its own attribute, tenants sending fresh keys would exhaust it and
+    every later span introducing a new field would be rejected — for all
+    tenants. Two requests with 16 entirely different keys each must produce
+    exactly the same set of attribute names."""
+    first = {f"tenantA_key_{i}": f"v{i}" for i in range(16)}
+    second = {f"tenantB_other_{i}": f"w{i}" for i in range(16)}
+
+    await _post({**TAGGED_BODY, "metadata": first})
+    await _post({**TAGGED_BODY, "metadata": second})
+
+    infer = _spans_by_name(exporter)["ai-inference"]
+    assert len(infer) == 2
+    names_a, names_b = set(infer[0].attributes), set(infer[1].attributes)
+    assert names_a == names_b, f"tenant input changed field names: {names_a ^ names_b}"
+    assert not [n for n in names_a if "tenantA" in n or "tenantB" in n]
+    assert _kv(infer[0].attributes) == [f"{k}={v}" for k, v in first.items()]
+    assert _kv(infer[1].attributes) == [f"{k}={v}" for k, v in second.items()]
+
+
+@pytest.mark.asyncio
+async def test_dotted_metadata_key_is_accepted_now_that_keys_are_values(exporter, upstream):
+    """Dots were rejected only because a key became a field path; as a value
+    inside metadata_kv a dot is harmless."""
+    response = await _post({**TAGGED_BODY, "metadata": {"order.id": "55", "order": "A1"}})
+
+    assert response.status_code == 200
+    assert _kv(_spans_by_name(exporter)["ai-inference"][0].attributes) == ["order.id=55", "order=A1"]
+
+
+@pytest.mark.asyncio
+async def test_exported_span_carries_metadata_kv_as_a_json_array(exporter, upstream):
+    """What actually reaches Kafka -> Fluent-Bit -> OpenSearch: the real
+    KafkaSpanExporter, serialized the way its producer serializes."""
+    import json
+    from unittest.mock import MagicMock
+
+    await _post(TAGGED_BODY)
+    span = _spans_by_name(exporter)["ai-inference"][0]
+
+    producer = MagicMock()
+    with patch("trace.setup.settings") as s, patch("kafka.KafkaProducer", return_value=producer):
+        s.KAFKA_ENABLED, s.KAFKA_TOPIC_OTEL_TRACE = True, "kafka-topic-otel-trace"
+        s.KAFKA_SERVER, s.SERVICE_NAME = "localhost:9092", "inference-service"
+        from trace.setup import KafkaSpanExporter
+        KafkaSpanExporter().export([span])
+
+    sent = json.loads(json.dumps(producer.send.call_args.kwargs["value"], default=str))
+    assert sent["attributes"]["metadata_kv"] == ["session_id=s-77", "feature=order-help"]
+    assert not [k for k in sent["attributes"] if k.startswith("metadata.")]
 
 
 # ── app_id is platform identity: every request, every task type ──────────────
@@ -315,7 +376,7 @@ async def test_caller_metadata_cannot_spoof_app_id(exporter, upstream):
     assert response.status_code == 200
     for span in exporter.get_finished_spans():
         assert span.attributes.get("app_id") == "app-42", span.name
-        assert span.attributes.get("metadata.app_id") == "someone-elses-app", span.name
+        assert _kv(span.attributes) == ["app_id=someone-elses-app"], span.name
 
 
 @pytest.mark.asyncio
@@ -339,7 +400,7 @@ async def test_non_llm_request_spans_carry_app_id_but_no_caller_tags(exporter):
         assert attrs.get("app_id") == "app-42", name
         assert attrs.get("tenantId") == "181", name
         assert "enduser.id" not in attrs, name
-        assert not [k for k in attrs if k.startswith("metadata.")], name
+        assert "metadata_kv" not in attrs, name
 
 
 # ── Non-LLM requests are unaffected ──────────────────────────────────────────
@@ -348,11 +409,11 @@ def test_context_attributes_carry_no_tags_when_none_were_set():
     """ASR/NMT/... spans also call get_context_attributes(); in a request that
     never went through the LLM route the tag contextvar is unset."""
     attrs = contextvars.Context().run(get_context_attributes)
-    assert not [k for k in attrs if k in ("app_id", "enduser.id") or k.startswith("metadata.")]
+    assert not [k for k in attrs if k in ("app_id", "enduser.id", "metadata_kv")]
 
 
 def test_tag_attributes_cannot_overwrite_platform_attributes():
-    """A tenant key named like a platform attribute lands under metadata.*."""
+    """A tenant key named like a platform attribute is only a value in metadata_kv."""
     def run():
         set_tenant_id("181")
         set_application_id("app-42")
@@ -362,6 +423,4 @@ def test_tag_attributes_cannot_overwrite_platform_attributes():
     attrs = contextvars.Context().run(run)
     assert attrs["tenantId"] == "181"
     assert attrs["app_id"] == "app-42"
-    assert attrs["metadata.tenantId"] == "999"
-    assert attrs["metadata.api_key_id"] == "1"
-    assert attrs["metadata.app_id"] == "x"
+    assert attrs["metadata_kv"] == ["tenantId=999", "api_key_id=1", "app_id=x"]

@@ -64,7 +64,7 @@ def get_context_attributes() -> dict:
             attrs["app_id"] = application_id
     except Exception as e:
         logger.debug(f"Could not read context attributes: {e}")
-    # Caller tags (enduser.id, metadata.*) set by the LLM route; empty for every
+    # Caller tags (enduser.id, metadata_kv) set by the LLM route; empty for every
     # other request. Their names can't collide with the keys above.
     attrs.update(get_request_tag_attributes())
     return attrs
