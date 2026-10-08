@@ -1,0 +1,32 @@
+"""add policy_id to applications
+
+Links applications to PII policies. The policy table lives in the core DB
+(ai4iplatform_core/e3df9d24b593_add_pii_policy_tables.py), so there is no
+foreign key; the application layer must validate the ids.
+
+Revision ID: 51379ee0d696
+Revises: a4e3128bdf70
+Create Date: 2026-10-08
+
+"""
+from typing import Sequence, Union
+
+import sqlalchemy as sa
+from alembic import op
+from sqlalchemy.dialects import postgresql
+
+revision: str = '51379ee0d696'
+down_revision: Union[str, Sequence[str], None] = 'a4e3128bdf70'
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    op.add_column(
+        'applications',
+        sa.Column('policy_id', postgresql.ARRAY(sa.Integer()), nullable=True),
+    )
+
+
+def downgrade() -> None:
+    op.drop_column('applications', 'policy_id')
