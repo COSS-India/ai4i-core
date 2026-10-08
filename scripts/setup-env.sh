@@ -93,7 +93,7 @@ add_sed_replacement_allow_empty() {
     local value="$2"
     # Escape sed replacement metacharacters in the value (&, \, and | delimiter).
     local escaped
-    escaped=$(printf '%s' "${value}" | sed -e 's/[&\\|]/g')
+    escaped=$(printf '%s' "${value}" | sed -e 's/[&\\|]/\\&/g')
     SED_ARGS+=(-e "s|<${placeholder}>|${escaped}|g")
 }
 
