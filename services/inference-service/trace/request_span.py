@@ -12,6 +12,8 @@ from contextlib import asynccontextmanager, contextmanager
 from opentelemetry import trace, context as otel_context
 from opentelemetry.trace import StatusCode
 
+from trace.request_tags import get_request_tag_attributes
+
 logger = logging.getLogger(__name__)
 
 # Shared tracer for the inference service
@@ -35,13 +37,17 @@ def get_context_attributes() -> dict:
     """
     attrs = {}
     try:
-        from ai4i_core.context import get_user_id, get_tenant_id, get_trace_id, get_auth_type, get_api_key_id, get_tier_id
+        from ai4i_core.context import (
+            get_user_id, get_tenant_id, get_trace_id, get_auth_type, get_api_key_id, get_tier_id,
+            get_application_id,
+        )
         user_id = get_user_id()
         tenant_id = get_tenant_id()
         correlation_id = get_trace_id()
         auth_type = get_auth_type()
         api_key_id = get_api_key_id()
         tier_id = get_tier_id()
+        application_id = get_application_id()
         if user_id:
             attrs["userId"] = user_id
         if tenant_id:
@@ -54,8 +60,13 @@ def get_context_attributes() -> dict:
             attrs["api_key_id"] = api_key_id
         if tier_id:
             attrs["tier_id"] = tier_id
+        if application_id:
+            attrs["app_id"] = application_id
     except Exception as e:
         logger.debug(f"Could not read context attributes: {e}")
+    # Caller tags (enduser.id, metadata.*) set by the LLM route; empty for every
+    # other request. Their names can't collide with the keys above.
+    attrs.update(get_request_tag_attributes())
     return attrs
 
 

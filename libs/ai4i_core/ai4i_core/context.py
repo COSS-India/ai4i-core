@@ -10,7 +10,7 @@ these vars — equivalent to Java's ThreadLocal but scoped to a coroutine chain.
 
 import contextvars
 import uuid
-from typing import Optional
+from typing import Any, Dict, Optional
 
 _trace_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("trace_id", default=None)
 _tenant_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("tenant_id", default=None)
@@ -19,6 +19,11 @@ _endpoint_path_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextV
 _auth_type_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("auth_type", default=None)
 _api_key_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("api_key_id", default=None)
 _tier_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("tier_id", default=None)
+_application_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("application_id", default=None)
+# Caller-supplied attribution tags (OpenAI `user` / `metadata`), validated by the
+# route that accepts them. default=None, never {}: a mutable default would be one
+# object shared by every request that hasn't set the var.
+_request_tags_var: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar("request_tags", default=None)
 _llm_usage_input_tokens_var: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar("llm_usage_input_tokens", default=None)
 _llm_usage_output_tokens_var: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar("llm_usage_output_tokens", default=None)
 _llm_usage_model_name_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("llm_usage_model_name", default=None)
@@ -101,6 +106,27 @@ def set_tier_id(tier_id: str) -> contextvars.Token:
 
 def get_tier_id() -> Optional[str]:
     return _tier_id_var.get()
+
+
+def set_application_id(application_id: str) -> contextvars.Token:
+    return _application_id_var.set(application_id)
+
+
+def get_application_id() -> Optional[str]:
+    return _application_id_var.get()
+
+
+def set_request_tags(user: Optional[str], metadata: Optional[Dict[str, str]]) -> contextvars.Token:
+    """Store the caller's tags for this request. Pass only already-validated values."""
+    return _request_tags_var.set({"user": user or None, "metadata": dict(metadata or {})})
+
+
+def get_request_tags() -> Optional[Dict[str, Any]]:
+    return _request_tags_var.get()
+
+
+def reset_request_tags(token: contextvars.Token) -> None:
+    _request_tags_var.reset(token)
 
 
 def set_llm_usage_input_tokens(input_tokens: Optional[int]) -> contextvars.Token:

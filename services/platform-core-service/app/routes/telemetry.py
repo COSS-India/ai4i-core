@@ -2,7 +2,7 @@
 import re
 import asyncio
 import logging
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
@@ -102,6 +102,25 @@ def _collect_all_trace_ids(opensearch_client: OpenSearchTraceClient, filter_quer
             break
 
     return trace_ids
+
+
+# OpenSearch's dynamic mapping gives each string attribute a `.keyword`
+# subfield that only indexes values up to this length.
+_KEYWORD_IGNORE_ABOVE = 256
+
+
+def _exact_attribute_match(attribute: str, value: str) -> dict:
+    """Exact-value filter on one span attribute.
+
+    `term` on the `.keyword` subfield, because match_phrase on the analysed
+    text field would also match longer values containing the same tokens
+    (user=customer-1 would find customer-1-admin). Values longer than the
+    keyword cap aren't in `.keyword` at all, so those fall back to match_phrase.
+    """
+    field = f"attributes.{attribute}"
+    if len(value) > _KEYWORD_IGNORE_ABOVE:
+        return {"match_phrase": {field: value}}
+    return {"term": {f"{field}.keyword": value}}
 
 
 def _build_traces_map(hits: list, tenant_filter: Optional[str]) -> dict:
@@ -341,6 +360,17 @@ async def search_traces_opensearch(
     page: int = Query(1, ge=1, description="Page number for pagination"),
     page_size: int = Query(20, ge=1, le=100, description="Number of traces per page"),
     opensearch_client: OpenSearchTraceClient = Depends(_get_opensearch_client),
+    # Annotated (not `= Query(None)`) so a direct call that omits these gets
+    # None, not a truthy FieldInfo.
+    user: Annotated[Optional[str], Query(
+        max_length=256, description="Exact end-user ID the caller sent as OpenAI `user`",
+    )] = None,
+    metadata_key: Annotated[Optional[str], Query(
+        min_length=1, max_length=64, description="Caller metadata key; requires metadata_value",
+    )] = None,
+    metadata_value: Annotated[Optional[str], Query(
+        max_length=512, description="Exact value for metadata_key",
+    )] = None,
 ):
     """
     Search traces from OpenSearch for the Logs Dashboard.
@@ -356,6 +386,12 @@ async def search_traces_opensearch(
 
     # Validate user has one of the allowed roles (1, 2, or 5)
     _validate_telemetry_access(request)
+
+    if (metadata_key is None) != (metadata_value is None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="metadata_key and metadata_value must be given together",
+        )
 
     try:
         is_admin = _is_admin(request)
@@ -405,13 +441,24 @@ async def search_traces_opensearch(
                 range_query["lte"] = end_date
             filter_clauses.append({"range": {"@timestamp": range_query}})
 
+        # Caller tags are on every span of an LLM request (inference-service's
+        # get_context_attributes), so matching any span finds the trace.
+        if user is not None:
+            filter_clauses.append(_exact_attribute_match("enduser.id", user))
+        if metadata_key is not None:
+            filter_clauses.append(_exact_attribute_match(f"metadata.{metadata_key}", metadata_value))
+
         # Step 1: Find trace_ids that match the filters
         if filter_clauses:
             filter_query = {"bool": {"must": filter_clauses}}
         else:
             filter_query = {"match_all": {}}
 
-        logger.info(f"Searching traces - task_types={task_types}, status={status_filter}, tenant={tenant_filter}")
+        # Tag values are tenant end-user data: log only whether they were used.
+        logger.info(
+            f"Searching traces - task_types={task_types}, status={status_filter}, tenant={tenant_filter}, "
+            f"user_filter={user is not None}, metadata_filter={metadata_key is not None}"
+        )
 
         # Step 2: page the matching traces at the TRACE level, newest-first.
         # Collapsing on trace_id makes each result row one trace (not one span), so
