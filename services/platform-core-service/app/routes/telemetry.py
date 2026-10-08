@@ -110,17 +110,20 @@ _KEYWORD_IGNORE_ABOVE = 256
 
 
 def _exact_attribute_match(attribute: str, value: str) -> dict:
-    """Exact-value filter on one span attribute.
+    """Exact-value, case-insensitive filter on one span attribute.
 
     `term` on the `.keyword` subfield, because match_phrase on the analysed
     text field would also match longer values containing the same tokens
     (user=customer-1 would find customer-1-admin). Values longer than the
     keyword cap aren't in `.keyword` at all, so those fall back to match_phrase.
+    case_insensitive keeps both branches consistent: the analysed field that
+    match_phrase reads is already lowercased, so `Shesna` is found by `shesna`
+    either way.
     """
     field = f"attributes.{attribute}"
     if len(value) > _KEYWORD_IGNORE_ABOVE:
         return {"match_phrase": {field: value}}
-    return {"term": {f"{field}.keyword": value}}
+    return {"term": {f"{field}.keyword": {"value": value, "case_insensitive": True}}}
 
 
 def _build_traces_map(hits: list, tenant_filter: Optional[str]) -> dict:

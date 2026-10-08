@@ -92,6 +92,11 @@ def _clauses(client):
     return query["bool"]["must"]
 
 
+def _exact(attribute, value):
+    """The clause an exact, case-insensitive tag search must send."""
+    return {"term": {f"attributes.{attribute}.keyword": {"value": value, "case_insensitive": True}}}
+
+
 # ── The exact ticket scenario ────────────────────────────────────────────────
 
 def test_search_by_user_filters_in_opensearch_across_all_pages():
@@ -103,7 +108,7 @@ def test_search_by_user_filters_in_opensearch_across_all_pages():
     response = _search(client, user="customer-8812")
 
     clauses = _clauses(client)
-    assert {"term": {"attributes.enduser.id.keyword": "customer-8812"}} in clauses
+    assert _exact("enduser.id", "customer-8812") in clauses
     assert response.total == 20
     assert response.aggregations.total == 20
 
@@ -113,7 +118,7 @@ def test_search_by_metadata_key_and_value():
 
     _search(client, metadata_key="session_id", metadata_value="s-77")
 
-    assert {"term": {"attributes.metadata.session_id.keyword": "s-77"}} in _clauses(client)
+    assert _exact("metadata.session_id", "s-77") in _clauses(client)
 
 
 def test_tag_search_stays_scoped_to_the_callers_tenant():
@@ -126,7 +131,7 @@ def test_tag_search_stays_scoped_to_the_callers_tenant():
     clauses = _clauses(client)
     assert {"match_phrase": {"attributes.tenantId": "181"}} in clauses
     assert {"match_phrase": {"attributes.tenantId": "999"}} not in clauses
-    assert {"term": {"attributes.enduser.id.keyword": "customer-8812"}} in clauses
+    assert _exact("enduser.id", "customer-8812") in clauses
 
 
 def test_user_and_metadata_filters_combine_with_and():
@@ -136,8 +141,8 @@ def test_user_and_metadata_filters_combine_with_and():
             task_types="llm")
 
     clauses = _clauses(client)
-    assert {"term": {"attributes.enduser.id.keyword": "customer-8812"}} in clauses
-    assert {"term": {"attributes.metadata.session_id.keyword": "s-77"}} in clauses
+    assert _exact("enduser.id", "customer-8812") in clauses
+    assert _exact("metadata.session_id", "s-77") in clauses
     assert {"match_phrase": {"attributes.task_type": "llm"}} in clauses
 
 
@@ -170,7 +175,34 @@ def test_value_at_keyword_cap_still_uses_exact_term():
 
     _search(client, user=value)
 
-    assert {"term": {"attributes.enduser.id.keyword": value}} in _clauses(client)
+    assert _exact("enduser.id", value) in _clauses(client)
+
+
+@pytest.mark.parametrize("typed", ["shesna", "SHESNA", "sHeSnA"])
+def test_search_ignores_case_of_the_typed_value(typed):
+    """Stored `Shesna`, searched in another case: must still match. Before,
+    the short-value branch sent a plain case-sensitive `term` and found
+    nothing, while values over 256 chars (match_phrase) already ignored case.
+    The value is sent as typed — OpenSearch does the case folding, so it is
+    never lowercased into a different string."""
+    client = _client(["t1"])
+
+    _search(client, user=typed, metadata_key="session", metadata_value=typed)
+
+    clauses = _clauses(client)
+    assert _exact("enduser.id", typed) in clauses
+    assert _exact("metadata.session", typed) in clauses
+
+
+def test_case_insensitive_search_is_still_exact_not_partial():
+    """Case-folding must not turn exact match into prefix/contains."""
+    client = _client(["t1"])
+
+    _search(client, user="SHES")
+
+    clause = _clauses(client)[-1]
+    assert list(clause) == ["term"], f"must stay a term query, got {clause}"
+    assert clause["term"]["attributes.enduser.id.keyword"]["value"] == "SHES"
 
 
 # ── Bad input ────────────────────────────────────────────────────────────────
@@ -208,8 +240,8 @@ def test_http_query_params_reach_opensearch():
 
     assert response.status_code == 200, response.text
     clauses = _clauses(client)
-    assert {"term": {"attributes.enduser.id.keyword": "customer-8812"}} in clauses
-    assert {"term": {"attributes.metadata.session_id.keyword": "s-77"}} in clauses
+    assert _exact("enduser.id", "customer-8812") in clauses
+    assert _exact("metadata.session_id", "s-77") in clauses
 
 
 @pytest.mark.parametrize("params", [
