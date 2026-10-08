@@ -1,10 +1,9 @@
 """Category reads/writes for the policy hierarchy (Category -> SubCategory
 -> Policy).
 
-Names are unique case-insensitively: the uq_category_name constraint is
-case-sensitive, so "PII" vs "pii" is caught here before the insert. The
-IntegrityError fallback still covers two concurrent creates of the exact
-same name.
+Names are unique case-insensitively (uq_category_name_lower). The
+pre-insert check gives a clean 409; the IntegrityError fallback covers two
+concurrent creates of the same name.
 """
 
 from typing import List
