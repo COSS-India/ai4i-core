@@ -2,7 +2,7 @@
 
 import enum
 
-from sqlalchemy import Boolean, Column, Enum, ForeignKey, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, Column, Enum, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import relationship
 
@@ -19,10 +19,6 @@ class GuardrailScope(str, enum.Enum):
 
 class Policy(Base):
     __tablename__ = "policy"
-    __table_args__ = (
-        UniqueConstraint("policy_id", name="uq_policy_policy_id"),
-        UniqueConstraint("name", name="uq_policy_name"),
-    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     policy_id = Column(String(100), nullable=False)
@@ -37,7 +33,7 @@ class Policy(Base):
         ),
         nullable=False,
     )
-    is_global = Column(Boolean, nullable=True, server_default=text("false"))
+    is_global = Column(Boolean, nullable=False, server_default=text("false"))
     sub_category_id = Column(
         Integer,
         ForeignKey("sub_category.id", name="fk_policy_sub_category_id", ondelete="RESTRICT"),
@@ -47,5 +43,11 @@ class Policy(Base):
     is_active = Column(Boolean, nullable=False, server_default=text("false"))
     # Elements reference policy_type.id; not enforced by the database.
     policy_type_id = Column(ARRAY(Integer), nullable=True)
+
+    # Case-insensitive uniqueness on name.
+    __table_args__ = (
+        UniqueConstraint("policy_id", name="uq_policy_policy_id"),
+        Index("uq_policy_name_lower", func.lower(name), unique=True),
+    )
 
     sub_category = relationship("SubCategory", back_populates="policies")

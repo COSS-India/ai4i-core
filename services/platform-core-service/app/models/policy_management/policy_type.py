@@ -16,4 +16,4 @@ class PolicyType(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     policy_type = Column(String(100), nullable=False)
-    policy_fields = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    policy_fields = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))

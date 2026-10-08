@@ -1,6 +1,6 @@
 """ORM model for the sub_category table."""
 
-from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, Column, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.orm import relationship
 
 from app.models import Base
@@ -10,9 +10,6 @@ class SubCategory(Base):
     """Grouping of policies within a category (e.g. 'PII Guardrails')."""
 
     __tablename__ = "sub_category"
-    __table_args__ = (
-        UniqueConstraint("name", name="uq_sub_category_name"),
-    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(100), nullable=False)
@@ -24,6 +21,11 @@ class SubCategory(Base):
         index=True,
     )
     is_active = Column(Boolean, nullable=False, server_default=text("false"))
+
+    # Case-insensitive uniqueness on name.
+    __table_args__ = (
+        Index("uq_sub_category_name_lower", func.lower(name), unique=True),
+    )
 
     category = relationship("Category", back_populates="sub_categories")
     policies = relationship("Policy", back_populates="sub_category")
