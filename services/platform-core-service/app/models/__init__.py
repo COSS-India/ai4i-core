@@ -39,6 +39,13 @@ from app.models.pii_management.domain_policy import DomainPolicy  # noqa: E402
 from app.models.pii_management.pattern import GeoLibrary, PatternLibrary  # noqa: E402
 from app.models.pii_management.tenant_map import TenantPiiDomainMap  # noqa: E402
 
+# Policy-management tables (Category before SubCategory before Policy FKs)
+from app.models.policy_management.category import Category  # noqa: E402
+from app.models.policy_management.sub_category import SubCategory  # noqa: E402
+from app.models.policy_management.policy_type import PolicyType  # noqa: E402
+from app.models.policy_management.policy import Policy  # noqa: E402
+from app.models.policy_management.audit_log import PolicyAuditLog  # noqa: E402
+
 # Notification-management tables (no cross-domain FKs; subscription after
 # catalog for its FK)
 from app.models.notification_management.config_notification_alert import (  # noqa: E402
@@ -82,6 +89,12 @@ __all__ = [
     "PatternLibrary",
     "GeoLibrary",
     "TenantPiiDomainMap",
+    # policy-management
+    "Category",
+    "SubCategory",
+    "PolicyType",
+    "Policy",
+    "PolicyAuditLog",
     # notification-management
     "ConfigNotificationAlert",
     "TenantNotificationSubscription",

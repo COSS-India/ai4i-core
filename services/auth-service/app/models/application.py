@@ -1,7 +1,7 @@
 import enum
 
 from sqlalchemy import Column, DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -42,6 +42,9 @@ class Application(Base):
         nullable=False,
         server_default=ApplicationStatus.ACTIVE.value,
     )
+    # Ids of policies in the core DB (policy.id); cross-database, so no FK —
+    # the application layer must validate them.
+    policy_id = Column(ARRAY(Integer), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     created_by = Column(UUID(as_uuid=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
