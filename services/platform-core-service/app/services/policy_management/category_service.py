@@ -32,14 +32,16 @@ async def list_categories(session: AsyncSession) -> List[CategoryItem]:
     return [CategoryItem.model_validate(row) for row in result.scalars().all()]
 
 
-async def create_category(session: AsyncSession, body: CategoryCreate) -> CategoryItem:
+async def create_category(
+    session: AsyncSession, body: CategoryCreate, *, created_by: str | None = None
+) -> CategoryItem:
     existing = await session.execute(
         select(Category.id).where(func.lower(Category.name) == func.lower(body.name)).limit(1)
     )
     if existing.first() is not None:
         raise DuplicateEntityError(f"Category '{body.name}'")
 
-    row = Category(name=body.name, description=body.description)
+    row = Category(name=body.name, description=body.description, created_by=created_by)
     session.add(row)
     try:
         await session.commit()

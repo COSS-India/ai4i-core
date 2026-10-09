@@ -35,6 +35,7 @@ from .exceptions import (
     EntityNotFoundError,
     UserNotFoundError,
     DuplicateEntityError,
+    EntityInUseError,
     # Validation (422)
     ValidationError,
     PasswordValidationError,
@@ -84,6 +85,7 @@ __all__ = [
     "EntityNotFoundError",
     "UserNotFoundError",
     "DuplicateEntityError",
+    "EntityInUseError",
     # Validation
     "ValidationError",
     "PasswordValidationError",

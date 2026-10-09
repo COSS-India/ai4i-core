@@ -48,7 +48,9 @@ async def list_sub_categories(
     return [SubCategoryItem.model_validate(row) for row in result.scalars().all()]
 
 
-async def create_sub_category(session: AsyncSession, body: SubCategoryCreate) -> SubCategoryItem:
+async def create_sub_category(
+    session: AsyncSession, body: SubCategoryCreate, *, created_by: str | None = None
+) -> SubCategoryItem:
     await _ensure_category_exists(session, body.category_id)
 
     existing = await session.execute(
@@ -57,7 +59,9 @@ async def create_sub_category(session: AsyncSession, body: SubCategoryCreate) ->
     if existing.first() is not None:
         raise DuplicateEntityError(f"Sub-category '{body.name}'")
 
-    row = SubCategory(name=body.name, description=body.description, category_id=body.category_id)
+    row = SubCategory(
+        name=body.name, description=body.description, category_id=body.category_id, created_by=created_by
+    )
     session.add(row)
     try:
         await session.commit()

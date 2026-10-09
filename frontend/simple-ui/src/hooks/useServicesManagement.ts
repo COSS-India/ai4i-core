@@ -36,6 +36,9 @@ import {
   sanitizeServiceId,
   validateHardwareDescription,
   validatePricePerUnit,
+  LLM_CACHED_INPUT_PRICE_LABEL,
+  LLM_INPUT_PRICE_LABEL,
+  LLM_OUTPUT_PRICE_LABEL,
   validateServiceDescription,
   validateServiceIdLength,
   validateServiceName,
@@ -171,6 +174,9 @@ export function useServicesManagement() {
    */
   const [savedAuthTokenMask, setSavedAuthTokenMask] = useState("");
   const [pricePerUnit, setPricePerUnit] = useState<string>("");
+  // LLM only: pricePerUnit is then the input token price.
+  const [cachedInputPricePerUnit, setCachedInputPricePerUnit] = useState<string>("");
+  const [outputPricePerUnit, setOutputPricePerUnit] = useState<string>("");
   const [unitSize, setUnitSize] = useState<string>("");
   const [currency, setCurrency] = useState<string>("INR");
   const [selectedTiers, setSelectedTiers] = useState<string[]>([]);
@@ -835,6 +841,8 @@ export function useServicesManagement() {
     setHasAuthToken(false);
     setSavedAuthTokenMask("");
     setPricePerUnit("");
+    setCachedInputPricePerUnit("");
+    setOutputPricePerUnit("");
     setUnitSize("");
     setCurrency("INR");
     setSelectedTiers([]);
@@ -881,6 +889,15 @@ export function useServicesManagement() {
     setCreateReturnTo(path);
   }, [router.query.returnTo]);
 
+  /** The LLM-only prices, or nothing: the API rejects them for other task types. */
+  const llmPrices = (): Pick<Service, "cachedInputCostPerUnit" | "outputCostPerUnit"> =>
+    isLlmTaskType
+      ? {
+          cachedInputCostPerUnit: Number(cachedInputPricePerUnit),
+          outputCostPerUnit: Number(outputPricePerUnit),
+        }
+      : {};
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -904,6 +921,7 @@ export function useServicesManagement() {
           serviceDescription: formData.serviceDescription,
           task_type: formData.task_type,
           costPerUnit: pricePerUnit ? Number(pricePerUnit) : undefined,
+          ...llmPrices(),
           unitSize: unitSize ? Number(unitSize) : undefined,
           tierIds: selectedTiers,
         };
@@ -968,6 +986,7 @@ export function useServicesManagement() {
           api_key: "",
           status: "active",
           costPerUnit: pricePerUnit ? Number(pricePerUnit) : undefined,
+          ...llmPrices(),
           unitSize: unitSize ? Number(unitSize) : undefined,
           tierIds,
           ...(taskIsLlm && trimmedToken ? { authToken: trimmedToken } : {}),
@@ -1079,7 +1098,17 @@ export function useServicesManagement() {
    * Price bounds hold on PATCH as well as POST, so this one is not gated on
    * create mode the way the length rules below are.
    */
-  const pricePerUnitError = validatePricePerUnit(pricePerUnit);
+  const pricePerUnitError = validatePricePerUnit(
+    pricePerUnit,
+    isLlmTaskType ? LLM_INPUT_PRICE_LABEL : undefined,
+  );
+  // LLM services also need a cached input and an output price.
+  const cachedInputPricePerUnitError = isLlmTaskType
+    ? validatePricePerUnit(cachedInputPricePerUnit, LLM_CACHED_INPUT_PRICE_LABEL)
+    : null;
+  const outputPricePerUnitError = isLlmTaskType
+    ? validatePricePerUnit(outputPricePerUnit, LLM_OUTPUT_PRICE_LABEL)
+    : null;
 
   // Duplicate serviceId check — only in create mode (serviceId is read-only when editing).
   // Union the registry ids so a clash still shows while the unfiltered list loads.
@@ -1155,6 +1184,8 @@ export function useServicesManagement() {
     !!formData.endpoint?.trim() &&
     !!formData.task_type?.trim() &&
     !pricePerUnitError &&
+    !cachedInputPricePerUnitError &&
+    !outputPricePerUnitError &&
     !!currency.trim() &&
     isUnitSizeValid &&
     selectedTiers.length > 0;
@@ -1245,6 +1276,12 @@ export function useServicesManagement() {
       setHasAuthToken(!!service.hasAuthToken);
       setPricePerUnit(
         service.costPerUnit != null ? String(service.costPerUnit) : "",
+      );
+      setCachedInputPricePerUnit(
+        service.cachedInputCostPerUnit != null ? String(service.cachedInputCostPerUnit) : "",
+      );
+      setOutputPricePerUnit(
+        service.outputCostPerUnit != null ? String(service.outputCostPerUnit) : "",
       );
       setUnitSize(service.unitSize != null ? String(service.unitSize) : "");
       // Prefer tier IDs; fall back to mapping tier names via the fetched tier list
@@ -1560,6 +1597,12 @@ export function useServicesManagement() {
     pricePerUnit,
     setPricePerUnit,
     pricePerUnitError,
+    cachedInputPricePerUnit,
+    setCachedInputPricePerUnit,
+    cachedInputPricePerUnitError,
+    outputPricePerUnit,
+    setOutputPricePerUnit,
+    outputPricePerUnitError,
     unitSize,
     setUnitSize,
     currency,

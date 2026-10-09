@@ -1,6 +1,6 @@
 """ORM model for the category table."""
 
-from sqlalchemy import Boolean, Column, Index, Integer, String, Text, func, text
+from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String, Text, func, text
 from sqlalchemy.orm import relationship
 
 from app.models import Base
@@ -15,6 +15,10 @@ class Category(Base):
     name = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, nullable=False, server_default=text("false"))
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=text("now()"), onupdate=func.now())
+    created_by = Column(String, nullable=True)
+    updated_by = Column(String, nullable=True)
 
     # Case-insensitive uniqueness on name.
     __table_args__ = (

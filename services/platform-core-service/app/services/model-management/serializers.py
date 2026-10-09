@@ -150,6 +150,12 @@ def service_to_dict(
         "publishedAt": _iso(service.published_at),
         "unpublishedAt": _iso(service.unpublished_at),
         "costPerUnit": float(service.cost_per_unit) if service.cost_per_unit is not None else None,
+        "cachedInputCostPerUnit": (
+            float(service.cached_input_cost_per_unit) if service.cached_input_cost_per_unit is not None else None
+        ),
+        "outputCostPerUnit": (
+            float(service.output_cost_per_unit) if service.output_cost_per_unit is not None else None
+        ),
         "unitSize": service.unit_size,
         "unitRate": float(service.unit_rate) if service.unit_rate is not None else None,
         "tierIds": service.tier_ids,

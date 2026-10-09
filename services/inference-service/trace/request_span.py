@@ -152,7 +152,8 @@ async def traced_inference(payload: dict, task_name: str, logger_: logging.Logge
     The 'ai-inference' span around an inference call, built on traced_span.
 
     Yields a mutable attrs dict pre-seeded with input_type; the wrapped code
-    fills in input_tokens / output_tokens / output_type as they become known.
+    fills in input_tokens / output_tokens / output_type as they become known
+    (LLM calls also set cached_input_tokens, the cached part of input_tokens).
     On failure token counts are zeroed and the error is logged with traceback.
 
     Single definition shared by the base run_inference and TTS's override —
@@ -164,6 +165,7 @@ async def traced_inference(payload: dict, task_name: str, logger_: logging.Logge
         logger_.error(f"{task_name}: inference failed: {exc}", exc_info=True)
         attrs["input_tokens"] = 0
         attrs["output_tokens"] = 0
+        attrs["cached_input_tokens"] = 0
         return attrs
 
     with traced_span(
@@ -179,6 +181,7 @@ async def traced_inference(payload: dict, task_name: str, logger_: logging.Logge
             "output_type": "unknown",
             "input_tokens": 0,
             "output_tokens": 0,
+            "cached_input_tokens": 0,
             # For trace/observability only — the PPU consumer's LLM/non-LLM
             # billing decision reads mm_services.task_type instead (via
             # get_service_pricing), not this span attribute.

@@ -1,6 +1,6 @@
 """ORM model for the audit_log table."""
 
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, DateTime, Integer, String, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 
 from app.models import Base
@@ -21,3 +21,5 @@ class PolicyAuditLog(Base):
     model_request = Column(JSONB, nullable=True)
     response = Column(JSONB, nullable=True)
     guardrail_info = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    created_by = Column(String, nullable=True)
