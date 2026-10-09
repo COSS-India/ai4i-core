@@ -21,8 +21,24 @@ logger = get_logger(__name__)
 class ServicePricing:
     task_type: str   # "llm", "asr", "nmt" — maps to inference_name
     unit_rate: Optional[Decimal]       # ₹ per single raw unit (preferred)
-    cost_per_unit: Optional[Decimal]   # ₹ per unit_size units (fallback)
+    cost_per_unit: Optional[Decimal]   # ₹ per unit_size units (fallback). LLM: input token price
     unit_size: Optional[int]           # scaling divisor
+    # LLM only, ₹ per unit_size tokens. None (non-LLM, or a cache entry from
+    # before these existed) means "price like input" — see calculate_llm_cost.
+    cached_input_cost_per_unit: Optional[Decimal] = None
+    output_cost_per_unit: Optional[Decimal] = None
+
+
+@dataclass
+class LlmCost:
+    """One LLM request's cost by token category; total is what's charged."""
+    input_cost: Decimal
+    cached_input_cost: Decimal
+    output_cost: Decimal
+
+    @property
+    def total(self) -> Decimal:
+        return self.input_cost + self.cached_input_cost + self.output_cost
 
 
 @dataclass
@@ -188,11 +204,14 @@ async def get_service_pricing(
                 unit_rate=Decimal(cached["unit_rate"]) if cached.get("unit_rate") else None,
                 cost_per_unit=Decimal(cached["cost_per_unit"]) if cached.get("cost_per_unit") else None,
                 unit_size=int(cached["unit_size"]) if cached.get("unit_size") else None,
+                cached_input_cost_per_unit=_decimal_or_none(cached.get("cached_input_cost_per_unit")),
+                output_cost_per_unit=_decimal_or_none(cached.get("output_cost_per_unit")),
             )
 
     result = await db.execute(
         text(
-            "SELECT task_type, unit_rate, cost_per_unit, unit_size"
+            "SELECT task_type, unit_rate, cost_per_unit, unit_size,"
+            " cached_input_cost_per_unit, output_cost_per_unit"
             " FROM mm_services"
             " WHERE service_id = :service_id AND deleted_at IS NULL"
             " ORDER BY created_at DESC"
@@ -209,6 +228,8 @@ async def get_service_pricing(
         unit_rate=Decimal(str(row.unit_rate)) if row.unit_rate is not None else None,
         cost_per_unit=Decimal(str(row.cost_per_unit)) if row.cost_per_unit is not None else None,
         unit_size=int(row.unit_size) if row.unit_size else None,
+        cached_input_cost_per_unit=_decimal_or_none(row.cached_input_cost_per_unit),
+        output_cost_per_unit=_decimal_or_none(row.output_cost_per_unit),
     )
 
     # Only cache when the service has a task_type configured; otherwise
@@ -220,6 +241,8 @@ async def get_service_pricing(
             "unit_rate": str(pricing.unit_rate) if pricing.unit_rate is not None else "",
             "cost_per_unit": str(pricing.cost_per_unit) if pricing.cost_per_unit is not None else "",
             "unit_size": str(pricing.unit_size) if pricing.unit_size is not None else "",
+            "cached_input_cost_per_unit": _str_or_empty(pricing.cached_input_cost_per_unit),
+            "output_cost_per_unit": _str_or_empty(pricing.output_cost_per_unit),
         })
         await pipe.expire(cache_key, Constants.PRICING_CACHE_TTL)
         await pipe.execute()
@@ -307,6 +330,50 @@ async def get_inference_type_id(db: AsyncSession, inference_name: str) -> Option
     )
     _inference_type_ids[normalized] = (type_id, time.monotonic() + ttl)
     return type_id
+
+
+def _decimal_or_none(value) -> Optional[Decimal]:
+    """A DB Numeric or a cached string ("" = not set) as Decimal, else None.
+    0 is a real price and stays 0."""
+    if value is None or value == "":
+        return None
+    return Decimal(str(value))
+
+
+def _str_or_empty(value: Optional[Decimal]) -> str:
+    return str(value) if value is not None else ""
+
+
+def _per_unit_rate(price: Optional[Decimal], pricing: ServicePricing) -> Optional[Decimal]:
+    """₹ per single token for a price quoted per unit_size tokens."""
+    if price is None or not pricing.unit_size:
+        return None
+    return price / pricing.unit_size
+
+
+def calculate_llm_cost(
+    input_tokens: Decimal, cached_input_tokens: Decimal, output_tokens: Decimal, pricing: ServicePricing,
+) -> LlmCost:
+    """Cost of one LLM request, each token counted in one category only.
+
+    input_tokens is the request's full prompt_tokens; cached_input_tokens is
+    the part of it served from the model's prefix cache (0 when the request
+    didn't report any), so uncached input = input_tokens - cached. Uncached
+    input is priced at the input price (unit_rate, else cost_per_unit /
+    unit_size, exactly as calculate_cost), cached input at
+    cached_input_cost_per_unit and output at output_cost_per_unit, both per
+    unit_size tokens. A missing cached/output price falls back to the input
+    price, so a service without them bills exactly as it did before."""
+    cached = min(max(cached_input_tokens, Decimal(0)), input_tokens)
+    uncached = input_tokens - cached
+    input_rate = pricing.unit_rate or _per_unit_rate(pricing.cost_per_unit, pricing) or Decimal(0)
+    cached_rate = _per_unit_rate(pricing.cached_input_cost_per_unit, pricing)
+    output_rate = _per_unit_rate(pricing.output_cost_per_unit, pricing)
+    return LlmCost(
+        input_cost=uncached * input_rate,
+        cached_input_cost=cached * (input_rate if cached_rate is None else cached_rate),
+        output_cost=output_tokens * (input_rate if output_rate is None else output_rate),
+    )
 
 
 def calculate_cost(total_units: Decimal, pricing: ServicePricing) -> Decimal:

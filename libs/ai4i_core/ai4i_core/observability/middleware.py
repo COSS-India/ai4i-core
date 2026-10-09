@@ -106,6 +106,7 @@ def set_billed_state(
     *,
     billed_input: float,
     billed_output: float = 0,
+    billed_cached_input: float = 0,
 ) -> None:
     """Record the billed quantities on ``request.state`` for
     ObservabilityMiddleware to read, so it never re-parses the request body.
@@ -118,7 +119,8 @@ def set_billed_state(
     ``billed_input`` / ``billed_output`` are the same counts on the
     ai-inference span (billing's source of truth) — the ``billed_`` prefix
     marks them as the quantities that actually get billed, so the metric
-    equals the bill.
+    equals the bill. ``billed_cached_input`` (LLM only) is the part of
+    ``billed_input`` served from the model's prefix cache.
 
     Metric LABELS (``source_lang`` / ``target_lang`` / ``model``) are not
     billing data and are NOT set here — set them with ``set_metric_labels``.
@@ -129,6 +131,7 @@ def set_billed_state(
     st = request.state
     st.billed_input = billed_input
     st.billed_output = billed_output
+    st.billed_cached_input = billed_cached_input
 
 
 class _Unset:
@@ -266,6 +269,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         # non-inference path, or an error before billing ran).
         billed_input = getattr(request.state, "billed_input", None)
         billed_output = getattr(request.state, "billed_output", None)
+        billed_cached_input = getattr(request.state, "billed_cached_input", 0)
         # Metric labels (not billed quantities) — set alongside the billed
         # count from the same single parse, so a label can never disagree
         # with what a second body parse would have produced.
@@ -288,6 +292,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             auth_type=auth_type,
             billed_input=billed_input,
             billed_output=billed_output,
+            billed_cached_input=billed_cached_input,
             source_lang=source_lang,
             target_lang=target_lang,
             model=model,
@@ -347,6 +352,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 auth_type=_auth_type(request),
                 billed_input=getattr(request.state, "billed_input", None),
                 billed_output=getattr(request.state, "billed_output", None),
+                billed_cached_input=getattr(request.state, "billed_cached_input", 0),
                 model=getattr(request.state, "model", "") or "",
                 model_id=getattr(request.state, "model_id", "") or "",
             )
@@ -411,6 +417,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         auth_type: str = "",
         billed_input: Optional[float] = None,
         billed_output: Optional[float] = None,
+        billed_cached_input: Optional[float] = 0,
         source_lang: str = "",
         target_lang: str = "",
         model: str = "",
@@ -461,6 +468,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         endpoint=path,
                         model_id=model_id,
                         auth_type=auth_type,
+                        cached_input_tokens=billed_cached_input or 0,
                     )
                 return
 

@@ -39,6 +39,10 @@ import {
   INFRA_DESCRIPTION_MAX_LEN,
   INFRA_DESCRIPTION_MIN_LEN,
   PRICE_PER_UNIT_MAX,
+  PRICE_LABEL,
+  LLM_CACHED_INPUT_PRICE_LABEL,
+  LLM_INPUT_PRICE_LABEL,
+  LLM_OUTPUT_PRICE_LABEL,
   SERVICE_DESCRIPTION_MAX_LEN,
   SERVICE_DESCRIPTION_MIN_LEN,
   SERVICE_ID_MAX_LEN,
@@ -66,6 +70,13 @@ interface ServiceFormTabProps {
   pricePerUnit: string;
   pricePerUnitError?: string | null;
   onPricePerUnitChange: (value: string) => void;
+  /** LLM only: pricePerUnit is then the input token price. */
+  cachedInputPricePerUnit: string;
+  cachedInputPricePerUnitError?: string | null;
+  onCachedInputPricePerUnitChange: (value: string) => void;
+  outputPricePerUnit: string;
+  outputPricePerUnitError?: string | null;
+  onOutputPricePerUnitChange: (value: string) => void;
   unitSize: string;
   onUnitSizeChange: (value: string) => void;
   currency: string;
@@ -116,6 +127,12 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
   pricePerUnit,
   pricePerUnitError,
   onPricePerUnitChange,
+  cachedInputPricePerUnit,
+  cachedInputPricePerUnitError,
+  onCachedInputPricePerUnitChange,
+  outputPricePerUnit,
+  outputPricePerUnitError,
+  onOutputPricePerUnitChange,
   unitSize,
   onUnitSizeChange,
   currency,
@@ -158,9 +175,43 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
   const descriptionError = afterBlur("serviceDescription", serviceDescriptionError);
   const infraError = afterBlur("hardwareDescription", hardwareDescriptionError);
 
-  const priceError = pricePerUnit.trim()
-    ? (pricePerUnitError ?? null)
-    : afterBlur("pricePerUnit", pricePerUnitError);
+  // A price shows its error once it holds anything; an empty one waits for a blur.
+  const priceFieldError = (field: string, value: string, error?: string | null) =>
+    value.trim() ? (error ?? null) : afterBlur(field, error);
+
+  const renderPriceField = (
+    field: string,
+    label: string,
+    value: string,
+    error: string | null | undefined,
+    onChange: (value: string) => void,
+    helper: string,
+  ) => {
+    if (isView) {
+      return <ReadOnlyField label={label}>{value || "—"}</ReadOnlyField>;
+    }
+    const shownError = priceFieldError(field, value, error);
+    return (
+      <FormControl isRequired isInvalid={!!shownError}>
+        <FieldLabel>{label}</FieldLabel>
+        <Input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={() => markBlurred(field)}
+          placeholder={FIELD_HINTS.service.price.placeholder}
+          type="number"
+          min={0}
+          max={PRICE_PER_UNIT_MAX}
+          bg="white"
+        />
+        {shownError ? (
+          <FormErrorMessage>{shownError}</FormErrorMessage>
+        ) : (
+          <FieldHint>{helper}</FieldHint>
+        )}
+      </FormControl>
+    );
+  };
   // Duplicate clash wins. Length shows once the field holds anything — the
   // prefill fills it without a blur — but an empty field still waits for one.
   const idError =
@@ -626,29 +677,15 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
               </SimpleGrid>
 
             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                {isView ? (
-                  <ReadOnlyField label="Price per unit size">
-                    {pricePerUnit || "—"}
-                  </ReadOnlyField>
-                ) : (
-                <FormControl isRequired isInvalid={!!priceError}>
-                  <FieldLabel>Price per unit size</FieldLabel>
-                  <Input
-                    value={pricePerUnit}
-                    onChange={(e) => onPricePerUnitChange(e.target.value)}
-                    onBlur={() => markBlurred("pricePerUnit")}
-                    placeholder={FIELD_HINTS.service.price.placeholder}
-                    type="number"
-                    min={0}
-                    max={PRICE_PER_UNIT_MAX}
-                    bg="white"
-                  />
-                  {priceError ? (
-                    <FormErrorMessage>{priceError}</FormErrorMessage>
-                  ) : (
-                    <FieldHint>{FIELD_HINTS.service.price.helper}</FieldHint>
-                  )}
-                </FormControl>
+                {renderPriceField(
+                  "pricePerUnit",
+                  isLlmTaskType ? LLM_INPUT_PRICE_LABEL : PRICE_LABEL,
+                  pricePerUnit,
+                  pricePerUnitError,
+                  onPricePerUnitChange,
+                  isLlmTaskType
+                    ? FIELD_HINTS.service.llmInputPrice.helper
+                    : FIELD_HINTS.service.price.helper,
                 )}
 
                 {isView ? (
@@ -670,6 +707,27 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 </FormControl>
                 )}
               </SimpleGrid>
+
+            {isLlmTaskType ? (
+              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                {renderPriceField(
+                  "cachedInputPricePerUnit",
+                  LLM_CACHED_INPUT_PRICE_LABEL,
+                  cachedInputPricePerUnit,
+                  cachedInputPricePerUnitError,
+                  onCachedInputPricePerUnitChange,
+                  FIELD_HINTS.service.llmCachedInputPrice.helper,
+                )}
+                {renderPriceField(
+                  "outputPricePerUnit",
+                  LLM_OUTPUT_PRICE_LABEL,
+                  outputPricePerUnit,
+                  outputPricePerUnitError,
+                  onOutputPricePerUnitChange,
+                  FIELD_HINTS.service.llmOutputPrice.helper,
+                )}
+              </SimpleGrid>
+            ) : null}
             {isView ? (
               <ReadOnlyField label="Tier">
                 {selectedTierNames.length > 0 ? (

@@ -305,6 +305,11 @@ export const createService = async (
     if (serviceData.task_type) apiPayload.taskType = serviceData.task_type;
     if (serviceData.costPerUnit !== undefined)
       apiPayload.costPerUnit = serviceData.costPerUnit;
+    // LLM only; the API rejects them for other task types.
+    if (serviceData.cachedInputCostPerUnit != null)
+      apiPayload.cachedInputCostPerUnit = serviceData.cachedInputCostPerUnit;
+    if (serviceData.outputCostPerUnit != null)
+      apiPayload.outputCostPerUnit = serviceData.outputCostPerUnit;
     if (serviceData.unitSize !== undefined)
       apiPayload.unitSize = serviceData.unitSize;
     if (serviceData.tierIds?.length) apiPayload.tierIds = serviceData.tierIds;
@@ -384,6 +389,10 @@ export const updateService = async (
       if (serviceData.task_type) apiPayload.taskType = serviceData.task_type;
       if (serviceData.costPerUnit !== undefined)
         apiPayload.costPerUnit = serviceData.costPerUnit;
+      if (serviceData.cachedInputCostPerUnit != null)
+        apiPayload.cachedInputCostPerUnit = serviceData.cachedInputCostPerUnit;
+      if (serviceData.outputCostPerUnit != null)
+        apiPayload.outputCostPerUnit = serviceData.outputCostPerUnit;
       if (serviceData.unitSize !== undefined)
         apiPayload.unitSize = serviceData.unitSize;
       if (serviceData.tierIds?.length) apiPayload.tierIds = serviceData.tierIds;

@@ -143,3 +143,22 @@ async def test_error_branch_model_span_is_a_child_of_request_span():
     assert model_span.attributes.get("service_id") == "missing-svc"
     assert model_span.attributes.get("status") == "failure"
     assert model_span.attributes.get("status_code") == 404
+
+
+
+def test_bridge_copies_cached_input_tokens_onto_request_state():
+    from ai4i_core.context import (
+        set_llm_usage_cached_input_tokens,
+        set_llm_usage_input_tokens,
+        set_llm_usage_output_tokens,
+    )
+
+    set_llm_usage_input_tokens(1200)
+    set_llm_usage_output_tokens(150)
+    set_llm_usage_cached_input_tokens(1024)
+    request = _fake_request()
+
+    inference_routes._bridge_llm_usage_to_request(request)
+
+    assert request.state.billed_input == 1200
+    assert request.state.billed_cached_input == 1024

@@ -11,8 +11,9 @@ from ai4i_core.context import (
     set_llm_usage_model_id,
     set_llm_usage_model_name,
     set_llm_usage_output_tokens,
+    set_llm_usage_cached_input_tokens,
 )
-from ai4i_core.observability.utils import get_llm_usage
+from ai4i_core.observability.utils import get_llm_cached_tokens, get_llm_usage
 from config import settings
 from inference.inference_server_resolver import InferenceServerResolver
 from trace.request_span import traced_span, traced_inference, get_context_attributes
@@ -357,6 +358,9 @@ class OpenAIProxyService:
                     input_tokens, output_tokens = get_llm_usage(body)
                     infer_attrs["input_tokens"] = input_tokens
                     infer_attrs["output_tokens"] = output_tokens
+                    # Part of input_tokens served from vLLM's prefix cache;
+                    # the PPU consumer prices it at the cached input price.
+                    infer_attrs["cached_input_tokens"] = get_llm_cached_tokens(body)
                     infer_attrs["output_type"] = "text"
                     # vLLM echoes the real upstream model name in the response —
                     # capture it for the model span (the client's `model` field
@@ -368,6 +372,7 @@ class OpenAIProxyService:
                     # therefore buffering) the response body.
                     set_llm_usage_input_tokens(input_tokens)
                     set_llm_usage_output_tokens(output_tokens)
+                    set_llm_usage_cached_input_tokens(infer_attrs["cached_input_tokens"])
                     set_llm_usage_model_name(model_attrs["model_name"])
 
         return status_code, body
@@ -578,8 +583,10 @@ class OpenAIProxyService:
         input_tokens, output_tokens = get_llm_usage(chunk)
         infer_attrs["input_tokens"] = input_tokens
         infer_attrs["output_tokens"] = output_tokens
+        infer_attrs["cached_input_tokens"] = get_llm_cached_tokens(chunk)
         set_llm_usage_input_tokens(input_tokens)
         set_llm_usage_output_tokens(output_tokens)
+        set_llm_usage_cached_input_tokens(infer_attrs["cached_input_tokens"])
 
     async def proxy_multipart(
         self,

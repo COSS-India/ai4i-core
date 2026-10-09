@@ -817,6 +817,9 @@ export function useTierManagement() {
           serviceId,
           task_type: resolveTaskType(service),
           costPerUnit: service.costPerUnit,
+          // LLM only (null otherwise); the API requires them with the billing fields.
+          cachedInputCostPerUnit: service.cachedInputCostPerUnit,
+          outputCostPerUnit: service.outputCostPerUnit,
           unitSize: service.unitSize,
           tierIds,
         });

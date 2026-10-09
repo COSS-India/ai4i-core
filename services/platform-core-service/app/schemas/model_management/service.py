@@ -359,6 +359,28 @@ _SERVICE_CREATE_EXAMPLE = {
 }
 
 
+LLM_TASK_TYPE = "llm"
+LLM_PRICE_FIELDS = ("cachedInputCostPerUnit", "outputCostPerUnit")
+
+
+def check_llm_token_prices(
+    task_type: Optional[str],
+    cost_per_unit: Optional[Decimal],
+    cached_input_cost_per_unit: Optional[Decimal],
+    output_cost_per_unit: Optional[Decimal],
+) -> None:
+    """LLM services carry three prices per unitSize tokens, all mandatory:
+    costPerUnit (input), cachedInputCostPerUnit and outputCostPerUnit.
+    Other task types carry costPerUnit only."""
+    if task_type == LLM_TASK_TYPE:
+        if None in (cost_per_unit, cached_input_cost_per_unit, output_cost_per_unit):
+            raise ValueError(
+                "costPerUnit, cachedInputCostPerUnit and outputCostPerUnit are required for LLM services"
+            )
+    elif cached_input_cost_per_unit is not None or output_cost_per_unit is not None:
+        raise ValueError("cachedInputCostPerUnit and outputCostPerUnit apply only to LLM services")
+
+
 class ServiceCreateRequest(BaseSchema):
     """Request body for POST /services. See the "Example Value" tab for a
     full worked ULCA-conformant payload."""
@@ -407,7 +429,18 @@ class ServiceCreateRequest(BaseSchema):
     sslVerify: bool = True
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
-    costPerUnit: Decimal = Field(..., ge=0, le=10_000_000)
+    costPerUnit: Decimal = Field(
+        ..., ge=0, le=10_000_000,
+        description="Price per unitSize units. For LLM services, the input token price.",
+    )
+    cachedInputCostPerUnit: Optional[Decimal] = Field(
+        None, ge=0, le=10_000_000,
+        description="LLM only, required for LLM: cached input token price per unitSize tokens.",
+    )
+    outputCostPerUnit: Optional[Decimal] = Field(
+        None, ge=0, le=10_000_000,
+        description="LLM only, required for LLM: output token price per unitSize tokens.",
+    )
     unitSize: int = Field(..., ge=1, le=10_000_000)
     tierIds: List[str] = Field(..., min_length=1)
     expectedResponseSchema: Optional[Dict[str, Any]] = Field(
@@ -555,6 +588,15 @@ class ServiceCreateRequest(BaseSchema):
             )
         return self
 
+    @model_validator(mode="after")
+    def _check_llm_token_prices(self) -> "ServiceCreateRequest":
+        """Runs after _reconcile_ulca_fields, so taskType is resolved from
+        either `task.type` or the deprecated `taskType` alias."""
+        check_llm_token_prices(
+            self.taskType, self.costPerUnit, self.cachedInputCostPerUnit, self.outputCostPerUnit
+        )
+        return self
+
 
 # Partial update — only the keys sent are merged, omit any field to leave it
 # unchanged. taskType/costPerUnit/unitSize/tierIds are shown together since
@@ -630,7 +672,18 @@ class ServiceUpdateRequest(BaseSchema):
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = None
     isTryItDefault: Optional[bool] = None
-    costPerUnit: Optional[Decimal] = Field(None, ge=0, le=10_000_000)
+    costPerUnit: Optional[Decimal] = Field(
+        None, ge=0, le=10_000_000,
+        description="Price per unitSize units. For LLM services, the input token price.",
+    )
+    cachedInputCostPerUnit: Optional[Decimal] = Field(
+        None, ge=0, le=10_000_000,
+        description="LLM only: cached input token price per unitSize tokens. Sent with the billing fields for LLM.",
+    )
+    outputCostPerUnit: Optional[Decimal] = Field(
+        None, ge=0, le=10_000_000,
+        description="LLM only: output token price per unitSize tokens. Sent with the billing fields for LLM.",
+    )
     unitSize: Optional[int] = Field(None, ge=1, le=10_000_000)
     tierIds: Optional[List[str]] = None
     expectedResponseSchema: Optional[Dict[str, Any]] = Field(
@@ -778,7 +831,8 @@ class ServiceUpdateRequest(BaseSchema):
     @model_validator(mode="after")
     def _require_billing_fields_on_substantive_edit(self) -> "ServiceUpdateRequest":
         """taskType/costPerUnit/unitSize/tierIds must be supplied together on
-        any edit beyond the publish/unpublish toggle. `_reconcile_ulca_fields`
+        any edit beyond the publish/unpublish toggle, plus
+        cachedInputCostPerUnit/outputCostPerUnit when taskType is llm. `_reconcile_ulca_fields`
         above already backfilled `taskType` from `task` when only the latter
         was supplied, so checking the `taskType` attribute here still covers
         both input channels.
@@ -788,15 +842,18 @@ class ServiceUpdateRequest(BaseSchema):
         flow, which sends only {serviceId, isPublished} by design.
         """
         if self.model_fields_set - self._PUBLISH_ONLY_FIELDS:
-            missing = [
-                f for f in self._BILLING_FIELDS_REQUIRED_TOGETHER
-                if getattr(self, f) is None
-            ]
+            required = self._BILLING_FIELDS_REQUIRED_TOGETHER
+            if self.taskType == LLM_TASK_TYPE:
+                required = required + LLM_PRICE_FIELDS
+            missing = [f for f in required if getattr(self, f) is None]
             if missing:
                 raise ValueError(
                     f"{', '.join(missing)} must be provided together on any "
                     "update other than publish/unpublish."
                 )
+            check_llm_token_prices(
+                self.taskType, self.costPerUnit, self.cachedInputCostPerUnit, self.outputCostPerUnit
+            )
         return self
 
 
@@ -914,6 +971,9 @@ class ServiceResponse(BaseSchema):
     publishedAt: Optional[str] = None
     unpublishedAt: Optional[str] = None
     costPerUnit: Optional[float] = None
+    # LLM only; null for other task types.
+    cachedInputCostPerUnit: Optional[float] = None
+    outputCostPerUnit: Optional[float] = None
     unitSize: Optional[int] = None
     unitRate: Optional[float] = None
     tierIds: Optional[List[str]] = None

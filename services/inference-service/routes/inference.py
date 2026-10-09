@@ -7,6 +7,7 @@ import logging
 from typing import Any, Dict, Optional, Tuple
 
 from ai4i_core.context import (
+    get_llm_usage_cached_input_tokens,
     get_llm_usage_input_tokens,
     get_llm_usage_model_id,
     get_llm_usage_model_name,
@@ -510,6 +511,7 @@ def _bridge_llm_usage_to_request(request: Request) -> None:
         request,
         billed_input=get_llm_usage_input_tokens() or 0,
         billed_output=get_llm_usage_output_tokens() or 0,
+        billed_cached_input=get_llm_usage_cached_input_tokens() or 0,
     )
     set_metric_labels(
         request,
