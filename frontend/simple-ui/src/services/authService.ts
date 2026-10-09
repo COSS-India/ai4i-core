@@ -799,28 +799,6 @@ class AuthService {
     }
   }
 
-  // Auto-refresh token (legacy method, kept for compatibility)
-  async ensureValidToken(): Promise<boolean> {
-    if (!this.isAuthenticated()) {
-      return false;
-    }
-
-    try {
-      await this.validateToken();
-      return true;
-    } catch (error) {
-      // Try to refresh token
-      try {
-        await this.refreshToken();
-        return true;
-      } catch (refreshError) {
-        this.clearTokens();
-        this.clearStoredUser();
-        return false;
-      }
-    }
-  }
-
   // Session expiry tracking (7 days if remember_me, else 24 hours)
   /**
    * Store the login timestamp

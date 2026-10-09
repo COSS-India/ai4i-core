@@ -83,6 +83,15 @@ class TestSubCategoryCreateSchema:
         with pytest.raises(PydanticValidationError):
             SubCategoryCreate(name="Toxicity", category_id=category_id)
 
+    @pytest.mark.parametrize("category_id", [True, "3", 3.0])
+    def test_category_id_must_be_a_real_integer(self, category_id):
+        with pytest.raises(PydanticValidationError):
+            SubCategoryCreate(name="Toxicity", category_id=category_id)
+
+    def test_category_id_must_fit_the_integer_column(self):
+        with pytest.raises(PydanticValidationError):
+            SubCategoryCreate(name="Toxicity", category_id=2_147_483_648)
+
     def test_name_is_required(self):
         with pytest.raises(PydanticValidationError, match="name"):
             SubCategoryCreate(category_id=1)
@@ -95,6 +104,17 @@ class TestSubCategoryCreateSchema:
     def test_name_longer_than_column_is_rejected(self):
         with pytest.raises(PydanticValidationError):
             SubCategoryCreate(name="x" * 101, category_id=1)
+
+    def test_name_with_nothing_visible_is_rejected(self):
+        with pytest.raises(PydanticValidationError, match="Sub-Category Name is required"):
+            SubCategoryCreate(name="\u200b", category_id=1)
+
+    def test_description_longer_than_limit_is_rejected(self):
+        with pytest.raises(PydanticValidationError):
+            SubCategoryCreate(name="Toxicity", description="x" * 1001, category_id=1)
+
+    def test_padding_does_not_count_toward_max_length(self):
+        assert SubCategoryCreate(name="  " + "x" * 100 + "  ", category_id=1).name == "x" * 100
 
     def test_name_and_description_are_trimmed(self):
         body = SubCategoryCreate(name="  Toxicity  ", description="  Hate  ", category_id=1)
@@ -142,7 +162,7 @@ class TestCreateSubCategoryService:
         )
         stmt = session.execute.await_args_list[1].args[0]
         sql = str(stmt.compile(compile_kwargs={"literal_binds": True}))
-        assert "lower(sub_category.name) = 'toxicity'" in sql
+        assert "lower(sub_category.name) = lower('Toxicity')" in sql
 
     async def test_integrity_error_on_commit_is_a_duplicate(self):
         session = _session(
@@ -150,6 +170,28 @@ class TestCreateSubCategoryService:
             commit_side_effect=IntegrityError("insert", {}, Exception("uq_sub_category_name_lower")),
         )
         with pytest.raises(DuplicateEntityError):
+            await sub_category_service.create_sub_category(
+                session, SubCategoryCreate(name="Toxicity", category_id=1)
+            )
+        session.rollback.assert_awaited_once()
+
+    async def test_parent_removed_before_insert_is_not_found(self):
+        session = _session(
+            _CATEGORY_FOUND, _NAME_FREE,
+            commit_side_effect=IntegrityError("insert", {}, Exception("fk_sub_category_category_id")),
+        )
+        with pytest.raises(EntityNotFoundError):
+            await sub_category_service.create_sub_category(
+                session, SubCategoryCreate(name="Toxicity", category_id=1)
+            )
+        session.rollback.assert_awaited_once()
+
+    async def test_other_integrity_errors_are_not_reported_as_duplicates(self):
+        session = _session(
+            _CATEGORY_FOUND, _NAME_FREE,
+            commit_side_effect=IntegrityError("insert", {}, Exception("some_other_constraint")),
+        )
+        with pytest.raises(IntegrityError):
             await sub_category_service.create_sub_category(
                 session, SubCategoryCreate(name="Toxicity", category_id=1)
             )

@@ -4,12 +4,14 @@
 Every sub-category belongs to exactly one category, which must already exist.
 Names are unique case-insensitively across all categories, not just within
 one (uq_sub_category_name_lower). The pre-insert checks give a clean 404/409;
-the IntegrityError fallback covers a concurrent create of the same name.
+an IntegrityError on that index covers a concurrent create of the same name,
+and one on the category foreign key a parent removed after the check (404);
+any other integrity error is re-raised.
 
 Enabling or disabling a sub-category writes the same is_active to every
 policy under it; the parent category and sibling sub-categories are
-untouched. A sub-category cannot be enabled
-while its category is disabled (409) — enable the category instead.
+untouched. A sub-category cannot be enabled while its category is disabled
+(409) — enable the category instead.
 """
 
 from typing import List, Optional
@@ -50,7 +52,7 @@ async def create_sub_category(session: AsyncSession, body: SubCategoryCreate) ->
     await _ensure_category_exists(session, body.category_id)
 
     existing = await session.execute(
-        select(SubCategory.id).where(func.lower(SubCategory.name) == body.name.lower()).limit(1)
+        select(SubCategory.id).where(func.lower(SubCategory.name) == func.lower(body.name)).limit(1)
     )
     if existing.first() is not None:
         raise DuplicateEntityError(f"Sub-category '{body.name}'")
@@ -59,9 +61,13 @@ async def create_sub_category(session: AsyncSession, body: SubCategoryCreate) ->
     session.add(row)
     try:
         await session.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         await session.rollback()
-        raise DuplicateEntityError(f"Sub-category '{body.name}'")
+        if "uq_sub_category_name_lower" in str(exc.orig):
+            raise DuplicateEntityError(f"Sub-category '{body.name}'")
+        if "fk_sub_category_category_id" in str(exc.orig):
+            raise EntityNotFoundError(f"Category {body.category_id}")
+        raise
     await session.refresh(row)
     return SubCategoryItem.model_validate(row)
 

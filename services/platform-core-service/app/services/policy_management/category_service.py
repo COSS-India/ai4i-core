@@ -2,7 +2,7 @@
 -> Policy).
 
 Names are unique case-insensitively (uq_category_name_lower). The
-pre-insert check gives a clean 409; the IntegrityError fallback covers two
+pre-insert check gives a clean 409; an IntegrityError on that index covers two
 concurrent creates of the same name.
 
 Enabling or disabling a category writes the same is_active to every
@@ -34,7 +34,7 @@ async def list_categories(session: AsyncSession) -> List[CategoryItem]:
 
 async def create_category(session: AsyncSession, body: CategoryCreate) -> CategoryItem:
     existing = await session.execute(
-        select(Category.id).where(func.lower(Category.name) == body.name.lower()).limit(1)
+        select(Category.id).where(func.lower(Category.name) == func.lower(body.name)).limit(1)
     )
     if existing.first() is not None:
         raise DuplicateEntityError(f"Category '{body.name}'")
@@ -43,9 +43,11 @@ async def create_category(session: AsyncSession, body: CategoryCreate) -> Catego
     session.add(row)
     try:
         await session.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         await session.rollback()
-        raise DuplicateEntityError(f"Category '{body.name}'")
+        if "uq_category_name_lower" in str(exc.orig):
+            raise DuplicateEntityError(f"Category '{body.name}'")
+        raise
     await session.refresh(row)
     return CategoryItem.model_validate(row)
 

@@ -104,7 +104,7 @@ async def update_category_status(
 )
 async def list_sub_categories(
     request: Request,
-    category_id: Optional[int] = Query(None, gt=0, description="Only sub-categories of this category."),
+    category_id: Optional[int] = Query(None, gt=0, le=2_147_483_647, description="Only sub-categories of this category."),
     session: AsyncSession = Depends(get_db),
 ) -> ListSubCategoryResponse:
     """List sub-categories, optionally only those under one category (404 if
