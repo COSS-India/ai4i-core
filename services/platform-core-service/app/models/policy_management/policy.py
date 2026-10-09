@@ -2,7 +2,7 @@
 
 import enum
 
-from sqlalchemy import Boolean, Column, Enum, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func, text
+from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import relationship
 
@@ -43,6 +43,10 @@ class Policy(Base):
     is_active = Column(Boolean, nullable=False, server_default=text("false"))
     # Elements reference policy_type.id; not enforced by the database.
     policy_type_id = Column(ARRAY(Integer), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=text("now()"), onupdate=func.now())
+    created_by = Column(String, nullable=True)
+    updated_by = Column(String, nullable=True)
 
     # Case-insensitive uniqueness on name.
     __table_args__ = (

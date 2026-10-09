@@ -133,6 +133,15 @@ class DuplicateEntityError(AppError):
         super().__init__(message=msg, code="DUPLICATE_ENTITY", status_code=409)
 
 
+class EntityInUseError(AppError):
+    def __init__(self, entity: str = "Entity"):
+        super().__init__(
+            message=f"{entity} is still in use and cannot be deleted.",
+            code="ENTITY_IN_USE",
+            status_code=409,
+        )
+
+
 # =============================================================================
 # Validation (422)
 # =============================================================================
@@ -304,6 +313,7 @@ __all__ = [
     "EntityNotFoundError",
     "UserNotFoundError",
     "DuplicateEntityError",
+    "EntityInUseError",
     # Validation (422)
     "ValidationError",
     "PasswordValidationError",
