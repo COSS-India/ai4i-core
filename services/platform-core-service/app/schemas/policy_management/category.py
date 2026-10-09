@@ -3,6 +3,12 @@ from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.common import MessageMeta, SuccessResponse, SuccessResponseWithMeta
+from app.schemas.policy_management.fields import (
+    DESCRIPTION_MAX_LEN,
+    NAME_MAX_LEN,
+    clean_description,
+    clean_name,
+)
 
 
 class CategoryItem(BaseModel):
@@ -21,30 +27,22 @@ class CategoryListData(BaseModel):
 
 
 class CategoryCreate(BaseModel):
-    """Category Name is mandatory; Description is optional. Whitespace is
-    trimmed first, so a name of only spaces counts as blank and 422s."""
+    """Category Name is mandatory; Description is optional. Whitespace and
+    zero-width characters are trimmed first, so a name with nothing visible
+    counts as blank and 422s."""
 
-    name: str = Field(..., max_length=100)
-    description: Optional[str] = None
+    name: str = Field(..., max_length=NAME_MAX_LEN)
+    description: Optional[str] = Field(None, max_length=DESCRIPTION_MAX_LEN)
 
     @field_validator("name", mode="before")
     @classmethod
     def validate_name(cls, v):
-        # Runs before max_length so padding does not count toward the limit;
-        # non-strings fall through to the str type check.
-        if not isinstance(v, str):
-            return v
-        v = v.strip()
-        if not v:
-            raise ValueError("Category Name is required")
-        return v
+        return clean_name(v, "Category")
 
-    @field_validator("description")
+    @field_validator("description", mode="before")
     @classmethod
-    def normalize_description(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        return v.strip() or None
+    def normalize_description(cls, v):
+        return clean_description(v)
 
 
 # ── Route response envelopes ──

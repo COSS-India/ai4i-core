@@ -4,7 +4,8 @@
 Every sub-category belongs to exactly one category, which must already exist.
 Names are unique case-insensitively across all categories, not just within
 one (uq_sub_category_name_lower). The pre-insert checks give a clean 404/409;
-the IntegrityError fallback covers a concurrent create of the same name.
+an IntegrityError on that index covers a concurrent create of the same name;
+any other integrity error is re-raised.
 """
 
 from typing import List, Optional
@@ -49,8 +50,10 @@ async def create_sub_category(session: AsyncSession, body: SubCategoryCreate) ->
     session.add(row)
     try:
         await session.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         await session.rollback()
-        raise DuplicateEntityError(f"Sub-category '{body.name}'")
+        if "uq_sub_category_name_lower" in str(exc.orig):
+            raise DuplicateEntityError(f"Sub-category '{body.name}'")
+        raise
     await session.refresh(row)
     return SubCategoryItem.model_validate(row)

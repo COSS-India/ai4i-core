@@ -83,9 +83,27 @@ class TestCategoryCreateSchema:
         assert body.name == "Safety"
         assert body.description == "Harm filters"
 
-    @pytest.mark.parametrize("description", [None, "", "   "])
+    @pytest.mark.parametrize("name", ["\u200b", " \u200b\ufeff "])
+    def test_name_with_nothing_visible_is_rejected(self, name):
+        with pytest.raises(PydanticValidationError, match="Category Name is required"):
+            CategoryCreate(name=name)
+
+    def test_zero_width_characters_are_trimmed_from_the_ends(self):
+        assert CategoryCreate(name="\u200bSafety\u200b").name == "Safety"
+
+    def test_zero_width_joiner_inside_a_name_is_kept(self):
+        assert CategoryCreate(name="ക\u200dഷ").name == "ക\u200dഷ"
+
+    @pytest.mark.parametrize("description", [None, "", "   ", "\u200b"])
     def test_description_is_optional(self, description):
         assert CategoryCreate(name="Safety", description=description).description is None
+
+    def test_description_longer_than_limit_is_rejected(self):
+        with pytest.raises(PydanticValidationError):
+            CategoryCreate(name="Safety", description="x" * 1001)
+
+    def test_description_padding_does_not_count_toward_limit(self):
+        assert CategoryCreate(name="Safety", description=" " + "x" * 1000 + " ").description == "x" * 1000
 
 
 @pytest.mark.asyncio
@@ -115,9 +133,16 @@ class TestCreateCategoryService:
 
     async def test_integrity_error_on_commit_is_a_duplicate(self):
         session = _session(
-            existing=None, commit_side_effect=IntegrityError("insert", {}, Exception("uq_category_name"))
+            existing=None, commit_side_effect=IntegrityError("insert", {}, Exception("uq_category_name_lower"))
         )
         with pytest.raises(DuplicateEntityError):
+            await category_service.create_category(session, CategoryCreate(name="Safety"))
+        session.rollback.assert_awaited_once()
+
+    async def test_other_integrity_errors_are_not_reported_as_duplicates(self):
+        error = IntegrityError("insert", {}, Exception("some_other_constraint"))
+        session = _session(existing=None, commit_side_effect=error)
+        with pytest.raises(IntegrityError):
             await category_service.create_category(session, CategoryCreate(name="Safety"))
         session.rollback.assert_awaited_once()
 

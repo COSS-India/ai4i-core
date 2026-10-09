@@ -2,7 +2,7 @@
 -> Policy).
 
 Names are unique case-insensitively (uq_category_name_lower). The
-pre-insert check gives a clean 409; the IntegrityError fallback covers two
+pre-insert check gives a clean 409; an IntegrityError on that index covers two
 concurrent creates of the same name.
 """
 
@@ -33,8 +33,10 @@ async def create_category(session: AsyncSession, body: CategoryCreate) -> Catego
     session.add(row)
     try:
         await session.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         await session.rollback()
-        raise DuplicateEntityError(f"Category '{body.name}'")
+        if "uq_category_name_lower" in str(exc.orig):
+            raise DuplicateEntityError(f"Category '{body.name}'")
+        raise
     await session.refresh(row)
     return CategoryItem.model_validate(row)
