@@ -1,9 +1,11 @@
 """Pay-per-use ORM models."""
 
 from app.models.pay_per_use.budget_usage import BudgetUsage
+from app.models.pay_per_use.daily_usage import DailyUsage
 from app.models.pay_per_use.inference_type import InferenceType
 from app.models.pay_per_use.quota_usage import QuotaUsage
 from app.models.pay_per_use.tier import Tier, TierQuota
+from app.models.pay_per_use.usage_event import UsageEvent
 
 __all__ = [
     "Tier",
@@ -11,4 +13,6 @@ __all__ = [
     "QuotaUsage",
     "BudgetUsage",
     "InferenceType",
+    "UsageEvent",
+    "DailyUsage",
 ]
