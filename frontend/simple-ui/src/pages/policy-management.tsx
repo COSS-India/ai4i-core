@@ -3,20 +3,24 @@ import Head from "next/head";
 import React from "react";
 import { useRouter } from "next/router";
 import ContentLayout from "../components/common/ContentLayout";
-import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import LoadingSpinner from "../components/common/LoadingSpinner";
 import PolicyManagement from "../components/policy/PolicyManagement";
 import { useAuth } from "../hooks/useAuth";
 import { getPlatformName } from "../config/runtimeConfig";
-import { isPlatformAdminUser } from "../utils/rbac";
-import CreateButton from "../components/common/CreateButton";
+import { getTenantIdFromToken } from "../utils/helpers";
+import { isPlatformAdminUser, isTenantAdminUser } from "../utils/rbac";
+import type { PortalRole } from "../components/policy/pii/model";
 
 const PolicyManagementPage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
-  const openCreateRef = React.useRef<() => void>(() => {});
 
-  const canManagePolicies = isPlatformAdminUser(user?.roles);
+  const role: PortalRole | null = isPlatformAdminUser(user?.roles)
+    ? "adopter"
+    : isTenantAdminUser(user?.roles)
+      ? "institution"
+      : null;
+  const institutionId = user?.tenant_id?.trim() || getTenantIdFromToken() || "";
 
   React.useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -47,33 +51,15 @@ const PolicyManagementPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>{`Policy Management - ${getPlatformName()}`}</title>
+        <title>{`Policies - ${getPlatformName()}`}</title>
         <meta
           name="description"
-          content="PII policies, type library, and policy-service audit logs"
+          content="Security and privacy policies, PII definitions, and the policy playground"
         />
       </Head>
 
       <ContentLayout>
-          <ManagementPageHeader
-            crumbs={false}
-            title="Policy Management"
-            description="Manage policy definitions and PII types"
-            actions={
-              canManagePolicies ? (
-                <CreateButton onClick={() => openCreateRef.current()}>
-                  Create Policy
-                </CreateButton>
-              ) : undefined
-            }
-          />
-
-          <PolicyManagement
-            canManage={canManagePolicies}
-            onRegisterCreatePolicy={(open) => {
-              openCreateRef.current = open;
-            }}
-          />
+          <PolicyManagement role={role} institutionId={institutionId} />
       </ContentLayout>
     </>
   );

@@ -194,8 +194,9 @@ function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean 
     case TABS.home:
       return true;
     case TABS.traces:
-    case TABS.policyManagement:
       return false;
+    case TABS.policyManagement:
+      return ctx.isAdmin || ctx.isTenantAdmin;
     case TABS.modelManagement:
       return !ctx.isGuest && !ctx.isUser;
     case TABS.servicesManagement:
