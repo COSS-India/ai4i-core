@@ -69,7 +69,7 @@ class CreateCategoryResponse(SuccessResponseWithMeta):
 
 
 class UpdateCategoryStatusResponse(SuccessResponseWithMeta):
-    """PUT /policies/categories/{category_id}"""
+    """PATCH /policies/categories/{category_id}/status"""
 
     data: CategoryItem
     meta: MessageMeta

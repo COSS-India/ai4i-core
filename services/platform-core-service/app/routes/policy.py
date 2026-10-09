@@ -4,10 +4,10 @@ Categories are the top level of the policy hierarchy; a category is created
 before any sub-categories or policies exist under it. Each sub-category
 belongs to exactly one category.
 
-Categories and sub-categories are enabled/disabled via PUT rather than
-deleted, so their policies and history survive a disable. Toggling a
-category applies the same is_active to every sub-category and policy under
-it; toggling a sub-category applies it to every policy under it.
+Categories and sub-categories are enabled/disabled via PATCH .../status
+rather than deleted, so their policies and history survive a disable.
+Toggling a category applies the same is_active to every sub-category and
+policy under it; toggling a sub-category applies it to every policy under it.
 """
 
 from typing import Optional
@@ -88,8 +88,8 @@ async def create_category(
     )
 
 
-@router.put(
-    "/categories/{category_id}",
+@router.patch(
+    "/categories/{category_id}/status",
     response_model=UpdateCategoryStatusResponse,
     responses=error_responses(403, 404),
 )
@@ -153,8 +153,8 @@ async def create_sub_category(
     )
 
 
-@router.put(
-    "/sub-categories/{sub_category_id}",
+@router.patch(
+    "/sub-categories/{sub_category_id}/status",
     response_model=UpdateSubCategoryStatusResponse,
     responses=error_responses(403, 404, 409),
 )

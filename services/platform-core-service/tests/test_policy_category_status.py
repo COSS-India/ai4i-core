@@ -1,6 +1,6 @@
 """app/routes/policy.py and the category/sub-category services —
-PUT /policies/categories/{category_id} and
-PUT /policies/sub-categories/{sub_category_id}.
+PATCH /policies/categories/{category_id}/status and
+PATCH /policies/sub-categories/{sub_category_id}/status.
 
 Covers the acceptance criteria that live in the API: an Adopter Admin can
 enable or disable a category or sub-category, the row is updated in place
@@ -304,17 +304,17 @@ class TestRouteShape:
     @pytest.mark.parametrize(
         "path,param",
         [
-            ("/policies/categories/{category_id}", "category_id"),
-            ("/policies/sub-categories/{sub_category_id}", "sub_category_id"),
+            ("/policies/categories/{category_id}/status", "category_id"),
+            ("/policies/sub-categories/{sub_category_id}/status", "sub_category_id"),
         ],
     )
     def test_id_must_fit_the_integer_column(self, path, param):
-        route = next(r for r in _policy_routes.router.routes if r.path == path and "PUT" in r.methods)
+        route = next(r for r in _policy_routes.router.routes if r.path == path and "PATCH" in r.methods)
         field = next(p for p in route.dependant.path_params if p.name == param)
         bounds = {type(m).__name__: m for m in field.field_info.metadata}
         assert (bounds["Gt"].gt, bounds["Le"].le) == (0, 2_147_483_647)
 
     def test_paths_and_methods(self):
         routes = {(r.path, m) for r in _policy_routes.router.routes for m in r.methods}
-        assert ("/policies/categories/{category_id}", "PUT") in routes
-        assert ("/policies/sub-categories/{sub_category_id}", "PUT") in routes
+        assert ("/policies/categories/{category_id}/status", "PATCH") in routes
+        assert ("/policies/sub-categories/{sub_category_id}/status", "PATCH") in routes

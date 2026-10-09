@@ -73,7 +73,7 @@ class CreateSubCategoryResponse(SuccessResponseWithMeta):
 
 
 class UpdateSubCategoryStatusResponse(SuccessResponseWithMeta):
-    """PUT /policies/sub-categories/{sub_category_id}"""
+    """PATCH /policies/sub-categories/{sub_category_id}/status"""
 
     data: SubCategoryItem
     meta: MessageMeta
