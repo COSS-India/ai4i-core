@@ -177,6 +177,12 @@
     { "endpoint": "POST:/api/v1/policies/policy-types",                   "permissionRequired": 1,   "description": "Create a policy type (admin sentinel — ADMIN only)" },
     { "endpoint": "GET:/api/v1/policies/policy-types/{policy_type_id}",   "permissionRequired": 1,   "description": "Get policy type by ID (admin sentinel — ADMIN only)" },
     { "endpoint": "PUT:/api/v1/policies/policy-types/{policy_type_id}",   "permissionRequired": 1,   "description": "Update a policy type (admin sentinel — ADMIN only)" },
-    { "endpoint": "DELETE:/api/v1/policies/policy-types/{policy_type_id}","permissionRequired": 1,   "description": "Delete a policy type (admin sentinel — ADMIN only)" }
+    { "endpoint": "DELETE:/api/v1/policies/policy-types/{policy_type_id}","permissionRequired": 1,   "description": "Delete a policy type (admin sentinel — ADMIN only)" },
+
+    { "endpoint": "GET:/api/v1/policies",                                 "permissionRequired": 1,   "description": "List policies (admin sentinel — ADMIN only)" },
+    { "endpoint": "POST:/api/v1/policies",                                "permissionRequired": 1,   "description": "Create a policy (admin sentinel — ADMIN only)" },
+    { "endpoint": "GET:/api/v1/policies/{id}",                            "permissionRequired": 1,   "description": "Get policy by ID (admin sentinel — ADMIN only)" },
+    { "endpoint": "PUT:/api/v1/policies",                                 "permissionRequired": 1,   "description": "Update a policy (admin sentinel — ADMIN only)" },
+    { "endpoint": "DELETE:/api/v1/policies/{id}",                         "permissionRequired": 1,   "description": "Delete a policy (admin sentinel — ADMIN only)" }
   ]
 }

@@ -8,6 +8,7 @@ import unicodedata
 
 NAME_MAX_LEN = 100
 DESCRIPTION_MAX_LEN = 1000
+POLICY_DESCRIPTION_MAX_LEN = 200
 
 
 def _is_invisible(c: str) -> bool:
