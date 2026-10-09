@@ -11,6 +11,7 @@ import {
   getRememberMeFromStorage,
 } from "../utils/tokenStorage";
 import { responseIndicatesTenantSuspendedOrInactive } from "../utils/tenantInactiveApiErrors";
+import { isAuthRejection } from "../utils/authErrors";
 import { apiEndpoints, API_URL_PATH_MARKERS } from "./apiEndpoints";
 import BaseApiService from "./baseApiService";
 import { getApiBaseUrl } from "../config/runtimeConfig";
@@ -337,9 +338,9 @@ apiClient.interceptors.response.use(
             if (context.isAuthRefreshEndpoint) {
               console.warn("Refresh token rejected — clearing session");
               await clearSessionAndRedirect("/auth");
-              return Promise.reject(
-                new Error("Session expired. Please sign in again."),
-              );
+              const sessionExpiredError = new Error("Session expired. Please sign in again.");
+              (sessionExpiredError as any).status = 401;
+              return Promise.reject(sessionExpiredError);
             }
 
             if (
@@ -413,28 +414,20 @@ apiClient.interceptors.response.use(
                     return apiClient(originalRequest);
                   }
                 } catch (refreshError: any) {
-                  // Refresh failed - check if it's because token expired
-                  const refreshErrorMsg = (
-                    refreshError?.message || ""
-                  ).toLowerCase();
-                  const refreshFailedDueToExpiration =
-                    refreshErrorMsg.includes("expired") ||
-                    refreshErrorMsg.includes("invalid") ||
-                    refreshErrorMsg.includes("401") ||
-                    refreshErrorMsg.includes("unauthorized");
-
-                  if (refreshFailedDueToExpiration || isTokenExpired) {
-                    // Token expired or invalid credentials - redirect to sign-in page
-                    console.warn(
-                      `Authentication failed for ${endpointType} endpoint - redirecting to sign-in`,
-                    );
-                    await clearSessionAndRedirect("/auth");
-                    return Promise.reject(
-                      new Error("Session expired. Please sign in again."),
-                    );
-                  } else {
-                    console.warn(`Token refresh failed for ${endpointType} endpoint:`, refreshError);
+                  // Transient refresh failure (auth-service down/restarting): keep the
+                  // session and surface the outage instead of signing the user out.
+                  if (!isAuthRejection(refreshError)) {
+                    console.warn(`Token refresh unavailable for ${endpointType} endpoint:`, refreshError);
+                    return Promise.reject(refreshError);
                   }
+                  // Token expired or invalid credentials - redirect to sign-in page
+                  console.warn(
+                    `Authentication failed for ${endpointType} endpoint - redirecting to sign-in`,
+                  );
+                  await clearSessionAndRedirect("/auth");
+                  return Promise.reject(
+                    new Error("Session expired. Please sign in again."),
+                  );
                 }
               } else if (isTokenExpired) {
                 // Token expired or invalid credentials - redirect to sign-in
@@ -472,19 +465,8 @@ apiClient.interceptors.response.use(
               (enhancedError as any).response = error?.response;
               return Promise.reject(enhancedError);
             } else {
-              // For auth endpoints and other non-service endpoints
-              // Check if token expired and redirect to sign-in if so
-
-              // Extract error message to check for expiration
-              const errorMessage = extractErrorMessage(data, "");
-
-              const errorMessageLower = errorMessage.toLowerCase();
-              const isTokenExpired =
-                isTokenExpiredFromMessage(errorMessage) ||
-                errorMessageLower.includes(
-                  "invalid authentication credentials",
-                );
-
+              // For auth endpoints and other non-service endpoints:
+              // refresh once and retry; sign out only if the refresh is rejected
               if (!originalRequest._retry) {
                 originalRequest._retry = true;
 
@@ -504,29 +486,19 @@ apiClient.interceptors.response.use(
                     return apiClient(originalRequest);
                   }
                 } catch (refreshError: any) {
-                  // Refresh failed - check if it's due to expiration
-                  const refreshErrorMsg = (
-                    refreshError?.message || ""
-                  ).toLowerCase();
-                  const refreshFailedDueToExpiration =
-                    refreshErrorMsg.includes("expired") ||
-                    refreshErrorMsg.includes("invalid") ||
-                    refreshErrorMsg.includes("401") ||
-                    refreshErrorMsg.includes("unauthorized");
-
-                  if (refreshFailedDueToExpiration || isTokenExpired) {
-                    // Token expired - redirect to sign-in
-                    console.warn(
-                      "Token expired for auth endpoint - redirecting to sign-in",
-                    );
-                    await clearSessionAndRedirect("/auth");
-                    return Promise.reject(
-                      new Error("Session expired. Please sign in again."),
-                    );
-                  } else {
-                    console.error('Token refresh failed for auth endpoint:', refreshError);
-                    await clearSessionAndRedirect('/');
+                  // Transient refresh failure (auth-service down/restarting): keep the
+                  // session and surface the outage instead of signing the user out.
+                  if (!isAuthRejection(refreshError)) {
+                    console.error('Token refresh unavailable for auth endpoint:', refreshError);
+                    return Promise.reject(refreshError);
                   }
+                  console.warn(
+                    "Token expired for auth endpoint - redirecting to sign-in",
+                  );
+                  await clearSessionAndRedirect("/auth");
+                  return Promise.reject(
+                    new Error("Session expired. Please sign in again."),
+                  );
                 }
               } else {
                 // Already retried - token likely expired, redirect to sign-in

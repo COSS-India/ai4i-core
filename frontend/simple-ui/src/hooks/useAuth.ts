@@ -6,6 +6,7 @@ import { User, AuthState, LoginRequest, LoginResponse, RegisterRequest } from '.
 import authService from '../services/authService';
 import { useTokenRefresh } from './useTokenRefresh';
 import { UI_ERROR_MESSAGES } from '../config/constants';
+import { isAuthRejection } from '../utils/authErrors';
 
 // Broadcast auth state changes so other hook instances (e.g., Header) can react immediately
 const AUTH_UPDATED_EVENT = 'auth:updated';
@@ -32,13 +33,15 @@ function runAuthInitOnce(): Promise<void> {
         const currentUser = await authService.getCurrentUser({ suppressErrorAlert: true });
         authService.setStoredUser(currentUser);
       } catch (error: any) {
-        const errorMessage = error?.message || 'Token validation failed';
-        if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
-          console.warn('Auth service timeout during initialization - clearing auth state silently');
+        authInitPromise = null; // Allow re-init on next mount / after next login
+        if (!isAuthRejection(error)) {
+          // Timeout / network / 5xx (e.g. auth-service mid-deploy): keep the session
+          // and fall back to the stored user rather than signing everyone out.
+          console.warn('Auth service unavailable during initialization - keeping session:', error?.message);
+          return;
         }
         authService.clearAuthTokens();
         authService.clearStoredUser();
-        authInitPromise = null; // Allow re-init after next login in same session
       }
     } else {
       if (!hasToken) authService.clearStoredUser();
@@ -394,8 +397,10 @@ export const useAuth = () => {
       return response;
     } catch (error) {
       console.error('Token refresh failed:', error);
-      // If refresh fails, logout user
-      await logout();
+      // Only a rejected refresh token ends the session; transient failures are retried later
+      if (isAuthRejection(error)) {
+        await logout();
+      }
       throw error;
     }
   }, [logout]);
