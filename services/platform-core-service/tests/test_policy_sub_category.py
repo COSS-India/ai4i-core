@@ -175,10 +175,21 @@ class TestCreateSubCategoryService:
             )
         session.rollback.assert_awaited_once()
 
-    async def test_other_integrity_errors_are_not_reported_as_duplicates(self):
+    async def test_parent_removed_before_insert_is_not_found(self):
         session = _session(
             _CATEGORY_FOUND, _NAME_FREE,
             commit_side_effect=IntegrityError("insert", {}, Exception("fk_sub_category_category_id")),
+        )
+        with pytest.raises(EntityNotFoundError):
+            await sub_category_service.create_sub_category(
+                session, SubCategoryCreate(name="Toxicity", category_id=1)
+            )
+        session.rollback.assert_awaited_once()
+
+    async def test_other_integrity_errors_are_not_reported_as_duplicates(self):
+        session = _session(
+            _CATEGORY_FOUND, _NAME_FREE,
+            commit_side_effect=IntegrityError("insert", {}, Exception("some_other_constraint")),
         )
         with pytest.raises(IntegrityError):
             await sub_category_service.create_sub_category(
