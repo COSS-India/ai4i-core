@@ -318,10 +318,11 @@ class OpenAIProxyService:
             self._seed_model_attrs(model_attrs, service_id, model_name)
 
             async with traced_inference(payload, _TASK_TYPE_LLM, logger) as infer_attrs:
-                # service_id and tenantId must be set explicitly: the PPU Kafka
-                # consumer reads only the ai-inference span for billing.
+                # service_id, tenantId and model_name must be set explicitly:
+                # the PPU Kafka consumer reads only the ai-inference span.
                 infer_attrs["service_id"] = service_id
                 infer_attrs["tenantId"] = model_attrs.get("tenantId", "")
+                infer_attrs["model_name"] = model_attrs["model_name"]
 
                 logger.info("LLM proxy -> %s (service_id=%s)", url, service_id)
                 try:
@@ -361,6 +362,7 @@ class OpenAIProxyService:
                     # capture it for the model span (the client's `model` field
                     # carried the service ID, not the upstream model name).
                     model_attrs["model_name"] = body.get("model", "unknown")
+                    infer_attrs["model_name"] = model_attrs["model_name"]
                     # Publish to context vars so ObservabilityMiddleware can
                     # emit Prometheus token metrics without re-reading (and
                     # therefore buffering) the response body.
@@ -535,10 +537,11 @@ class OpenAIProxyService:
                 set_llm_usage_model_name(model_attrs["model_name"])
 
                 async with traced_inference(payload, _TASK_TYPE_LLM, logger) as infer_attrs:
-                    # service_id and tenantId must be set explicitly: the PPU
-                    # Kafka consumer reads only the ai-inference span for billing.
+                    # service_id, tenantId and model_name must be set explicitly:
+                    # the PPU Kafka consumer reads only the ai-inference span.
                     infer_attrs["service_id"] = service_id
                     infer_attrs["tenantId"] = model_attrs.get("tenantId", "")
+                    infer_attrs["model_name"] = model_attrs["model_name"]
                     infer_attrs["output_type"] = "text"
 
                     async for line in result:
