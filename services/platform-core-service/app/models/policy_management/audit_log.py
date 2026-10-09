@@ -22,6 +22,4 @@ class PolicyAuditLog(Base):
     response = Column(JSONB, nullable=True)
     guardrail_info = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
-    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
     created_by = Column(String, nullable=True)
-    updated_by = Column(String, nullable=True)

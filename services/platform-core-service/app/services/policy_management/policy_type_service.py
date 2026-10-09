@@ -10,7 +10,7 @@ from typing import List
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import DuplicateEntityError, EntityNotFoundError
+from app.core.exceptions import DuplicateEntityError, EntityInUseError, EntityNotFoundError
 from app.repositories.policy_management.policy_type_repository import PolicyTypeRepository
 from app.schemas.policy_management.policy_type import (
     PolicyTypeCreate,
@@ -55,7 +55,7 @@ async def update_policy_type(
     if existing is None:
         raise EntityNotFoundError(f"PolicyType {policy_type_id}")
 
-    data = body.model_dump(exclude_none=True)
+    data = body.model_dump(exclude_none=True, exclude={"policy_type_id"})
     if updated_by is not None:
         data["updated_by"] = updated_by
     if not data:
@@ -80,5 +80,7 @@ async def delete_policy_type(session: AsyncSession, policy_type_id: int) -> int:
     repo = PolicyTypeRepository(session)
     if await repo.get_by_id(policy_type_id) is None:
         raise EntityNotFoundError(f"PolicyType {policy_type_id}")
+    if await repo.is_referenced_by_policy(policy_type_id):
+        raise EntityInUseError(f"PolicyType {policy_type_id}")
     await repo.delete(policy_type_id)
     return policy_type_id

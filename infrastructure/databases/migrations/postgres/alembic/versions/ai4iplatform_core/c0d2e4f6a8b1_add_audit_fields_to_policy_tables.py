@@ -15,18 +15,27 @@ down_revision: Union[str, None] = "f4a8c2d6e1b7"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-_TABLES = ("category", "sub_category", "policy_type", "policy", "audit_log")
+_TABLES = ("category", "sub_category", "policy_type", "policy")
+
+
+def _add_column_if_not_exists(table: str, column: str, ddl: str) -> None:
+    op.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {ddl}")
 
 
 def upgrade() -> None:
     for table in _TABLES:
-        op.add_column(table, sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")))
-        op.add_column(table, sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")))
-        op.add_column(table, sa.Column("created_by", sa.String(), nullable=True))
-        op.add_column(table, sa.Column("updated_by", sa.String(), nullable=True))
+        _add_column_if_not_exists(table, "created_at", "TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL")
+        _add_column_if_not_exists(table, "updated_at", "TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL")
+        _add_column_if_not_exists(table, "created_by", "VARCHAR")
+        _add_column_if_not_exists(table, "updated_by", "VARCHAR")
+    # audit_log is append-only so it only needs created_at / created_by
+    _add_column_if_not_exists("audit_log", "created_at", "TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL")
+    _add_column_if_not_exists("audit_log", "created_by", "VARCHAR")
 
 
 def downgrade() -> None:
+    op.drop_column("audit_log", "created_by")
+    op.drop_column("audit_log", "created_at")
     for table in reversed(_TABLES):
         op.drop_column(table, "updated_by")
         op.drop_column(table, "created_by")

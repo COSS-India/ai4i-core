@@ -44,7 +44,7 @@ class Policy(Base):
     # Elements reference policy_type.id; not enforced by the database.
     policy_type_id = Column(ARRAY(Integer), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
-    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=text("now()"), onupdate=func.now())
     created_by = Column(String, nullable=True)
     updated_by = Column(String, nullable=True)
 

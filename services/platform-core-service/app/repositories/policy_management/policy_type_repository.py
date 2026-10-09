@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.policy_management.policy_type import PolicyType
@@ -43,6 +43,13 @@ class PolicyTypeRepository:
         )
         await self._db.commit()
         return await self.get_by_id(policy_type_id)
+
+    async def is_referenced_by_policy(self, policy_type_id: int) -> bool:
+        result = await self._db.execute(
+            text("SELECT 1 FROM policy WHERE :id = ANY(policy_type_id) LIMIT 1"),
+            {"id": policy_type_id},
+        )
+        return result.scalar() is not None
 
     async def delete(self, policy_type_id: int) -> bool:
         result = await self._db.execute(

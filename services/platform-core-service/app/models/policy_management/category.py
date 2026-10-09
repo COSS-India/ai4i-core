@@ -16,7 +16,7 @@ class Category(Base):
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, nullable=False, server_default=text("false"))
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
-    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=text("now()"), onupdate=func.now())
     created_by = Column(String, nullable=True)
     updated_by = Column(String, nullable=True)
 

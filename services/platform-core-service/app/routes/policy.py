@@ -7,7 +7,7 @@ belongs to exactly one category.
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Path, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -71,7 +71,8 @@ async def create_category(
     (case-insensitive) — 409 if it already exists. Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
-    item = await category_service.create_category(session, payload)
+    user_id = request.headers.get("X-User-Id")
+    item = await category_service.create_category(session, payload, created_by=user_id)
     return CreateCategoryResponse(
         success=True, data=item, meta=MessageMeta(message=f"Category '{item.name}' created.")
     )
@@ -109,7 +110,8 @@ async def create_sub_category(
     name is already taken (case-insensitive). Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
-    item = await sub_category_service.create_sub_category(session, payload)
+    user_id = request.headers.get("X-User-Id")
+    item = await sub_category_service.create_sub_category(session, payload, created_by=user_id)
     return CreateSubCategoryResponse(
         success=True, data=item, meta=MessageMeta(message=f"Sub-category '{item.name}' created.")
     )
@@ -153,8 +155,8 @@ async def create_policy_type(
     item = await policy_type_service.create_policy_type(session, payload, created_by=user_id)
     return CreatePolicyTypeResponse(
         success=True,
-        id=item.id,
-        message=f"Policy type '{item.policy_type}' created.",
+        data=DeletedIdData(id=item.id),
+        meta=MessageMeta(message=f"Policy type '{item.policy_type}' created."),
     )
 
 
@@ -164,8 +166,8 @@ async def create_policy_type(
     responses=error_responses(403, 404),
 )
 async def get_policy_type(
-    policy_type_id: int,
     request: Request,
+    policy_type_id: int = Path(..., gt=0, le=2_147_483_647),
     session: AsyncSession = Depends(get_db),
 ) -> GetPolicyTypeResponse:
     """Fetch a single policy type by ID. 404 if it does not exist.
@@ -177,22 +179,22 @@ async def get_policy_type(
 
 
 @router.put(
-    "/policy-types/{policy_type_id}",
+    "/policy-types",
     response_model=UpdatePolicyTypeResponse,
     responses=error_responses(403, 404, 409),
 )
 async def update_policy_type(
-    policy_type_id: int,
-    payload: PolicyTypeUpdate,
     request: Request,
+    payload: PolicyTypeUpdate,
     session: AsyncSession = Depends(get_db),
 ) -> UpdatePolicyTypeResponse:
-    """Update name and/or policy_fields of a policy type. 404 if it does not
-    exist, 409 if the new name is already taken. Adopter Admin only."""
+    """Update name and/or policy_fields of a policy type. policy_type_id is
+    required in the request body. 404 if it does not exist, 409 if the new
+    name is already taken. Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
-    item = await policy_type_service.update_policy_type(session, policy_type_id, payload, updated_by=user_id)
+    item = await policy_type_service.update_policy_type(session, payload.policy_type_id, payload, updated_by=user_id)
     return UpdatePolicyTypeResponse(
         success=True,
         data=item,
@@ -206,8 +208,8 @@ async def update_policy_type(
     responses=error_responses(403, 404),
 )
 async def delete_policy_type(
-    policy_type_id: int,
     request: Request,
+    policy_type_id: int = Path(..., gt=0, le=2_147_483_647),
     session: AsyncSession = Depends(get_db),
 ) -> DeletePolicyTypeResponse:
     """Delete a policy type by ID. 404 if it does not exist.
