@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Path, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import get_auth_db_optional, get_db
 from app.core.exceptions import InsufficientPermissionsError
 from app.core.permissions import is_admin
 from app.schemas.common import DeletedIdData, MessageMeta, error_responses
@@ -36,7 +36,23 @@ from app.schemas.policy_management.policy_type import (
     PolicyTypeUpdate,
     UpdatePolicyTypeResponse,
 )
-from app.services.policy_management import category_service, sub_category_service, policy_type_service
+from app.schemas.policy_management.policy import (
+    CreatePolicyResponse,
+    CreatedPolicyData,
+    DeletePolicyResponse,
+    GetPolicyResponse,
+    ListPolicyResponse,
+    PolicyCreate,
+    PolicyListData,
+    PolicyUpdate,
+    UpdatePolicyResponse,
+)
+from app.services.policy_management import (
+    category_service,
+    policy_service,
+    policy_type_service,
+    sub_category_service,
+)
 
 router = APIRouter(
     prefix="/policies",
@@ -221,4 +237,117 @@ async def delete_policy_type(
         success=True,
         data=DeletedIdData(id=deleted_id),
         meta=MessageMeta(message=f"Policy type {deleted_id} deleted."),
+    )
+
+
+# ── Policy endpoints ──────────────────────────────────────────────────────────
+
+
+@router.get(
+    "",
+    response_model=ListPolicyResponse,
+    responses=error_responses(403, 404),
+)
+async def list_policies(
+    request: Request,
+    name: Optional[str] = Query(None, description="Case-insensitive partial match on policy name."),
+    sub_category_id: Optional[int] = Query(None, gt=0, le=2_147_483_647, description="Filter policies by sub-category ID. 404 if it does not exist."),
+    session: AsyncSession = Depends(get_db),
+) -> ListPolicyResponse:
+    """List policies, optionally filtered by name (partial match) and/or
+    sub-category. 404 if the given sub-category does not exist.
+    Adopter Admin only."""
+    if not is_admin(request):
+        raise InsufficientPermissionsError()
+    items = await policy_service.list_policies(session, name=name, sub_category_id=sub_category_id)
+    return ListPolicyResponse(success=True, data=PolicyListData(items=items))
+
+
+@router.post(
+    "",
+    response_model=CreatePolicyResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses=error_responses(403, 409),
+)
+async def create_policy(
+    payload: PolicyCreate,
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+) -> CreatePolicyResponse:
+    """Create a policy. Name must be unique (case-insensitive); policy_id is
+    auto-generated in SPP-XXXX format. 409 if the name already exists.
+    Adopter Admin only."""
+    if not is_admin(request):
+        raise InsufficientPermissionsError()
+    user_id = request.headers.get("X-User-Id")
+    item = await policy_service.create_policy(session, payload, created_by=user_id)
+    return CreatePolicyResponse(
+        success=True,
+        data=CreatedPolicyData(policy_id=item.policy_id),
+        meta=MessageMeta(message=f"Policy '{item.name}' created successfully."),
+    )
+
+
+@router.get(
+    "/{id}",
+    response_model=GetPolicyResponse,
+    responses=error_responses(403, 404),
+)
+async def get_policy(
+    request: Request,
+    id: int = Path(..., gt=0, le=2_147_483_647),
+    session: AsyncSession = Depends(get_db),
+) -> GetPolicyResponse:
+    """Fetch a single policy by its integer primary key. 404 if it does not
+    exist. Adopter Admin only."""
+    if not is_admin(request):
+        raise InsufficientPermissionsError()
+    item = await policy_service.get_policy(session, id)
+    return GetPolicyResponse(success=True, data=item)
+
+
+@router.put(
+    "",
+    response_model=UpdatePolicyResponse,
+    responses=error_responses(403, 404, 409),
+)
+async def update_policy(
+    request: Request,
+    payload: PolicyUpdate,
+    session: AsyncSession = Depends(get_db),
+) -> UpdatePolicyResponse:
+    """Update a policy. ``id`` (integer primary key) is required in the request
+    body. 404 if it does not exist, 409 if the new name is already taken.
+    Adopter Admin only."""
+    if not is_admin(request):
+        raise InsufficientPermissionsError()
+    user_id = request.headers.get("X-User-Id")
+    item = await policy_service.update_policy(session, payload.id, payload, updated_by=user_id)
+    return UpdatePolicyResponse(
+        success=True,
+        data=item,
+        meta=MessageMeta(message=f"Policy '{item.name}' updated."),
+    )
+
+
+@router.delete(
+    "/{id}",
+    response_model=DeletePolicyResponse,
+    responses=error_responses(403, 404, 409),
+)
+async def delete_policy(
+    request: Request,
+    id: int = Path(..., gt=0, le=2_147_483_647),
+    session: AsyncSession = Depends(get_db),
+    auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
+) -> DeletePolicyResponse:
+    """Delete a policy by integer primary key. 404 if it does not exist.
+    409 if it is linked to one or more applications. Adopter Admin only."""
+    if not is_admin(request):
+        raise InsufficientPermissionsError()
+    deleted_id = await policy_service.delete_policy(session, id, auth_db=auth_db)
+    return DeletePolicyResponse(
+        success=True,
+        data=DeletedIdData(id=deleted_id),
+        meta=MessageMeta(message=f"Policy {deleted_id} deleted."),
     )

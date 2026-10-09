@@ -7,7 +7,6 @@ covers concurrent creates of the same name.
 
 from typing import List
 
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import DuplicateEntityError, EntityInUseError, EntityNotFoundError
@@ -61,18 +60,7 @@ async def update_policy_type(
     if not data:
         return PolicyTypeItem.model_validate(existing)
 
-    if "policy_type" in data:
-        dupe = await repo.get_by_name(data["policy_type"])
-        if dupe is not None and dupe.id != policy_type_id:
-            raise DuplicateEntityError(f"PolicyType '{data['policy_type']}'")
-
-    try:
-        row = await repo.update(policy_type_id, data)
-    except IntegrityError as exc:
-        await session.rollback()
-        if "uq_policy_type_policy_type" in str(exc.orig):
-            raise DuplicateEntityError(f"PolicyType '{data.get('policy_type')}'")
-        raise
+    row = await repo.update(policy_type_id, data)
     return PolicyTypeItem.model_validate(row)
 
 
