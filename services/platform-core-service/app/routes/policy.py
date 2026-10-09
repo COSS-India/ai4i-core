@@ -84,7 +84,7 @@ async def create_category(
 async def update_category_status(
     payload: CategoryStatusUpdate,
     request: Request,
-    category_id: int = Path(..., gt=0),
+    category_id: int = Path(..., gt=0, le=2_147_483_647),
     session: AsyncSession = Depends(get_db),
 ) -> UpdateCategoryStatusResponse:
     """Enable or disable a category and every sub-category and policy under
@@ -145,7 +145,7 @@ async def create_sub_category(
 async def update_sub_category_status(
     payload: SubCategoryStatusUpdate,
     request: Request,
-    sub_category_id: int = Path(..., gt=0),
+    sub_category_id: int = Path(..., gt=0, le=2_147_483_647),
     session: AsyncSession = Depends(get_db),
 ) -> UpdateSubCategoryStatusResponse:
     """Enable or disable a sub-category and every policy under it; 404 if

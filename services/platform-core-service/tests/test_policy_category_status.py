@@ -253,6 +253,19 @@ class TestUpdateSubCategoryStatusRoute:
 
 
 class TestRouteShape:
+    @pytest.mark.parametrize(
+        "path,param",
+        [
+            ("/policies/categories/{category_id}", "category_id"),
+            ("/policies/sub-categories/{sub_category_id}", "sub_category_id"),
+        ],
+    )
+    def test_id_must_fit_the_integer_column(self, path, param):
+        route = next(r for r in _policy_routes.router.routes if r.path == path and "PUT" in r.methods)
+        field = next(p for p in route.dependant.path_params if p.name == param)
+        bounds = {type(m).__name__: m for m in field.field_info.metadata}
+        assert (bounds["Gt"].gt, bounds["Le"].le) == (0, 2_147_483_647)
+
     def test_paths_and_methods(self):
         routes = {(r.path, m) for r in _policy_routes.router.routes for m in r.methods}
         assert ("/policies/categories/{category_id}", "PUT") in routes
