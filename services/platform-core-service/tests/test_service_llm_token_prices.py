@@ -1,7 +1,6 @@
-"""LLM token pricing on POST/PATCH /services: LLM services can carry three
-prices per unitSize tokens (costPerUnit = input, plus the optional
-cachedInputCostPerUnit and outputCostPerUnit); other task types carry
-costPerUnit only."""
+"""LLM token pricing on POST/PATCH /services: LLM services carry three prices
+per unitSize tokens (costPerUnit = input, cachedInputCostPerUnit,
+outputCostPerUnit), all mandatory; other task types carry costPerUnit only."""
 
 from decimal import Decimal
 
@@ -28,6 +27,7 @@ _CREATE_BASE = dict(
     tierIds=["tier-1"],
 )
 _LLM_PRICES = dict(costPerUnit=100, cachedInputCostPerUnit=40, outputCostPerUnit=250)
+_REQUIRED_MSG = "costPerUnit, cachedInputCostPerUnit and outputCostPerUnit are required for LLM services"
 _LLM_ONLY_MSG = "cachedInputCostPerUnit and outputCostPerUnit apply only to LLM services"
 
 
@@ -53,15 +53,10 @@ class TestCreate:
         payload = {**_CREATE_BASE, **_LLM_PRICES, "taskType": "llm"}
         assert ServiceCreateRequest(**payload).outputCostPerUnit == Decimal("250")
 
-    def test_llm_without_new_prices_is_accepted(self) -> None:
-        """Clients that only send costPerUnit (e.g. the current UI) keep working."""
-        req = _create(cachedInputCostPerUnit=None, outputCostPerUnit=None)
-        assert req.costPerUnit == Decimal("100")
-        assert req.cachedInputCostPerUnit is None and req.outputCostPerUnit is None
-
-    def test_llm_with_only_one_new_price(self) -> None:
-        req = _create(cachedInputCostPerUnit=None)
-        assert req.cachedInputCostPerUnit is None and req.outputCostPerUnit == Decimal("250")
+    @pytest.mark.parametrize("missing", ["cachedInputCostPerUnit", "outputCostPerUnit"])
+    def test_llm_missing_a_new_price_is_rejected(self, missing) -> None:
+        with pytest.raises(PydanticValidationError, match=_REQUIRED_MSG):
+            _create(**{missing: None})
 
     def test_zero_prices_are_allowed(self) -> None:
         req = _create(costPerUnit=0, cachedInputCostPerUnit=0, outputCostPerUnit=0)
@@ -91,10 +86,17 @@ class TestUpdate:
         req = ServiceUpdateRequest(**_UPDATE_BILLING, taskType="llm", **_LLM_PRICES)
         assert req.cachedInputCostPerUnit == Decimal("40")
 
-    def test_llm_billing_group_without_new_prices_is_accepted(self) -> None:
-        req = ServiceUpdateRequest(**_UPDATE_BILLING, taskType="llm", costPerUnit=100)
-        assert "cachedInputCostPerUnit" not in req.model_fields_set   # stored price left unchanged
-        assert "outputCostPerUnit" not in req.model_fields_set
+    def test_llm_missing_new_prices_lists_them(self) -> None:
+        with pytest.raises(
+            PydanticValidationError,
+            match="cachedInputCostPerUnit, outputCostPerUnit must be provided together",
+        ):
+            ServiceUpdateRequest(**_UPDATE_BILLING, taskType="llm", costPerUnit=100)
+
+    @pytest.mark.parametrize("missing", ["cachedInputCostPerUnit", "outputCostPerUnit"])
+    def test_llm_missing_one_new_price_is_rejected(self, missing) -> None:
+        with pytest.raises(PydanticValidationError, match=missing):
+            ServiceUpdateRequest(**_UPDATE_BILLING, taskType="llm", **{**_LLM_PRICES, missing: None})
 
     def test_non_llm_with_a_new_price_is_rejected(self) -> None:
         with pytest.raises(PydanticValidationError, match=_LLM_ONLY_MSG):

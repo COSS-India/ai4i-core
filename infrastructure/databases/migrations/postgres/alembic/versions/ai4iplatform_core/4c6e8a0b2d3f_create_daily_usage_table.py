@@ -1,21 +1,31 @@
 """create daily_usage table, partitioned by month
 
-Daily rollup of usage_events: one row per IST day and dimension combination
-(tenant, application, API key, tier, service, task type, billing month).
-Names (tenant, application, tier, service, model) and the tenant's budget are
-copied in by the rollup, so dashboard reads need no cross-database joins.
+Daily rollup of usage_events: one row per UTC day and dimension combination
+(tenant, application, API key, tier, service, inference type, billing month).
+usage_date is the UTC day of usage_events.occurred_at, and billing_month its
+UTC month, so both match the PPU consumer's billing_month. Names (tenant,
+application, tier, service, model) and the tenant's budget are copied in by
+the rollup, so dashboard reads need no cross-database joins.
 
-tenant_id, application_id and api_key_id refer to rows in the auth DB, and
-service_id to mm_services.service_id (not unique: services are soft-deleted),
-so those have no foreign key constraint. tier_id and inference_type_id do.
+tenant_id, application_id and api_key_id refer to rows in the auth DB, so
+they have no foreign key constraint. service_id references
+mm_services.service_id, which is unique and kept when a service is
+soft-deleted; tier_id and inference_type_id reference their tables too.
+
+cost is generated from the three category costs, so it always equals their
+(stored, rounded) sum. The rollup writes the three parts, never cost.
 
 The dimension key treats NULLs as equal (NULLS NOT DISTINCT, Postgres 15+),
 so the rollup can upsert rows whose application or API key is unknown.
 
-Partitioning: range-partitioned on usage_date (the IST day), one partition per
-calendar month, named daily_usage_YYYY_MM. This migration creates the parent
-table and the October 2026 partition only; later partitions are created by a
-scheduled job outside alembic. Writers always use daily_usage itself.
+Partitioning: range-partitioned on usage_date, one partition per calendar
+month, named daily_usage_YYYY_MM, plus daily_usage_default for rows outside
+every month partition. This migration creates the partitions for the UTC
+month it runs in and the next one. Later months must be created before they
+start by the scheduled partition job, which ships with the first writer of
+this table; a month whose rows already landed in daily_usage_default cannot
+get its partition until those rows are moved out. Writers always use
+daily_usage itself.
 
 usage_date, not created_at, is the partition key: Postgres requires the
 partition column in every unique key, and the rollup upserts on the dimension
@@ -46,10 +56,8 @@ DIMENSIONS = (
     "tier_id", "service_id", "inference_type_id", "billing_month",
 )
 
-# usage_date is already an IST day, so the bounds are plain dates.
-FIRST_PARTITION = "daily_usage_2026_10"
-FIRST_PARTITION_FROM = "2026-10-01"
-FIRST_PARTITION_TO = "2026-11-01"
+# Months created by this migration: the current UTC month and the next.
+MONTHS_AHEAD = 1
 
 UNITS = sa.Numeric()
 MONEY = sa.Numeric(18, 6)
@@ -88,7 +96,14 @@ def upgrade() -> None:
         _zero("input_units_cost", MONEY),
         _zero("cached_input_units_cost", MONEY),
         _zero("output_units_cost", MONEY),
-        _zero("cost", MONEY),
+        # Generated, not checked: each cost is rounded to MONEY's scale when
+        # stored, so a CHECK against an unrounded total rejects valid rows.
+        sa.Column(
+            "cost", MONEY, sa.Computed(
+                "input_units_cost + cached_input_units_cost + output_units_cost", persisted=True,
+            ),
+            nullable=False,
+        ),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         # Set by the rollup on every upsert; the default only covers the first insert.
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
@@ -97,14 +112,14 @@ def upgrade() -> None:
             ["tier_id"], ["tiers.id"], name="fk_daily_usage_tier_id", ondelete="SET NULL",
         ),
         sa.ForeignKeyConstraint(
+            ["service_id"], ["mm_services.service_id"], name="fk_daily_usage_service_id",
+        ),
+        sa.ForeignKeyConstraint(
             ["inference_type_id"], ["inference_types.id"], name="fk_daily_usage_inference_type_id",
         ),
         sa.CheckConstraint("billing_month ~ '^[0-9]{4}-[0-9]{2}$'", name="ck_daily_usage_billing_month"),
         sa.CheckConstraint(
             "success_count + failed_count = request_count", name="ck_daily_usage_request_counts",
-        ),
-        sa.CheckConstraint(
-            "cost = input_units_cost + cached_input_units_cost + output_units_cost", name="ck_daily_usage_cost",
         ),
         postgresql_partition_by="RANGE (usage_date)",
     )
@@ -119,11 +134,29 @@ def upgrade() -> None:
     op.create_index("ix_daily_usage_billing_month", TABLE, ["billing_month", "tenant_id"])
 
     # Indexes and the unique key above are created on every partition,
-    # including ones the scheduled job adds later.
+    # including ones the partition job adds later. Month bounds are computed
+    # when the migration runs (also in --sql output); usage_date is already a
+    # UTC day, so they are plain dates.
     op.execute(
-        f"CREATE TABLE {FIRST_PARTITION} PARTITION OF {TABLE} "
-        f"FOR VALUES FROM ('{FIRST_PARTITION_FROM}') TO ('{FIRST_PARTITION_TO}')"
+        f"""
+        DO $$
+        DECLARE
+            first_month date := date_trunc('month', now() AT TIME ZONE 'UTC')::date;
+            month_start date;
+        BEGIN
+            FOR i IN 0..{MONTHS_AHEAD} LOOP
+                month_start := (first_month + make_interval(months => i))::date;
+                EXECUTE format(
+                    'CREATE TABLE %I PARTITION OF {TABLE} FOR VALUES FROM (%L) TO (%L)',
+                    '{TABLE}_' || to_char(month_start, 'YYYY_MM'),
+                    to_char(month_start, 'YYYY-MM-DD'),
+                    to_char(month_start + interval '1 month', 'YYYY-MM-DD')
+                );
+            END LOOP;
+        END $$
+        """
     )
+    op.execute(f"CREATE TABLE {TABLE}_default PARTITION OF {TABLE} DEFAULT")
 
 
 def downgrade() -> None:

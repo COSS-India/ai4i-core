@@ -125,6 +125,15 @@ export const FIELD_HINTS = {
       placeholder: "Enter price",
       helper: `e.g., 600. Must be between 0 and ${PRICE_PER_UNIT_MAX_LABEL}`,
     },
+    llmInputPrice: {
+      helper: `Price of input tokens that were not cached. Between 0 and ${PRICE_PER_UNIT_MAX_LABEL}`,
+    },
+    llmCachedInputPrice: {
+      helper: `Price of input tokens served from the model's prefix cache. Between 0 and ${PRICE_PER_UNIT_MAX_LABEL}`,
+    },
+    llmOutputPrice: {
+      helper: `Price of generated output tokens. Between 0 and ${PRICE_PER_UNIT_MAX_LABEL}`,
+    },
     tier: { placeholder: "Select applicable tier(s)", helper: "Select at least one" },
     tierSearch: { placeholder: "Search tiers..." },
   },

@@ -81,6 +81,12 @@ const ServicesManagement: React.FC = () => {
     pricePerUnit,
     setPricePerUnit,
     pricePerUnitError,
+    cachedInputPricePerUnit,
+    setCachedInputPricePerUnit,
+    cachedInputPricePerUnitError,
+    outputPricePerUnit,
+    setOutputPricePerUnit,
+    outputPricePerUnitError,
     unitSize,
     setUnitSize,
     currency,
@@ -299,6 +305,12 @@ const ServicesManagement: React.FC = () => {
       pricePerUnit={pricePerUnit}
       onPricePerUnitChange={setPricePerUnit}
       pricePerUnitError={pricePerUnitError}
+      cachedInputPricePerUnit={cachedInputPricePerUnit}
+      onCachedInputPricePerUnitChange={setCachedInputPricePerUnit}
+      cachedInputPricePerUnitError={cachedInputPricePerUnitError}
+      outputPricePerUnit={outputPricePerUnit}
+      onOutputPricePerUnitChange={setOutputPricePerUnit}
+      outputPricePerUnitError={outputPricePerUnitError}
       unitSize={unitSize}
       onUnitSizeChange={setUnitSize}
       currency={currency}
