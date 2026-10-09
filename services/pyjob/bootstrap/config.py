@@ -44,6 +44,13 @@ class PyJobSettings(BaseSettings):
     DB_POOL_SIZE: int = 5
     DB_MAX_OVERFLOW: int = 5
 
+    # ── Monthly partitions (usage_events, daily_usage) ──
+    # Months kept, counting the current one: 4 keeps this month and the 3 before.
+    USAGE_EVENTS_MONTHS_RETENTION: int = Field(4, ge=1)
+    DAILY_USAGE_MONTHS_RETENTION: int = Field(4, ge=1)
+    # Months created ahead of the current one.
+    PARTITION_MONTHS_AHEAD: int = Field(3, ge=0)
+
     # ── Redis ──
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
