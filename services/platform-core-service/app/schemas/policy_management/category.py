@@ -27,9 +27,13 @@ class CategoryCreate(BaseModel):
     name: str = Field(..., max_length=100)
     description: Optional[str] = None
 
-    @field_validator("name")
+    @field_validator("name", mode="before")
     @classmethod
-    def validate_name(cls, v: str) -> str:
+    def validate_name(cls, v):
+        # Runs before max_length so padding does not count toward the limit;
+        # non-strings fall through to the str type check.
+        if not isinstance(v, str):
+            return v
         v = v.strip()
         if not v:
             raise ValueError("Category Name is required")

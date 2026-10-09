@@ -71,6 +71,13 @@ class TestCategoryCreateSchema:
         with pytest.raises(PydanticValidationError):
             CategoryCreate(name="x" * 101)
 
+    def test_padding_does_not_count_toward_max_length(self):
+        assert CategoryCreate(name="  " + "x" * 100 + "  ").name == "x" * 100
+
+    def test_non_string_name_is_rejected(self):
+        with pytest.raises(PydanticValidationError):
+            CategoryCreate(name=123)
+
     def test_name_and_description_are_trimmed(self):
         body = CategoryCreate(name="  Safety  ", description="  Harm filters  ")
         assert body.name == "Safety"
@@ -104,7 +111,7 @@ class TestCreateCategoryService:
         session = _session(existing=None)
         await category_service.create_category(session, CategoryCreate(name="Safety"))
         sql = str(session.execute.await_args.args[0].compile(compile_kwargs={"literal_binds": True}))
-        assert "lower(category.name) = 'safety'" in sql
+        assert "lower(category.name) = lower('Safety')" in sql
 
     async def test_integrity_error_on_commit_is_a_duplicate(self):
         session = _session(

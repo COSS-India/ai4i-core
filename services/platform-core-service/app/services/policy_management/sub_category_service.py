@@ -40,7 +40,7 @@ async def create_sub_category(session: AsyncSession, body: SubCategoryCreate) ->
     await _ensure_category_exists(session, body.category_id)
 
     existing = await session.execute(
-        select(SubCategory.id).where(func.lower(SubCategory.name) == body.name.lower()).limit(1)
+        select(SubCategory.id).where(func.lower(SubCategory.name) == func.lower(body.name)).limit(1)
     )
     if existing.first() is not None:
         raise DuplicateEntityError(f"Sub-category '{body.name}'")

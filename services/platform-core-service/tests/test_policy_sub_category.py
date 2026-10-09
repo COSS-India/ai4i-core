@@ -83,6 +83,10 @@ class TestSubCategoryCreateSchema:
         with pytest.raises(PydanticValidationError):
             SubCategoryCreate(name="Toxicity", category_id=category_id)
 
+    def test_category_id_must_fit_the_integer_column(self):
+        with pytest.raises(PydanticValidationError):
+            SubCategoryCreate(name="Toxicity", category_id=2_147_483_648)
+
     def test_name_is_required(self):
         with pytest.raises(PydanticValidationError, match="name"):
             SubCategoryCreate(category_id=1)
@@ -95,6 +99,9 @@ class TestSubCategoryCreateSchema:
     def test_name_longer_than_column_is_rejected(self):
         with pytest.raises(PydanticValidationError):
             SubCategoryCreate(name="x" * 101, category_id=1)
+
+    def test_padding_does_not_count_toward_max_length(self):
+        assert SubCategoryCreate(name="  " + "x" * 100 + "  ", category_id=1).name == "x" * 100
 
     def test_name_and_description_are_trimmed(self):
         body = SubCategoryCreate(name="  Toxicity  ", description="  Hate  ", category_id=1)
@@ -142,7 +149,7 @@ class TestCreateSubCategoryService:
         )
         stmt = session.execute.await_args_list[1].args[0]
         sql = str(stmt.compile(compile_kwargs={"literal_binds": True}))
-        assert "lower(sub_category.name) = 'toxicity'" in sql
+        assert "lower(sub_category.name) = lower('Toxicity')" in sql
 
     async def test_integrity_error_on_commit_is_a_duplicate(self):
         session = _session(

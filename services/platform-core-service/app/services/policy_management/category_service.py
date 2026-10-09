@@ -24,7 +24,7 @@ async def list_categories(session: AsyncSession) -> List[CategoryItem]:
 
 async def create_category(session: AsyncSession, body: CategoryCreate) -> CategoryItem:
     existing = await session.execute(
-        select(Category.id).where(func.lower(Category.name) == body.name.lower()).limit(1)
+        select(Category.id).where(func.lower(Category.name) == func.lower(body.name)).limit(1)
     )
     if existing.first() is not None:
         raise DuplicateEntityError(f"Category '{body.name}'")
