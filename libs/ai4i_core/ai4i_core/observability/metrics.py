@@ -215,18 +215,24 @@ class MetricsCollector:
         endpoint: str = "",
         model_id: str = "",
         auth_type: str = "",
+        cached_input_tokens: int = 0,
     ):
         """Track LLM token usage from the inference engine's ``usage`` block.
 
-        Emits up to three series per request — ``token_type=prompt``,
-        ``completion``, and ``total`` — so PromQL can break down by either
-        dimension. Counts ≤ 0 are skipped (so a streaming response with no
-        usage block contributes nothing).
+        Emits up to four series per request — ``token_type=prompt``,
+        ``completion``, ``total`` and ``cached_input`` — so PromQL can break
+        down by either dimension. ``cached_input`` is the part of ``prompt``
+        served from the model's prefix cache (included in ``prompt`` and
+        ``total``, not extra to them), so uncached input is
+        ``prompt - cached_input``. Counts ≤ 0 are skipped (so a streaming
+        response with no usage block, or a request with no cache hit,
+        contributes nothing for that type).
         """
         for token_type, count in (
             ("prompt", prompt_tokens),
             ("completion", completion_tokens),
             ("total", total_tokens),
+            ("cached_input", cached_input_tokens),
         ):
             if count > 0:
                 self.enterprise_llm_tokens_processed.labels(

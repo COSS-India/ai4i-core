@@ -48,6 +48,12 @@ class TestSetBilledState:
         request = SimpleNamespace(state=SimpleNamespace())
         set_billed_state(request, billed_input=5)
         assert request.state.billed_output == 0
+        assert request.state.billed_cached_input == 0
+
+    def test_sets_billed_cached_input(self):
+        request = SimpleNamespace(state=SimpleNamespace())
+        set_billed_state(request, billed_input=1200, billed_output=150, billed_cached_input=1024)
+        assert request.state.billed_cached_input == 1024
 
     def test_does_not_set_labels_or_dead_fields(self):
         """Labels (languages, model) are not billing data; billed_unit_type
@@ -326,3 +332,28 @@ class TestDispatchNeverReadsBody:
         # At most one body read total — FastAPI's own for the handler's
         # `request`/body binding. The middleware adds none of its own.
         assert mock_body.call_count <= 1
+
+
+class TestLLMCachedInputMetric:
+    @pytest.mark.asyncio
+    async def test_cached_input_is_passed_to_track_llm_tokens(self):
+        mw = _middleware()
+        await mw._record_metrics(
+            path="/api/v1/chat/completions", method="POST", service_type="llm",
+            tenant="t1", tenant_id="", service_id="s1", status_code=200, duration=0.2,
+            billed_input=1200, billed_output=150, billed_cached_input=1024, model="gemma",
+        )
+        _, kwargs = mw.metrics_collector.track_llm_tokens.call_args
+        assert kwargs["cached_input_tokens"] == 1024
+        assert kwargs["prompt_tokens"] == 1200      # prompt still includes the cached part
+
+    @pytest.mark.asyncio
+    async def test_missing_cached_input_is_zero(self):
+        mw = _middleware()
+        await mw._record_metrics(
+            path="/api/v1/chat/completions", method="POST", service_type="llm",
+            tenant="t1", tenant_id="", service_id="s1", status_code=200, duration=0.2,
+            billed_input=10, billed_output=5,
+        )
+        _, kwargs = mw.metrics_collector.track_llm_tokens.call_args
+        assert kwargs["cached_input_tokens"] == 0

@@ -39,6 +39,8 @@ import pytest
 from consumers.payperuse_consumer import _billing
 from consumers.payperuse_consumer._billing import (
     ServicePricing,
+    calculate_cost,
+    calculate_llm_cost,
     deduct_balance_and_update_quota,
     fetch_tenant_budget_status,
     get_inference_type_id,
@@ -493,12 +495,15 @@ class _FakePipeline:
         return None
 
 
-def _pricing_row(task_type="asr", unit_rate=None, cost_per_unit=None, unit_size=None):
+def _pricing_row(task_type="asr", unit_rate=None, cost_per_unit=None, unit_size=None,
+                 cached_input_cost_per_unit=None, output_cost_per_unit=None):
     return _FakeRow(
         task_type=task_type,
         unit_rate=unit_rate,
         cost_per_unit=cost_per_unit,
         unit_size=unit_size,
+        cached_input_cost_per_unit=cached_input_cost_per_unit,
+        output_cost_per_unit=output_cost_per_unit,
     )
 
 
@@ -839,3 +844,97 @@ class TestFetchTenantBudgetStatus:
 
         assert auth_db.calls[0][1]["tenant_id"] == 42
         assert isinstance(auth_db.calls[0][1]["tenant_id"], int)
+
+
+# ── LLM token pricing: input, cached input and output ───────────────────────
+
+
+def _llm_pricing(cached=Decimal("0.04"), output=Decimal("0.25"), unit_rate=None):
+    """Prices per 1,000 tokens: input 0.10, cached input 0.04, output 0.25."""
+    return ServicePricing(
+        task_type="llm", unit_rate=unit_rate, cost_per_unit=Decimal("0.10"), unit_size=1000,
+        cached_input_cost_per_unit=cached, output_cost_per_unit=output,
+    )
+
+
+class TestCalculateLlmCost:
+    def test_each_category_at_its_own_price(self):
+        # prompt 1,200 of which 1,024 cached, completion 150 (design doc section 4)
+        cost = calculate_llm_cost(Decimal(1200), Decimal(1024), Decimal(150), _llm_pricing())
+
+        assert cost.input_cost == Decimal("0.0176")        # 176 uncached
+        assert cost.cached_input_cost == Decimal("0.04096")
+        assert cost.output_cost == Decimal("0.0375")
+        assert cost.total == Decimal("0.09606")
+
+    def test_no_cached_tokens_prices_all_input_at_input_price(self):
+        cost = calculate_llm_cost(Decimal(1200), Decimal(0), Decimal(150), _llm_pricing())
+
+        assert cost.input_cost == Decimal("0.12")
+        assert cost.cached_input_cost == 0
+
+    def test_missing_new_prices_bill_exactly_as_before(self):
+        """A service, or a cache entry from before the new prices, without them."""
+        pricing = _llm_pricing(cached=None, output=None)
+
+        cost = calculate_llm_cost(Decimal(1200), Decimal(1024), Decimal(150), pricing)
+
+        assert cost.total == calculate_cost(Decimal(1350), pricing)
+
+    def test_cached_above_input_is_capped(self):
+        cost = calculate_llm_cost(Decimal(100), Decimal(500), Decimal(0), _llm_pricing())
+
+        assert cost.input_cost == 0
+        assert cost.cached_input_cost == Decimal("0.004")   # 100 tokens, not 500
+
+    def test_zero_cached_price_is_free_not_input_price(self):
+        cost = calculate_llm_cost(Decimal(1000), Decimal(1000), Decimal(0), _llm_pricing(cached=Decimal(0)))
+
+        assert cost.total == 0
+
+    def test_unit_rate_is_the_input_rate_when_set(self):
+        pricing = _llm_pricing(unit_rate=Decimal("0.0002"))  # overrides 0.10 / 1000 for input
+
+        cost = calculate_llm_cost(Decimal(1000), Decimal(0), Decimal(0), pricing)
+
+        assert cost.input_cost == Decimal("0.2")
+
+
+class TestGetServicePricingLlmPrices:
+    async def test_db_read_returns_and_caches_the_llm_prices(self, monkeypatch):
+        redis = _FakePricingRedis()
+        _use_redis(monkeypatch, redis)
+        db = _RecordingSession(rows=[_pricing_row(
+            task_type="llm", cost_per_unit=Decimal("0.10"), unit_size=1000,
+            cached_input_cost_per_unit=Decimal("0.04"), output_cost_per_unit=Decimal("0.25"),
+        )])
+
+        pricing = await get_service_pricing(db, "svc-llm")
+
+        assert pricing.cached_input_cost_per_unit == Decimal("0.04")
+        assert pricing.output_cost_per_unit == Decimal("0.25")
+        cached = redis.hashes["ppu:svc:svc-llm"]
+        assert (cached["cached_input_cost_per_unit"], cached["output_cost_per_unit"]) == ("0.04", "0.25")
+
+    async def test_cache_hit_reads_the_llm_prices(self, monkeypatch):
+        redis = _FakePricingRedis(seed={"ppu:svc:svc-llm": {
+            "task_type": "llm", "unit_rate": "", "cost_per_unit": "0.10", "unit_size": "1000",
+            "cached_input_cost_per_unit": "0", "output_cost_per_unit": "0.25",
+        }})
+        _use_redis(monkeypatch, redis)
+
+        pricing = await get_service_pricing(_RecordingSession(), "svc-llm")
+
+        assert pricing.cached_input_cost_per_unit == Decimal("0")   # a real zero price, not "unset"
+        assert pricing.output_cost_per_unit == Decimal("0.25")
+
+    async def test_cache_entry_from_before_the_llm_prices_still_works(self, monkeypatch):
+        redis = _FakePricingRedis(seed={"ppu:svc:svc-llm": {
+            "task_type": "llm", "unit_rate": "0.0001", "cost_per_unit": "0.10", "unit_size": "1000",
+        }})
+        _use_redis(monkeypatch, redis)
+
+        pricing = await get_service_pricing(_RecordingSession(), "svc-llm")
+
+        assert pricing.cached_input_cost_per_unit is None
+        assert pricing.output_cost_per_unit is None

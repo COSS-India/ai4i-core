@@ -281,7 +281,7 @@ class TestBillUsageThreadsInferenceTypeId:
         base.update(overrides)
         return BillingContext(**base)
 
-    def _patch(self, monkeypatch, *, resolved_id, task_type="asr"):
+    def _patch(self, monkeypatch, *, resolved_id, task_type="asr", pricing=None):
         """Stub pricing + the two billing calls; return the captured kwargs."""
         from decimal import Decimal
 
@@ -294,7 +294,7 @@ class TestBillUsageThreadsInferenceTypeId:
         captured: dict = {}
 
         async def _pricing(db, service_id):
-            return ServicePricing(
+            return pricing or ServicePricing(
                 task_type=task_type,
                 unit_rate=Decimal("0.5"),
                 cost_per_unit=None,
@@ -334,6 +334,24 @@ class TestBillUsageThreadsInferenceTypeId:
             h, "session_scope", lambda name=None: self._FakeAuthSessionScope()
         )
         return captured
+
+    async def test_llm_is_charged_by_token_category(self, monkeypatch):
+        from decimal import Decimal
+
+        from consumers.payperuse_consumer._billing import ServicePricing
+        from consumers.payperuse_consumer.handler import _bill_usage
+
+        pricing = ServicePricing(
+            task_type="llm", unit_rate=None, cost_per_unit=Decimal("0.10"), unit_size=1000,
+            cached_input_cost_per_unit=Decimal("0.04"), output_cost_per_unit=Decimal("0.25"),
+        )
+        captured = self._patch(monkeypatch, resolved_id=1, task_type="llm", pricing=pricing)
+        ctx = self._ctx(input_tokens=1200.0, cached_input_tokens=1024.0, output_tokens=150.0, total_tokens=1350.0)
+
+        await _bill_usage(self._FakeDb(), ctx)
+
+        assert captured["cost"] == Decimal("0.09606")   # 176 input + 1,024 cached + 150 output
+        assert captured["units"] == Decimal("1350.0")    # quota still counts every token
 
     async def test_resolved_id_is_passed_to_the_upsert(self, monkeypatch):
         from consumers.payperuse_consumer.handler import _bill_usage
@@ -651,3 +669,17 @@ class TestPublishUsageCrossingEvents:
 
         item = next(i for i in calls["items"] if i.name is NotificationName.QUOTA_EXHAUSTED)
         assert list(item.fallback_details) == ["tier-1", ["ASR: Quota Limit 1,000, Resets on 2026-09-01"]]
+
+
+
+class TestGetCachedInputTokens:
+    def test_reads_the_span_attribute(self):
+        from consumers.payperuse_consumer.handler import _get_cached_input_tokens
+
+        assert _get_cached_input_tokens({"cached_input_tokens": 1024}) == 1024.0
+
+    def test_absent_or_bad_means_zero(self):
+        from consumers.payperuse_consumer.handler import _get_cached_input_tokens
+
+        assert _get_cached_input_tokens({}) == 0.0
+        assert _get_cached_input_tokens({"cached_input_tokens": "bad"}) == 0.0

@@ -498,3 +498,41 @@ class TestUpdateServicePricingCacheInvalidation:
         # happened too, not been skipped by the later failure.
         svc._services.commit.assert_awaited_once()
         svc._cache.invalidate_pricing.assert_awaited_once_with("svc-abc")
+
+
+class TestUpdateServiceLlmTokenPrices:
+    """cachedInputCostPerUnit / outputCostPerUnit (LLM only) are persisted,
+    bust the pricing cache like costPerUnit does, and are cleared when a
+    service moves off the LLM task type."""
+
+    @staticmethod
+    def _applied(svc) -> dict:
+        return svc._services.apply_updates.await_args.args[1]
+
+    @pytest.mark.asyncio
+    async def test_llm_prices_are_persisted(self) -> None:
+        svc = _make_svc("svc-abc")
+        payload = ServiceUpdateRequest(
+            serviceId="svc-abc", taskType="llm", costPerUnit=100, cachedInputCostPerUnit=40,
+            outputCostPerUnit=250, unitSize=1000, tierIds=["tier-1"],
+        )
+
+        await svc.update_service(payload, updated_by="user-1")
+
+        applied = self._applied(svc)
+        assert applied["cached_input_cost_per_unit"] == 40
+        assert applied["output_cost_per_unit"] == 250
+        svc._cache.invalidate_pricing.assert_awaited_once_with("svc-abc")
+
+    @pytest.mark.asyncio
+    async def test_moving_off_llm_clears_the_llm_only_prices(self) -> None:
+        svc = _make_svc("svc-abc")
+        payload = ServiceUpdateRequest(
+            serviceId="svc-abc", taskType="nmt", costPerUnit=1.0, unitSize=1, tierIds=["tier-1"]
+        )
+
+        await svc.update_service(payload, updated_by="user-1")
+
+        applied = self._applied(svc)
+        assert applied["cached_input_cost_per_unit"] is None
+        assert applied["output_cost_per_unit"] is None
