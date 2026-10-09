@@ -1,0 +1,42 @@
+"""Category reads/writes for the policy hierarchy (Category -> SubCategory
+-> Policy).
+
+Names are unique case-insensitively (uq_category_name_lower). The
+pre-insert check gives a clean 409; an IntegrityError on that index covers two
+concurrent creates of the same name.
+"""
+
+from typing import List
+
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.exceptions import DuplicateEntityError
+from app.models.policy_management.category import Category
+from app.schemas.policy_management.category import CategoryCreate, CategoryItem
+
+
+async def list_categories(session: AsyncSession) -> List[CategoryItem]:
+    result = await session.execute(select(Category).order_by(Category.id))
+    return [CategoryItem.model_validate(row) for row in result.scalars().all()]
+
+
+async def create_category(session: AsyncSession, body: CategoryCreate) -> CategoryItem:
+    existing = await session.execute(
+        select(Category.id).where(func.lower(Category.name) == func.lower(body.name)).limit(1)
+    )
+    if existing.first() is not None:
+        raise DuplicateEntityError(f"Category '{body.name}'")
+
+    row = Category(name=body.name, description=body.description)
+    session.add(row)
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        if "uq_category_name_lower" in str(exc.orig):
+            raise DuplicateEntityError(f"Category '{body.name}'")
+        raise
+    await session.refresh(row)
+    return CategoryItem.model_validate(row)

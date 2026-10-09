@@ -166,6 +166,11 @@
 
     { "endpoint": "GET:/api/v1/notification-alerts/subscriptions",                       "permissionRequired": 148, "description": "View an institution's metering-notification subscriptions (notification.subscription.read); admin platform-wide, role 5 own tenant only" },
     { "endpoint": "PATCH:/api/v1/notification-alerts/subscriptions/{notification_id}",    "permissionRequired": 149, "description": "Subscribe/unsubscribe an institution to a notification (notification.subscription.update); admin platform-wide, role 5 own tenant only" },
-    { "endpoint": "PUT:/api/v1/notification-alerts/subscriptions/{notification_id}",      "permissionRequired": 149, "description": "Replace an institution's notification recipients (notification.subscription.update); admin platform-wide, role 5 own tenant only" }
+    { "endpoint": "PUT:/api/v1/notification-alerts/subscriptions/{notification_id}",      "permissionRequired": 149, "description": "Replace an institution's notification recipients (notification.subscription.update); admin platform-wide, role 5 own tenant only" },
+
+    { "endpoint": "GET:/api/v1/policies/categories",                      "permissionRequired": 1,   "description": "List policy categories (admin sentinel — ADMIN only)" },
+    { "endpoint": "POST:/api/v1/policies/categories",                     "permissionRequired": 1,   "description": "Create a policy category (admin sentinel — ADMIN only)" },
+    { "endpoint": "GET:/api/v1/policies/sub-categories",                  "permissionRequired": 1,   "description": "List policy sub-categories (admin sentinel — ADMIN only)" },
+    { "endpoint": "POST:/api/v1/policies/sub-categories",                 "permissionRequired": 1,   "description": "Create a policy sub-category (admin sentinel — ADMIN only)" }
   ]
 }
