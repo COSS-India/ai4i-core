@@ -46,9 +46,10 @@ class CategoryCreate(BaseModel):
 
 
 class CategoryStatusUpdate(BaseModel):
-    """Enable or disable a category without deleting it."""
+    """Enable or disable a category without deleting it. is_active is
+    strict, so ``"false"`` or ``0`` is rejected rather than coerced."""
 
-    is_active: bool
+    is_active: bool = Field(..., strict=True)
 
 
 # ── Route response envelopes ──

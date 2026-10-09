@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 from pydantic import ValidationError as PydanticValidationError
@@ -37,7 +37,7 @@ _spec.loader.exec_module(_policy_routes)
 
 def _request(*, is_admin: bool = True) -> MagicMock:
     request = MagicMock()
-    request.headers = {"X-Permission-IDS": "1"} if is_admin else {"X-Permission-IDS": "5"}
+    request.headers = {"X-Permission-IDS": "1" if is_admin else "5", "X-User-Id": "42"}
     return request
 
 
@@ -71,9 +71,10 @@ class TestStatusUpdateSchema:
             model()
 
     @pytest.mark.parametrize("model", [CategoryStatusUpdate, SubCategoryStatusUpdate])
-    def test_is_active_must_be_boolean(self, model):
+    @pytest.mark.parametrize("value", ["maybe", "false", "true", 0, 1, None])
+    def test_is_active_must_be_a_real_boolean(self, model, value):
         with pytest.raises(PydanticValidationError):
-            model(is_active="maybe")
+            model(is_active=value)
 
 
 @pytest.mark.asyncio
@@ -85,7 +86,7 @@ class TestUpdateCategoryStatusService:
         item = await category_service.update_category_status(
             session, 1, CategoryStatusUpdate(is_active=after)
         )
-        session.get.assert_awaited_once_with(Category, 1)
+        session.get.assert_awaited_once_with(Category, 1, with_for_update=True)
         session.commit.assert_awaited_once()
         session.delete.assert_not_called()
         assert row.is_active is after
@@ -93,20 +94,26 @@ class TestUpdateCategoryStatusService:
 
     @pytest.mark.parametrize("is_active", [True, False])
     async def test_applies_the_flag_to_its_sub_categories(self, is_active):
-        session = _session(_category(is_active=not is_active))
+        row = _category(is_active=not is_active)
+        session = _session(row)
         await category_service.update_category_status(
-            session, 1, CategoryStatusUpdate(is_active=is_active)
+            session, 1, CategoryStatusUpdate(is_active=is_active), updated_by="42"
         )
+        assert row.updated_by == "42"
         sub_stmt, policy_stmt = (c.args[0] for c in session.execute.await_args_list)
         sql = _sql(sub_stmt)
         assert sql.startswith("UPDATE sub_category SET is_active=")
         assert sql.endswith("WHERE sub_category.category_id = 1")
         assert sub_stmt.compile().params["is_active"] is is_active
+        assert sub_stmt.compile().params["updated_by"] == "42"
+        assert "updated_at=now()" in sql
         sql = _sql(policy_stmt)
         assert sql.startswith("UPDATE policy SET is_active=")
         assert "WHERE policy.sub_category_id IN (SELECT sub_category.id" in sql
         assert "WHERE sub_category.category_id = 1)" in sql
         assert policy_stmt.compile().params["is_active"] is is_active
+        assert policy_stmt.compile().params["updated_by"] == "42"
+        assert "updated_at=now()" in sql
 
     async def test_unknown_category_is_not_found(self):
         session = _session(None)
@@ -125,9 +132,10 @@ class TestUpdateSubCategoryStatusService:
         row = _sub_category(is_active=before)
         session = _session(row, _category(is_active=True))
         item = await sub_category_service.update_sub_category_status(
-            session, 3, SubCategoryStatusUpdate(is_active=after)
+            session, 3, SubCategoryStatusUpdate(is_active=after), updated_by="42"
         )
         assert session.get.await_args_list[0].args == (SubCategory, 3)
+        assert row.updated_by == "42"
         session.commit.assert_awaited_once()
         session.delete.assert_not_called()
         assert row.is_active is after
@@ -135,7 +143,10 @@ class TestUpdateSubCategoryStatusService:
             id=3, name="PII Guardrails", description="Keep", category_id=1, is_active=after
         )
         stmt = session.execute.await_args.args[0]
-        assert _sql(stmt) == f"UPDATE policy SET is_active={str(after).lower()} WHERE policy.sub_category_id = 3"
+        assert _sql(stmt) == (
+            f"UPDATE policy SET is_active={str(after).lower()}, updated_at=now(), "
+            "updated_by='42' WHERE policy.sub_category_id = 3"
+        )
 
     async def test_cannot_enable_under_a_disabled_category(self):
         row = _sub_category(is_active=False)
@@ -145,19 +156,27 @@ class TestUpdateSubCategoryStatusService:
                 session, 3, SubCategoryStatusUpdate(is_active=True)
             )
         assert exc.value.status_code == 409
-        assert session.get.await_args_list[1].args == (Category, 1)
+        assert session.get.await_args_list[1] == call(Category, 1, with_for_update=True)
         assert row.is_active is False
         session.execute.assert_not_awaited()
         session.commit.assert_not_awaited()
 
     async def test_can_disable_under_a_disabled_category(self):
         row = _sub_category(is_active=True)
-        session = _session(row)
+        session = _session(row, _category(is_active=False))
         await sub_category_service.update_sub_category_status(
             session, 3, SubCategoryStatusUpdate(is_active=False)
         )
         assert row.is_active is False
-        session.get.assert_awaited_once()
+        session.commit.assert_awaited_once()
+
+    @pytest.mark.parametrize("is_active", [True, False])
+    async def test_locks_the_parent_category(self, is_active):
+        session = _session(_sub_category(is_active=not is_active), _category(is_active=True))
+        await sub_category_service.update_sub_category_status(
+            session, 3, SubCategoryStatusUpdate(is_active=is_active)
+        )
+        assert session.get.await_args_list[1] == call(Category, 1, with_for_update=True)
 
     async def test_unknown_sub_category_is_not_found(self):
         session = _session(None)
@@ -180,6 +199,7 @@ class TestUpdateCategoryStatusRoute:
             payload=payload, request=_request(), category_id=1, session=MagicMock()
         )
         assert stub.await_args.args[1:] == (1, payload)
+        assert stub.await_args.kwargs == {"updated_by": "42"}
         assert resp.data == item
         assert resp.meta.message == f"Category 'Safety' {word}."
 
@@ -222,6 +242,7 @@ class TestUpdateSubCategoryStatusRoute:
             payload=payload, request=_request(), sub_category_id=3, session=MagicMock()
         )
         assert stub.await_args.args[1:] == (3, payload)
+        assert stub.await_args.kwargs == {"updated_by": "42"}
         assert resp.data == item
         assert resp.meta.message == f"Sub-category 'Toxicity' {word}."
 

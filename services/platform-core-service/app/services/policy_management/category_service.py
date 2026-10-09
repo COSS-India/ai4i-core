@@ -7,7 +7,8 @@ concurrent creates of the same name.
 
 Enabling or disabling a category writes the same is_active to every
 sub-category under it and every policy under those sub-categories, in the
-same transaction. Nothing is deleted.
+same transaction. Nothing is deleted. The category row is locked FOR UPDATE
+so a concurrent sub-category enable (which locks the same row) waits.
 """
 
 from typing import List
@@ -55,16 +56,21 @@ async def create_category(
 
 
 async def update_category_status(
-    session: AsyncSession, category_id: int, body: CategoryStatusUpdate
+    session: AsyncSession,
+    category_id: int,
+    body: CategoryStatusUpdate,
+    *,
+    updated_by: str | None = None,
 ) -> CategoryItem:
-    row = await session.get(Category, category_id)
+    row = await session.get(Category, category_id, with_for_update=True)
     if row is None:
         raise EntityNotFoundError(f"Category {category_id}")
     row.is_active = body.is_active
+    row.updated_by = updated_by
     await session.execute(
         update(SubCategory)
         .where(SubCategory.category_id == category_id)
-        .values(is_active=body.is_active)
+        .values(is_active=body.is_active, updated_by=updated_by)
     )
     await session.execute(
         update(Policy)
@@ -73,7 +79,7 @@ async def update_category_status(
                 select(SubCategory.id).where(SubCategory.category_id == category_id)
             )
         )
-        .values(is_active=body.is_active)
+        .values(is_active=body.is_active, updated_by=updated_by)
     )
     await session.commit()
     await session.refresh(row)

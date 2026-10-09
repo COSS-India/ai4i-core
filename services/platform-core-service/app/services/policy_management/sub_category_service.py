@@ -11,7 +11,9 @@ any other integrity error is re-raised.
 Enabling or disabling a sub-category writes the same is_active to every
 policy under it; the parent category and sibling sub-categories are
 untouched. A sub-category cannot be enabled while its category is disabled
-(409) — enable the category instead.
+(409) — enable the category instead. The parent category row is locked FOR
+UPDATE, the same lock a category toggle takes, so the check cannot race a
+concurrent category disable.
 """
 
 from typing import List, Optional
@@ -77,25 +79,29 @@ async def create_sub_category(
 
 
 async def update_sub_category_status(
-    session: AsyncSession, sub_category_id: int, body: SubCategoryStatusUpdate
+    session: AsyncSession,
+    sub_category_id: int,
+    body: SubCategoryStatusUpdate,
+    *,
+    updated_by: str | None = None,
 ) -> SubCategoryItem:
     row = await session.get(SubCategory, sub_category_id)
     if row is None:
         raise EntityNotFoundError(f"Sub-category {sub_category_id}")
-    if body.is_active:
-        category = await session.get(Category, row.category_id)
-        if not category.is_active:
-            raise AppError(
-                f"Category '{category.name}' is disabled; enable it before enabling "
-                f"sub-category '{row.name}'.",
-                code="CATEGORY_DISABLED",
-                status_code=409,
-            )
+    category = await session.get(Category, row.category_id, with_for_update=True)
+    if body.is_active and not category.is_active:
+        raise AppError(
+            f"Category '{category.name}' is disabled; enable it before enabling "
+            f"sub-category '{row.name}'.",
+            code="CATEGORY_DISABLED",
+            status_code=409,
+        )
     row.is_active = body.is_active
+    row.updated_by = updated_by
     await session.execute(
         update(Policy)
         .where(Policy.sub_category_id == sub_category_id)
-        .values(is_active=body.is_active)
+        .values(is_active=body.is_active, updated_by=updated_by)
     )
     await session.commit()
     await session.refresh(row)
