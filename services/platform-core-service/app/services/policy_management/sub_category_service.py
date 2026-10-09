@@ -7,18 +7,31 @@ one (uq_sub_category_name_lower). The pre-insert checks give a clean 404/409;
 an IntegrityError on that index covers a concurrent create of the same name,
 and one on the category foreign key a parent removed after the check (404);
 any other integrity error is re-raised.
+
+Enabling or disabling a sub-category writes the same is_active to every
+policy under it; the parent category and sibling sub-categories are
+untouched. A sub-category cannot be enabled while its category is disabled
+(409) — enable the category instead. The parent category row is locked FOR
+UPDATE, the same lock a category toggle takes, so the check cannot race a
+concurrent category disable. A request for the state the sub-category is
+already in changes nothing.
 """
 
 from typing import List, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import DuplicateEntityError, EntityNotFoundError
+from app.core.exceptions import AppError, DuplicateEntityError, EntityNotFoundError
 from app.models.policy_management.category import Category
+from app.models.policy_management.policy import Policy
 from app.models.policy_management.sub_category import SubCategory
-from app.schemas.policy_management.sub_category import SubCategoryCreate, SubCategoryItem
+from app.schemas.policy_management.sub_category import (
+    SubCategoryCreate,
+    SubCategoryItem,
+    SubCategoryStatusUpdate,
+)
 
 
 async def _ensure_category_exists(session: AsyncSession, category_id: int) -> None:
@@ -62,5 +75,39 @@ async def create_sub_category(
         if "fk_sub_category_category_id" in str(exc.orig):
             raise EntityNotFoundError(f"Category {body.category_id}")
         raise
+    await session.refresh(row)
+    return SubCategoryItem.model_validate(row)
+
+
+async def update_sub_category_status(
+    session: AsyncSession,
+    sub_category_id: int,
+    body: SubCategoryStatusUpdate,
+    *,
+    updated_by: str | None = None,
+) -> SubCategoryItem:
+    row = await session.get(SubCategory, sub_category_id)
+    if row is None:
+        raise EntityNotFoundError(f"Sub-category {sub_category_id}")
+    category = await session.get(Category, row.category_id, with_for_update=True)
+    if body.is_active and not category.is_active:
+        raise AppError(
+            f"Category '{category.name}' is disabled; enable it before enabling "
+            f"sub-category '{row.name}'.",
+            code="CATEGORY_DISABLED",
+            status_code=409,
+        )
+    if row.is_active == body.is_active:
+        item = SubCategoryItem.model_validate(row)
+        await session.rollback()  # release the category row lock
+        return item
+    row.is_active = body.is_active
+    row.updated_by = updated_by
+    await session.execute(
+        update(Policy)
+        .where(Policy.sub_category_id == sub_category_id)
+        .values(is_active=body.is_active, updated_by=updated_by)
+    )
+    await session.commit()
     await session.refresh(row)
     return SubCategoryItem.model_validate(row)

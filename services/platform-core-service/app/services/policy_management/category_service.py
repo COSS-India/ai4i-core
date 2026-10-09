@@ -4,17 +4,31 @@
 Names are unique case-insensitively (uq_category_name_lower). The
 pre-insert check gives a clean 409; an IntegrityError on that index covers two
 concurrent creates of the same name.
+
+Enabling or disabling a category writes the same is_active to every
+sub-category under it and every policy under those sub-categories, in the
+same transaction. Nothing is deleted. The category row is locked FOR UPDATE
+so a concurrent sub-category enable (which locks the same row) waits. A
+request for the state the category is already in changes nothing, so a
+repeated enable does not re-enable sub-categories or policies that were
+disabled on their own.
 """
 
 from typing import List
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import DuplicateEntityError
+from app.core.exceptions import DuplicateEntityError, EntityNotFoundError
 from app.models.policy_management.category import Category
-from app.schemas.policy_management.category import CategoryCreate, CategoryItem
+from app.models.policy_management.policy import Policy
+from app.models.policy_management.sub_category import SubCategory
+from app.schemas.policy_management.category import (
+    CategoryCreate,
+    CategoryItem,
+    CategoryStatusUpdate,
+)
 
 
 async def list_categories(session: AsyncSession) -> List[CategoryItem]:
@@ -40,5 +54,40 @@ async def create_category(
         if "uq_category_name_lower" in str(exc.orig):
             raise DuplicateEntityError(f"Category '{body.name}'")
         raise
+    await session.refresh(row)
+    return CategoryItem.model_validate(row)
+
+
+async def update_category_status(
+    session: AsyncSession,
+    category_id: int,
+    body: CategoryStatusUpdate,
+    *,
+    updated_by: str | None = None,
+) -> CategoryItem:
+    row = await session.get(Category, category_id, with_for_update=True)
+    if row is None:
+        raise EntityNotFoundError(f"Category {category_id}")
+    if row.is_active == body.is_active:
+        item = CategoryItem.model_validate(row)
+        await session.rollback()  # release the row lock
+        return item
+    row.is_active = body.is_active
+    row.updated_by = updated_by
+    await session.execute(
+        update(SubCategory)
+        .where(SubCategory.category_id == category_id)
+        .values(is_active=body.is_active, updated_by=updated_by)
+    )
+    await session.execute(
+        update(Policy)
+        .where(
+            Policy.sub_category_id.in_(
+                select(SubCategory.id).where(SubCategory.category_id == category_id)
+            )
+        )
+        .values(is_active=body.is_active, updated_by=updated_by)
+    )
+    await session.commit()
     await session.refresh(row)
     return CategoryItem.model_validate(row)

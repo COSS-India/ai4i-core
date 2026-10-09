@@ -45,6 +45,13 @@ class CategoryCreate(BaseModel):
         return clean_description(v)
 
 
+class CategoryStatusUpdate(BaseModel):
+    """Enable or disable a category without deleting it. is_active is
+    strict, so ``"false"`` or ``0`` is rejected rather than coerced."""
+
+    is_active: bool = Field(..., strict=True)
+
+
 # ── Route response envelopes ──
 
 
@@ -56,6 +63,13 @@ class ListCategoryResponse(SuccessResponse):
 
 class CreateCategoryResponse(SuccessResponseWithMeta):
     """POST /policies/categories"""
+
+    data: CategoryItem
+    meta: MessageMeta
+
+
+class UpdateCategoryStatusResponse(SuccessResponseWithMeta):
+    """PATCH /policies/categories/{category_id}/status"""
 
     data: CategoryItem
     meta: MessageMeta

@@ -8,6 +8,9 @@ import unicodedata
 
 NAME_MAX_LEN = 100
 DESCRIPTION_MAX_LEN = 1000
+# Largest value of a Postgres INTEGER id column; bigger ids 422 instead of
+# overflowing in the driver.
+ID_MAX = 2_147_483_647
 
 
 def _is_invisible(c: str) -> bool:
