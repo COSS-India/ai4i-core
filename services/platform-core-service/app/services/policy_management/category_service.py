@@ -8,7 +8,10 @@ concurrent creates of the same name.
 Enabling or disabling a category writes the same is_active to every
 sub-category under it and every policy under those sub-categories, in the
 same transaction. Nothing is deleted. The category row is locked FOR UPDATE
-so a concurrent sub-category enable (which locks the same row) waits.
+so a concurrent sub-category enable (which locks the same row) waits. A
+request for the state the category is already in changes nothing, so a
+repeated enable does not re-enable sub-categories or policies that were
+disabled on their own.
 """
 
 from typing import List
@@ -65,6 +68,10 @@ async def update_category_status(
     row = await session.get(Category, category_id, with_for_update=True)
     if row is None:
         raise EntityNotFoundError(f"Category {category_id}")
+    if row.is_active == body.is_active:
+        item = CategoryItem.model_validate(row)
+        await session.rollback()  # release the row lock
+        return item
     row.is_active = body.is_active
     row.updated_by = updated_by
     await session.execute(

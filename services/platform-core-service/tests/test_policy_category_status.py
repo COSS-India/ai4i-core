@@ -47,6 +47,7 @@ def _session(row=None, parent=None) -> MagicMock:
     session.get = AsyncMock(side_effect=[row, parent])
     session.execute = AsyncMock()
     session.commit = AsyncMock()
+    session.rollback = AsyncMock()
     session.refresh = AsyncMock()
     session.delete = AsyncMock()
     return session
@@ -115,6 +116,19 @@ class TestUpdateCategoryStatusService:
         assert policy_stmt.compile().params["updated_by"] == "42"
         assert "updated_at=now()" in sql
 
+    @pytest.mark.parametrize("is_active", [True, False])
+    async def test_same_state_changes_nothing(self, is_active):
+        row = _category(is_active=is_active)
+        session = _session(row)
+        item = await category_service.update_category_status(
+            session, 1, CategoryStatusUpdate(is_active=is_active), updated_by="42"
+        )
+        assert item.is_active is is_active
+        assert row.updated_by is None
+        session.execute.assert_not_awaited()
+        session.commit.assert_not_awaited()
+        session.rollback.assert_awaited_once()
+
     async def test_unknown_category_is_not_found(self):
         session = _session(None)
         with pytest.raises(EntityNotFoundError):
@@ -177,6 +191,19 @@ class TestUpdateSubCategoryStatusService:
             session, 3, SubCategoryStatusUpdate(is_active=is_active)
         )
         assert session.get.await_args_list[1] == call(Category, 1, with_for_update=True)
+
+    @pytest.mark.parametrize("is_active", [True, False])
+    async def test_same_state_changes_nothing(self, is_active):
+        row = _sub_category(is_active=is_active)
+        session = _session(row, _category(is_active=True))
+        item = await sub_category_service.update_sub_category_status(
+            session, 3, SubCategoryStatusUpdate(is_active=is_active), updated_by="42"
+        )
+        assert item.is_active is is_active
+        assert row.updated_by is None
+        session.execute.assert_not_awaited()
+        session.commit.assert_not_awaited()
+        session.rollback.assert_awaited_once()
 
     async def test_unknown_sub_category_is_not_found(self):
         session = _session(None)

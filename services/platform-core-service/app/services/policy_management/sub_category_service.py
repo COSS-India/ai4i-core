@@ -13,7 +13,8 @@ policy under it; the parent category and sibling sub-categories are
 untouched. A sub-category cannot be enabled while its category is disabled
 (409) — enable the category instead. The parent category row is locked FOR
 UPDATE, the same lock a category toggle takes, so the check cannot race a
-concurrent category disable.
+concurrent category disable. A request for the state the sub-category is
+already in changes nothing.
 """
 
 from typing import List, Optional
@@ -96,6 +97,10 @@ async def update_sub_category_status(
             code="CATEGORY_DISABLED",
             status_code=409,
         )
+    if row.is_active == body.is_active:
+        item = SubCategoryItem.model_validate(row)
+        await session.rollback()  # release the category row lock
+        return item
     row.is_active = body.is_active
     row.updated_by = updated_by
     await session.execute(
