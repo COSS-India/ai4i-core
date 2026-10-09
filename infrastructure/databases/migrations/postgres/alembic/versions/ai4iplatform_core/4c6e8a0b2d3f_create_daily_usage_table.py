@@ -1,4 +1,4 @@
-"""create daily_usage table
+"""create daily_usage table, partitioned by month
 
 Daily rollup of usage_events: one row per IST day and dimension combination
 (tenant, application, API key, tier, service, task type, billing month).
@@ -11,6 +11,17 @@ so those have no foreign key constraint. tier_id and inference_type_id do.
 
 The dimension key treats NULLs as equal (NULLS NOT DISTINCT, Postgres 15+),
 so the rollup can upsert rows whose application or API key is unknown.
+
+Partitioning: range-partitioned on usage_date (the IST day), one partition per
+calendar month, named daily_usage_YYYY_MM. This migration creates the parent
+table and the October 2026 partition only; later partitions are created by a
+scheduled job outside alembic. Writers always use daily_usage itself.
+
+usage_date, not created_at, is the partition key: Postgres requires the
+partition column in every unique key, and the rollup upserts on the dimension
+key. usage_date is part of that key and never changes for a row, so re-running
+a day's rollup updates its rows instead of inserting duplicates. For the same
+reason the primary key is (id, usage_date).
 
 Revision ID: 4c6e8a0b2d3f
 Revises: 3b5d7f9a1c2e
@@ -35,6 +46,11 @@ DIMENSIONS = (
     "tier_id", "service_id", "inference_type_id", "billing_month",
 )
 
+# usage_date is already an IST day, so the bounds are plain dates.
+FIRST_PARTITION = "daily_usage_2026_10"
+FIRST_PARTITION_FROM = "2026-10-01"
+FIRST_PARTITION_TO = "2026-11-01"
+
 UNITS = sa.Numeric()
 MONEY = sa.Numeric(18, 6)
 
@@ -46,7 +62,7 @@ def _zero(name: str, type_) -> sa.Column:
 def upgrade() -> None:
     op.create_table(
         TABLE,
-        sa.Column("id", sa.BigInteger(), sa.Identity(always=True), primary_key=True),
+        sa.Column("id", sa.BigInteger(), sa.Identity(always=True), nullable=False),
         sa.Column("usage_date", sa.Date(), nullable=False),
         sa.Column("tenant_id", sa.Integer(), nullable=True),
         sa.Column("tenant_name", sa.String(255), nullable=True),
@@ -76,6 +92,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         # Set by the rollup on every upsert; the default only covers the first insert.
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.PrimaryKeyConstraint("id", "usage_date", name="pk_daily_usage"),
         sa.ForeignKeyConstraint(
             ["tier_id"], ["tiers.id"], name="fk_daily_usage_tier_id", ondelete="SET NULL",
         ),
@@ -89,6 +106,7 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "cost = input_units_cost + cached_input_units_cost + output_units_cost", name="ck_daily_usage_cost",
         ),
+        postgresql_partition_by="RANGE (usage_date)",
     )
     # NULLS NOT DISTINCT has no SQLAlchemy 2.0.23 constraint option, so the
     # unique dimension key is created in SQL.
@@ -100,11 +118,14 @@ def upgrade() -> None:
     op.create_index("ix_daily_usage_service_date", TABLE, ["service_id", "usage_date"])
     op.create_index("ix_daily_usage_billing_month", TABLE, ["billing_month", "tenant_id"])
 
+    # Indexes and the unique key above are created on every partition,
+    # including ones the scheduled job adds later.
+    op.execute(
+        f"CREATE TABLE {FIRST_PARTITION} PARTITION OF {TABLE} "
+        f"FOR VALUES FROM ('{FIRST_PARTITION_FROM}') TO ('{FIRST_PARTITION_TO}')"
+    )
+
 
 def downgrade() -> None:
-    op.drop_index("ix_daily_usage_billing_month", table_name=TABLE)
-    op.drop_index("ix_daily_usage_service_date", table_name=TABLE)
-    op.drop_index("ix_daily_usage_application_date", table_name=TABLE)
-    op.drop_index("ix_daily_usage_tenant_date", table_name=TABLE)
-    op.execute(f"DROP INDEX IF EXISTS {DIMENSION_KEY}")
+    # Dropping the parent drops every partition and its indexes.
     op.drop_table(TABLE)
