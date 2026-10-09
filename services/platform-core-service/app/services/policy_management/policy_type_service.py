@@ -7,6 +7,7 @@ covers concurrent creates of the same name.
 
 from typing import List
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import DuplicateEntityError, EntityInUseError, EntityNotFoundError

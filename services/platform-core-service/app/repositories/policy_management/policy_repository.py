@@ -1,6 +1,6 @@
 """Repository for the policy table."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,14 +21,20 @@ class PolicyRepository:
         self,
         name: Optional[str] = None,
         sub_category_id: Optional[int] = None,
-    ) -> List[Policy]:
-        stmt = select(Policy).order_by(Policy.id)
+        offset: int = 0,
+        limit: int = 100,
+    ) -> Tuple[List[Policy], int]:
+        base = select(Policy)
         if name is not None:
-            stmt = stmt.where(Policy.name.ilike(f"%{name}%"))
+            base = base.where(Policy.name.ilike(f"%{name}%"))
         if sub_category_id is not None:
-            stmt = stmt.where(Policy.sub_category_id == sub_category_id)
-        result = await self._db.execute(stmt)
-        return list(result.scalars().all())
+            base = base.where(Policy.sub_category_id == sub_category_id)
+
+        total_result = await self._db.execute(select(func.count()).select_from(base.subquery()))
+        total = total_result.scalar_one()
+
+        rows_result = await self._db.execute(base.order_by(Policy.id).offset(offset).limit(limit))
+        return list(rows_result.scalars().all()), total
 
     async def get_by_id(self, policy_id: int) -> Optional[Policy]:
         result = await self._db.execute(select(Policy).where(Policy.id == policy_id))

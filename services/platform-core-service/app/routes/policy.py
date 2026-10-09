@@ -7,10 +7,10 @@ belongs to exactly one category.
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Path, Query, Request, status
+from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_auth_db_optional, get_db
+from app.core.database import get_auth_db, get_db
 from app.core.exceptions import InsufficientPermissionsError
 from app.core.permissions import is_admin
 from app.schemas.common import DeletedIdData, MessageMeta, error_responses
@@ -44,6 +44,7 @@ from app.schemas.policy_management.policy import (
     ListPolicyResponse,
     PolicyCreate,
     PolicyListData,
+    PolicyListMeta,
     PolicyUpdate,
     UpdatePolicyResponse,
 )
@@ -250,8 +251,11 @@ async def delete_policy_type(
 )
 async def list_policies(
     request: Request,
+    response: Response,
     name: Optional[str] = Query(None, description="Case-insensitive partial match on policy name."),
     sub_category_id: Optional[int] = Query(None, gt=0, le=2_147_483_647, description="Filter policies by sub-category ID. 404 if it does not exist."),
+    offset: int = Query(0, ge=0, description="Number of items to skip (for pagination)."),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of items to return. Defaults to 100."),
     session: AsyncSession = Depends(get_db),
 ) -> ListPolicyResponse:
     """List policies, optionally filtered by name (partial match) and/or
@@ -259,8 +263,13 @@ async def list_policies(
     Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
-    items = await policy_service.list_policies(session, name=name, sub_category_id=sub_category_id)
-    return ListPolicyResponse(success=True, data=PolicyListData(items=items))
+    items, total = await policy_service.list_policies(session, name=name, sub_category_id=sub_category_id, offset=offset, limit=limit)
+    response.headers["X-Total-Count"] = str(total)
+    return ListPolicyResponse(
+        success=True,
+        data=PolicyListData(items=items),
+        meta=PolicyListMeta(total=total, offset=offset, limit=limit),
+    )
 
 
 @router.post(
@@ -339,7 +348,7 @@ async def delete_policy(
     request: Request,
     id: int = Path(..., gt=0, le=2_147_483_647),
     session: AsyncSession = Depends(get_db),
-    auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
+    auth_db: AsyncSession = Depends(get_auth_db),
 ) -> DeletePolicyResponse:
     """Delete a policy by integer primary key. 404 if it does not exist.
     409 if it is linked to one or more applications. Adopter Admin only."""

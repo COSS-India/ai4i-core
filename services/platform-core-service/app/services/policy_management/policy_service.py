@@ -6,9 +6,9 @@ check gives a clean 409; an IntegrityError on those constraints covers
 concurrent creates of the same name.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,11 +17,23 @@ from app.repositories.policy_management.policy_repository import PolicyRepositor
 from app.schemas.policy_management.policy import PolicyCreate, PolicyItem, PolicyUpdate
 
 
+async def _assert_policy_types_exist(session: AsyncSession, ids: List[int]) -> None:
+    from app.models.policy_management.policy_type import PolicyType
+
+    result = await session.execute(select(PolicyType.id).where(PolicyType.id.in_(ids)))
+    found = {row[0] for row in result.all()}
+    missing = sorted(set(ids) - found)
+    if missing:
+        raise EntityNotFoundError(f"PolicyType {missing}")
+
+
 async def list_policies(
     session: AsyncSession,
     name: Optional[str] = None,
     sub_category_id: Optional[int] = None,
-) -> List[PolicyItem]:
+    offset: int = 0,
+    limit: int = 100,
+) -> Tuple[List[PolicyItem], int]:
     from app.models.policy_management.sub_category import SubCategory
     from sqlalchemy import select as _select
 
@@ -33,8 +45,8 @@ async def list_policies(
             raise EntityNotFoundError(f"SubCategory {sub_category_id}")
 
     repo = PolicyRepository(session)
-    rows = await repo.get_all(name=name, sub_category_id=sub_category_id)
-    return [PolicyItem.model_validate(row) for row in rows]
+    rows, total = await repo.get_all(name=name, sub_category_id=sub_category_id, offset=offset, limit=limit)
+    return [PolicyItem.model_validate(row) for row in rows], total
 
 
 async def get_policy(session: AsyncSession, policy_id: int) -> PolicyItem:
@@ -51,6 +63,8 @@ async def create_policy(
     repo = PolicyRepository(session)
     if await repo.get_by_name(body.name) is not None:
         raise DuplicateEntityError(f"Policy '{body.name}'")
+
+    await _assert_policy_types_exist(session, body.policy_type_id)
 
     policy_id_str = await repo.get_next_policy_id()
     data = body.model_dump()
@@ -86,6 +100,9 @@ async def update_policy(
         data["updated_by"] = updated_by
     if not data:
         return PolicyItem.model_validate(existing)
+
+    if body.policy_type_id is not None:
+        await _assert_policy_types_exist(session, body.policy_type_id)
 
     try:
         row = await repo.update(policy_id, data)

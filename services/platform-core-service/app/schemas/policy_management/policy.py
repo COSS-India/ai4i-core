@@ -1,13 +1,13 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Annotated, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.policy_management.policy import GuardrailScope
 from app.schemas.common import DeletedIdData, MessageMeta, SuccessResponse, SuccessResponseWithMeta
 from app.schemas.policy_management.fields import (
-    DESCRIPTION_MAX_LEN,
     NAME_MAX_LEN,
+    POLICY_DESCRIPTION_MAX_LEN,
     clean_description,
     clean_name,
 )
@@ -46,12 +46,12 @@ class PolicyCreate(BaseModel):
     )
 
     name: str = Field(..., max_length=NAME_MAX_LEN, description="Unique policy name (case-insensitive).")
-    description: Optional[str] = Field(None, max_length=DESCRIPTION_MAX_LEN, description="Optional description.")
+    description: Optional[str] = Field(None, max_length=POLICY_DESCRIPTION_MAX_LEN, description="Optional description.")
     domain: List[str] = Field(..., min_length=1, description="One or more domains this policy applies to.")
     guardrail_scope: GuardrailScope = Field(..., description="Enforcement side: input, output, or both.")
     is_global: bool = Field(False, description="Whether this policy applies globally across all tenants.")
     sub_category_id: int = Field(..., gt=0, le=2_147_483_647, description="Sub-category this policy belongs to.")
-    policy_type_id: List[int] = Field(..., min_length=1, description="One or more policy type IDs.")
+    policy_type_id: List[Annotated[int, Field(gt=0, le=2_147_483_647, strict=True)]] = Field(..., min_length=1, description="One or more policy type IDs.")
 
     @field_validator("name", mode="before")
     @classmethod
@@ -95,13 +95,13 @@ class PolicyUpdate(BaseModel):
     )
 
     id: int = Field(..., gt=0, le=2_147_483_647, description="Integer primary key of the policy to update.")
-    description: Optional[str] = Field(None, max_length=DESCRIPTION_MAX_LEN, description="Updated description.")
+    description: Optional[str] = Field(None, max_length=POLICY_DESCRIPTION_MAX_LEN, description="Updated description.")
     domain: Optional[List[str]] = Field(None, description="Replacement domain list (≥1 entry if supplied).")
     guardrail_scope: Optional[GuardrailScope] = Field(None, description="New guardrail scope.")
     is_global: Optional[bool] = Field(None, description="Update global flag.")
     is_active: Optional[bool] = Field(None, description="Activate or deactivate the policy.")
     sub_category_id: Optional[int] = Field(None, gt=0, le=2_147_483_647, description="New sub-category ID.")
-    policy_type_id: Optional[List[int]] = Field(None, description="Replacement policy type list (≥1 entry if supplied).")
+    policy_type_id: Optional[List[Annotated[int, Field(gt=0, le=2_147_483_647, strict=True)]]] = Field(None, description="Replacement policy type list (≥1 entry if supplied).")
 
     @field_validator("description", mode="before")
     @classmethod
@@ -157,10 +157,16 @@ class PolicyListData(BaseModel):
     items: List[PolicyItem]
 
 
+class PolicyListMeta(BaseModel):
+    total: int
+    offset: int
+    limit: int
+
+
 # ── Route response envelopes ──
 
 
-class ListPolicyResponse(SuccessResponse):
+class ListPolicyResponse(SuccessResponseWithMeta):
     """GET /policies"""
 
     model_config = ConfigDict(
@@ -168,11 +174,13 @@ class ListPolicyResponse(SuccessResponse):
             "example": {
                 "success": True,
                 "data": {"items": [_EXAMPLE_POLICY_ITEM]},
+                "meta": {"total": 1, "offset": 0, "limit": 100},
             }
         }
     )
 
     data: PolicyListData
+    meta: PolicyListMeta
 
 
 class GetPolicyResponse(SuccessResponse):
