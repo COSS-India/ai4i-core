@@ -1,6 +1,6 @@
 """ORM model for the sub_category table."""
 
-from sqlalchemy import Boolean, Column, ForeignKey, Index, Integer, String, Text, func, text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.orm import relationship
 
 from app.models import Base
@@ -21,6 +21,10 @@ class SubCategory(Base):
         index=True,
     )
     is_active = Column(Boolean, nullable=False, server_default=text("false"))
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    created_by = Column(String, nullable=True)
+    updated_by = Column(String, nullable=True)
 
     # Case-insensitive uniqueness on name.
     __table_args__ = (
