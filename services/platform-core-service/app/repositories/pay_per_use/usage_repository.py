@@ -14,7 +14,9 @@ from app.models.pay_per_use.budget_usage import BudgetUsage
 from app.models.pay_per_use.inference_type import InferenceType
 from app.models.pay_per_use.quota_usage import QuotaUsage
 from app.models.pay_per_use.tier import Tier
+from app.repositories.pay_per_use.period_usage import period_source, tenant_pks
 from app.utils.billing_month import shift_billing_month
+from app.utils.usage_period import UsagePeriod
 
 
 # The payperuse consumer assigns billing months in IST.
@@ -333,6 +335,58 @@ class UsageRepository:
             stmt = stmt.where(QuotaUsage.billing_month == billing_month)
         if task_type_ids:
             stmt = stmt.where(QuotaUsage.inference_type_id.in_(task_type_ids))
+        result = await self._db.execute(stmt)
+        return result.all()
+
+    async def get_period_usage(
+        self,
+        period: UsagePeriod,
+        tenant_ids: list[str] | None = None,
+        task_type_ids: list[int] | None = None,
+    ):
+        """Per (tenant, tier, inference type) units and costs in ``period`` —
+        usage_events for ``today``, daily_usage otherwise (see period_source)
+        — with the first and last activity of each group, so callers can
+        order tiers and pick each tenant's most recent one.
+
+        ``tenant_ids`` None means every tenant. Rows without a tenant (never
+        written for billed API-key traffic) are skipped. ``task_type_ids``
+        narrows to those catalogue ids. The task type's name and unit come
+        from the catalogue, falling back to the row's own copy.
+        """
+        source = period_source(period)
+        m = source.model
+        task_type = func.coalesce(InferenceType.name, m.task_type)
+        unit = func.coalesce(InferenceType.unit, source.unit)
+        stmt = (
+            select(
+                m.tenant_id,
+                m.tier_id,
+                m.inference_type_id,
+                task_type.label("task_type"),
+                unit.label("task_type_unit"),
+                func.sum(m.total_units).label("total_units"),
+                func.sum(m.cached_input_units).label("cached_input_units"),
+                func.sum(m.output_units).label("output_units"),
+                func.sum(m.input_units_cost).label("input_units_cost"),
+                func.sum(m.cached_input_units_cost).label("cached_input_units_cost"),
+                func.sum(m.output_units_cost).label("output_units_cost"),
+                func.sum(source.total_cost).label("cost"),
+                func.min(source.time_column).label("first_seen"),
+                func.max(source.time_column).label("last_seen"),
+            )
+            .outerjoin(InferenceType, m.inference_type_id == InferenceType.id)
+            .where(source.in_period, m.tenant_id.is_not(None))
+            .group_by(m.tenant_id, m.tier_id, m.inference_type_id, task_type, unit)
+            .order_by(m.tenant_id)
+        )
+        if tenant_ids is not None:
+            pks = tenant_pks(tenant_ids)
+            if not pks:
+                return []
+            stmt = stmt.where(m.tenant_id.in_(pks))
+        if task_type_ids:
+            stmt = stmt.where(m.inference_type_id.in_(task_type_ids))
         result = await self._db.execute(stmt)
         return result.all()
 

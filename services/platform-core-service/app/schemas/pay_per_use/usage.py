@@ -1,8 +1,10 @@
 """Response schemas for the PPU usage dashboard."""
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel
+
+from app.schemas.period import Period
 
 
 class SpendItem(BaseModel):
@@ -50,15 +52,42 @@ class UsageSummaryResponse(BaseModel):
     totalRemainingBudget: float = 0
 
 
+class MonthlyQuota(BaseModel):
+    """A task type's quota for the current billing month (quota_usage, the
+    counter quota enforcement uses) — whatever period the dashboard shows."""
+    billingMonth: str
+    limit: float
+    used: float
+    remaining: float            # limit − used; negative when over quota
+    percentageUsed: float
+
+
+class CostShare(BaseModel):
+    """One LLM token category in the Budget drill-down."""
+    key: Literal["input", "cached_input", "output"]
+    label: str
+    units: float
+    cost: float
+    costShare: float            # share of PeriodUsage.cost
+
+
+class PeriodUsage(BaseModel):
+    """A task type's usage in the selected period (usage_events for today,
+    daily_usage otherwise)."""
+    units: float
+    cost: float
+    # LLM only (null otherwise): uncached input, cached input and output,
+    # summing to units and cost; cached input is omitted when 0.
+    breakdown: Optional[list[CostShare]] = None
+
+
 class TaskTypeUsage(BaseModel):
     taskType: str
     unit: str
-    quotaLimit: Optional[float] = None
-    consumed: float
-    remaining: Optional[float] = None
-    # No spend/percentage here (and never one) — see SpendItem's docstring; the same
-    # "no per-task-type money column" limitation applies at this tier/task-type
-    # breakdown level too.
+    # Current billing month; null when the institution has no quota for this
+    # task type this month.
+    quota: Optional[MonthlyQuota] = None
+    periodUsage: PeriodUsage
 
 
 class TierUsageBreakdown(BaseModel):
@@ -77,30 +106,27 @@ class TenantBudget(BaseModel):
 
 
 class TenantUsageCount(BaseModel):
-    taskTypeCount: int
-    unit: Optional[str] = None
-    quotaLimit: Optional[float] = None
-    consumed: Optional[float] = None
-    remaining: Optional[float] = None
-    percentage: Optional[float] = None
+    taskTypeCount: int          # distinct task types used in the period
 
 
 class TenantHierarchicalItem(BaseModel):
     tenantId: str
     tenantName: str
+    # Tier of the institution's most recent usage in the period (its current
+    # tier when it has none).
     tier: str
     tierId: str
     currency: str
-    # Real, tenant-total spend — sum of budget_usage.api_key_budget_used across this
-    # tenant's api keys, always lifetime-cumulative (see TierUsageBreakdown's
-    # docstring for why this can't be broken down by tier/task type).
-    spend: float
+    # Spend in the selected period (usage_events / daily_usage).
+    periodSpend: float
+    # All-time balance: allocated budget vs all-time spend (budget_usage).
     budget: TenantBudget
     usage: TenantUsageCount
     tierBreakdown: list[TierUsageBreakdown]
 
 
 class TenantHierarchicalListResponse(BaseModel):
+    period: Period
     data: list[TenantHierarchicalItem]
     total: int
 
@@ -118,12 +144,13 @@ class TenantBudgetDetail(TenantBudget):
 class TenantUsageDetailResponse(BaseModel):
     """Response for /usage-tenant — identical shape to TenantHierarchicalItem except
     budget carries the extra effective-from/to window (see TenantBudgetDetail)."""
+    period: Period
     tenantId: str
     tenantName: str
     tier: str
     tierId: str
     currency: str
-    spend: float
+    periodSpend: float
     budget: TenantBudgetDetail
     usage: TenantUsageCount
     tierBreakdown: list[TierUsageBreakdown]

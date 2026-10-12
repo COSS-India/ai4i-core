@@ -5,9 +5,8 @@ import asyncio
 import json
 import logging
 import re
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Literal, Optional, Union
-from zoneinfo import ZoneInfo
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -30,6 +29,7 @@ from app.schemas.metering import (
     MostUsedService,
     ServiceModelRow,
     OverviewResponse,
+    PeriodScope,
     PlatformAdoption,
     Scope,
     ServiceConsumptionResponse,
@@ -44,7 +44,14 @@ from app.services.metering_service import MeteringService
 from app.utils.metering_promql_builder import (
     API_KEY_AUTH_TYPE,
     SERVICE_BREAKDOWN_CONFIG,
-    AbsoluteRange,
+)
+from app.utils.usage_period import (
+    FROM_DESCRIPTION,
+    PERIOD_DESCRIPTION,
+    TO_DESCRIPTION,
+    UsagePeriod,
+    iso_ist,
+    period_from_request,
 )
 
 logger = logging.getLogger(__name__)
@@ -140,159 +147,19 @@ def _parse_task_types(task_types: Optional[str]) -> Optional[list[str]]:
     return values
 
 
-# A naive from/to (no offset) is read as IST — the dashboard's display
-# timezone, same as how the payperuse consumer assigns billing months.
-_IST = ZoneInfo("Asia/Kolkata")
-# How far past the server's clock an explicit `to` may land before it's
-# rejected as a future date — absorbs client/server clock skew when the
-# frontend sends its own "now".
-_FUTURE_TO_TOLERANCE = timedelta(seconds=60)
-# Earliest `from` a custom range uses; an earlier one is silently clamped to
-# it (see _parse_from_to). The platform has no data before it, and without a
-# floor an absurd `from` (e.g. year 1) overflows datetime arithmetic and asks
-# the chart for ~100k zero-filled weekly buckets.
-_FROM_FLOOR = datetime(2000, 1, 1, tzinfo=_IST).astimezone(timezone.utc)
-
-
-def _floor_to_cache_ttl(now: datetime) -> datetime:
-    """``now`` floored to a multiple of the metering cache TTL. A range that
-    ends "now" is clamped to this instead of the exact second, so every
-    caller within the same TTL bucket shares one cache key (and one set of
-    backend queries) rather than each request minting its own."""
-    step = max(1, _CACHE_TTL)
-    return datetime.fromtimestamp(int(now.timestamp()) // step * step, tz=timezone.utc)
-
-
-# A `+HH:MM` offset sent without URL-encoding arrives with the `+` decoded
-# to a space ("...T10:00:00 05:30"); put it back before parsing.
-_UNENCODED_OFFSET = re.compile(r"(T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?) (\d{2}:?\d{2})$")
-
-
-def _to_utc(name: str, dt: datetime) -> datetime:
-    """``dt`` in UTC. A value so far out that UTC falls outside datetime's
-    range (year 1 in a positive offset, year 9999 in a negative one) can't
-    overflow into a 500: an ancient one becomes the floor (clamped anyway),
-    a far-future one is the usual future-date 422."""
-    try:
-        return dt.astimezone(timezone.utc)
-    except OverflowError:
-        if dt.year < _FROM_FLOOR.year:
-            return _FROM_FLOOR
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"`{name}` must not be in the future.",
-        ) from None
-
-
-def _parse_range_bound(name: str, raw: str) -> tuple[datetime, bool]:
-    """Parse one from/to value to (UTC datetime, is_date_only)."""
-    value = _UNENCODED_OFFSET.sub(r"\1+\2", raw.strip())
-    try:
-        day = date.fromisoformat(value)
-    except ValueError:
-        day = None
-    if day is not None:
-        return _to_utc(name, datetime.combine(day, time(), tzinfo=_IST)), True
-    try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"`{name}` must be an ISO-8601 date or datetime, got {raw!r}.",
-        ) from None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=_IST)
-    return _to_utc(name, dt), False
-
-
-def _parse_from_to(from_: Optional[str], to: Optional[str]) -> Optional[AbsoluteRange]:
-    """Parse the ``from``/``to`` query params into an AbsoluteRange, or None
-    when neither is given (the caller then falls back to ``window``).
-
-    - Both or neither: exactly one of them is a 422.
-    - A value with no UTC offset is read as IST; one with an offset is kept
-      as given. Both are normalized to UTC.
-    - A date-only ``to`` (e.g. "2026-09-20") covers that whole day, so
-      from=to=<same date> is a one-day range; it's capped at now when the day
-      is today.
-    - A ``to`` capped at now is floored to the cache TTL (_floor_to_cache_ttl),
-      unless that would leave the range empty.
-    - ``from`` must be before ``to``, and ``to`` must not be in the future.
-      Not validated against first_usage_at — a range before it just comes
-      back sparse/empty.
-    - ``from`` may be as far back as the caller likes. Data older than a
-      source's retention is simply not counted: the Prometheus queries clamp
-      the range to what's retained (metering_promql_builder.retained_range)
-      rather than erroring or counting lifetime counters.
-    - A ``from`` before _FROM_FLOOR (2000-01-01 IST) is silently clamped to
-      it, and a range entirely before it becomes the one day starting at the
-      floor (no data, so zeros). Never a 422: an absurd ``from`` would
-      otherwise overflow datetime arithmetic (a 500, or the previous-period
-      window before year 1) and zero-fill ~100k chart buckets. Scope echoes
-      the clamped range.
-    """
-    if from_ is None and to is None:
-        return None
-    if from_ is None or to is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="`from` and `to` must be supplied together.",
-        )
-    start, _ = _parse_range_bound("from", from_)
-    end, to_date_only = _parse_range_bound("to", to)
-    now = datetime.now(timezone.utc)
-
-    if to_date_only:
-        if end > now:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="`to` must not be in the future.",
-            )
-        end += timedelta(days=1)
-    elif end > now + _FUTURE_TO_TOLERANCE:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="`to` must not be in the future.",
-        )
-    if start < _FROM_FLOOR:
-        start = _FROM_FLOOR
-        if end <= start:
-            end = start + timedelta(days=1)
-    open_end = _floor_to_cache_ttl(now)
-    if end > open_end:
-        # Fall back to the exact now when the floor would cut off the whole
-        # range (a `from` inside the current cache bucket).
-        end = open_end if open_end > start else now
-
-    if start >= end:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="`from` must be earlier than `to`.",
-        )
-    return AbsoluteRange(start=start, end=end)
+def _usage_period(
+    request: Request, period: Optional[str], from_: Optional[str], to: Optional[str],
+) -> UsagePeriod:
+    """The period filter for /overview and /model-consumption (422
+    INVALID_PERIOD on bad input, or when the removed `window` is sent).
+    "Now" is read here so a test can freeze this module's clock."""
+    return period_from_request(request, period, from_, to, now=datetime.now(timezone.utc))
 
 
 def _iso_utc(dt: datetime) -> str:
-    """UTC ISO-8601 in the same shape as every response's generated_at."""
+    """UTC ISO-8601 — internal only (the first-usage cache, logs). Response
+    timestamps are IST (iso_ist)."""
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _range_cache_part(window: str, custom_range: Optional[AbsoluteRange]) -> str:
-    if custom_range is None:
-        return window
-    return f"custom:{int(custom_range.start.timestamp())}-{int(custom_range.end.timestamp())}"
-
-
-def _scope_range_fields(window: str, custom_range: Optional[AbsoluteRange]) -> dict:
-    """Scope's window/from/to: the raw preset, or "custom" plus the
-    effective (validated, clamped) bounds when a custom range was applied."""
-    if custom_range is None:
-        return {"window": window}
-    return {
-        "window": "custom",
-        "from_": _iso_utc(custom_range.start),
-        "to": _iso_utc(custom_range.end),
-    }
 
 
 async def _first_usage_at(
@@ -323,6 +190,27 @@ async def _first_usage_at(
     return first, True
 
 
+async def _tenant_onboarded_at(
+    svc: MeteringService, tenant_id: Optional[str],
+) -> tuple[Optional[datetime], bool]:
+    """(tenants.created_at for ``tenant_id``, ok) — the institution's
+    onboarding date, the date picker's floor for an Institution admin. None
+    without a tenant (platform-wide admin view) or an auth DB. Best-effort
+    like the other auth-DB lookups: a failure logs, rolls the shared session
+    back and yields (None, False), so the caller doesn't cache that None."""
+    if not tenant_id or svc._auth_db is None:
+        return None, True
+    try:
+        row = await svc._auth_db.execute(
+            text("SELECT created_at FROM tenants WHERE id = :id"), {"id": int(tenant_id)},
+        )
+        return row.scalar(), True
+    except Exception:
+        logger.warning("onboarded_at lookup failed for tenant_id=%s", tenant_id, exc_info=True)
+        await svc._safe_rollback_auth_db()
+        return None, False
+
+
 def _first_usage_cache_key(scope_tenant: Optional[str], scope_tenant_name: Optional[str]) -> str:
     """first_request_at depends only on the tenant scope, not on the window,
     task types, role or limit the overview key varies by. Both parts are in
@@ -350,7 +238,7 @@ def _combine_first_usage(*candidates: Optional[datetime]) -> Optional[str]:
     metering source's first API-key request (covers untiered traffic, but only
     within retention). None when neither has anything."""
     present = [c for c in candidates if c is not None]
-    return _iso_utc(min(present)) if present else None
+    return iso_ist(min(present)) if present else None
 
 
 # ── Cache helpers ─────────────────────────────────────────────────────────────
@@ -534,6 +422,8 @@ def _platform_adoption_block(
     at7: Optional[dict],
     at30: Optional[dict],
     model_usage_growth_pct: Optional[float] = None,
+    total_models: Optional[int] = None,
+    active_models_30d: Optional[int] = None,
 ) -> Optional[PlatformAdoption]:
     if not (is_admin and tc):
         return None
@@ -544,7 +434,33 @@ def _platform_adoption_block(
         active_7d=at7["count"] if at7 else None,
         active_30d=at30["count"] if at30 else None,
         model_usage_growth_pct=model_usage_growth_pct,
+        total_models=total_models,
+        active_models_30d=active_models_30d,
     )
+
+
+async def _platform_model_counts(
+    svc: MeteringService, task_types: Optional[list[str]],
+) -> tuple[Optional[int], Optional[int], bool]:
+    """(total_models, active_models_30d, ok) for the Key metrics strip —
+    the same figures /model-consumption's summary reports for a 30-day
+    window, platform-wide, so the strip needs no model-consumption call.
+    Sequential, not gathered: both read the shared per-request core-DB
+    session (service/model repositories), which isn't safe for concurrent
+    use. ok=False when the 30-day breakdown failed, so the response isn't
+    cached with a missing figure."""
+    total_models = await svc.registry_model_count(task_types=task_types)
+    try:
+        breakdown = await svc.model_breakdown(
+            tenant=None, time_range="30d", tenant_id=None, task_types=task_types,
+        )
+    except Exception as exc:
+        logger.warning("Key metrics active-models lookup failed: %s", exc)
+        return total_models, None, False
+    if breakdown is None:
+        return total_models, None, True
+    kpis = MeteringService.model_consumption_kpis(breakdown["services"], breakdown["model_totals"])
+    return total_models, kpis["active_models"], True
 
 
 def _usage_concentration_block(is_admin: bool, conc: Optional[dict]) -> Optional[UsageConcentration]:
@@ -651,22 +567,12 @@ WindowParam = Literal["1h", "24h", "7d", "30d"]
 # ── Tab 1: Overview ───────────────────────────────────────────────────────────
 
 
-_FROM_DESCRIPTION = (
-    "Custom range start, ISO-8601 date or datetime (no offset = IST). Must be "
-    "sent together with `to`; overrides `window` when both are given."
-)
-_TO_DESCRIPTION = (
-    "Custom range end, ISO-8601 date or datetime (no offset = IST). A date-only "
-    "value covers that whole day. Must not be in the future."
-)
-
-
 @router.get("/overview", response_model=OverviewResponse)
 async def get_overview(
     request: Request,
-    window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
-    from_: Optional[str] = Query(None, alias="from", description=_FROM_DESCRIPTION),
-    to: Optional[str] = Query(None, description=_TO_DESCRIPTION),
+    period: Optional[str] = Query(None, description=PERIOD_DESCRIPTION),
+    from_: Optional[str] = Query(None, alias="from", description=FROM_DESCRIPTION),
+    to: Optional[str] = Query(None, description=TO_DESCRIPTION),
     limit: int = Query(10, ge=1, le=50, description="Max tenants in usage concentration ranking"),
     tenant_id: Optional[int] = Query(None, ge=1, description="Narrow to a specific tenant (admin only)"),
     task_types: Optional[str] = Query(
@@ -680,8 +586,8 @@ async def get_overview(
 ):
     _require_metering_access(request)
 
-    custom_range = _parse_from_to(from_, to)
-    time_range = custom_range or window
+    usage_period = _usage_period(request, period, from_, to)
+    time_range = usage_period.absolute_range
     is_admin = _is_platform_admin(request)
     scope_tenant, scope_tenant_name = await _resolve_tenant_scope(request, svc, tenant_id, is_admin)
     task_type_filter = _parse_task_types(task_types)
@@ -691,9 +597,9 @@ async def get_overview(
     auth_type_filter = API_KEY_AUTH_TYPE
 
     ranking_active = is_admin and not scope_tenant
-    # v5: earliest_from dropped from the payload (v4 carried it).
+    # v7: onboarded_at (v6: period filter and platform_adoption's model counts).
     cache_key = (
-        f"metering:overview:v5:{_range_cache_part(window, custom_range)}:{scope_tenant_name or 'all'}:"
+        f"metering:overview:v7:{usage_period.cache_part}:{scope_tenant_name or 'all'}:"
         f"{_caller_role_label(request)}:{','.join(task_type_filter) if task_type_filter else 'all'}"
         + (f":{limit}" if ranking_active else "")
     )
@@ -711,6 +617,9 @@ async def get_overview(
     # that caused (sqlalchemy.exc.InvalidRequestError: "This session is
     # provisioning a new connection").
     tc, active_by_range = await svc.overview_tenant_data(["24h", "7d", "30d"])
+    # Same auth-DB session as above, so sequential too (usage_concentration in
+    # the gather below reads it as well).
+    onboarded_at, onboarded_ok = await _tenant_onboarded_at(svc, scope_tenant)
     # Core-DB session is shared with the metering service's repositories, so
     # this stays out of the gather() below (AsyncSession isn't safe for
     # concurrent use — same reasoning as overview_tenant_data above).
@@ -731,7 +640,7 @@ async def get_overview(
         svc.usage_concentration(limit=limit, time_range=time_range, task_types=task_type_filter)
         if ranking_active else asyncio.sleep(0),
         # Key Metrics KPI #7 (model_usage_growth_pct) is admin-only, fixed
-        # calendar-month comparison — independent of `window` and from/to.
+        # calendar-month comparison — independent of the period filter.
         svc.model_usage_growth_pct() if is_admin else asyncio.sleep(0),
         # Other half of first_usage_at, from its own longer-lived cache when
         # possible; kept out of _partition_results below.
@@ -786,33 +695,42 @@ async def get_overview(
         active_by_range["24h"], active_by_range["7d"], active_by_range["30d"], *results,
     ])
     at24, at7, at30, rt, chart, conc, model_usage_growth_pct = combined
+    # Key metrics strip's model cards (admin-only, fixed 30 days); after the
+    # gather because they share the core-DB session (see the helper).
+    total_models = active_models_30d = None
+    if is_admin:
+        total_models, active_models_30d, models_ok = await _platform_model_counts(svc, task_type_filter)
+        degraded = degraded or not models_ok
 
     org = scope_tenant_name
 
     kpis = _overview_kpis(rt)
     # Platform adoption / usage concentration are admin-only blocks.
-    platform_adoption = _platform_adoption_block(is_admin, tc, at24, at7, at30, model_usage_growth_pct)
+    platform_adoption = _platform_adoption_block(
+        is_admin, tc, at24, at7, at30, model_usage_growth_pct, total_models, active_models_30d,
+    )
     usage_conc = _usage_concentration_block(is_admin, conc)
 
-    generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    generated_at = iso_ist(datetime.now(tz=timezone.utc))
 
     response = OverviewResponse(
-        scope=Scope(
+        scope=PeriodScope(
             role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org,
-            task_types=task_type_filter, **_scope_range_fields(window, custom_range),
+            task_types=task_type_filter, period=usage_period.to_schema(),
         ),
         kpis=kpis,
         platform_adoption=platform_adoption,
         usage_concentration=usage_conc,
         request_volume=chart,
         first_usage_at=first_usage_at,
+        onboarded_at=iso_ist(onboarded_at) if onboarded_at else None,
         degraded=degraded,
         generated_at=generated_at,
     )
 
-    # A failed first_usage_at lookup doesn't degrade the response, but its
-    # None mustn't be cached as if the tenant had no usage.
-    if not degraded and first_usage_ok:
+    # A failed first_usage_at/onboarded_at lookup doesn't degrade the
+    # response, but its None mustn't be cached as if there were no value.
+    if not degraded and first_usage_ok and onboarded_ok:
         await _cache_set(redis, cache_key, response.model_dump(by_alias=True))
 
     return response
@@ -903,7 +821,7 @@ async def get_tenant_consumption(
     for r in heatmap_rows:
         r["organisation"] = r["tenant"]
 
-    generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    generated_at = iso_ist(datetime.now(tz=timezone.utc))
 
     response = TenantConsumptionResponse(
         scope=Scope(
@@ -969,7 +887,7 @@ async def get_service_consumption(
     services = breakdown["services"] if breakdown else []
     summary = _service_consumption_summary(breakdown)
 
-    generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    generated_at = iso_ist(datetime.now(tz=timezone.utc))
 
     response = ServiceConsumptionResponse(
         scope=Scope(
@@ -1007,9 +925,9 @@ async def get_service_consumption(
 @router.get("/model-consumption", response_model=ModelConsumptionResponse)
 async def get_model_consumption(
     request: Request,
-    window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
-    from_: Optional[str] = Query(None, alias="from", description=_FROM_DESCRIPTION),
-    to: Optional[str] = Query(None, description=_TO_DESCRIPTION),
+    period: Optional[str] = Query(None, description=PERIOD_DESCRIPTION),
+    from_: Optional[str] = Query(None, alias="from", description=FROM_DESCRIPTION),
+    to: Optional[str] = Query(None, description=TO_DESCRIPTION),
     tenant_id: Optional[int] = Query(None, ge=1, description="Narrow to a specific tenant (admin only)"),
     limit: int = Query(10, ge=1, le=25, description="Max models to return in top_models"),
     task_types: Optional[str] = Query(
@@ -1022,17 +940,14 @@ async def get_model_consumption(
 ):
     _require_metering_access(request)
 
-    custom_range = _parse_from_to(from_, to)
+    usage_period = _usage_period(request, period, from_, to)
     is_admin = _is_platform_admin(request)
     scope_tenant, scope_tenant_name = await _resolve_tenant_scope(request, svc, tenant_id, is_admin)
     task_type_filter = _parse_task_types(task_types)
 
-    # v4: no longer implicitly LLM-only — the endpoint now covers every task
-    # type (or the requested subset via `task_types`). Bumped from v3 so a
-    # payload cached under the old LLM-only behavior can't be served back
-    # under the new default.
+    # v5: period filter (scope.period) and the LLM native_breakdown.
     cache_key = (
-        f"metering:model-consumption:v4:{_range_cache_part(window, custom_range)}:{limit}:"
+        f"metering:model-consumption:v5:{usage_period.cache_part}:{limit}:"
         f"{scope_tenant_name or 'all'}:"
         f"{','.join(task_type_filter) if task_type_filter else 'all'}:{_caller_role_label(request)}"
     )
@@ -1044,7 +959,7 @@ async def get_model_consumption(
 
     results = await asyncio.gather(
         svc.model_breakdown(
-            tenant=scope_tenant_name, time_range=custom_range or window, tenant_id=scope_tenant,
+            tenant=scope_tenant_name, time_range=usage_period.absolute_range, tenant_id=scope_tenant,
             task_types=task_type_filter,
         ),
         return_exceptions=True,
@@ -1071,12 +986,12 @@ async def get_model_consumption(
     summary = _model_consumption_summary(breakdown, total_models, most_used)
     top_models = [TopModelRow(**m) for m in ranked_models]
 
-    generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    generated_at = iso_ist(datetime.now(tz=timezone.utc))
 
     response = ModelConsumptionResponse(
-        scope=Scope(
+        scope=PeriodScope(
             role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org,
-            task_types=task_type_filter, **_scope_range_fields(window, custom_range),
+            task_types=task_type_filter, period=usage_period.to_schema(),
         ),
         summary=summary,
         top_models=top_models,
@@ -1091,6 +1006,7 @@ async def get_model_consumption(
                 requests=s["requests"],
                 native_units=s["native_units"],
                 native_unit_suffix=s["native_unit_suffix"],
+                native_breakdown=s.get("native_breakdown"),
                 success_pct=s["success_pct"],
                 # No traffic → nothing succeeded AND nothing failed. Without this
                 # guard, success_pct=0 for a 0-request service makes 100-0=100%

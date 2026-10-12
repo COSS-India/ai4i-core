@@ -1,6 +1,8 @@
 """Response schemas for the Metering Dashboard's Applications tab."""
 from pydantic import BaseModel
 
+from app.schemas.period import Period
+
 
 class MoneyPercent(BaseModel):
     amount: float
@@ -8,17 +10,17 @@ class MoneyPercent(BaseModel):
 
 
 class ApplicationUsageSummaryResponse(BaseModel):
+    period: Period
     totalApplications: int
     allocatedBudget: MoneyPercent
     spendBudget: MoneyPercent
     remainingBudget: MoneyPercent
-    # Unlike UsageSummaryResponse.billingPeriod (a real YYYY-MM month), this is
-    # always the constant "lifetime": budget_usage carries no billing_month
-    # column, so every figure here is a lifetime-cumulative total, not scoped
-    # to any period. There is no billing_period query param on these endpoints
-    # — a dashboard period selector must not compare this figure against a
-    # period-scoped one (e.g. the Overview tab's totalSpend) without
-    # accounting for that difference.
+    # Spend in the selected period (usage_events / daily_usage); percentage is
+    # of the institution's budget.
+    periodSpend: MoneyPercent
+    # Describes spendBudget/remainingBudget only: always the constant
+    # "lifetime", since they come from budget_usage, which has no time
+    # dimension. periodSpend is the period-scoped figure.
     billingPeriod: str = "lifetime"
 
 
@@ -27,13 +29,16 @@ class ApplicationUsageListItem(BaseModel):
     name: str
     domain: str | None = None
     # allocatedBudget.percentage is % of the institution's total budget.
-    # spendBudget/remainingBudget.percentage are % of this application's OWN allocation.
+    # spendBudget/remainingBudget (all-time) and periodSpend (the selected
+    # period) percentages are % of this application's OWN allocation.
     allocatedBudget: MoneyPercent
     spendBudget: MoneyPercent
     remainingBudget: MoneyPercent
+    periodSpend: MoneyPercent
 
 
 class ApplicationUsageListResponse(BaseModel):
+    period: Period
     data: list[ApplicationUsageListItem]
     total: int
 
@@ -43,29 +48,32 @@ class ApiKeyUsageItem(BaseModel):
     keyName: str
     maskedKey: str
     isActive: bool
-    # allocatedBudget.percentage is % of the institution's total budget, computed
-    # from the amount — NOT the raw api_key.allocated_percentage column, which is
-    # stored as % of the parent APPLICATION's budget instead (see
-    # application_usage_service.py's get_application_detail for why the two must
-    # not be conflated under this one field).
-    # spendBudget/remainingBudget.percentage are % of this key's OWN allocation.
+    # allocatedBudget.percentage is % of the parent application's budget,
+    # computed from the amount (see application_usage_service.py's
+    # get_application_detail).
+    # spendBudget/remainingBudget (all-time) and periodSpend (the selected
+    # period) percentages are % of this key's OWN allocation.
     allocatedBudget: MoneyPercent
     spendBudget: MoneyPercent
     remainingBudget: MoneyPercent
+    periodSpend: MoneyPercent
 
 
 class ApplicationUsageTotals(BaseModel):
     allocatedBudget: float
     spendBudget: float
     remainingBudget: float
+    periodSpend: float
 
 
 class ApplicationUsageDetailResponse(BaseModel):
+    period: Period
     applicationId: int
     applicationName: str
     domain: str | None = None
     allocatedBudget: MoneyPercent
     spendBudget: MoneyPercent
     remainingBudget: MoneyPercent
+    periodSpend: MoneyPercent
     apiKeys: list[ApiKeyUsageItem]
     totals: ApplicationUsageTotals
