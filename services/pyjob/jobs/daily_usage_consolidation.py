@@ -1,15 +1,20 @@
 """Daily partitions for usage_events and the daily_usage rollup.
 
-Run by k8s every day at 00:00 UTC. Days are UTC days: usage_events is
-partitioned on occurred_at, and daily_usage.usage_date is the UTC day of it
-(see the create_usage_events_table and create_daily_usage_table migrations).
+Run by k8s every day at 00:00 IST (30 18 * * * in UTC). Days are IST days,
+the Usage Dashboard's day: usage_events is partitioned on occurred_at by IST
+day, and daily_usage.usage_date is the IST day of it,
+(occurred_at AT TIME ZONE 'Asia/Kolkata')::date (see the
+create_daily_usage_table migration). Timestamps stay UTC; only the day
+boundaries are IST midnight.
 
 1. Partitions of usage_events, in one transaction:
 
-   - Month partitions (usage_events_YYYY_MM, as the migration creates them)
-     are detached, and their rows are moved into day partitions
-     (usage_events_YYYY_MM_DD). This only does work on the first run after
-     the migration; later runs find no month partitions.
+   - Every partition that isn't one IST day, named for that day
+     (usage_events_YYYY_MM_DD from IST midnight to the next), is detached
+     and its rows are moved into IST day partitions: the UTC month partitions
+     the migration creates, and UTC day partitions from before days were IST.
+     This only does work on the first run after the migration or that change;
+     later runs find nothing to convert.
    - Day partitions are created for today and the next USAGE_EVENTS_DAYS_AHEAD
      days, and for every earlier day that has rows to restore. Rows the
      DEFAULT partition holds for a day being created are moved into it first,
@@ -25,7 +30,9 @@ partitioned on occurred_at, and daily_usage.usage_date is the UTC day of it
    daily_usage, one transaction per day, so events that arrive late are
    picked up. Each day is aggregated per dimension key and upserted; rows of
    that day the run did not write (a combination that no longer exists) are
-   deleted. Names come from tiers, mm_services and mm_models here and from
+   deleted. billing_month is the UTC month of occurred_at, as the PPU
+   consumer bills it, so the 00:00-05:30 IST rows of the 1st get their own
+   row under the previous month. Names come from tiers, mm_services and mm_models here and from
    tenants and applications in the auth DB. Requests are counted once per
    correlation id; rows without a status_code add units and cost but are not
    counted, and a request is failed if any of its rows has status >= 400.
@@ -36,9 +43,9 @@ step instead of racing.
 """
 from __future__ import annotations
 
-import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo
 
 from ai4i_core.logging import get_logger
 from sqlalchemy import bindparam, text
@@ -51,8 +58,7 @@ logger = get_logger(__name__)
 
 TABLE = "usage_events"
 DEFAULT = f"{TABLE}_default"
-_MONTH_RE = re.compile(rf"^{TABLE}_(\d{{4}})_(\d{{2}})$")
-_DAY_RE = re.compile(rf"^{TABLE}_(\d{{4}})_(\d{{2}})_(\d{{2}})$")
+IST = ZoneInfo("Asia/Kolkata")
 
 # Upsert target of the rollup: uq_daily_usage_dimensions, NULLS NOT DISTINCT.
 DIMENSIONS = (
@@ -75,13 +81,13 @@ class RowCountMismatchError(RuntimeError):
 
 
 def _bound(day: date) -> str:
-    # Explicit +00 offset, as in the migration, so the bound doesn't depend on
-    # the session's TimeZone.
-    return f"'{day.isoformat()} 00:00:00+00'"
+    # IST midnight with an explicit offset, so the bound doesn't depend on the
+    # session's TimeZone. IST has no DST, so every day is 24 hours.
+    return f"'{day.isoformat()} 00:00:00+05:30'"
 
 
 def _day_start(day: date) -> datetime:
-    return datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+    return datetime.combine(day, time(), tzinfo=IST)
 
 
 def _day_name(day: date) -> str:
@@ -104,20 +110,43 @@ async def _lock(session: AsyncSession, step: str) -> bool:
     ).scalar_one()
 
 
-async def _partitions(session: AsyncSession) -> list[str]:
-    """Names of the partitions of usage_events, DEFAULT included."""
+async def _partitions(session: AsyncSession) -> tuple[dict[date, str], list[str], bool]:
+    """The partitions of usage_events: IST day partitions by day, every other
+    non-DEFAULT partition (to convert), and whether there is a DEFAULT one."""
     rows = await session.execute(
         text(
-            """
-            SELECT c.relname
-            FROM pg_inherits i
-            JOIN pg_class c ON c.oid = i.inhrelid
-            WHERE i.inhparent = CAST(:table AS regclass)
+            r"""
+            SELECT relname, bound = 'DEFAULT' AS is_default,
+                   CAST(substring(bound FROM 'FROM \(''([^'']+)''\)') AS timestamptz)
+                       AT TIME ZONE 'Asia/Kolkata' AS lower_ist,
+                   CAST(substring(bound FROM 'TO \(''([^'']+)''\)') AS timestamptz)
+                       AT TIME ZONE 'Asia/Kolkata' AS upper_ist
+            FROM (
+                SELECT c.relname, pg_get_expr(c.relpartbound, c.oid) AS bound
+                FROM pg_inherits i
+                JOIN pg_class c ON c.oid = i.inhrelid
+                WHERE i.inhparent = CAST(:table AS regclass)
+            ) p
             """
         ),
         {"table": TABLE},
     )
-    return list(rows.scalars())
+    days: dict[date, str] = {}
+    others: list[str] = []
+    has_default = False
+    for name, is_default, lower, upper in rows:
+        if is_default:
+            has_default = True
+        elif (
+            lower is not None
+            and lower.time() == time()
+            and upper == lower + timedelta(days=1)
+            and name == _day_name(lower.date())
+        ):
+            days[lower.date()] = name
+        else:
+            others.append(name)
+    return days, sorted(others), has_default
 
 
 async def _insertable_columns(session: AsyncSession) -> str:
@@ -138,7 +167,7 @@ async def _insertable_columns(session: AsyncSession) -> str:
 
 async def _days_with_rows(session: AsyncSession, table: str) -> set[date]:
     rows = await session.execute(
-        text(f'SELECT DISTINCT (occurred_at AT TIME ZONE \'UTC\')::date FROM "{table}"')
+        text(f'SELECT DISTINCT (occurred_at AT TIME ZONE \'Asia/Kolkata\')::date FROM "{table}"')
     )
     return set(rows.scalars())
 
@@ -154,20 +183,18 @@ async def _maintain_partitions(today: date) -> None:
             await session.execute(text("SET LOCAL lock_timeout = '30s'"))
             await session.execute(text(f'LOCK TABLE "{TABLE}" IN ACCESS EXCLUSIVE MODE'))
 
-            partitions = await _partitions(session)
-            months = sorted(name for name in partitions if _MONTH_RE.match(name))
-            days = {
-                date(int(m[1]), int(m[2]), int(m[3])): name
-                for name in partitions
-                if (m := _DAY_RE.match(name))
-            }
-            has_default = DEFAULT in partitions
+            days, converted, has_default = await _partitions(session)
 
-            # Detach the month partitions; their retained rows go back in below.
+            # Detach the partitions to convert; their rows go back in below. A
+            # UTC day partition has the name of the IST day partition that
+            # replaces it, so each is renamed out of the way first.
             wanted = {today + timedelta(days=i) for i in range(settings.USAGE_EVENTS_DAYS_AHEAD + 1)}
-            for name in months:
+            detached = []
+            for i, name in enumerate(converted):
                 await session.execute(text(f'ALTER TABLE "{TABLE}" DETACH PARTITION "{name}"'))
-                wanted |= await _days_with_rows(session, name)
+                await session.execute(text(f'ALTER TABLE "{name}" RENAME TO "ue_convert_{i}"'))
+                detached.append(f"ue_convert_{i}")
+                wanted |= await _days_with_rows(session, detached[-1])
             if has_default:
                 wanted |= await _days_with_rows(session, DEFAULT)
             to_create = sorted(d for d in wanted if d not in days)
@@ -197,7 +224,7 @@ async def _maintain_partitions(today: date) -> None:
 
             # Restore through the parent, which routes each row to its day.
             restored = 0
-            sources = (["ue_moved"] if moved else []) + months
+            sources = (["ue_moved"] if moved else []) + detached
             for source in sources:
                 expected = (await session.execute(text(f'SELECT count(*) FROM "{source}"'))).scalar_one()
                 result = await session.execute(
@@ -208,14 +235,14 @@ async def _maintain_partitions(today: date) -> None:
                         f"restored {result.rowcount} of {expected} row(s) from {source}; rolled back"
                     )
                 restored += expected
-            # Every row of the detached month partitions is now in a day partition.
-            for name in months:
+            # Every row of the detached partitions is now in an IST day partition.
+            for name in detached:
                 await session.execute(text(f'DROP TABLE "{name}"'))
 
     logger.info(
         "Partition maintenance done | table=%s today=%s converted=%s created=%s "
         "default_rows_moved=%d rows_restored=%d",
-        TABLE, today, months, [_day_name(d) for d in to_create], moved, restored,
+        TABLE, today, converted, [_day_name(d) for d in to_create], moved, restored,
     )
 
 
@@ -224,6 +251,7 @@ _AGGREGATE = text(
     WITH agg AS (
         SELECT
             tenant_id, application_id, api_key_id, tier_id, service_id, inference_type_id,
+            to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM') AS billing_month,
             max(task_type) AS task_type,
             max(unit_of_measurement) AS unit,
             count(DISTINCT correlation_id) FILTER (WHERE status_code IS NOT NULL) AS request_count,
@@ -236,7 +264,8 @@ _AGGREGATE = text(
             sum(output_units_cost) AS output_units_cost
         FROM usage_events
         WHERE occurred_at >= :start AND occurred_at < :end
-        GROUP BY tenant_id, application_id, api_key_id, tier_id, service_id, inference_type_id
+        GROUP BY tenant_id, application_id, api_key_id, tier_id, service_id, inference_type_id,
+                 to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM')
     )
     SELECT
         agg.*,
@@ -317,7 +346,7 @@ async def _rollup_day(day: date) -> None:
                 rows.append({
                     **{c: g[c] for c in DIMENSIONS[1:-1] + MEASURES},
                     "usage_date": day,
-                    "billing_month": f"{day:%Y-%m}",
+                    "billing_month": g["billing_month"],
                     "tenant_name": tenant_name,
                     "allocated_budget": allocated_budget,
                     "application_name": applications.get(g["application_id"]),
@@ -364,4 +393,4 @@ async def consolidate(today: date) -> None:
 
 async def run() -> None:
     logger.info("Starting daily usage consolidation")
-    await consolidate(datetime.now(timezone.utc).date())
+    await consolidate(datetime.now(IST).date())

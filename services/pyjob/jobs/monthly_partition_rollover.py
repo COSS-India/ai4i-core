@@ -1,11 +1,13 @@
 """Monthly partitions for daily_usage.
 
-Run by k8s on the 1st of every month at 00:00. Schedule it in UTC: partition
-months are UTC calendar months (see the create_daily_usage_table migration),
-and this job reads the current month in UTC.
+Run by k8s on the 1st of every month at 00:00 UTC (05:30 IST). Partition
+months are calendar months of usage_date, which is an IST day (see the
+create_daily_usage_table migration), so this job reads the current month in
+IST. Partitions are created months ahead, so the hour it runs doesn't matter.
 
-usage_events is partitioned by day instead, by the daily_usage_consolidation
-job, which also converts the month partitions its migration creates.
+usage_events is partitioned by IST day instead, by the
+daily_usage_consolidation job, which also converts the month partitions its
+migration creates.
 
 In one transaction, with daily_usage locked ACCESS EXCLUSIVE so the rollup
 waits instead of writing mid-change:
@@ -24,7 +26,8 @@ advisory lock makes an overlapping run skip instead of racing.
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from ai4i_core.logging import get_logger
 from sqlalchemy import text
@@ -36,6 +39,7 @@ from bootstrap.database import platform_core_session
 logger = get_logger(__name__)
 
 TABLE = "daily_usage"
+IST = ZoneInfo("Asia/Kolkata")
 COLUMN = "usage_date"
 _MONTH_RE = re.compile(rf"^{TABLE}_(\d{{4}})_(\d{{2}})$")
 
@@ -174,4 +178,4 @@ async def rollover(today: date) -> None:
 
 async def run() -> None:
     logger.info("Starting monthly partition rollover")
-    await rollover(datetime.now(timezone.utc).date())
+    await rollover(datetime.now(IST).date())
