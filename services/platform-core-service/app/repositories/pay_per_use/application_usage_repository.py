@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.pay_per_use.budget_usage import BudgetUsage
-from app.repositories.pay_per_use.period_usage import period_source, usage_data_since
+from app.repositories.pay_per_use.period_usage import period_source, usage_data_from
 from app.utils.usage_period import UsagePeriod
 
 
@@ -22,9 +22,9 @@ class ApplicationUsageRepository:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
-    async def get_usage_data_since(self) -> Optional[datetime]:
-        """When the Postgres usage data begins (see period_usage.usage_data_since)."""
-        return await usage_data_since(self._db)
+    async def get_usage_data_from(self, period: UsagePeriod) -> Optional[datetime]:
+        """When the usage data begins inside ``period`` (see period_usage.usage_data_from)."""
+        return await usage_data_from(self._db, period)
 
     async def get_spend_by_api_key_ids(self, api_key_ids: list[int]) -> dict[int, Decimal]:
         """{api_key_id: api_key_budget_used} for the given keys.

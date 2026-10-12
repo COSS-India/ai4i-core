@@ -150,7 +150,7 @@ class ApplicationUsageService:
         period_spend = sum(period_spend_by_app.values(), Decimal("0"))
 
         return ApplicationUsageSummaryResponse(
-            period=period.to_schema(await self._repo.get_usage_data_since()),
+            period=period.to_schema(await self._repo.get_usage_data_from(period)),
             totalApplications=len(applications),
             allocatedBudget=_money_percent(allocated_amount, tenant_budget),
             spendBudget=_money_percent(spend_amount, tenant_budget),
@@ -201,7 +201,7 @@ class ApplicationUsageService:
         )
         total = len(items)
         return ApplicationUsageListResponse(
-            period=period.to_schema(await self._repo.get_usage_data_since()), data=items[offset : offset + limit], total=total,
+            period=period.to_schema(await self._repo.get_usage_data_from(period)), data=items[offset : offset + limit], total=total,
         )
 
     async def get_application_detail(
@@ -248,7 +248,7 @@ class ApplicationUsageService:
             )
 
         return ApplicationUsageDetailResponse(
-            period=period.to_schema(await self._repo.get_usage_data_since()),
+            period=period.to_schema(await self._repo.get_usage_data_from(period)),
             applicationId=application["id"],
             applicationName=application["name"],
             domain=application["domain"],

@@ -52,7 +52,10 @@ class UsageEvent(Base):
         Index("ix_usage_events_service_occurred", "service_id", "occurred_at"),
         # The dashboard's Today queries filter on occurred_at alone (migration
         # cf2715437b4f); rows arrive in roughly time order, so BRIN fits.
-        Index("ix_usage_events_occurred_at_brin", "occurred_at", postgresql_using="brin"),
+        Index(
+            "ix_usage_events_occurred_at_brin", "occurred_at",
+            postgresql_using="brin", postgresql_with={"autosummarize": "on"},
+        ),
         {"postgresql_partition_by": "RANGE (occurred_at)"},
     )
 

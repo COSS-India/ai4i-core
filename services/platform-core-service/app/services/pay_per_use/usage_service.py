@@ -491,7 +491,7 @@ class UsageService:
         the period. task_type_ids narrows every figure to those task types.
         period.dataFrom/partial say how much of the period the usage data
         covers, so an empty page can read as "no data" rather than "no usage"
-        (see usage_data_since).
+        (see period_usage.usage_data_from).
 
         Only the page's institutions get the all-time balance, this month's
         quota, names and tier names. Queries run one after another: the
@@ -502,7 +502,7 @@ class UsageService:
         by_tenant: dict[str, list] = {}
         for row in rows:
             by_tenant.setdefault(str(row.tenant_id), []).append(row)
-        period_block = period.to_schema(await self._repo.get_usage_data_since())
+        period_block = period.to_schema(await self._repo.get_usage_data_from(period))
 
         wanted_tier = str(uuid.UUID(tier_id)) if tier_id else None
         candidates = []
@@ -579,7 +579,7 @@ class UsageService:
         )
         budget_row = budgets.get(tenant_id)
         return TenantUsageDetailResponse(
-            period=period.to_schema(await self._repo.get_usage_data_since()),
+            period=period.to_schema(await self._repo.get_usage_data_from(period)),
             tenantId=item.tenantId,
             tenantName=item.tenantName,
             tier=item.tier,

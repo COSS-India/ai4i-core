@@ -19,7 +19,6 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.core.config import settings
-from app.repositories.pay_per_use import period_usage
 from app.repositories.pay_per_use.application_usage_repository import ApplicationUsageRepository
 from app.repositories.pay_per_use.usage_repository import UsageRepository
 from app.utils.usage_period import resolve_period
@@ -226,10 +225,36 @@ class TestGetPeriodSpendByApiKeyIds:
 
 
 @pytest.mark.asyncio
-class TestUsageDataSince:
-    async def test_first_usage_event(self, session, rollup_off, monkeypatch):
-        monkeypatch.setattr(period_usage, "_data_since", None)
-        at = resolve_period("today", None, None).start + timedelta(seconds=1)
-        await _event(session, span="first", occurred_at=at)
-        since = await UsageRepository(session).get_usage_data_since()
-        assert since is not None and since <= at
+class TestUsageDataFrom:
+    async def test_rows_before_the_period_mean_it_is_fully_covered(self, session, rollup_off):
+        yesterday = resolve_period("yesterday", None, None)
+        await _event(session, span="old", occurred_at=yesterday.start - timedelta(hours=1))
+        assert await UsageRepository(session).get_usage_data_from(yesterday) == yesterday.start
+
+    async def test_recording_began_inside_the_period(self, session, rollup_off):
+        """Holds only while the test DB has no rows from before today; the
+        transaction is rolled back, so the shared DB keeps none."""
+        today = resolve_period("today", None, None)
+        if await session.scalar(text("SELECT 1 FROM usage_events WHERE occurred_at < :s LIMIT 1"),
+                                {"s": today.start}):
+            pytest.skip("usage_events already holds rows from before today")
+        first = today.start + timedelta(seconds=5)
+        await _event(session, span="first", occurred_at=first)
+        await _event(session, span="later", occurred_at=first + timedelta(seconds=1))
+        assert await ApplicationUsageRepository(session).get_usage_data_from(today) == first
+
+    async def test_no_data_for_the_period(self, session, rollup_off):
+        today = resolve_period("today", None, None)
+        if await session.scalar(text("SELECT 1 FROM usage_events WHERE occurred_at < :e LIMIT 1"),
+                                {"e": today.end}):
+            pytest.skip("usage_events already holds rows")
+        assert await UsageRepository(session).get_usage_data_from(today) is None
+
+    async def test_daily_usage_with_the_rollup_on(self, session, rollup_on):
+        last_7 = resolve_period("last_7_days", None, None)
+        if await session.scalar(text("SELECT 1 FROM daily_usage WHERE usage_date < :d LIMIT 1"),
+                                {"d": last_7.from_date}):
+            pytest.skip("daily_usage already holds rows from before the period")
+        await _daily(session, usage_date=last_7.to_date)
+        # The IST midnight that starts the day.
+        assert await UsageRepository(session).get_usage_data_from(last_7) == last_7.end - timedelta(days=1)

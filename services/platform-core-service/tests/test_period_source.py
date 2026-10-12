@@ -31,3 +31,5 @@ def test_brin_index_on_occurred_at():
     (index,) = [i for i in UsageEvent.__table__.indexes if i.name == "ix_usage_events_occurred_at_brin"]
     assert [c.name for c in index.columns] == ["occurred_at"]
     assert index.dialect_options["postgresql"]["using"] == "brin"
+    # Unsummarised ranges match every query; see migration cf2715437b4f.
+    assert index.dialect_options["postgresql"]["with"] == {"autosummarize": "on"}

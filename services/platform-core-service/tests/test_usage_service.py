@@ -55,13 +55,13 @@ def _make_repo(**method_returns) -> MagicMock:
     tests that don't care about budgets would otherwise need to mock it just to avoid
     an unconfigured-MagicMock-isn't-awaitable error.
 
-    get_usage_data_since defaults to a date before every period (the usage
+    get_usage_data_from defaults to a date before every period (the usage
     data covers it whole).
     """
     repo = MagicMock()
     method_returns.setdefault("get_tier_names", {"1": "Pro", "2": "Enterprise"})
     method_returns.setdefault("get_tenant_budgets", {})
-    method_returns.setdefault("get_usage_data_since", _DATA_SINCE)
+    method_returns.setdefault("get_usage_data_from", _DATA_SINCE)
     for method, value in method_returns.items():
         if isinstance(value, _Seq):
             setattr(repo, method, AsyncMock(side_effect=list(value)))
@@ -493,7 +493,7 @@ class TestGetTenantList:
         repo.get_tenant_budgets.assert_not_called()
 
     async def test_period_reports_how_much_the_usage_data_covers(self):
-        repo = _make_repo(get_period_usage=[], get_usage_data_since=None)
+        repo = _make_repo(get_period_usage=[], get_usage_data_from=None)
         result = await UsageService(repo).get_tenant_list(_YESTERDAY, None, None, None)
         assert (result.period.dataFrom, result.period.partial) == (None, True)
 

@@ -12,8 +12,15 @@ to every existing partition and to each one the partition job creates later.
 (CREATE INDEX CONCURRENTLY isn't supported on a partitioned parent; the table
 is small this early, so the brief lock is acceptable.)
 
+autosummarize = on: BRIN only summarises a block range at VACUUM, and an
+unsummarised range matches every query. The consumer appends continuously, so
+without it the newest ranges — the ones Today reads — stay unsummarised until
+autovacuum gets round to the partition, and range scans read the whole
+partition. With it, each range is queued for summarising as soon as it fills.
+The option carries over to every partition's index.
+
 Revision ID: cf2715437b4f
-Revises: 9092247a3b27
+Revises: d1e3f5a7b9c2
 Create Date: 2026-10-12
 
 """
@@ -22,7 +29,7 @@ from typing import Sequence, Union
 from alembic import op
 
 revision: str = "cf2715437b4f"
-down_revision: Union[str, None] = "9092247a3b27"
+down_revision: Union[str, None] = "d1e3f5a7b9c2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -30,7 +37,10 @@ INDEX = "ix_usage_events_occurred_at_brin"
 
 
 def upgrade() -> None:
-    op.create_index(INDEX, "usage_events", ["occurred_at"], postgresql_using="brin")
+    op.create_index(
+        INDEX, "usage_events", ["occurred_at"],
+        postgresql_using="brin", postgresql_with={"autosummarize": "on"},
+    )
 
 
 def downgrade() -> None:

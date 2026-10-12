@@ -10,7 +10,6 @@ differently.
 """
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 from datetime import datetime, time as day_start, timezone
 from typing import Any, Optional
@@ -63,29 +62,30 @@ def tenant_pks(tenant_ids: list[str]) -> list[int]:
     return [int(t) for t in tenant_ids if t and t.isdigit()]
 
 
-# usage_data_since() cache: the earliest recorded usage only moves on a
-# backfill, so a found value is kept for an hour; "none yet" is never cached.
-_DATA_SINCE_TTL_S = 3600
-_data_since: tuple[datetime, float] | None = None
+async def usage_data_from(db: AsyncSession, period: UsagePeriod) -> Optional[datetime]:
+    """When the data period_source(period) reads begins inside ``period``:
+    ``period.start`` when the table holds rows from before it (the period is
+    fully covered), else the first row inside the period, else None (no data
+    for the period at all). Platform-wide on purpose: it marks when recording
+    began, so a period before it reads as "no data" rather than as "no usage"
+    for any one institution.
 
-
-async def usage_data_since(db: AsyncSession) -> Optional[datetime]:
-    """When the Postgres usage data begins: the first usage_events row, or,
-    with the rollup on, the first daily_usage day if that's earlier. None
-    while nothing has been recorded. Platform-wide on purpose: it marks when
-    recording began, so a period before it reads as "no data" rather than as
-    "no usage" for any one institution."""
-    global _data_since
-    if _data_since is not None and time.monotonic() < _data_since[1]:
-        return _data_since[0]
-    candidates = [await db.scalar(select(func.min(UsageEvent.occurred_at)))]
-    if daily_rollup_enabled():
-        first_day = await db.scalar(select(func.min(DailyUsage.usage_date)))
-        if first_day is not None:
-            candidates.append(datetime.combine(first_day, day_start(), tzinfo=IST).astimezone(timezone.utc))
-    present = [c for c in candidates if c is not None]
-    if not present:
+    Bounded on purpose — never min() over the whole table, which no index on
+    usage_events can answer (BRIN can't serve a min) and would scan every
+    partition: the "anything earlier?" probe stops at the first row it finds
+    (partitions older than the period hold rows whenever it's covered), and
+    the in-period min() only runs when there's nothing earlier, reading no
+    more than the period query itself does (via the occurred_at BRIN)."""
+    source = period_source(period)
+    if source.model is DailyUsage:
+        before = DailyUsage.usage_date < period.from_date
+    else:
+        before = UsageEvent.occurred_at < period.start
+    if await db.scalar(select(source.time_column).where(before).limit(1)) is not None:
+        return period.start
+    first = await db.scalar(select(func.min(source.time_column)).where(source.in_period))
+    if first is None:
         return None
-    since = min(present)
-    _data_since = (since, time.monotonic() + _DATA_SINCE_TTL_S)
-    return since
+    if not isinstance(first, datetime):  # daily_usage.usage_date: an IST day
+        first = datetime.combine(first, day_start(), tzinfo=IST).astimezone(timezone.utc)
+    return first
