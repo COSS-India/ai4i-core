@@ -44,12 +44,19 @@ class PyJobSettings(BaseSettings):
     DB_POOL_SIZE: int = 5
     DB_MAX_OVERFLOW: int = 5
 
-    # ── Monthly partitions (usage_events, daily_usage) ──
-    # Months kept, counting the current one: 4 keeps this month and the 3 before.
-    USAGE_EVENTS_MONTHS_RETENTION: int = Field(4, ge=1)
-    DAILY_USAGE_MONTHS_RETENTION: int = Field(4, ge=1)
+    # ── Monthly partitions (daily_usage) ──
     # Months created ahead of the current one.
     PARTITION_MONTHS_AHEAD: int = Field(3, ge=0)
+
+    # ── Daily partitions (usage_events) ──
+    # Days kept, counting today: 120 keeps today and the 119 before.
+    USAGE_EVENTS_DAYS_RETENTION: int = Field(120, ge=1)
+    # Days created ahead of today.
+    USAGE_EVENTS_DAYS_AHEAD: int = Field(7, ge=0)
+
+    # ── daily_usage rollup ──
+    # Closed days re-rolled before yesterday, to pick up late events.
+    USAGE_ROLLUP_LOOKBACK_DAYS: int = Field(2, ge=0)
 
     # ── Redis ──
     REDIS_HOST: str = "localhost"

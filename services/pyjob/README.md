@@ -31,6 +31,13 @@ async def run() -> None:
 
 It is picked up automatically. The launcher opens the DB engines before `run()` and disposes them and the Redis client after. Add the schedule to the k8s CronJob manifest.
 
+## Jobs
+
+| Job | Schedule (UTC) | What it does |
+|---|---|---|
+| `daily_usage_consolidation` | `0 0 * * *` | Keeps `usage_events` partitioned by day (converts the migration's month partitions on its first run, creates `USAGE_EVENTS_DAYS_AHEAD` days ahead, drops days older than `USAGE_EVENTS_DAYS_RETENTION`), then rolls yesterday and the `USAGE_ROLLUP_LOOKBACK_DAYS` before it into `daily_usage` |
+| `monthly_partition_rollover` | `0 0 1 * *` | Creates `daily_usage` month partitions `PARTITION_MONTHS_AHEAD` months ahead; past months are kept |
+
 ## Running
 
 ```bash
