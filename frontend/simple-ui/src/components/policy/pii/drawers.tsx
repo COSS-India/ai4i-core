@@ -23,6 +23,7 @@ import FormActions from "../../common/FormActions";
 import FormDrawer from "../../common/FormDrawer";
 import FormSection from "../../common/FormSection";
 import ReadOnlyField from "../../common/ReadOnlyField";
+import { MIN_REGEX_EXAMPLES } from "./apiMap";
 import { regexCompiles } from "./detection";
 import {
   HANDLING_OPTIONS,
@@ -140,6 +141,9 @@ function TypeForm({
     const parsed = parseExampleValues(examples);
     if (!name.trim()) next.name = "Name is required.";
     if (parsed.length === 0) next.examples = "Add at least one example value.";
+    else if (detectionMode === "Regex" && parsed.length < MIN_REGEX_EXAMPLES) {
+      next.examples = `Add at least ${MIN_REGEX_EXAMPLES} example values.`;
+    }
     if (detectionMode === "Regex" && !regex.trim()) next.regex = "A regex pattern is required in Regex mode.";
     else if (detectionMode === "Regex" && !regexCompiles(regex.trim())) {
       next.regex = "Enter a valid regular expression.";

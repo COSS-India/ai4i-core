@@ -250,11 +250,13 @@ export const apiEndpoints = {
   /** Platform-core policy hierarchy. */
   policyHierarchy: {
     categories: `${API_V1}/policies/categories`,
+    categoryStatus: (id: number) => `${API_V1}/policies/categories/${id}/status`,
     subCategories: `${API_V1}/policies/sub-categories`,
-    /** PII definitions. AI4IDS-3179 collection: /api/v1/policy-types. */
-    policyTypes: `${API_V1}/policy-types`,
-    policyTypeById: (id: number) => `${API_V1}/policy-types/${id}`,
-    /** Policies under a sub-category. AI4IDS-3179 collection: /api/v1/policies. */
+    subCategoryStatus: (id: number) => `${API_V1}/policies/sub-categories/${id}/status`,
+    /** PII definitions. GET list, GET by id, POST, PUT (id in the body), DELETE. */
+    policyTypes: `${API_V1}/policies/policy-types`,
+    policyTypeById: (id: number) => `${API_V1}/policies/policy-types/${id}`,
+    /** Policies under a sub-category. GET list, GET by id, POST, PUT (id in the body), DELETE. */
     policies: `${API_V1}/policies`,
     policyById: (id: number) => `${API_V1}/policies/${id}`,
   },

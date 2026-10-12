@@ -119,8 +119,8 @@ const SERVICE_BASE_PATHS = [
   apiEndpoints.telemetry.base,
   apiEndpoints.metering.base,
   apiEndpoints.policy.base,
-  apiEndpoints.policyHierarchy.categories,
-  apiEndpoints.policyHierarchy.subCategories,
+  // Categories, sub-categories, policy types, and policies all live under this prefix.
+  apiEndpoints.policyHierarchy.policies,
   apiEndpoints.tiers.base,
   apiEndpoints.usage.base,
   apiEndpoints.alerts.base,

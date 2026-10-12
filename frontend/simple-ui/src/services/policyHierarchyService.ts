@@ -3,10 +3,14 @@ import { apiEndpoints } from "./apiEndpoints";
 import {
   policyCategoryCreateResponseSchema,
   policyCategoryListResponseSchema,
+  policyCategoryStatusResponseSchema,
+  policyCreateResponseSchema,
   policyItemResponseSchema,
   policyListResponseSchema,
   policySubCategoryCreateResponseSchema,
   policySubCategoryListResponseSchema,
+  policySubCategoryStatusResponseSchema,
+  policyTypeCreateResponseSchema,
   policyTypeItemResponseSchema,
   policyTypeListResponseSchema,
   type GuardrailScope,
@@ -60,6 +64,28 @@ export async function createPolicySubCategory(
   return policySubCategoryCreateResponseSchema.parse(response.data).data;
 }
 
+/** PATCH /policies/categories/{id}/status. Body is `{ is_active }`. */
+export async function updatePolicyCategoryStatus(
+  id: number,
+  isActive: boolean,
+): Promise<PolicyCategoryItem> {
+  const response = await apiClient.patch(apiEndpoints.policyHierarchy.categoryStatus(id), {
+    is_active: isActive,
+  });
+  return policyCategoryStatusResponseSchema.parse(response.data).data;
+}
+
+/** PATCH /policies/sub-categories/{id}/status. Body is `{ is_active }`. */
+export async function updatePolicySubCategoryStatus(
+  id: number,
+  isActive: boolean,
+): Promise<PolicySubCategoryItem> {
+  const response = await apiClient.patch(apiEndpoints.policyHierarchy.subCategoryStatus(id), {
+    is_active: isActive,
+  });
+  return policySubCategoryStatusResponseSchema.parse(response.data).data;
+}
+
 export interface PolicyTypeWrite {
   policy_type: string;
   policy_fields: Record<string, unknown>;
@@ -67,29 +93,30 @@ export interface PolicyTypeWrite {
 
 export async function listPolicyTypes(): Promise<PolicyTypeItem[]> {
   const response = await apiClient.get(apiEndpoints.policyHierarchy.policyTypes);
-  return policyTypeListResponseSchema.parse(response.data).data;
+  return policyTypeListResponseSchema.parse(response.data).data.items;
 }
 
-/** GET /policy-types/{id}. */
+/** GET /policies/policy-types/{id}. Create only returns the id, so the row comes from this. */
 export async function getPolicyType(id: number): Promise<PolicyTypeItem> {
   const response = await apiClient.get(apiEndpoints.policyHierarchy.policyTypeById(id));
   return policyTypeItemResponseSchema.parse(response.data).data;
 }
 
-export async function createPolicyType(body: PolicyTypeWrite): Promise<PolicyTypeItem> {
+export async function createPolicyType(body: PolicyTypeWrite): Promise<number> {
   const response = await apiClient.post(apiEndpoints.policyHierarchy.policyTypes, {
     policy_type: body.policy_type,
     policy_fields: body.policy_fields,
   });
-  return policyTypeItemResponseSchema.parse(response.data).data;
+  return policyTypeCreateResponseSchema.parse(response.data).data.id;
 }
 
-/** PUT /policy-types/{id}. The collection body is policy_fields only. */
+/** PUT /policies/policy-types. policy_type_id is in the body. */
 export async function updatePolicyType(
   id: number,
   policyFields: Record<string, unknown>,
 ): Promise<PolicyTypeItem> {
-  const response = await apiClient.put(apiEndpoints.policyHierarchy.policyTypeById(id), {
+  const response = await apiClient.put(apiEndpoints.policyHierarchy.policyTypes, {
+    policy_type_id: id,
     policy_fields: policyFields,
   });
   return policyTypeItemResponseSchema.parse(response.data).data;
@@ -106,8 +133,6 @@ export interface PolicyWrite {
   guardrail_scope: GuardrailScope;
   is_global: boolean;
   sub_category_id: number;
-  is_active: boolean;
-  output_parse_pii: boolean;
   policy_type_id: number[];
 }
 
@@ -117,19 +142,35 @@ export interface PolicyPatch {
   guardrail_scope?: GuardrailScope;
   is_global?: boolean;
   is_active?: boolean;
-  output_parse_pii?: boolean;
   sub_category_id?: number;
   policy_type_id?: number[];
 }
 
+const POLICY_PAGE_SIZE = 1000;
+
 export async function listPolicies(subCategoryId?: number): Promise<PolicyRecord[]> {
-  const response = await apiClient.get(apiEndpoints.policyHierarchy.policies, {
-    params: subCategoryId == null ? undefined : { sub_category_id: subCategoryId },
-  });
-  return policyListResponseSchema.parse(response.data).data;
+  const items: PolicyRecord[] = [];
+  let offset = 0;
+  let total = Number.POSITIVE_INFINITY;
+  while (offset < total) {
+    const response = await apiClient.get(apiEndpoints.policyHierarchy.policies, {
+      params: {
+        offset,
+        limit: POLICY_PAGE_SIZE,
+        ...(subCategoryId == null ? {} : { sub_category_id: subCategoryId }),
+      },
+    });
+    const page = policyListResponseSchema.parse(response.data);
+    items.push(...page.data.items);
+    total = page.meta.total;
+    if (page.data.items.length === 0) break;
+    offset += page.data.items.length;
+  }
+  return items;
 }
 
-export async function createPolicy(body: PolicyWrite): Promise<PolicyRecord> {
+/** POST /policies returns policy_id only. */
+export async function createPolicy(body: PolicyWrite): Promise<string> {
   const response = await apiClient.post(apiEndpoints.policyHierarchy.policies, {
     name: body.name,
     description: body.description ?? null,
@@ -137,16 +178,14 @@ export async function createPolicy(body: PolicyWrite): Promise<PolicyRecord> {
     guardrail_scope: body.guardrail_scope,
     is_global: body.is_global,
     sub_category_id: body.sub_category_id,
-    is_active: body.is_active,
-    output_parse_pii: body.output_parse_pii,
     policy_type_id: body.policy_type_id,
   });
-  return policyItemResponseSchema.parse(response.data).data;
+  return policyCreateResponseSchema.parse(response.data).data.policy_id;
 }
 
-/** PATCH /policies/{id}. Only supplied fields change. */
+/** PUT /policies. id is in the body. */
 export async function updatePolicy(id: number, body: PolicyPatch): Promise<PolicyRecord> {
-  const response = await apiClient.patch(apiEndpoints.policyHierarchy.policyById(id), body);
+  const response = await apiClient.put(apiEndpoints.policyHierarchy.policies, { id, ...body });
   return policyItemResponseSchema.parse(response.data).data;
 }
 

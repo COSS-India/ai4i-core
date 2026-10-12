@@ -18,6 +18,8 @@ import {
   listPolicySubCategories,
   listPolicyTypes,
   updatePolicy,
+  updatePolicyCategoryStatus,
+  updatePolicySubCategoryStatus,
   updatePolicyType,
 } from "../../../services/policyHierarchyService";
 import type {
@@ -162,10 +164,8 @@ interface PiiPoliciesContextValue {
   updatePolicy: (id: string, input: PolicyInput) => Promise<string | null>;
   deletePolicy: (id: string) => Promise<void>;
   setPolicyStatus: (id: string, status: RecordStatus) => Promise<void>;
-  /** Local until the category status API exists. */
-  setCategoryStatus: (id: string, status: RecordStatus) => void;
-  /** Local until the sub-category status API exists. */
-  setSubcategoryStatus: (id: string, status: RecordStatus) => void;
+  setCategoryStatus: (id: string, status: RecordStatus) => Promise<void>;
+  setSubcategoryStatus: (id: string, status: RecordStatus) => Promise<void>;
   toggleSubscription: (policyId: string, institutionId: string) => void;
 }
 
@@ -437,11 +437,17 @@ export function PiiPoliciesProvider({
       addType: async (input) => {
         if (duplicateName(types, input.name)) return "A PII type with this name already exists.";
         try {
-          const saved = await createPolicyType({
+          const createdId = await createPolicyType({
             policy_type: input.name,
             policy_fields: policyFieldsFromDefinition(input),
           });
-          setTypes((prev) => appendById(prev, definitionFromPolicyType(saved)));
+          const items = await listPolicyTypes();
+          setTypes(items.map(definitionFromPolicyType));
+          setTypesStatus("ready");
+          setTypesError("");
+          if (!items.some((item) => item.id === createdId)) {
+            return "The PII definition was created, but it is not in the list yet.";
+          }
           toast("PII type added.");
           return null;
         } catch (error: unknown) {
@@ -493,23 +499,25 @@ export function PiiPoliciesProvider({
           return "Couldn't create the policy.";
         }
         try {
-          const saved = await createPolicy({
+          const policyId = await createPolicy({
             name: input.name,
             description: blankToNull(input.description),
             domain: domainNames(input.domainIds, domains),
             guardrail_scope: guardrailToApi(input.scope),
             is_global: input.policyType === "Global",
             sub_category_id: subCategoryId,
-            is_active: false,
-            output_parse_pii: true,
             policy_type_id: typeIds,
           });
-          setPolicies((prev) =>
-            appendById(prev, {
-              ...policyFromRecord(saved, domains),
-              languages: [...input.languages],
-            }),
-          );
+          const items = await listPolicies();
+          setPolicies((prev) => {
+            const languagesByPolicyId = new Map(prev.map((policy) => [policy.policyId, policy.languages]));
+            return items.map((item) => {
+              const policy = policyFromRecord(item, domains);
+              const languages =
+                policy.policyId === policyId ? [...input.languages] : languagesByPolicyId.get(policy.policyId);
+              return languages && languages.length > 0 ? { ...policy, languages } : policy;
+            });
+          });
           setPoliciesStatus("ready");
           setPoliciesError("");
           toast("Policy created.");
@@ -584,13 +592,47 @@ export function PiiPoliciesProvider({
           });
         }
       },
-      setCategoryStatus: (id, status) => {
-        setCategories((prev) => prev.map((c) => (c.id === id ? { ...c, status } : c)));
-        toast(status === "Active" ? "Category activated." : "Category deactivated.");
+      setCategoryStatus: async (id, status) => {
+        const categoryId = numericId(id);
+        if (categoryId == null) {
+          showToast({ type: "error", message: "Couldn't update the category.", messageOnly: true });
+          return;
+        }
+        try {
+          const saved = await updatePolicyCategoryStatus(categoryId, status === "Active");
+          const next = toCategory(saved);
+          setCategories((prev) => prev.map((c) => (c.id === id ? next : c)));
+          toast(status === "Active" ? "Category activated." : "Category deactivated.");
+        } catch (error: unknown) {
+          showToast({
+            type: "error",
+            message: apiErrorMessage(error, "Couldn't update the category."),
+            messageOnly: true,
+          });
+        }
       },
-      setSubcategoryStatus: (id, status) => {
-        setSubcategories((prev) => prev.map((s) => (s.id === id ? { ...s, status } : s)));
-        toast(status === "Active" ? "Sub-category activated." : "Sub-category deactivated.");
+      setSubcategoryStatus: async (id, status) => {
+        const subCategoryId = numericId(id);
+        if (subCategoryId == null) {
+          showToast({
+            type: "error",
+            message: "Couldn't update the sub-category.",
+            messageOnly: true,
+          });
+          return;
+        }
+        try {
+          const saved = await updatePolicySubCategoryStatus(subCategoryId, status === "Active");
+          const next = toSubcategory(saved);
+          setSubcategories((prev) => prev.map((s) => (s.id === id ? next : s)));
+          toast(status === "Active" ? "Sub-category activated." : "Sub-category deactivated.");
+        } catch (error: unknown) {
+          showToast({
+            type: "error",
+            message: apiErrorMessage(error, "Couldn't update the sub-category."),
+            messageOnly: true,
+          });
+        }
       },
       toggleSubscription: (policyId, instId) => {
         setSubscriptions((prev) => {
@@ -693,8 +735,13 @@ function apiErrorMessage(error: unknown, fallback = "Couldn't load policy catego
   if (!error || typeof error !== "object") {
     return error instanceof Error && error.message ? error.message : fallback;
   }
-  const data = (error as { response?: { data?: { detail?: unknown; message?: string } } }).response
-    ?.data;
+  const data = (
+    error as {
+      response?: {
+        data?: { detail?: unknown; message?: string; error?: { message?: string } };
+      };
+    }
+  ).response?.data;
   const detail = data?.detail;
   if (typeof detail === "string" && detail.trim()) return detail;
   if (Array.isArray(detail)) {
@@ -707,6 +754,7 @@ function apiErrorMessage(error: unknown, fallback = "Couldn't load policy catego
     const message = (detail as { message?: unknown }).message;
     if (typeof message === "string" && message.trim()) return message;
   }
+  if (typeof data?.error?.message === "string" && data.error.message.trim()) return data.error.message;
   if (typeof data?.message === "string" && data.message.trim()) return data.message;
   if (error instanceof Error && error.message) return error.message;
   return fallback;

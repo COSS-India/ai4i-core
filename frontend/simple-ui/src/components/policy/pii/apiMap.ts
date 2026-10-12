@@ -15,6 +15,9 @@ import {
   type PolicyType,
 } from "./model";
 
+/** Regex definitions go in custom_field, which the API rejects with fewer than three examples. */
+export const MIN_REGEX_EXAMPLES = 3;
+
 const HANDLING_TO_API: Record<Handling, string> = {
   Mask: "mask",
   Hash: "hash",

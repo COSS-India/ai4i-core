@@ -52,6 +52,20 @@ export const policySubCategoryCreateResponseSchema = z.object({
   meta: policyWriteMetaSchema,
 });
 
+/** PATCH /policies/categories/{id}/status */
+export const policyCategoryStatusResponseSchema = z.object({
+  success: z.boolean(),
+  data: policyCategoryItemSchema,
+  meta: policyWriteMetaSchema,
+});
+
+/** PATCH /policies/sub-categories/{id}/status */
+export const policySubCategoryStatusResponseSchema = z.object({
+  success: z.boolean(),
+  data: policySubCategoryItemSchema,
+  meta: policyWriteMetaSchema,
+});
+
 const policyFieldsSchema = z.preprocess(
   (value) => (value && typeof value === "object" && !Array.isArray(value) ? value : {}),
   z.record(z.unknown()),
@@ -64,24 +78,27 @@ export const policyTypeItemSchema = z.object({
   policy_fields: policyFieldsSchema,
 });
 
-const listMetaSchema = z
-  .object({
-    total: z.number().int().optional(),
-  })
-  .passthrough()
-  .optional();
-
-/** GET /policy-types. `data` is the array of definitions. */
+/** GET /policies/policy-types. */
 export const policyTypeListResponseSchema = z.object({
   success: z.boolean(),
-  data: z.array(policyTypeItemSchema),
-  meta: listMetaSchema,
+  data: z.object({
+    items: z.array(policyTypeItemSchema),
+  }),
 });
 
-/** GET /policy-types/{id} and POST /policy-types. Both return the full definition. */
+/** GET /policies/policy-types/{id} and PUT /policies/policy-types. */
 export const policyTypeItemResponseSchema = z.object({
   success: z.boolean(),
   data: policyTypeItemSchema,
+  meta: policyWriteMetaSchema,
+});
+
+/** POST /policies/policy-types returns the new id. The row is loaded with GET by id. */
+export const policyTypeCreateResponseSchema = z.object({
+  success: z.boolean(),
+  data: z.object({
+    id: z.number().int(),
+  }),
   meta: policyWriteMetaSchema,
 });
 
@@ -98,18 +115,32 @@ export const policyRecordSchema = z.object({
   is_global: z.boolean(),
   sub_category_id: z.number().int(),
   is_active: z.boolean(),
-  output_parse_pii: z.boolean().optional(),
   policy_type_id: z.array(z.number().int()).nullable().optional(),
 });
 
-/** GET /policies. `data` is the array. Filters: sub_category_id, is_active, is_global, guardrail_scope, domain. */
+/** GET /policies. Filters: name, sub_category_id, offset, limit. */
 export const policyListResponseSchema = z.object({
   success: z.boolean(),
-  data: z.array(policyRecordSchema),
-  meta: listMetaSchema,
+  data: z.object({
+    items: z.array(policyRecordSchema),
+  }),
+  meta: z.object({
+    total: z.number().int(),
+    offset: z.number().int(),
+    limit: z.number().int(),
+  }),
 });
 
-/** POST /policies, GET /policies/{id}, and PATCH /policies/{id}. */
+/** POST /policies returns the generated policy_id. The row is read back from the list. */
+export const policyCreateResponseSchema = z.object({
+  success: z.boolean(),
+  data: z.object({
+    policy_id: z.string(),
+  }),
+  meta: policyWriteMetaSchema,
+});
+
+/** GET /policies/{id} and PUT /policies. */
 export const policyItemResponseSchema = z.object({
   success: z.boolean(),
   data: policyRecordSchema,
