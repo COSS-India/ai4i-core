@@ -58,6 +58,10 @@ def _zero(name: str, type_) -> sa.Column:
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+    if conn.execute(sa.text("SELECT to_regclass('public.usage_events')")).scalar() is not None:
+        return
+
     op.create_table(
         TABLE,
         sa.Column("correlation_id", sa.String(64), nullable=False),
@@ -105,9 +109,9 @@ def upgrade() -> None:
     )
     # Indexes on the parent are created on every partition, including ones
     # the partition job adds later with CREATE TABLE ... PARTITION OF.
-    op.create_index("ix_usage_events_tenant_occurred", TABLE, ["tenant_id", "occurred_at"])
-    op.create_index("ix_usage_events_api_key_occurred", TABLE, ["api_key_id", "occurred_at"])
-    op.create_index("ix_usage_events_service_occurred", TABLE, ["service_id", "occurred_at"])
+    op.create_index("ix_usage_events_tenant_occurred", TABLE, ["tenant_id", "occurred_at"], if_not_exists=True)
+    op.create_index("ix_usage_events_api_key_occurred", TABLE, ["api_key_id", "occurred_at"], if_not_exists=True)
+    op.create_index("ix_usage_events_service_occurred", TABLE, ["service_id", "occurred_at"], if_not_exists=True)
 
     # Month bounds are computed when the migration runs (also in --sql
     # output) and written with an explicit +00 offset, so they don't depend
@@ -122,7 +126,7 @@ def upgrade() -> None:
             FOR i IN 0..{MONTHS_AHEAD} LOOP
                 month_start := (first_month + make_interval(months => i))::date;
                 EXECUTE format(
-                    'CREATE TABLE %I PARTITION OF {TABLE} FOR VALUES FROM (%L) TO (%L)',
+                    'CREATE TABLE IF NOT EXISTS %I PARTITION OF {TABLE} FOR VALUES FROM (%L) TO (%L)',
                     '{TABLE}_' || to_char(month_start, 'YYYY_MM'),
                     to_char(month_start, 'YYYY-MM-DD') || ' 00:00:00+00',
                     to_char(month_start + interval '1 month', 'YYYY-MM-DD') || ' 00:00:00+00'
@@ -131,7 +135,7 @@ def upgrade() -> None:
         END $$
         """
     )
-    op.execute(f"CREATE TABLE {TABLE}_default PARTITION OF {TABLE} DEFAULT")
+    op.execute(f"CREATE TABLE IF NOT EXISTS {TABLE}_default PARTITION OF {TABLE} DEFAULT")
 
 
 def downgrade() -> None:

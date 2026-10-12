@@ -68,6 +68,10 @@ def _zero(name: str, type_) -> sa.Column:
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+    if conn.execute(sa.text("SELECT to_regclass('public.daily_usage')")).scalar() is not None:
+        return
+
     op.create_table(
         TABLE,
         sa.Column("id", sa.BigInteger(), sa.Identity(always=True), nullable=False),
@@ -126,12 +130,12 @@ def upgrade() -> None:
     # NULLS NOT DISTINCT has no SQLAlchemy 2.0.23 constraint option, so the
     # unique dimension key is created in SQL.
     op.execute(
-        f"CREATE UNIQUE INDEX {DIMENSION_KEY} ON {TABLE} ({', '.join(DIMENSIONS)}) NULLS NOT DISTINCT"
+        f"CREATE UNIQUE INDEX IF NOT EXISTS {DIMENSION_KEY} ON {TABLE} ({', '.join(DIMENSIONS)}) NULLS NOT DISTINCT"
     )
-    op.create_index("ix_daily_usage_tenant_date", TABLE, ["tenant_id", "usage_date"])
-    op.create_index("ix_daily_usage_application_date", TABLE, ["application_id", "usage_date"])
-    op.create_index("ix_daily_usage_service_date", TABLE, ["service_id", "usage_date"])
-    op.create_index("ix_daily_usage_billing_month", TABLE, ["billing_month", "tenant_id"])
+    op.create_index("ix_daily_usage_tenant_date", TABLE, ["tenant_id", "usage_date"], if_not_exists=True)
+    op.create_index("ix_daily_usage_application_date", TABLE, ["application_id", "usage_date"], if_not_exists=True)
+    op.create_index("ix_daily_usage_service_date", TABLE, ["service_id", "usage_date"], if_not_exists=True)
+    op.create_index("ix_daily_usage_billing_month", TABLE, ["billing_month", "tenant_id"], if_not_exists=True)
 
     # Indexes and the unique key above are created on every partition,
     # including ones the partition job adds later. Month bounds are computed
@@ -147,7 +151,7 @@ def upgrade() -> None:
             FOR i IN 0..{MONTHS_AHEAD} LOOP
                 month_start := (first_month + make_interval(months => i))::date;
                 EXECUTE format(
-                    'CREATE TABLE %I PARTITION OF {TABLE} FOR VALUES FROM (%L) TO (%L)',
+                    'CREATE TABLE IF NOT EXISTS %I PARTITION OF {TABLE} FOR VALUES FROM (%L) TO (%L)',
                     '{TABLE}_' || to_char(month_start, 'YYYY_MM'),
                     to_char(month_start, 'YYYY-MM-DD'),
                     to_char(month_start + interval '1 month', 'YYYY-MM-DD')
@@ -156,7 +160,7 @@ def upgrade() -> None:
         END $$
         """
     )
-    op.execute(f"CREATE TABLE {TABLE}_default PARTITION OF {TABLE} DEFAULT")
+    op.execute(f"CREATE TABLE IF NOT EXISTS {TABLE}_default PARTITION OF {TABLE} DEFAULT")
 
 
 def downgrade() -> None:
