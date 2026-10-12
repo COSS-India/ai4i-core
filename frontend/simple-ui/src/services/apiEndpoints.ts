@@ -247,10 +247,16 @@ export const apiEndpoints = {
     auditLogs: `${API_V1}/policy-service/audit-logs`,
     auditLogById: (id: string) => `${API_V1}/policy-service/audit-logs/${id}`,
   },
-  /** Platform-core policy hierarchy. GET /policies/categories and /policies/sub-categories. */
+  /** Platform-core policy hierarchy. */
   policyHierarchy: {
     categories: `${API_V1}/policies/categories`,
     subCategories: `${API_V1}/policies/sub-categories`,
+    /** PII definitions. AI4IDS-3179 collection: /api/v1/policy-types. */
+    policyTypes: `${API_V1}/policy-types`,
+    policyTypeById: (id: number) => `${API_V1}/policy-types/${id}`,
+    /** Policies under a sub-category. AI4IDS-3179 collection: /api/v1/policies. */
+    policies: `${API_V1}/policies`,
+    policyById: (id: number) => `${API_V1}/policies/${id}`,
   },
   metering: {
     base: `${API_V1}/metering`,

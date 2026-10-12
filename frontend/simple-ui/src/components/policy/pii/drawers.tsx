@@ -26,6 +26,7 @@ import ReadOnlyField from "../../common/ReadOnlyField";
 import { regexCompiles } from "./detection";
 import {
   HANDLING_OPTIONS,
+  domainLabel,
   INSTITUTIONS,
   LANGUAGES,
   NER_MODELS,
@@ -84,7 +85,7 @@ function TypeDrawer() {
       key={existing?.id ?? "new"}
       title={existing ? "Edit PII Type" : "Add PII Type"}
       submitLabel={existing ? "Save" : "Add PII Type"}
-      nameLocked={Boolean(existing?.isDefault)}
+      nameLocked={Boolean(existing)}
       initial={{
         name: existing?.name ?? "",
         examples: existing?.examples.join("\n") ?? "",
@@ -121,7 +122,7 @@ function TypeForm({
     nerModel: string;
   };
   onClose: () => void;
-  onSave: (input: TypeInput) => string | null;
+  onSave: (input: TypeInput) => Promise<string | null>;
 }) {
   const [name, setName] = useState(initial.name);
   const [examples, setExamples] = useState(initial.examples);
@@ -131,8 +132,10 @@ function TypeForm({
   const [regex, setRegex] = useState(initial.regex);
   const [nerModel, setNerModel] = useState(initial.nerModel);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
 
-  const save = () => {
+  const save = async () => {
+    if (saving) return;
     const next: Record<string, string> = {};
     const parsed = parseExampleValues(examples);
     if (!name.trim()) next.name = "Name is required.";
@@ -144,17 +147,22 @@ function TypeForm({
     if (detectionMode === "Model" && !nerModel) next.model = "Select an NER model.";
     setErrors(next);
     if (Object.keys(next).length) return;
-    const error = onSave({
-      name: name.trim(),
-      examples: parsed,
-      handling,
-      maskingPattern: handling === "Mask" ? maskingPattern : null,
-      detectionMode,
-      regex: regex.trim(),
-      nerModel,
-    });
-    if (error) setErrors({ name: error });
-    else onClose();
+    setSaving(true);
+    try {
+      const error = await onSave({
+        name: name.trim(),
+        examples: parsed,
+        handling,
+        maskingPattern: handling === "Mask" ? maskingPattern : null,
+        detectionMode,
+        regex: regex.trim(),
+        nerModel,
+      });
+      if (error) setErrors({ name: error });
+      else onClose();
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -162,13 +170,26 @@ function TypeForm({
       isOpen
       onClose={onClose}
       title={title}
-      footer={<FormActions cancelLabel="Cancel" submitLabel={submitLabel} onCancel={onClose} onSubmit={save} />}
+      lockDismiss={saving}
+      footer={
+        <FormActions
+          cancelLabel="Cancel"
+          submitLabel={submitLabel}
+          onCancel={onClose}
+          onSubmit={() => {
+            void save();
+          }}
+          isLoading={saving}
+          loadingText="Saving"
+        />
+      }
     >
       <FormSection title="Identity">
         <FormField label="PII Type Name" required error={errors.name}>
           <Input
             value={name}
             isDisabled={nameLocked}
+            maxLength={100}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Passport Number"
           />
@@ -426,6 +447,7 @@ function PolicyDrawer() {
       key={existing?.id ?? "new-policy"}
       title={existing ? "Edit Policy" : "Create Policy"}
       submitLabel={existing ? "Save" : "Create Policy"}
+      nameLocked={Boolean(existing)}
       initial={
         existing
           ? {
@@ -456,12 +478,14 @@ function PolicyDrawer() {
 function PolicyForm({
   title,
   submitLabel,
+  nameLocked,
   initial,
   onClose,
   onSave,
 }: {
   title: string;
   submitLabel: string;
+  nameLocked: boolean;
   initial: {
     name: string;
     description: string;
@@ -472,9 +496,9 @@ function PolicyForm({
     scope: PolicyScope | "";
   };
   onClose: () => void;
-  onSave: (input: PolicyInput) => string | null;
+  onSave: (input: PolicyInput) => Promise<string | null>;
 }) {
-  const { domains, types } = usePiiPolicies();
+  const { domains, types, typesStatus, typesError } = usePiiPolicies();
   const [name, setName] = useState(initial.name);
   const [description, setDescription] = useState(initial.description);
   const [domainIds, setDomainIds] = useState(initial.domainIds);
@@ -487,6 +511,7 @@ function PolicyForm({
   const [typesOpen, setTypesOpen] = useState(true);
   const [typeQuery, setTypeQuery] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
 
   const grouped = useMemo(() => {
     const q = typeQuery.toLowerCase();
@@ -501,7 +526,8 @@ function PolicyForm({
     setter(list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
   };
 
-  const save = () => {
+  const save = async () => {
+    if (saving) return;
     const next: Record<string, string> = {};
     if (!name.trim()) next.name = "Policy name is required.";
     if (description.length > 200) next.description = "Description is limited to 200 characters.";
@@ -511,17 +537,22 @@ function PolicyForm({
     if (!scope) next.scope = "Select a scope.";
     setErrors(next);
     if (Object.keys(next).length || !scope) return;
-    const error = onSave({
-      name: name.trim(),
-      description: description.trim(),
-      domainIds,
-      languages,
-      typeIds,
-      policyType,
-      scope,
-    });
-    if (error) setErrors({ name: error });
-    else onClose();
+    setSaving(true);
+    try {
+      const error = await onSave({
+        name: name.trim(),
+        description: description.trim(),
+        domainIds,
+        languages,
+        typeIds,
+        policyType,
+        scope,
+      });
+      if (error) setErrors({ name: error });
+      else onClose();
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -530,11 +561,28 @@ function PolicyForm({
       onClose={onClose}
       size="wide"
       title={title}
-      footer={<FormActions submitLabel={submitLabel} onCancel={onClose} onSubmit={save} />}
+      lockDismiss={saving}
+      footer={
+        <FormActions
+          submitLabel={submitLabel}
+          onCancel={onClose}
+          onSubmit={() => {
+            void save();
+          }}
+          isLoading={saving}
+          loadingText="Saving"
+        />
+      }
     >
       <Stack spacing={4}>
         <FormField label="Policy Name" required error={errors.name}>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Retail Banking Safeguard" />
+          <Input
+            value={name}
+            isDisabled={nameLocked}
+            maxLength={100}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Retail Banking Safeguard"
+          />
         </FormField>
         <FormField label="Description" error={errors.description}>
           <Textarea
@@ -603,6 +651,16 @@ function PolicyForm({
         />
         <Box borderTopWidth="1px" borderColor="ink.200" />
         <FormField label={`Link PII Types (${typeIds.length}/${types.length})`} required error={errors.types}>
+          {typesStatus === "loading" ? (
+            <Text fontSize="sm" color="ink.500" mb={2}>
+              Loading PII definitions…
+            </Text>
+          ) : null}
+          {typesStatus === "error" ? (
+            <Text fontSize="sm" color="red.500" mb={2}>
+              {typesError}
+            </Text>
+          ) : null}
           <Flex justify="space-between" mb={2}>
             <Button size="sm" variant="ghost" onClick={() => setTypesOpen((v) => !v)}>
               {typesOpen ? "Hide" : "Show"} types
@@ -773,7 +831,7 @@ function PolicyViewDrawer() {
         <Detail label="Scope" value={p.scope} />
         <Detail
           label="Domain"
-          value={p.domainIds.map((id) => domains.find((d) => d.id === id)?.name).filter(Boolean).join(", ") || "—"}
+          value={p.domainIds.map((id) => domainLabel(id, domains)).filter(Boolean).join(", ") || "—"}
         />
         {p.policyType === "Global" ? (
           <Detail label="Institutions" value="Applied to all institutions automatically. Institutions cannot unsubscribe." />

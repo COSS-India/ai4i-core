@@ -1,8 +1,7 @@
 /**
- * Policies catalog. Categories and sub-categories come from
- * GET /policies/categories and GET /policies/sub-categories.
- * Definitions, policies, and the playground stay on the prototype seed
- * until those APIs are available.
+ * Policies catalog. Categories, sub-categories, PII definitions, and policies
+ * come from the platform-core policy APIs. Domain rows and the playground
+ * sample text stay local.
  */
 
 export type Handling = "Mask" | "Redact" | "Hash";
@@ -38,6 +37,8 @@ export interface Policy {
   policyId: string;
   name: string;
   description: string;
+  /** Parent sub-category. Policies are listed under this id. */
+  subcategoryId: string;
   domainIds: string[];
   languages: string[];
   typeIds: string[];
@@ -387,6 +388,7 @@ const POLICIES: Policy[] = [
   {
     id: "policy-core",
     policyId: "SPP-1001",
+    subcategoryId: "",
     name: "Core PII Protection",
     description: "Baseline protection applied platform-wide.",
     domainIds: ["dom-education", "dom-finance", "dom-healthcare"],
@@ -399,6 +401,7 @@ const POLICIES: Policy[] = [
   {
     id: "policy-edu",
     policyId: "SPP-1002",
+    subcategoryId: "",
     name: "Education Data Safeguard",
     description: "Student-record protection for education-sector institutions.",
     domainIds: ["dom-education"],
@@ -411,6 +414,7 @@ const POLICIES: Policy[] = [
   {
     id: "policy-fin",
     policyId: "SPP-1003",
+    subcategoryId: "",
     name: "Financial Services Compliance",
     description: "RBI-aligned protection for banking and payments data.",
     domainIds: ["dom-finance"],
@@ -430,6 +434,7 @@ const POLICIES: Policy[] = [
   {
     id: "policy-health",
     policyId: "SPP-1004",
+    subcategoryId: "",
     name: "Healthcare Privacy Shield",
     description: "Patient-data protection for healthcare-sector institutions.",
     domainIds: ["dom-healthcare"],
@@ -503,6 +508,10 @@ export function nextPolicyCode(policies: Policy[]): string {
     .filter((n) => !Number.isNaN(n));
   const next = Math.max(1000, ...nums) + 1;
   return `SPP-${next}`;
+}
+
+export function domainLabel(id: string, domains: { id: string; name: string }[]): string {
+  return domains.find((domain) => domain.id === id)?.name ?? id;
 }
 
 export function parseExampleValues(raw: string): string[] {

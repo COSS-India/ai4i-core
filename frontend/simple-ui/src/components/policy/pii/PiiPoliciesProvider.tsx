@@ -1,9 +1,24 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
+  definitionFromPolicyType,
+  domainNames,
+  guardrailToApi,
+  policyFieldsFromDefinition,
+  policyFromRecord,
+} from "./apiMap";
+import {
+  createPolicy,
   createPolicyCategory,
   createPolicySubCategory,
+  createPolicyType,
+  deletePolicy,
+  deletePolicyType,
+  listPolicies,
   listPolicyCategories,
   listPolicySubCategories,
+  listPolicyTypes,
+  updatePolicy,
+  updatePolicyType,
 } from "../../../services/policyHierarchyService";
 import type {
   PolicyCategoryItem,
@@ -13,7 +28,6 @@ import { showToast } from "../../../utils/toast";
 import type { DetectionResult } from "./detection";
 import {
   createInitialCatalog,
-  nextPolicyCode,
   type Domain,
   type Handling,
   type MaskingPattern,
@@ -86,6 +100,12 @@ interface PiiPoliciesContextValue {
   hierarchyStatus: "loading" | "ready" | "error";
   hierarchyError: string;
   reloadHierarchy: () => void;
+  typesStatus: "loading" | "ready" | "error";
+  typesError: string;
+  reloadTypes: () => void;
+  policiesStatus: "loading" | "ready" | "error";
+  policiesError: string;
+  reloadPolicies: () => void;
   /** Returns an error message, or null after the category is in the list. */
   createCategory: (name: string, description: string) => Promise<string | null>;
   /** Parent is the open category. Returns an error message, or null on success. */
@@ -135,13 +155,13 @@ interface PiiPoliciesContextValue {
   addDomain: (name: string, description: string) => string | null;
   updateDomain: (id: string, name: string, description: string) => string | null;
   deleteDomain: (id: string) => void;
-  addType: (input: TypeInput) => string | null;
-  updateType: (id: string, input: TypeInput) => string | null;
-  deleteType: (id: string) => void;
-  addPolicy: (input: PolicyInput) => string | null;
-  updatePolicy: (id: string, input: PolicyInput) => string | null;
-  deletePolicy: (id: string) => void;
-  setPolicyStatus: (id: string, status: RecordStatus) => void;
+  addType: (input: TypeInput) => Promise<string | null>;
+  updateType: (id: string, input: TypeInput) => Promise<string | null>;
+  deleteType: (id: string) => Promise<void>;
+  addPolicy: (input: PolicyInput) => Promise<string | null>;
+  updatePolicy: (id: string, input: PolicyInput) => Promise<string | null>;
+  deletePolicy: (id: string) => Promise<void>;
+  setPolicyStatus: (id: string, status: RecordStatus) => Promise<void>;
   /** Local until the category status API exists. */
   setCategoryStatus: (id: string, status: RecordStatus) => void;
   /** Local until the sub-category status API exists. */
@@ -171,12 +191,16 @@ export function PiiPoliciesProvider({
   const nextId = (prefix: string) => `${prefix}-${idRef.current++}`;
 
   const [domains, setDomains] = useState(initial.domains);
-  const [types, setTypes] = useState(initial.types);
-  const [policies, setPolicies] = useState(initial.policies);
+  const [types, setTypes] = useState<PiiType[]>([]);
+  const [policies, setPolicies] = useState<Policy[]>([]);
   const [categories, setCategories] = useState<PolicyCategory[]>([]);
   const [subcategories, setSubcategories] = useState<PolicySubcategory[]>([]);
   const [hierarchyStatus, setHierarchyStatus] = useState<"loading" | "ready" | "error">("loading");
   const [hierarchyError, setHierarchyError] = useState("");
+  const [typesStatus, setTypesStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [typesError, setTypesError] = useState("");
+  const [policiesStatus, setPoliciesStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [policiesError, setPoliciesError] = useState("");
   const [subscriptions, setSubscriptions] = useState(initial.subscriptions);
 
   const [view, setView] = useState<PolicyView>({ kind: "home" });
@@ -211,8 +235,48 @@ export function PiiPoliciesProvider({
         if (requestId !== hierarchyRequest.current) return;
         setCategories([]);
         setSubcategories([]);
-        setHierarchyError(hierarchyErrorMessage(error));
+        setHierarchyError(apiErrorMessage(error));
         setHierarchyStatus("error");
+      });
+  }, []);
+
+  const typesRequest = useRef(0);
+  const reloadTypes = useCallback(() => {
+    const requestId = ++typesRequest.current;
+    setTypesStatus("loading");
+    setTypesError("");
+    void listPolicyTypes()
+      .then((items) => {
+        if (requestId !== typesRequest.current) return;
+        setTypes(items.map(definitionFromPolicyType));
+        setTypesStatus("ready");
+      })
+      .catch((error: unknown) => {
+        if (requestId !== typesRequest.current) return;
+        setTypes([]);
+        setTypesError(apiErrorMessage(error, "Couldn't load PII definitions."));
+        setTypesStatus("error");
+      });
+  }, []);
+
+  const domainsRef = useRef(domains);
+  domainsRef.current = domains;
+  const policiesRequest = useRef(0);
+  const reloadPolicies = useCallback(() => {
+    const requestId = ++policiesRequest.current;
+    setPoliciesStatus("loading");
+    setPoliciesError("");
+    void listPolicies()
+      .then((items) => {
+        if (requestId !== policiesRequest.current) return;
+        setPolicies(items.map((item) => policyFromRecord(item, domainsRef.current)));
+        setPoliciesStatus("ready");
+      })
+      .catch((error: unknown) => {
+        if (requestId !== policiesRequest.current) return;
+        setPolicies([]);
+        setPoliciesError(apiErrorMessage(error, "Couldn't load policies."));
+        setPoliciesStatus("error");
       });
   }, []);
 
@@ -222,6 +286,20 @@ export function PiiPoliciesProvider({
       hierarchyRequest.current += 1;
     };
   }, [reloadHierarchy]);
+
+  useEffect(() => {
+    reloadTypes();
+    return () => {
+      typesRequest.current += 1;
+    };
+  }, [reloadTypes]);
+
+  useEffect(() => {
+    reloadPolicies();
+    return () => {
+      policiesRequest.current += 1;
+    };
+  }, [reloadPolicies]);
 
   const value = useMemo<PiiPoliciesContextValue>(() => {
     const toast = (message: string) => showToast({ type: "success", message, messageOnly: true });
@@ -235,6 +313,12 @@ export function PiiPoliciesProvider({
       hierarchyStatus,
       hierarchyError,
       reloadHierarchy,
+      typesStatus,
+      typesError,
+      reloadTypes,
+      policiesStatus,
+      policiesError,
+      reloadPolicies,
       createCategory: async (name, description) => {
         const trimmed = name.trim();
         if (!trimmed) return "Enter a name.";
@@ -250,7 +334,7 @@ export function PiiPoliciesProvider({
           toast("Category created.");
           return null;
         } catch (error: unknown) {
-          return hierarchyErrorMessage(error, "Couldn't create the category.");
+          return apiErrorMessage(error, "Couldn't create the category.");
         }
       },
       createSubCategory: async (categoryId, name, description) => {
@@ -273,7 +357,7 @@ export function PiiPoliciesProvider({
           toast("Sub-category created.");
           return null;
         } catch (error: unknown) {
-          return hierarchyErrorMessage(error, "Couldn't create the sub-category.");
+          return apiErrorMessage(error, "Couldn't create the sub-category.");
         }
       },
       subscriptions,
@@ -350,89 +434,155 @@ export function PiiPoliciesProvider({
         setDomains((prev) => prev.filter((d) => d.id !== id));
         toast("Domain deleted.");
       },
-      addType: (input) => {
+      addType: async (input) => {
         if (duplicateName(types, input.name)) return "A PII type with this name already exists.";
-        setTypes((prev) => [
-          ...prev,
-          {
-            id: nextId("pii"),
-            domainId: null,
-            isDefault: false,
-            ...input,
-            examples: [...input.examples],
-          },
-        ]);
-        toast("PII type added.");
-        return null;
+        try {
+          const saved = await createPolicyType({
+            policy_type: input.name,
+            policy_fields: policyFieldsFromDefinition(input),
+          });
+          setTypes((prev) => appendById(prev, definitionFromPolicyType(saved)));
+          toast("PII type added.");
+          return null;
+        } catch (error: unknown) {
+          return apiErrorMessage(error, "Couldn't create the PII definition.");
+        }
       },
-      updateType: (id, input) => {
+      updateType: async (id, input) => {
         const current = types.find((t) => t.id === id);
         if (!current) return "PII type not found.";
         if (!current.isDefault && duplicateName(types, input.name, id)) {
           return "A PII type with this name already exists.";
         }
-        setTypes((prev) =>
-          prev.map((t) =>
-            t.id === id
-              ? {
-                  ...t,
-                  ...input,
-                  name: t.isDefault ? t.name : input.name,
-                  examples: [...input.examples],
-                }
-              : t,
-          ),
-        );
-        toast("PII type updated.");
-        return null;
+        const typeId = numericId(id);
+        if (typeId == null) return "Couldn't update the PII definition.";
+        try {
+          const saved = await updatePolicyType(typeId, policyFieldsFromDefinition(input));
+          const next = definitionFromPolicyType(saved);
+          setTypes((prev) => prev.map((t) => (t.id === id ? next : t)));
+          toast("PII type updated.");
+          return null;
+        } catch (error: unknown) {
+          return apiErrorMessage(error, "Couldn't update the PII definition.");
+        }
       },
-      deleteType: (id) => {
-        setTypes((prev) => prev.filter((t) => t.id !== id));
-        toast("PII type deleted.");
+      deleteType: async (id) => {
+        const typeId = numericId(id);
+        if (typeId == null) {
+          showToast({ type: "error", message: "Couldn't delete the PII definition.", messageOnly: true });
+          return;
+        }
+        try {
+          await deletePolicyType(typeId);
+          setTypes((prev) => prev.filter((t) => t.id !== id));
+          toast("PII type deleted.");
+        } catch (error: unknown) {
+          showToast({
+            type: "error",
+            message: apiErrorMessage(error, "Couldn't delete the PII definition."),
+            messageOnly: true,
+          });
+        }
       },
-      addPolicy: (input) => {
+      addPolicy: async (input) => {
+        if (view.kind !== "sub") return "Open a sub-category before creating a policy.";
         if (duplicateName(policies, input.name)) return "A policy with this name already exists.";
-        const policyId = nextPolicyCode(policies);
-        setPolicies((prev) => [
-          ...prev,
-          {
-            id: nextId("policy"),
-            policyId,
-            status: "Active",
-            ...input,
-            domainIds: [...input.domainIds],
-            languages: [...input.languages],
-            typeIds: [...input.typeIds],
-          },
-        ]);
-        toast("Policy created.");
-        return null;
+        const subCategoryId = numericId(view.subcategoryId);
+        const typeIds = numericIds(input.typeIds);
+        if (subCategoryId == null || typeIds.length !== input.typeIds.length) {
+          return "Couldn't create the policy.";
+        }
+        try {
+          const saved = await createPolicy({
+            name: input.name,
+            description: blankToNull(input.description),
+            domain: domainNames(input.domainIds, domains),
+            guardrail_scope: guardrailToApi(input.scope),
+            is_global: input.policyType === "Global",
+            sub_category_id: subCategoryId,
+            is_active: false,
+            output_parse_pii: true,
+            policy_type_id: typeIds,
+          });
+          setPolicies((prev) =>
+            appendById(prev, {
+              ...policyFromRecord(saved, domains),
+              languages: [...input.languages],
+            }),
+          );
+          setPoliciesStatus("ready");
+          setPoliciesError("");
+          toast("Policy created.");
+          return null;
+        } catch (error: unknown) {
+          return apiErrorMessage(error, "Couldn't create the policy.");
+        }
       },
-      updatePolicy: (id, input) => {
+      updatePolicy: async (id, input) => {
+        const current = policies.find((p) => p.id === id);
+        if (!current) return "Policy not found.";
         if (duplicateName(policies, input.name, id)) return "A policy with this name already exists.";
-        setPolicies((prev) =>
-          prev.map((p) =>
-            p.id === id
-              ? {
-                  ...p,
-                  ...input,
-                  domainIds: [...input.domainIds],
-                  languages: [...input.languages],
-                  typeIds: [...input.typeIds],
-                }
-              : p,
-          ),
-        );
-        toast("Policy updated.");
-        return null;
+        const policyId = numericId(id);
+        const subCategoryId = numericId(current.subcategoryId);
+        const typeIds = numericIds(input.typeIds);
+        if (policyId == null || subCategoryId == null || typeIds.length !== input.typeIds.length) {
+          return "Couldn't update the policy.";
+        }
+        try {
+          const saved = await updatePolicy(policyId, {
+            description: blankToNull(input.description),
+            domain: domainNames(input.domainIds, domains),
+            guardrail_scope: guardrailToApi(input.scope),
+            is_global: input.policyType === "Global",
+            sub_category_id: subCategoryId,
+            policy_type_id: typeIds,
+          });
+          const next = { ...policyFromRecord(saved, domains), languages: input.languages };
+          setPolicies((prev) => prev.map((p) => (p.id === id ? next : p)));
+          toast("Policy updated.");
+          return null;
+        } catch (error: unknown) {
+          return apiErrorMessage(error, "Couldn't update the policy.");
+        }
       },
-      deletePolicy: (id) => {
-        setPolicies((prev) => prev.filter((p) => p.id !== id));
-        toast("Policy deleted.");
+      deletePolicy: async (id) => {
+        const policyId = numericId(id);
+        if (policyId == null) {
+          showToast({ type: "error", message: "Couldn't delete the policy.", messageOnly: true });
+          return;
+        }
+        try {
+          await deletePolicy(policyId);
+          setPolicies((prev) => prev.filter((p) => p.id !== id));
+          toast("Policy deleted.");
+        } catch (error: unknown) {
+          showToast({
+            type: "error",
+            message: apiErrorMessage(error, "Couldn't delete the policy."),
+            messageOnly: true,
+          });
+        }
       },
-      setPolicyStatus: (id, status) => {
-        setPolicies((prev) => prev.map((p) => (p.id === id ? { ...p, status } : p)));
-        toast(status === "Active" ? "Policy activated." : "Policy deactivated.");
+      setPolicyStatus: async (id, status) => {
+        const policyId = numericId(id);
+        if (policyId == null) {
+          showToast({ type: "error", message: "Couldn't update the policy.", messageOnly: true });
+          return;
+        }
+        try {
+          const saved = await updatePolicy(policyId, { is_active: status === "Active" });
+          const next = policyFromRecord(saved, domains);
+          setPolicies((prev) =>
+            prev.map((p) => (p.id === id ? { ...next, languages: p.languages } : p)),
+          );
+          toast(status === "Active" ? "Policy activated." : "Policy deactivated.");
+        } catch (error: unknown) {
+          showToast({
+            type: "error",
+            message: apiErrorMessage(error, "Couldn't update the policy."),
+            messageOnly: true,
+          });
+        }
       },
       setCategoryStatus: (id, status) => {
         setCategories((prev) => prev.map((c) => (c.id === id ? { ...c, status } : c)));
@@ -463,6 +613,12 @@ export function PiiPoliciesProvider({
     hierarchyStatus,
     hierarchyError,
     reloadHierarchy,
+    typesStatus,
+    typesError,
+    reloadTypes,
+    policiesStatus,
+    policiesError,
+    reloadPolicies,
     subscriptions,
     role,
     institutionId,
@@ -521,7 +677,19 @@ function appendById<T extends { id: string }>(items: T[], next: T): T[] {
   return [...items, next];
 }
 
-function hierarchyErrorMessage(error: unknown, fallback = "Couldn't load policy categories."): string {
+function numericId(id: string): number | null {
+  const value = Number(id);
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function numericIds(ids: string[]): number[] {
+  return ids.flatMap((id) => {
+    const value = numericId(id);
+    return value == null ? [] : [value];
+  });
+}
+
+function apiErrorMessage(error: unknown, fallback = "Couldn't load policy categories."): string {
   if (!error || typeof error !== "object") {
     return error instanceof Error && error.message ? error.message : fallback;
   }

@@ -4,6 +4,7 @@ import {
   Badge,
   Box,
   Button,
+  Center,
   Flex,
   HStack,
   Radio,
@@ -19,6 +20,7 @@ import {
 } from "@chakra-ui/react";
 import React, { useMemo } from "react";
 import CreateButton from "../../common/CreateButton";
+import LoadingSpinner from "../../common/LoadingSpinner";
 import FieldLabel from "../../common/FieldLabel";
 import DataTable, {
   createActionsColumn,
@@ -28,6 +30,7 @@ import { buildSample, runDetection, type DetectionHit } from "./detection";
 import { useDeferredColumnSort } from "../../../utils/tableSort";
 import {
   HANDLING_OPTIONS,
+  domainLabel,
   policyEffective,
   subcategoryEffective,
   type PiiType,
@@ -69,17 +72,24 @@ export function PolicyList() {
     askConfirm,
     setPolicyStatus,
     deletePolicy,
+    policiesStatus,
+    policiesError,
+    reloadPolicies,
   } = store;
   const { sub, parentActive } = useParentActive();
+  const scoped = useMemo(
+    () => policies.filter((p) => !sub || p.subcategoryId === sub.id),
+    [policies, sub],
+  );
 
   const rows = useMemo(
     () =>
-      policies.filter((p) => {
+      scoped.filter((p) => {
         const matchesName = p.name.toLowerCase().includes(policySearch.toLowerCase());
         const matchesDomain = !policyDomainFilter || p.domainIds.includes(policyDomainFilter);
         return matchesName && matchesDomain;
       }),
-    [policies, policySearch, policyDomainFilter],
+    [scoped, policySearch, policyDomainFilter],
   );
 
   const policySortAccessors = useMemo(
@@ -143,10 +153,7 @@ export function PolicyList() {
         header: "Domain",
         cell: (row) => (
           <Badge textTransform="none">
-            {row.domainIds
-              .map((id) => domains.find((d) => d.id === id)?.name)
-              .filter(Boolean)
-              .join(", ") || "—"}
+            {row.domainIds.map((id) => domainLabel(id, domains)).filter(Boolean).join(", ") || "—"}
           </Badge>
         ),
       },
@@ -157,7 +164,7 @@ export function PolicyList() {
         sortAccessor: (row) => row.languages.join(", "),
         cell: (row) => (
           <Text fontSize="sm" color="ink.500">
-            {row.languages.join(", ")}
+            {row.languages.length > 0 ? row.languages.join(", ") : "—"}
           </Text>
         ),
       },
@@ -198,11 +205,27 @@ export function PolicyList() {
 
   return (
     <Box>
+      {policiesStatus === "error" ? (
+        <Alert status="error" borderRadius="md" mb={4}>
+          <AlertIcon />
+          <Text flex="1" fontSize="sm">
+            {policiesError}
+          </Text>
+          <Button size="sm" variant="outline" onClick={reloadPolicies}>
+            Try again
+          </Button>
+        </Alert>
+      ) : null}
       {!parentActive ? (
         <LockedNotice>
           All policies here are inactive — "{sub?.name}" (or its category) is currently disabled.
         </LockedNotice>
       ) : null}
+      {policiesStatus === "loading" && scoped.length === 0 ? (
+        <Center py={10}>
+          <LoadingSpinner label="Loading policies…" />
+        </Center>
+      ) : (
       <DataTable
         layout="admin"
         items={sortedPolicies}
@@ -212,7 +235,7 @@ export function PolicyList() {
         onSortChange={policySort.onSortChange}
         paginate="client"
         paginationPosition="bottom"
-        unfilteredCount={policies.length}
+        unfilteredCount={scoped.length}
         hasActiveFilters={Boolean(policySearch || policyDomainFilter)}
         onClearFilters={() => {
           setPolicySearch("");
@@ -245,6 +268,7 @@ export function PolicyList() {
           },
         ]}
       />
+      )}
     </Box>
   );
 }
@@ -284,6 +308,9 @@ function TypeLibrary() {
     openDrawer,
     askConfirm,
     deleteType,
+    typesStatus,
+    typesError,
+    reloadTypes,
   } = usePiiPolicies();
 
   const rows = types.filter((t) => {
@@ -360,6 +387,23 @@ function TypeLibrary() {
   );
 
   return (
+    <Box>
+      {typesStatus === "error" ? (
+        <Alert status="error" borderRadius="md" mb={4}>
+          <AlertIcon />
+          <Text flex="1" fontSize="sm">
+            {typesError}
+          </Text>
+          <Button size="sm" variant="outline" onClick={reloadTypes}>
+            Try again
+          </Button>
+        </Alert>
+      ) : null}
+      {typesStatus === "loading" && types.length === 0 ? (
+        <Center py={10}>
+          <LoadingSpinner label="Loading PII definitions…" />
+        </Center>
+      ) : (
     <DataTable
       layout="admin"
       items={sortedTypes}
@@ -402,6 +446,8 @@ function TypeLibrary() {
         },
       ]}
     />
+      )}
+    </Box>
   );
 }
 
@@ -505,8 +551,10 @@ export function PlaygroundPanel() {
     setPlaygroundResult,
     loadPlaygroundSample,
   } = usePiiPolicies();
-  const { parentActive } = useParentActive();
-  const activePolicies = policies.filter((p) => policyEffective(p, parentActive) === "Active");
+  const { sub, parentActive } = useParentActive();
+  const activePolicies = policies.filter(
+    (p) => (!sub || p.subcategoryId === sub.id) && policyEffective(p, parentActive) === "Active",
+  );
   const selected = policies.find((p) => p.policyId === playgroundPolicyId) ?? null;
   const canRun = Boolean(selected && playgroundTarget && playgroundInput.trim());
   const resultRows = playgroundResult?.results ?? [];
@@ -728,7 +776,9 @@ export function InstitutionCatalog() {
     toggleSubscription,
   } = usePiiPolicies();
   const { sub, parentActive } = useParentActive();
-  const active = policies.filter((p) => policyEffective(p, parentActive) === "Active");
+  const active = policies.filter(
+    (p) => (!sub || p.subcategoryId === sub.id) && policyEffective(p, parentActive) === "Active",
+  );
   const visible =
     catalogScope === "subscribed"
       ? active.filter(
