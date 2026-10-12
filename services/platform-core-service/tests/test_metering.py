@@ -24,8 +24,10 @@ from app.utils.metering_promql_builder import (
     api_key_auth_type_selector,
     apply_time_range,
     build_base_selectors,
+    comparison_shift_seconds,
     escape_label_value,
     previous_window_offset,
+    retained_range,
     step_for_duration,
     sum_over_window,
     sum_over_window_by,
@@ -259,19 +261,19 @@ class TestAbsoluteRangeWindow:
 
 
 class TestStepForDuration:
+    """Usage Dashboard periods: a day or less is hourly, up to 31 days daily,
+    longer weekly."""
     @pytest.mark.parametrize("seconds,expected", [
-        (1_800, "10m"), (3_600, "10m"),
-        (3_601, "4h"), (86_400, "4h"),
+        (1_800, "1h"), (3_600, "1h"), (3_601, "1h"), (86_400, "1h"),
         (86_401, "1d"), (3 * 86_400, "1d"), (604_800, "1d"), (10 * 86_400, "1d"),
-        (31 * 86_400, "1d"), (31 * 86_400 + 1, "7d"), (90 * 86_400, "7d"),
+        (31 * 86_400, "1d"), (31 * 86_400 + 1, "1w"), (90 * 86_400, "1w"),
     ])
     def test_thresholds(self, seconds, expected):
         assert step_for_duration(seconds) == expected
 
-    def test_only_emits_steps_the_frontend_knows(self):
-        known = set(WINDOW_STEP.values())
+    def test_only_emits_the_contract_steps(self):
         for secs in (60, 7_200, 200_000, 10**7):
-            assert step_for_duration(secs) in known
+            assert step_for_duration(secs) in {"1h", "1d", "1w"}
 
 
 class TestServiceBreakdownConfig:
@@ -868,6 +870,12 @@ class TestModelBreakdown:
         async def fake_query(promql):
             if 'status_code=~"2.."' in promql:
                 return self._row("MH-gemma-32b", 90)
+            if 'token_type="prompt"' in promql:
+                return self._row("MH-gemma-32b", 12000)
+            if 'token_type="completion"' in promql:
+                return self._row("MH-gemma-32b", 345)
+            if 'token_type="cached_input"' in promql:
+                return []
             if "telemetry_obsv_llm_tokens_processed_sum" in promql:
                 return self._row("MH-gemma-32b", 12345)
             return self._row("MH-gemma-32b", 100)
@@ -916,6 +924,12 @@ class TestModelBreakdown:
         async def fake_query(promql):
             if 'status_code=~"2.."' in promql:
                 return self._rows({"live-service": 90, "deleted-service": 40})
+            if 'token_type="prompt"' in promql:
+                return self._rows({"live-service": 12000, "deleted-service": 900})
+            if 'token_type="completion"' in promql:
+                return self._rows({"live-service": 345, "deleted-service": 99})
+            if 'token_type="cached_input"' in promql:
+                return []
             if "telemetry_obsv_llm_tokens_processed_sum" in promql:
                 return self._rows({"live-service": 12345, "deleted-service": 999})
             return self._rows({"live-service": 100, "deleted-service": 50})
@@ -1020,9 +1034,10 @@ class TestModelBreakdown:
             call[0][0] for call in client.query.call_args_list
             if "telemetry_obsv_llm_tokens_processed_sum" in call[0][0]
         ]
-        assert len(tokens_calls) == 1
-        assert f'tenant="{escape_label_value(tenant)}"' in tokens_calls[0]
-        assert f'tenant="{tenant}"' not in tokens_calls[0]
+        assert len(tokens_calls) == 4
+        for q in tokens_calls:
+            assert f'tenant="{escape_label_value(tenant)}"' in q
+            assert f'tenant="{tenant}"' not in q
 
     async def test_tokens_query_prefers_tenant_id_like_request_and_success_do(self):
         """Bug scenario: a tenant renamed mid-window. Request/success queries
@@ -1168,7 +1183,9 @@ class TestModelBreakdown:
             call[0][0] for call in client.query.call_args_list
             if "telemetry_obsv_llm_tokens_processed_sum" in call[0][0]
         ]
-        assert len(tokens_calls) == 1
+        # token_type="total", plus prompt / cached_input / completion for the
+        # Model drill-down's token breakdown.
+        assert len(tokens_calls) == 4
 
     async def test_nmt_row_reports_characters_not_tokens(self):
         """AI4IDS follow-up: a row's own task type — resolved from the
@@ -2801,7 +2818,8 @@ class TestAbsoluteRangeQueries:
         ):
             await svc.model_breakdown(tenant=None, time_range=_abs_range(5, 2), task_types=["llm"])
         queries = [c.args[0] for c in svc._client.query.call_args_list]
-        assert len(queries) == 3  # total, success, llm native units
+        # total, success, llm native units, and its 3 token_type breakdown series
+        assert len(queries) == 6
         for q in queries:
             assert "[259200s] offset 172800s" in q
 
@@ -3195,7 +3213,7 @@ class TestChartSizeFromTheFloor:
         floor = _datetime(1999, 12, 31, 18, 30, tzinfo=_timezone.utc)
         svc = _make_service(range_return=[{"values": [[1, "3"]]}])
         chart = await svc.request_volume_chart(AbsoluteRange(start=floor, end=_NOW), tenant=None)
-        assert chart.step == "7d"
+        assert chart.step == "1w"
         assert all(len(s.points) <= 1_400 for s in chart.series)
 
 
@@ -3251,3 +3269,107 @@ class TestCustomRangeBarsStampedAtBucketStart:
         os_chart = await OpenSearchMeteringService(os_client=os_client).request_volume_chart(r, tenant=None)
 
         assert prom_chart.series[0].points[0].ts == os_chart.series[0].points[0].ts == int(start_ts)
+
+
+# ── LLM token breakdown (Model drill-down) ───────────────────────────────────
+
+
+@pytest.mark.asyncio
+class TestLlmTokenBreakdown:
+    """native_breakdown on LLM service rows: input (prompt − cached_input),
+    cached input and output, summing to native_units."""
+
+    @staticmethod
+    def _row(service_id: str, value: float, endpoint: str = "/api/v1/chat") -> list:
+        return [{
+            "metric": {"service_id": service_id, "model_id": "", PROMETHEUS_API_PATH_LABEL: endpoint},
+            "value": [0, str(value)],
+        }]
+
+    async def _breakdown(self, token_values: dict, total=10257, fail=()):
+        """Run model_breakdown for one LLM service whose token_type series
+        return ``token_values``; a token_type in ``fail`` raises."""
+        client = MagicMock()
+
+        async def fake_query(promql):
+            for token_type in ("prompt", "cached_input", "completion", "total"):
+                if f'token_type="{token_type}"' in promql:
+                    if token_type in fail:
+                        raise RuntimeError("prometheus down")
+                    if token_type == "total":
+                        return self._row("svc-llm", total)
+                    value = token_values.get(token_type)
+                    return self._row("svc-llm", value) if value is not None else []
+            return self._row("svc-llm", 114)
+
+        client.query = AsyncMock(side_effect=fake_query)
+        svc = MeteringService(client=client)
+        with patch(
+            "app.services.metering_service.inference_type_cache.get_unit_map_standalone",
+            AsyncMock(return_value={}),
+        ):
+            result = await svc.model_breakdown(tenant=None, time_range="24h", task_types=["llm"])
+        return result["services"][0]
+
+    async def test_breakdown_entries_and_shares(self):
+        row = await self._breakdown({"prompt": 9800, "cached_input": 150, "completion": 457})
+        assert row["native_breakdown"] == [
+            {"key": "input", "label": "Input tokens", "units": 9650.0, "percentage": 94.08},
+            {"key": "cached_input", "label": "Cached input tokens", "units": 150.0, "percentage": 1.46},
+            {"key": "output", "label": "Output tokens", "units": 457.0, "percentage": 4.46},
+        ]
+
+    async def test_total_is_the_sum_of_the_entries(self):
+        row = await self._breakdown({"prompt": 9800, "cached_input": 150, "completion": 457}, total=10300)
+        assert row["native_units"] == 10257.0 == sum(e["units"] for e in row["native_breakdown"])
+
+    async def test_zero_cached_input_is_omitted(self):
+        row = await self._breakdown({"prompt": 900, "completion": 100})
+        assert [e["key"] for e in row["native_breakdown"]] == ["input", "output"]
+        assert row["native_units"] == 1000.0
+
+    async def test_failed_token_query_keeps_the_total(self):
+        """A failed per-token_type query must not zero the row: no breakdown,
+        native_units stays token_type="total"."""
+        row = await self._breakdown({}, total=10257, fail=("prompt", "cached_input", "completion"))
+        assert row["native_breakdown"] is None
+        assert row["native_units"] == 10257.0
+
+    async def test_non_llm_rows_have_no_breakdown(self):
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("indictrans", 4, endpoint="/api/v1/nmt/inference"))
+        svc = MeteringService(client=client)
+        with patch(
+            "app.services.metering_service.inference_type_cache.get_unit_map_standalone",
+            AsyncMock(return_value={}),
+        ):
+            result = await svc.model_breakdown(tenant=None, time_range="24h", task_types=["nmt"])
+        assert result["services"][0]["native_breakdown"] is None
+
+
+class TestComparisonWindow:
+    """The vs-previous-period window: the range's own length back by default;
+    a set previous_shift_seconds (the dashboard's `today`) moves it a day."""
+
+    def test_default_is_the_equal_length_window_before(self):
+        r = AbsoluteRange(start=_datetime(2026, 10, 8, 18, 30, tzinfo=_timezone.utc),
+                          end=_datetime(2026, 10, 9, 8, 50, tzinfo=_timezone.utc))
+        assert comparison_shift_seconds(r) == r.duration_seconds
+
+    def test_today_compares_with_the_same_clock_span_yesterday(self):
+        r = AbsoluteRange(start=_datetime(2026, 10, 8, 18, 30, tzinfo=_timezone.utc),
+                          end=_datetime(2026, 10, 9, 8, 50, tzinfo=_timezone.utc),
+                          previous_shift_seconds=86_400)
+        assert comparison_shift_seconds(r) == 86_400
+
+    def test_retention_clamp_keeps_the_shift(self, monkeypatch):
+        monkeypatch.setattr(
+            "app.utils.metering_promql_builder.retention_edge",
+            lambda now=None: _datetime(2026, 10, 9, 0, 0, tzinfo=_timezone.utc),
+        )
+        r = AbsoluteRange(start=_datetime(2026, 10, 8, 18, 30, tzinfo=_timezone.utc),
+                          end=_datetime(2026, 10, 9, 8, 50, tzinfo=_timezone.utc),
+                          previous_shift_seconds=86_400)
+        clamped = retained_range(r)
+        assert clamped.start == _datetime(2026, 10, 9, 0, 0, tzinfo=_timezone.utc)
+        assert clamped.previous_shift_seconds == 86_400

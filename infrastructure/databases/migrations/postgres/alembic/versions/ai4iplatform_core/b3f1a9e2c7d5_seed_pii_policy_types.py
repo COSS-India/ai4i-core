@@ -1,7 +1,7 @@
 """seed PII policy types
 
 Revision ID: b3f1a9e2c7d5
-Revises: c0d2e4f6a8b1
+Revises: 9092247a3b27
 Create Date: 2026-10-09
 
 """
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b3f1a9e2c7d5"
-down_revision: Union[str, None] = "c0d2e4f6a8b1"
+down_revision: Union[str, None] = "9092247a3b27"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

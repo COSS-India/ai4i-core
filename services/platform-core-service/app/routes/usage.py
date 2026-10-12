@@ -22,6 +22,12 @@ from app.schemas.pay_per_use.usage import (
     UsageSummaryResponse,
 )
 from app.services.pay_per_use.usage_service import UsageService
+from app.utils.usage_period import (
+    FROM_DESCRIPTION,
+    PERIOD_DESCRIPTION,
+    TO_DESCRIPTION,
+    period_from_request,
+)
 
 router = APIRouter(prefix="/pay-per-use", tags=["Usage"])
 
@@ -97,20 +103,20 @@ async def get_usage_summary(
 @router.get("/usage-tenants", response_model=TenantHierarchicalListResponse)
 async def get_tenant_usage_list(
     request: Request,
-    billing_period: Annotated[
-        Optional[str],
-        Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="Billing month in YYYY-MM format. Omit for all-time usage up to now."),
-    ] = None,
-    tier_id: Optional[str] = Query(None, description="Filter by tier ID."),
-    modelTaskType: Optional[str] = Query(None, description="Filter by model task type (e.g. LLM, ASR, NMT)."),
+    period: Optional[str] = Query(None, description=PERIOD_DESCRIPTION),
+    from_: Optional[str] = Query(None, alias="from", description=FROM_DESCRIPTION),
+    to: Optional[str] = Query(None, description=TO_DESCRIPTION),
+    tier_id: Optional[str] = Query(None, description="Only institutions whose most recent tier in the period is this one."),
+    modelTaskType: Optional[str] = Query(None, description="Only institutions that used this task type in the period (e.g. LLM, ASR, NMT)."),
     task_types: Optional[str] = Query(None, description="Comma-separated task types to include (frontend allowlist)."),
-    sortOrder: Annotated[str, Query(pattern="^(asc|desc)$", description="Sort tenants by spend ascending or descending.")] = "desc",
+    sortOrder: Annotated[str, Query(pattern="^(asc|desc)$", description="Sort institutions by spend in the period, ascending or descending.")] = "desc",
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of tenants to return."),
     offset: int = Query(0, ge=0, description="Number of tenants to skip (for pagination)."),
     db: AsyncSession = Depends(get_db),
     auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ):
     _require_admin(request)
+    usage_period = period_from_request(request, period, from_, to)
     tier_id = _validate_tier_id(tier_id)
     svc = UsageService(UsageRepository(db))
     # Resolved to an id here, at the edge. A name that is not in the catalogue
@@ -122,7 +128,7 @@ async def get_tenant_usage_list(
         else None
     )
     return await svc.get_tenant_list(
-        billing_period, tier_id, model_task_type_id, auth_db,
+        usage_period, tier_id, model_task_type_id, auth_db,
         sortOrder, limit, offset, task_type_ids=await _parse_task_type_ids(db, task_types),
     )
 
@@ -131,18 +137,18 @@ async def get_tenant_usage_list(
 async def get_tenant_usage_detail(
     request: Request,
     tenant_id: str = Query(..., description="Tenant ID."),
-    billing_period: Annotated[
-        Optional[str],
-        Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="Billing month in YYYY-MM format. Omit for all-time usage up to now."),
-    ] = None,
+    period: Optional[str] = Query(None, description=PERIOD_DESCRIPTION),
+    from_: Optional[str] = Query(None, alias="from", description=FROM_DESCRIPTION),
+    to: Optional[str] = Query(None, description=TO_DESCRIPTION),
     task_types: Optional[str] = Query(None, description="Comma-separated task types to include (frontend allowlist)."),
     db: AsyncSession = Depends(get_db),
     auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ):
     _authorize_tenant(request, tenant_id)
+    usage_period = period_from_request(request, period, from_, to)
 
     svc = UsageService(UsageRepository(db))
     return await svc.get_tenant_detail(
-        tenant_id, billing_period, auth_db,
+        tenant_id, usage_period, auth_db,
         task_type_ids=await _parse_task_type_ids(db, task_types),
     )

@@ -15,7 +15,7 @@ Provides:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Union
 
@@ -108,6 +108,11 @@ class AbsoluteRange:
     """
     start: datetime
     end: datetime
+    # How far back the vs-previous-period window sits. None = the range's own
+    # length (the equal-length window just before it). The Usage Dashboard's
+    # `today` (midnight → now) sets one day instead, so it compares with
+    # yesterday midnight → the same clock time yesterday.
+    previous_shift_seconds: int | None = None
 
     @property
     def duration_seconds(self) -> int:
@@ -165,7 +170,7 @@ def retained_range(time_range: TimeRange) -> Union[TimeRange, _NotRetained]:
         return NOT_RETAINED
     if time_range.start >= edge:
         return time_range
-    return AbsoluteRange(start=edge, end=time_range.end)
+    return replace(time_range, start=edge)
 
 
 def _empty_expr(metric_expr: str) -> str:
@@ -205,6 +210,22 @@ def previous_window_offset(time_range: TimeRange) -> str:
         return window_offset(time_range, time_range.duration_seconds)
     window = window_duration(time_range)
     return f" offset {window}" if window else ""
+
+
+def comparison_shift_seconds(time_range: AbsoluteRange) -> int:
+    """How far the vs-previous-period window is shifted back from an
+    AbsoluteRange (see AbsoluteRange.previous_shift_seconds)."""
+    return time_range.previous_shift_seconds or time_range.duration_seconds
+
+
+def comparison_window_offset(time_range: TimeRange) -> str:
+    """`` offset ...`` for the vs-previous-period KPI window. Same as
+    previous_window_offset unless the AbsoluteRange sets its own
+    previous_shift_seconds. Not for the hybrid sum's start-of-window check,
+    which must stay at the range's own start (previous_window_offset)."""
+    if isinstance(time_range, AbsoluteRange):
+        return window_offset(time_range, comparison_shift_seconds(time_range))
+    return previous_window_offset(time_range)
 
 
 def build_task_type_selector(task_types: list[str] | None) -> str | None:
@@ -337,18 +358,15 @@ def sum_over_window_by(metric_expr: str, by_label: str, time_range: TimeRange) -
     return f"sum by({by_label}) ({body})" if body else f"sum by({by_label}) ({metric_expr})"
 
 
-# Request Volume chart step for an AbsoluteRange — the same buckets as
-# WINDOW_STEP, picked by duration instead of by preset key: a range up to
-# 1h gets 10m bars, up to 24h 4h bars, up to 31d daily bars (one per
-# calendar day picked), and anything longer weekly bars. Capped at 7d
-# because the frontend's label formatting keys off these four step values
-# only.
+# Request Volume chart step for an AbsoluteRange (the Usage Dashboard's
+# period filter): one day or less (today, yesterday) gets hourly bars, up to
+# 31 days daily bars (one per IST day picked), anything longer weekly bars.
+# The step is also the value the response reports (Graph.step).
 _RANGE_STEP_THRESHOLDS: tuple[tuple[int, str], ...] = (
-    (3_600, "10m"),
-    (86_400, "4h"),
+    (86_400, "1h"),
     (31 * 86_400, "1d"),
 )
-_RANGE_STEP_MAX = "7d"
+_RANGE_STEP_MAX = "1w"
 
 
 def step_for_duration(seconds: int) -> str:

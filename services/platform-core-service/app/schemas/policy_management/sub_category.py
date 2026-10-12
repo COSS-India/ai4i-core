@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.schemas.common import MessageMeta, SuccessResponse, SuccessResponseWithMeta
 from app.schemas.policy_management.fields import (
     DESCRIPTION_MAX_LEN,
+    ID_MAX,
     NAME_MAX_LEN,
     clean_description,
     clean_name,
@@ -35,7 +36,7 @@ class SubCategoryCreate(BaseModel):
 
     name: str = Field(..., max_length=NAME_MAX_LEN)
     description: Optional[str] = Field(None, max_length=DESCRIPTION_MAX_LEN)
-    category_id: int = Field(..., gt=0, le=2_147_483_647, strict=True)
+    category_id: int = Field(..., gt=0, le=ID_MAX, strict=True)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -46,6 +47,13 @@ class SubCategoryCreate(BaseModel):
     @classmethod
     def normalize_description(cls, v):
         return clean_description(v)
+
+
+class SubCategoryStatusUpdate(BaseModel):
+    """Enable or disable a sub-category without deleting it. is_active is
+    strict, so ``"false"`` or ``0`` is rejected rather than coerced."""
+
+    is_active: bool = Field(..., strict=True)
 
 
 # ── Route response envelopes ──
@@ -59,6 +67,13 @@ class ListSubCategoryResponse(SuccessResponse):
 
 class CreateSubCategoryResponse(SuccessResponseWithMeta):
     """POST /policies/sub-categories"""
+
+    data: SubCategoryItem
+    meta: MessageMeta
+
+
+class UpdateSubCategoryStatusResponse(SuccessResponseWithMeta):
+    """PATCH /policies/sub-categories/{sub_category_id}/status"""
 
     data: SubCategoryItem
     meta: MessageMeta

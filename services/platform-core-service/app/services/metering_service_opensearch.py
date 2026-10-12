@@ -63,6 +63,7 @@ from app.utils.metering_promql_builder import (
     TIME_RANGES,
     AbsoluteRange,
     TimeRange,
+    comparison_shift_seconds,
 )
 from app.utils.opensearch_log_client import (
     OpenSearchLogClient,
@@ -104,15 +105,21 @@ def _os_window(time_range: TimeRange) -> Union[str, AbsoluteRange, None]:
 def _period_ranges(time_range: TimeRange) -> Optional[tuple[dict, dict, dict, int]]:
     """(outer, current, previous) `@timestamp` range bodies plus the window
     length in seconds, for request_total's vs-previous-period split (doc
-    §7.5). The previous period is the equal-length window right before the
-    current one. None when there's no bounded window ("all")."""
+    §7.5). The previous period is an equal-length window shifted back by
+    comparison_shift_seconds: by default the one right before the current
+    one; for the dashboard's `today`, the same clock span yesterday. None
+    when there's no bounded window ("all")."""
     if isinstance(time_range, AbsoluteRange):
         start, end = time_range.start, time_range.end
-        prev_start = start - (end - start)
+        shift = timedelta(seconds=comparison_shift_seconds(time_range))
+        prev_start, prev_end = start - shift, end - shift
+        # end is exclusive (the next IST midnight for a whole-day period), so
+        # lt, not lte: an event at exactly midnight belongs to the next day
+        # only, and the KPIs agree with the chart, which also uses lt.
         return (
-            {"gte": prev_start.isoformat(), "lte": end.isoformat()},
-            {"gte": start.isoformat(), "lte": end.isoformat()},
-            {"gte": prev_start.isoformat(), "lt": start.isoformat()},
+            {"gte": prev_start.isoformat(), "lt": end.isoformat()},
+            {"gte": start.isoformat(), "lt": end.isoformat()},
+            {"gte": prev_start.isoformat(), "lt": min(prev_end, start).isoformat()},
             time_range.duration_seconds,
         )
     window = TIME_RANGES.get(time_range or "all")
@@ -216,11 +223,12 @@ class OpenSearchMeteringService(MeteringService):
     @staticmethod
     def _windowed_query(window: Union[str, AbsoluteRange, None], filters: list[dict]) -> dict:
         """``window`` comes from `_os_window`: a relative duration ("7d") is
-        date math ending at now; an AbsoluteRange is explicit UTC ISO bounds."""
+        date math ending at now; an AbsoluteRange is explicit UTC ISO bounds,
+        end exclusive (lt), the same as every AbsoluteRange query."""
         if isinstance(window, AbsoluteRange):
             return {"bool": {"filter": [
                 {"range": {"@timestamp": {
-                    "gte": window.start.isoformat(), "lte": window.end.isoformat(),
+                    "gte": window.start.isoformat(), "lt": window.end.isoformat(),
                 }}},
                 *filters,
             ]}}
@@ -394,7 +402,8 @@ class OpenSearchMeteringService(MeteringService):
         if bounds is None:
             return None
         step, start, end = bounds
-        histogram = {"field": "@timestamp", "fixed_interval": step}
+        # fixed_interval has no week unit; Graph.step still reports "1w".
+        histogram = {"field": "@timestamp", "fixed_interval": "7d" if step == "1w" else step}
         if isinstance(window, AbsoluteRange):
             # Epoch millis — accepted by both the range query and
             # extended_bounds under the default date format. Buckets are

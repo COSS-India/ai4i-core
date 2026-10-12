@@ -93,6 +93,10 @@ class Settings(BaseSettings):
         "kafka-topic-otel-trace", description="Kafka topic for OTel trace spans"
     )
 
+    # PII — Presidio spaCy model names (must match models baked into the image)
+    PII_SPACY_EN_MODEL: str = Field("en_core_web_lg", description="spaCy model for English PII detection")
+    PII_SPACY_MULTILINGUAL_MODEL: str = Field("xx_ent_wiki_sm", description="spaCy model for non-English PII detection")
+
     # Security — user-supplied audio/image URI downloads (SSRF guard)
     ALLOW_PRIVATE_DOWNLOAD_HOSTS: bool = Field(
         False,

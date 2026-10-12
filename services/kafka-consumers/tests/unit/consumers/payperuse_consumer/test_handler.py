@@ -333,6 +333,13 @@ class TestBillUsageThreadsInferenceTypeId:
         monkeypatch.setattr(
             h, "session_scope", lambda name=None: self._FakeAuthSessionScope()
         )
+
+        async def _record(db, event):
+            captured["event"] = event
+            captured["commits_before_event"] = db.commits
+            return captured.get("record_result", True)
+
+        monkeypatch.setattr(h, "record_usage_event", _record)
         return captured
 
     async def test_llm_is_charged_by_token_category(self, monkeypatch):
@@ -683,3 +690,140 @@ class TestGetCachedInputTokens:
 
         assert _get_cached_input_tokens({}) == 0.0
         assert _get_cached_input_tokens({"cached_input_tokens": "bad"}) == 0.0
+
+
+class TestUsageEventRow:
+    """_bill_usage writes one usage_events row per billed span, in the same
+    transaction as the budget/quota writes."""
+
+    _helpers = TestBillUsageThreadsInferenceTypeId
+
+    def _run(self, monkeypatch, ctx, pricing=None, task_type="asr", record_result=True):
+        import asyncio
+
+        from consumers.payperuse_consumer.handler import _bill_usage
+
+        helpers = self._helpers()
+        captured = helpers._patch(monkeypatch, resolved_id=7, task_type=task_type, pricing=pricing)
+        captured["record_result"] = record_result
+        db = helpers._FakeDb()
+        asyncio.run(_bill_usage(db, ctx))
+        return captured, db
+
+    def _ctx(self, **overrides):
+        from datetime import datetime, timezone
+
+        base = dict(
+            tenant_id="12", application_id=7, api_key_id=31, status_code=200,
+            occurred_at=datetime(2026, 10, 12, 6, 30, tzinfo=timezone.utc),
+        )
+        base.update(overrides)
+        return self._helpers()._ctx(**base)
+
+    def test_llm_row_splits_units_and_cost_by_category(self, monkeypatch):
+        from datetime import datetime, timezone
+        from decimal import Decimal
+
+        from consumers.payperuse_consumer._billing import ServicePricing
+
+        pricing = ServicePricing(
+            task_type="llm", unit_rate=None, cost_per_unit=Decimal("0.10"), unit_size=1000,
+            cached_input_cost_per_unit=Decimal("0.04"), output_cost_per_unit=Decimal("0.25"),
+        )
+        ctx = self._ctx(input_tokens=1200.0, cached_input_tokens=1024.0, output_tokens=150.0, total_tokens=1350.0)
+        captured, _ = self._run(monkeypatch, ctx, pricing=pricing)
+
+        event = captured["event"]
+        assert (event.correlation_id, event.span_id) == ("corr-1", "span-1")
+        assert event.occurred_at == datetime(2026, 10, 12, 6, 30, tzinfo=timezone.utc)
+        assert (event.tenant_id, event.application_id, event.api_key_id) == (12, 7, 31)
+        assert (event.tier_id, event.service_id, event.inference_type_id) == ("tier-1", "svc-1", 7)
+        assert (event.task_type, event.status_code) == ("llm", 200)
+        assert (event.total_units, event.cached_input_units, event.output_units) == (
+            Decimal("1350.0"), Decimal("1024.0"), Decimal("150.0"),
+        )
+        assert (event.input_units_cost, event.cached_input_units_cost, event.output_units_cost) == (
+            Decimal("0.0176"), Decimal("0.04096"), Decimal("0.0375"),
+        )
+        # The row's costs add up to exactly what was charged.
+        assert sum((event.input_units_cost, event.cached_input_units_cost, event.output_units_cost)) == captured["cost"]
+
+    def test_cached_input_is_clamped_to_the_input_tokens(self, monkeypatch):
+        from decimal import Decimal
+
+        from consumers.payperuse_consumer._billing import ServicePricing
+
+        pricing = ServicePricing(task_type="llm", unit_rate=None, cost_per_unit=Decimal("0.10"), unit_size=1000)
+        ctx = self._ctx(input_tokens=100.0, cached_input_tokens=500.0, output_tokens=0.0, total_tokens=100.0)
+        captured, _ = self._run(monkeypatch, ctx, pricing=pricing)
+        assert captured["event"].cached_input_units == Decimal("100.0")
+
+    def test_non_llm_row_has_the_whole_charge_as_input(self, monkeypatch):
+        from decimal import Decimal
+
+        ctx = self._ctx(input_tokens=40.0, output_tokens=9.0, total_tokens=49.0)
+        captured, _ = self._run(monkeypatch, ctx, task_type="nmt")
+
+        event = captured["event"]
+        assert event.total_units == Decimal("40.0")            # output units aren't billed for NMT
+        assert (event.cached_input_units, event.output_units) == (0, 0)
+        assert event.input_units_cost == Decimal("20.0") == captured["cost"]   # 40 × 0.5
+        assert (event.cached_input_units_cost, event.output_units_cost) == (0, 0)
+
+    def test_missing_ids_are_null(self, monkeypatch):
+        ctx = self._ctx(tenant_id="not-a-number", api_key_id=0, application_id=None)
+        captured, _ = self._run(monkeypatch, ctx)
+        event = captured["event"]
+        assert (event.tenant_id, event.api_key_id, event.application_id) == (None, None, None)
+
+    def test_written_in_the_billing_transaction_before_commit(self, monkeypatch):
+        captured, db = self._run(monkeypatch, self._ctx())
+        assert captured["commits_before_event"] == 0
+        assert db.commits == 1
+
+    def test_failed_row_does_not_stop_billing(self, monkeypatch):
+        captured, db = self._run(monkeypatch, self._ctx(), record_result=False)
+        assert db.commits == 1
+        assert "units" in captured   # the budget/quota write still ran
+
+
+class TestPrepareBillingContextForUsageEvents:
+    def _prepare(self, monkeypatch, attributes: dict, end_time=1_791_786_600_000_000_000):
+        import asyncio
+
+        from consumers.payperuse_consumer import handler as h
+
+        message = {
+            "name": "ai-inference",
+            "context": {"span_id": "0x00000000000000ab"},
+            "end_time": end_time,
+            "attributes": {
+                "tenantId": "12", "service_id": "svc-1", "input_tokens": 10, "output_tokens": 5,
+                "correlation_id": "corr-1", "api_key_id": "31", "tier_id": "tier-1", "authType": "api_key",
+                **attributes,
+            },
+        }
+
+        async def _not_billed(*args):
+            return False
+
+        monkeypatch.setattr(h, "_get_billing_data", lambda msg: message)
+        monkeypatch.setattr(h, "_is_already_billed", _not_billed)
+
+        class _Msg:
+            def offset(self):
+                return 0
+
+        return asyncio.run(h._prepare_billing_context(_Msg()))
+
+    def test_span_end_time_is_occurred_at_and_billing_month(self, monkeypatch):
+        from datetime import datetime, timezone
+
+        ctx = self._prepare(monkeypatch, {"app_id": "7", "status_code": 200})
+        assert ctx.occurred_at == datetime.fromtimestamp(1_791_786_600, tz=timezone.utc)
+        assert ctx.billing_month == ctx.occurred_at.strftime("%Y-%m")
+        assert (ctx.application_id, ctx.status_code) == (7, 200)
+
+    def test_absent_application_and_status_are_none(self, monkeypatch):
+        ctx = self._prepare(monkeypatch, {})
+        assert (ctx.application_id, ctx.status_code) == (None, None)
