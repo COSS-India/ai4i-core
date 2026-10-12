@@ -1,5 +1,10 @@
-import type { MeteringTopN, MeteringWindow } from "../types/metering";
+import type { MeteringPeriod, MeteringPeriodKey, MeteringTopN } from "../types/metering";
 import { INSTITUTION, INSTITUTIONS } from "./constants";
+
+type MeteringPresetPeriodKey = Exclude<MeteringPeriodKey, "custom">;
+
+/** Longest custom range the API accepts, in days. */
+const CUSTOM_RANGE_MAX_DAYS = 366;
 
 /** Metering & usage dashboard — copy, defaults, and configuration. */
 export const METERING = {
@@ -8,6 +13,9 @@ export const METERING = {
     UNAVAILABLE_503:
       "Metering data is temporarily unavailable. Prometheus may not be configured.",
     FORBIDDEN_403: "You do not have permission to view this metering data.",
+    /** `detail.code` of a 422 for a period the API rejects. */
+    INVALID_PERIOD_CODE: "INVALID_PERIOD",
+    INVALID_PERIOD_RESET: "That date range can't be shown, so the dashboard is back on Today.",
     BAD_REQUEST_400: "Invalid metering request parameters.",
   },
   BANNERS: {
@@ -31,7 +39,7 @@ export const METERING = {
     SCROLL_ROOT_MARGIN: "100px",
   },
   DEFAULTS: {
-    TIME_WINDOW: "24h" satisfies MeteringWindow,
+    PERIOD: { key: "today" } satisfies MeteringPeriod,
     TOP_N: 10 satisfies MeteringTopN,
     SUB_TAB: "overview" as const,
     ASYNC_STATE_HEIGHT: "300px",
@@ -76,23 +84,24 @@ export const METERING = {
     },
     EMPTY_VALUE: "—",
   },
-  TIME_WINDOWS: [
-    { value: "1h", label: "Last 1 hour" },
-    { value: "24h", label: "Last 24 hours" },
-    { value: "7d", label: "Last 7 days" },
-    { value: "30d", label: "Last 30 days" },
-  ] as const satisfies ReadonlyArray<{ value: MeteringWindow; label: string }>,
-  TIME_WINDOW_LABELS: {
-    "1h": "last 1 hour",
-    "24h": "last 24 hours",
-    "7d": "last 7 days",
-    "30d": "last 30 days",
-  } as const satisfies Record<MeteringWindow, string>,
+  /** Preset period buttons; a custom range comes from the date picker. */
+  PERIODS: [
+    { key: "today", label: "Today" },
+    { key: "yesterday", label: "Yesterday" },
+    { key: "last_7_days", label: "Last 7 days" },
+  ] as const satisfies ReadonlyArray<{ key: MeteringPresetPeriodKey; label: string }>,
+  /** Preset period in running text, e.g. "Consumption across all Models – today". */
+  PERIOD_LABELS: {
+    today: "today",
+    yesterday: "yesterday",
+    last_7_days: "last 7 days",
+  } as const satisfies Record<MeteringPresetPeriodKey, string>,
   /** Custom date ranges are calendar days in IST, whatever the browser zone. */
   IST_TIME_ZONE: "Asia/Kolkata",
   CUSTOM_RANGE: {
     TITLE: "Custom date range",
-    SUBTITLE: "Select a start date and an end date",
+    SUBTITLE: `Select a start date and an end date (up to ${CUSTOM_RANGE_MAX_DAYS} days, ending yesterday)`,
+    MAX_DAYS: CUSTOM_RANGE_MAX_DAYS,
     APPLY: "Apply",
     CANCEL: "Cancel",
     CLEAR: "Clear custom range",
@@ -141,13 +150,26 @@ export const METERING = {
     BUDGET: "BUDGET",
     QUOTA_SUMMARY: "QUOTA SUMMARY",
     USAGE_BY_TASK_TYPE: "USAGE BY MODEL TASK TYPE",
-    USAGE_VS_QUOTA_ALL_TIME: "USAGE VS. QUOTA (ALL-TIME)",
+    /** Followed by the billing month, e.g. "USAGE VS. QUOTA (OCT 2026)". */
+    USAGE_VS_QUOTA: "USAGE VS. QUOTA",
+    THIS_MONTH: "THIS MONTH",
+    NO_QUOTA_THIS_MONTH: "No quota this month",
+    USAGE_IN_PERIOD: "USAGE IN PERIOD",
+    PERIOD_SPEND: "SPEND IN PERIOD",
+    TABLE_PERIOD_SPEND: "Spend in period",
+    /** Expandable LLM rows: input / cached input / output tokens and their cost. */
+    TOGGLE_COST_BREAKDOWN: "Toggle cost breakdown for",
+    COST_SHARE_SUFFIX: "% of cost",
+    BREAKDOWN_TOTAL: "Total",
+    TABLE_NOTE:
+      "Spend and usage are for the selected period. Budget is all-time and quota is for the current month — open an institution for the full breakdown.",
+    MULTI_TIER_NOTE: `Grouped by tier since this ${INSTITUTION.toLowerCase()} changed tier during the period.`,
     /** @deprecated Use USAGE_BY_TASK_TYPE */
     SPEND_BY_TASK_TYPE: "USAGE BY MODEL TASK TYPE",
     TENANT_DETAIL_TITLE: "Institution Usage Details",
     BUDGET_ALL_TIME_NOTE: "All-time institution budget.",
-    TIER_BREAKDOWN_ALL_TIME_NOTE:
-      "Cumulative all-time quota usage per task type.",
+    TIER_BREAKDOWN_NOTE:
+      "Usage in the selected period; quota is for the current billing month.",
     TOTAL_ALLOCATED: "TOTAL ALLOCATED",
     TOTAL_USED: "TOTAL USED",
     TOTAL_REMAINING: "TOTAL REMAINING",
@@ -158,16 +180,18 @@ export const METERING = {
       ALLOCATED_BUDGET: "Monetary budget assigned to this institution.",
       BUDGET: "How much of the allocated budget has been spent versus what remains.",
       ALLOCATED_TOKENS: "Token allowance assigned to this institution.",
-      USAGE: "Quota consumed versus remaining for this model task type.",
+      USAGE: "This month's quota used versus remaining for this model task type.",
+      PERIOD_USAGE: "Units used and their cost in the selected period.",
+      PERIOD_SPEND: `Spend by this ${INSTITUTION.toLowerCase()} in the selected period.`,
       ACTIVE_TENANTS: `${INSTITUTIONS} with spend recorded.`,
       TASK_TYPES: `Number of model task types this ${INSTITUTION.toLowerCase()} has consumed.`,
     },
     TABLE_TASK_TYPES: "Task Types",
   },
   APPLICATION_USAGE: {
-    TENANT_SUBTITLE: "Application usage · lifetime totals",
+    TENANT_SUBTITLE: "Application usage and spend",
     LIFETIME_NOTE:
-      "Application budget figures are lifetime totals — not scoped to the time window used on other tabs.",
+      "Spend in period follows the selected period. Allocated, spend and remaining budget are lifetime totals.",
     SUMMARY: {
       TOTAL_APPLICATIONS: "TOTAL APPLICATIONS",
       ALLOCATED: "ALLOCATED BUDGET",
@@ -176,12 +200,18 @@ export const METERING = {
       SCOPE_ONBOARDED: "Onboarded under this Institution",
       SCOPE_ACROSS_APPS: "Across all Applications",
       PCT_OF_INSTITUTION: "of Institution Budget",
+      PERIOD_SPEND: "SPEND IN PERIOD",
     },
     TOOLTIPS: {
       TOTAL_APPLICATIONS: "Count of all Applications onboarded under the Institution.",
       ALLOCATED:
         "Sum of Budget allocated across all Applications. Equals 100% of the Institution's Budget when fully allocated.",
-      SPENT: "Sum of Budget consumed across all Applications.",
+      SPENT: "Lifetime sum of Budget consumed across all Applications.",
+      PERIOD_SPEND:
+        "Spend across all Applications in the selected period, as % of the Institution's Budget.",
+      PERIOD_SPEND_COL:
+        "This Application's spend in the selected period, as % of its own allocation.",
+      API_KEY_PERIOD_SPEND: "This Key's spend in the selected period, as % of its own allocation.",
       REMAINING:
         "Allocated Budget minus Spend Budget, summed across all Applications.",
       ALLOCATED_COL:
@@ -209,9 +239,13 @@ export const METERING = {
       NO_BUDGET: "No Budget allocated",
       REMAINING_OF_ALLOCATION: "of App allocation",
       REMAINING_OF_KEY_ALLOCATION: "remaining",
+      PERIOD_SPEND: "SPEND IN PERIOD",
+      PERIOD_SPEND_SHORT: "IN PERIOD",
+      PERIOD_OF_ALLOCATION: "of allocation",
     },
     DRAWER_TITLE: "Application Spend Details",
     DRAWER_SPEND_BY_API_KEY: "Spend by API Key",
+    DRAWER_PERIOD_SPEND: "SPEND IN PERIOD",
     DRAWER_NO_BUDGET: "No Budget has been allocated to this Application yet.",
     DRAWER_NO_KEYS: "No API keys have been issued against this Application yet.",
     SELECT_INSTITUTION: "Select an institution from the filter above to view application usage.",
@@ -410,6 +444,9 @@ export const METERING = {
       TABLE_SUCCESS: "Success rate %",
       TABLE_FAILURE: "Failure rate %",
       FILTER_TASK_TYPES: "Model Task Type",
+      /** Expandable LLM rows: input / cached input / output tokens. */
+      TOGGLE_TOKEN_BREAKDOWN: "Toggle token breakdown for",
+      TOKEN_SHARE_SUFFIX: "% of tokens",
       TOOLTIPS: {
         TASK_TYPE:
           "The task type this model performs, as registered in the Model Registry.",

@@ -4,8 +4,8 @@ import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
 import {
   USAGE_SPEND_ACCENT,
-  aggregateTasks,
   formatSpendMoney,
+  formatSpendMoneyExact,
 } from "../../utils/usageSpendHelpers";
 import type { TenantUsageItem } from "../../types/usageSpend";
 import DataTable, { type DataTableColumn } from "../common/table";
@@ -23,11 +23,12 @@ interface UsageSpendTenantTableProps {
 }
 
 const COLUMN_WIDTHS = {
-  institution: "26%",
-  tier: "12%",
-  allocatedBudget: "18%",
-  budget: "24%",
-  taskTypes: "20%",
+  institution: "24%",
+  tier: "10%",
+  periodSpend: "14%",
+  allocatedBudget: "16%",
+  budget: "20%",
+  taskTypes: "16%",
 } as const;
 
 const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
@@ -95,6 +96,19 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
         cell: (row) => <TierBadge label={row.tier} />,
       },
       {
+        id: "periodSpend",
+        header: METERING.USAGE_SPEND.TABLE_PERIOD_SPEND,
+        sortable: true,
+        sortAccessor: (row) => row.periodSpend,
+        hint: tips.PERIOD_SPEND,
+        width: COLUMN_WIDTHS.periodSpend,
+        cell: (row) => (
+          <Text fontWeight="semibold" fontSize="13px">
+            {formatSpendMoneyExact(row.periodSpend, row.currency)}
+          </Text>
+        ),
+      },
+      {
         id: "budgetLimit",
         header: "Allocated Budget (INR)",
         sortable: true,
@@ -127,13 +141,11 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
         id: "taskTypeCount",
         header: METERING.USAGE_SPEND.TABLE_TASK_TYPES,
         sortable: true,
-        sortAccessor: (row) =>
-          row.usage?.taskTypeCount ?? aggregateTasks(row.tierBreakdown ?? []).length,
+        sortAccessor: (row) => row.usage.taskTypeCount,
         hint: tips.TASK_TYPES,
         width: COLUMN_WIDTHS.taskTypes,
         cell: (row) => {
-          const taskCount =
-            row.usage?.taskTypeCount ?? aggregateTasks(row.tierBreakdown ?? []).length;
+          const taskCount = row.usage.taskTypeCount;
           if (taskCount === 0) {
             return (
               <Text fontSize="12px" color="gray.500">
@@ -170,7 +182,7 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
       columns={columns}
       rows={tenants}
       rowKey={(row) => row.tenantId}
-      defaultSortKey="budgetSpent"
+      defaultSortKey="periodSpend"
       defaultSortDirection="desc"
       isLoading={isLoading}
       isEmpty={!isLoading && tenants.length === 0}

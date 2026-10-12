@@ -13,22 +13,17 @@ import {
   METERING,
   type MeteringSubTab,
 } from "../../config/meteringConstants";
-import type {
-  MeteringDateRange,
-  MeteringTopN,
-  MeteringWindow,
-} from "../../types/metering";
+import type { MeteringDayKey, MeteringPeriod, MeteringTopN } from "../../types/metering";
 import { formatMeteringRefreshTime } from "../../utils/meteringFormatters";
 import CustomRangePicker from "./CustomRangePicker";
 import SegmentedTabBar from "./SegmentedTabBar";
 
 interface MeteringControlsProps {
-  timeWindow: MeteringWindow;
-  onTimeWindowChange: (w: MeteringWindow) => void;
-  /** Applied custom range; when set no preset is highlighted. */
-  customRange?: MeteringDateRange | null;
-  onApplyCustomRange?: (range: MeteringDateRange) => void;
-  onClearCustomRange?: () => void;
+  /** Selected period; a custom one highlights no preset. */
+  period: MeteringPeriod;
+  onPeriodChange: (period: MeteringPeriod) => void;
+  /** Earliest day the custom range picker allows; null = no floor. */
+  firstPickableDay?: MeteringDayKey | null;
   topN?: MeteringTopN;
   onTopNChange?: (n: MeteringTopN) => void;
   showTopN?: boolean;
@@ -47,11 +42,9 @@ interface MeteringControlsProps {
 }
 
 const MeteringControls: React.FC<MeteringControlsProps> = ({
-  timeWindow,
-  onTimeWindowChange,
-  customRange = null,
-  onApplyCustomRange,
-  onClearCustomRange,
+  period,
+  onPeriodChange,
+  firstPickableDay = null,
   topN,
   onTopNChange,
   showTopN = false,
@@ -67,8 +60,6 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
   showSubTabs = false,
   subTabs = METERING.SUB_TABS,
 }) => {
-  const isPeriodIndependentTab =
-    subTab === METERING.SUB_TAB.USAGE_SPEND || subTab === METERING.SUB_TAB.APPLICATIONS;
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
@@ -83,34 +74,31 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
 
   return (
   <VStack align="stretch" spacing={3}>
-    {isPeriodIndependentTab ? null : (
-      <HStack spacing={2} flexWrap="wrap">
-        <ButtonGroup size="sm" isAttached variant="outline" flexWrap="wrap">
-          {METERING.TIME_WINDOWS.map((opt) => {
-            const isActive = !customRange && timeWindow === opt.value;
-            return (
-              <Button
-                key={opt.value}
-                onClick={() => onTimeWindowChange(opt.value)}
-                colorScheme={isActive ? "orange" : "gray"}
-                variant={isActive ? "solid" : "outline"}
-                fontWeight={isActive ? "semibold" : "normal"}
-                borderRadius="full"
-              >
-                {opt.label}
-              </Button>
-            );
-          })}
-        </ButtonGroup>
-        {onApplyCustomRange && onClearCustomRange ? (
-          <CustomRangePicker
-            appliedRange={customRange}
-            onApply={onApplyCustomRange}
-            onClear={onClearCustomRange}
-          />
-        ) : null}
-      </HStack>
-    )}
+    <HStack spacing={2} flexWrap="wrap">
+      <ButtonGroup size="sm" isAttached variant="outline" flexWrap="wrap">
+        {METERING.PERIODS.map((opt) => {
+          const isActive = period.key === opt.key;
+          return (
+            <Button
+              key={opt.key}
+              onClick={() => onPeriodChange({ key: opt.key })}
+              colorScheme={isActive ? "orange" : "gray"}
+              variant={isActive ? "solid" : "outline"}
+              fontWeight={isActive ? "semibold" : "normal"}
+              borderRadius="full"
+            >
+              {opt.label}
+            </Button>
+          );
+        })}
+      </ButtonGroup>
+      <CustomRangePicker
+        appliedRange={period.key === "custom" ? period.range : null}
+        onApply={(range) => onPeriodChange({ key: "custom", range })}
+        onClear={() => onPeriodChange(METERING.DEFAULTS.PERIOD)}
+        minDay={firstPickableDay}
+      />
+    </HStack>
 
     <HStack spacing={3} flexWrap="wrap" justify="space-between" align="flex-end">
       <HStack spacing={3} flexWrap="wrap" align="flex-end">

@@ -3,6 +3,7 @@ import {
   Button,
   Checkbox,
   HStack,
+  IconButton,
   Menu,
   MenuButton,
   MenuItem,
@@ -13,19 +14,23 @@ import {
   Tooltip,
   VStack,
 } from "@chakra-ui/react";
-import { ChevronDownIcon } from "@chakra-ui/icons";
-import React, { useEffect, useMemo, useState } from "react";
+import { ChevronDownIcon, ChevronRightIcon } from "@chakra-ui/icons";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { formatModelTaskTypeLabel } from "../../config/constants";
 import { METERING } from "../../config/meteringConstants";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
-import type { ModelConsumptionResponse, ModelTopN } from "../../types/metering";
+import type {
+  ModelConsumptionResponse,
+  ModelConsumptionRow,
+  ModelTopN,
+} from "../../types/metering";
 import {
   buildModelBreakdownChart,
   buildTopModelsChart,
   deriveModelInsights,
   formatCompactNumber,
   formatNativeConsumption,
-  getScopeWindowLabel,
+  getScopePeriodLabel,
   modelConsumptionTaskTypeColor,
 } from "../../utils/meteringFormatters";
 import { normalizeModelTaskType } from "../../utils/meteringTaskType";
@@ -33,9 +38,17 @@ import DataTable, { type DataTableColumn } from "../common/table";
 import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDonutChart, { DonutRankedLayout } from "./MeteringDonutChart";
 import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
+import { ModelTokenBreakdownRows } from "./ModelTokenBreakdownRows";
 import RankedShareList from "./RankedShareList";
 import SegmentedTabBar from "./SegmentedTabBar";
 import { TaskTypeLabel } from "./UsageSpendCells";
+
+const breakdownRowKey = (row: ModelConsumptionRow) =>
+  `${row.service_id}-${row.model_name ?? row.name}`;
+
+/** LLM rows carry a token breakdown and can be expanded to show it. */
+const hasTokenBreakdown = (row: ModelConsumptionRow) =>
+  (row.native_breakdown?.length ?? 0) > 0;
 
 interface ModelConsumptionTabProps {
   data?: ModelConsumptionResponse;
@@ -57,6 +70,16 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
   const { taskTypeNames } = useInferenceTypes();
   const [topN, setTopN] = useState<ModelTopN>(METERING.MODEL_TOP_N_DEFAULT);
   const [selectedTaskTypes, setSelectedTaskTypes] = useState<Set<string>>(new Set());
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+
+  const toggleRow = useCallback((key: string) => {
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (taskTypeNames.length > 0) {
@@ -137,15 +160,33 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
         id: "task_type",
         header: section.TABLE_TASK_TYPE,
         hint: section.TOOLTIPS.TASK_TYPE,
-        cell: (row, i) =>
-          row.task_type ? (
-            <TaskTypeLabel
-              taskType={row.task_type}
-              color={modelConsumptionTaskTypeColor(row.task_type, i)}
-            />
-          ) : (
-            METERING.GRAPH.EMPTY_VALUE
-          ),
+        cell: (row, i) => {
+          const key = breakdownRowKey(row);
+          const isOpen = expandedRows.has(key);
+          return (
+            <HStack spacing={1}>
+              <IconButton
+                aria-label={`${section.TOGGLE_TOKEN_BREAKDOWN} ${row.name}`}
+                aria-expanded={isOpen}
+                icon={<ChevronRightIcon />}
+                size="xs"
+                variant="ghost"
+                visibility={hasTokenBreakdown(row) ? "visible" : "hidden"}
+                transform={isOpen ? "rotate(90deg)" : undefined}
+                transition="transform 0.15s ease"
+                onClick={() => toggleRow(key)}
+              />
+              {row.task_type ? (
+                <TaskTypeLabel
+                  taskType={row.task_type}
+                  color={modelConsumptionTaskTypeColor(row.task_type, i)}
+                />
+              ) : (
+                <Text fontSize="sm">{METERING.GRAPH.EMPTY_VALUE}</Text>
+              )}
+            </HStack>
+          );
+        },
       },
       {
         id: "model_name",
@@ -226,7 +267,7 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
         ),
       },
     ],
-    [section, sortAccessors],
+    [section, sortAccessors, expandedRows, toggleRow],
   );
 
   const toggleTaskType = (taskType: string) => {
@@ -380,7 +421,7 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
 
           <MeteringSectionCard
             title={section.BREAKDOWN_TITLE}
-            subtitle={`${section.BREAKDOWN_SUBTITLE_PREFIX} ${getScopeWindowLabel(data.scope)}`}
+            subtitle={`${section.BREAKDOWN_SUBTITLE_PREFIX} ${getScopePeriodLabel(data.scope)}`}
             sectionLabel
             bare
           >
@@ -437,12 +478,17 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
             <DataTable
               columns={breakdownColumns}
               rows={filteredBreakdown}
-              rowKey={(row) => `${row.service_id}-${row.model_name ?? row.name}`}
+              rowKey={breakdownRowKey}
               defaultSortKey="requests"
               defaultSortDirection="desc"
               theadBg="gray.50"
               containerMt={0}
               showAsyncState={false}
+              renderAfterRow={(row) =>
+                hasTokenBreakdown(row) && expandedRows.has(breakdownRowKey(row)) ? (
+                  <ModelTokenBreakdownRows row={row} />
+                ) : null
+              }
             />
           </MeteringSectionCard>
         </VStack>

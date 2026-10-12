@@ -23,11 +23,9 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
   const {
     subTab,
     setSubTab,
-    timeWindow,
-    setTimeWindow,
-    customRange,
-    applyCustomRange,
-    clearCustomRange,
+    period,
+    setPeriod,
+    firstUsageDay,
     topN,
     setTopN,
     scopeTenantId,
@@ -84,11 +82,9 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
       ) : null}
 
       <MeteringControls
-        timeWindow={timeWindow}
-        onTimeWindowChange={setTimeWindow}
-        customRange={customRange}
-        onApplyCustomRange={applyCustomRange}
-        onClearCustomRange={clearCustomRange}
+        period={period}
+        onPeriodChange={setPeriod}
+        firstPickableDay={firstUsageDay}
         lastGeneratedAt={lastGeneratedAt}
         onRefresh={isTenantView ? undefined : handleRefresh}
         isRefreshing={isRefreshing}
@@ -107,6 +103,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
       {isTenantView ? (
         <TenantDashboardPanels
           subTab={subTab}
+          period={period}
           overview={overview}
           requestVolumeSection={requestVolumeSection}
           modelQuery={modelQuery}
@@ -120,6 +117,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
       {isTenantView ? null : (
         <AdopterDashboardPanels
           subTab={subTab}
+          period={period}
           overview={overview}
           tenantOrganisationById={tenantOrganisationById}
           requestVolumeSection={requestVolumeSection}

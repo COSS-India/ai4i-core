@@ -18,11 +18,14 @@ import type {
   ApplicationUsageDetail,
   ApplicationUsageListItem,
 } from "../../types/applicationUsage";
+import type { MeteringPeriod } from "../../types/metering";
+import { formatPeriodTitle } from "../../utils/meteringFormatters";
 import ApplicationUsageDrawer from "./ApplicationUsageDrawer";
 import ApplicationUsageSummaryPanel from "./ApplicationUsageSummaryPanel";
 import ApplicationUsageTable from "./ApplicationUsageTable";
 
 interface ApplicationUsageTabProps {
+  readonly period: MeteringPeriod;
   readonly scopeTenantId?: string | null;
   readonly isTenantView?: boolean;
   readonly tenantId?: string | null;
@@ -31,6 +34,7 @@ interface ApplicationUsageTabProps {
 }
 
 const ApplicationUsageTab: React.FC<ApplicationUsageTabProps> = ({
+  period,
   scopeTenantId = null,
   isTenantView = false,
   tenantId = null,
@@ -46,10 +50,12 @@ const ApplicationUsageTab: React.FC<ApplicationUsageTabProps> = ({
 
   const data = useApplicationUsageData({
     tenantId: scopedId,
+    period,
     refreshNonce,
   });
 
   const copy = METERING.APPLICATION_USAGE;
+  const periodTitle = formatPeriodTitle(period);
   const orgName = organisationLabel?.trim() || null;
 
   const handleApplicationClick = useCallback(
@@ -60,7 +66,7 @@ const ApplicationUsageTab: React.FC<ApplicationUsageTabProps> = ({
       setIsDetailLoading(true);
       setDetailError(null);
       try {
-        const detail = await fetchApplicationUsageDetail(scopedId, row.applicationId);
+        const detail = await fetchApplicationUsageDetail(scopedId, row.applicationId, period);
         if (requestId !== detailRequestIdRef.current) return;
         setSelected(detail);
         setDetailError(null);
@@ -72,7 +78,7 @@ const ApplicationUsageTab: React.FC<ApplicationUsageTabProps> = ({
         if (requestId === detailRequestIdRef.current) setIsDetailLoading(false);
       }
     },
-    [scopedId, onDetailOpen],
+    [scopedId, period, onDetailOpen],
   );
 
   const handleDetailClose = useCallback(() => {
@@ -117,6 +123,7 @@ const ApplicationUsageTab: React.FC<ApplicationUsageTabProps> = ({
 
       <ApplicationUsageSummaryPanel
         summary={data.summary}
+        periodTitle={periodTitle}
         isLoading={data.isSummaryLoading}
         error={data.summaryError}
       />
@@ -137,6 +144,7 @@ const ApplicationUsageTab: React.FC<ApplicationUsageTabProps> = ({
         isOpen={isDetailOpen}
         onClose={handleDetailClose}
         detail={selected}
+        periodTitle={periodTitle}
         isLoading={isDetailLoading}
         errorMessage={detailError}
       />

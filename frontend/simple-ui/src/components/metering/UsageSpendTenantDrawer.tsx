@@ -13,14 +13,15 @@ import {
 } from "@chakra-ui/react";
 import React from "react";
 import { METERING } from "../../config/meteringConstants";
-import type { TenantUsageDetail } from "../../types/usageSpend";
+import type { TenantUsageItem } from "../../types/usageSpend";
 import { InstitutionUsageDetailContent } from "./InstitutionUsageDetailPanel";
 import { TenantAvatar, TierBadge } from "./UsageSpendCells";
 
 interface UsageSpendTenantDrawerProps {
   isOpen: boolean;
   onClose: () => void;
-  detail: TenantUsageDetail | null;
+  detail: TenantUsageItem | null;
+  periodTitle: string;
   isLoading: boolean;
 }
 
@@ -28,6 +29,7 @@ const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
   isOpen,
   onClose,
   detail,
+  periodTitle,
   isLoading,
 }) => {
   let body: React.ReactNode = null;
@@ -48,7 +50,11 @@ const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
           <TierBadge label={detail.tier} />
         </HStack>
 
-        <InstitutionUsageDetailContent detail={detail} isLoading={isLoading} />
+        <InstitutionUsageDetailContent
+          detail={detail}
+          periodTitle={periodTitle}
+          isLoading={isLoading}
+        />
       </VStack>
     );
   }

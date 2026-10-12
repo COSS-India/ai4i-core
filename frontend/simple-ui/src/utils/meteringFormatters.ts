@@ -1,8 +1,8 @@
 import type {
   MeteringDataState,
   MeteringGraph,
+  MeteringPeriod,
   MeteringScope,
-  MeteringWindow,
   ModelConsumptionRow,
   ModelConsumptionSummary,
   TopModelRow,
@@ -12,45 +12,44 @@ import { METERING } from "../config/meteringConstants";
 import { meteringColorAt } from "./meteringColors";
 import { normalizeModelTaskType } from "./meteringTaskType";
 import { taskTypeColor } from "./usageSpendHelpers";
-import {
-  formatMeteringDateRange,
-  rangeLengthDays,
-  scopeToDateRange,
-} from "./meteringDateRange";
+import { formatMeteringDateRange } from "./meteringDateRange";
 
-export const getWindowLabel = (window: MeteringWindow): string =>
-  METERING.TIME_WINDOW_LABELS[window] ?? window;
+/** Selected period as a title, e.g. "Last 7 days" or "01 Oct – 08 Oct 2026". */
+export function formatPeriodTitle(period: MeteringPeriod): string {
+  if (period.key === "custom") return formatMeteringDateRange(period.range);
+  return METERING.PERIODS.find((p) => p.key === period.key)?.label ?? period.key;
+}
 
 /** Period label for a response scope — preset label, or the applied custom dates. */
-export function getScopeWindowLabel(scope: MeteringScope): string {
-  if (scope.window !== "custom") return getWindowLabel(scope.window);
-  const range = scopeToDateRange(scope);
-  return range ? formatMeteringDateRange(range) : METERING.CONTROLS.CUSTOM_RANGE;
+export function getScopePeriodLabel(scope: MeteringScope): string {
+  const { period } = scope;
+  if (period.key !== "custom") return METERING.PERIOD_LABELS[period.key];
+  return formatMeteringDateRange(period);
 }
 
 /**
- * How request-volume buckets are labelled. Intraday windows show HH:mm;
- * custom ranges are bucketed from IST midnight, so they format in IST.
+ * How request-volume buckets are labelled. A 1-day period has hourly buckets
+ * (HH:mm); longer periods have daily or weekly ones (DD MMM). Buckets start
+ * at IST boundaries, so they always format in IST.
  */
 export interface MeteringChartScale {
   intraday: boolean;
-  timeZone?: string;
+  timeZone: string;
 }
 
-function presetChartScale(window: MeteringWindow): MeteringChartScale {
-  return { intraday: window === "1h" || window === "24h" };
-}
+const DEFAULT_CHART_SCALE: MeteringChartScale = {
+  intraday: true,
+  timeZone: METERING.IST_TIME_ZONE,
+};
 
 /**
  * Chart scale from the response `scope`, not the selected filter: while a new
- * window loads, keepPreviousData still shows the previous graph, and its
+ * period loads, keepPreviousData still shows the previous graph, and its
  * labels must follow the data actually on screen.
  */
 export function resolveMeteringChartScale(scope: MeteringScope): MeteringChartScale {
-  if (scope.window !== "custom") return presetChartScale(scope.window);
-  const range = scopeToDateRange(scope);
   return {
-    intraday: range != null && rangeLengthDays(range) === 1,
+    intraday: scope.period.from === scope.period.to,
     timeZone: METERING.IST_TIME_ZONE,
   };
 }
@@ -114,7 +113,7 @@ export function findMeteringSeries(
 /** Build request volume chart rows from successful/failed counts. */
 export function buildRequestVolumeChartData(
   graph?: MeteringGraph | null,
-  scale: MeteringChartScale = presetChartScale(METERING.DEFAULTS.TIME_WINDOW),
+  scale: MeteringChartScale = DEFAULT_CHART_SCALE,
 ): RequestVolumeChartPoint[] {
   const { SUCCESSFUL, FAILED } = METERING.GRAPH.SERIES_KEYS;
   const successfulSeries = findMeteringSeries(graph, SUCCESSFUL);

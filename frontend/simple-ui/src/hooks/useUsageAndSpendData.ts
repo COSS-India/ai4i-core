@@ -8,11 +8,15 @@ import { fetchTiers } from "../services/tierManagementService";
 import { parseError } from "../utils/errorHandler";
 import { INSTITUTION } from "../config/constants";
 import { USAGE_SPEND_STALE_MS } from "../utils/usageSpendHelpers";
+import { retryUnlessInvalidPeriod } from "../utils/meteringQuery";
+import { periodQueryKeyParts } from "../utils/meteringDateRange";
+import type { MeteringPeriod } from "../types/metering";
 import type { TenantUsageItem } from "../types/usageSpend";
 
 interface UseUsageAndSpendDataArgs {
   scopeTenantId: string | null;
   isTenantView: boolean;
+  period: MeteringPeriod;
   tenantId: string | null;
   refreshNonce: number;
   filterTierId: string;
@@ -22,6 +26,7 @@ interface UseUsageAndSpendDataArgs {
 export function useUsageAndSpendData({
   scopeTenantId,
   isTenantView,
+  period,
   tenantId,
   refreshNonce,
   filterTierId,
@@ -33,20 +38,21 @@ export function useUsageAndSpendData({
   const enabledParam = taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
 
   const scopedQuery = useQuery({
-    queryKey: ["usage-tenant", scopedId, enabledParam, refreshNonce],
+    queryKey: ["usage-tenant", scopedId, ...periodQueryKeyParts(period), enabledParam, refreshNonce],
     queryFn: () => {
       if (!scopedId) throw new Error(`${INSTITUTION} id is required`);
-      return fetchTenantUsageById(scopedId, undefined, enabledParam);
+      return fetchTenantUsageById(scopedId, period, enabledParam);
     },
     enabled: isScoped,
     staleTime: USAGE_SPEND_STALE_MS,
-    retry: 1,
+    retry: retryUnlessInvalidPeriod,
   });
 
   const tenantsQuery = useQuery({
-    queryKey: ["usage-tenants", filterTierId, enabledParam, refreshNonce],
+    queryKey: ["usage-tenants", ...periodQueryKeyParts(period), filterTierId, enabledParam, refreshNonce],
     queryFn: () =>
       fetchTenantUsageList({
+        period,
         tierId: filterTierId || undefined,
         taskTypes: enabledParam,
         sortOrder: "desc",
@@ -55,7 +61,7 @@ export function useUsageAndSpendData({
       }),
     enabled: !isScoped,
     staleTime: USAGE_SPEND_STALE_MS,
-    retry: 1,
+    retry: retryUnlessInvalidPeriod,
   });
 
   const tiersQuery = useQuery({
