@@ -16,7 +16,10 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import redis.asyncio as aioredis
+
 from app.core.database import get_auth_db, get_db
+from app.core.redis import get_redis
 from app.core.exceptions import InsufficientPermissionsError
 from app.core.permissions import is_admin
 from app.schemas.common import DeletedIdData, MessageMeta, error_responses
@@ -211,11 +214,12 @@ async def update_sub_category_status(
 async def list_policy_types(
     request: Request,
     session: AsyncSession = Depends(get_db),
+    domain: Optional[str] = Query(None, description="Filter policy_fields to a specific domain (e.g. Education, Finance, Healthcare)."),
 ) -> ListPolicyTypeResponse:
-    """List every policy type. Adopter Admin only."""
+    """List policy types. Pass ?domain=Education to get only Education fields. Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
-    items = await policy_type_service.list_policy_types(session)
+    items = await policy_type_service.list_policy_types(session, domain=domain)
     return ListPolicyTypeResponse(success=True, data=PolicyTypeListData(items=items))
 
 
@@ -348,6 +352,7 @@ async def create_policy(
     payload: PolicyCreate,
     request: Request,
     session: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis),
 ) -> CreatePolicyResponse:
     """Create a policy. Name must be unique (case-insensitive); policy_id is
     auto-generated in SPP-XXXX format. 409 if the name already exists.
@@ -355,7 +360,7 @@ async def create_policy(
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
-    item = await policy_service.create_policy(session, payload, created_by=user_id)
+    item = await policy_service.create_policy(session, payload, created_by=user_id, redis=redis)
     return CreatePolicyResponse(
         success=True,
         data=CreatedPolicyData(policy_id=item.policy_id),

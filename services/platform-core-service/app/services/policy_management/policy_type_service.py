@@ -19,10 +19,19 @@ from app.schemas.policy_management.policy_type import (
 )
 
 
-async def list_policy_types(session: AsyncSession) -> List[PolicyTypeItem]:
+async def list_policy_types(session: AsyncSession, domain: str | None = None) -> List[PolicyTypeItem]:
     repo = PolicyTypeRepository(session)
     rows = await repo.get_all()
-    return [PolicyTypeItem.model_validate(row) for row in rows]
+    items = []
+    for row in rows:
+        item = PolicyTypeItem.model_validate(row)
+        if domain is not None:
+            matched = {k: v for k, v in item.policy_fields.items() if k.lower() == domain.lower()}
+            if not matched:
+                continue
+            item = item.model_copy(update={"policy_fields": matched})
+        items.append(item)
+    return items
 
 
 async def get_policy_type(session: AsyncSession, policy_type_id: int) -> PolicyTypeItem:

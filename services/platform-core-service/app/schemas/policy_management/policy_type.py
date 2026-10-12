@@ -7,32 +7,41 @@ from app.schemas.policy_management.fields import NAME_MAX_LEN, clean_name
 
 
 def _validate_custom_fields(policy_fields: Dict[str, Any]) -> Dict[str, Any]:
-    """If policy_fields contains a 'custom_field' list, every entry must have
-    at least 3 examples and a non-empty regex."""
-    custom_field_entries = policy_fields.get("custom_field")
-    if not custom_field_entries:
-        return policy_fields
+    """Each top-level key in policy_fields is a domain (e.g. Education, Finance).
+    Every domain must have a 'custom_field' list where each entry has at least
+    3 examples and a non-empty regex."""
+    for domain, domain_value in policy_fields.items():
+        if not isinstance(domain_value, dict):
+            raise ValueError(f"policy_fields['{domain}'] must be an object.")
 
-    if not isinstance(custom_field_entries, list):
-        raise ValueError("'custom_field' must be a list of objects.")
+        custom_field_entries = domain_value.get("custom_field")
+        if not custom_field_entries:
+            continue
 
-    for entry in custom_field_entries:
-        if not isinstance(entry, dict):
-            raise ValueError("Each item inside 'custom_field' must be an object.")
+        if not isinstance(custom_field_entries, list):
+            raise ValueError(f"policy_fields['{domain}']['custom_field'] must be a list.")
 
-        entity_name = entry.get("entity_name", "<unknown>")
+        for entry in custom_field_entries:
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    f"Each item in policy_fields['{domain}']['custom_field'] must be an object."
+                )
 
-        examples = entry.get("examples")
-        if not examples or not isinstance(examples, list) or len(examples) < 3:
-            raise ValueError(
-                f"custom_field entry '{entity_name}': at least 3 examples are required."
-            )
+            entity_name = entry.get("entity_name", "<unknown>")
 
-        regex = entry.get("regex")
-        if not regex or not str(regex).strip():
-            raise ValueError(
-                f"custom_field entry '{entity_name}': 'regex' is required."
-            )
+            examples = entry.get("examples")
+            if not examples or not isinstance(examples, list) or len(examples) < 3:
+                raise ValueError(
+                    f"policy_fields['{domain}'] custom_field entry '{entity_name}': "
+                    "at least 3 examples are required."
+                )
+
+            regex = entry.get("regex")
+            if not regex or not str(regex).strip():
+                raise ValueError(
+                    f"policy_fields['{domain}'] custom_field entry '{entity_name}': "
+                    "'regex' is required."
+                )
 
     return policy_fields
 
@@ -58,31 +67,46 @@ class PolicyTypeCreate(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "policy_type": "Medical Policy PII",
+                "policy_type": "PII",
                 "policy_fields": {
-                    "model_supported_field": [
-                        {
-                            "en": [
-                                {"entity_name": "MEDICAL_ID"},
-                                {"entity_name": "EMAIL_ADDRESS"},
-                            ],
-                            "hi": [
-                                {"entity_name": "EDUCATION_ID"},
-                            ],
-                        }
-                    ],
-                    "custom_field": [
-                        {
-                            "entity_name": "MEDICAL_ID",
-                            "examples": ["MED001", "MED002", "MED003"],
-                            "regex": "MED-\\d{6}",
-                        },
-                        {
-                            "entity_name": "EMPLOYEE_NUM",
-                            "examples": ["ED001", "ED002", "ED003"],
-                            "regex": "EMP\\d{4}",
-                        },
-                    ],
+                    "Education": {
+                        "custom_field": [
+                            {
+                                "entity_name": "STUDENT_NAME",
+                                "examples": ["Arjun Kumar", "Priya Sharma", "Ravi Verma"],
+                                "regex": "\\b[A-Z][a-z]+(?:\\s[A-Z][a-z]+){1,3}\\b",
+                            },
+                            {
+                                "entity_name": "STUDENT_ID",
+                                "examples": ["EDU20231234", "STU2024567", "SCH12345"],
+                                "regex": "\\b[A-Z]{2,5}\\d{4,10}\\b",
+                            },
+                            {
+                                "entity_name": "EMAIL_ADDRESS",
+                                "examples": ["arjun@college.edu", "student@university.ac.in", "user@school.org"],
+                                "regex": "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b",
+                            },
+                        ]
+                    },
+                    "Finance": {
+                        "custom_field": [
+                            {
+                                "entity_name": "BANK_ACCOUNT_NUMBER",
+                                "examples": ["123456789012", "987654321098", "112233445566"],
+                                "regex": "\\b\\d{9,18}\\b",
+                            },
+                            {
+                                "entity_name": "PAN_NUMBER",
+                                "examples": ["ABCDE1234F", "PQRST5678G", "XYZWV9012H"],
+                                "regex": "\\b[A-Z]{5}\\d{4}[A-Z]\\b",
+                            },
+                            {
+                                "entity_name": "IFSC_CODE",
+                                "examples": ["SBIN0000456", "HDFC0001234", "ICIC0005678"],
+                                "regex": "\\b[A-Z]{4}0[A-Z0-9]{6}\\b",
+                            },
+                        ]
+                    },
                 },
             }
         }
@@ -108,31 +132,27 @@ class PolicyTypeUpdate(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "policy_type_id": 2,
+                "policy_type_id": 1,
                 "policy_fields": {
-                    "model_supported_field": [
-                        {
-                            "en": [
-                                {"entity_name": "MEDICAL_ID"},
-                                {"entity_name": "EMAIL_ADDRESS"},
-                            ],
-                            "hi": [
-                                {"entity_name": "EDUCATION_ID"},
-                            ],
-                        }
-                    ],
-                    "custom_field": [
-                        {
-                            "entity_name": "MEDICAL_ID",
-                            "examples": ["MED001", "MED002", "MED003"],
-                            "regex": "MED-\\d{6}",
-                        },
-                        {
-                            "entity_name": "EMPLOYEE_NUM",
-                            "examples": ["ED001", "ED002", "ED003"],
-                            "regex": "EMP\\d{4}",
-                        },
-                    ],
+                    "Healthcare": {
+                        "custom_field": [
+                            {
+                                "entity_name": "PATIENT_NAME",
+                                "examples": ["Meena Raj", "Suresh Kumar", "Anita Singh"],
+                                "regex": "\\b[A-Z][a-z]+(?:\\s[A-Z][a-z]+){1,3}\\b",
+                            },
+                            {
+                                "entity_name": "AADHAAR_NUMBER",
+                                "examples": ["1234 5678 9012", "9876 5432 1098", "1111 2222 3333"],
+                                "regex": "\\b\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4}\\b",
+                            },
+                            {
+                                "entity_name": "HEALTH_INSURANCE_ID",
+                                "examples": ["HIN9876543", "INS123456789", "POL987654321"],
+                                "regex": "\\b[A-Z0-9]{6,20}\\b",
+                            },
+                        ]
+                    },
                 },
             }
         }
