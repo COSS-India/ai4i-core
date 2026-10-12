@@ -11,8 +11,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from datetime import datetime, timezone
+
 from app.core.exceptions import EntityNotFoundError
 from app.services.pay_per_use.application_usage_service import ApplicationUsageService
+from app.utils.usage_period import resolve_period
+
+_PERIOD = resolve_period("last_7_days", None, None, now=datetime(2026, 10, 9, 8, 50, tzinfo=timezone.utc))
 
 
 class _Row:
@@ -36,9 +41,14 @@ def _rows_result(rows: list):
     return SimpleNamespace(all=lambda: rows)
 
 
-def _make_repo(spend_by_key: dict) -> MagicMock:
+def _make_repo(spend_by_key: dict, period_spend_by_key: dict | None = None) -> MagicMock:
+    """spend_by_key: all-time (budget_usage); period_spend_by_key: the
+    selected period (usage_events / daily_usage)."""
     repo = MagicMock()
     repo.get_spend_by_api_key_ids = AsyncMock(return_value=spend_by_key)
+    repo.get_period_spend_by_api_key_ids = AsyncMock(return_value=period_spend_by_key or {})
+    # Before every period the tests use: the usage data covers them whole.
+    repo.get_usage_data_from = AsyncMock(return_value=datetime(2020, 1, 1, tzinfo=timezone.utc))
     return repo
 
 
@@ -140,7 +150,7 @@ class TestAuthDbFailurePropagates:
         # totalApplications=0 and every budget zeroed — indistinguishable from
         # a real empty institution. It must now raise instead.
         with pytest.raises(RuntimeError, match="connection to auth_db lost"):
-            await svc.get_summary("1", auth_db)
+            await svc.get_summary("1", _PERIOD, auth_db)
 
     @pytest.mark.asyncio
     async def test_get_application_list_does_not_swallow_a_query_failure_as_empty(self):
@@ -155,7 +165,7 @@ class TestAuthDbFailurePropagates:
         svc = ApplicationUsageService(repo)
 
         with pytest.raises(RuntimeError, match="connection to auth_db lost"):
-            await svc.get_application_list("1", auth_db)
+            await svc.get_application_list("1", _PERIOD, auth_db)
 
     @pytest.mark.asyncio
     async def test_get_application_detail_does_not_report_404_for_a_query_failure(self):
@@ -174,7 +184,7 @@ class TestAuthDbFailurePropagates:
         svc = ApplicationUsageService(repo)
 
         with pytest.raises(RuntimeError, match="connection to auth_db lost"):
-            await svc.get_application_detail(1, "1", auth_db)
+            await svc.get_application_detail(1, "1", _PERIOD, auth_db)
         # Specifically must NOT be reported as "not found" — that would hide
         # a real infrastructure failure behind a client-facing 404.
 
@@ -208,7 +218,7 @@ class TestGetSummary:
         repo = _make_repo({10: Decimal("70000.00"), 11: Decimal("30000.00")})
         svc = ApplicationUsageService(repo)
 
-        result = await svc.get_summary("1", auth_db)
+        result = await svc.get_summary("1", _PERIOD, auth_db)
 
         assert result.totalApplications == 2
         assert result.allocatedBudget.amount == 600000.0
@@ -229,7 +239,7 @@ class TestGetSummary:
         repo = _make_repo({})
         svc = ApplicationUsageService(repo)
 
-        result = await svc.get_summary("1", auth_db)
+        result = await svc.get_summary("1", _PERIOD, auth_db)
 
         assert result.billingPeriod == "lifetime"
 
@@ -241,7 +251,7 @@ class TestGetSummary:
         repo = _make_repo({})
         svc = ApplicationUsageService(repo)
 
-        result = await svc.get_summary("1", auth_db)
+        result = await svc.get_summary("1", _PERIOD, auth_db)
 
         assert result.totalApplications == 0
         assert result.allocatedBudget.amount == 0.0
@@ -252,7 +262,7 @@ class TestGetSummary:
         repo = _make_repo({})
         svc = ApplicationUsageService(repo)
 
-        result = await svc.get_summary("1", None)
+        result = await svc.get_summary("1", _PERIOD, None)
 
         assert result.totalApplications == 0
         assert result.allocatedBudget.amount == 0.0
@@ -279,16 +289,21 @@ class TestGetApplicationList:
             ]
         )
         # App A spends 25% of its own 400000 allocation; App B spends 45% of its own 200000.
-        repo = _make_repo({10: Decimal("100000.00"), 11: Decimal("90000.00")})
+        # In the period, App B spent more (900 vs 500).
+        repo = _make_repo(
+            {10: Decimal("100000.00"), 11: Decimal("90000.00")},
+            {10: Decimal("500.00"), 11: Decimal("900.00")},
+        )
         svc = ApplicationUsageService(repo)
 
-        result = await svc.get_application_list("1", auth_db, sort_order="desc")
+        result = await svc.get_application_list("1", _PERIOD, auth_db, sort_order="desc")
 
-        # App A spent 100000 (25% of its own 400000), App B spent 90000 (45% of its own
-        # 200000) — sorting is by spend AMOUNT, so App A (higher amount) sorts first
-        # even though App B has the higher percentage-of-its-own-allocation.
-        assert [item.applicationId for item in result.data] == [1, 2]
-        app_b = result.data[1]
+        # Sorting is by spend in the PERIOD, so App B (900) sorts first even though
+        # App A's all-time spend is higher.
+        assert [item.applicationId for item in result.data] == [2, 1]
+        app_b = result.data[0]
+        assert app_b.periodSpend.amount == 900.0
+        assert app_b.periodSpend.percentage == 0.45  # % of App B's own allocation
         assert app_b.allocatedBudget.percentage == 20.0  # % of institution budget
         assert app_b.spendBudget.percentage == 45.0  # % of App B's own allocation
         assert app_b.remainingBudget.percentage == 55.0
@@ -309,7 +324,7 @@ class TestGetApplicationList:
         repo = _make_repo({})
         svc = ApplicationUsageService(repo)
 
-        result = await svc.get_application_list("1", auth_db)
+        result = await svc.get_application_list("1", _PERIOD, auth_db)
 
         item = result.data[0]
         assert item.allocatedBudget.amount == 0.0
@@ -328,7 +343,7 @@ class TestGetApplicationList:
         repo = _make_repo({})
         svc = ApplicationUsageService(repo)
 
-        result = await svc.get_application_list("1", auth_db, limit=1, offset=1)
+        result = await svc.get_application_list("1", _PERIOD, auth_db, limit=1, offset=1)
 
         assert result.total == 3
         assert len(result.data) == 1
@@ -344,7 +359,7 @@ class TestGetApplicationDetail:
         svc = ApplicationUsageService(repo)
 
         with pytest.raises(EntityNotFoundError):
-            await svc.get_application_detail(999, "1", auth_db)
+            await svc.get_application_detail(999, "1", _PERIOD, auth_db)
 
     @pytest.mark.asyncio
     async def test_detail_includes_masked_keys_and_totals(self):
@@ -375,7 +390,7 @@ class TestGetApplicationDetail:
         repo = _make_repo({10: Decimal("70000.00"), 11: Decimal("30000.00")})
         svc = ApplicationUsageService(repo)
 
-        result = await svc.get_application_detail(1, "1", auth_db)
+        result = await svc.get_application_detail(1, "1", _PERIOD, auth_db)
 
         assert result.applicationName == "Citizen Services"
         assert result.spendBudget.amount == 100000.0
@@ -418,9 +433,62 @@ class TestGetApplicationDetail:
         repo = _make_repo({984: Decimal("0.00")})
         svc = ApplicationUsageService(repo)
 
-        result = await svc.get_application_detail(42, "1", auth_db)
+        result = await svc.get_application_detail(42, "1", _PERIOD, auth_db)
 
         key_984 = result.apiKeys[0]
         assert key_984.keyId == 984
         assert key_984.allocatedBudget.amount == 2000.0
         assert key_984.allocatedBudget.percentage == 10.0  # not 1.0
+
+
+# ── Spend in the selected period ──────────────────────────────────────────────
+
+
+def _one_app_auth_db(tenant_budget=Decimal("100000.00")):
+    return _make_auth_db([
+        _budget_result(tenant_budget),
+        _rows_result([
+            _Row(id=7, name="Citizen Helpdesk", domain="gov", allocated_percentage=Decimal("20.00"),
+                 allocated_budget=Decimal("20000.00"), status="ACTIVE"),
+        ]),
+        _rows_result([
+            _Row(id=31, application_id=7, key_name="prod-key", api_key="xxxxa1b2",
+                 allocated_percentage=Decimal("75.00"), allocated_budget=Decimal("15000.00"), is_active=True),
+            _Row(id=32, application_id=7, key_name="test-key", api_key="yyyyc3d4",
+                 allocated_percentage=Decimal("25.00"), allocated_budget=Decimal("5000.00"), is_active=False),
+        ]),
+    ])
+
+
+class TestPeriodSpend:
+    @pytest.mark.asyncio
+    async def test_summary_period_spend_is_a_share_of_the_institution_budget(self):
+        repo = _make_repo({31: Decimal("1500"), 32: Decimal("300")}, {31: Decimal("100.50"), 32: Decimal("20")})
+        result = await ApplicationUsageService(repo).get_summary("1", _PERIOD, _one_app_auth_db())
+
+        assert result.period.key == "last_7_days"
+        assert result.periodSpend.amount == 120.5
+        assert result.periodSpend.percentage == 0.1205
+        # All-time figures are unchanged.
+        assert result.spendBudget.amount == 1800.0
+        assert result.billingPeriod == "lifetime"
+        repo.get_period_spend_by_api_key_ids.assert_awaited_once_with(_PERIOD, [31, 32])
+
+    @pytest.mark.asyncio
+    async def test_detail_period_spend_per_key_and_total(self):
+        repo = _make_repo({31: Decimal("1500"), 32: Decimal("300")}, {31: Decimal("6.40")})
+        result = await ApplicationUsageService(repo).get_application_detail(7, "1", _PERIOD, _one_app_auth_db())
+
+        assert result.periodSpend.amount == 6.4
+        assert result.periodSpend.percentage == 0.032   # % of the application's 20000
+        prod, test = result.apiKeys
+        assert (prod.periodSpend.amount, test.periodSpend.amount) == (6.4, 0.0)
+        assert round(prod.periodSpend.percentage, 4) == 0.0427   # % of the key's own 15000
+        assert result.totals.periodSpend == 6.4
+
+    @pytest.mark.asyncio
+    async def test_no_usage_in_the_period_is_zero(self):
+        repo = _make_repo({31: Decimal("1500")})
+        result = await ApplicationUsageService(repo).get_application_list("1", _PERIOD, _one_app_auth_db())
+        assert result.data[0].periodSpend.model_dump() == {"amount": 0.0, "percentage": 0.0}
+        assert result.period.key == "last_7_days"

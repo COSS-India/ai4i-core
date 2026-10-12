@@ -15,13 +15,16 @@ from bootstrap.lifecycle import session_scope
 from consumers.payperuse_consumer import config as cfg
 from consumers.payperuse_consumer._billing import (
     BillingWriteResult,
+    LlmCost,
     ServicePricing,
+    UsageEvent,
     calculate_cost,
     calculate_llm_cost,
     deduct_balance_and_update_quota,
     fetch_tenant_budget_status,
     get_inference_type_id,
     get_service_pricing,
+    record_usage_event,
     _get_billing_data,
     _get_billed_key, _update_billing_on_cache,
 )
@@ -173,6 +176,11 @@ class BillingContext:
     # LLM billing prices these separately; input_tokens includes the cached ones.
     output_tokens: float = 0.0
     cached_input_tokens: float = 0.0
+    # For the usage_events row: the span's end time (also what billing_month
+    # is derived from), its application and its status code.
+    occurred_at: Optional[datetime] = None
+    application_id: Optional[int] = None
+    status_code: Optional[int] = None
 
 
 @dataclass
@@ -184,10 +192,23 @@ class BillingOutcome:
     quota_exhausted: bool
 
 
-def _resolve_billing_month(end_time_ns) -> str:
+def _span_end_time(end_time_ns) -> datetime:
+    """The span's end time in UTC (now when the span has none). One clock for
+    both billing_month and usage_events.occurred_at, so a row's partition
+    month and its billing month always agree."""
     if end_time_ns:
-        return datetime.fromtimestamp(int(end_time_ns) / 1e9, tz=timezone.utc).strftime("%Y-%m")
-    return datetime.now(timezone.utc).strftime("%Y-%m")
+        return datetime.fromtimestamp(int(end_time_ns) / 1e9, tz=timezone.utc)
+    return datetime.now(timezone.utc)
+
+
+def _resolve_billing_month(end_time_ns) -> str:
+    return _span_end_time(end_time_ns).strftime("%Y-%m")
+
+
+def _optional_int(value) -> Optional[int]:
+    """A positive int from a span attribute or id string, else None."""
+    number = _to_int(value)
+    return number if number > 0 else None
 
 
 _IST = ZoneInfo("Asia/Kolkata")
@@ -311,7 +332,8 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
             msg.offset(), tenant_id, api_key_id,
         )
 
-    billing_month = _resolve_billing_month(data.get("end_time"))
+    occurred_at = _span_end_time(data.get("end_time"))
+    billing_month = occurred_at.strftime("%Y-%m")
     logger.debug("Billing month resolved | tenant=%s billing_month=%s", tenant_id, billing_month)
 
     return BillingContext(
@@ -329,6 +351,11 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
         tier_id=tier_id,
         output_tokens=output_tokens,
         cached_input_tokens=_get_cached_input_tokens(attrs),
+        occurred_at=occurred_at,
+        # app_id: the request's application (request_span.get_context_attributes).
+        application_id=_optional_int(attrs.get("app_id")),
+        # status_code: set on every ai-inference span (classify_status).
+        status_code=_optional_int(attrs.get("status_code")),
     )
 
 
@@ -480,6 +507,7 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
     # LLM: input, cached input and output tokens each at their own price
     # (cached input is part of input_tokens). Quota still counts every token
     # (billed_units above); only the cost is split.
+    llm_cost: Optional[LlmCost] = None
     if is_llm:
         llm_cost = calculate_llm_cost(
             Decimal(str(ctx.input_tokens)),
@@ -540,6 +568,10 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
         inference_type_id=inference_type_id,
     )
 
+    # The Usage Dashboard's record of this charge, in the same transaction as
+    # the budget/quota writes above (committed below). Never raises.
+    await record_usage_event(db, _usage_event(ctx, pricing, inference_type_id, billed_units, cost, llm_cost))
+
     if write.tier_id is None:
         # deduct_balance_and_update_quota already logged the warning; no
         # active assignment means nothing was written to either table. The
@@ -597,6 +629,47 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
         cost=cost,
         wallet_exhausted=wallet_exhausted,
         quota_exhausted=quota_exhausted,
+    )
+
+
+def _usage_event(
+    ctx: BillingContext,
+    pricing: ServicePricing,
+    inference_type_id: Optional[int],
+    billed_units: Decimal,
+    cost: Decimal,
+    llm_cost: Optional[LlmCost],
+) -> UsageEvent:
+    """The usage_events row for one billed span. LLM rows carry the units
+    and cost split by category (cached input clamped to the input tokens,
+    exactly as calculate_llm_cost prices it); every other task type has its
+    whole charge in input_units_cost and no cached/output units."""
+    if llm_cost is not None:
+        input_tokens = Decimal(str(ctx.input_tokens))
+        cached = min(max(Decimal(str(ctx.cached_input_tokens)), Decimal(0)), input_tokens)
+        output = Decimal(str(ctx.output_tokens))
+        costs = (llm_cost.input_cost, llm_cost.cached_input_cost, llm_cost.output_cost)
+    else:
+        cached = output = Decimal(0)
+        costs = (cost, Decimal(0), Decimal(0))
+    return UsageEvent(
+        correlation_id=ctx.correlation_id,
+        span_id=ctx.span_id,
+        occurred_at=ctx.occurred_at or _span_end_time(None),
+        tenant_id=_optional_int(ctx.tenant_id),
+        application_id=ctx.application_id,
+        api_key_id=ctx.api_key_id or None,
+        tier_id=ctx.tier_id,
+        service_id=ctx.service_id,
+        inference_type_id=inference_type_id,
+        task_type=pricing.task_type,
+        status_code=ctx.status_code,
+        total_units=billed_units,
+        cached_input_units=cached,
+        output_units=output,
+        input_units_cost=costs[0],
+        cached_input_units_cost=costs[1],
+        output_units_cost=costs[2],
     )
 
 

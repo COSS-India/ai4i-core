@@ -1,9 +1,14 @@
 """create daily_usage table, partitioned by month
 
-Daily rollup of usage_events: one row per UTC day and dimension combination
+Daily rollup of usage_events: one row per IST day and dimension combination
 (tenant, application, API key, tier, service, inference type, billing month).
-usage_date is the UTC day of usage_events.occurred_at, and billing_month its
-UTC month, so both match the PPU consumer's billing_month. Names (tenant,
+usage_date is the IST day of usage_events.occurred_at —
+(occurred_at AT TIME ZONE 'Asia/Kolkata')::date — the Usage Dashboard's day,
+so Yesterday/Last 7 days/Custom line up with Today (IST midnight → now, read
+from usage_events). billing_month stays the UTC month of occurred_at, matching
+the PPU consumer, so 00:00–05:30 IST on the 1st rolls up into a separate row
+(same usage_date, previous billing_month); the dimension key includes
+billing_month, so those rows never collide. Names (tenant,
 application, tier, service, model) and the tenant's budget are copied in by
 the rollup, so dashboard reads need no cross-database joins.
 
@@ -139,8 +144,8 @@ def upgrade() -> None:
 
     # Indexes and the unique key above are created on every partition,
     # including ones the partition job adds later. Month bounds are computed
-    # when the migration runs (also in --sql output); usage_date is already a
-    # UTC day, so they are plain dates.
+    # when the migration runs (also in --sql output); usage_date is an IST
+    # day (a plain date), so they are plain dates.
     op.execute(
         f"""
         DO $$

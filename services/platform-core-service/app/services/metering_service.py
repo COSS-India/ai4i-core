@@ -5,6 +5,7 @@ import math
 import re
 import time as _time
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Optional, Union
 
 from sqlalchemy import text
@@ -18,6 +19,7 @@ from app.schemas.metering import Graph, GraphPoint, GraphSeries
 from app.utils.prometheus_client import PrometheusClient
 from app.utils.metering_retention import refresh_retention as _refresh_retention, retention_days
 from app.services.pay_per_use import inference_type_cache
+from app.utils.rounding import round_shares
 from app.utils.metering_promql_builder import (
     TIME_RANGES,
     AbsoluteRange,
@@ -33,8 +35,9 @@ from app.utils.metering_promql_builder import (
     api_key_auth_type_selector,
     build_base_selectors,
     build_task_type_selector,
+    comparison_shift_seconds,
+    comparison_window_offset,
     escape_label_value,
-    previous_window_offset,
     retained_range,
     retention_edge,
     step_for_duration,
@@ -58,12 +61,27 @@ _WINDOW_SECONDS: dict = {
     "7d":  604_800,
     "30d": 2_592_000,
 }
-_STEP_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+_STEP_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+# The LLM token histogram's per-category series, as the Model drill-down's
+# token breakdown entries: (entry key, label, token_type). Prometheus's
+# "prompt" includes the cached tokens, so "input" is prompt − cached_input.
+LLM_TOKEN_ENTRIES = (
+    ("input", "Input tokens", "prompt"),
+    ("cached_input", "Cached input tokens", "cached_input"),
+    ("output", "Output tokens", "completion"),
+)
+
+
+def _llm_token_key(token_type: str) -> str:
+    """native_by_task key for one LLM token_type series (alongside the task
+    keys, which never contain a colon)."""
+    return f"llm:{token_type}"
 
 
 def _step_seconds(step: str) -> int:
-    """Parse a duration step (e.g. '10m', '4h', '1d') to seconds."""
-    m = re.fullmatch(r"(\d+)([smhd])", step.strip())
+    """Parse a duration step (e.g. '10m', '4h', '1d', '1w') to seconds."""
+    m = re.fullmatch(r"(\d+)([smhdw])", step.strip())
     return int(m.group(1)) * _STEP_UNIT_SECONDS[m.group(2)] if m else 0
 
 
@@ -108,15 +126,15 @@ def _range_chart_buckets(window: AbsoluteRange) -> tuple[str, int, int]:
 
 
 def _previous_window_retained(time_range: TimeRange) -> bool:
-    """False when an AbsoluteRange's vs-previous window (the equal-length
-    window ending at its start) reaches back past PROMETHEUS_RETENTION_DAYS.
+    """False when an AbsoluteRange's vs-previous window (shifted back by
+    comparison_shift_seconds) reaches back past PROMETHEUS_RETENTION_DAYS.
     increase() there would undercount from pruned data and inflate every
     growth %, so request_total reports the previous figures as None instead,
     same as model_usage_growth_pct's retention guard. Presets are unchanged.
     """
     if not isinstance(time_range, AbsoluteRange):
         return True
-    prev_start = time_range.start - (time_range.end - time_range.start)
+    prev_start = time_range.start - timedelta(seconds=comparison_shift_seconds(time_range))
     return prev_start >= retention_edge()
 
 
@@ -290,9 +308,11 @@ class MeteringService:
         single-tenant-scoped Overview view): see build_base_selectors'
         docstring — accepted, not fixed here, tracked in the ticket.
 
-        For an AbsoluteRange the "previous" figures cover the equal-length
-        window ending at ``time_range.start``, same as a preset compares
-        against the window just before it.
+        For an AbsoluteRange the "previous" figures cover an equal-length
+        window shifted back by comparison_shift_seconds: by default the one
+        ending at ``time_range.start``, same as a preset compares against the
+        window just before it; for the dashboard's `today`, the same clock
+        span yesterday.
 
         An AbsoluteRange is first clamped to Prometheus retention
         (retained_range): a range reaching back past it counts only what's
@@ -315,7 +335,7 @@ class MeteringService:
         window = window_duration(time_range)
         rate_window = window or "5m"
         end_off = window_offset(time_range)
-        prev_off = previous_window_offset(time_range)
+        prev_off = comparison_window_offset(time_range)
         has_prev = bool(window) and _previous_window_retained(time_range)
 
         if retained is NOT_RETAINED:
@@ -1341,6 +1361,13 @@ class MeteringService:
             native_units, native_unit_suffix = self._native_units_for(
                 task, native_by_task, service_id, unit_map
             )
+            native_breakdown = (
+                self._llm_token_breakdown(native_by_task, service_id, native_units)
+                if task == "llm" else None
+            )
+            if native_breakdown is not None:
+                # The row total is the sum of its breakdown (prompt + completion).
+                native_units = float(sum(e["units"] for e in native_breakdown))
             services.append({
                 "service_id": service_id,
                 "name": name,
@@ -1350,6 +1377,7 @@ class MeteringService:
                 "requests": total_v,
                 "native_units": native_units,
                 "native_unit_suffix": native_unit_suffix,
+                "native_breakdown": native_breakdown,
                 "success_pct": round(success_v / total_v * 100, 2) if total_v else 0.0,
             })
 
@@ -1983,7 +2011,51 @@ class MeteringService:
             q = sum_over_window_by(f"{native_metric}{sel}", "service_id", time_range)
             native_tasks.append(task)
             native_coros.append(self._client.query(q))
+            if task == "llm":
+                # The Model drill-down's token breakdown: the same histogram,
+                # one query per token_type instead of token_type="total".
+                base_parts = [p for p in parts if not p.startswith("token_type=")]
+                for _, _, token_type in LLM_TOKEN_ENTRIES:
+                    token_sel = "{" + ",".join([*base_parts, f'token_type="{token_type}"']) + "}"
+                    native_tasks.append(_llm_token_key(token_type))
+                    native_coros.append(self._client.query(
+                        sum_over_window_by(f"{native_metric}{token_sel}", "service_id", time_range)
+                    ))
         return native_tasks, native_coros
+
+    @staticmethod
+    def _llm_token_breakdown(
+        native_by_task: dict[str, dict[str, float]], service_id: str, total_tokens: float,
+    ) -> Optional[list[dict]]:
+        """Input / cached input / output tokens for one LLM service row, each
+        with its share of the row's tokens, or None when the per-token_type
+        series weren't queried or came back empty while the total didn't
+        (a failed query must not zero the row). The entries always sum to
+        the row's total; cached input is omitted when it is 0 (or wasn't
+        reported, as for data recorded before ai4i-core 1.0.48)."""
+        keys = [_llm_token_key(t) for _, _, t in LLM_TOKEN_ENTRIES]
+        if not all(k in native_by_task for k in keys):
+            return None
+        prompt, cached, completion = (native_by_task[k].get(service_id, 0.0) for k in keys)
+        cached = min(cached, prompt)
+        units = {
+            "input": round(prompt - cached),
+            "cached_input": round(cached),
+            "output": round(completion),
+        }
+        total = sum(units.values())
+        if total == 0 and total_tokens > 0:
+            return None
+        shown = [
+            (key, label) for key, label, _ in LLM_TOKEN_ENTRIES
+            if not (key == "cached_input" and units[key] == 0)
+        ]
+        # Shares rounded so they add up to exactly 100.00.
+        shares = round_shares([Decimal(units[key]) for key, _ in shown])
+        return [
+            {"key": key, "label": label, "units": float(units[key]), "percentage": float(shares[i])}
+            for i, (key, label) in enumerate(shown)
+        ]
 
     @staticmethod
     def _native_units_by_service(rows: list) -> dict[str, float]:
