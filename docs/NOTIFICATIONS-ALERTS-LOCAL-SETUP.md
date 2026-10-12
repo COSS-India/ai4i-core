@@ -1,6 +1,6 @@
 # Notifications & Alerts — Local Setup
 
-Companion to [`SETUP_GUIDE.md`](SETUP_GUIDE.md). Use this to get notification and alert **emails** working locally.
+Companion to [`SETUP_GUIDE.md`](SETUP_GUIDE.md). Use this to get notification **emails** working locally.
 
 **Before you start:**
 - Core setup done with the **full stack** (`SETUP_GUIDE.md` Step 4, Option B).
@@ -8,14 +8,14 @@ Companion to [`SETUP_GUIDE.md`](SETUP_GUIDE.md). Use this to get notification an
 - SMTP credentials available (e.g. Amazon SES SMTP).
 - For PPU notifications (budget/quota threshold and exhausted), also complete [`PPU-LOCAL-SETUP.md`](PPU-LOCAL-SETUP.md).
 
-## Two separate systems
+## How it works
 
-| | **Notifications** (Kafka) | **Infrastructure alerts** (Prometheus) |
-|---|---|---|
-| Examples | Tier assigned/changed, budget assigned/updated/exhausted, quota threshold/exhausted, error-rate and latency alerts | Rules in `infrastructure/prometheus/rules/*.yml` |
-| Path | auth-service / platform-core / `payperuse_consumer` → Kafka `notification.events` → **`notifications_consumer`** → email | Prometheus → **Alertmanager** → email |
-| Email settings | `services/kafka-consumers/consumers/notifications_consumer/.env` | `SMTP_SMARTHOST`, `SMTP_FROM`, `SMTP_AUTH_*` in `services/platform-core-service/.env` |
-| Manage in UI | `/notifications-alerts` | `/alerts-management` |
+| | |
+|---|---|
+| Examples | Tier assigned/changed, budget assigned/updated/exhausted, quota threshold/exhausted, error-rate and latency alerts |
+| Path | auth-service / platform-core / `payperuse_consumer` → Kafka `notification.events` → **`notifications_consumer`** → email |
+| Email settings | `services/kafka-consumers/consumers/notifications_consumer/.env` |
+| Manage in UI | `/notifications-alerts` |
 
 ## Step 1: Configure email
 
@@ -124,35 +124,12 @@ As admin, open **`/notifications-alerts`** and for each notification or alert yo
 
 Institution-scoped items (`TIER_ASSIGNED`, `BUDGET_ASSIGNED`) can also be switched per tenant by that tenant's admin. Recipients are the users holding the selected roles, so they need a valid email address.
 
-## Step 4: Configure Alertmanager (infrastructure alerts)
-
-In `services/platform-core-service/.env`:
-
-```bash
-SMTP_SMARTHOST=email-smtp.<region>.amazonaws.com:587   # host:port here
-SMTP_FROM=<verified sender>
-SMTP_AUTH_USERNAME=<smtp username>
-SMTP_AUTH_PASSWORD=<smtp password>
-DEFAULT_RECEIVER_EMAILS=<you@example.com>               # catch-all recipient
-ALERT_HISTORY_WEBHOOK_URL=http://inference-service:8095/api/v1/alerts/history/webhook
-```
-
-- **Two email sections:** `SMTP_SMARTHOST` / `SMTP_AUTH_*` (above) are for Alertmanager. The same file has a second section further down (`EMAIL_PROVIDER`, `EMAIL_FROM`, `SMTP_HOST`, `SMTP_USERNAME`, `SMTP_PASSWORD`) that platform-core uses itself. Fill it the same way as Step 1.1, and replace placeholders such as `<region>` and `<YOUR_SMTP_USERNAME>`.
-- **Webhook URL:** Alertmanager runs in Docker, so `localhost` would point at the container itself. In `docker-compose-local.yml` the hostname `inference-service` is mapped to your machine, so it reaches platform-core on `:8095`.
-- **File permission:** platform-core rewrites `alertmanager.yml` every `SYNC_INTERVAL` (60 s). The Alertmanager container creates that file as root, so make it yours once:
-  ```bash
-  sudo chown $USER:$USER infrastructure/alertmanager/alertmanager.yml
-  ```
-
-Restart platform-core (`--reload` doesn't pick up `.env` changes). Receivers and routing rules are managed at **`/alerts-management`**.
-
-## Step 5: Test
+## Step 4: Test
 
 | Test | Do this | Expect |
 |---|---|---|
 | Notification | Assign a tier to a tenant, or top up its budget (`/institution-management`) | `TIER_ASSIGNED` / `BUDGET_UPDATED` email; a line in the `notifications_consumer` log |
 | PPU threshold | Spend past a budget band (see `PPU-LOCAL-SETUP.md`) | `BUDGET_THRESHOLD` email |
-| Alertmanager | Open http://localhost:9095 | Firing alerts listed; email to the receiver |
 
 **Something sent but no email?** Check the `notifications_consumer` log, then the failure log:
 
@@ -171,6 +148,5 @@ docker exec ai4v-postgres psql -U postgres -d ai4iplatform_core -c \
 | Consumer exits with `Fatal Kafka error — exiting for restart \| code=_AUTO_OFFSET_RESET` | Offsets were never seeded. Run Step 2.2, then start it again. |
 | Nothing happens at all | The recipient roles are still off (Step 3) |
 | PPU emails never arrive | `PII_ENCRYPTION_KEY` in `payperuse_consumer`'s `.env` must equal auth-service's, or recipients can't be resolved |
-| platform-core: `Permission denied: … alertmanager.yml` | Run the `chown` in Step 4 |
 | `554 Email address is not verified` | SES sandbox: verify the sender and recipient |
 | Error-rate / latency alerts never fire | Locally, Prometheus can only scrape **inference-service** (see `prometheus.yml`), so other services have no metrics |
