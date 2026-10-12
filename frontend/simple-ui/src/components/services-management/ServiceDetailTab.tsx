@@ -160,6 +160,18 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
           selectedService.costPerUnit != null ? String(selectedService.costPerUnit) : ""
         }
         onPricePerUnitChange={() => undefined}
+        cachedInputPricePerUnit={
+          selectedService.cachedInputCostPerUnit != null
+            ? String(selectedService.cachedInputCostPerUnit)
+            : ""
+        }
+        onCachedInputPricePerUnitChange={() => undefined}
+        outputPricePerUnit={
+          selectedService.outputCostPerUnit != null
+            ? String(selectedService.outputCostPerUnit)
+            : ""
+        }
+        onOutputPricePerUnitChange={() => undefined}
         unitSize={selectedService.unitSize != null ? String(selectedService.unitSize) : ""}
         onUnitSizeChange={() => undefined}
         currency="INR"

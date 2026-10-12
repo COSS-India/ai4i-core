@@ -17,6 +17,7 @@ from consumers.payperuse_consumer._billing import (
     BillingWriteResult,
     ServicePricing,
     calculate_cost,
+    calculate_llm_cost,
     deduct_balance_and_update_quota,
     fetch_tenant_budget_status,
     get_inference_type_id,
@@ -75,6 +76,14 @@ def _get_otel_attributes(attrs: dict):
     tier_id: Optional[str] = raw_tier or None
 
     return tenant_id, service_id, input_tokens, output_tokens, correlation_id, api_key_id, tier_id
+
+
+def _get_cached_input_tokens(attrs: dict) -> float:
+    """LLM spans carry the cached part of the prompt as cached_input_tokens
+    (vLLM usage.prompt_tokens_details.cached_tokens). Absent on spans from
+    before it existed and on non-LLM spans: 0, so all input is priced at
+    the input price."""
+    return _to_float(attrs.get("cached_input_tokens"))
 
 
 async def _is_already_billed(billed_key: str, correlation_id: str, span_id: str, msg: Message) -> bool | None:
@@ -161,6 +170,9 @@ class BillingContext:
     offset: int
     api_key_id: int = 0
     tier_id: Optional[str] = None
+    # LLM billing prices these separately; input_tokens includes the cached ones.
+    output_tokens: float = 0.0
+    cached_input_tokens: float = 0.0
 
 
 @dataclass
@@ -315,6 +327,8 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
         offset=msg.offset(),
         api_key_id=api_key_id,
         tier_id=tier_id,
+        output_tokens=output_tokens,
+        cached_input_tokens=_get_cached_input_tokens(attrs),
     )
 
 
@@ -460,9 +474,28 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
     # purposes, but must not count toward cost or quota here. task_type is
     # sourced from mm_services (via get_service_pricing), so it must be
     # configured correctly on the service for billing to be accurate.
-    billed_units = Decimal(str(ctx.total_tokens if pricing.task_type.lower() == "llm" else ctx.input_tokens))
+    is_llm = pricing.task_type.lower() == "llm"
+    billed_units = Decimal(str(ctx.total_tokens if is_llm else ctx.input_tokens))
 
-    cost = calculate_cost(billed_units, pricing)
+    # LLM: input, cached input and output tokens each at their own price
+    # (cached input is part of input_tokens). Quota still counts every token
+    # (billed_units above); only the cost is split.
+    if is_llm:
+        llm_cost = calculate_llm_cost(
+            Decimal(str(ctx.input_tokens)),
+            Decimal(str(ctx.cached_input_tokens)),
+            Decimal(str(ctx.output_tokens)),
+            pricing,
+        )
+        cost = llm_cost.total
+        logger.debug(
+            "LLM cost by category | tenant=%s input=%s cached_input=%s output=%s"
+            " cached_input_tokens=%s",
+            ctx.tenant_id, llm_cost.input_cost, llm_cost.cached_input_cost,
+            llm_cost.output_cost, ctx.cached_input_tokens,
+        )
+    else:
+        cost = calculate_cost(billed_units, pricing)
     if cost == 0:
         logger.warning(
             "Zero cost for service_id=%s — skipping billing for tenant=%s"

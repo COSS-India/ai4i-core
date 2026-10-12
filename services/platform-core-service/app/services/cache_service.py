@@ -160,7 +160,8 @@ class CacheService:
     async def invalidate_pricing(self, service_id: str) -> None:
         """Delete payperuse_consumer's cached pricing for service_id.
 
-        Call this whenever an update changes cost_per_unit, unit_size,
+        Call this whenever an update changes cost_per_unit,
+        cached_input_cost_per_unit, output_cost_per_unit, unit_size,
         unit_rate, or task_type, so the price change takes effect on the
         very next billing event instead of waiting out the 1-hour TTL.
         """

@@ -104,6 +104,10 @@ _ULCA_BASE = dict(
     tierIds=["tier-1"],
 )
 
+# LLM services also carry cached input and output prices (costPerUnit is the
+# input price); create and edit reject an LLM payload without them.
+_LLM_PRICES = dict(cachedInputCostPerUnit=0.004, outputCostPerUnit=0.02)
+
 _LEGACY_BASE = dict(
     name="my-service",
     serviceDescription=_LONG_DESCRIPTION,
@@ -388,6 +392,7 @@ class TestAuthenticationTokenTaskTypeGate:
     def test_accepted_on_create_for_llm_task_type(self) -> None:
         base = {
             **_ULCA_BASE,
+            **_LLM_PRICES,
             "task": {"type": "llm"},
             "inferenceEndPoint": {
                 **_ULCA_BASE["inferenceEndPoint"],
@@ -418,6 +423,7 @@ class TestAuthenticationTokenTaskTypeGate:
                 "authenticationToken": "sk-vllm-secret",
             },
             costPerUnit=1.0,
+            **_LLM_PRICES,
             unitSize=1,
             tierIds=["tier-1"],
         )
@@ -728,6 +734,7 @@ class TestSchemaDerivationAndTaskTypeConsistency:
         )
         base = {
             **_ULCA_BASE,
+            **_LLM_PRICES,
             "task": {"type": "llm"},
             "inferenceEndPoint": {
                 "callbackUrl": "http://localhost:8080",
@@ -762,6 +769,7 @@ class TestSchemaDerivationAndTaskTypeConsistency:
         )
         base = {
             **_ULCA_BASE,
+            **_LLM_PRICES,
             "task": {"type": "llm"},
             "inferenceEndPoint": {
                 "callbackUrl": "http://localhost:8080",

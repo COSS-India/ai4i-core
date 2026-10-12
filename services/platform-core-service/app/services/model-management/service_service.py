@@ -44,6 +44,7 @@ from app.repositories.model_management.model_repository import ModelRepository
 from app.repositories.model_management.service_repository import ServiceRepository
 from app.schemas.model_management.service import (
     DESCRIPTION_MAX_LEN,
+    LLM_TASK_TYPE,
     ServiceCreateRequest,
     ServiceEndpointUpdateItem,
     ServiceUpdateRequest,
@@ -328,6 +329,8 @@ class ServiceService:
             expected_response_schema=jsonable_encoder(payload.expectedResponseSchema),
             task_type=payload.taskType,
             cost_per_unit=payload.costPerUnit,
+            cached_input_cost_per_unit=payload.cachedInputCostPerUnit,
+            output_cost_per_unit=payload.outputCostPerUnit,
             unit_size=payload.unitSize,
             unit_rate=unit_rate,
             tier_ids=payload.tierIds,
@@ -532,6 +535,15 @@ class ServiceService:
             update_data["task_type"] = request_dict["taskType"]
         if "costPerUnit" in request_dict:
             update_data["cost_per_unit"] = request_dict["costPerUnit"]
+        if "cachedInputCostPerUnit" in request_dict:
+            update_data["cached_input_cost_per_unit"] = request_dict["cachedInputCostPerUnit"]
+        if "outputCostPerUnit" in request_dict:
+            update_data["output_cost_per_unit"] = request_dict["outputCostPerUnit"]
+        # The LLM-only prices don't apply to other task types: clear them when
+        # a service moves off LLM (the schema rejects them for non-LLM).
+        if "task_type" in update_data and update_data["task_type"] != LLM_TASK_TYPE:
+            update_data["cached_input_cost_per_unit"] = None
+            update_data["output_cost_per_unit"] = None
         if "unitSize" in request_dict:
             update_data["unit_size"] = request_dict["unitSize"]
         if "tierIds" in request_dict:
@@ -562,7 +574,8 @@ class ServiceService:
                     "endpoint/hardwareDescription/api_key), "
                     "inferenceServerType, sslVerify, healthStatus, "
                     "benchmarks, expectedResponseSchema, isPublished, "
-                    "isTryItDefault, taskType, costPerUnit, unitSize, "
+                    "isTryItDefault, taskType, costPerUnit, "
+                    "cachedInputCostPerUnit, outputCostPerUnit, unitSize, "
                     "tierIds. Note: name, modelId, modelVersion are not "
                     "updatable."
                 ),
@@ -598,7 +611,10 @@ class ServiceService:
         # for the rest of the hour despite the DB already having the new
         # price — the exact bug this block exists to prevent, just via a
         # different failure path.
-        if {"cost_per_unit", "unit_size", "unit_rate", "task_type"} & update_data.keys():
+        if {
+            "cost_per_unit", "cached_input_cost_per_unit", "output_cost_per_unit",
+            "unit_size", "unit_rate", "task_type",
+        } & update_data.keys():
             await self._cache.invalidate_pricing(instance.service_id)
 
         model = await self._models.get_by_id_version(

@@ -95,9 +95,15 @@ class Service(Base):
     unpublished_at = Column(DateTime(timezone=True), nullable=True)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
     task_type = Column(String(32), nullable=True)
+    # Price per unit_size units. For LLM services this is the input token
+    # price; the two prices below are per the same unit_size.
     cost_per_unit = Column(Numeric(16, 8), nullable=True)
     unit_size = Column(BigInteger, nullable=True)
     unit_rate = Column(Numeric(16, 8), nullable=True)
+    # LLM only (NULL for other task types); range 0–10,000,000 enforced by
+    # check constraints in migration 5d7f9b1c3e4a.
+    cached_input_cost_per_unit = Column(Numeric(16, 8), nullable=True)
+    output_cost_per_unit = Column(Numeric(16, 8), nullable=True)
     tier_ids = Column(ARRAY(String), nullable=True)
     created_by = Column(String(255), nullable=True)
     updated_by = Column(String(255), nullable=True)
