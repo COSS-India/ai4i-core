@@ -8,6 +8,7 @@ import unicodedata
 
 NAME_MAX_LEN = 100
 DESCRIPTION_MAX_LEN = 1000
+POLICY_DESCRIPTION_MAX_LEN = 200
 # Largest value of a Postgres INTEGER id column; bigger ids 422 instead of
 # overflowing in the driver.
 ID_MAX = 2_147_483_647
@@ -32,7 +33,7 @@ def clean_name(v, label: str):
     left is blank. Zero-width joiners inside a name are kept — some scripts
     need them."""
     if not isinstance(v, str):
-        return v
+        raise ValueError(f"{label} Name must be a string")
     v = _strip_invisible(v)
     if not v:
         raise ValueError(f"{label} Name is required")
