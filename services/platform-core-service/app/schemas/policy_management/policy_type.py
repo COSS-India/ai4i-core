@@ -1,3 +1,4 @@
+import re
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -47,6 +48,37 @@ def _validate_custom_fields(policy_fields: Dict[str, Any]) -> Dict[str, Any]:
                     f"policy_fields['{domain}'] custom_field entry '{entity_name}': "
                     "'regex' is required."
                 )
+            # Regex provided by the product team — compiled here to catch invalid patterns at validation time
+            try:
+                re.compile(regex)
+            except re.error as exc:
+                raise ValueError(
+                    f"policy_fields['{domain}'] custom_field entry '{entity_name}': "
+                    f"invalid regex — {exc}."
+                )
+
+        model_supported_entries = domain_value.get("model_supported_field")
+        if model_supported_entries:
+            if not isinstance(model_supported_entries, list):
+                raise ValueError(
+                    f"policy_fields['{domain}']['model_supported_field'] must be a list."
+                )
+            for entry in model_supported_entries:
+                if not isinstance(entry, dict):
+                    raise ValueError(
+                        f"Each item in policy_fields['{domain}']['model_supported_field'] must be an object."
+                    )
+                for lang, entities in entry.items():
+                    if not isinstance(entities, list):
+                        raise ValueError(
+                            f"policy_fields['{domain}']['model_supported_field']['{lang}'] must be a list."
+                        )
+                    for entity in entities:
+                        if not isinstance(entity, dict) or not entity.get("entity_name"):
+                            raise ValueError(
+                                f"policy_fields['{domain}']['model_supported_field']['{lang}']: "
+                                "each entry must have 'entity_name'."
+                            )
 
     return policy_fields
 
@@ -110,7 +142,18 @@ class PolicyTypeCreate(BaseModel):
                                 "examples": ["SBIN0000456", "HDFC0001234", "ICIC0005678"],
                                 "regex": "\\b[A-Z]{4}0[A-Z0-9]{6}\\b",
                             },
-                        ]
+                        ],
+                        "model_supported_field": [
+                            {
+                                "en": [
+                                    {"entity_name": "CREDIT_CARD_NUMBER"},
+                                    {"entity_name": "CRYPTO"},
+                                ],
+                                "hi": [
+                                    {"entity_name": "IN_PAN"},
+                                ],
+                            }
+                        ],
                     },
                 },
             }
@@ -156,7 +199,18 @@ class PolicyTypeUpdate(BaseModel):
                                 "examples": ["HIN9876543", "INS123456789", "POL987654321"],
                                 "regex": "\\b[A-Z0-9]{6,20}\\b",
                             },
-                        ]
+                        ],
+                        "model_supported_field": [
+                            {
+                                "en": [
+                                    {"entity_name": "MEDICAL_ID"},
+                                    {"entity_name": "EMAIL_ADDRESS"},
+                                ],
+                                "hi": [
+                                    {"entity_name": "EDUCATION_ID"},
+                                ],
+                            }
+                        ],
                     },
                 },
             }
