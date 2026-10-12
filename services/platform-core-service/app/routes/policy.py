@@ -6,8 +6,9 @@ belongs to exactly one category.
 
 Categories and sub-categories are enabled/disabled via PATCH .../status
 rather than deleted, so their policies and history survive a disable.
-Toggling a category applies the same is_active to every sub-category and
-policy under it; toggling a sub-category applies it to every policy under it.
+A toggle changes only that row: children keep their own is_active, and a
+sub-category or policy is in effect only when it and every ancestor are
+enabled, so re-enabling a parent restores each child's own state.
 """
 
 from typing import Optional
@@ -99,9 +100,10 @@ async def update_category_status(
     category_id: int = Path(..., gt=0, le=ID_MAX),
     session: AsyncSession = Depends(get_db),
 ) -> UpdateCategoryStatusResponse:
-    """Enable or disable a category and every sub-category and policy under
-    it; 404 if the category does not exist. Nothing is deleted, so
-    re-enabling resumes its policies as configured. Adopter Admin only."""
+    """Enable or disable a category, which switches off everything under it
+    without changing the children's own status; 404 if the category does
+    not exist. Nothing is deleted, so re-enabling resumes its sub-categories
+    and policies as configured. Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
@@ -164,8 +166,9 @@ async def update_sub_category_status(
     sub_category_id: int = Path(..., gt=0, le=ID_MAX),
     session: AsyncSession = Depends(get_db),
 ) -> UpdateSubCategoryStatusResponse:
-    """Enable or disable a sub-category and every policy under it; 404 if
-    it does not exist, 409 if enabling it while its category is disabled.
+    """Enable or disable a sub-category, which switches off its policies
+    without changing their own status; 404 if it does not exist, 409 if
+    enabling it while its category is disabled.
     The parent category and sibling sub-categories are unaffected. Adopter
     Admin only."""
     if not is_admin(request):

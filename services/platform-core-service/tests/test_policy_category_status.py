@@ -4,10 +4,10 @@ PATCH /policies/sub-categories/{sub_category_id}/status.
 
 Covers the acceptance criteria that live in the API: an Adopter Admin can
 enable or disable a category or sub-category, the row is updated in place
-rather than deleted, toggling a category applies the same flag to every
-sub-category and policy under it, toggling a sub-category applies it to its
-policies and leaves its parent alone, a
-sub-category cannot be enabled under a disabled category, an unknown id is 404, and only an Adopter Admin gets in.
+rather than deleted, a toggle changes only its own row so each child's own
+state survives a parent disable/re-enable, a toggle of a sub-category leaves
+its parent alone, a sub-category cannot be enabled under a disabled category,
+an unknown id is 404, and only an Adopter Admin gets in.
 
 The route module is loaded by file path for the same reason
 test_policy_category.py does.
@@ -53,10 +53,6 @@ def _session(row=None, parent=None) -> MagicMock:
     return session
 
 
-def _sql(stmt) -> str:
-    return str(stmt.compile(compile_kwargs={"literal_binds": True}))
-
-
 def _category(is_active=True) -> Category:
     return Category(id=1, name="Security & Privacy", description="Keep", is_active=is_active)
 
@@ -94,27 +90,15 @@ class TestUpdateCategoryStatusService:
         assert item == CategoryItem(id=1, name="Security & Privacy", description="Keep", is_active=after)
 
     @pytest.mark.parametrize("is_active", [True, False])
-    async def test_applies_the_flag_to_its_sub_categories(self, is_active):
+    async def test_leaves_sub_categories_and_policies_alone(self, is_active):
         row = _category(is_active=not is_active)
         session = _session(row)
         await category_service.update_category_status(
             session, 1, CategoryStatusUpdate(is_active=is_active), updated_by="42"
         )
         assert row.updated_by == "42"
-        sub_stmt, policy_stmt = (c.args[0] for c in session.execute.await_args_list)
-        sql = _sql(sub_stmt)
-        assert sql.startswith("UPDATE sub_category SET is_active=")
-        assert sql.endswith("WHERE sub_category.category_id = 1")
-        assert sub_stmt.compile().params["is_active"] is is_active
-        assert sub_stmt.compile().params["updated_by"] == "42"
-        assert "updated_at=now()" in sql
-        sql = _sql(policy_stmt)
-        assert sql.startswith("UPDATE policy SET is_active=")
-        assert "WHERE policy.sub_category_id IN (SELECT sub_category.id" in sql
-        assert "WHERE sub_category.category_id = 1)" in sql
-        assert policy_stmt.compile().params["is_active"] is is_active
-        assert policy_stmt.compile().params["updated_by"] == "42"
-        assert "updated_at=now()" in sql
+        session.execute.assert_not_awaited()
+        session.commit.assert_awaited_once()
 
     @pytest.mark.parametrize("is_active", [True, False])
     async def test_same_state_changes_nothing(self, is_active):
@@ -156,11 +140,7 @@ class TestUpdateSubCategoryStatusService:
         assert item == SubCategoryItem(
             id=3, name="PII Guardrails", description="Keep", category_id=1, is_active=after
         )
-        stmt = session.execute.await_args.args[0]
-        assert _sql(stmt) == (
-            f"UPDATE policy SET is_active={str(after).lower()}, updated_at=now(), "
-            "updated_by='42' WHERE policy.sub_category_id = 3"
-        )
+        session.execute.assert_not_awaited()  # policies keep their own state
 
     async def test_cannot_enable_under_a_disabled_category(self):
         row = _sub_category(is_active=False)
@@ -191,6 +171,27 @@ class TestUpdateSubCategoryStatusService:
             session, 3, SubCategoryStatusUpdate(is_active=is_active)
         )
         assert session.get.await_args_list[1] == call(Category, 1, with_for_update=True)
+
+    async def test_rereads_the_row_after_taking_the_lock(self):
+        """A toggle that committed while we waited for the lock must be seen,
+        or a disable could take the no-op path on a stale is_active."""
+        row = _sub_category(is_active=False)
+        session = _session(row, _category(is_active=True))
+        calls = MagicMock()
+        calls.attach_mock(session.get, "get")
+
+        async def refresh(obj):
+            if not calls.refresh.called:
+                row.is_active = True  # committed by the other toggle while we waited
+            calls.refresh(obj)
+
+        session.refresh.side_effect = refresh
+        item = await sub_category_service.update_sub_category_status(
+            session, 3, SubCategoryStatusUpdate(is_active=False)
+        )
+        assert [c[0] for c in calls.mock_calls[:3]] == ["get", "get", "refresh"]
+        assert item.is_active is False
+        session.commit.assert_awaited_once()
 
     @pytest.mark.parametrize("is_active", [True, False])
     async def test_same_state_changes_nothing(self, is_active):
