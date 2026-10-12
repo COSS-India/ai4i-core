@@ -46,6 +46,7 @@ opentelemetry-util-http==0.63b0
 # PII detection (Presidio + spaCy models baked into the image at build time)
 presidio-analyzer==2.2.35
 presidio-anonymizer==2.2.35
+langdetect==1.0.9
 spacy==3.7.4
 en-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.7.1/en_core_web_lg-3.7.1-py3-none-any.whl
 xx-ent-wiki-sm @ https://github.com/explosion/spacy-models/releases/download/xx_ent_wiki_sm-3.7.0/xx_ent_wiki_sm-3.7.0-py3-none-any.whl
