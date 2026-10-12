@@ -247,6 +247,19 @@ export const apiEndpoints = {
     auditLogs: `${API_V1}/policy-service/audit-logs`,
     auditLogById: (id: string) => `${API_V1}/policy-service/audit-logs/${id}`,
   },
+  /** Platform-core policy hierarchy. */
+  policyHierarchy: {
+    categories: `${API_V1}/policies/categories`,
+    categoryStatus: (id: number) => `${API_V1}/policies/categories/${id}/status`,
+    subCategories: `${API_V1}/policies/sub-categories`,
+    subCategoryStatus: (id: number) => `${API_V1}/policies/sub-categories/${id}/status`,
+    /** PII definitions. GET list, GET by id, POST, PUT (id in the body), DELETE. */
+    policyTypes: `${API_V1}/policies/policy-types`,
+    policyTypeById: (id: number) => `${API_V1}/policies/policy-types/${id}`,
+    /** Policies under a sub-category. GET list, GET by id, POST, PUT (id in the body), DELETE. */
+    policies: `${API_V1}/policies`,
+    policyById: (id: number) => `${API_V1}/policies/${id}`,
+  },
   metering: {
     base: `${API_V1}/metering`,
     overview: `${API_V1}/metering/overview`,
