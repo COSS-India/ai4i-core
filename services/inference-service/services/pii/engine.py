@@ -3,7 +3,7 @@
 import logging
 from typing import Dict, List, Optional, Tuple
 
-from presidio_analyzer import AnalyzerEngine, RecognizerResult
+from presidio_analyzer import AnalyzerEngine, EntityRecognizer, RecognizerResult
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 from presidio_anonymizer import AnonymizerEngine
 from presidio_anonymizer.entities import EngineResult, OperatorConfig
@@ -42,9 +42,25 @@ class PresidioEngine:
             settings.PII_SPACY_MULTILINGUAL_MODEL,
         )
 
-    def analyze(self, text: str, source_language: str) -> List[RecognizerResult]:
-        lang_code = get_spacy_lang_code(source_language)
-        return self._analyzer.analyze(text=text, language=lang_code)
+    def analyze(
+        self,
+        text: str,
+        source_language: str,
+        entities: Optional[List[str]] = None,
+        ad_hoc_recognizers: Optional[List[EntityRecognizer]] = None,
+    ) -> List[RecognizerResult]:
+        """Detect PII. entities=None means every supported entity.
+
+        ad_hoc_recognizers apply to this call only; the shared registry is
+        not changed. Their supported_language must be
+        get_spacy_lang_code(source_language).
+        """
+        return self._analyzer.analyze(
+            text=text,
+            language=get_spacy_lang_code(source_language),
+            entities=entities,
+            ad_hoc_recognizers=ad_hoc_recognizers,
+        )
 
     def anonymize(
         self, text: str, analyzer_results: List[RecognizerResult]
