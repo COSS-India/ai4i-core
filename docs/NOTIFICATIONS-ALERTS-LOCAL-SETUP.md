@@ -149,4 +149,4 @@ docker exec ai4v-postgres psql -U postgres -d ai4iplatform_core -c \
 | Nothing happens at all | The recipient roles are still off (Step 3) |
 | PPU emails never arrive | `PII_ENCRYPTION_KEY` in `payperuse_consumer`'s `.env` must equal auth-service's, or recipients can't be resolved |
 | `554 Email address is not verified` | SES sandbox: verify the sender and recipient |
-| Error-rate / latency alerts never fire | Locally, Prometheus can only scrape **inference-service** (see `prometheus.yml`), so other services have no metrics |
+| Error-rate / latency alerts never fire | See [`MONITORING-ALERTS-LOCAL-SETUP.md`](MONITORING-ALERTS-LOCAL-SETUP.md) |
