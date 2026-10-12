@@ -274,6 +274,7 @@ async def update_policy_type(
     request: Request,
     payload: PolicyTypeUpdate,
     session: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis),
 ) -> UpdatePolicyTypeResponse:
     """Update name and/or policy_fields of a policy type. policy_type_id is
     required in the request body. 404 if it does not exist, 409 if the new
@@ -281,7 +282,7 @@ async def update_policy_type(
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
-    item = await policy_type_service.update_policy_type(session, payload.policy_type_id, payload, updated_by=user_id)
+    item = await policy_type_service.update_policy_type(session, payload.policy_type_id, payload, updated_by=user_id, redis=redis)
     return UpdatePolicyTypeResponse(
         success=True,
         data=item,
@@ -395,6 +396,7 @@ async def update_policy(
     request: Request,
     payload: PolicyUpdate,
     session: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis),
 ) -> UpdatePolicyResponse:
     """Update a policy. ``id`` (integer primary key) is required in the request
     body. 404 if it does not exist, 409 if the new name is already taken.
@@ -402,7 +404,7 @@ async def update_policy(
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
-    item = await policy_service.update_policy(session, payload.id, payload, updated_by=user_id)
+    item = await policy_service.update_policy(session, payload.id, payload, updated_by=user_id, redis=redis)
     return UpdatePolicyResponse(
         success=True,
         data=item,
@@ -420,12 +422,13 @@ async def delete_policy(
     id: int = Path(..., gt=0, le=2_147_483_647),
     session: AsyncSession = Depends(get_db),
     auth_db: AsyncSession = Depends(get_auth_db),
+    redis: aioredis.Redis = Depends(get_redis),
 ) -> DeletePolicyResponse:
     """Delete a policy by integer primary key. 404 if it does not exist.
     409 if it is linked to one or more applications. Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
-    deleted_id = await policy_service.delete_policy(session, id, auth_db=auth_db)
+    deleted_id = await policy_service.delete_policy(session, id, auth_db=auth_db, redis=redis)
     return DeletePolicyResponse(
         success=True,
         data=DeletedIdData(id=deleted_id),

@@ -127,6 +127,7 @@ class CoreSettings(BaseSettings):
     # Cache TTLs
     model_cache_ttl_seconds: int = 3600
     service_cache_ttl_seconds: int = 300
+    policy_cache_ttl_seconds: int = 3600
     metering_cache_ttl_seconds: int = 60
     # /overview's metering-source first_request_at, cached per tenant scope on
     # its own key: it's a full-retention subquery, and it only moves when a

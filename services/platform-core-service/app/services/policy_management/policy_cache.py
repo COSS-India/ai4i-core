@@ -7,6 +7,7 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.policy_management.category import Category
 from app.models.policy_management.policy import Policy
 from app.models.policy_management.policy_type import PolicyType
@@ -82,7 +83,20 @@ async def cache_policy(policy: Policy, session: AsyncSession, redis: Redis) -> N
             ),
         }
 
-        await redis.set(policy_cache_key(policy.id), json.dumps(payload))
+        await redis.set(
+            policy_cache_key(policy.id),
+            json.dumps(payload),
+            ex=settings.policy_cache_ttl_seconds,
+        )
         logger.debug("Cached policy id=%s", policy.id)
     except Exception:
         logger.warning("Failed to cache policy id=%s", policy.id, exc_info=True)
+
+
+async def delete_policy_cache(policy_id: int, redis: Redis) -> None:
+    """Remove a policy entry from the Redis cache."""
+    try:
+        await redis.delete(policy_cache_key(policy_id))
+        logger.debug("Evicted cache for policy id=%s", policy_id)
+    except Exception:
+        logger.warning("Failed to evict cache for policy id=%s", policy_id, exc_info=True)

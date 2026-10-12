@@ -8,8 +8,8 @@ from app.schemas.policy_management.fields import NAME_MAX_LEN, clean_name
 
 def _validate_custom_fields(policy_fields: Dict[str, Any]) -> Dict[str, Any]:
     """Each top-level key in policy_fields is a domain (e.g. Education, Finance).
-    Every domain must have a 'custom_field' list where each entry has at least
-    3 examples and a non-empty regex."""
+    Every domain must have a 'custom_field' list where each entry has a mandatory
+    entity_name, at least 3 examples, and a non-empty regex."""
     for domain, domain_value in policy_fields.items():
         if not isinstance(domain_value, dict):
             raise ValueError(f"policy_fields['{domain}'] must be an object.")
@@ -27,7 +27,12 @@ def _validate_custom_fields(policy_fields: Dict[str, Any]) -> Dict[str, Any]:
                     f"Each item in policy_fields['{domain}']['custom_field'] must be an object."
                 )
 
-            entity_name = entry.get("entity_name", "<unknown>")
+            entity_name = entry.get("entity_name")
+            if not entity_name or not str(entity_name).strip():
+                raise ValueError(
+                    f"policy_fields['{domain}'] custom_field entry: "
+                    "'entity_name' is required and must not be blank."
+                )
 
             examples = entry.get("examples")
             if not examples or not isinstance(examples, list) or len(examples) < 3:

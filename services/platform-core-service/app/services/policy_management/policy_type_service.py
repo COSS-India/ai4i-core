@@ -57,7 +57,7 @@ async def create_policy_type(session: AsyncSession, body: PolicyTypeCreate, crea
 
 
 async def update_policy_type(
-    session: AsyncSession, policy_type_id: int, body: PolicyTypeUpdate, updated_by: str | None = None
+    session: AsyncSession, policy_type_id: int, body: PolicyTypeUpdate, updated_by: str | None = None, redis=None
 ) -> PolicyTypeItem:
     repo = PolicyTypeRepository(session)
     existing = await repo.get_by_id(policy_type_id)
@@ -71,6 +71,18 @@ async def update_policy_type(
         return PolicyTypeItem.model_validate(existing)
 
     row = await repo.update(policy_type_id, data)
+
+    if redis is not None:
+        from sqlalchemy import select, text
+        from app.models.policy_management.policy import Policy
+        from app.services.policy_management.policy_cache import cache_policy
+
+        affected = await session.execute(
+            select(Policy).where(text(":id = ANY(policy_type_id)")).params(id=policy_type_id)
+        )
+        for policy in affected.scalars().all():
+            await cache_policy(policy, session, redis)
+
     return PolicyTypeItem.model_validate(row)
 
 
