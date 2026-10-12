@@ -1,11 +1,23 @@
 """Presidio analyze/anonymize test endpoints and the policy simulation."""
 
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 router = APIRouter(prefix="/pii", tags=["PII Test"])
+
+# Matches platform-core's NAME_MAX_LEN for policy type names.
+NAME_MAX_LEN = 100
+# spaCy refuses text over 1,000,000 characters (a 500); stay well below it.
+MAX_SIMULATE_TEXT_LEN = 100_000
+MAX_POLICY_TYPES = 50
+MAX_CUSTOM_FIELDS = 100
+MAX_REGEX_LEN = 1000
+
+EntityName = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=NAME_MAX_LEN)
+]
 
 
 class PiiRequest(BaseModel):
@@ -24,9 +36,29 @@ class AnalyzeResponse(BaseModel):
     entities: List[EntityResult]
 
 
+class AnalyzerResultIn(BaseModel):
+    entityType: EntityName
+    # strict: lax mode would accept true as 1 and "5" as 5.
+    start: int = Field(..., ge=0, strict=True)
+    end: int = Field(..., ge=0, strict=True)
+    score: float = Field(..., ge=0, le=1)
+
+
 class AnonymizeRequest(PiiRequest):
     # The /analyze output for this text, as is. Omit it to analyze here.
-    analyzerResults: Optional[List[EntityResult]] = None
+    analyzerResults: Optional[List[AnalyzerResultIn]] = None
+
+    @model_validator(mode="after")
+    def spans_inside_text(self):
+        # Presidio raises (a 500) for a span past the end of the text, and
+        # silently duplicates text for start > end.
+        for e in self.analyzerResults or []:
+            if not e.start < e.end <= len(self.text):
+                raise ValueError(
+                    f"analyzerResults span {e.start}-{e.end} is not inside the text "
+                    f"(length {len(self.text)}); start must be less than end."
+                )
+        return self
 
 
 class AnonymizedItem(BaseModel):
@@ -87,17 +119,43 @@ def anonymize(req: AnonymizeRequest):
     )
 
 
+# platform-core's policy_fields JSONB. extra="allow": keys this endpoint does
+# not use (examples, handling, implementation_method, ...) are accepted.
+class CustomFieldIn(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    entity_name: EntityName
+    # Not stripped: spaces can be part of the pattern. pattern=\S rejects blank.
+    regex: Annotated[str, StringConstraints(max_length=MAX_REGEX_LEN, pattern=r"\S")]
+
+
+class ModelEntityIn(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    entity_name: EntityName
+
+
+class PolicyFieldsIn(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    custom_field: List[CustomFieldIn] = Field(default_factory=list, max_length=MAX_CUSTOM_FIELDS)
+    # [{"en": [{"entity_name": "PERSON"}], "hi": [...]}]
+    model_supported_field: List[Dict[str, List[ModelEntityIn]]] = Field(default_factory=list)
+
+
 class SimulatePolicyType(BaseModel):
     """A policy_type row as platform-core returns it (GET /policies/policy-types)."""
 
     id: Optional[int] = None
-    policy_type: str
-    policy_fields: Dict[str, Any] = Field(default_factory=dict)
+    policy_type: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=NAME_MAX_LEN)
+    ]
+    policy_fields: PolicyFieldsIn = Field(default_factory=PolicyFieldsIn)
 
 
 class SimulateRequest(BaseModel):
-    text: str
-    policyTypes: List[SimulatePolicyType]
+    text: str = Field(..., max_length=MAX_SIMULATE_TEXT_LEN)
+    policyTypes: List[SimulatePolicyType] = Field(..., max_length=MAX_POLICY_TYPES)
 
 
 class Replacement(BaseModel):
@@ -118,18 +176,39 @@ class SimulateResponse(BaseModel):
     detected: List[DetectedPii]
 
 
-@router.post("/simulate", response_model=SimulateResponse)
+@router.post(
+    "/simulate",
+    response_model=SimulateResponse,
+    responses={400: {"description": "Malformed request or policy fields, an invalid regex, or a regex that timed out."}},
+)
 def simulate(req: SimulateRequest):
-    """Detect the policy's PII types in text and replace them with tokens."""
-    from services.pii.simulation import InvalidPolicyError, PolicyType, simulate as run
+    """Detect the policy's PII types in text and replace them with numbered tokens.
+
+    The text's language is detected automatically.
+    """
+    from services.pii.simulation import CustomField, InvalidPolicyError, PolicyType, simulate as run
+
+    policy_types = []
+    for pt in req.policyTypes:
+        model_entities: Dict[str, List[str]] = {}
+        for by_language in pt.policy_fields.model_supported_field:
+            for lang, entries in by_language.items():
+                model_entities.setdefault(lang, []).extend(e.entity_name for e in entries)
+        policy_types.append(
+            PolicyType(
+                name=pt.policy_type,
+                custom_fields=[
+                    CustomField(cf.entity_name, cf.regex) for cf in pt.policy_fields.custom_field
+                ],
+                model_entities=model_entities,
+            )
+        )
 
     try:
-        result = run(
-            req.text,
-            [PolicyType(pt.policy_type, pt.policy_fields) for pt in req.policyTypes],
-        )
+        result = run(req.text, policy_types)
     except InvalidPolicyError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        # 400 like the app's request-validation handler (app_factory.py).
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return SimulateResponse(
         originalText=req.text,

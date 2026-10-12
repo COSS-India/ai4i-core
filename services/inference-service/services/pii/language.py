@@ -3,12 +3,18 @@
 import logging
 
 from langdetect import DetectorFactory, LangDetectException, detect
+from langdetect.detector_factory import init_factory
 
 logger = logging.getLogger(__name__)
 
 # langdetect is non-deterministic unless seeded: the same text could get a
 # different language (and so a different spaCy model) on each request.
 DetectorFactory.seed = 0
+
+# langdetect loads its profiles lazily and publishes the factory before they
+# finish loading, so two concurrent first calls can detect against a
+# half-loaded factory. Load them once here; the import lock serialises it.
+init_factory()
 
 DEFAULT_LANGUAGE = "en"
 
