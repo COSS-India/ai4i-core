@@ -49,7 +49,7 @@ class PolicyCreate(BaseModel):
     description: Optional[str] = Field(None, max_length=POLICY_DESCRIPTION_MAX_LEN, description="Optional description.")
     domain: List[str] = Field(..., min_length=1, description="One or more domains this policy applies to.")
     guardrail_scope: GuardrailScope = Field(..., description="Enforcement side: input, output, or both.")
-    is_global: bool = Field(False, description="Whether this policy applies globally across all tenants.")
+    is_global: bool = Field(..., description="Whether this policy applies globally across all tenants.")
     sub_category_id: int = Field(..., gt=0, le=2_147_483_647, description="Sub-category this policy belongs to.")
     policy_type_id: List[Annotated[int, Field(gt=0, le=2_147_483_647, strict=True)]] = Field(..., min_length=1, description="One or more policy type IDs.")
 
@@ -66,9 +66,17 @@ class PolicyCreate(BaseModel):
     @field_validator("domain", mode="before")
     @classmethod
     def validate_domain(cls, v):
-        if isinstance(v, list) and len(v) == 0:
+        if not isinstance(v, list):
+            return v
+        if len(v) == 0:
             raise ValueError("domain must contain at least one entry")
-        return v
+        cleaned = []
+        for i, entry in enumerate(v):
+            entry = clean_name(entry, f"domain[{i}]")
+            if len(entry) > NAME_MAX_LEN:
+                raise ValueError(f"domain[{i}] must be at most {NAME_MAX_LEN} characters")
+            cleaned.append(entry)
+        return cleaned
 
     @field_validator("policy_type_id", mode="before")
     @classmethod
@@ -111,9 +119,17 @@ class PolicyUpdate(BaseModel):
     @field_validator("domain", mode="before")
     @classmethod
     def validate_domain(cls, v):
-        if isinstance(v, list) and len(v) == 0:
+        if not isinstance(v, list):
+            return v
+        if len(v) == 0:
             raise ValueError("domain must contain at least one entry")
-        return v
+        cleaned = []
+        for i, entry in enumerate(v):
+            entry = clean_name(entry, f"domain[{i}]")
+            if len(entry) > NAME_MAX_LEN:
+                raise ValueError(f"domain[{i}] must be at most {NAME_MAX_LEN} characters")
+            cleaned.append(entry)
+        return cleaned
 
     @field_validator("policy_type_id", mode="before")
     @classmethod

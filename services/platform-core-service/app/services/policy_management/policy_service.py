@@ -125,13 +125,6 @@ async def delete_policy(
     if existing is None:
         raise EntityNotFoundError(f"Policy {policy_id}")
 
-    if not existing.is_active:
-        raise AppError(
-            message=f"Policy {policy_id} is not active and cannot be deleted.",
-            code="POLICY_NOT_ACTIVE",
-            status_code=409,
-        )
-
     if auth_db is not None:
         result = await auth_db.execute(
             text("SELECT 1 FROM applications WHERE :pid = ANY(policy_id) LIMIT 1"),
