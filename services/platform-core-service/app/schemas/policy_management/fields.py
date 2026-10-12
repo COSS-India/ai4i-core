@@ -30,7 +30,7 @@ def clean_name(v, label: str):
     left is blank. Zero-width joiners inside a name are kept — some scripts
     need them."""
     if not isinstance(v, str):
-        return v
+        raise ValueError(f"{label} Name must be a string")
     v = _strip_invisible(v)
     if not v:
         raise ValueError(f"{label} Name is required")

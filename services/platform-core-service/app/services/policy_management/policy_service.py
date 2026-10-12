@@ -1,9 +1,9 @@
 """Policy reads/writes for the policy management domain.
 
-policy.name is unique (case-insensitive, uq_policy_name_lower) and
-policy.policy_id is unique (uq_policy_policy_id). The pre-insert/pre-update
-check gives a clean 409; an IntegrityError on those constraints covers
-concurrent creates of the same name.
+policy.name is unique (case-insensitive, uq_policy_name_lower).
+The pre-insert check gives a clean 409; an IntegrityError on that constraint
+covers concurrent creates of the same name.
+policy_id is generated atomically via the policy_id_seq sequence.
 """
 
 from typing import List, Optional, Tuple
@@ -79,8 +79,6 @@ async def create_policy(
         orig = str(exc.orig)
         if "uq_policy_name_lower" in orig:
             raise DuplicateEntityError(f"Policy '{body.name}'")
-        if "uq_policy_policy_id" in orig:
-            raise DuplicateEntityError(f"Policy ID '{policy_id_str}'")
         if "fk_policy_sub_category_id" in orig:
             raise EntityNotFoundError(f"SubCategory {body.sub_category_id}")
         raise

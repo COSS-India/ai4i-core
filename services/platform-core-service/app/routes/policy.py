@@ -254,7 +254,7 @@ async def list_policies(
     response: Response,
     name: Optional[str] = Query(None, description="Case-insensitive partial match on policy name."),
     sub_category_id: Optional[int] = Query(None, gt=0, le=2_147_483_647, description="Filter policies by sub-category ID. 404 if it does not exist."),
-    offset: int = Query(0, ge=0, description="Number of items to skip (for pagination)."),
+    offset: int = Query(0, ge=0, le=2_147_483_647, description="Number of items to skip (for pagination)."),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of items to return. Defaults to 100."),
     session: AsyncSession = Depends(get_db),
 ) -> ListPolicyResponse:

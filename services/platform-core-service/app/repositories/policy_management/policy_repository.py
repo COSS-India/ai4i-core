@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.policy_management.policy import Policy
@@ -47,16 +47,8 @@ class PolicyRepository:
         return result.scalar_one_or_none()
 
     async def get_next_policy_id(self) -> str:
-        """Generate the next SPP-XXXX identifier by reading the current max."""
-        from sqlalchemy import text
-        result = await self._db.execute(
-            text(
-                "SELECT MAX(CAST(SUBSTRING(policy_id FROM 5) AS INTEGER)) "
-                "FROM policy WHERE policy_id ~ '^PID-[0-9]+$'"
-            )
-        )
-        last_num = result.scalar() or 0
-        return f"{_ID_PREFIX}{last_num + 1:04d}"
+        result = await self._db.execute(text("SELECT nextval('policy_id_seq')"))
+        return f"{_ID_PREFIX}{result.scalar():04d}"
 
     async def create(self, data: Dict[str, Any]) -> Policy:
         row = Policy(**data)
