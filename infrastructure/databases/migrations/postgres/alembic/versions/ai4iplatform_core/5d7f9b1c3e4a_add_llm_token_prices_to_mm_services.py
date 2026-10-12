@@ -36,6 +36,13 @@ def _check_name(column: str) -> str:
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+    if conn.execute(sa.text(
+        "SELECT 1 FROM information_schema.columns"
+        " WHERE table_name = 'mm_services' AND column_name = 'cached_input_cost_per_unit'"
+    )).scalar() is not None:
+        return
+
     for column in NEW_PRICES:
         op.add_column(TABLE, sa.Column(column, sa.Numeric(16, 8), nullable=True))
         op.create_check_constraint(
