@@ -1,14 +1,16 @@
 """Presidio engine singleton — loads both spaCy models once at startup."""
 
 import logging
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from presidio_analyzer import AnalyzerEngine, RecognizerResult
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 from presidio_anonymizer import AnonymizerEngine
+from presidio_anonymizer.entities import EngineResult, OperatorConfig
 
 from config import settings
 from services.pii.model_registry import get_spacy_lang_code
+from services.pii.operators import OPERATOR_NAME, InstanceCounterAnonymizer
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +32,10 @@ class PresidioEngine:
             supported_languages=["en", "xx"],
         )
         self._anonymizer = AnonymizerEngine()
+        # Older presidio-anonymizer (e.g. the pinned 2.2.35) has no add_anonymizer;
+        # it discovers Operator subclasses automatically, so the import is enough.
+        if hasattr(self._anonymizer, "add_anonymizer"):
+            self._anonymizer.add_anonymizer(InstanceCounterAnonymizer)
         logger.info(
             "Presidio engine loaded (en_model=%s, multilingual_model=%s)",
             settings.PII_SPACY_EN_MODEL,
@@ -40,8 +46,21 @@ class PresidioEngine:
         lang_code = get_spacy_lang_code(source_language)
         return self._analyzer.analyze(text=text, language=lang_code)
 
-    def anonymize(self, text: str, analyzer_results: List[RecognizerResult]) -> str:
-        return self._anonymizer.anonymize(text=text, analyzer_results=analyzer_results).text
+    def anonymize(
+        self, text: str, analyzer_results: List[RecognizerResult]
+    ) -> Tuple[EngineResult, Dict[str, Dict[str, str]]]:
+        """Replace each entity with a numbered token (<PERSON_1>, ...).
+
+        Returns Presidio's EngineResult and the {entity_type: {value: token}}
+        map the operator filled in. The map holds raw PII; never log it.
+        """
+        entity_mapping: Dict[str, Dict[str, str]] = {}
+        result = self._anonymizer.anonymize(
+            text=text,
+            analyzer_results=analyzer_results,
+            operators={"DEFAULT": OperatorConfig(OPERATOR_NAME, {"entity_mapping": entity_mapping})},
+        )
+        return result, entity_mapping
 
 
 def get_engine() -> PresidioEngine:
