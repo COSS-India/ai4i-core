@@ -247,6 +247,11 @@ export const apiEndpoints = {
     auditLogs: `${API_V1}/policy-service/audit-logs`,
     auditLogById: (id: string) => `${API_V1}/policy-service/audit-logs/${id}`,
   },
+  /** Platform-core policy hierarchy. GET /policies/categories and /policies/sub-categories. */
+  policyHierarchy: {
+    categories: `${API_V1}/policies/categories`,
+    subCategories: `${API_V1}/policies/sub-categories`,
+  },
   metering: {
     base: `${API_V1}/metering`,
     overview: `${API_V1}/metering/overview`,

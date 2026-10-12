@@ -1,18 +1,19 @@
-import { Box, Tab, TabList, TabPanel, TabPanels, Tabs, Text } from "@chakra-ui/react";
+import { Alert, AlertIcon, Box, Button, Center, Tab, TabList, TabPanel, TabPanels, Tabs, Text } from "@chakra-ui/react";
 import React from "react";
 import ConfirmDialog from "../../common/ConfirmDialog";
+import LoadingSpinner from "../../common/LoadingSpinner";
 import ManagementPageHeader from "../../common/ManagementPageHeader";
 import type { Crumb } from "../../common/PageBreadcrumb";
 import {
-  PII_SUBCATEGORY_ID,
   categoryEffective,
+  isPiiGuardrailsSubcategory,
   subcategoryEffective,
   type PortalRole,
 } from "./model";
 import { PiiDrawers } from "./drawers";
 import { ConfigurationPanel, InstitutionCatalog, PlaygroundPanel, PolicyList } from "./panels";
 import { PiiPoliciesProvider, usePiiPolicies, type PiiTab } from "./PiiPoliciesProvider";
-import { AddCard, CardGrid, NavCard } from "./ui";
+import { CardGrid, NavCard } from "./ui";
 
 const TABS: { id: PiiTab; label: string }[] = [
   { id: "policies", label: "Policies" },
@@ -32,6 +33,9 @@ function ExperienceBody() {
   const {
     categories,
     subcategories,
+    hierarchyStatus,
+    hierarchyError,
+    reloadHierarchy,
     role,
     view,
     openHome,
@@ -39,9 +43,6 @@ function ExperienceBody() {
     openSubcategory,
     tab,
     setTab,
-    openDrawer,
-    toggleCategory,
-    toggleSubcategory,
     confirm,
     closeConfirm,
   } = store;
@@ -49,7 +50,7 @@ function ExperienceBody() {
   const category = view.kind === "category" ? categories.find((c) => c.id === view.categoryId) : undefined;
   const sub = view.kind === "sub" ? subcategories.find((s) => s.id === view.subcategoryId) : undefined;
   const parent = sub ? categories.find((c) => c.id === sub.categoryId) : undefined;
-  const isPii = sub?.id === PII_SUBCATEGORY_ID;
+  const isPii = sub ? isPiiGuardrailsSubcategory(sub) : false;
   const canManage = role === "adopter";
 
   let title = "Policies";
@@ -94,29 +95,56 @@ function ExperienceBody() {
         crumbs={crumbs}
       />
 
-      {view.kind === "home" ? (
-        <CardGrid>
-          {categories.map((cat) => {
-            const count = subcategories.filter((s) => s.categoryId === cat.id).length;
-            return (
-              <NavCard
-                key={cat.id}
-                icon="shield"
-                title={cat.name}
-                description={cat.description}
-                meta={`${count} sub-categor${count === 1 ? "y" : "ies"}`}
-                status={cat.status}
-                effective={categoryEffective(cat)}
-                onOpen={() => openCategory(cat.id)}
-                onToggle={canManage ? () => toggleCategory(cat.id) : undefined}
-              />
-            );
-          })}
-          {canManage ? <AddCard label="Add Category" onClick={() => openDrawer({ kind: "add-category" })} /> : null}
-        </CardGrid>
+      {hierarchyStatus === "loading" ? (
+        <Center py={16}>
+          <LoadingSpinner label="Loading categories…" />
+        </Center>
       ) : null}
 
-      {category ? (
+      {hierarchyStatus === "error" ? (
+        <Alert status="error" borderRadius="md">
+          <AlertIcon />
+          <Text flex="1" fontSize="sm">
+            {hierarchyError}
+          </Text>
+          <Button size="sm" variant="outline" onClick={reloadHierarchy}>
+            Try again
+          </Button>
+        </Alert>
+      ) : null}
+
+      {hierarchyStatus === "ready" && view.kind === "home" ? (
+        categories.length === 0 ? (
+          <Text fontSize="sm" color="ink.500">
+            No categories yet.
+          </Text>
+        ) : (
+          <CardGrid>
+            {categories.map((cat) => {
+              const count = subcategories.filter((s) => s.categoryId === cat.id).length;
+              return (
+                <NavCard
+                  key={cat.id}
+                  icon="shield"
+                  title={cat.name}
+                  description={cat.description || "No description"}
+                  meta={`${count} sub-categor${count === 1 ? "y" : "ies"}`}
+                  status={cat.status}
+                  effective={categoryEffective(cat)}
+                  onOpen={() => openCategory(cat.id)}
+                />
+              );
+            })}
+          </CardGrid>
+        )
+      ) : null}
+
+      {hierarchyStatus === "ready" && category ? (
+        subcategories.every((s) => s.categoryId !== category.id) ? (
+          <Text fontSize="sm" color="ink.500">
+            No sub-categories yet.
+          </Text>
+        ) : (
         <CardGrid>
           {subcategories
             .filter((s) => s.categoryId === category.id)
@@ -125,25 +153,19 @@ function ExperienceBody() {
               return (
                 <NavCard
                   key={s.id}
-                  icon={s.id === PII_SUBCATEGORY_ID ? "shield" : "flask"}
+                  icon={isPiiGuardrailsSubcategory(s) ? "shield" : "flask"}
                   title={s.name}
-                  description={s.description}
+                  description={s.description || "No description"}
                   status={s.status}
                   effective={subcategoryEffective(s, categories)}
                   locked={parentOff}
                   lockedNote={`Disabled — "${category.name}" is inactive`}
                   onOpen={() => openSubcategory(s.id)}
-                  onToggle={canManage ? () => toggleSubcategory(s.id) : undefined}
                 />
               );
             })}
-          {canManage ? (
-            <AddCard
-              label="Add Sub-category"
-              onClick={() => openDrawer({ kind: "add-subcategory", categoryId: category.id })}
-            />
-          ) : null}
         </CardGrid>
+        )
       ) : null}
 
       {sub && !isPii ? (

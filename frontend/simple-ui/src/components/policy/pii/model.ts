@@ -1,7 +1,8 @@
 /**
- * Mock catalog for the Policies prototype
- * (https://flourishing-marigold-fe300d.netlify.app/).
- * Seeded until category, definition, and playground APIs are available.
+ * Policies catalog. Categories and sub-categories come from
+ * GET /policies/categories and GET /policies/sub-categories.
+ * Definitions, policies, and the playground stay on the prototype seed
+ * until those APIs are available.
  */
 
 export type Handling = "Mask" | "Redact" | "Hash";
@@ -96,7 +97,10 @@ export const INSTITUTIONS: Institution[] = [
   { id: "inst-metro", name: "Metro Public Services" },
 ];
 
-export const PII_SUBCATEGORY_ID = "sub-pii-guardrails";
+/** The deployed PII sub-category. Matched by name because the id is assigned by the API. */
+export function isPiiGuardrailsSubcategory(sub: { name: string }): boolean {
+  return sub.name.trim().toLowerCase().replace(/\s+/g, " ") === "pii guardrails";
+}
 
 const DOMAINS: Domain[] = [
   {
@@ -444,27 +448,6 @@ const POLICIES: Policy[] = [
   },
 ];
 
-const CATEGORIES: PolicyCategory[] = [
-  {
-    id: "cat-security-privacy",
-    name: "Security & Privacy",
-    description:
-      "Guardrails that detect and protect personally identifiable information across requests, responses, and storage.",
-    status: "Active",
-  },
-];
-
-const SUBCATEGORIES: PolicySubcategory[] = [
-  {
-    id: PII_SUBCATEGORY_ID,
-    categoryId: "cat-security-privacy",
-    name: "PII Guardrails",
-    description:
-      "Configure PII types, policies, and enforcement for personally identifiable information.",
-    status: "Active",
-  },
-];
-
 export const INITIAL_SUBSCRIPTIONS: Record<string, string[]> = {
   "SPP-1002": ["inst-springfield"],
   "SPP-1003": ["inst-northbank"],
@@ -474,8 +457,6 @@ export interface PiiCatalog {
   domains: Domain[];
   types: PiiType[];
   policies: Policy[];
-  categories: PolicyCategory[];
-  subcategories: PolicySubcategory[];
   subscriptions: Record<string, string[]>;
 }
 
@@ -489,8 +470,6 @@ export function createInitialCatalog(): PiiCatalog {
       languages: [...p.languages],
       typeIds: [...p.typeIds],
     })),
-    categories: CATEGORIES.map((c) => ({ ...c })),
-    subcategories: SUBCATEGORIES.map((s) => ({ ...s })),
     subscriptions: Object.fromEntries(
       Object.entries(INITIAL_SUBSCRIPTIONS).map(([k, v]) => [k, [...v]]),
     ),

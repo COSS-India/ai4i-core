@@ -1,4 +1,12 @@
-import React, { createContext, useContext, useMemo, useRef, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  listPolicyCategories,
+  listPolicySubCategories,
+} from "../../../services/policyHierarchyService";
+import type {
+  PolicyCategoryItem,
+  PolicySubCategoryItem,
+} from "../../../services/dto/schemas/policyHierarchy";
 import { showToast } from "../../../utils/toast";
 import type { DetectionResult } from "./detection";
 import {
@@ -53,8 +61,6 @@ export type DrawerState =
   | { kind: "add-type" }
   | { kind: "edit-type"; id: string }
   | { kind: "view-type"; id: string }
-  | { kind: "add-category" }
-  | { kind: "add-subcategory"; categoryId: string }
   | { kind: "add-domain" }
   | { kind: "edit-domain"; id: string }
   | { kind: "create-policy" }
@@ -75,6 +81,9 @@ interface PiiPoliciesContextValue {
   policies: Policy[];
   categories: PolicyCategory[];
   subcategories: PolicySubcategory[];
+  hierarchyStatus: "loading" | "ready" | "error";
+  hierarchyError: string;
+  reloadHierarchy: () => void;
   subscriptions: Record<string, string[]>;
   role: PortalRole;
   institutionId: string;
@@ -113,10 +122,6 @@ interface PiiPoliciesContextValue {
   confirm: ConfirmState | null;
   askConfirm: (confirm: ConfirmState) => void;
   closeConfirm: () => void;
-  addCategory: (name: string, description: string) => string | null;
-  addSubcategory: (categoryId: string, name: string, description: string) => string | null;
-  toggleCategory: (id: string) => void;
-  toggleSubcategory: (id: string) => void;
   addDomain: (name: string, description: string) => string | null;
   updateDomain: (id: string, name: string, description: string) => string | null;
   deleteDomain: (id: string) => void;
@@ -154,8 +159,10 @@ export function PiiPoliciesProvider({
   const [domains, setDomains] = useState(initial.domains);
   const [types, setTypes] = useState(initial.types);
   const [policies, setPolicies] = useState(initial.policies);
-  const [categories, setCategories] = useState(initial.categories);
-  const [subcategories, setSubcategories] = useState(initial.subcategories);
+  const [categories, setCategories] = useState<PolicyCategory[]>([]);
+  const [subcategories, setSubcategories] = useState<PolicySubcategory[]>([]);
+  const [hierarchyStatus, setHierarchyStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [hierarchyError, setHierarchyError] = useState("");
   const [subscriptions, setSubscriptions] = useState(initial.subscriptions);
 
   const [view, setView] = useState<PolicyView>({ kind: "home" });
@@ -174,6 +181,34 @@ export function PiiPoliciesProvider({
   const [drawer, setDrawer] = useState<DrawerState>({ kind: "none" });
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
 
+  const hierarchyRequest = useRef(0);
+  const reloadHierarchy = useCallback(() => {
+    const requestId = ++hierarchyRequest.current;
+    setHierarchyStatus("loading");
+    setHierarchyError("");
+    void Promise.all([listPolicyCategories(), listPolicySubCategories()])
+      .then(([categoryItems, subcategoryItems]) => {
+        if (requestId !== hierarchyRequest.current) return;
+        setCategories(categoryItems.map(toCategory));
+        setSubcategories(subcategoryItems.map(toSubcategory));
+        setHierarchyStatus("ready");
+      })
+      .catch((error: unknown) => {
+        if (requestId !== hierarchyRequest.current) return;
+        setCategories([]);
+        setSubcategories([]);
+        setHierarchyError(hierarchyErrorMessage(error));
+        setHierarchyStatus("error");
+      });
+  }, []);
+
+  useEffect(() => {
+    reloadHierarchy();
+    return () => {
+      hierarchyRequest.current += 1;
+    };
+  }, [reloadHierarchy]);
+
   const value = useMemo<PiiPoliciesContextValue>(() => {
     const toast = (message: string) => showToast({ type: "success", message, messageOnly: true });
 
@@ -183,6 +218,9 @@ export function PiiPoliciesProvider({
       policies,
       categories,
       subcategories,
+      hierarchyStatus,
+      hierarchyError,
+      reloadHierarchy,
       subscriptions,
       role,
       institutionId,
@@ -237,43 +275,6 @@ export function PiiPoliciesProvider({
       confirm,
       askConfirm: setConfirm,
       closeConfirm: () => setConfirm(null),
-      addCategory: (name, description) => {
-        if (duplicateName(categories, name)) return "A category with this name already exists.";
-        const id = nextId("cat");
-        setCategories((prev) => [...prev, { id, name, description, status: "Active" }]);
-        setView({ kind: "category", categoryId: id });
-        toast("Category added.");
-        return null;
-      },
-      addSubcategory: (categoryId, name, description) => {
-        const id = nextId("sub");
-        setSubcategories((prev) => [
-          ...prev,
-          { id, categoryId, name, description, status: "Active" },
-        ]);
-        toast("Sub-category added.");
-        return null;
-      },
-      toggleCategory: (id) => {
-        setCategories((prev) =>
-          prev.map((c) =>
-            c.id === id ? { ...c, status: c.status === "Active" ? "Inactive" : "Active" } : c,
-          ),
-        );
-        const current = categories.find((c) => c.id === id);
-        toast(current?.status === "Active" ? "Category deactivated." : "Category activated.");
-      },
-      toggleSubcategory: (id) => {
-        setSubcategories((prev) =>
-          prev.map((s) =>
-            s.id === id ? { ...s, status: s.status === "Active" ? "Inactive" : "Active" } : s,
-          ),
-        );
-        const current = subcategories.find((s) => s.id === id);
-        toast(
-          current?.status === "Active" ? "Sub-category deactivated." : "Sub-category activated.",
-        );
-      },
       addDomain: (name, description) => {
         if (duplicateName(domains, name)) return "A domain with this name already exists.";
         setDomains((prev) => [...prev, { id: nextId("dom"), name, description, isDefault: false }]);
@@ -396,6 +397,9 @@ export function PiiPoliciesProvider({
     policies,
     categories,
     subcategories,
+    hierarchyStatus,
+    hierarchyError,
+    reloadHierarchy,
     subscriptions,
     role,
     institutionId,
@@ -423,4 +427,41 @@ export function usePiiPolicies() {
   const ctx = useContext(PiiPoliciesContext);
   if (!ctx) throw new Error("usePiiPolicies must be used within PiiPoliciesProvider");
   return ctx;
+}
+
+function toCategory(item: PolicyCategoryItem): PolicyCategory {
+  return {
+    id: String(item.id),
+    name: item.name,
+    description: item.description?.trim() ?? "",
+    status: item.is_active ? "Active" : "Inactive",
+  };
+}
+
+function toSubcategory(item: PolicySubCategoryItem): PolicySubcategory {
+  return {
+    id: String(item.id),
+    categoryId: String(item.category_id),
+    name: item.name,
+    description: item.description?.trim() ?? "",
+    status: item.is_active ? "Active" : "Inactive",
+  };
+}
+
+function hierarchyErrorMessage(error: unknown): string {
+  const fallback = "Couldn't load policy categories.";
+  if (!error || typeof error !== "object") {
+    return error instanceof Error && error.message ? error.message : fallback;
+  }
+  const data = (error as { response?: { data?: { detail?: unknown; message?: string } } }).response
+    ?.data;
+  const detail = data?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (detail && typeof detail === "object" && "message" in detail) {
+    const message = (detail as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+  if (typeof data?.message === "string" && data.message.trim()) return data.message;
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
 }

@@ -119,6 +119,8 @@ const SERVICE_BASE_PATHS = [
   apiEndpoints.telemetry.base,
   apiEndpoints.metering.base,
   apiEndpoints.policy.base,
+  apiEndpoints.policyHierarchy.categories,
+  apiEndpoints.policyHierarchy.subCategories,
   apiEndpoints.tiers.base,
   apiEndpoints.usage.base,
   apiEndpoints.alerts.base,

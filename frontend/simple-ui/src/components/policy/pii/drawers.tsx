@@ -66,7 +66,6 @@ export function PiiDrawers() {
     <>
       <TypeDrawer />
       <TypeViewDrawer />
-      <NameDescriptionDrawer />
       <DomainDrawer />
       <PolicyDrawer />
       <PolicyViewDrawer />
@@ -335,78 +334,6 @@ function Segment({ label, options, current }: { label: string; options: readonly
         ))}
       </HStack>
     </Box>
-  );
-}
-
-function NameDescriptionDrawer() {
-  const { drawer, closeDrawer, addCategory, addSubcategory } = usePiiPolicies();
-  const open = drawer.kind === "add-category" || drawer.kind === "add-subcategory";
-  if (!open) return null;
-  const isCategory = drawer.kind === "add-category";
-  return (
-    <NameForm
-      key={isCategory ? "cat" : drawer.categoryId}
-      title={isCategory ? "Add Category" : "Add Sub-category"}
-      submitLabel={isCategory ? "Add Category" : "Add Sub-category"}
-      namePlaceholder={isCategory ? "e.g. Service Routing" : "e.g. Rate Limiting"}
-      descriptionPlaceholder={
-        isCategory ? "What kind of policies live under this category?" : "What does this sub-category cover?"
-      }
-      onClose={closeDrawer}
-      onSave={(name, description) =>
-        isCategory ? addCategory(name, description) : addSubcategory(drawer.categoryId, name, description)
-      }
-    />
-  );
-}
-
-function NameForm({
-  title,
-  submitLabel,
-  namePlaceholder,
-  descriptionPlaceholder,
-  onClose,
-  onSave,
-}: {
-  title: string;
-  submitLabel: string;
-  namePlaceholder: string;
-  descriptionPlaceholder: string;
-  onClose: () => void;
-  onSave: (name: string, description: string) => string | null;
-}) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [error, setError] = useState("");
-  return (
-    <FormDrawer
-      isOpen
-      onClose={onClose}
-      title={title}
-      footer={<FormActions submitLabel={submitLabel} onCancel={onClose} onSubmit={() => {
-        if (!name.trim()) {
-          setError("Name is required.");
-          return;
-        }
-        const message = onSave(name.trim(), description.trim());
-        if (message) setError(message);
-        else onClose();
-      }} />}
-    >
-      <Stack spacing={4}>
-        <FormField label="Name" required error={error}>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={namePlaceholder} />
-        </FormField>
-        <FormField label="Description">
-          <Textarea
-            rows={3}
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder={descriptionPlaceholder}
-          />
-        </FormField>
-      </Stack>
-    </FormDrawer>
   );
 }
 

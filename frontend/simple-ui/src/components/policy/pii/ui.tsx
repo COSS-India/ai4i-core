@@ -136,7 +136,11 @@ export function NavCard({
             onToggle={onToggle}
             label={`${inactive ? "Activate" : "Deactivate"} ${title}`}
           />
-        ) : null}
+        ) : (
+          <Text fontSize="xs" fontWeight="medium" color={inactive ? "ink.400" : "green.600"}>
+            {inactive ? "Inactive" : "Active"}
+          </Text>
+        )}
       </Flex>
       <Button
         variant="ghost"
