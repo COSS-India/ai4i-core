@@ -11,17 +11,15 @@ partitioned on occurred_at, and daily_usage.usage_date is the UTC day of it
      (usage_events_YYYY_MM_DD). This only does work on the first run after
      the migration; later runs find no month partitions.
    - Day partitions are created for today and the next USAGE_EVENTS_DAYS_AHEAD
-     days, and for every earlier retained day that has rows to restore.
-     Rows the DEFAULT partition holds for a day being created are moved into
-     it first, since Postgres refuses the new range otherwise.
-   - Day partitions older than USAGE_EVENTS_DAYS_RETENTION (counting today)
-     are detached and dropped, with no archive, and older rows are deleted
-     from the DEFAULT partition.
+     days, and for every earlier day that has rows to restore. Rows the
+     DEFAULT partition holds for a day being created are moved into it first,
+     since Postgres refuses the new range otherwise.
+   - Past day partitions are never dropped.
 
    The parent is locked ACCESS EXCLUSIVE for the transaction, so writers wait
    instead of sending rows to the DEFAULT partition mid-conversion. The
-   conversion rewrites every retained row once; later runs only create and
-   drop empty or expired partitions, which is quick.
+   conversion rewrites every row once; later runs only create empty
+   partitions, which is quick.
 
 2. Rollup of yesterday and the USAGE_ROLLUP_LOOKBACK_DAYS before it into
    daily_usage, one transaction per day, so events that arrive late are
@@ -138,19 +136,15 @@ async def _insertable_columns(session: AsyncSession) -> str:
     return ", ".join(f'"{name}"' for name in rows.scalars())
 
 
-async def _days_with_rows(session: AsyncSession, table: str, cutoff: date) -> set[date]:
+async def _days_with_rows(session: AsyncSession, table: str) -> set[date]:
     rows = await session.execute(
-        text(
-            f'SELECT DISTINCT (occurred_at AT TIME ZONE \'UTC\')::date FROM "{table}" '
-            f"WHERE occurred_at >= {_bound(cutoff)}"
-        )
+        text(f'SELECT DISTINCT (occurred_at AT TIME ZONE \'UTC\')::date FROM "{table}"')
     )
     return set(rows.scalars())
 
 
 async def _maintain_partitions(today: date) -> None:
     settings = get_settings()
-    cutoff = today - timedelta(days=settings.USAGE_EVENTS_DAYS_RETENTION - 1)
 
     async with platform_core_session() as session:
         async with session.begin():
@@ -173,9 +167,9 @@ async def _maintain_partitions(today: date) -> None:
             wanted = {today + timedelta(days=i) for i in range(settings.USAGE_EVENTS_DAYS_AHEAD + 1)}
             for name in months:
                 await session.execute(text(f'ALTER TABLE "{TABLE}" DETACH PARTITION "{name}"'))
-                wanted |= await _days_with_rows(session, name, cutoff)
+                wanted |= await _days_with_rows(session, name)
             if has_default:
-                wanted |= await _days_with_rows(session, DEFAULT, cutoff)
+                wanted |= await _days_with_rows(session, DEFAULT)
             to_create = sorted(d for d in wanted if d not in days)
 
             columns = await _insertable_columns(session)
@@ -205,44 +199,23 @@ async def _maintain_partitions(today: date) -> None:
             restored = 0
             sources = (["ue_moved"] if moved else []) + months
             for source in sources:
-                expected = (
-                    await session.execute(
-                        text(f'SELECT count(*) FROM "{source}" WHERE occurred_at >= {_bound(cutoff)}')
-                    )
-                ).scalar_one()
+                expected = (await session.execute(text(f'SELECT count(*) FROM "{source}"'))).scalar_one()
                 result = await session.execute(
-                    text(
-                        f'INSERT INTO "{TABLE}" ({columns}) SELECT {columns} FROM "{source}" '
-                        f"WHERE occurred_at >= {_bound(cutoff)}"
-                    )
+                    text(f'INSERT INTO "{TABLE}" ({columns}) SELECT {columns} FROM "{source}"')
                 )
                 if (result.rowcount or 0) != expected:
                     raise RowCountMismatchError(
                         f"restored {result.rowcount} of {expected} row(s) from {source}; rolled back"
                     )
                 restored += expected
+            # Every row of the detached month partitions is now in a day partition.
             for name in months:
                 await session.execute(text(f'DROP TABLE "{name}"'))
 
-            dropped = []
-            for day, name in sorted(days.items()):
-                if day >= cutoff:
-                    continue
-                await session.execute(text(f'ALTER TABLE "{TABLE}" DETACH PARTITION "{name}"'))
-                await session.execute(text(f'DROP TABLE "{name}"'))
-                dropped.append(name)
-
-            purged = 0
-            if has_default:
-                result = await session.execute(
-                    text(f'DELETE FROM "{DEFAULT}" WHERE occurred_at < {_bound(cutoff)}')
-                )
-                purged = result.rowcount or 0
-
     logger.info(
-        "Partition maintenance done | table=%s today=%s keep_from=%s converted=%s created=%s dropped=%s "
-        "default_rows_moved=%d rows_restored=%d default_rows_deleted=%d",
-        TABLE, today, cutoff, months, [_day_name(d) for d in to_create], dropped, moved, restored, purged,
+        "Partition maintenance done | table=%s today=%s converted=%s created=%s "
+        "default_rows_moved=%d rows_restored=%d",
+        TABLE, today, months, [_day_name(d) for d in to_create], moved, restored,
     )
 
 

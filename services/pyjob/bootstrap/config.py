@@ -49,8 +49,6 @@ class PyJobSettings(BaseSettings):
     PARTITION_MONTHS_AHEAD: int = Field(3, ge=0)
 
     # ── Daily partitions (usage_events) ──
-    # Days kept, counting today: 120 keeps today and the 119 before.
-    USAGE_EVENTS_DAYS_RETENTION: int = Field(120, ge=1)
     # Days created ahead of today.
     USAGE_EVENTS_DAYS_AHEAD: int = Field(7, ge=0)
 

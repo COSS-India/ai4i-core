@@ -8,14 +8,15 @@ table:
 - usage_events: migration 3b5d7f9a1c2e creates month partitions. pyjob's
   daily_usage_consolidation job converts them into day partitions
   (usage_events_YYYY_MM_DD) on its first run, then keeps the days ahead
-  created and drops expired ones every day.
+  created every day. Past days are kept.
 - daily_usage: migration 4c6e8a0b2d3f creates the current and next month, and
   pyjob's monthly_partition_rollover job creates each later month, as
-  ``monthly_partition_ddl`` does, before that month starts.
+  ``monthly_partition_ddl`` does, before that month starts. Past months
+  are kept.
 
 A month whose rows have already landed in daily_usage's DEFAULT partition
-can't get its own partition until those rows are moved out, so the job must
-stay ahead.
+can't get its own partition until those rows are moved out; the job moves
+them into the partition it creates.
 """
 from datetime import date
 
