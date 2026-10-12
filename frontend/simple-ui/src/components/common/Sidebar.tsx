@@ -24,7 +24,7 @@ import {
   IoAppsOutline,
   IoPulseOutline,
   IoNotificationsOutline,
-  IoFolderOpenOutline,
+  IoShieldOutline,
   IoStatsChartOutline,
 } from "react-icons/io5";
 import { INSTITUTION, TABS } from "../../config/constants";
@@ -49,7 +49,7 @@ import {
 } from "../../utils/rbac";
 import AdopterLogo from "./AdopterLogo";
 
-type NavSectionId = "try" | "monitor" | "manage";
+type NavSectionId = "try" | "monitor" | "manage" | "orchestration";
 
 interface NavItem {
   id: string;
@@ -65,6 +65,7 @@ const NAV_SECTIONS: { id: NavSectionId; label: string }[] = [
   { id: "try", label: "Try" },
   { id: "monitor", label: "Monitor" },
   { id: "manage", label: "Manage" },
+  { id: "orchestration", label: "Orchestration" },
 ];
 
 // Unsigned-in users only see Explore. Remaining top-nav items are role-gated.
@@ -161,12 +162,12 @@ const topNavItems: NavItem[] = [
   },
   {
     id: TABS.policyManagement,
-    label: "Policy Management",
+    label: "Policies",
     shortLabel: "Policies",
     path: `/${TABS.policyManagement}`,
-    icon: IoFolderOpenOutline,
+    icon: IoShieldOutline,
     requiresAuth: true,
-    section: "manage",
+    section: "orchestration",
   },
 ];
 

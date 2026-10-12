@@ -1,5 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
+  createPolicyCategory,
+  createPolicySubCategory,
   listPolicyCategories,
   listPolicySubCategories,
 } from "../../../services/policyHierarchyService";
@@ -84,6 +86,14 @@ interface PiiPoliciesContextValue {
   hierarchyStatus: "loading" | "ready" | "error";
   hierarchyError: string;
   reloadHierarchy: () => void;
+  /** Returns an error message, or null after the category is in the list. */
+  createCategory: (name: string, description: string) => Promise<string | null>;
+  /** Parent is the open category. Returns an error message, or null on success. */
+  createSubCategory: (
+    categoryId: string,
+    name: string,
+    description: string,
+  ) => Promise<string | null>;
   subscriptions: Record<string, string[]>;
   role: PortalRole;
   institutionId: string;
@@ -132,6 +142,10 @@ interface PiiPoliciesContextValue {
   updatePolicy: (id: string, input: PolicyInput) => string | null;
   deletePolicy: (id: string) => void;
   setPolicyStatus: (id: string, status: RecordStatus) => void;
+  /** Local until the category status API exists. */
+  setCategoryStatus: (id: string, status: RecordStatus) => void;
+  /** Local until the sub-category status API exists. */
+  setSubcategoryStatus: (id: string, status: RecordStatus) => void;
   toggleSubscription: (policyId: string, institutionId: string) => void;
 }
 
@@ -221,6 +235,47 @@ export function PiiPoliciesProvider({
       hierarchyStatus,
       hierarchyError,
       reloadHierarchy,
+      createCategory: async (name, description) => {
+        const trimmed = name.trim();
+        if (!trimmed) return "Enter a name.";
+        if (duplicateName(categories, trimmed)) {
+          return "A category with this name already exists.";
+        }
+        try {
+          const created = await createPolicyCategory({
+            name: trimmed,
+            description: blankToNull(description),
+          });
+          setCategories((prev) => appendById(prev, toCategory(created)));
+          toast("Category created.");
+          return null;
+        } catch (error: unknown) {
+          return hierarchyErrorMessage(error, "Couldn't create the category.");
+        }
+      },
+      createSubCategory: async (categoryId, name, description) => {
+        const trimmed = name.trim();
+        if (!trimmed) return "Enter a name.";
+        if (duplicateName(subcategories, trimmed)) {
+          return "A sub-category with this name already exists.";
+        }
+        const parentId = Number(categoryId);
+        if (!Number.isInteger(parentId) || parentId <= 0) {
+          return "Couldn't create the sub-category.";
+        }
+        try {
+          const created = await createPolicySubCategory({
+            name: trimmed,
+            description: blankToNull(description),
+            category_id: parentId,
+          });
+          setSubcategories((prev) => appendById(prev, toSubcategory(created)));
+          toast("Sub-category created.");
+          return null;
+        } catch (error: unknown) {
+          return hierarchyErrorMessage(error, "Couldn't create the sub-category.");
+        }
+      },
       subscriptions,
       role,
       institutionId,
@@ -379,6 +434,14 @@ export function PiiPoliciesProvider({
         setPolicies((prev) => prev.map((p) => (p.id === id ? { ...p, status } : p)));
         toast(status === "Active" ? "Policy activated." : "Policy deactivated.");
       },
+      setCategoryStatus: (id, status) => {
+        setCategories((prev) => prev.map((c) => (c.id === id ? { ...c, status } : c)));
+        toast(status === "Active" ? "Category activated." : "Category deactivated.");
+      },
+      setSubcategoryStatus: (id, status) => {
+        setSubcategories((prev) => prev.map((s) => (s.id === id ? { ...s, status } : s)));
+        toast(status === "Active" ? "Sub-category activated." : "Sub-category deactivated.");
+      },
       toggleSubscription: (policyId, instId) => {
         setSubscriptions((prev) => {
           const list = prev[policyId] ? [...prev[policyId]] : [];
@@ -448,8 +511,17 @@ function toSubcategory(item: PolicySubCategoryItem): PolicySubcategory {
   };
 }
 
-function hierarchyErrorMessage(error: unknown): string {
-  const fallback = "Couldn't load policy categories.";
+function blankToNull(value: string): string | null {
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function appendById<T extends { id: string }>(items: T[], next: T): T[] {
+  if (items.some((item) => item.id === next.id)) return items;
+  return [...items, next];
+}
+
+function hierarchyErrorMessage(error: unknown, fallback = "Couldn't load policy categories."): string {
   if (!error || typeof error !== "object") {
     return error instanceof Error && error.message ? error.message : fallback;
   }
@@ -457,6 +529,12 @@ function hierarchyErrorMessage(error: unknown): string {
     ?.data;
   const detail = data?.detail;
   if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const first = detail.find((item) => item && typeof item === "object" && "msg" in item) as
+      | { msg?: unknown }
+      | undefined;
+    if (typeof first?.msg === "string" && first.msg.trim()) return first.msg;
+  }
   if (detail && typeof detail === "object" && "message" in detail) {
     const message = (detail as { message?: unknown }).message;
     if (typeof message === "string" && message.trim()) return message;

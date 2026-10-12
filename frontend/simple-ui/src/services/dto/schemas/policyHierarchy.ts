@@ -31,5 +31,26 @@ export const policySubCategoryListResponseSchema = z.object({
   }),
 });
 
+const policyWriteMetaSchema = z
+  .object({
+    message: z.string().optional(),
+  })
+  .passthrough()
+  .optional();
+
+/** POST /policies/categories */
+export const policyCategoryCreateResponseSchema = z.object({
+  success: z.boolean(),
+  data: policyCategoryItemSchema,
+  meta: policyWriteMetaSchema,
+});
+
+/** POST /policies/sub-categories */
+export const policySubCategoryCreateResponseSchema = z.object({
+  success: z.boolean(),
+  data: policySubCategoryItemSchema,
+  meta: policyWriteMetaSchema,
+});
+
 export type PolicyCategoryItem = z.infer<typeof policyCategoryItemSchema>;
 export type PolicySubCategoryItem = z.infer<typeof policySubCategoryItemSchema>;

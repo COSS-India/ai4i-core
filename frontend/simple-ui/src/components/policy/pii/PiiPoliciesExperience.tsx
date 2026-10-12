@@ -1,5 +1,5 @@
 import { Alert, AlertIcon, Box, Button, Center, Tab, TabList, TabPanel, TabPanels, Tabs, Text } from "@chakra-ui/react";
-import React from "react";
+import React, { useEffect, useState } from "react";
 import ConfirmDialog from "../../common/ConfirmDialog";
 import LoadingSpinner from "../../common/LoadingSpinner";
 import ManagementPageHeader from "../../common/ManagementPageHeader";
@@ -11,9 +11,15 @@ import {
   type PortalRole,
 } from "./model";
 import { PiiDrawers } from "./drawers";
+import { HierarchyNameForm } from "./hierarchyForms";
 import { ConfigurationPanel, InstitutionCatalog, PlaygroundPanel, PolicyList } from "./panels";
-import { PiiPoliciesProvider, usePiiPolicies, type PiiTab } from "./PiiPoliciesProvider";
-import { CardGrid, NavCard } from "./ui";
+import {
+  PiiPoliciesProvider,
+  usePiiPolicies,
+  type ConfirmState,
+  type PiiTab,
+} from "./PiiPoliciesProvider";
+import { AddCard, CardGrid, NavCard } from "./ui";
 
 const TABS: { id: PiiTab; label: string }[] = [
   { id: "policies", label: "Policies" },
@@ -26,6 +32,24 @@ function crumbClick(navigate: () => void) {
     event.preventDefault();
     navigate();
   };
+}
+
+function requestStatus(
+  askConfirm: (confirm: ConfirmState) => void,
+  name: string,
+  active: boolean,
+  activateBody: string,
+  deactivateBody: string,
+  onConfirm: () => void,
+) {
+  const nextActive = !active;
+  askConfirm({
+    title: `${nextActive ? "Activate" : "Deactivate"} "${name}"?`,
+    body: nextActive ? activateBody : deactivateBody,
+    confirmLabel: nextActive ? "Activate" : "Deactivate",
+    confirmColorScheme: nextActive ? "blue" : "red",
+    onConfirm,
+  });
 }
 
 function ExperienceBody() {
@@ -45,7 +69,25 @@ function ExperienceBody() {
     setTab,
     confirm,
     closeConfirm,
+    createCategory,
+    createSubCategory,
+    askConfirm,
+    setCategoryStatus,
+    setSubcategoryStatus,
   } = store;
+  const [categoryFormOpen, setCategoryFormOpen] = useState(false);
+  const [subcategoryFormOpen, setSubcategoryFormOpen] = useState(false);
+  const viewKey =
+    view.kind === "home"
+      ? "home"
+      : view.kind === "category"
+        ? view.categoryId
+        : view.subcategoryId;
+
+  useEffect(() => {
+    setCategoryFormOpen(false);
+    setSubcategoryFormOpen(false);
+  }, [viewKey]);
 
   const category = view.kind === "category" ? categories.find((c) => c.id === view.categoryId) : undefined;
   const sub = view.kind === "sub" ? subcategories.find((s) => s.id === view.subcategoryId) : undefined;
@@ -114,7 +156,7 @@ function ExperienceBody() {
       ) : null}
 
       {hierarchyStatus === "ready" && view.kind === "home" ? (
-        categories.length === 0 ? (
+        categories.length === 0 && !canManage ? (
           <Text fontSize="sm" color="ink.500">
             No categories yet.
           </Text>
@@ -132,15 +174,35 @@ function ExperienceBody() {
                   status={cat.status}
                   effective={categoryEffective(cat)}
                   onOpen={() => openCategory(cat.id)}
+                  onToggle={
+                    canManage
+                      ? () =>
+                          requestStatus(
+                            askConfirm,
+                            cat.name,
+                            cat.status === "Active",
+                            "Activating this category makes its sub-categories available. Continue?",
+                            "Deactivating this category disables every sub-category under it. Continue?",
+                            () =>
+                              setCategoryStatus(
+                                cat.id,
+                                cat.status === "Active" ? "Inactive" : "Active",
+                              ),
+                          )
+                      : undefined
+                  }
                 />
               );
             })}
+            {canManage ? (
+              <AddCard label="Add Category" onClick={() => setCategoryFormOpen(true)} />
+            ) : null}
           </CardGrid>
         )
       ) : null}
 
       {hierarchyStatus === "ready" && category ? (
-        subcategories.every((s) => s.categoryId !== category.id) ? (
+        subcategories.every((s) => s.categoryId !== category.id) && !canManage ? (
           <Text fontSize="sm" color="ink.500">
             No sub-categories yet.
           </Text>
@@ -161,9 +223,29 @@ function ExperienceBody() {
                   locked={parentOff}
                   lockedNote={`Disabled — "${category.name}" is inactive`}
                   onOpen={() => openSubcategory(s.id)}
+                  onToggle={
+                    canManage
+                      ? () =>
+                          requestStatus(
+                            askConfirm,
+                            s.name,
+                            s.status === "Active",
+                            "Activating this sub-category makes its policies available. Continue?",
+                            "Deactivating this sub-category disables the policies under it. Continue?",
+                            () =>
+                              setSubcategoryStatus(
+                                s.id,
+                                s.status === "Active" ? "Inactive" : "Active",
+                              ),
+                          )
+                      : undefined
+                  }
                 />
               );
             })}
+          {canManage ? (
+            <AddCard label="Add Sub-category" onClick={() => setSubcategoryFormOpen(true)} />
+          ) : null}
         </CardGrid>
         )
       ) : null}
@@ -206,6 +288,27 @@ function ExperienceBody() {
       ) : null}
 
       {sub && isPii && role === "institution" ? <InstitutionCatalog /> : null}
+
+      {categoryFormOpen ? (
+        <HierarchyNameForm
+          title="Add Category"
+          submitLabel="Add Category"
+          namePlaceholder="e.g. Service Routing"
+          descriptionPlaceholder="What kind of policies live under this category?"
+          onClose={() => setCategoryFormOpen(false)}
+          onSave={createCategory}
+        />
+      ) : null}
+      {subcategoryFormOpen && category ? (
+        <HierarchyNameForm
+          title="Add Sub-category"
+          submitLabel="Add Sub-category"
+          namePlaceholder="e.g. Rate Limiting"
+          descriptionPlaceholder="What does this sub-category cover?"
+          onClose={() => setSubcategoryFormOpen(false)}
+          onSave={(name, description) => createSubCategory(category.id, name, description)}
+        />
+      ) : null}
 
       <PiiDrawers />
       <ConfirmDialog
