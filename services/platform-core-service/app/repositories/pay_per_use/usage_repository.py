@@ -14,7 +14,7 @@ from app.models.pay_per_use.budget_usage import BudgetUsage
 from app.models.pay_per_use.inference_type import InferenceType
 from app.models.pay_per_use.quota_usage import QuotaUsage
 from app.models.pay_per_use.tier import Tier
-from app.repositories.pay_per_use.period_usage import period_source, tenant_pks
+from app.repositories.pay_per_use.period_usage import period_source, tenant_pks, usage_data_since
 from app.utils.billing_month import shift_billing_month
 from app.utils.usage_period import UsagePeriod
 
@@ -345,7 +345,7 @@ class UsageRepository:
         task_type_ids: list[int] | None = None,
     ):
         """Per (tenant, tier, inference type) units and costs in ``period`` —
-        usage_events for ``today``, daily_usage otherwise (see period_source)
+        from usage_events or daily_usage (see period_source)
         — with the first and last activity of each group, so callers can
         order tiers and pick each tenant's most recent one.
 
@@ -389,6 +389,10 @@ class UsageRepository:
             stmt = stmt.where(m.inference_type_id.in_(task_type_ids))
         result = await self._db.execute(stmt)
         return result.all()
+
+    async def get_usage_data_since(self) -> Optional[datetime]:
+        """When the Postgres usage data begins (see period_usage.usage_data_since)."""
+        return await usage_data_since(self._db)
 
     async def get_tier_names(self) -> dict:
         """{tier_id: name} for every tier, read straight from ppu_tiers.

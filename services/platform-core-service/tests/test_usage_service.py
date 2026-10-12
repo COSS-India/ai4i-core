@@ -38,6 +38,10 @@ class _Seq(list):
     billing month inside get_summary)."""
 
 
+# Before every period the tests use: the usage data covers them whole.
+_DATA_SINCE = datetime(2020, 1, 1, tzinfo=timezone.utc)
+
+
 def _make_repo(**method_returns) -> MagicMock:
     """Return a mock repository whose async methods return the given values.
 
@@ -50,10 +54,14 @@ def _make_repo(**method_returns) -> MagicMock:
     zero-usage branch calls this unconditionally now to resolve a fallback tier, so
     tests that don't care about budgets would otherwise need to mock it just to avoid
     an unconfigured-MagicMock-isn't-awaitable error.
+
+    get_usage_data_since defaults to a date before every period (the usage
+    data covers it whole).
     """
     repo = MagicMock()
     method_returns.setdefault("get_tier_names", {"1": "Pro", "2": "Enterprise"})
     method_returns.setdefault("get_tenant_budgets", {})
+    method_returns.setdefault("get_usage_data_since", _DATA_SINCE)
     for method, value in method_returns.items():
         if isinstance(value, _Seq):
             setattr(repo, method, AsyncMock(side_effect=list(value)))
@@ -484,6 +492,15 @@ class TestGetTenantList:
         assert (result.data, result.total) == ([], 0)
         repo.get_tenant_budgets.assert_not_called()
 
+    async def test_period_reports_how_much_the_usage_data_covers(self):
+        repo = _make_repo(get_period_usage=[], get_usage_data_since=None)
+        result = await UsageService(repo).get_tenant_list(_YESTERDAY, None, None, None)
+        assert (result.period.dataFrom, result.period.partial) == (None, True)
+
+        repo = _make_repo(get_period_usage=[])
+        result = await UsageService(repo).get_tenant_list(_YESTERDAY, None, None, None)
+        assert (result.period.dataFrom, result.period.partial) == ("2026-10-08T00:00:00+05:30", False)
+
     async def test_sorted_by_period_spend_with_tenant_id_tie_break(self):
         rows = [
             _period_row(tenant_id=1, cost=Decimal("5")),
@@ -539,6 +556,18 @@ class TestGetTenantList:
             {"key": "output", "label": "Output tokens", "units": 200, "cost": 0.05, "costShare": 11.89},
         ]
         assert sum(b.units for b in usage.breakdown) == usage.units
+
+    async def test_llm_cost_parts_add_up_to_the_cost(self):
+        """Rounded independently, three parts of 0.335 would show 0.34 each
+        (1.02) against a cost of 1.01; the residual goes to the largest part."""
+        row = _llm_row(input_units_cost=Decimal("0.335"), cached_input_units_cost=Decimal("0.335"),
+                       output_units_cost=Decimal("0.335"), cost=Decimal("1.005"))
+        repo = _make_repo(get_period_usage=[row], get_tenant_tier_usage_breakdown=[])
+        result = await UsageService(repo).get_tenant_list(_TODAY, None, None, None)
+        usage = result.data[0].tierBreakdown[0].taskTypes[0].periodUsage
+        assert usage.cost == 1.01
+        assert round(sum(b.cost for b in usage.breakdown), 2) == usage.cost
+        assert round(sum(b.costShare for b in usage.breakdown), 2) == 100.0
 
     async def test_zero_cached_input_is_omitted(self):
         row = _llm_row(cached_input_units=Decimal("0"), cached_input_units_cost=Decimal("0"),

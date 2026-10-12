@@ -5,6 +5,7 @@ import math
 import re
 import time as _time
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Optional, Union
 
 from sqlalchemy import text
@@ -18,6 +19,7 @@ from app.schemas.metering import Graph, GraphPoint, GraphSeries
 from app.utils.prometheus_client import PrometheusClient
 from app.utils.metering_retention import refresh_retention as _refresh_retention, retention_days
 from app.services.pay_per_use import inference_type_cache
+from app.utils.rounding import round_shares
 from app.utils.metering_promql_builder import (
     TIME_RANGES,
     AbsoluteRange,
@@ -2044,15 +2046,15 @@ class MeteringService:
         total = sum(units.values())
         if total == 0 and total_tokens > 0:
             return None
-        return [
-            {
-                "key": key,
-                "label": label,
-                "units": float(units[key]),
-                "percentage": round(units[key] / total * 100, 2) if total else 0.0,
-            }
-            for key, label, _ in LLM_TOKEN_ENTRIES
+        shown = [
+            (key, label) for key, label, _ in LLM_TOKEN_ENTRIES
             if not (key == "cached_input" and units[key] == 0)
+        ]
+        # Shares rounded so they add up to exactly 100.00.
+        shares = round_shares([Decimal(units[key]) for key, _ in shown])
+        return [
+            {"key": key, "label": label, "units": float(units[key]), "percentage": float(shares[i])}
+            for i, (key, label) in enumerate(shown)
         ]
 
     @staticmethod

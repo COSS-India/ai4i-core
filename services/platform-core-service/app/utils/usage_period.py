@@ -7,14 +7,14 @@ IST-day range every dashboard endpoint reports on.
     custom       IST days ``from`` … ``to`` inclusive, ``to`` at most yesterday
 
 Prometheus / OpenSearch figures query the range as an AbsoluteRange.
-Postgres figures come from usage_events for ``today`` and from daily_usage
-for every other period (see ``uses_daily_usage``).
+Postgres figures come from usage_events, or from daily_usage for past
+periods once the rollup is on (see period_usage.period_source).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Optional
+from typing import Optional, Union
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, Request, status
@@ -49,6 +49,15 @@ def invalid_period(message: str) -> HTTPException:
     )
 
 
+class _FullCoverage:
+    """to_schema's default: the source covers the whole period."""
+
+    __slots__ = ()
+
+
+FULL_COVERAGE = _FullCoverage()
+
+
 @dataclass(frozen=True)
 class UsagePeriod:
     key: str
@@ -63,7 +72,8 @@ class UsagePeriod:
 
     @property
     def uses_daily_usage(self) -> bool:
-        """Postgres source: daily_usage for whole past days, usage_events for today."""
+        """Whole past days, which daily_usage can serve once the rollup is on
+        (period_usage.period_source decides; today is always usage_events)."""
         return self.key != "today"
 
     @property
@@ -79,13 +89,26 @@ class UsagePeriod:
     def cache_part(self) -> str:
         return f"{self.key}:{int(self.start.timestamp())}-{int(self.end.timestamp())}"
 
-    def to_schema(self) -> Period:
+    def to_schema(self, data_since: Union[datetime, None, _FullCoverage] = FULL_COVERAGE) -> Period:
+        """The response's period block. ``data_since`` is when the figures'
+        source starts having data: the Prometheus/OpenSearch retention edge,
+        or the first recorded usage event. FULL_COVERAGE (the default) means
+        the whole period is covered; None means the source has no data."""
+        if isinstance(data_since, _FullCoverage):
+            data_from, partial = self.start, False
+        elif data_since is None or data_since >= self.end:
+            data_from, partial = None, True
+        else:
+            data_from = max(self.start, data_since)
+            partial = data_from > self.start
         return Period(
             key=self.key,
             from_=self.from_date.isoformat(),
             to=self.to_date.isoformat(),
             start=iso_ist(self.start),
             end=iso_ist(self.end),
+            dataFrom=iso_ist(data_from) if data_from else None,
+            partial=partial,
         )
 
 

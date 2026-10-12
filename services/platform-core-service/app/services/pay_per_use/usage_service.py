@@ -2,8 +2,8 @@
 
 /usage-summary (the Key metrics strip) is unchanged: all-time spend from
 budget_usage and usage from quota_usage. /usage-tenants and /usage-tenant
-report the selected period: spend and usage from usage_events (today) or
-daily_usage (any other period), next to the all-time budget balance
+report the selected period: spend and usage from usage_events or
+daily_usage (see period_usage.period_source), next to the all-time budget balance
 (budget_usage) and the current billing month's quota (quota_usage).
 """
 from __future__ import annotations
@@ -37,6 +37,7 @@ from app.schemas.pay_per_use.usage import (
     TierUsageBreakdown,
     UsageSummaryResponse,
 )
+from app.utils.rounding import round_parts, round_shares
 from app.utils.usage_period import IST, UsagePeriod
 
 # Unit labels come off the catalogue join now (see UsageRepository
@@ -132,11 +133,6 @@ def _row_unit(row) -> str:
     return getattr(row, "task_type_unit", None) or row.task_type
 
 
-def _share(part: Decimal, whole: Decimal) -> float:
-    """part as a % of whole, 2dp, from unrounded values; 0 when whole is 0."""
-    return float(round(part / whole * 100, 2)) if whole else 0.0
-
-
 def _period_usage(rows, is_llm: bool) -> PeriodUsage:
     """A task type's units and cost in the period, summed over ``rows``
     (one per tier/type group from get_period_usage). For LLM, the cost split
@@ -154,15 +150,22 @@ def _period_usage(rows, is_llm: bool) -> PeriodUsage:
             "cached_input": (cached, total("cached_input_units_cost")),
             "output": (output, total("output_units_cost")),
         }
+        shown = [
+            (key, label) for key, label in _COST_ENTRIES
+            if not (key == "cached_input" and parts[key][0] == 0)
+        ]
+        # Rounded so the parts add up exactly: costs to the rounded total,
+        # shares to 100.00 (the residual goes to the largest part).
+        costs = round_parts([parts[key][1] for key, _ in shown], cost)
+        shares = round_shares([parts[key][1] for key, _ in shown])
         breakdown = [
             CostShare(
                 key=key, label=label, units=float(parts[key][0]),
-                cost=float(round(parts[key][1], 2)), costShare=_share(parts[key][1], cost),
+                cost=float(costs[i]), costShare=float(shares[i]),
             )
-            for key, label in _COST_ENTRIES
-            if not (key == "cached_input" and parts[key][0] == 0)
+            for i, (key, label) in enumerate(shown)
         ]
-    return PeriodUsage(units=float(units), cost=float(round(cost, 2)), breakdown=breakdown)
+    return PeriodUsage(units=float(units), cost=float(round_parts([cost], cost)[0]), breakdown=breakdown)
 
 
 def _monthly_quota(quota_row, billing_month: str) -> Optional[MonthlyQuota]:
@@ -479,14 +482,16 @@ class UsageService:
         offset: int = 0,
         task_type_ids: list[int] | None = None,
     ) -> TenantHierarchicalListResponse:
-        """Institutions with usage in ``period`` (usage_events for today,
-        daily_usage otherwise), sorted by spend in the period (tenant id as
-        the tie-break, so pages stay stable) and paginated; ``total`` is the
-        count before limit/offset.
+        """Institutions with usage in ``period`` (see period_usage.period_source),
+        sorted by spend in the period (tenant id as the tie-break, so pages
+        stay stable) and paginated; ``total`` is the count before limit/offset.
 
         tier_id keeps institutions whose most recent tier in the period is
         that tier; model_task_type_id keeps those that used that task type in
         the period. task_type_ids narrows every figure to those task types.
+        period.dataFrom/partial say how much of the period the usage data
+        covers, so an empty page can read as "no data" rather than "no usage"
+        (see usage_data_since).
 
         Only the page's institutions get the all-time balance, this month's
         quota, names and tier names. Queries run one after another: the
@@ -497,6 +502,7 @@ class UsageService:
         by_tenant: dict[str, list] = {}
         for row in rows:
             by_tenant.setdefault(str(row.tenant_id), []).append(row)
+        period_block = period.to_schema(await self._repo.get_usage_data_since())
 
         wanted_tier = str(uuid.UUID(tier_id)) if tier_id else None
         candidates = []
@@ -513,7 +519,7 @@ class UsageService:
         page_ids = [tid for _, _, tid in candidates[offset : offset + limit]]
         if not page_ids:
             return TenantHierarchicalListResponse(
-                period=period.to_schema(), data=[], total=len(candidates),
+                period=period_block, data=[], total=len(candidates),
             )
 
         billing_month = current_billing_month()
@@ -536,7 +542,7 @@ class UsageService:
             for tid in page_ids
         ]
         return TenantHierarchicalListResponse(
-            period=period.to_schema(), data=items, total=len(candidates),
+            period=period_block, data=items, total=len(candidates),
         )
 
     async def get_tenant_detail(
@@ -573,7 +579,7 @@ class UsageService:
         )
         budget_row = budgets.get(tenant_id)
         return TenantUsageDetailResponse(
-            period=period.to_schema(),
+            period=period.to_schema(await self._repo.get_usage_data_since()),
             tenantId=item.tenantId,
             tenantName=item.tenantName,
             tier=item.tier,

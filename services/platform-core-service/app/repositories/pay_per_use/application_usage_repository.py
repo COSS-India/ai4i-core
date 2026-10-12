@@ -6,19 +6,25 @@ Dashboard period comes from usage_events / daily_usage (see period_usage).
 Rolling either up to application/tenant level is done by the service layer,
 which resolves api_key -> application -> tenant via auth_db.
 """
+from datetime import datetime
 from decimal import Decimal
+from typing import Optional
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.pay_per_use.budget_usage import BudgetUsage
-from app.repositories.pay_per_use.period_usage import period_source
+from app.repositories.pay_per_use.period_usage import period_source, usage_data_since
 from app.utils.usage_period import UsagePeriod
 
 
 class ApplicationUsageRepository:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
+
+    async def get_usage_data_since(self) -> Optional[datetime]:
+        """When the Postgres usage data begins (see period_usage.usage_data_since)."""
+        return await usage_data_since(self._db)
 
     async def get_spend_by_api_key_ids(self, api_key_ids: list[int]) -> dict[int, Decimal]:
         """{api_key_id: api_key_budget_used} for the given keys.
@@ -38,9 +44,9 @@ class ApplicationUsageRepository:
     async def get_period_spend_by_api_key_ids(
         self, period: UsagePeriod, api_key_ids: list[int],
     ) -> dict[int, Decimal]:
-        """{api_key_id: spend in ``period``} for the given keys — usage_events
-        for ``today``, daily_usage otherwise. A key with no usage in the
-        period is absent (spend 0)."""
+        """{api_key_id: spend in ``period``} for the given keys, from
+        usage_events or daily_usage (see period_source). A key with no usage
+        in the period is absent (spend 0)."""
         if not api_key_ids:
             return {}
         source = period_source(period)

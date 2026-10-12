@@ -113,9 +113,12 @@ def _period_ranges(time_range: TimeRange) -> Optional[tuple[dict, dict, dict, in
         start, end = time_range.start, time_range.end
         shift = timedelta(seconds=comparison_shift_seconds(time_range))
         prev_start, prev_end = start - shift, end - shift
+        # end is exclusive (the next IST midnight for a whole-day period), so
+        # lt, not lte: an event at exactly midnight belongs to the next day
+        # only, and the KPIs agree with the chart, which also uses lt.
         return (
-            {"gte": prev_start.isoformat(), "lte": end.isoformat()},
-            {"gte": start.isoformat(), "lte": end.isoformat()},
+            {"gte": prev_start.isoformat(), "lt": end.isoformat()},
+            {"gte": start.isoformat(), "lt": end.isoformat()},
             {"gte": prev_start.isoformat(), "lt": min(prev_end, start).isoformat()},
             time_range.duration_seconds,
         )
@@ -220,11 +223,12 @@ class OpenSearchMeteringService(MeteringService):
     @staticmethod
     def _windowed_query(window: Union[str, AbsoluteRange, None], filters: list[dict]) -> dict:
         """``window`` comes from `_os_window`: a relative duration ("7d") is
-        date math ending at now; an AbsoluteRange is explicit UTC ISO bounds."""
+        date math ending at now; an AbsoluteRange is explicit UTC ISO bounds,
+        end exclusive (lt), the same as every AbsoluteRange query."""
         if isinstance(window, AbsoluteRange):
             return {"bool": {"filter": [
                 {"range": {"@timestamp": {
-                    "gte": window.start.isoformat(), "lte": window.end.isoformat(),
+                    "gte": window.start.isoformat(), "lt": window.end.isoformat(),
                 }}},
                 *filters,
             ]}}

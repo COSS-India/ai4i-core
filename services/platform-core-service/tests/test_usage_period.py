@@ -86,7 +86,25 @@ class TestSchema:
             "key": "last_7_days", "from": "2026-10-02", "to": "2026-10-08",
             "start": "2026-10-02T00:00:00+05:30", "end": "2026-10-09T00:00:00+05:30",
             "timezone": "Asia/Kolkata",
+            "dataFrom": "2026-10-02T00:00:00+05:30", "partial": False,
         }
+
+    def test_data_since_inside_the_period_is_partial(self):
+        period = _resolve("last_7_days")
+        # 2026-10-05 00:00 IST
+        block = period.to_schema(datetime(2026, 10, 4, 18, 30, tzinfo=timezone.utc))
+        assert (block.dataFrom, block.partial) == ("2026-10-05T00:00:00+05:30", True)
+
+    def test_data_since_before_the_period_covers_it(self):
+        block = _resolve("last_7_days").to_schema(datetime(2026, 1, 1, tzinfo=timezone.utc))
+        assert (block.dataFrom, block.partial) == ("2026-10-02T00:00:00+05:30", False)
+
+    def test_no_data_at_all_or_only_after_the_period(self):
+        """No data → dataFrom null: the UI shows "no data", not zero usage."""
+        period = _resolve("last_7_days")
+        assert (period.to_schema(None).dataFrom, period.to_schema(None).partial) == (None, True)
+        after = period.to_schema(period.end)
+        assert (after.dataFrom, after.partial) == (None, True)
 
     def test_cache_part_differs_by_range(self):
         assert _resolve("today").cache_part != _resolve("yesterday").cache_part

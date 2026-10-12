@@ -555,7 +555,7 @@ class TestWindowedQueryAbsolute:
         query = OpenSearchMeteringService._windowed_query(_RANGE, [{"term": {"tenant_id": "7"}}])
         filters = query["bool"]["filter"]
         assert filters[0] == {"range": {"@timestamp": {
-            "gte": "2026-09-20T18:30:00+00:00", "lte": "2026-09-23T18:30:00+00:00",
+            "gte": "2026-09-20T18:30:00+00:00", "lt": "2026-09-23T18:30:00+00:00",
         }}}
         assert filters[1] == {"term": {"tenant_id": "7"}}
 
@@ -580,11 +580,11 @@ class TestAbsoluteRangeQueries:
         )
         query, aggs = os_client.aggregate.call_args.args
         assert query["bool"]["filter"][0]["range"]["@timestamp"] == {
-            "gte": "2026-09-17T18:30:00+00:00", "lte": "2026-09-23T18:30:00+00:00",
+            "gte": "2026-09-17T18:30:00+00:00", "lt": "2026-09-23T18:30:00+00:00",
         }
         periods = aggs["by_period"]["filters"]["filters"]
         assert periods["current"]["range"]["@timestamp"] == {
-            "gte": "2026-09-20T18:30:00+00:00", "lte": "2026-09-23T18:30:00+00:00",
+            "gte": "2026-09-20T18:30:00+00:00", "lt": "2026-09-23T18:30:00+00:00",
         }
         assert periods["previous"]["range"]["@timestamp"] == {
             "gte": "2026-09-17T18:30:00+00:00", "lt": "2026-09-20T18:30:00+00:00",
@@ -643,7 +643,7 @@ class TestAbsoluteRangeQueries:
         ):
             await svc.model_breakdown(tenant=None, time_range=_RANGE, task_types=["llm"])
         query = os_client.composite_all.call_args.args[0]
-        assert query["bool"]["filter"][0]["range"]["@timestamp"]["lte"] == "2026-09-23T18:30:00+00:00"
+        assert query["bool"]["filter"][0]["range"]["@timestamp"]["lt"] == "2026-09-23T18:30:00+00:00"
 
 
 @pytest.mark.asyncio

@@ -18,6 +18,8 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
+from app.core.config import settings
+from app.repositories.pay_per_use import period_usage
 from app.repositories.pay_per_use.application_usage_repository import ApplicationUsageRepository
 from app.repositories.pay_per_use.usage_repository import UsageRepository
 from app.utils.usage_period import resolve_period
@@ -83,6 +85,17 @@ async def session():
         await engine.dispose()
 
 
+@pytest.fixture()
+def rollup_on(monkeypatch):
+    """USAGE_DAILY_ROLLUP_ENABLED: past periods read daily_usage."""
+    monkeypatch.setattr(settings, "usage_daily_rollup_enabled", True)
+
+
+@pytest.fixture()
+def rollup_off(monkeypatch):
+    monkeypatch.setattr(settings, "usage_daily_rollup_enabled", False)
+
+
 async def _type_id(session, name: str) -> int:
     return await session.scalar(text("SELECT id FROM inference_types WHERE name = :n"), {"n": name})
 
@@ -139,7 +152,7 @@ class TestGetPeriodUsage:
         rows = await UsageRepository(session).get_period_usage(today)
         assert {_TENANT, _OTHER_TENANT} <= {r.tenant_id for r in rows}
 
-    async def test_past_periods_read_daily_usage(self, session):
+    async def test_past_periods_read_daily_usage_once_the_rollup_is_on(self, session, rollup_on):
         yesterday = resolve_period("yesterday", None, None)
         nmt = await _type_id(session, "nmt")
         await _daily(session, usage_date=yesterday.from_date, type_id=nmt, units=1900, cost=Decimal("0.08"))
@@ -151,6 +164,18 @@ class TestGetPeriodUsage:
         (row,) = await UsageRepository(session).get_period_usage(yesterday, tenant_ids=[str(_TENANT)])
         assert (row.task_type, row.total_units, row.cost) == ("nmt", 1900, Decimal("0.080000"))
         assert row.first_seen == row.last_seen == yesterday.from_date
+
+    async def test_past_periods_read_usage_events_until_the_rollup_is_on(self, session, rollup_off):
+        """Without the rollup daily_usage stays empty, so reading it would turn
+        every past period into "no institutions"."""
+        yesterday = resolve_period("yesterday", None, None)
+        nmt = await _type_id(session, "nmt")
+        await _event(session, span="y", occurred_at=yesterday.start + timedelta(seconds=1), type_id=nmt, units=40)
+        await _event(session, span="e", occurred_at=yesterday.end, type_id=nmt, units=7)  # today 00:00 IST
+        await _daily(session, usage_date=yesterday.from_date, type_id=nmt, units=1900)
+
+        (row,) = await UsageRepository(session).get_period_usage(yesterday, tenant_ids=[str(_TENANT)])
+        assert (row.task_type, row.total_units) == ("nmt", 40)
 
     async def test_task_type_filter(self, session):
         today = resolve_period("today", None, None)
@@ -180,7 +205,7 @@ class TestGetPeriodSpendByApiKeyIds:
         spend = await ApplicationUsageRepository(session).get_period_spend_by_api_key_ids(today, [_KEY])
         assert spend == {_KEY: Decimal("3.000000")}
 
-    async def test_past_period_from_daily_usage(self, session):
+    async def test_past_period_from_daily_usage(self, session, rollup_on):
         last_7 = resolve_period("last_7_days", None, None)
         await _daily(session, usage_date=last_7.from_date, cost=Decimal("2"))
         await _daily(session, usage_date=last_7.to_date, cost=Decimal("3"))
@@ -189,6 +214,22 @@ class TestGetPeriodSpendByApiKeyIds:
         spend = await ApplicationUsageRepository(session).get_period_spend_by_api_key_ids(last_7, [_KEY, _OTHER_KEY])
         assert spend == {_KEY: Decimal("5.000000")}
 
+    async def test_past_period_from_usage_events_without_the_rollup(self, session, rollup_off):
+        last_7 = resolve_period("last_7_days", None, None)
+        await _event(session, span="p", occurred_at=last_7.end - timedelta(seconds=1), costs=(Decimal("4"), 0, 0))
+        spend = await ApplicationUsageRepository(session).get_period_spend_by_api_key_ids(last_7, [_KEY])
+        assert spend == {_KEY: Decimal("4.000000")}
+
     async def test_no_keys_is_empty_without_a_query(self, session):
         today = resolve_period("today", None, None)
         assert await ApplicationUsageRepository(session).get_period_spend_by_api_key_ids(today, []) == {}
+
+
+@pytest.mark.asyncio
+class TestUsageDataSince:
+    async def test_first_usage_event(self, session, rollup_off, monkeypatch):
+        monkeypatch.setattr(period_usage, "_data_since", None)
+        at = resolve_period("today", None, None).start + timedelta(seconds=1)
+        await _event(session, span="first", occurred_at=at)
+        since = await UsageRepository(session).get_usage_data_since()
+        assert since is not None and since <= at

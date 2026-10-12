@@ -1,5 +1,5 @@
 """The Usage Dashboard's period filter, as echoed back in every response."""
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -21,3 +21,11 @@ class Period(BaseModel):
     start: str
     end: str
     timezone: str = "Asia/Kolkata"
+    # Where the source's data actually starts within the period: start itself
+    # when the source covers the whole period, later when it doesn't (data
+    # older than Prometheus/OpenSearch retention, or before usage recording
+    # began), null when the source has no data for the period at all.
+    dataFrom: Optional[str] = None
+    # True when the source doesn't cover the whole period, so a zero can mean
+    # "no data", not "no usage".
+    partial: bool = False

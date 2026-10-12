@@ -3,8 +3,8 @@
 Two kinds of spend, side by side:
 - all-time (spendBudget/remainingBudget): budget_usage, keyed by api_key_id
   only, with no time dimension — so billingPeriod is always "lifetime";
-- the selected period (periodSpend): usage_events for today, daily_usage
-  otherwise (see ApplicationUsageRepository.get_period_spend_by_api_key_ids).
+- the selected period (periodSpend): usage_events or daily_usage (see
+  period_usage.period_source).
 Identity/allocation (tenants/applications/api_key) lives in auth-service, read
 here via the auth_db cross-DB session — same pattern as
 UsageService._resolve_tenant_names.
@@ -150,7 +150,7 @@ class ApplicationUsageService:
         period_spend = sum(period_spend_by_app.values(), Decimal("0"))
 
         return ApplicationUsageSummaryResponse(
-            period=period.to_schema(),
+            period=period.to_schema(await self._repo.get_usage_data_since()),
             totalApplications=len(applications),
             allocatedBudget=_money_percent(allocated_amount, tenant_budget),
             spendBudget=_money_percent(spend_amount, tenant_budget),
@@ -201,7 +201,7 @@ class ApplicationUsageService:
         )
         total = len(items)
         return ApplicationUsageListResponse(
-            period=period.to_schema(), data=items[offset : offset + limit], total=total,
+            period=period.to_schema(await self._repo.get_usage_data_since()), data=items[offset : offset + limit], total=total,
         )
 
     async def get_application_detail(
@@ -248,7 +248,7 @@ class ApplicationUsageService:
             )
 
         return ApplicationUsageDetailResponse(
-            period=period.to_schema(),
+            period=period.to_schema(await self._repo.get_usage_data_since()),
             applicationId=application["id"],
             applicationName=application["name"],
             domain=application["domain"],

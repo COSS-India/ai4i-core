@@ -469,7 +469,9 @@ class TestOverviewPeriod:
         assert response.scope.period.key == "today"
         assert response.scope.period.from_ == response.scope.period.to == "2026-09-29"
 
-    async def test_custom_range_covers_whole_ist_days(self):
+    async def test_custom_range_covers_whole_ist_days(self, monkeypatch):
+        # Retention reaching back past the range: Prometheus covers it whole.
+        monkeypatch.setattr(_metering_route_mod, "retention_edge", lambda: _utc(2026, 9, 1))
         svc = _overview_svc()
         redis = _empty_redis()
         await _call_overview(svc, redis=redis, period="custom", from_="2026-09-20", to="2026-09-22")
@@ -487,8 +489,29 @@ class TestOverviewPeriod:
             "key": "custom", "from": "2026-09-20", "to": "2026-09-22",
             "start": "2026-09-20T00:00:00+05:30", "end": "2026-09-23T00:00:00+05:30",
             "timezone": "Asia/Kolkata",
+            "dataFrom": "2026-09-20T00:00:00+05:30", "partial": False,
         }
         assert ":custom:" in redis.set.call_args.args[0]
+
+    async def test_range_older_than_retention_is_flagged_partial(self, monkeypatch):
+        """Prometheus only holds retention_days of samples: a range starting
+        earlier is answered from what's left, and the period block says from
+        when (dataFrom) and that it's partial, instead of looking complete."""
+        monkeypatch.setattr(
+            _metering_route_mod, "retention_edge", lambda: _utc(2026, 9, 20, 18, 30),
+        )
+        response = await _call_overview(
+            _overview_svc(), period="custom", from_="2026-09-20", to="2026-09-22",
+        )
+        period = response.scope.period
+        assert (period.dataFrom, period.partial) == ("2026-09-21T00:00:00+05:30", True)
+
+    async def test_range_wholly_older_than_retention_has_no_data_from(self, monkeypatch):
+        monkeypatch.setattr(_metering_route_mod, "retention_edge", lambda: _utc(2026, 9, 25))
+        response = await _call_overview(
+            _overview_svc(), period="custom", from_="2026-09-20", to="2026-09-22",
+        )
+        assert (response.scope.period.dataFrom, response.scope.period.partial) == (None, True)
 
     async def test_last_7_days_excludes_today(self):
         svc = _overview_svc()
@@ -687,7 +710,7 @@ class TestOverviewFirstUsageAtHybrid:
     async def test_cache_key_is_v7(self, fake_usage_repo):
         redis = _empty_redis()
         await _call_overview(self._svc(), redis=redis)
-        assert _overview_keys(redis)[0].startswith("metering:overview:v7:")
+        assert _overview_keys(redis)[0].startswith("metering:overview:v8:")
 
 
 def _redis_with(entries: dict) -> AsyncMock:
