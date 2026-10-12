@@ -11,7 +11,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import func
 
 from app.models import Base
@@ -37,7 +37,9 @@ class UsageEvent(Base):
     span hits it instead of adding a row.
 
     tenant_id, application_id and api_key_id are rows in the auth DB, so they
-    have no foreign key.
+    have no foreign key. application_user_id is the calling application's own
+    id for its end user, and metadata holds free-form event attributes; both
+    were added by migration e8972603749c.
     """
 
     __tablename__ = "usage_events"
@@ -56,6 +58,8 @@ class UsageEvent(Base):
             "ix_usage_events_occurred_at_brin", "occurred_at",
             postgresql_using="brin", postgresql_with={"autosummarize": "on"},
         ),
+        # Containment / key-existence queries on metadata (migration e8972603749c).
+        Index("ix_usage_events_metadata_gin", "metadata", postgresql_using="gin"),
         {"postgresql_partition_by": "RANGE (occurred_at)"},
     )
 
@@ -84,6 +88,9 @@ class UsageEvent(Base):
     task_type = Column(String(64), nullable=True)
     unit_of_measurement = Column(String(64), nullable=True)
     status_code = Column(SmallInteger, nullable=True)
+    application_user_id = Column(String(64), nullable=True)
+    # Declarative classes reserve the name metadata, so the attribute is metadata_.
+    metadata_ = Column("metadata", JSONB, nullable=True)
 
     # cached_input_units and output_units are parts of total_units.
     total_units = Column(UNITS, nullable=False, default=0, server_default="0")
