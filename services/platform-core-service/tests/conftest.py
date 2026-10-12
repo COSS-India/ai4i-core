@@ -60,6 +60,7 @@ class _AppError(Exception):
 
 class _EntityNotFoundError(_AppError): pass
 class _DuplicateEntityError(_AppError): pass
+class _EntityInUseError(_AppError): pass
 class _ValidationError(_AppError): pass
 class _InsufficientPermissionsError(_AppError): pass
 class _ServiceError(_AppError): pass
@@ -101,6 +102,7 @@ _ai4i_exc = _conftest_stub(
     AppError=_AppError,
     EntityNotFoundError=_EntityNotFoundError,
     DuplicateEntityError=_DuplicateEntityError,
+    EntityInUseError=_EntityInUseError,
     ValidationError=_ValidationError,
     InsufficientPermissionsError=_InsufficientPermissionsError,
     ServiceError=_ServiceError,

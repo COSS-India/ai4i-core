@@ -109,7 +109,6 @@ class PolicyTypeUpdate(BaseModel):
         json_schema_extra={
             "example": {
                 "policy_type_id": 2,
-                "policy_type": "Medical Policy PII",
                 "policy_fields": {
                     "model_supported_field": [
                         {
@@ -140,15 +139,7 @@ class PolicyTypeUpdate(BaseModel):
     )
 
     policy_type_id: int = Field(..., gt=0, le=2_147_483_647)
-    policy_type: Optional[str] = Field(None, max_length=NAME_MAX_LEN)
     policy_fields: Optional[Dict[str, Any]] = None
-
-    @field_validator("policy_type", mode="before")
-    @classmethod
-    def validate_policy_type(cls, v):
-        if v is None:
-            return v
-        return clean_name(v, "Policy Type")
 
     @model_validator(mode="after")
     def validate_custom_fields(self):
