@@ -80,6 +80,19 @@ export function ModelLlmTokenRows({
           </Td>
         </Tr>
       ))}
+      <Tr bg="gray.50">
+        <Td pl={10} colSpan={4} {...childTd}>
+          <Text fontSize="sm" fontWeight="semibold" color="gray.800">
+            Total
+          </Text>
+        </Td>
+        <Td isNumeric {...childTd}>
+          <Text fontSize="sm" fontWeight="semibold" color="gray.800">
+            {formatNativeConsumption(breakdown.totalTokens, unitSuffix)}
+          </Text>
+        </Td>
+        <Td colSpan={2} {...childTd} />
+      </Tr>
     </>
   );
 }

@@ -3,30 +3,21 @@ import { normalizeModelTaskType } from "./meteringTaskType";
 /**
  * LLM token split for the Usage Dashboard drill-downs (AI4IDS-3339).
  *
- * The usage API contract is not published yet. `readLlmTokenCounts` is the
- * only place that knows the wire names. Until a row carries input and output
- * counts, it returns null and the row stays collapsed.
+ * Model rows read `native_breakdown` (TokenShare: units + percentage).
+ * Institution rows read `periodUsage.breakdown` (CostShare: units, cost, costShare)
+ * and the Total row from `periodUsage.units` / `periodUsage.cost`.
+ * Cached input is omitted by the API when it is zero; a zero entry is dropped here too.
  */
 
-export type LlmTokenCategoryId = "input" | "cachedInput" | "output";
-
-export interface LlmTokenCounts {
-  inputTokens: number;
-  /** Null when cached input was not reported. Zero is reported and still hidden. */
-  cachedInputTokens: number | null;
-  outputTokens: number;
-  inputCost: number | null;
-  cachedInputCost: number | null;
-  outputCost: number | null;
-}
+export type LlmTokenCategoryId = "input" | "cached_input" | "output";
 
 export interface LlmTokenCategoryView {
   id: LlmTokenCategoryId;
   label: string;
   tokens: number;
   cost: number | null;
-  /** Null when usage cost was not reported, so a share cannot be computed. */
-  sharePct: number | null;
+  /** Model: share of total tokens. Institution: share of total usage cost. */
+  sharePct: number;
 }
 
 export interface LlmTokenBreakdownView {
@@ -35,9 +26,11 @@ export interface LlmTokenBreakdownView {
   totalCost: number | null;
 }
 
+const CATEGORY_ORDER: LlmTokenCategoryId[] = ["input", "cached_input", "output"];
+
 const CATEGORY_LABEL: Record<LlmTokenCategoryId, string> = {
   input: "Input tokens",
-  cachedInput: "Cached input tokens",
+  cached_input: "Cached input tokens",
   output: "Output tokens",
 };
 
@@ -59,144 +52,131 @@ function finiteNumber(value: unknown): number | null {
   return null;
 }
 
-/** First present numeric field. Absent and null both mean "not reported". */
-function pickCount(record: Record<string, unknown>, keys: string[]): number | null {
-  for (const key of keys) {
-    if (!Object.prototype.hasOwnProperty.call(record, key)) continue;
-    return finiteNumber(record[key]);
+function isCategoryId(value: string): value is LlmTokenCategoryId {
+  return (CATEGORY_ORDER as string[]).includes(value);
+}
+
+function readShareEntries(
+  value: unknown,
+  shareField: "percentage" | "costShare",
+  withCost: boolean,
+): LlmTokenCategoryView[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const categories: LlmTokenCategoryView[] = [];
+  for (const item of value) {
+    const row = asRecord(item);
+    if (!row || typeof row.key !== "string" || !isCategoryId(row.key)) continue;
+    const units = finiteNumber(row.units);
+    if (units == null) continue;
+    const tokens = units < 0 ? 0 : units;
+    if (row.key === "cached_input" && tokens <= 0) continue;
+    const share = finiteNumber(row[shareField]);
+    const cost = withCost ? finiteNumber(row.cost) : null;
+    const label =
+      typeof row.label === "string" && row.label.trim()
+        ? row.label
+        : CATEGORY_LABEL[row.key];
+    categories.push({
+      id: row.key,
+      label,
+      tokens,
+      cost,
+      sharePct: share ?? 0,
+    });
   }
-  return null;
+  if (categories.length === 0) return null;
+  categories.sort(
+    (a, b) => CATEGORY_ORDER.indexOf(a.id) - CATEGORY_ORDER.indexOf(b.id),
+  );
+  return categories;
 }
 
-function nonNegative(value: number): number {
-  return value < 0 ? 0 : value;
+function summedTokens(categories: LlmTokenCategoryView[]): number {
+  return categories.reduce((sum, category) => sum + category.tokens, 0);
 }
 
-/**
- * Reads a token split from a model-consumption row or an institution task row.
- * Accepts snake_case or camelCase, nested under `token_breakdown` /
- * `tokenBreakdown`, or flat on the row. Returns null when input and output
- * are both missing — that is the "API not ready" case.
- */
-export function readLlmTokenCounts(source: object): LlmTokenCounts | null {
+/** Model drill-down. Null when `native_breakdown` is absent (non-LLM, or not sent yet). */
+export function readModelTokenBreakdown(source: object): LlmTokenBreakdownView | null {
   const row = asRecord(source);
   if (!row) return null;
-  const nested =
-    asRecord(row.token_breakdown) ?? asRecord(row.tokenBreakdown) ?? row;
-
-  const inputTokens = pickCount(nested, ["input_tokens", "inputTokens"]);
-  const outputTokens = pickCount(nested, ["output_tokens", "outputTokens"]);
-  if (inputTokens == null && outputTokens == null) return null;
-
+  const categories = readShareEntries(row.native_breakdown, "percentage", false);
+  if (!categories) return null;
   return {
-    inputTokens: nonNegative(inputTokens ?? 0),
-    cachedInputTokens: (() => {
-      const cached = pickCount(nested, [
-        "cached_input_tokens",
-        "cachedInputTokens",
-      ]);
-      return cached == null ? null : nonNegative(cached);
-    })(),
-    outputTokens: nonNegative(outputTokens ?? 0),
-    inputCost: pickCount(nested, ["input_cost", "inputCost"]),
-    cachedInputCost: pickCount(nested, [
-      "cached_input_cost",
-      "cachedInputCost",
-    ]),
-    outputCost: pickCount(nested, ["output_cost", "outputCost"]),
+    categories,
+    totalTokens: finiteNumber(row.native_units) ?? summedTokens(categories),
+    totalCost: null,
   };
 }
 
-function shareOf(part: number, total: number): number {
-  if (total <= 0) return 0;
-  return (part / total) * 100;
+/** Institution drill-down. Null when `periodUsage.breakdown` is absent. */
+export function readInstitutionTokenBreakdown(
+  source: object,
+): LlmTokenBreakdownView | null {
+  const row = asRecord(source);
+  const period = row ? asRecord(row.periodUsage) : null;
+  if (!period) return null;
+  const categories = readShareEntries(period.breakdown, "costShare", true);
+  if (!categories) return null;
+  const summedCost = categories.reduce(
+    (sum, category) => sum + (category.cost ?? 0),
+    0,
+  );
+  return {
+    categories,
+    totalTokens: finiteNumber(period.units) ?? summedTokens(categories),
+    totalCost: finiteNumber(period.cost) ?? summedCost,
+  };
 }
 
 /**
- * Visible categories for one LLM row.
- * Cached input is omitted when it is zero or was not reported. It still
- * counts as zero in the token total. Shares are of total tokens, or of
- * total usage cost when `shareOfCost` is set.
+ * Sums `periodUsage` across task rows that share a task type.
+ * Cost shares are recomputed from the summed costs.
  */
-export function buildLlmTokenBreakdown(
-  counts: LlmTokenCounts,
-  shareOfCost: boolean,
-): LlmTokenBreakdownView {
-  const cachedTokens = counts.cachedInputTokens ?? 0;
-  const showCached = counts.cachedInputTokens != null && counts.cachedInputTokens > 0;
-  const totalTokens = counts.inputTokens + cachedTokens + counts.outputTokens;
+export function mergePeriodUsage(sources: object[]): {
+  units: number;
+  cost: number;
+  breakdown: Array<{
+    key: LlmTokenCategoryId;
+    label: string;
+    units: number;
+    cost: number;
+    costShare: number;
+  }>;
+} | null {
+  const views = sources
+    .map((source) => readInstitutionTokenBreakdown(source))
+    .filter((view): view is LlmTokenBreakdownView => view != null);
+  if (views.length === 0) return null;
 
-  const reportedCosts = [
-    counts.inputCost,
-    showCached ? counts.cachedInputCost : null,
-    counts.outputCost,
-  ];
-  const costsReported = shareOfCost && reportedCosts.some((cost) => cost != null);
-  const costOrZero = (cost: number | null) => (costsReported ? (cost ?? 0) : null);
-  const inputCost = costOrZero(counts.inputCost);
-  const cachedCost = showCached ? costOrZero(counts.cachedInputCost) : null;
-  const outputCost = costOrZero(counts.outputCost);
-  const totalCost = costsReported
-    ? (inputCost ?? 0) + (showCached ? (cachedCost ?? 0) : 0) + (outputCost ?? 0)
-    : null;
-
-  const draft: Array<{
-    id: LlmTokenCategoryId;
-    tokens: number;
-    cost: number | null;
-  }> = [
-    { id: "input", tokens: counts.inputTokens, cost: inputCost },
-    ...(showCached
-      ? [{ id: "cachedInput" as const, tokens: counts.cachedInputTokens ?? 0, cost: cachedCost }]
-      : []),
-    { id: "output", tokens: counts.outputTokens, cost: outputCost },
-  ];
-
+  const byId = new Map<LlmTokenCategoryId, LlmTokenCategoryView>();
+  for (const view of views) {
+    for (const category of view.categories) {
+      const existing = byId.get(category.id);
+      if (!existing) {
+        byId.set(category.id, { ...category, cost: category.cost ?? 0 });
+      } else {
+        existing.tokens += category.tokens;
+        existing.cost = (existing.cost ?? 0) + (category.cost ?? 0);
+      }
+    }
+  }
+  const categories = CATEGORY_ORDER.flatMap((id) => {
+    const category = byId.get(id);
+    return category ? [category] : [];
+  });
+  const units = views.reduce((sum, view) => sum + view.totalTokens, 0);
+  const cost = views.reduce((sum, view) => sum + (view.totalCost ?? 0), 0);
   return {
-    totalTokens,
-    totalCost,
-    categories: draft.map((category) => ({
-      id: category.id,
-      label: CATEGORY_LABEL[category.id],
-      tokens: category.tokens,
-      cost: category.cost,
-      sharePct: shareOfCost
-        ? totalCost == null
-          ? null
-          : shareOf(category.cost ?? 0, totalCost)
-        : shareOf(category.tokens, totalTokens),
+    units,
+    cost,
+    breakdown: categories.map((category) => ({
+      key: category.id,
+      label: category.label,
+      units: category.tokens,
+      cost: category.cost ?? 0,
+      costShare: cost > 0 ? ((category.cost ?? 0) / cost) * 100 : 0,
     })),
   };
-}
-
-/** Sums two splits. A missing cached count stays missing only when both sides omitted it. */
-export function mergeLlmTokenCounts(
-  left: LlmTokenCounts | null,
-  right: LlmTokenCounts | null,
-): LlmTokenCounts | null {
-  if (!left) return right;
-  if (!right) return left;
-  const sumCost = (a: number | null, b: number | null) =>
-    a == null && b == null ? null : (a ?? 0) + (b ?? 0);
-  return {
-    inputTokens: left.inputTokens + right.inputTokens,
-    outputTokens: left.outputTokens + right.outputTokens,
-    cachedInputTokens:
-      left.cachedInputTokens == null && right.cachedInputTokens == null
-        ? null
-        : (left.cachedInputTokens ?? 0) + (right.cachedInputTokens ?? 0),
-    inputCost: sumCost(left.inputCost, right.inputCost),
-    cachedInputCost: sumCost(left.cachedInputCost, right.cachedInputCost),
-    outputCost: sumCost(left.outputCost, right.outputCost),
-  };
-}
-
-/** Writes a split back onto a row using the camelCase names the reader accepts. */
-export function withLlmTokenCounts<T extends object>(
-  row: T,
-  counts: LlmTokenCounts,
-): T & LlmTokenCounts {
-  return { ...row, ...counts };
 }
 
 export function formatTokenCount(value: number): string {
