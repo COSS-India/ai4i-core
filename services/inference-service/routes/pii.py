@@ -1,9 +1,9 @@
-"""Temporary test endpoints for Presidio analyze and anonymize."""
+"""Presidio analyze/anonymize test endpoints and the policy simulation."""
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/pii", tags=["PII Test"])
 
@@ -84,4 +84,63 @@ def anonymize(req: AnonymizeRequest):
             for i in anonymized.items
         ],
         entityMapping=entity_mapping,
+    )
+
+
+class SimulatePolicyType(BaseModel):
+    """A policy_type row as platform-core returns it (GET /policies/policy-types)."""
+
+    id: Optional[int] = None
+    policy_type: str
+    policy_fields: Dict[str, Any] = Field(default_factory=dict)
+
+
+class SimulateRequest(BaseModel):
+    text: str
+    policyTypes: List[SimulatePolicyType]
+
+
+class Replacement(BaseModel):
+    original: str
+    output: str
+
+
+class DetectedPii(BaseModel):
+    entityType: str
+    policyType: str
+    instances: int
+    replacements: List[Replacement]
+
+
+class SimulateResponse(BaseModel):
+    originalText: str
+    sanitizedText: str
+    detected: List[DetectedPii]
+
+
+@router.post("/simulate", response_model=SimulateResponse)
+def simulate(req: SimulateRequest):
+    """Detect the policy's PII types in text and replace them with tokens."""
+    from services.pii.simulation import InvalidPolicyError, PolicyType, simulate as run
+
+    try:
+        result = run(
+            req.text,
+            [PolicyType(pt.policy_type, pt.policy_fields) for pt in req.policyTypes],
+        )
+    except InvalidPolicyError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return SimulateResponse(
+        originalText=req.text,
+        sanitizedText=result.sanitized_text,
+        detected=[
+            DetectedPii(
+                entityType=d.entity_type,
+                policyType=d.policy_type,
+                instances=d.instances,
+                replacements=[Replacement(original=o, output=t) for o, t in d.replacements.items()],
+            )
+            for d in result.detected
+        ],
     )
