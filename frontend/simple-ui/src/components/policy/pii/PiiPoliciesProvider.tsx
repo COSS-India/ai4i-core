@@ -31,12 +31,10 @@ import type { DetectionResult } from "./detection";
 import {
   createInitialCatalog,
   type Domain,
-  type Handling,
-  type MaskingPattern,
-  type DetectionMode,
   type PiiType,
   type Policy,
   type PolicyCategory,
+  type PolicyField,
   type PolicyScope,
   type PolicySubcategory,
   type PolicyType,
@@ -56,12 +54,7 @@ export type ProcessingTarget = "response" | "storage";
 
 export interface TypeInput {
   name: string;
-  examples: string[];
-  handling: Handling;
-  maskingPattern: MaskingPattern | null;
-  detectionMode: DetectionMode;
-  regex: string;
-  nerModel: string;
+  fields: PolicyField[];
 }
 
 export interface PolicyInput {
@@ -435,7 +428,7 @@ export function PiiPoliciesProvider({
         toast("Domain deleted.");
       },
       addType: async (input) => {
-        if (duplicateName(types, input.name)) return "A PII type with this name already exists.";
+        if (duplicateName(types, input.name)) return "A policy type with this name already exists.";
         try {
           const createdId = await createPolicyType({
             policy_type: input.name,
@@ -448,7 +441,7 @@ export function PiiPoliciesProvider({
           if (!items.some((item) => item.id === createdId)) {
             return "The PII definition was created, but it is not in the list yet.";
           }
-          toast("PII type added.");
+          toast("Policy type added.");
           return null;
         } catch (error: unknown) {
           return apiErrorMessage(error, "Couldn't create the PII definition.");
@@ -458,7 +451,7 @@ export function PiiPoliciesProvider({
         const current = types.find((t) => t.id === id);
         if (!current) return "PII type not found.";
         if (!current.isDefault && duplicateName(types, input.name, id)) {
-          return "A PII type with this name already exists.";
+          return "A policy type with this name already exists.";
         }
         const typeId = numericId(id);
         if (typeId == null) return "Couldn't update the PII definition.";
@@ -466,7 +459,7 @@ export function PiiPoliciesProvider({
           const saved = await updatePolicyType(typeId, policyFieldsFromDefinition(input));
           const next = definitionFromPolicyType(saved);
           setTypes((prev) => prev.map((t) => (t.id === id ? next : t)));
-          toast("PII type updated.");
+          toast("Policy type updated.");
           return null;
         } catch (error: unknown) {
           return apiErrorMessage(error, "Couldn't update the PII definition.");
@@ -481,7 +474,7 @@ export function PiiPoliciesProvider({
         try {
           await deletePolicyType(typeId);
           setTypes((prev) => prev.filter((t) => t.id !== id));
-          toast("PII type deleted.");
+          toast("Policy type deleted.");
         } catch (error: unknown) {
           showToast({
             type: "error",
