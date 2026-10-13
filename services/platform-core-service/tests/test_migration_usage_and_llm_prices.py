@@ -330,25 +330,33 @@ def _key_columns(conn) -> list[str]:
 
 
 class TestDropSpanId:
-    def test_rows_sharing_the_new_key_are_merged_and_totals_kept(self, usage_tables) -> None:
+    def test_chunks_of_one_request_keep_their_rows(self, usage_tables) -> None:
+        """Chunks ended at different instants: separate rows under the new key too."""
         now = datetime.now(timezone.utc)
-        _event(usage_tables, span_id="b-span", occurred_at=now, total_units=Decimal("3"),
-               input_units_cost=Decimal("0.3"))
-        _event(usage_tables, span_id="a-span", occurred_at=now, total_units=Decimal("5"),
-               input_units_cost=Decimal("0.5"))
-        # A chunk that ended at another instant stays its own row.
-        _event(usage_tables, span_id="c-span", occurred_at=now + timedelta(seconds=1),
-               total_units=Decimal("2"), input_units_cost=Decimal("0.2"))
+        _event(usage_tables, span_id="a-span", occurred_at=now, total_units=Decimal("5"))
+        _event(usage_tables, span_id="b-span", occurred_at=now + timedelta(seconds=1),
+               total_units=Decimal("2"))
 
         _run(usage_tables, _load(_DROP_SPAN_ID).upgrade)
 
-        rows = usage_tables.execute(text(
-            "SELECT total_units, total_cost FROM usage_events"
-            " WHERE correlation_id = 'test-migr-corr-1' ORDER BY occurred_at"
-        )).all()
-        assert rows == [(Decimal("8"), Decimal("0.800000")), (Decimal("2"), Decimal("0.200000"))]
+        assert usage_tables.scalars(text(
+            "SELECT total_units FROM usage_events WHERE correlation_id = 'test-migr-corr-1'"
+            " ORDER BY occurred_at"
+        )).all() == [Decimal("5"), Decimal("2")]
         assert not _has_column(usage_tables, "usage_events", "span_id")
         assert _key_columns(usage_tables) == ["correlation_id", "occurred_at"]
+
+    def test_rows_sharing_the_new_key_stop_it_before_any_change(self, usage_tables) -> None:
+        now = datetime.now(timezone.utc)
+        _event(usage_tables, span_id="a-span", occurred_at=now)
+        _event(usage_tables, span_id="b-span", occurred_at=now)
+
+        with pytest.raises(RuntimeError, match=r"correlation_id=test-migr-corr-1 .* rows=2"):
+            _run(usage_tables, _load(_DROP_SPAN_ID).upgrade)
+
+        assert _has_column(usage_tables, "usage_events", "span_id")
+        assert _key_columns(usage_tables) == ["correlation_id", "span_id", "occurred_at"]
+        assert usage_tables.scalar(text("SELECT count(*) FROM usage_events")) == 2
 
     def test_redelivered_span_still_hits_the_key(self, usage_tables) -> None:
         _run(usage_tables, _load(_DROP_SPAN_ID).upgrade)

@@ -11,11 +11,11 @@ key and writes nothing (ON CONFLICT DO NOTHING). Postgres requires the
 partition column in every unique key, which occurred_at is.
 
 Existing rows: rows written before this change keep one row per span (a
-chunked TTS request stays several rows, each with its own occurred_at). Rows
-that would collide on the new key (same correlation_id and occurred_at, a
-microsecond-level coincidence) are merged first: units and costs are added
-onto the row with the lowest span_id and the others deleted, so totals are
-unchanged. The units CHECK still holds, since it holds for each part.
+chunked TTS request stays several rows, each with its own occurred_at). Two
+rows can only collide on the new key if two spans of one correlation id
+ended in the same microsecond. The migration doesn't guess how to combine
+them: it checks first and stops with an error listing them, before changing
+anything, so they can be resolved by hand (DUPLICATES_SQL finds them all).
 
 Locking: dropping and re-adding the primary key on the partitioned parent
 rebuilds the unique index on every partition under an exclusive lock, so
@@ -45,36 +45,35 @@ PK = "pk_usage_events"
 # span_id restored on downgrade for rows written while it didn't exist.
 _PLACEHOLDER_SPAN_ID = "0000000000000000"
 
-_SUMMED = (
-    "total_units", "cached_input_units", "output_units",
-    "input_units_cost", "cached_input_units_cost", "output_units_cost",
+# Rows that would share a key once span_id is gone.
+DUPLICATES_SQL = (
+    f"SELECT correlation_id, occurred_at, count(*) AS rows FROM {TABLE}"
+    " GROUP BY correlation_id, occurred_at HAVING count(*) > 1"
 )
+_EXAMPLES = 5
+
+
+def _fail_on_duplicates() -> None:
+    """Stop before any change when rows would collide on the new key."""
+    if op.get_context().as_sql:   # --sql: no data to check
+        return
+    rows = op.get_bind().execute(sa.text(f"{DUPLICATES_SQL} LIMIT {_EXAMPLES + 1}")).all()
+    if not rows:
+        return
+    examples = "\n".join(
+        f"  correlation_id={r.correlation_id} occurred_at={r.occurred_at} rows={r.rows}"
+        for r in rows[:_EXAMPLES]
+    )
+    more = "\n  ..." if len(rows) > _EXAMPLES else ""
+    raise RuntimeError(
+        f"{TABLE} has rows sharing (correlation_id, occurred_at), which the new primary key "
+        f"won't allow. Nothing was changed. Merge or delete them by hand, then run the "
+        f"migration again.\n{examples}{more}\nFind them all with:\n  {DUPLICATES_SQL};"
+    )
 
 
 def upgrade() -> None:
-    # Merge rows that would collide on the new key into the lowest span_id.
-    op.execute(
-        "CREATE TEMP TABLE usage_events_dup ON COMMIT DROP AS"
-        " SELECT correlation_id, occurred_at, min(span_id) AS keep_span_id, "
-        + ", ".join(f"sum({c}) AS {c}" for c in _SUMMED)
-        + f" FROM {TABLE} GROUP BY correlation_id, occurred_at HAVING count(*) > 1"
-    )
-    op.execute(
-        f"UPDATE {TABLE} u SET "
-        + ", ".join(f"{c} = d.{c}" for c in _SUMMED)
-        + " FROM usage_events_dup d"
-        " WHERE u.correlation_id = d.correlation_id AND u.occurred_at = d.occurred_at"
-        " AND u.span_id = d.keep_span_id"
-    )
-    op.execute(
-        f"DELETE FROM {TABLE} u USING usage_events_dup d"
-        " WHERE u.correlation_id = d.correlation_id AND u.occurred_at = d.occurred_at"
-        " AND u.span_id <> d.keep_span_id"
-    )
-    # Dropped now rather than at commit: alembic may run more steps in this
-    # transaction (e.g. a downgrade and upgrade again).
-    op.execute("DROP TABLE usage_events_dup")
-
+    _fail_on_duplicates()
     op.drop_constraint(PK, TABLE, type_="primary")
     op.drop_column(TABLE, "span_id")
     op.create_primary_key(PK, TABLE, ["correlation_id", "occurred_at"])
