@@ -91,6 +91,7 @@ async def cache_policy(policy: Policy, session: AsyncSession, redis: Redis) -> N
         logger.debug("Cached policy id=%s", policy.id)
     except Exception:
         logger.warning("Failed to cache policy id=%s", policy.id, exc_info=True)
+        await delete_policy_cache(policy.id, redis)
 
 
 async def delete_policy_cache(policy_id: int, redis: Redis) -> None:

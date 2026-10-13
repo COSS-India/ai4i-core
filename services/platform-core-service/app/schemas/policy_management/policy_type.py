@@ -4,56 +4,100 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.common import DeletedIdData, MessageMeta, SuccessResponse, SuccessResponseWithMeta
-from app.schemas.policy_management.fields import NAME_MAX_LEN, clean_name
+from app.schemas.policy_management.fields import (
+    MAX_CUSTOM_FIELDS,
+    MAX_REGEX_LEN,
+    NAME_MAX_LEN,
+    clean_domain_key,
+    clean_name,
+)
 
 
 def _validate_custom_fields(policy_fields: Dict[str, Any]) -> Dict[str, Any]:
     """Each top-level key in policy_fields is a domain (e.g. Education, Finance).
-    Every domain must have a 'custom_field' list where each entry has a mandatory
-    entity_name, at least 3 examples, and a non-empty regex."""
+    Keys are stripped of invisible characters, must not be blank, and must be
+    unique case-insensitively. Every domain's 'custom_field' list entries must
+    have a mandatory entity_name, at least 3 non-blank string examples, and a
+    non-blank string regex."""
+    normalised: Dict[str, Any] = {}
+    seen_lower: Dict[str, str] = {}  # lowercase key → first seen stripped key for collision reporting
+    total_custom_fields = 0
+
     for domain, domain_value in policy_fields.items():
+        try:
+            key = clean_domain_key(domain)
+        except ValueError as exc:
+            raise ValueError(f"policy_fields key {domain!r}: {exc}") from exc
+
+        lower = key.lower()
+        if lower in seen_lower:
+            raise ValueError(
+                f"policy_fields key {key!r} collides with {seen_lower[lower]!r} "
+                "(domain keys must be unique case-insensitively)."
+            )
+        seen_lower[lower] = key
+
         if not isinstance(domain_value, dict):
-            raise ValueError(f"policy_fields['{domain}'] must be an object.")
+            raise ValueError(f"policy_fields['{key}'] must be an object.")
 
         custom_field_entries = domain_value.get("custom_field")
         if not custom_field_entries:
+            normalised[key] = domain_value
             continue
 
         if not isinstance(custom_field_entries, list):
-            raise ValueError(f"policy_fields['{domain}']['custom_field'] must be a list.")
+            raise ValueError(f"policy_fields['{key}']['custom_field'] must be a list.")
+
+        total_custom_fields += len(custom_field_entries)
+        if total_custom_fields > MAX_CUSTOM_FIELDS:
+            raise ValueError(
+                f"policy_fields total custom_field entries must not exceed {MAX_CUSTOM_FIELDS} "
+                f"(got {total_custom_fields})."
+            )
 
         for entry in custom_field_entries:
             if not isinstance(entry, dict):
                 raise ValueError(
-                    f"Each item in policy_fields['{domain}']['custom_field'] must be an object."
+                    f"Each item in policy_fields['{key}']['custom_field'] must be an object."
                 )
 
-            entity_name = entry.get("entity_name")
-            if not entity_name or not str(entity_name).strip():
+            try:
+                entity_name = clean_name(entry.get("entity_name"), "Entity")
+            except ValueError as exc:
                 raise ValueError(
-                    f"policy_fields['{domain}'] custom_field entry: "
-                    "'entity_name' is required and must not be blank."
-                )
+                    f"policy_fields['{key}'] custom_field entry: {exc}"
+                ) from exc
 
             examples = entry.get("examples")
             if not examples or not isinstance(examples, list) or len(examples) < 3:
                 raise ValueError(
-                    f"policy_fields['{domain}'] custom_field entry '{entity_name}': "
+                    f"policy_fields['{key}'] custom_field entry '{entity_name}': "
                     "at least 3 examples are required."
                 )
+            for i, ex in enumerate(examples):
+                if not isinstance(ex, str) or not ex.strip():
+                    raise ValueError(
+                        f"policy_fields['{key}'] custom_field entry '{entity_name}': "
+                        f"examples[{i}] must be a non-blank string."
+                    )
 
             regex = entry.get("regex")
-            if not regex or not str(regex).strip():
+            if not isinstance(regex, str) or not regex.strip():
                 raise ValueError(
-                    f"policy_fields['{domain}'] custom_field entry '{entity_name}': "
-                    "'regex' is required."
+                    f"policy_fields['{key}'] custom_field entry '{entity_name}': "
+                    "'regex' must be a non-blank string."
+                )
+            if len(regex) > MAX_REGEX_LEN:
+                raise ValueError(
+                    f"policy_fields['{key}'] custom_field entry '{entity_name}': "
+                    f"'regex' must not exceed {MAX_REGEX_LEN} characters (got {len(regex)})."
                 )
             # Regex provided by the product team — compiled here to catch invalid patterns at validation time
             try:
                 re.compile(regex)
             except re.error as exc:
                 raise ValueError(
-                    f"policy_fields['{domain}'] custom_field entry '{entity_name}': "
+                    f"policy_fields['{key}'] custom_field entry '{entity_name}': "
                     f"invalid regex — {exc}."
                 )
 
@@ -61,26 +105,28 @@ def _validate_custom_fields(policy_fields: Dict[str, Any]) -> Dict[str, Any]:
         if model_supported_entries:
             if not isinstance(model_supported_entries, list):
                 raise ValueError(
-                    f"policy_fields['{domain}']['model_supported_field'] must be a list."
+                    f"policy_fields['{key}']['model_supported_field'] must be a list."
                 )
             for entry in model_supported_entries:
                 if not isinstance(entry, dict):
                     raise ValueError(
-                        f"Each item in policy_fields['{domain}']['model_supported_field'] must be an object."
+                        f"Each item in policy_fields['{key}']['model_supported_field'] must be an object."
                     )
                 for lang, entities in entry.items():
                     if not isinstance(entities, list):
                         raise ValueError(
-                            f"policy_fields['{domain}']['model_supported_field']['{lang}'] must be a list."
+                            f"policy_fields['{key}']['model_supported_field']['{lang}'] must be a list."
                         )
                     for entity in entities:
                         if not isinstance(entity, dict) or not entity.get("entity_name"):
                             raise ValueError(
-                                f"policy_fields['{domain}']['model_supported_field']['{lang}']: "
+                                f"policy_fields['{key}']['model_supported_field']['{lang}']: "
                                 "each entry must have 'entity_name'."
                             )
 
-    return policy_fields
+        normalised[key] = domain_value
+
+    return normalised
 
 
 class PolicyTypeItem(BaseModel):
@@ -170,7 +216,7 @@ class PolicyTypeCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_custom_fields(self):
-        _validate_custom_fields(self.policy_fields)
+        self.policy_fields = _validate_custom_fields(self.policy_fields)
         return self
 
 
@@ -223,7 +269,7 @@ class PolicyTypeUpdate(BaseModel):
     @model_validator(mode="after")
     def validate_custom_fields(self):
         if self.policy_fields is not None:
-            _validate_custom_fields(self.policy_fields)
+            self.policy_fields = _validate_custom_fields(self.policy_fields)
         return self
 
 

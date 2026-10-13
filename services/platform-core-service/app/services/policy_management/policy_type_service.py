@@ -26,7 +26,7 @@ async def list_policy_types(session: AsyncSession, domain: str | None = None) ->
     for row in rows:
         item = PolicyTypeItem.model_validate(row)
         if domain is not None:
-            matched = {k: v for k, v in item.policy_fields.items() if k.lower() == domain.lower()}
+            matched = {k: v for k, v in item.policy_fields.items() if k.lower() == domain.strip().lower()}
             if not matched:
                 continue
             item = item.model_copy(update={"policy_fields": matched})
