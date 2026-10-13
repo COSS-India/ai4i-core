@@ -71,7 +71,8 @@ from app.models.pay_per_use.inference_type import InferenceType  # noqa: E402
 from app.models.pay_per_use.tier import Tier, TierQuota  # noqa: E402
 from app.models.pay_per_use.quota_usage import QuotaUsage  # noqa: E402
 from app.models.pay_per_use.budget_usage import BudgetUsage  # noqa: E402
-# Partitioned by month; the partitions themselves are DDL (pay_per_use/partitioning.py)
+# Range-partitioned (usage_events by day, daily_usage by month); the partitions
+# themselves are DDL (pay_per_use/partitioning.py)
 from app.models.pay_per_use.usage_event import UsageEvent  # noqa: E402
 from app.models.pay_per_use.daily_usage import DailyUsage  # noqa: E402
 
