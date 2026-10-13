@@ -17,59 +17,57 @@ def _validate_custom_fields(policy_fields: Dict[str, Any]) -> Dict[str, Any]:
     Each entry must have entity_name, at least 3 non-blank string examples,
     and a non-blank compilable regex."""
     custom_field_entries = policy_fields.get("custom_field")
-    if not custom_field_entries:
-        return policy_fields
+    if custom_field_entries:
+        if not isinstance(custom_field_entries, list):
+            raise ValueError("policy_fields['custom_field'] must be a list.")
 
-    if not isinstance(custom_field_entries, list):
-        raise ValueError("policy_fields['custom_field'] must be a list.")
-
-    if len(custom_field_entries) > MAX_CUSTOM_FIELDS:
-        raise ValueError(
-            f"policy_fields custom_field entries must not exceed {MAX_CUSTOM_FIELDS} "
-            f"(got {len(custom_field_entries)})."
-        )
-
-    for entry in custom_field_entries:
-        if not isinstance(entry, dict):
-            raise ValueError("Each item in policy_fields['custom_field'] must be an object.")
-
-        try:
-            entity_name = clean_name(entry.get("entity_name"), "Entity")
-        except ValueError as exc:
-            raise ValueError(f"policy_fields custom_field entry: {exc}") from exc
-
-        examples = entry.get("examples")
-        if not examples or not isinstance(examples, list) or len(examples) < 3:
+        if len(custom_field_entries) > MAX_CUSTOM_FIELDS:
             raise ValueError(
-                f"policy_fields custom_field entry '{entity_name}': "
-                "at least 3 examples are required."
+                f"policy_fields custom_field entries must not exceed {MAX_CUSTOM_FIELDS} "
+                f"(got {len(custom_field_entries)})."
             )
-        for i, ex in enumerate(examples):
-            if not isinstance(ex, str) or not ex.strip():
+
+        for entry in custom_field_entries:
+            if not isinstance(entry, dict):
+                raise ValueError("Each item in policy_fields['custom_field'] must be an object.")
+
+            try:
+                entity_name = clean_name(entry.get("entity_name"), "Entity")
+            except ValueError as exc:
+                raise ValueError(f"policy_fields custom_field entry: {exc}") from exc
+
+            examples = entry.get("examples")
+            if not examples or not isinstance(examples, list) or len(examples) < 3:
                 raise ValueError(
                     f"policy_fields custom_field entry '{entity_name}': "
-                    f"examples[{i}] must be a non-blank string."
+                    "at least 3 examples are required."
                 )
+            for i, ex in enumerate(examples):
+                if not isinstance(ex, str) or not ex.strip():
+                    raise ValueError(
+                        f"policy_fields custom_field entry '{entity_name}': "
+                        f"examples[{i}] must be a non-blank string."
+                    )
 
-        regex = entry.get("regex")
-        if not isinstance(regex, str) or not regex.strip():
-            raise ValueError(
-                f"policy_fields custom_field entry '{entity_name}': "
-                "'regex' must be a non-blank string."
-            )
-        if len(regex) > MAX_REGEX_LEN:
-            raise ValueError(
-                f"policy_fields custom_field entry '{entity_name}': "
-                f"'regex' must not exceed {MAX_REGEX_LEN} characters (got {len(regex)})."
-            )
-        # Regex provided by the product team — compiled here to catch invalid patterns at validation time
-        try:
-            re.compile(regex)
-        except re.error as exc:
-            raise ValueError(
-                f"policy_fields custom_field entry '{entity_name}': "
-                f"invalid regex — {exc}."
-            )
+            regex = entry.get("regex")
+            if not isinstance(regex, str) or not regex.strip():
+                raise ValueError(
+                    f"policy_fields custom_field entry '{entity_name}': "
+                    "'regex' must be a non-blank string."
+                )
+            if len(regex) > MAX_REGEX_LEN:
+                raise ValueError(
+                    f"policy_fields custom_field entry '{entity_name}': "
+                    f"'regex' must not exceed {MAX_REGEX_LEN} characters (got {len(regex)})."
+                )
+            # Regex provided by the product team — compiled here to catch invalid patterns at validation time
+            try:
+                re.compile(regex)
+            except re.error as exc:
+                raise ValueError(
+                    f"policy_fields custom_field entry '{entity_name}': "
+                    f"invalid regex — {exc}."
+                )
 
     model_supported_entries = policy_fields.get("model_supported_field")
     if model_supported_entries:

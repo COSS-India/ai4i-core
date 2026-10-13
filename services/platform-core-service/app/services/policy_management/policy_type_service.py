@@ -19,17 +19,33 @@ from app.schemas.policy_management.policy_type import (
 )
 
 
-def _matches_entity(policy_fields: dict, search: str) -> bool:
+def _filter_policy_fields(policy_fields: dict, search: str) -> dict | None:
     term = search.strip().lower()
-    for entry in policy_fields.get("custom_field") or []:
-        if term in str(entry.get("entity_name", "")).lower():
-            return True
-    for entry in policy_fields.get("model_supported_field") or []:
-        for entities in entry.values():
-            for e in entities:
-                if term in str(e.get("entity_name", "")).lower():
-                    return True
-    return False
+
+    filtered_custom = [
+        entry for entry in (policy_fields.get("custom_field") or [])
+        if term in str(entry.get("entity_name", "")).lower()
+    ]
+
+    filtered_model = []
+    for entry in (policy_fields.get("model_supported_field") or []):
+        narrowed = {
+            lang: [e for e in entities if term in str(e.get("entity_name", "")).lower()]
+            for lang, entities in entry.items()
+        }
+        narrowed = {lang: ents for lang, ents in narrowed.items() if ents}
+        if narrowed:
+            filtered_model.append(narrowed)
+
+    if not filtered_custom and not filtered_model:
+        return None
+
+    result = {}
+    if filtered_custom:
+        result["custom_field"] = filtered_custom
+    if filtered_model:
+        result["model_supported_field"] = filtered_model
+    return result
 
 
 async def list_policy_types(session: AsyncSession, entity: str | None = None) -> List[PolicyTypeItem]:
@@ -37,7 +53,12 @@ async def list_policy_types(session: AsyncSession, entity: str | None = None) ->
     rows = await repo.get_all()
     items = [PolicyTypeItem.model_validate(row) for row in rows]
     if entity:
-        items = [item for item in items if _matches_entity(item.policy_fields, entity)]
+        narrowed = []
+        for item in items:
+            filtered = _filter_policy_fields(item.policy_fields, entity)
+            if filtered is not None:
+                narrowed.append(item.model_copy(update={"policy_fields": filtered}))
+        items = narrowed
     return items
 
 

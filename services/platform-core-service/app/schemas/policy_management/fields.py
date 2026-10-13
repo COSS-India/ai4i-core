@@ -45,14 +45,6 @@ def clean_name(v, label: str):
     return v
 
 
-def clean_domain_key(v: str) -> str:
-    """Strip invisible characters from a policy_fields domain key; reject blank."""
-    v = _strip_invisible(v)
-    if not v:
-        raise ValueError("domain key must not be blank")
-    return v
-
-
 def clean_description(v):
     """Trim like a name; a blank description is stored as None."""
     if not isinstance(v, str):
