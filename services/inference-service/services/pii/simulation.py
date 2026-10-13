@@ -17,7 +17,7 @@ redact, hash) are not part of policy_fields yet, so they are not applied.
 
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 import regex
 from presidio_analyzer import EntityRecognizer, Pattern, PatternRecognizer, RecognizerResult
@@ -81,7 +81,8 @@ class PolicyType:
 @dataclass
 class DetectedType:
     entity_type: str
-    policy_type: str
+    # every policy type that defines this entity, in request order
+    policy_types: List[str]
     instances: int = 0
     # original value -> token, in order of first appearance
     replacements: Dict[str, str] = field(default_factory=dict)
@@ -151,14 +152,27 @@ class TimedPatternRecognizer(PatternRecognizer):
         return EntityRecognizer.remove_duplicates(results)
 
 
-def _build_recognizers(
-    policy_types: List[PolicyType], language: str
-) -> tuple[List[PatternRecognizer], Dict[str, str]]:
-    """Return the ad-hoc recognizers and {entity_type: policy_type name}."""
+@dataclass
+class _Recognizers:
+    ad_hoc: List[PatternRecognizer]
+    # entity -> every policy type that defines it (custom or model field)
+    sources: Dict[str, List[str]]
+    # entities listed in model_supported_field for the detected language
+    model_entities: Set[str]
+
+
+def _add_source(sources: Dict[str, List[str]], entity: str, policy_type: str) -> None:
+    names = sources.setdefault(entity, [])
+    if policy_type not in names:
+        names.append(policy_type)
+
+
+def _build_recognizers(policy_types: List[PolicyType], language: str) -> _Recognizers:
     lang_code = get_spacy_lang_code(language)
     budget = RegexBudget(REGEX_BUDGET_SECONDS)
     recognizers: List[PatternRecognizer] = []
-    entity_source: Dict[str, str] = {}
+    sources: Dict[str, List[str]] = {}
+    model_entities: Set[str] = set()
 
     for pt in policy_types:
         for cf in pt.custom_fields:
@@ -177,12 +191,28 @@ def _build_recognizers(
                 raise InvalidPolicyError(
                     f"{pt.name}: invalid regex for {cf.entity_name}: {exc}"
                 ) from exc
-            entity_source.setdefault(cf.entity_name, pt.name)
+            _add_source(sources, cf.entity_name, pt.name)
 
         for entity in pt.model_entities.get(language, []):
-            entity_source.setdefault(entity, pt.name)
+            model_entities.add(entity)
+            _add_source(sources, entity, pt.name)
 
-    return recognizers, entity_source
+    return _Recognizers(recognizers, sources, model_entities)
+
+
+def _from_policy(results: List[RecognizerResult], recs: _Recognizers) -> List[RecognizerResult]:
+    """Drop built-in matches for entities the policy defines only by regex.
+
+    Presidio runs every recognizer that supports a requested entity, so a
+    custom field named PHONE_NUMBER also runs Presidio's PhoneRecognizer and
+    would report matches the policy's own regex never makes.
+    """
+    ad_hoc_names = {r.name for r in recs.ad_hoc}
+    return [
+        r for r in results
+        if r.entity_type in recs.model_entities
+        or (r.recognition_metadata or {}).get(RecognizerResult.RECOGNIZER_NAME_KEY) in ad_hoc_names
+    ]
 
 
 def simulate(text: str, policy_types: List[PolicyType]) -> SimulationResult:
@@ -190,15 +220,16 @@ def simulate(text: str, policy_types: List[PolicyType]) -> SimulationResult:
     # detection to them avoids short English text being read as "et" or "nl".
     policy_languages = {lang for pt in policy_types for lang in pt.model_entities}
     language = detect_language(text, policy_languages) if policy_languages else DEFAULT_LANGUAGE
-    recognizers, entity_source = _build_recognizers(policy_types, language)
-    if not entity_source or not text.strip():
+    recs = _build_recognizers(policy_types, language)
+    if not recs.sources or not text.strip():
         # entities=[] would mean "all entities" to Presidio; a policy with no
         # PII types must detect nothing.
         return SimulationResult(text, [])
 
     engine = get_engine()
-    analyzer_results = engine.analyze(
-        text, language, entities=list(entity_source), ad_hoc_recognizers=recognizers
+    analyzer_results = _from_policy(
+        engine.analyze(text, language, entities=list(recs.sources), ad_hoc_recognizers=recs.ad_hoc),
+        recs,
     )
     anonymized, entity_mapping = engine.anonymize(text, analyzer_results)
 
@@ -210,7 +241,7 @@ def simulate(text: str, policy_types: List[PolicyType]) -> SimulationResult:
     for item in sorted(anonymized.items, key=lambda i: i.start):
         row = detected.setdefault(
             item.entity_type,
-            DetectedType(item.entity_type, entity_source.get(item.entity_type, "")),
+            DetectedType(item.entity_type, recs.sources.get(item.entity_type, [])),
         )
         row.instances += 1
         row.replacements.setdefault(token_to_value[item.text], item.text)

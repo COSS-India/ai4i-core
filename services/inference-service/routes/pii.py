@@ -13,7 +13,11 @@ NAME_MAX_LEN = 100
 MAX_SIMULATE_TEXT_LEN = 100_000
 MAX_POLICY_TYPES = 50
 MAX_DOMAINS = 20
+# Totals across the whole request (all policy types and domains). Presidio's
+# recognizer selection grows with entities x recognizers, so per-list caps
+# that multiply out to 100,000 fields are not enough.
 MAX_CUSTOM_FIELDS = 100
+MAX_MODEL_ENTITIES = 100
 MAX_REGEX_LEN = 1000
 
 # strip_whitespace leaves zero-width characters, so "\u200b" would pass
@@ -153,7 +157,9 @@ class DomainFieldsIn(BaseModel):
 
     custom_field: List[CustomFieldIn] = Field(default_factory=list, max_length=MAX_CUSTOM_FIELDS)
     # [{"en": [{"entity_name": "PERSON"}], "hi": [...]}]
-    model_supported_field: List[Dict[str, List[ModelEntityIn]]] = Field(default_factory=list)
+    model_supported_field: List[
+        Dict[str, Annotated[List[ModelEntityIn], Field(max_length=MAX_MODEL_ENTITIES)]]
+    ] = Field(default_factory=list, max_length=MAX_MODEL_ENTITIES)
 
 
 class SimulatePolicyType(BaseModel):
@@ -172,6 +178,27 @@ class SimulateRequest(BaseModel):
     text: str = Field(..., max_length=MAX_SIMULATE_TEXT_LEN)
     policyTypes: List[SimulatePolicyType] = Field(..., max_length=MAX_POLICY_TYPES)
 
+    @model_validator(mode="after")
+    def cap_fields_per_request(self):
+        domains = [d for pt in self.policyTypes for d in pt.policy_fields.values()]
+        custom = sum(len(d.custom_field) for d in domains)
+        model = sum(
+            len(entries)
+            for d in domains
+            for by_language in d.model_supported_field
+            for entries in by_language.values()
+        )
+        if custom > MAX_CUSTOM_FIELDS:
+            raise ValueError(
+                f"{custom} custom_field entries in total; at most {MAX_CUSTOM_FIELDS} per request."
+            )
+        if model > MAX_MODEL_ENTITIES:
+            raise ValueError(
+                f"{model} model_supported_field entities in total; "
+                f"at most {MAX_MODEL_ENTITIES} per request."
+            )
+        return self
+
 
 class Replacement(BaseModel):
     original: str
@@ -180,7 +207,9 @@ class Replacement(BaseModel):
 
 class DetectedPii(BaseModel):
     entityType: str
-    policyType: str
+    # Every policy type that defines this entity (two types can define the
+    # same entity_name with different regexes; both run).
+    policyTypes: List[str]
     instances: int
     replacements: List[Replacement]
 
@@ -206,10 +235,13 @@ def simulate(req: SimulateRequest):
     policy_types = []
     for pt in req.policyTypes:
         custom_fields: List[CustomField] = []
+        seen: set = set()
         model_entities: Dict[str, List[str]] = {}
         for fields in pt.policy_fields.values():
             for cf in fields.custom_field:
-                if CustomField(cf.entity_name, cf.regex) not in custom_fields:
+                # The same entity and regex in several domains runs once.
+                if (cf.entity_name, cf.regex) not in seen:
+                    seen.add((cf.entity_name, cf.regex))
                     custom_fields.append(CustomField(cf.entity_name, cf.regex))
             for by_language in fields.model_supported_field:
                 for lang, entries in by_language.items():
@@ -234,7 +266,7 @@ def simulate(req: SimulateRequest):
         detected=[
             DetectedPii(
                 entityType=d.entity_type,
-                policyType=d.policy_type,
+                policyTypes=d.policy_types,
                 instances=d.instances,
                 replacements=[Replacement(original=o, output=t) for o, t in d.replacements.items()],
             )
