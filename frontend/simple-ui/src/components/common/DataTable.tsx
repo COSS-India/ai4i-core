@@ -7,6 +7,7 @@ import {
   Center,
   FormControl,
   FormControlProps,
+  FormErrorMessage,
   Input,
   InputGroup,
   InputGroupProps,
@@ -339,6 +340,7 @@ export function TableTextField({
   onChange,
   placeholder,
   helper,
+  error,
   hint,
   inputType = "text",
   formControlProps,
@@ -349,6 +351,8 @@ export function TableTextField({
   onChange: (value: string) => void;
   placeholder?: string;
   helper?: string;
+  /** Marks the field invalid and shows in place of `helper`. */
+  error?: string;
   hint?: string;
   inputType?: "text" | "number";
   formControlProps?: FormControlProps;
@@ -357,7 +361,7 @@ export function TableTextField({
   const { resetPage, inputBg } = useDataTableFilterContext();
 
   return (
-    <FormControl w={{ base: "full", sm: "200px" }} {...formControlProps}>
+    <FormControl w={{ base: "full", sm: "200px" }} isInvalid={!!error} {...formControlProps}>
       <FieldLabel hint={hint}>{label}</FieldLabel>
       <Input
         type={inputType}
@@ -372,7 +376,13 @@ export function TableTextField({
         aria-label={label}
         {...inputProps}
       />
-      <FieldHint>{helper}</FieldHint>
+      {error ? (
+        <FormErrorMessage fontSize="xs" m={0} mt={1}>
+          {error}
+        </FormErrorMessage>
+      ) : (
+        <FieldHint>{helper}</FieldHint>
+      )}
     </FormControl>
   );
 }
@@ -520,6 +530,7 @@ function ConfigDrivenFilters({
               onChange={def.onChange}
               placeholder={def.placeholder}
               helper={def.helper}
+              error={def.error}
               inputType={textType}
               formControlProps={widthProps ? { w: widthProps.w } : undefined}
               inputProps={textType === "number" ? { min: 0 } : undefined}

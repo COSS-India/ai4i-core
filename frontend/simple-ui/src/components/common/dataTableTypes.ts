@@ -57,6 +57,11 @@ export type DataTableFilterDef = {
    * - date: `"date"` (default) or `"datetime-local"`
    */
   inputType?: "text" | "number" | "date" | "datetime-local";
+  /**
+   * Validation message for `text` filters. When set the field is marked
+   * invalid (aria-invalid) and this replaces `helper` under the input.
+   */
+  error?: string;
   /** Width hint for the control. */
   width?: string | Record<string, string>;
 };

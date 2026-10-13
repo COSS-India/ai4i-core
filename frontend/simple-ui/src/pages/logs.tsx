@@ -55,6 +55,36 @@ import { isPlatformAdminUser, isTenantAdminUser, userHasRole } from "../utils/rb
 /** Auto-refresh interval when enabled (within 30–45s range). */
 const AUTO_REFRESH_MS = 37_000;
 
+/** Caller-tag filter limits; mirror the traces/search query param limits. */
+const END_USER_MAX_LENGTH = 256;
+const METADATA_KEY_MAX_LENGTH = 64;
+const METADATA_VALUE_MAX_LENGTH = 512;
+
+/** Wait for typing to pause before a caller-tag filter triggers a search. */
+const TAG_FILTER_DEBOUNCE_MS = 400;
+
+/**
+ * Parse the Metadata filter's "key=value" text, the same form spans store in
+ * metadata_kv. Splits at the first "=" (keys can't contain one). Returns null
+ * when empty, or an error hint when the API would reject the pair.
+ */
+const parseMetadataFilter = (
+  raw: string
+): { key: string; value: string } | { error: string } | null => {
+  const text = raw.trim();
+  if (!text) return null;
+  const hints = FIELD_HINTS.logs.metadata;
+  const separator = text.indexOf("=");
+  if (separator === -1) return { error: hints.missingSeparator };
+  const key = text.slice(0, separator).trim();
+  const value = text.slice(separator + 1).trim();
+  if (!key) return { error: hints.missingKey };
+  if (!value) return { error: hints.missingValue };
+  if (key.length > METADATA_KEY_MAX_LENGTH) return { error: hints.keyTooLong };
+  if (value.length > METADATA_VALUE_MAX_LENGTH) return { error: hints.valueTooLong };
+  return { key, value };
+};
+
 /**
  * Convert datetime-local format (YYYY-MM-DDTHH:mm) to ISO format (YYYY-MM-DDTHH:mm:ss.sssZ)
  * This ensures the timestamp is properly formatted for OpenSearch queries
@@ -114,6 +144,16 @@ const LogsPage: React.FC = () => {
   const [level, setLevel] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [debouncedSearch, setDebouncedSearch] = useState<string>("");
+  // Caller-tag filters (OpenAI `user` / `metadata`) — searched server-side
+  // across all pages, unlike the Search box which filters the loaded page.
+  const [endUser, setEndUser] = useState<string>("");
+  const [metadata, setMetadata] = useState<string>("");
+  // The tag filters the table is currently filtered by (sent to the API).
+  const [appliedTags, setAppliedTags] = useState({
+    user: "",
+    metadataKey: "",
+    metadataValue: "",
+  });
   const [startTime, setStartTime] = useState<string>("");
   const [endTime, setEndTime] = useState<string>("");
   const [selectedTenantId, setSelectedTenantId] = useState<string>("");
@@ -154,6 +194,42 @@ const LogsPage: React.FC = () => {
     const timer = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 300);
     return () => clearTimeout(timer);
   }, [searchQuery]);
+
+  // Only valid values are sent; the API rejects anything else (400/422).
+  // An invalid entry keeps the last valid filter applied, so the results never
+  // silently widen to every log while the field still shows text.
+  const trimmedEndUser = endUser.trim();
+  const endUserError =
+    trimmedEndUser.length > END_USER_MAX_LENGTH ? FIELD_HINTS.logs.endUser.tooLong : undefined;
+  const metadataFilter = useMemo(() => parseMetadataFilter(metadata), [metadata]);
+  const metadataError =
+    metadataFilter && "error" in metadataFilter ? metadataFilter.error : undefined;
+  const metadataPair = metadataFilter && "key" in metadataFilter ? metadataFilter : null;
+
+  const nextUser = endUserError ? appliedTags.user : trimmedEndUser;
+  const nextMetadataKey = metadataError ? appliedTags.metadataKey : metadataPair?.key ?? "";
+  const nextMetadataValue = metadataError ? appliedTags.metadataValue : metadataPair?.value ?? "";
+  // True while a typed tag change is waiting out the debounce. The query is
+  // paused meanwhile, so the immediate page-1 reset from typing doesn't fire
+  // its own request with the old tags.
+  const tagsPending =
+    nextUser !== appliedTags.user ||
+    nextMetadataKey !== appliedTags.metadataKey ||
+    nextMetadataValue !== appliedTags.metadataValue;
+
+  useEffect(() => {
+    if (!tagsPending) return;
+    const timer = setTimeout(
+      () =>
+        setAppliedTags({
+          user: nextUser,
+          metadataKey: nextMetadataKey,
+          metadataValue: nextMetadataValue,
+        }),
+      TAG_FILTER_DEBOUNCE_MS
+    );
+    return () => clearTimeout(timer);
+  }, [tagsPending, nextUser, nextMetadataKey, nextMetadataValue]);
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -243,6 +319,9 @@ const LogsPage: React.FC = () => {
       isTenantAdmin,
       page,
       pageSize,
+      appliedTags.user,
+      appliedTags.metadataKey,
+      appliedTags.metadataValue,
     ],
     queryFn: () => {
       const apiStartDate =
@@ -258,9 +337,16 @@ const LogsPage: React.FC = () => {
         page,
         pageSize,
         tenant_id: apiTenantId,
+        user: appliedTags.user || undefined,
+        metadataKey: appliedTags.metadataKey || undefined,
+        metadataValue: appliedTags.metadataValue || undefined,
       });
     },
-    enabled: isAuthenticated && (!isTenantAdmin || !!apiTenantId) && taskTypeFilterReady,
+    enabled:
+      isAuthenticated && (!isTenantAdmin || !!apiTenantId) && taskTypeFilterReady && !tagsPending,
+    // Keep the current rows on screen while a tag change is pending instead of
+    // flashing the loading state on every keystroke.
+    placeholderData: (previous) => (tagsPending ? previous : undefined),
     staleTime: 30 * 1000,
   });
 
@@ -351,6 +437,11 @@ const LogsPage: React.FC = () => {
     setLevel("");
     setSearchQuery("");
     setSelectedTenantId("");
+    setEndUser("");
+    setMetadata("");
+    // Apply the cleared tags now (not after the debounce) so Clear makes one
+    // request, without the old tags.
+    setAppliedTags({ user: "", metadataKey: "", metadataValue: "" });
     const now = new Date();
     const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
     const formatDateTime = (date: Date) => {
@@ -514,7 +605,9 @@ const LogsPage: React.FC = () => {
   const hasAppliedFilters =
     level !== "" ||
     (canPickTenant && selectedTenantId !== "") ||
-    searchQuery.trim() !== "";
+    searchQuery.trim() !== "" ||
+    trimmedEndUser !== "" ||
+    metadata.trim() !== "";
 
   return (
     <>
@@ -721,6 +814,30 @@ const LogsPage: React.FC = () => {
                           { label: "Success", value: "success" },
                           { label: "Failure", value: "failure" },
                         ],
+                      },
+                      {
+                        id: "endUser",
+                        label: "End User",
+                        type: "text",
+                        param: "user",
+                        value: endUser,
+                        onChange: setEndUser,
+                        placeholder: FIELD_HINTS.logs.endUser.placeholder,
+                        helper: FIELD_HINTS.logs.endUser.helper,
+                        error: endUserError,
+                        width: { base: "full", sm: "200px" },
+                      },
+                      {
+                        id: "metadata",
+                        label: "Metadata",
+                        type: "text",
+                        param: "metadata_key, metadata_value",
+                        value: metadata,
+                        onChange: setMetadata,
+                        placeholder: FIELD_HINTS.logs.metadata.placeholder,
+                        helper: FIELD_HINTS.logs.metadata.helper,
+                        error: metadataError,
+                        width: { base: "full", sm: "220px" },
                       },
                       {
                         id: "startTime",
