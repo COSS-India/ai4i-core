@@ -58,9 +58,19 @@ export interface Policy {
   domainIds: string[];
   languages: string[];
   typeIds: string[];
+  /**
+   * Entities picked from the linked types. The policy API stores only policy_type_id, so picks
+   * are kept for the session like `languages`. Empty applies every entity of those types.
+   */
+  entities: PolicyEntity[];
   policyType: PolicyType;
   scope: PolicyScope;
   status: RecordStatus;
+}
+
+export interface PolicyEntity {
+  typeId: string;
+  entityName: string;
 }
 
 export interface PolicyCategory {
@@ -402,7 +412,7 @@ const PII_TYPES: PiiType[] = [
   }),
 ];
 
-const POLICIES: Policy[] = [
+const POLICIES: Omit<Policy, "entities">[] = [
   {
     id: "policy-core",
     policyId: "SPP-1001",
@@ -492,6 +502,7 @@ export function createInitialCatalog(): PiiCatalog {
       domainIds: [...p.domainIds],
       languages: [...p.languages],
       typeIds: [...p.typeIds],
+      entities: [],
     })),
     subscriptions: Object.fromEntries(
       Object.entries(INITIAL_SUBSCRIPTIONS).map(([k, v]) => [k, [...v]]),

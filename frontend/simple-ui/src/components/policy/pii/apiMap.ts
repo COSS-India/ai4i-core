@@ -156,21 +156,37 @@ export function definitionFromPolicyType(item: PolicyTypeItem): PiiType {
   };
 }
 
-/** Custom regex fields for the selected policy types and domains, for the playground. */
-export function detectionTypesForPolicy(policy: Policy, types: PiiType[], domains: Domain[]): PiiType[] {
-  const wanted = new Set(
-    policy.domainIds.map((id) => apiDomainName(domainLabel(id, domains)).toLowerCase()),
+/** Whether the policy applies this field: in one of its domains and, when it has picks, picked. */
+function policyAppliesField(
+  policy: Policy,
+  typeId: string,
+  field: PolicyField,
+  wantedDomains: Set<string>,
+): boolean {
+  if (!field.entityName) return false;
+  const inDomain =
+    wantedDomains.size === 0 || field.domain === "" || wantedDomains.has(field.domain.toLowerCase());
+  if (!inDomain) return false;
+  if (policy.entities.length === 0) return true;
+  const name = field.entityName.toLowerCase();
+  return policy.entities.some(
+    (entity) => entity.typeId === typeId && entity.entityName.toLowerCase() === name,
   );
+}
+
+function policyDomainKeys(policy: Policy, domains: Domain[]): Set<string> {
+  return new Set(policy.domainIds.map((id) => apiDomainName(domainLabel(id, domains)).toLowerCase()));
+}
+
+/** Custom regex fields the policy applies, for the playground. */
+export function detectionTypesForPolicy(policy: Policy, types: PiiType[], domains: Domain[]): PiiType[] {
+  const wanted = policyDomainKeys(policy, domains);
   const linked = types.filter((type) => policy.typeIds.includes(type.id));
   const flattened = linked.flatMap((type) =>
     type.fields
       .filter(
         (field) =>
-          field.mode === "custom" &&
-          field.regex &&
-          (wanted.size === 0 ||
-            wanted.has(field.domain.toLowerCase()) ||
-            field.domain === ""),
+          field.mode === "custom" && field.regex && policyAppliesField(policy, type.id, field, wanted),
       )
       .map((field) => ({
         ...type,
@@ -187,22 +203,14 @@ export function detectionTypesForPolicy(policy: Policy, types: PiiType[], domain
   return flattened;
 }
 
-/** Entity names for a policy's types in its domains, including model-supported rows. */
+/** Entity names the policy applies, including model-supported rows. */
 export function entityNamesForPolicy(policy: Policy, types: PiiType[], domains: Domain[]): string[] {
-  const wanted = new Set(
-    policy.domainIds.map((id) => apiDomainName(domainLabel(id, domains)).toLowerCase()),
-  );
+  const wanted = policyDomainKeys(policy, domains);
   const names = types
     .filter((type) => policy.typeIds.includes(type.id))
     .flatMap((type) =>
       type.fields
-        .filter(
-          (field) =>
-            field.entityName &&
-            (wanted.size === 0 ||
-              wanted.has(field.domain.toLowerCase()) ||
-              field.domain === ""),
-        )
+        .filter((field) => policyAppliesField(policy, type.id, field, wanted))
         .map((field) => field.entityName),
     );
   return Array.from(new Set(names));
@@ -236,6 +244,7 @@ export function policyFromRecord(item: PolicyRecord, domains: Domain[]): Policy 
     }),
     languages: [],
     typeIds: (item.policy_type_id ?? []).map(String),
+    entities: [],
     policyType: item.is_global ? "Global" : "Institution level",
     scope: SCOPE_FROM_API[item.guardrail_scope],
     status: item.is_active ? "Active" : "Inactive",

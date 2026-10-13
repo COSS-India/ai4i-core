@@ -1,4 +1,4 @@
-import { SearchIcon } from "@chakra-ui/icons";
+import { ChevronDownIcon, ChevronUpIcon, SearchIcon } from "@chakra-ui/icons";
 import {
   Badge,
   Box,
@@ -10,6 +10,7 @@ import {
   HStack,
   Input,
   Select,
+  SimpleGrid,
   Stack,
   Tag,
   TagCloseButton,
@@ -33,6 +34,7 @@ import {
   LANGUAGES,
   MODEL_FIELD_LANGUAGES,
   SCOPE_OPTIONS,
+  type PolicyEntity,
   type PolicyField,
   type PolicyScope,
   type PolicyType,
@@ -453,13 +455,17 @@ function TypeViewDrawer() {
   if (drawer.kind !== "view-type") return null;
   const t = types.find((x) => x.id === drawer.id);
   if (!t) return null;
+  const entity = drawer.entity;
+  const fields = entity
+    ? t.fields.filter((field) => field.entityName === entity.name && field.mode === entity.mode)
+    : t.fields;
 
   return (
     <FormDrawer
       isOpen
       onClose={closeDrawer}
       size="wide"
-      title="View Policy Type"
+      title={entity ? "View PII Type" : "View Policy Type"}
       footer={
         <FormActions
           cancelLabel="Close"
@@ -471,9 +477,9 @@ function TypeViewDrawer() {
       }
     >
       <Stack spacing={4}>
-        <ReadOnlyField label="Policy Type Name">{t.name}</ReadOnlyField>
+        <ReadOnlyField label={entity ? "Group" : "Policy Type Name"}>{t.name}</ReadOnlyField>
         <Stack spacing={3}>
-          {t.fields.map((field) => (
+          {fields.map((field) => (
             <Box
               key={`${field.domain}:${field.language}:${field.entityName}:${field.mode}`}
               borderWidth="1px"
@@ -612,6 +618,7 @@ function PolicyDrawer() {
               domainIds: existing.domainIds,
               languages: existing.languages,
               typeIds: existing.typeIds,
+              entities: existing.entities,
               policyType: existing.policyType,
               scope: existing.scope,
             }
@@ -621,6 +628,7 @@ function PolicyDrawer() {
               domainIds: [],
               languages: ["English"],
               typeIds: [],
+              entities: [],
               policyType: "Global",
               scope: "" as PolicyScope | "",
             }
@@ -629,6 +637,15 @@ function PolicyDrawer() {
       onSave={(input) => (existing ? updatePolicy(existing.id, input) : addPolicy(input))}
     />
   );
+}
+
+function pickKey(typeId: string, entityName: string): string {
+  return `${typeId}::${entityName}`;
+}
+
+function parsePickKey(key: string): PolicyEntity {
+  const split = key.indexOf("::");
+  return { typeId: key.slice(0, split), entityName: key.slice(split + 2) };
 }
 
 function PolicyForm({
@@ -648,6 +665,7 @@ function PolicyForm({
     domainIds: string[];
     languages: string[];
     typeIds: string[];
+    entities: PolicyEntity[];
     policyType: PolicyType;
     scope: PolicyScope | "";
   };
@@ -659,7 +677,12 @@ function PolicyForm({
   const [description, setDescription] = useState(initial.description);
   const [domainIds, setDomainIds] = useState(initial.domainIds);
   const [languages, setLanguages] = useState(initial.languages);
-  const [typeIds, setTypeIds] = useState(initial.typeIds);
+  // null until the admin changes a pick on a policy saved without picks, which applies every linked entity.
+  const [picks, setPicks] = useState<string[] | null>(
+    initial.entities.length > 0 || initial.typeIds.length === 0
+      ? initial.entities.map((entity) => pickKey(entity.typeId, entity.entityName))
+      : null,
+  );
   const [policyType, setPolicyType] = useState<PolicyType>(initial.policyType);
   const [scope, setScope] = useState<PolicyScope | "">(initial.scope);
   const [domainOpen, setDomainOpen] = useState(false);
@@ -690,17 +713,44 @@ function PolicyForm({
   const visibleChoices = useMemo(() => {
     const query = typeQuery.trim().toLowerCase();
     if (!query) return domainChoices;
-    return domainChoices.filter(
-      (choice) =>
-        choice.name.toLowerCase().includes(query) ||
-        choice.entities.some((name) => name.toLowerCase().includes(query)),
-    );
+    return domainChoices
+      .map((choice) =>
+        choice.name.toLowerCase().includes(query)
+          ? choice
+          : { ...choice, entities: choice.entities.filter((name) => name.toLowerCase().includes(query)) },
+      )
+      .filter((choice) => choice.entities.length > 0);
   }, [domainChoices, typeQuery]);
 
-  const selectedTypeIds =
-    typesStatus === "ready"
-      ? typeIds.filter((id) => domainChoices.some((choice) => choice.id === id))
-      : typeIds;
+  const linkedPicks = useMemo(
+    () =>
+      types
+        .filter((type) => initial.typeIds.includes(type.id))
+        .flatMap((type) =>
+          Array.from(new Set(type.fields.map((field) => field.entityName).filter(Boolean))).map((entity) =>
+            pickKey(type.id, entity),
+          ),
+        ),
+    [types, initial.typeIds],
+  );
+  const choiceKeys = useMemo(
+    () => domainChoices.flatMap((choice) => choice.entities.map((entity) => pickKey(choice.id, entity))),
+    [domainChoices],
+  );
+  const typesReady = typesStatus === "ready";
+  const currentPicks = picks ?? linkedPicks;
+  const selectedPicks = typesReady ? currentPicks.filter((key) => choiceKeys.includes(key)) : currentPicks;
+  const savedEntities = typesReady ? selectedPicks.map(parsePickKey) : initial.entities;
+  const savedTypeIds = typesReady
+    ? Array.from(new Set(savedEntities.map((entity) => entity.typeId)))
+    : initial.typeIds;
+
+  const togglePick = (key: string) => {
+    setPicks((prev) => {
+      const base = prev ?? linkedPicks;
+      return base.includes(key) ? base.filter((item) => item !== key) : [...base, key];
+    });
+  };
 
   const toggle = (list: string[], value: string, setter: (next: string[]) => void) => {
     setter(list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
@@ -713,7 +763,7 @@ function PolicyForm({
     if (description.length > 200) next.description = "Description is limited to 200 characters.";
     if (domainIds.length === 0) next.domain = "Select at least one domain.";
     if (languages.length === 0) next.languages = "Select at least one language.";
-    if (selectedTypeIds.length === 0) next.types = "Select at least one policy type.";
+    if (savedTypeIds.length === 0) next.types = "Select at least one PII type.";
     if (!scope) next.scope = "Select a scope.";
     setErrors(next);
     if (Object.keys(next).length || !scope) return;
@@ -724,7 +774,8 @@ function PolicyForm({
         description: description.trim(),
         domainIds,
         languages,
-        typeIds: selectedTypeIds,
+        typeIds: savedTypeIds,
+        entities: savedEntities,
         policyType,
         scope,
       });
@@ -830,58 +881,80 @@ function PolicyForm({
           onCheck={(value) => toggle(languages, value, setLanguages)}
         />
         <Box borderTopWidth="1px" borderColor="ink.200" />
-        <FormField
-          label={`Policy Types (${selectedTypeIds.length}/${domainChoices.length})`}
-          required
-          error={errors.types}
-        >
-          {domainIds.length === 0 ? (
-            <Text fontSize="sm" color="ink.500">
-              Select a domain to see its policy types.
-            </Text>
-          ) : null}
-          {typesStatus === "loading" ? (
-            <Text fontSize="sm" color="ink.500" mb={2}>
-              Loading policy types…
-            </Text>
-          ) : null}
-          {typesStatus === "error" ? (
-            <Text fontSize="sm" color="red.500" mb={2}>
-              {typesError}
-            </Text>
-          ) : null}
-          {domainIds.length > 0 && typesStatus !== "loading" && domainChoices.length === 0 ? (
-            <Text fontSize="sm" color="ink.500">
-              No policy types for the selected domain.
-            </Text>
-          ) : null}
-          {domainChoices.length > 0 ? (
-            <>
-              <Flex justify="space-between" mb={2}>
-                <Button size="sm" variant="ghost" onClick={() => setTypesOpen((v) => !v)}>
-                  {typesOpen ? "Hide" : "Show"} types
+        <FormControl isInvalid={Boolean(errors.types)}>
+          <Flex justify="space-between" align="center" mb={2}>
+            <HStack
+              as="button"
+              type="button"
+              spacing={1.5}
+              aria-expanded={typesOpen}
+              onClick={() => setTypesOpen((v) => !v)}
+            >
+              {typesOpen ? <ChevronUpIcon /> : <ChevronDownIcon />}
+              <Text fontSize="sm" fontWeight="600">
+                Link PII Types
+                <Text as="span" color="red.500" ml={0.5}>
+                  *
+                </Text>
+              </Text>
+              <Text fontSize="xs" color="ink.400">
+                ({selectedPicks.length}/{choiceKeys.length})
+              </Text>
+            </HStack>
+            {domainChoices.length > 0 ? (
+              <HStack spacing={2} fontSize="xs">
+                <Button
+                  size="xs"
+                  variant="link"
+                  colorScheme="orange"
+                  onClick={() => setPicks(choiceKeys)}
+                >
+                  Select All
                 </Button>
-                <HStack spacing={2}>
-                  <Button
-                    size="xs"
-                    variant="link"
-                    onClick={() => setTypeIds(domainChoices.map((choice) => choice.id))}
-                  >
-                    Select All
-                  </Button>
-                  <Button size="xs" variant="link" color="ink.500" onClick={() => setTypeIds([])}>
-                    Clear
-                  </Button>
-                </HStack>
-              </Flex>
-              {typesOpen ? (
-                <Box>
+                <Text color="ink.300">|</Text>
+                <Button size="xs" variant="link" color="ink.500" onClick={() => setPicks([])}>
+                  Clear
+                </Button>
+              </HStack>
+            ) : null}
+          </Flex>
+          {typesOpen ? (
+            <>
+              {domainIds.length === 0 ? (
+                <Text fontSize="sm" color="ink.500">
+                  Select a domain to see its PII types.
+                </Text>
+              ) : null}
+              {typesStatus === "loading" ? (
+                <Text fontSize="sm" color="ink.500" mb={2}>
+                  Loading PII types…
+                </Text>
+              ) : null}
+              {typesStatus === "error" ? (
+                <Text fontSize="sm" color="red.500" mb={2}>
+                  {typesError}
+                </Text>
+              ) : null}
+              {domainIds.length > 0 && typesStatus !== "loading" && domainChoices.length === 0 ? (
+                <Text fontSize="sm" color="ink.500">
+                  No PII types for the selected domain.
+                </Text>
+              ) : null}
+              {domainChoices.length > 0 ? (
+                <>
                   <Box position="relative" mb={2}>
-                    <SearchIcon position="absolute" left={2.5} top="50%" transform="translateY(-50%)" color="ink.400" boxSize={3} />
+                    <SearchIcon
+                      position="absolute"
+                      left={2.5}
+                      top="50%"
+                      transform="translateY(-50%)"
+                      color="ink.400"
+                      boxSize={3}
+                    />
                     <Input
                       size="sm"
                       pl={8}
-                      placeholder="Search policy types..."
+                      placeholder="Search PII types..."
                       value={typeQuery}
                       onChange={(e) => setTypeQuery(e.target.value)}
                     />
@@ -890,25 +963,41 @@ function PolicyForm({
                     <Stack spacing={3}>
                       {visibleChoices.map((choice) => (
                         <Box key={choice.id}>
-                          <Checkbox
-                            size="sm"
-                            isChecked={selectedTypeIds.includes(choice.id)}
-                            onChange={() => toggle(typeIds, choice.id, setTypeIds)}
+                          <Text
+                            fontSize="2xs"
+                            fontWeight="700"
+                            letterSpacing="0.5px"
+                            textTransform="uppercase"
+                            color="orange.600"
+                            borderBottomWidth="1px"
+                            borderColor="ink.100"
+                            pb={1}
+                            mb={2}
                           >
                             {choice.name}
-                          </Checkbox>
-                          <Text pl={6} mt={1} fontSize="xs" color="ink.500">
-                            {choice.entities.join(", ")}
                           </Text>
+                          <SimpleGrid columns={2} spacingX={4} spacingY={2}>
+                            {choice.entities.map((entity) => (
+                              <Checkbox
+                                key={entity}
+                                size="sm"
+                                isChecked={selectedPicks.includes(pickKey(choice.id, entity))}
+                                onChange={() => togglePick(pickKey(choice.id, entity))}
+                              >
+                                {entity}
+                              </Checkbox>
+                            ))}
+                          </SimpleGrid>
                         </Box>
                       ))}
                     </Stack>
                   </Box>
-                </Box>
+                </>
               ) : null}
             </>
           ) : null}
-        </FormField>
+          {errors.types ? <FormErrorMessage>{errors.types}</FormErrorMessage> : null}
+        </FormControl>
         <Box>
           <FieldLabel required>Scope</FieldLabel>
           <Stack spacing={2}>

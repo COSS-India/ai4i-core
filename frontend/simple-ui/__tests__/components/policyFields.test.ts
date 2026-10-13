@@ -34,6 +34,7 @@ const financePolicy = (typeId: string): Policy => ({
   domainIds: ["dom-finance"],
   languages: [],
   typeIds: [typeId],
+  entities: [],
   policyType: "Global",
   scope: "Both",
   status: "Active",
@@ -129,5 +130,20 @@ describe("policy type fields", () => {
       "STUDENT_ID",
     ]);
     expect(entityNamesForPolicy(policy, [type], domains)).toEqual(["STUDENT_ID", "EMAIL_ADDRESS"]);
+  });
+
+  it("applies only the picked entities when a policy has picks", () => {
+    const type = definitionFromPolicyType({
+      id: 8,
+      policy_type: "PII",
+      policy_fields: policyFieldsFromDefinition({ fields: [studentId, emailModel] }),
+    });
+    const policy: Policy = {
+      ...financePolicy(type.id),
+      entities: [{ typeId: type.id, entityName: "EMAIL_ADDRESS" }],
+    };
+
+    expect(entityNamesForPolicy(policy, [type], domains)).toEqual(["EMAIL_ADDRESS"]);
+    expect(detectionTypesForPolicy(policy, [type], domains)).toEqual([]);
   });
 });

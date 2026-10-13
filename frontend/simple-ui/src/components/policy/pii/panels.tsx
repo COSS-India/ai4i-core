@@ -29,12 +29,14 @@ import DataTable, {
 import { detectionTypesForPolicy, entityNamesForPolicy } from "./apiMap";
 import { buildSample, runDetection, type DetectionHit } from "./detection";
 import { useDeferredColumnSort } from "../../../utils/tableSort";
+import { showToast } from "../../../utils/toast";
 import {
   domainLabel,
   policyEffective,
   subcategoryEffective,
   type PiiType,
   type Policy,
+  type PolicyField,
 } from "./model";
 import { usePiiPolicies, type ProcessingTarget } from "./PiiPoliciesProvider";
 import DataTableActions from "../../common/DataTableActions";
@@ -298,8 +300,31 @@ export function ConfigurationPanel() {
   );
 }
 
-function fieldNames(type: PiiType): string[] {
-  return Array.from(new Set(type.fields.map((field) => field.entityName)));
+interface EntityRow {
+  key: string;
+  type: PiiType;
+  entityName: string;
+  mode: PolicyField["mode"];
+}
+
+function entityRows(types: PiiType[]): EntityRow[] {
+  return types.flatMap((type) => {
+    const seen = new Set<string>();
+    return type.fields.flatMap((field) => {
+      const key = `${type.id}:${field.mode}:${field.entityName}`;
+      if (!field.entityName || seen.has(key)) return [];
+      seen.add(key);
+      return [{ key, type, entityName: field.entityName, mode: field.mode }];
+    });
+  });
+}
+
+function viewEntityDrawer(row: EntityRow) {
+  return {
+    kind: "view-type" as const,
+    id: row.type.id,
+    entity: { name: row.entityName, mode: row.mode },
+  };
 }
 
 function TypeLibrary() {
@@ -310,77 +335,107 @@ function TypeLibrary() {
     openDrawer,
     askConfirm,
     deleteType,
+    updateType,
     typesStatus,
     typesError,
     reloadTypes,
   } = usePiiPolicies();
 
-  const rows = types.filter((t) => {
+  const allRows = useMemo(() => entityRows(types), [types]);
+  const rows = useMemo(() => {
     const query = typeSearch.toLowerCase();
-    if (!query) return true;
-    return (
-      t.name.toLowerCase().includes(query) ||
-      t.fields.some((field) => field.entityName.toLowerCase().includes(query))
+    if (!query) return allRows;
+    return allRows.filter(
+      (row) => row.entityName.toLowerCase().includes(query) || row.type.name.toLowerCase().includes(query),
     );
-  });
+  }, [allRows, typeSearch]);
 
   const typeSortAccessors = useMemo(
     () => ({
-      name: (row: PiiType) => row.name,
-      fields: (row: PiiType) => fieldNames(row).join(", "),
+      entity: (row: EntityRow) => row.entityName,
+      group: (row: EntityRow) => row.type.name,
+      mode: (row: EntityRow) => row.mode,
     }),
     [],
   );
-  const typeSort = useDeferredColumnSort("name", typeSortAccessors);
-  const sortedTypes = useMemo(() => typeSort.apply(rows), [typeSort, rows]);
+  const typeSort = useDeferredColumnSort("entity", typeSortAccessors);
+  const sortedRows = useMemo(() => typeSort.apply(rows), [typeSort, rows]);
 
-  const columns = useMemo<DataTableColumn<PiiType>[]>(
-    () => [
+  const columns = useMemo<DataTableColumn<EntityRow>[]>(() => {
+    const removeEntity = async (row: EntityRow) => {
+      const remaining = row.type.fields.filter(
+        (field) => !(field.entityName === row.entityName && field.mode === row.mode),
+      );
+      if (remaining.length === 0) {
+        await deleteType(row.type.id);
+        return;
+      }
+      const error = await updateType(row.type.id, { name: row.type.name, fields: remaining });
+      if (error) showToast({ type: "error", message: error, messageOnly: true });
+    };
+
+    return [
       {
-        id: "name",
-        header: "Policy Type",
+        id: "entity",
+        header: "PII Type",
         sortable: true,
-        sortAccessor: (row) => row.name,
+        sortAccessor: (row) => row.entityName,
         cell: (row) => (
           <Text fontSize="sm" fontWeight="medium">
-            {row.name}
+            {row.entityName}
           </Text>
         ),
       },
       {
-        id: "fields",
-        header: "Fields",
+        id: "group",
+        header: "Group",
         sortable: true,
-        sortAccessor: (row) => fieldNames(row).join(", "),
+        sortAccessor: (row) => row.type.name,
         cell: (row) => (
           <Text fontSize="sm" color="ink.500">
-            {fieldNames(row).join(", ") || "—"}
+            {row.type.name}
           </Text>
         ),
       },
-      createActionsColumn<PiiType>({
+      {
+        id: "mode",
+        header: "Mode",
+        sortable: true,
+        sortAccessor: (row) => row.mode,
+        cell: (row) => (
+          <Badge colorScheme={row.mode === "model" ? "purple" : "blue"} variant="subtle">
+            {row.mode === "model" ? "Model" : "Custom"}
+          </Badge>
+        ),
+      },
+      createActionsColumn<EntityRow>({
         getActions: (row) => [
-          { id: "view", label: "View", onClick: () => openDrawer({ kind: "view-type", id: row.id }) },
-          { id: "edit", label: "Edit", onClick: () => openDrawer({ kind: "edit-type", id: row.id }) },
+          { id: "view", label: "View", onClick: () => openDrawer(viewEntityDrawer(row)) },
+          { id: "edit", label: "Edit", onClick: () => openDrawer({ kind: "edit-type", id: row.type.id }) },
           {
             id: "delete",
             label: "Delete",
-            disabled: row.isDefault,
-            tooltip: row.isDefault ? "This cannot be removed" : "Delete",
+            disabled: row.type.isDefault,
+            tooltip: row.type.isDefault ? "This cannot be removed" : "Delete",
             onClick: () =>
               askConfirm({
-                title: "Delete policy type?",
-                body: "This will remove the policy type and its fields. Policies using it will need to be updated. This action cannot be undone.",
+                title: `Delete ${row.entityName}?`,
+                body: row.type.fields.every(
+                  (field) => field.entityName === row.entityName && field.mode === row.mode,
+                )
+                    ? `${row.entityName} is the only PII type in ${row.type.name}, so the whole group will be deleted. This action cannot be undone.`
+                    : `This removes ${row.entityName} from ${row.type.name}. Policies that picked it will no longer detect it. This action cannot be undone.`,
                 confirmLabel: "Delete",
                 confirmColorScheme: "red",
-                onConfirm: () => deleteType(row.id),
+                onConfirm: () => {
+                  void removeEntity(row);
+                },
               }),
           },
         ],
       }),
-    ],
-    [openDrawer, askConfirm, deleteType],
-  );
+    ];
+  }, [openDrawer, askConfirm, deleteType, updateType]);
 
   return (
     <Box>
@@ -402,29 +457,29 @@ function TypeLibrary() {
       ) : (
     <DataTable
       layout="admin"
-      items={sortedTypes}
+      items={sortedRows}
       columns={columns}
-      getRowKey={(row) => row.id}
+      getRowKey={(row) => row.key}
       sort={typeSort.sort}
       onSortChange={typeSort.onSortChange}
       paginate="client"
       paginationPosition="bottom"
-      unfilteredCount={types.length}
+      unfilteredCount={allRows.length}
       hasActiveFilters={Boolean(typeSearch)}
       onClearFilters={() => {
         setTypeSearch("");
       }}
-      emptyMessage="No policy types yet."
-      noResultsMessage="No policy types match your search."
-      onRowClick={(row) => openDrawer({ kind: "view-type", id: row.id })}
+      emptyMessage="No PII types yet."
+      noResultsMessage="No PII types match your search."
+      onRowClick={(row) => openDrawer(viewEntityDrawer(row))}
       filterToolbarRightContent={
         <CreateButton onClick={() => openDrawer({ kind: "add-type" })}>Add Policy Type</CreateButton>
       }
       search={{
         value: typeSearch,
         onChange: setTypeSearch,
-        placeholder: "Search policy types...",
-        fields: ["name"],
+        placeholder: "Search PII types...",
+        fields: ["entityName", "type.name"],
       }}
     />
       )}

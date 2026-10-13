@@ -34,6 +34,7 @@ import {
   type PiiType,
   type Policy,
   type PolicyCategory,
+  type PolicyEntity,
   type PolicyField,
   type PolicyScope,
   type PolicySubcategory,
@@ -63,6 +64,7 @@ export interface PolicyInput {
   domainIds: string[];
   languages: string[];
   typeIds: string[];
+  entities: PolicyEntity[];
   policyType: PolicyType;
   scope: PolicyScope;
 }
@@ -71,7 +73,7 @@ export type DrawerState =
   | { kind: "none" }
   | { kind: "add-type" }
   | { kind: "edit-type"; id: string }
-  | { kind: "view-type"; id: string }
+  | { kind: "view-type"; id: string; entity?: { name: string; mode: PolicyField["mode"] } }
   | { kind: "add-domain" }
   | { kind: "edit-domain"; id: string }
   | { kind: "create-policy" }
@@ -503,12 +505,17 @@ export function PiiPoliciesProvider({
           });
           const items = await listPolicies();
           setPolicies((prev) => {
-            const languagesByPolicyId = new Map(prev.map((policy) => [policy.policyId, policy.languages]));
+            const previousById = new Map(prev.map((policy) => [policy.policyId, policy]));
             return items.map((item) => {
               const policy = policyFromRecord(item, domains);
-              const languages =
-                policy.policyId === policyId ? [...input.languages] : languagesByPolicyId.get(policy.policyId);
-              return languages && languages.length > 0 ? { ...policy, languages } : policy;
+              const previous = previousById.get(policy.policyId);
+              const languages = policy.policyId === policyId ? [...input.languages] : previous?.languages;
+              const entities = policy.policyId === policyId ? [...input.entities] : previous?.entities;
+              return {
+                ...policy,
+                ...(languages && languages.length > 0 ? { languages } : {}),
+                ...(entities ? { entities } : {}),
+              };
             });
           });
           setPoliciesStatus("ready");
@@ -538,7 +545,11 @@ export function PiiPoliciesProvider({
             sub_category_id: subCategoryId,
             policy_type_id: typeIds,
           });
-          const next = { ...policyFromRecord(saved, domains), languages: input.languages };
+          const next = {
+            ...policyFromRecord(saved, domains),
+            languages: input.languages,
+            entities: input.entities,
+          };
           setPolicies((prev) => prev.map((p) => (p.id === id ? next : p)));
           toast("Policy updated.");
           return null;
@@ -574,7 +585,7 @@ export function PiiPoliciesProvider({
           const saved = await updatePolicy(policyId, { is_active: status === "Active" });
           const next = policyFromRecord(saved, domains);
           setPolicies((prev) =>
-            prev.map((p) => (p.id === id ? { ...next, languages: p.languages } : p)),
+            prev.map((p) => (p.id === id ? { ...next, languages: p.languages, entities: p.entities } : p)),
           );
           toast(status === "Active" ? "Policy activated." : "Policy deactivated.");
         } catch (error: unknown) {
@@ -723,7 +734,6 @@ function numericIds(ids: string[]): number[] {
     return value == null ? [] : [value];
   });
 }
-
 function apiErrorMessage(error: unknown, fallback = "Couldn't load policy categories."): string {
   if (!error || typeof error !== "object") {
     return error instanceof Error && error.message ? error.message : fallback;
