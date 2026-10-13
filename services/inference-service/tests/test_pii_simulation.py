@@ -83,7 +83,8 @@ def fake_engine():
     with patch.object(engine_module, "NlpEngineProvider", _Provider), \
          patch.object(engine_module, "AnalyzerEngine", lambda *a, **k: fake):
         engine = engine_module.PresidioEngine()
-    with patch.object(simulation, "get_engine", lambda: engine):
+    with patch.object(simulation, "get_engine", lambda: engine), \
+         patch.object(engine_module, "get_engine", lambda: engine):
         yield fake
 
 
@@ -120,10 +121,10 @@ def test_simulate_replaces_each_policy_entity(fake_engine):
     assert result.sanitized_text == (
         "Account <BANK_ACCOUNT_NUMBER_1>, IFSC <IFSC_CODE_1>, PAN <PAN_NUMBER_1>."
     )
-    assert [(d.entity_type, d.policy_type, d.instances, d.replacements) for d in result.detected] == [
-        ("BANK_ACCOUNT_NUMBER", "Finance-PII", 1, {"123456789012": "<BANK_ACCOUNT_NUMBER_1>"}),
-        ("IFSC_CODE", "Finance-PII", 1, {"SBIN0000456": "<IFSC_CODE_1>"}),
-        ("PAN_NUMBER", "Finance-PII", 1, {"ABCDE1234F": "<PAN_NUMBER_1>"}),
+    assert [(d.entity_type, d.policy_types, d.instances, d.replacements) for d in result.detected] == [
+        ("BANK_ACCOUNT_NUMBER", ["Finance-PII"], 1, {"123456789012": "<BANK_ACCOUNT_NUMBER_1>"}),
+        ("IFSC_CODE", ["Finance-PII"], 1, {"SBIN0000456": "<IFSC_CODE_1>"}),
+        ("PAN_NUMBER", ["Finance-PII"], 1, {"ABCDE1234F": "<PAN_NUMBER_1>"}),
     ]
 
 
@@ -166,6 +167,30 @@ def test_model_entities_use_the_detected_language(fake_engine):
     hi = simulate("मेरा नाम राहुल है और मैं दिल्ली में रहता हूँ", [policy])
     assert hi.detected == []
     assert fake_engine.calls[-1]["entities"] == ["EMAIL_ADDRESS"]
+
+
+def test_custom_only_entity_ignores_builtin_recognizers(fake_engine):
+    # Presidio's PhoneRecognizer also supports PHONE_NUMBER; the policy's own
+    # regex (10 digits in a row) does not match "+91 98765 43210".
+    fake_engine.model_hits = {"PHONE_NUMBER": ["+91 98765 43210"]}
+    phone = CustomField("PHONE_NUMBER", r"\b(?:\+?\d{1,3}[\s-]?)?\d{10}\b")
+
+    custom_only = simulate("Call +91 98765 43210", [PolicyType("PII", [phone])])
+    assert custom_only.detected == []
+
+    # Listed in model_supported_field too: the built-in match is wanted.
+    both = simulate("Call +91 98765 43210", [
+        PolicyType("PII", [phone], model_entities={"en": ["PHONE_NUMBER"]})])
+    assert both.sanitized_text == "Call <PHONE_NUMBER_1>"
+
+
+def test_entity_defined_by_two_policy_types_lists_both(fake_engine):
+    a = PolicyType("Contact", [CustomField("EMAIL_ADDRESS", r"\b\w+@college\.edu\b")])
+    b = PolicyType("PII", [CustomField("EMAIL_ADDRESS", r"\b\w+@acme\.com\b")])
+    result = simulate("arjun@college.edu and bob@acme.com", [a, b])
+    (row,) = result.detected
+    assert row.policy_types == ["Contact", "PII"]
+    assert row.instances == 2
 
 
 def test_invalid_regex_raises_invalid_policy(fake_engine):
@@ -287,6 +312,59 @@ def test_simulate_accepts_platform_core_rows(client, fake_engine):
     })
     assert resp.status_code == 200
     assert resp.json()["sanitizedText"] == "PAN <PAN_NUMBER_1>"
+
+
+def test_simulate_caps_custom_fields_per_request(client):
+    # 3 policy types x 70 fields: each list is under its own cap, the total is not.
+    field = {"entity_name": "X", "regex": "a"}
+    body = {"text": "abc", "policyTypes": [
+        {"policy_type": f"T{i}", "policy_fields": {"D": {"custom_field": [field] * 70}}}
+        for i in range(3)
+    ]}
+    resp = client.post("/pii/simulate", json=body)
+    assert resp.status_code == 400
+    assert "at most 200 per request" in resp.json()["detail"]
+
+
+def test_simulate_caps_model_entities_per_request(client):
+    entities = [{"entity_name": "PERSON"}] * 70
+    body = {"text": "abc", "policyTypes": [
+        {"policy_type": f"T{i}", "policy_fields": {"D": {"model_supported_field": [{"en": entities}]}}}
+        for i in range(3)
+    ]}
+    resp = client.post("/pii/simulate", json=body)
+    assert resp.status_code == 400
+    assert "at most 200 per request" in resp.json()["detail"]
+
+
+def test_simulate_response_lists_policy_types(client, fake_engine):
+    resp = client.post("/pii/simulate", json=_simulate_body({"Finance": {"custom_field": [PAN_FIELD]}},
+                                                            text="PAN ABCDE1234F"))
+    assert resp.json()["detected"][0]["policyTypes"] == ["PII"]
+
+
+def test_anonymize_with_supplied_analyzer_results(client, fake_engine):
+    # /analyze-shaped results go straight to the real anonymizer + entity_counter.
+    text = "Alice met Bob, then Alice left"
+    resp = client.post("/pii/anonymize", json={
+        "text": text,
+        "analyzerResults": [
+            {"entityType": "PERSON", "start": 0, "end": 5, "score": 0.85},
+            {"entityType": "PERSON", "start": 10, "end": 13, "score": 0.85},
+            {"entityType": "PERSON", "start": 20, "end": 25, "score": 0.85},
+        ],
+    })
+    assert resp.status_code == 200
+    body = resp.json()
+    # Presidio replaces right to left, so the later name is numbered first.
+    assert body["anonymizedText"] == "<PERSON_1> met <PERSON_2>, then <PERSON_1> left"
+    assert body["entityMapping"] == {"PERSON": {"Alice": "<PERSON_1>", "Bob": "<PERSON_2>"}}
+    assert [(i["entityType"], i["text"], i["operator"]) for i in body["items"]] == [
+        ("PERSON", "<PERSON_1>", "entity_counter"),
+        ("PERSON", "<PERSON_2>", "entity_counter"),
+        ("PERSON", "<PERSON_1>", "entity_counter"),
+    ]
+    assert fake_engine.calls == []   # supplied results: no analysis
 
 
 @pytest.mark.parametrize("span", [
