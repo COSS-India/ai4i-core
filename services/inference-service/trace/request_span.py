@@ -188,22 +188,3 @@ async def traced_inference(payload: dict, task_name: str, logger_: logging.Logge
             "task_type": task_name.lower(),
         })
         yield attrs
-
-
-@contextmanager
-def traced_inference_call(task_name: str):
-    """
-    An 'ai-inference-call' span around one model call inside a request's
-    'ai-inference' span, for services that call the model more than once per
-    request (TTS chunks, per-item audio; see BaseTaskService.run_inference).
-
-    Trace-only: it keeps each call's latency and units visible in the trace,
-    while the parent 'ai-inference' span carries the request's summed units.
-    The PPU consumer bills 'ai-inference' spans only, so these are never
-    billed — one billable span per request, one usage_events row.
-    """
-    with traced_span("ai-inference-call", classify_status=True, mark_ok=False) as attrs:
-        # Same trace id as its parent in OpenSearch (see traced_inference).
-        attrs.update(get_context_attributes())
-        attrs["task_type"] = task_name.lower()
-        yield attrs

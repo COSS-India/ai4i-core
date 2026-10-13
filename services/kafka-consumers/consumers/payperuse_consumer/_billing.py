@@ -511,10 +511,10 @@ async def deduct_balance_and_update_quota(
 
 @dataclass(frozen=True)
 class UsageEvent:
-    """One billed request, as written to usage_events (the Usage Dashboard's
-    source for Today, and the daily_usage rollup's input). The inference
-    service emits one billable ai-inference span per request, so one span is
-    one row; span_id is not stored (migration a7c3e9f1b5d2).
+    """One billed span, as written to usage_events (the Usage Dashboard's
+    source for Today, and the daily_usage rollup's input). span_id is not
+    stored (migration a7c3e9f1b5d2): rows are keyed on (correlation_id,
+    occurred_at), and the spans of one request end at different instants.
 
     total_units is what was billed: LLM input + output tokens (cached input
     is part of input), other task types their input units. The three costs

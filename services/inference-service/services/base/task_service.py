@@ -4,7 +4,6 @@ Base class defining the contract and shared pipeline for all inference task serv
 
 import json
 import logging
-from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -278,7 +277,7 @@ class BaseTaskService:
         back happens in postprocess_output — this method stays generic.
         """
         # Lazy import — trace setup happens at app init, after this module loads.
-        from trace.request_span import traced_inference, traced_inference_call
+        from trace.request_span import traced_inference
         from trace.span_attributes import count_input_tokens, count_output_tokens, get_unit_type
 
         model_name = serviceInfo.get('name', '')
@@ -337,62 +336,44 @@ class BaseTaskService:
         self.target_lang = str((language or {}).get("targetLanguage") or "").strip()
 
         response_data = []
-        # One ai-inference span per request, around every model call: it is the
-        # span the PPU Kafka consumer bills, so a request is billed (and
-        # written to usage_events) once, with its units summed across calls.
-        # per_item call_mode (TTS chunks, per-item audio) makes one call per
-        # group; when there is more than one, each gets an ai-inference-call
-        # child span so its latency and units stay visible in the trace — the
-        # consumer ignores those. A single call needs no child (the parent
-        # already times it), so single-call requests keep their 3 spans. A
-        # failed call fails the whole span, whose token counts are then zeroed
-        # (traced_inference), so a request that errors part-way isn't billed.
-        async with traced_inference(payload, self.task_name, self.logger) as span_ctx:
-            # service_id is not in context vars — must be copied explicitly.
-            # The PPU Kafka consumer reads only the ai-inference span for
-            # billing, so it must always be present there (mirrors llm_service.py).
-            span_ctx["service_id"] = service_id
-            # input_type/output_type (payload-shape guessing) are seeded by
-            # traced_inference for the LLM path only — Triton uses unit_type instead.
-            span_ctx.pop("input_type", None)
-            span_ctx.pop("output_type", None)
-            span_ctx["unit_type"] = unit_type
-            output_total = 0
-            per_call_spans = len(groups) > 1
-            for group in groups:
-                triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
-                    group, config_data
+        for group in groups:
+            triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
+                group, config_data
+            )
+            #// call ai_inference span here. So that it will geenrate teace time taken for ai inference only.
+            async with traced_inference(payload, self.task_name, self.logger) as span_ctx:
+                # service_id is not in context vars — must be copied explicitly.
+                # The PPU Kafka consumer reads only the ai-inference span for
+                # billing, so it must always be present there (mirrors llm_service.py).
+                span_ctx["service_id"] = service_id
+                # input_type/output_type (payload-shape guessing) are seeded by
+                # traced_inference for the LLM path only — Triton uses unit_type instead.
+                span_ctx.pop("input_type", None)
+                span_ctx.pop("output_type", None)
+                span_ctx["unit_type"] = unit_type
+                # Must count only this group's items, not the full input_items list —
+                # otherwise per_item call_mode bills the whole request once per item.
+                # Written to input_tokens (not a Triton-specific "input" key) so the
+                # PPU Kafka consumer's attrs.get("input_tokens") always sees the real
+                # count — traced_inference seeds input_tokens=0 on every span, so a
+                # differently-named key would silently leave that 0 in place.
+                span_ctx["input_tokens"] = count_input_tokens(group, unit_type)
+                self.billed_input += span_ctx["input_tokens"]
+                raw_triton_output = await self._call_triton_inference(
+                    triton_endpoint=triton_endpoint,
+                    triton_inputs=triton_inputs,
+                    triton_outputs=triton_outputs,
+                    api_key=api_key,
                 )
-                with (traced_inference_call(self.task_name) if per_call_spans else nullcontext({})) as call_ctx:
-                    call_ctx["service_id"] = service_id
-                    call_ctx["unit_type"] = unit_type
-                    # Must count only this group's items, not the full input_items
-                    # list — otherwise per_item call_mode counts the whole request
-                    # once per item.
-                    call_ctx["input_tokens"] = count_input_tokens(group, unit_type)
-                    raw_triton_output = await self._call_triton_inference(
-                        triton_endpoint=triton_endpoint,
-                        triton_inputs=triton_inputs,
-                        triton_outputs=triton_outputs,
-                        api_key=api_key,
-                    )
-                    group_response_data = await self.convert_triton_output_to_task_format(raw_triton_output)
-                    call_ctx["output_tokens"] = count_output_tokens(group_response_data, unit_type)
+                group_response_data = await self.convert_triton_output_to_task_format(raw_triton_output)
                 response_data.extend(group_response_data)
-                self.billed_input += call_ctx["input_tokens"]
-                output_total += call_ctx["output_tokens"]
-            # Written to input_tokens (not a Triton-specific "input" key) so the
-            # PPU Kafka consumer's attrs.get("input_tokens") always sees the real
-            # count — traced_inference seeds input_tokens=0 on every span, so a
-            # differently-named key would silently leave that 0 in place.
-            span_ctx["input_tokens"] = self.billed_input
-            # Recorded on the span for observability/trace inspection, but PPU
-            # billing for non-LLM services is input-only by design — the Kafka
-            # consumer (payperuse_consumer/handler.py) ignores this field for
-            # every inference_name except llm. Not kept on an instance attr:
-            # nothing downstream reads a non-LLM output count (Prometheus
-            # tracks input units only).
-            span_ctx["output_tokens"] = output_total
+                # Recorded on the span for observability/trace inspection, but
+                # PPU billing for non-LLM services is input-only by design — the
+                # Kafka consumer (payperuse_consumer/handler.py) ignores this
+                # field for every inference_name except llm. Not accumulated
+                # onto an instance attr: nothing downstream reads a non-LLM
+                # output count (Prometheus tracks input units only).
+                span_ctx["output_tokens"] = count_output_tokens(group_response_data, unit_type)
         return PostProcessFormat(
             payload=payload,
             response_data=response_data,

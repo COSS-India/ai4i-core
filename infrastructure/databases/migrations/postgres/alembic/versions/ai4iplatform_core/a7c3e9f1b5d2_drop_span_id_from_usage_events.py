@@ -1,4 +1,4 @@
-"""drop span_id from usage_events: one row per request
+"""drop span_id from usage_events; primary key (correlation_id, occurred_at)
 
 Revision ID: a7c3e9f1b5d2
 Revises: e8972603749c

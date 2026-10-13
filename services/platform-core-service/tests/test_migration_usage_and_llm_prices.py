@@ -316,7 +316,7 @@ class TestUsageEventsPartitions:
         assert _event_partition(usage_tables, "span-later") == "usage_events_default"
 
 
-# ── a7c3e9f1b5d2: span_id dropped, one row per request ──────────────────────
+# ── a7c3e9f1b5d2: span_id dropped, key (correlation_id, occurred_at) ────────
 
 
 def _key_columns(conn) -> list[str]:

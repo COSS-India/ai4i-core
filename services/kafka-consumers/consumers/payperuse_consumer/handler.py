@@ -274,16 +274,15 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
     # Deduplicate on correlation_id + span_id, not correlation_id alone.
     # correlation_id is the application-level request identifier injected by
     # RequestMiddleware — stable across Kafka redeliveries of the *same* span,
-    # which is what makes it useful for dedup. But correlation_id is not
-    # unique per request: RequestMiddleware takes a client-sent
-    # X-Correlation-ID as is, so two requests can share one. (The inference
-    # service emits one billable ai-inference span per request — TTS chunks
-    # and per-item audio calls are ai-inference-call children, see
-    # task_service.run_inference — and spans written before that change may
-    # still be in flight with several per request.) Keying on correlation_id
-    # alone would skip the second such span as a "duplicate", silently
-    # under-billing. span_id tells them apart, read from the message here
-    # only: usage_events no longer stores it (migration a7c3e9f1b5d2). The
+    # which is what makes it useful for dedup. But a single request can emit
+    # multiple ai-inference spans sharing one correlation_id (e.g. TTS chunks
+    # text >400 chars into several per_item Triton calls, each its own span —
+    # see tts_service.py), and RequestMiddleware takes a client-sent
+    # X-Correlation-ID as is, so two requests can share one too. Keying on
+    # correlation_id alone would skip every such span after the first as a
+    # "duplicate", silently under-billing. span_id tells them apart, read from
+    # the message here only: usage_events no longer stores it (migration
+    # a7c3e9f1b5d2). The
     # exporter (trace/setup.py) already drops spans with span_id==0, so every
     # span_id reaching this consumer is valid and unique.
     attrs = data.get("attributes", {})
@@ -643,7 +642,7 @@ def _usage_event(
     cost: Decimal,
     llm_cost: Optional[LlmCost],
 ) -> UsageEvent:
-    """The usage_events row for one billed span (one per request). LLM rows carry the units
+    """The usage_events row for one billed span. LLM rows carry the units
     and cost split by category (cached input clamped to the input tokens,
     exactly as calculate_llm_cost prices it); every other task type has its
     whole charge in input_units_cost and no cached/output units."""
