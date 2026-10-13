@@ -570,10 +570,17 @@ async def record_usage_event(db: AsyncSession, event: UsageEvent) -> bool:
     all. Runs inside a SAVEPOINT and never raises: the dashboard row is a
     record of the charge, so a failed insert is logged and rolled back to the
     savepoint, and the billing itself still commits. Returns whether the
-    insert ran (a redelivered span's conflict counts as ran)."""
+    insert ran (a conflict on the key counts as ran).
+
+    A conflict writes no row, and under (correlation_id, occurred_at) it isn't
+    always a redelivery: RequestMiddleware takes a client-sent
+    X-Correlation-ID as is, so two requests sharing one that end in the same
+    microsecond collide, and the second is charged with no row. Redeliveries
+    are normally stopped earlier by the Redis dedup check, so a conflict is
+    logged as a warning to keep a dropped row visible."""
     try:
         async with db.begin_nested():
-            await db.execute(_INSERT_USAGE_EVENT, {
+            result = await db.execute(_INSERT_USAGE_EVENT, {
                 "correlation_id": event.correlation_id,
                 "occurred_at": event.occurred_at,
                 "tenant_id": event.tenant_id,
@@ -591,6 +598,17 @@ async def record_usage_event(db: AsyncSession, event: UsageEvent) -> bool:
                 "cached_input_units_cost": event.cached_input_units_cost,
                 "output_units_cost": event.output_units_cost,
             })
+        if result.rowcount == 0:
+            logger.warning(
+                "usage_events row already exists for this key — no row written for this span"
+                " (a redelivery that got past the Redis dedup check, or another span with the"
+                " same correlation_id ending in the same microsecond; billing still committed)"
+                " | correlation_id=%s occurred_at=%s tenant=%s service=%s total_cost=%s",
+                event.correlation_id, event.occurred_at.isoformat(), event.tenant_id,
+                event.service_id,
+                event.input_units_cost + event.cached_input_units_cost + event.output_units_cost,
+                extra={"event": "ppu.usage_event.key_conflict"},
+            )
         return True
     except Exception as exc:
         logger.error(
