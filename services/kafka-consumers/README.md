@@ -92,6 +92,30 @@ services/kafka-consumers/
 > code change — see
 > [ARCHITECTURE.md §10.2](./ARCHITECTURE.md#102-why-payperuse_consumer-keeps-the-legacy-group-id).
 
+> **Deploying migration `a7c3e9f1b5d2` (drops `usage_events.span_id`): stop
+> `payperuse_consumer` across it.** The old image's insert names `span_id`, and
+> the new image's `ON CONFLICT (correlation_id, occurred_at)` needs the new
+> primary key, so while the schema and the running image disagree, every
+> `usage_events` insert fails. `record_usage_event` logs and swallows the
+> failure, the charge still commits and the offset moves on, so those rows are
+> lost from the Usage Dashboard and the daily rollup for good. In order:
+>
+> 1. Scale `payperuse_consumer` to 0 and wait until it has stopped. A clean
+>    shutdown commits its offsets; the backlog stays in Kafka.
+> 2. Check nothing blocks the migration — this must return no rows:
+>    `SELECT correlation_id, occurred_at, count(*) FROM usage_events GROUP BY 1, 2 HAVING count(*) > 1;`
+> 3. Run the migration: `./scripts/migrate.sh ai4iplatform_core upgrade head`.
+> 4. Start `payperuse_consumer` on the new image (`replicas: 1`). It resumes
+>    from the committed offsets; a span redelivered from before the stop is
+>    caught by the Redis dedup check.
+> 5. Watch the consumer group's lag drain, and the logs for
+>    `ppu.usage_event.insert_failed` (should be none).
+>
+> Billing pauses while the consumer is down; budget and quota catch up as the
+> backlog drains. Rolling back means the reverse order: stop the consumer,
+> `./scripts/migrate.sh ai4iplatform_core downgrade e8972603749c`, start the
+> old image. The downgrade gives every row a placeholder `span_id`.
+
 ---
 
 ## Setup
