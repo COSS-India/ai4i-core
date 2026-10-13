@@ -40,6 +40,7 @@ _VERSIONS = _ALEMBIC_DIR / "versions" / "ai4iplatform_core"
 _USAGE_EVENTS = "3b5d7f9a1c2e_create_usage_events_table.py"
 _DAILY_USAGE = "4c6e8a0b2d3f_create_daily_usage_table.py"
 _LLM_PRICES = "5d7f9b1c3e4a_add_llm_token_prices_to_mm_services.py"
+_DROP_SPAN_ID = "a7c3e9f1b5d2_drop_span_id_from_usage_events.py"
 
 _MODEL_ID = "test-migr-llm-prices-model"
 
@@ -313,6 +314,73 @@ class TestUsageEventsPartitions:
         _event(usage_tables, span_id="span-later", occurred_at=later)
 
         assert _event_partition(usage_tables, "span-later") == "usage_events_default"
+
+
+# ── a7c3e9f1b5d2: span_id dropped, key (correlation_id, occurred_at) ────────
+
+
+def _key_columns(conn) -> list[str]:
+    return list(conn.scalars(text(
+        "SELECT a.attname FROM pg_constraint c"
+        " JOIN unnest(c.conkey) WITH ORDINALITY k(attnum, n) ON true"
+        " JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum"
+        " WHERE c.conname = 'pk_usage_events' AND c.conrelid = 'usage_events'::regclass"
+        " ORDER BY k.n"
+    )))
+
+
+class TestDropSpanId:
+    def test_chunks_of_one_request_keep_their_rows(self, usage_tables) -> None:
+        """Chunks ended at different instants: separate rows under the new key too."""
+        now = datetime.now(timezone.utc)
+        _event(usage_tables, span_id="a-span", occurred_at=now, total_units=Decimal("5"))
+        _event(usage_tables, span_id="b-span", occurred_at=now + timedelta(seconds=1),
+               total_units=Decimal("2"))
+
+        _run(usage_tables, _load(_DROP_SPAN_ID).upgrade)
+
+        assert usage_tables.scalars(text(
+            "SELECT total_units FROM usage_events WHERE correlation_id = 'test-migr-corr-1'"
+            " ORDER BY occurred_at"
+        )).all() == [Decimal("5"), Decimal("2")]
+        assert not _has_column(usage_tables, "usage_events", "span_id")
+        assert _key_columns(usage_tables) == ["correlation_id", "occurred_at"]
+
+    def test_rows_sharing_the_new_key_stop_it_before_any_change(self, usage_tables) -> None:
+        now = datetime.now(timezone.utc)
+        _event(usage_tables, span_id="a-span", occurred_at=now)
+        _event(usage_tables, span_id="b-span", occurred_at=now)
+
+        with pytest.raises(RuntimeError, match=r"correlation_id=test-migr-corr-1 .* rows=2"):
+            _run(usage_tables, _load(_DROP_SPAN_ID).upgrade)
+
+        assert _has_column(usage_tables, "usage_events", "span_id")
+        assert _key_columns(usage_tables) == ["correlation_id", "span_id", "occurred_at"]
+        assert usage_tables.scalar(text("SELECT count(*) FROM usage_events")) == 2
+
+    def test_redelivered_span_still_hits_the_key(self, usage_tables) -> None:
+        _run(usage_tables, _load(_DROP_SPAN_ID).upgrade)
+        occurred_at = datetime.now(timezone.utc)
+        _insert(usage_tables, "usage_events", correlation_id="test-migr-corr-2", occurred_at=occurred_at)
+
+        with pytest.raises(IntegrityError, match="duplicate key"):
+            with usage_tables.begin_nested():
+                _insert(usage_tables, "usage_events", correlation_id="test-migr-corr-2", occurred_at=occurred_at)
+
+    def test_downgrade_restores_span_id_and_the_old_key(self, usage_tables) -> None:
+        migration = _load(_DROP_SPAN_ID)
+        _run(usage_tables, migration.upgrade)
+        _insert(usage_tables, "usage_events", correlation_id="test-migr-corr-3",
+                occurred_at=datetime.now(timezone.utc))
+
+        _run(usage_tables, migration.downgrade)
+
+        assert usage_tables.scalar(text(
+            "SELECT span_id FROM usage_events WHERE correlation_id = 'test-migr-corr-3'"
+        )) == "0000000000000000"
+        assert _key_columns(usage_tables) == ["correlation_id", "span_id", "occurred_at"]
+        _run(usage_tables, migration.upgrade)   # and back up again in the same transaction
+        assert _key_columns(usage_tables) == ["correlation_id", "occurred_at"]
 
 
 def _daily(conn, **cols) -> None:
