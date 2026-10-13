@@ -484,7 +484,9 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
               theadBg="gray.50"
               containerMt={0}
               isEmpty={filteredBreakdown.length === 0}
-              emptyMessage={METERING.EMPTY.PERIOD}
+              emptyMessage={
+                breakdown.length > 0 ? METERING.EMPTY.FILTERED : METERING.EMPTY.PERIOD
+              }
               renderAfterRow={(row) =>
                 hasTokenBreakdown(row) && expandedRows.has(breakdownRowKey(row)) ? (
                   <ModelTokenBreakdownRows row={row} />

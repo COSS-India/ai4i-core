@@ -38,11 +38,6 @@ export function addDays(key: MeteringDayKey, days: number): MeteringDayKey {
   return utcMsToDayKey(dayKeyToUtcMs(key) + days * DAY_MS);
 }
 
-/** Inclusive day count of a range (a single day is 1). */
-export function rangeLengthDays(range: MeteringDateRange): number {
-  return Math.round((dayKeyToUtcMs(range.to) - dayKeyToUtcMs(range.from)) / DAY_MS) + 1;
-}
-
 /** Inclusive IST days a custom range may use; `max` is yesterday. */
 export interface PickableDays {
   min: MeteringDayKey | null;
@@ -75,29 +70,6 @@ export function buildPeriodParams(period: MeteringPeriod): Record<string, string
 /** React Query key parts for a period; a custom range is keyed by its dates. */
 export function periodQueryKeyParts(period: MeteringPeriod): string[] {
   return period.key === "custom" ? [period.key, period.range.from, period.range.to] : [period.key];
-}
-
-/**
- * IST days a period covers. "last_7_days" is the 7 days ending yesterday —
- * today is excluded.
- */
-export function periodToDateRange(
-  period: MeteringPeriod,
-  nowMs: number = Date.now(),
-): MeteringDateRange {
-  const today = istDayKey(nowMs);
-  switch (period.key) {
-    case "today":
-      return { from: today, to: today };
-    case "yesterday": {
-      const yesterday = addDays(today, -1);
-      return { from: yesterday, to: yesterday };
-    }
-    case "last_7_days":
-      return { from: addDays(today, -7), to: addDays(today, -1) };
-    case "custom":
-      return period.range;
-  }
 }
 
 function formatDayMonth(key: MeteringDayKey): string {

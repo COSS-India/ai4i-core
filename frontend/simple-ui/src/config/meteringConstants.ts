@@ -329,6 +329,8 @@ export const METERING = {
     TENANT_CONSUMPTION: `No ${INSTITUTION.toLowerCase()} consumption data available.`,
     /** Every tab's empty state when the selected period has no usage (AI4IDS-3341/3342). */
     PERIOD: "No usage for the selected date range.",
+    /** The period has usage, but the task-type filter hides every row. */
+    FILTERED: "No usage matches the selected task types.",
   },
   REFRESH: {
     JUST_NOW: "just now",
