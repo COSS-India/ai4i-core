@@ -231,7 +231,7 @@ export function formatMeteringDataStateBanner(
         message: `${METERING.BANNERS.DATA_STATE.ERROR_PREFIX} ${formatMeteringGeneratedAt(generatedAt)}`,
       };
     case "empty":
-      return { status: "info", message: METERING.BANNERS.DATA_STATE.EMPTY };
+      return { status: "info", message: METERING.EMPTY.PERIOD };
     case "no_history":
       return { status: "info", message: METERING.BANNERS.DATA_STATE.NO_HISTORY };
     default:

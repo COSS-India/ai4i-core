@@ -172,11 +172,12 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     setPeriod(METERING.DEFAULTS.PERIOD);
   }, [period.key, overviewQuery.error]);
 
-  // Date picker floor: the IST day of the first recorded usage in scope.
-  const firstUsageDay = useMemo((): MeteringDayKey | null => {
-    const ms = Date.parse(overview?.first_usage_at ?? "");
+  // Date picker floor: the IST day the institution was onboarded, or the first
+  // recorded usage in scope when there is no single institution.
+  const firstPickableDay = useMemo((): MeteringDayKey | null => {
+    const ms = Date.parse(overview?.onboarded_at ?? overview?.first_usage_at ?? "");
     return Number.isNaN(ms) ? null : istDayKey(ms);
-  }, [overview?.first_usage_at]);
+  }, [overview?.onboarded_at, overview?.first_usage_at]);
 
   // Key metrics (`platform_adoption`) ignore the period, but a fetch for
   // another period (or its failure) must not blank them, so they read the
@@ -323,7 +324,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     setSubTab,
     period,
     setPeriod,
-    firstUsageDay,
+    firstPickableDay,
     topN,
     setTopN,
     scopeTenantId,

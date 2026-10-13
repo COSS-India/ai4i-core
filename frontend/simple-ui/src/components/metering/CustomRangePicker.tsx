@@ -45,7 +45,7 @@ interface CustomRangePickerProps {
   appliedRange: MeteringDateRange | null;
   onApply: (range: MeteringDateRange) => void;
   onClear: () => void;
-  /** Earliest pickable IST day (first recorded usage); null = no floor. */
+  /** Earliest pickable IST day (onboarding, else first usage); null = no floor. */
   minDay?: MeteringDayKey | null;
 }
 

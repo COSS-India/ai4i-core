@@ -42,7 +42,7 @@ interface SpendByTaskTypeTableProps {
 const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
   tierBreakdown,
   currency = "INR",
-  emptyMessage = "No usage data.",
+  emptyMessage = METERING.EMPTY.PERIOD,
 }) => {
   const copy = METERING.USAGE_SPEND;
   const multiTier = tierBreakdown.length > 1;

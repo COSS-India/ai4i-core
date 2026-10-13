@@ -111,6 +111,7 @@ export const overviewResponseSchema = z.object({
   request_volume: meteringGraphSchema.nullable().optional(),
   throughput: throughputDataSchema.optional(),
   first_usage_at: z.string().nullable().optional(),
+  onboarded_at: z.string().nullable().optional(),
   ...meteringResponseMetaSchema,
 });
 

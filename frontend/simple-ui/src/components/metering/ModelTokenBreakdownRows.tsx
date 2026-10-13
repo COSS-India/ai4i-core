@@ -8,8 +8,9 @@ const childTd = { borderColor: "gray.100", py: 2 } as const;
 
 /**
  * LLM token breakdown under a Model drill-down row: one row per token
- * category, in the API's order. Units sit under Native Consumption (the 5th
- * of the table's 7 columns) and the share of tokens under the two rate columns.
+ * category, in the API's order, then a Total row from `native_units`. Units sit
+ * under Native Consumption (the 5th of the table's 7 columns) and the share of
+ * tokens under the two rate columns.
  */
 export function ModelTokenBreakdownRows({ row }: Readonly<{ row: ModelConsumptionRow }>) {
   const section = METERING.SECTIONS.MODEL;
@@ -35,6 +36,19 @@ export function ModelTokenBreakdownRows({ row }: Readonly<{ row: ModelConsumptio
           </Td>
         </Tr>
       ))}
+      <Tr bg="gray.50">
+        <Td pl={12} colSpan={4} {...childTd}>
+          <Text fontSize="sm" fontWeight="bold" color="gray.800">
+            {section.BREAKDOWN_TOTAL}
+          </Text>
+        </Td>
+        <Td isNumeric {...childTd}>
+          <Text fontSize="sm" fontWeight="bold" color="gray.800">
+            {formatNativeConsumption(row.native_units, row.native_unit_suffix)}
+          </Text>
+        </Td>
+        <Td colSpan={2} {...childTd} />
+      </Tr>
     </>
   );
 }

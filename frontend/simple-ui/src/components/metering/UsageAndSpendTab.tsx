@@ -7,7 +7,6 @@ import {
   useDisclosure,
 } from "@chakra-ui/react";
 import { fetchTenantUsageById } from "../../services/usageSpendService";
-import { INSTITUTION } from "../../config/constants";
 import { METERING } from "../../config/meteringConstants";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { useUsageAndSpendData } from "../../hooks/useUsageAndSpendData";
@@ -15,6 +14,7 @@ import type { MeteringPeriod } from "../../types/metering";
 import type { TenantUsageItem } from "../../types/usageSpend";
 import { formatPeriodTitle } from "../../utils/meteringFormatters";
 import InstitutionUsageDetailPanel from "./InstitutionUsageDetailPanel";
+import MeteringAsyncState from "./MeteringAsyncState";
 import UsageSpendTenantDrawer from "./UsageSpendTenantDrawer";
 import UsageSpendTenantTable from "./UsageSpendTenantTable";
 
@@ -58,7 +58,8 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
   });
 
   const periodTitle = formatPeriodTitle(period);
-  const tenantDetail = isTenantView || data.isScoped ? (data.tenants[0] ?? null) : null;
+  const isScopedView = isTenantView || data.isScoped;
+  const tenantDetail = isScopedView ? (data.tenants[0] ?? null) : null;
 
   const toggleExpand = useCallback((id: string) => {
     setExpanded((prev) => {
@@ -106,16 +107,27 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
     setIsDetailLoading(false);
   }, [onDetailClose]);
 
-  if (tenantDetail) {
+  // A scoped viewer never falls through to the Adopter layout, even while the
+  // period's detail is loading or after it fails.
+  if (isScopedView) {
     return (
-      <VStack align="stretch" spacing={5}>
-        <InstitutionUsageDetailPanel
-          detail={tenantDetail}
-          periodTitle={periodTitle}
-          organisationLabel={organisationLabel}
-          isLoading={data.isTenantsLoading}
-        />
-      </VStack>
+      <MeteringAsyncState
+        isLoading={!tenantDetail && data.isTenantsLoading}
+        isEmpty={!tenantDetail}
+        errorMessage={tenantDetail ? null : data.tenantsError}
+        emptyMessage={METERING.EMPTY.PERIOD}
+      >
+        {tenantDetail ? (
+          <VStack align="stretch" spacing={5}>
+            <InstitutionUsageDetailPanel
+              detail={tenantDetail}
+              periodTitle={periodTitle}
+              organisationLabel={organisationLabel}
+              isLoading={data.isTenantsLoading}
+            />
+          </VStack>
+        ) : null}
+      </MeteringAsyncState>
     );
   }
 
@@ -148,7 +160,7 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
         tenants={data.tenants}
         isLoading={data.isTenantsLoading}
         errorMessage={data.tenantsError}
-        emptyMessage={`No ${INSTITUTION.toLowerCase()} usage data available.`}
+        emptyMessage={METERING.EMPTY.PERIOD}
         expanded={expanded}
         onToggleExpand={toggleExpand}
         onTenantClick={handleTenantClick}

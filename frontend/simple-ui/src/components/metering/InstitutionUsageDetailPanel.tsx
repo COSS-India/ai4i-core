@@ -73,7 +73,7 @@ export const InstitutionUsageDetailContent: React.FC<InstitutionUsageDetailConte
           </Text>
         )}
         <Text fontSize="11.5px" color="gray.500" mt={3}>
-          {METERING.USAGE_SPEND.BUDGET_ALL_TIME_NOTE}
+          {METERING.USAGE_SPEND.BUDGET_TOTALS_NOTE}
         </Text>
       </Box>
 

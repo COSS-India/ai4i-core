@@ -298,7 +298,7 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
       isLoading={isLoading}
       isEmpty={!data}
       errorMessage={errorMessage}
-      emptyMessage={METERING.EMPTY.MODEL_CONSUMPTION}
+      emptyMessage={METERING.EMPTY.PERIOD}
     >
       {data ? (
         <VStack align="stretch" spacing={6}>
@@ -483,7 +483,8 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
               defaultSortDirection="desc"
               theadBg="gray.50"
               containerMt={0}
-              showAsyncState={false}
+              isEmpty={filteredBreakdown.length === 0}
+              emptyMessage={METERING.EMPTY.PERIOD}
               renderAfterRow={(row) =>
                 hasTokenBreakdown(row) && expandedRows.has(breakdownRowKey(row)) ? (
                   <ModelTokenBreakdownRows row={row} />

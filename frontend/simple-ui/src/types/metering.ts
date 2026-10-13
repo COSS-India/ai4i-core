@@ -150,6 +150,11 @@ export interface OverviewResponse extends MeteringResponseMeta {
   throughput?: ThroughputData;
   /** First recorded usage for the tenant scope (UTC); null when there is none yet. */
   first_usage_at?: string | null;
+  /**
+   * When the scoped institution was onboarded (IST, with offset); the date
+   * picker's floor. Null for the platform-wide view.
+   */
+  onboarded_at?: string | null;
 }
 
 /** LLM token category in a usage breakdown. */

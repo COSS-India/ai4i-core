@@ -218,7 +218,7 @@ export function PolicyList() {
       ) : null}
       {!parentActive ? (
         <LockedNotice>
-          All policies here are inactive — "{sub?.name}" (or its category) is currently disabled.
+          All policies here are inactive — &quot;{sub?.name}&quot; (or its category) is currently disabled.
         </LockedNotice>
       ) : null}
       {policiesStatus === "loading" && scoped.length === 0 ? (
@@ -894,7 +894,7 @@ export function InstitutionCatalog() {
     <Box>
       {!parentActive ? (
         <LockedNotice>
-          "{sub?.name}" (or its category) is currently disabled — no policies are being enforced.
+          &quot;{sub?.name}&quot; (or its category) is currently disabled — no policies are being enforced.
         </LockedNotice>
       ) : null}
       <DataTable

@@ -25,7 +25,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
     setSubTab,
     period,
     setPeriod,
-    firstUsageDay,
+    firstPickableDay,
     topN,
     setTopN,
     scopeTenantId,
@@ -84,7 +84,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
       <MeteringControls
         period={period}
         onPeriodChange={setPeriod}
-        firstPickableDay={firstUsageDay}
+        firstPickableDay={firstPickableDay}
         lastGeneratedAt={lastGeneratedAt}
         onRefresh={isTenantView ? undefined : handleRefresh}
         isRefreshing={isRefreshing}

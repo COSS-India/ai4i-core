@@ -22,7 +22,6 @@ export const METERING = {
     DEGRADED:
       "Some metrics could not be loaded completely. Showing partial data from the metering API.",
     DATA_STATE: {
-      EMPTY: "No data for selected time window",
       NO_HISTORY:
         "No consumption data found. Usage metrics will appear once API requests are recorded.",
       ERROR_PREFIX: "Unable to refresh data. Last successful refresh at",
@@ -167,7 +166,8 @@ export const METERING = {
     /** @deprecated Use USAGE_BY_TASK_TYPE */
     SPEND_BY_TASK_TYPE: "USAGE BY MODEL TASK TYPE",
     TENANT_DETAIL_TITLE: "Institution Usage Details",
-    BUDGET_ALL_TIME_NOTE: "All-time institution budget.",
+    BUDGET_TOTALS_NOTE:
+      "Allocated and Remaining Budget reflect overall totals and are not affected by the selected date range.",
     TIER_BREAKDOWN_NOTE:
       "Usage in the selected period; quota is for the current billing month.",
     TOTAL_ALLOCATED: "TOTAL ALLOCATED",
@@ -327,8 +327,8 @@ export const METERING = {
   EMPTY: {
     DEFAULT: "No data available.",
     TENANT_CONSUMPTION: `No ${INSTITUTION.toLowerCase()} consumption data available.`,
-    MODEL_CONSUMPTION: "No model consumption data available.",
-    CHART: "No data available for the selected time window.",
+    /** Every tab's empty state when the selected period has no usage (AI4IDS-3341/3342). */
+    PERIOD: "No usage for the selected date range.",
   },
   REFRESH: {
     JUST_NOW: "just now",
@@ -447,6 +447,7 @@ export const METERING = {
       /** Expandable LLM rows: input / cached input / output tokens. */
       TOGGLE_TOKEN_BREAKDOWN: "Toggle token breakdown for",
       TOKEN_SHARE_SUFFIX: "% of tokens",
+      BREAKDOWN_TOTAL: "Total",
       TOOLTIPS: {
         TASK_TYPE:
           "The task type this model performs, as registered in the Model Registry.",
