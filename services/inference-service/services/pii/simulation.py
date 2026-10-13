@@ -200,21 +200,6 @@ def _build_recognizers(policy_types: List[PolicyType], language: str) -> _Recogn
     return _Recognizers(recognizers, sources, model_entities)
 
 
-def _from_policy(results: List[RecognizerResult], recs: _Recognizers) -> List[RecognizerResult]:
-    """Drop built-in matches for entities the policy defines only by regex.
-
-    Presidio runs every recognizer that supports a requested entity, so a
-    custom field named PHONE_NUMBER also runs Presidio's PhoneRecognizer and
-    would report matches the policy's own regex never makes.
-    """
-    ad_hoc_names = {r.name for r in recs.ad_hoc}
-    return [
-        r for r in results
-        if r.entity_type in recs.model_entities
-        or (r.recognition_metadata or {}).get(RecognizerResult.RECOGNIZER_NAME_KEY) in ad_hoc_names
-    ]
-
-
 def simulate(text: str, policy_types: List[PolicyType]) -> SimulationResult:
     # Only languages the policy configures can change the result; restricting
     # detection to them avoids short English text being read as "et" or "nl".
@@ -227,10 +212,27 @@ def simulate(text: str, policy_types: List[PolicyType]) -> SimulationResult:
         return SimulationResult(text, [])
 
     engine = get_engine()
-    analyzer_results = _from_policy(
-        engine.analyze(text, language, entities=list(recs.sources), ad_hoc_recognizers=recs.ad_hoc),
-        recs,
-    )
+    if recs.model_entities:
+        undetectable = recs.model_entities - engine.detectable_entities(language)
+        if undetectable:
+            # Presidio would raise "No matching recognizers" (a 500) or find
+            # nothing, and the Playground would report "no PII".
+            raise InvalidPolicyError(
+                f"model_supported_field entities that cannot be detected in "
+                f"'{language}' text: {', '.join(sorted(undetectable))}. Use a "
+                f"custom_field regex instead, or remove them for this language."
+            )
+
+    # Policy regexes run on their own and Presidio only for the
+    # model_supported_field entities, so a built-in recognizer (EmailRecognizer
+    # for a custom EMAIL_ADDRESS) never competes with the policy's regex on the
+    # same span.
+    analyzer_results = [
+        result for recognizer in recs.ad_hoc
+        for result in recognizer.analyze(text, recognizer.supported_entities)
+    ]
+    if recs.model_entities:
+        analyzer_results += engine.analyze(text, language, entities=sorted(recs.model_entities))
     anonymized, entity_mapping = engine.anonymize(text, analyzer_results)
 
     token_to_value = {

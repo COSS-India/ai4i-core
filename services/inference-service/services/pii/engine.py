@@ -1,9 +1,10 @@
 """Presidio engine singleton — loads both spaCy models once at startup."""
 
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
-from presidio_analyzer import AnalyzerEngine, EntityRecognizer, RecognizerResult
+from presidio_analyzer import AnalyzerEngine, RecognizerResult
+from presidio_analyzer.predefined_recognizers import SpacyRecognizer
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 from presidio_anonymizer import AnonymizerEngine
 from presidio_anonymizer.entities import EngineResult, OperatorConfig
@@ -15,6 +16,10 @@ from services.pii.operators import OPERATOR_NAME, InstanceCounterAnonymizer
 logger = logging.getLogger(__name__)
 
 _engine: Optional["PresidioEngine"] = None
+
+# Languages xx_ent_wiki_sm's NER was trained on (WikiNER). For any other
+# non-English language it finds almost no names, places or organisations.
+MULTILINGUAL_NER_LANGUAGES = {"de", "es", "fr", "it", "nl", "pl", "pt", "ru"}
 
 
 class PresidioEngine:
@@ -47,20 +52,32 @@ class PresidioEngine:
         text: str,
         source_language: str,
         entities: Optional[List[str]] = None,
-        ad_hoc_recognizers: Optional[List[EntityRecognizer]] = None,
     ) -> List[RecognizerResult]:
-        """Detect PII. entities=None means every supported entity.
-
-        ad_hoc_recognizers apply to this call only; the shared registry is
-        not changed. Their supported_language must be
-        get_spacy_lang_code(source_language).
-        """
+        """Detect PII. entities=None means every supported entity."""
         return self._analyzer.analyze(
             text=text,
             language=get_spacy_lang_code(source_language),
             entities=entities,
-            ad_hoc_recognizers=ad_hoc_recognizers,
         )
+
+    def detectable_entities(self, source_language: str) -> Set[str]:
+        """Entities Presidio can detect in text of this language.
+
+        Asking for any other entity raises "No matching recognizers" (or
+        silently finds nothing). Entities served only by spaCy NER (PERSON,
+        LOCATION, ...) are left out where the loaded model has no NER for the
+        language.
+        """
+        recognizers = self._analyzer.registry.get_recognizers(
+            language=get_spacy_lang_code(source_language), all_fields=True
+        )
+        ner_works = source_language == "en" or source_language in MULTILINGUAL_NER_LANGUAGES
+        return {
+            entity
+            for recognizer in recognizers
+            if ner_works or not isinstance(recognizer, SpacyRecognizer)
+            for entity in recognizer.supported_entities
+        }
 
     def anonymize(
         self, text: str, analyzer_results: List[RecognizerResult]
