@@ -478,30 +478,46 @@ class TestGetFirstUsageAt:
         assert result == datetime(2026, 5, 10, 8, 0, tzinfo=timezone.utc)
 
 
+def _rows(rows: list) -> SimpleNamespace:
+    return SimpleNamespace(all=lambda: rows)
+
+
 @pytest.mark.asyncio
-class TestGetBudgetedTenantIds:
-    """The /usage-summary budget block's institutions: every tenant with a
-    budget on file, not picked by quota rows."""
+class TestGetBudgetedTenantBudgets:
+    """The /usage-summary budget block: budgets for every tenant with a budget
+    on file, not picked by quota rows, from one read of tenants."""
 
-    async def test_no_auth_db_returns_empty_list(self):
-        assert await UsageRepository(MagicMock()).get_budgeted_tenant_ids(None) == []
+    async def test_no_auth_db_returns_empty(self):
+        assert await UsageRepository(MagicMock()).get_budgeted_tenant_budgets(None) == {}
 
-    async def test_budgeted_and_not_deactivated(self):
+    async def test_budgets_of_budgeted_non_deactivated_tenants_in_one_read(self):
         auth_db = MagicMock()
-        auth_db.execute = AsyncMock(return_value=SimpleNamespace(all=lambda: [SimpleNamespace(id=2), SimpleNamespace(id=42)]))
+        auth_db.execute = AsyncMock(side_effect=[
+            _rows([SimpleNamespace(id=2, allocated_budget=Decimal("1000"), tier_id=None,
+                                   budget_effective_from=None, budget_effective_to=None)]),  # tenants
+            _rows([SimpleNamespace(id=39, tenant_id=2)]),                                     # applications
+            _rows([SimpleNamespace(id=10, application_id=39)]),                               # api_key
+        ])
+        db = AsyncMock()
+        db.execute = AsyncMock(return_value=_rows(
+            [SimpleNamespace(api_key_id=10, api_key_budget_used=Decimal("300"))]
+        ))
 
-        assert await UsageRepository(MagicMock()).get_budgeted_tenant_ids(auth_db) == ["2", "42"]
-        sql = str(auth_db.execute.call_args.args[0])
-        assert "allocated_budget IS NOT NULL" in sql
-        assert "status <> 'DEACTIVATED'" in sql
-        assert "tier_id" not in sql
+        result = await UsageRepository(db=db).get_budgeted_tenant_budgets(auth_db)
+
+        assert (result["2"].spent, result["2"].available_balance) == (Decimal("300"), Decimal("700"))
+        sqls = [str(call.args[0]) for call in auth_db.execute.call_args_list]
+        assert sum("FROM tenants" in q for q in sqls) == 1
+        assert "allocated_budget IS NOT NULL" in sqls[0]
+        assert "status <> 'DEACTIVATED'" in sqls[0]
+        assert "tier_id =" not in sqls[0]
 
     async def test_tier_filter_is_the_current_tier(self):
         auth_db = MagicMock()
-        auth_db.execute = AsyncMock(return_value=SimpleNamespace(all=lambda: []))
+        auth_db.execute = AsyncMock(return_value=_rows([]))
         tier = "6f1c2a9e-4b1d-4f0e-9a51-3c7d2e8b1f04"
 
-        await UsageRepository(MagicMock()).get_budgeted_tenant_ids(auth_db, tier)
+        assert await UsageRepository(MagicMock()).get_budgeted_tenant_budgets(auth_db, tier) == {}
         stmt, params = auth_db.execute.call_args.args
         assert "tier_id = CAST(:tier_id AS uuid)" in str(stmt)
         assert params == {"tier_id": tier}
@@ -511,4 +527,4 @@ class TestGetBudgetedTenantIds:
         auth_db = MagicMock()
         auth_db.execute = AsyncMock(side_effect=RuntimeError("connection dropped"))
         with pytest.raises(RuntimeError):
-            await UsageRepository(MagicMock()).get_budgeted_tenant_ids(auth_db)
+            await UsageRepository(MagicMock()).get_budgeted_tenant_budgets(auth_db)

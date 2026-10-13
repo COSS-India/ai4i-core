@@ -22,8 +22,18 @@ export interface SummaryBudget {
   spent: number;
   /** allocated − spent; negative when overspent overall. */
   remaining: number;
-  /** Institutions whose all-time spend has reached their budget. */
+  /**
+   * Institutions whose all-time spend has reached their budget (institution spend
+   * >= institution budget). Not the number of institutions with blocked keys:
+   * billing blocks per key, against each key's own ceiling.
+   */
   exceededTenants: number;
+  /**
+   * With a tier filter: institutions were picked by their current tier. Null without
+   * one. Differs from quota.tierFilter, so an institution whose tier was removed can
+   * be missing here but present in quota.
+   */
+  tierFilter?: "current_tier" | null;
 }
 
 /** Quota usage in one billing month (all months when billingMonth is null). */
@@ -33,6 +43,8 @@ export interface SummaryQuota {
   /** Institutions with quota usage in scope. */
   activeTenants: number;
   byTaskType: QuotaUsageItem[];
+  /** With a tier filter: institutions were picked by the most recent tier in their quota rows. */
+  tierFilter?: "most_recent_quota_tier" | null;
 }
 
 /** GET /usage-summary: budget (all-time) and quota (monthly), each with its own time basis. */

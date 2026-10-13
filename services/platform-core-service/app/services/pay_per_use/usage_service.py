@@ -371,8 +371,10 @@ class UsageService:
         """The Key metrics strip, as two independent blocks with their own time
         basis: ``budget`` is all-time (see _budget_summary) and ``quota`` is the
         billing month (see _quota_summary). billing_month scopes quota only.
-        tier_id narrows both; task_type_ids narrows quota only, as spend has no
-        per-task-type split. Without auth_db the budget block is all zeros."""
+        tier_id narrows both, each by its own tier (current tier vs. most recent
+        tier in the quota rows; each block's tierFilter names it);
+        task_type_ids narrows quota only, as spend has no per-task-type split.
+        Without auth_db the budget block is all zeros."""
         return UsageSummaryResponse(
             currency=_CURRENCY,
             budget=await self._budget_summary(tier_id, auth_db),
@@ -383,16 +385,18 @@ class UsageService:
         """Budget across every institution with a budget on file — all-time,
         since budget_usage is a lifetime running total. Institutions come from
         tenants, not quota rows, so ones on untiered keys (spend, no quota rows)
-        are counted; tier_id keeps those currently on that tier.
+        are counted; tier_id keeps those currently on that tier (tierFilter says
+        so in the response, as the quota block picks by a different tier).
 
         exceededTenants counts institutions whose lifetime spend has reached
-        their budget — spent >= budget, the rule billing uses to block a key. A
-        zero budget isn't counted: nothing was allocated to exhaust."""
-        tenant_ids = await self._repo.get_budgeted_tenant_ids(auth_db, tier_id)
-        budgets = await self._repo.get_tenant_budgets(tenant_ids, auth_db)
+        their budget: institution spend >= institution budget, the same >=
+        comparison billing applies per key — but per institution, so it isn't
+        the number of institutions with blocked keys. A zero budget isn't
+        counted: nothing was allocated to exhaust."""
+        budgets = await self._repo.get_budgeted_tenant_budgets(auth_db, tier_id)
         allocated = spent = remaining = Decimal("0")
         exceeded = 0
-        for tid in tenant_ids:
+        for tid in budgets:
             budget_limit, available_balance, has_budget = _resolve_budget(tid, budgets)
             if not has_budget:
                 continue
@@ -408,6 +412,7 @@ class UsageService:
             spent=round(spent, 2),
             remaining=round(remaining, 2),
             exceededTenants=exceeded,
+            tierFilter="current_tier" if tier_id else None,
         )
 
     async def _quota_summary(
@@ -458,6 +463,7 @@ class UsageService:
             billingMonth=billing_month,
             activeTenants=len(assignments),
             byTaskType=items,
+            tierFilter="most_recent_quota_tier" if tier_id else None,
         )
 
     async def get_tenant_list(

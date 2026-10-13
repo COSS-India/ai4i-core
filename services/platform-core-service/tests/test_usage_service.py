@@ -61,7 +61,7 @@ def _make_repo(**method_returns) -> MagicMock:
     repo = MagicMock()
     method_returns.setdefault("get_tier_names", {"1": "Pro", "2": "Enterprise"})
     method_returns.setdefault("get_tenant_budgets", {})
-    method_returns.setdefault("get_budgeted_tenant_ids", [])
+    method_returns.setdefault("get_budgeted_tenant_budgets", {})
     method_returns.setdefault("get_tenants_with_usage_tier", [])
     method_returns.setdefault("get_tenant_tier_usage_breakdown", [])
     method_returns.setdefault("get_usage_data_from", _DATA_SINCE)
@@ -147,8 +147,7 @@ class TestSummaryBudget:
     @pytest.mark.asyncio
     async def test_totals_across_every_budgeted_institution(self):
         repo = _make_repo(
-            get_budgeted_tenant_ids=["t1", "t2"],
-            get_tenant_budgets=_budgets(
+            get_budgeted_tenant_budgets=_budgets(
                 _budget_row(tenant_id="t1", budget_limit=Decimal("1000"),
                             available_balance=Decimal("700"), spent=Decimal("300")),
                 _budget_row(tenant_id="t2", budget_limit=Decimal("500"),
@@ -159,7 +158,8 @@ class TestSummaryBudget:
 
         assert budget.basis == "all_time"
         assert (budget.institutions, budget.allocated, budget.spent, budget.remaining) == (2, 1500, 600, 900)
-        repo.get_tenant_budgets.assert_awaited_once_with(["t1", "t2"], _AUTH_DB)
+        repo.get_budgeted_tenant_budgets.assert_awaited_once_with(_AUTH_DB, None)
+        repo.get_tenant_budgets.assert_not_called()   # one read of tenants, not two
 
     @pytest.mark.asyncio
     async def test_institution_without_quota_rows_still_counts(self):
@@ -168,8 +168,7 @@ class TestSummaryBudget:
         repo = _make_repo(
             get_tenants_with_usage_tier=[],          # no quota rows at all
             get_tenant_tier_usage_breakdown=[],
-            get_budgeted_tenant_ids=["t1"],
-            get_tenant_budgets=_budgets(_budget_row(budget_limit=Decimal("10"), spent=Decimal("50"))),
+            get_budgeted_tenant_budgets=_budgets(_budget_row(budget_limit=Decimal("10"), spent=Decimal("50"))),
         )
         result = await UsageService(repo).get_summary("2026-06", auth_db=_AUTH_DB)
 
@@ -179,54 +178,58 @@ class TestSummaryBudget:
     @pytest.mark.asyncio
     async def test_billing_period_does_not_change_the_budget(self):
         repo = _make_repo(
-            get_budgeted_tenant_ids=["t1"],
-            get_tenant_budgets=_budgets(_budget_row(spent=Decimal("50"))),
+            get_budgeted_tenant_budgets=_budgets(_budget_row(spent=Decimal("50"))),
         )
         svc = UsageService(repo)
         june = await svc.get_summary("2026-06", auth_db=_AUTH_DB)
         all_months = await svc.get_summary(None, auth_db=_AUTH_DB)
 
         assert june.budget == all_months.budget
-        for call in repo.get_budgeted_tenant_ids.await_args_list:
+        for call in repo.get_budgeted_tenant_budgets.await_args_list:
             assert call.args == (_AUTH_DB, None)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("limit", "spent", "exceeded"),
-        [("100", "100", 1),     # reached: billing blocks the key at used >= budget
+        [("100", "100", 1),     # reached: the >= billing applies per key, per institution
          ("100", "150", 1),     # over
          ("100", "99.99", 0),   # just under
          ("0", "0", 0)],        # nothing allocated, nothing to exhaust
     )
     async def test_exceeded_means_spend_reached_the_budget(self, limit, spent, exceeded):
         repo = _make_repo(
-            get_budgeted_tenant_ids=["t1"],
-            get_tenant_budgets=_budgets(_budget_row(budget_limit=Decimal(limit), spent=Decimal(spent))),
+            get_budgeted_tenant_budgets=_budgets(_budget_row(budget_limit=Decimal(limit), spent=Decimal(spent))),
         )
         result = await UsageService(repo).get_summary("2026-06", auth_db=_AUTH_DB)
         assert result.budget.exceededTenants == exceeded
 
     @pytest.mark.asyncio
-    async def test_institution_without_a_budget_row_is_left_out(self):
-        """Unknown budget != a budget of 0: not counted, not exceeded."""
-        repo = _make_repo(get_budgeted_tenant_ids=["t1"], get_tenant_budgets=_budgets())
-        budget = (await UsageService(repo).get_summary("2026-06", auth_db=_AUTH_DB)).budget
+    async def test_tier_filter_is_the_current_tier_and_says_so(self):
+        """The two blocks filter on different tiers: budget on the current tier
+        (tenants.tier_id), quota on the most recent tier in the quota rows. An
+        institution whose tier was removed is out of budget but can be in quota,
+        so each block names the rule it used."""
+        repo = _make_repo(
+            get_budgeted_tenant_budgets={},                  # tenants.tier_id is NULL now
+            get_tenants_with_usage_tier=[_tier_row()],       # still on tier "1" in its quota rows
+            get_tenant_tier_usage_breakdown=[_usage_row()],
+        )
+        result = await UsageService(repo).get_summary("2026-06", tier_id="1", auth_db=_AUTH_DB)
 
-        assert (budget.institutions, budget.allocated, budget.exceededTenants) == (0, 0, 0)
+        repo.get_budgeted_tenant_budgets.assert_awaited_once_with(_AUTH_DB, "1")
+        assert (result.budget.institutions, result.budget.tierFilter) == (0, "current_tier")
+        assert (result.quota.activeTenants, result.quota.tierFilter) == (1, "most_recent_quota_tier")
 
     @pytest.mark.asyncio
-    async def test_tier_filter_reaches_the_institution_lookup(self):
-        repo = _make_repo(get_budgeted_tenant_ids=[], get_tenant_budgets=_budgets())
-        await UsageService(repo).get_summary("2026-06", tier_id="1", auth_db=_AUTH_DB)
-
-        repo.get_budgeted_tenant_ids.assert_awaited_once_with(_AUTH_DB, "1")
+    async def test_no_tier_filter_no_tier_rule(self):
+        result = await UsageService(_make_repo()).get_summary("2026-06", auth_db=_AUTH_DB)
+        assert (result.budget.tierFilter, result.quota.tierFilter) == (None, None)
 
     @pytest.mark.asyncio
     async def test_only_the_two_blocks_and_currency(self):
         """Spend is lifetime only: no month-scoped money and no month-over-month
         change anywhere in the response."""
-        repo = _make_repo(get_budgeted_tenant_ids=[], get_tenant_budgets=_budgets())
-        result = await UsageService(repo).get_summary("2026-06", auth_db=_AUTH_DB)
+        result = await UsageService(_make_repo()).get_summary("2026-06", auth_db=_AUTH_DB)
 
         assert set(result.model_dump()) == {"currency", "budget", "quota"}
         assert "spendChangePercent" not in str(result.model_dump())

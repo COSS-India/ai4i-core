@@ -34,9 +34,16 @@ class SummaryBudget(BaseModel):
     allocated: float            # sum of their allocated budgets
     spent: float                # sum of their lifetime spend (budget_usage)
     remaining: float            # allocated − spent; negative when overspent overall
-    # Institutions whose lifetime spend has reached their budget (spent >= budget,
-    # the same rule billing uses to block a key); a zero budget doesn't count.
+    # Institutions whose lifetime spend has reached their budget: institution
+    # spend >= institution budget — the same >= comparison billing applies per
+    # key, but not the same quantity, so this isn't the number of institutions
+    # with blocked keys. A zero budget doesn't count.
     exceededTenants: int
+    # How a tier_id filter picked institutions here: by their current tier
+    # (tenants.tier_id). Null without tier_id. Differs from quota.tierFilter, so
+    # an institution whose tier was removed since drops out of this block but
+    # can still be in quota.
+    tierFilter: Optional[Literal["current_tier"]] = None
 
 
 class SummaryQuota(BaseModel):
@@ -48,6 +55,10 @@ class SummaryQuota(BaseModel):
     # Institutions with quota usage in scope.
     activeTenants: int
     byTaskType: list[QuotaUsageItem]
+    # How a tier_id filter picked institutions here: by the most recent tier in
+    # their quota rows in scope (the billing month, or all months). Null without
+    # tier_id. See budget.tierFilter.
+    tierFilter: Optional[Literal["most_recent_quota_tier"]] = None
 
 
 class UsageSummaryResponse(BaseModel):
