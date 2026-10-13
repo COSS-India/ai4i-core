@@ -823,7 +823,8 @@ const LogsPage: React.FC = () => {
                         value: endUser,
                         onChange: setEndUser,
                         placeholder: FIELD_HINTS.logs.endUser.placeholder,
-                        helper: endUserError ?? FIELD_HINTS.logs.endUser.helper,
+                        helper: FIELD_HINTS.logs.endUser.helper,
+                        error: endUserError,
                         width: { base: "full", sm: "200px" },
                       },
                       {
@@ -834,7 +835,8 @@ const LogsPage: React.FC = () => {
                         value: metadata,
                         onChange: setMetadata,
                         placeholder: FIELD_HINTS.logs.metadata.placeholder,
-                        helper: metadataError ?? FIELD_HINTS.logs.metadata.helper,
+                        helper: FIELD_HINTS.logs.metadata.helper,
+                        error: metadataError,
                         width: { base: "full", sm: "220px" },
                       },
                       {
