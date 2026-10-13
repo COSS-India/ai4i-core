@@ -2,6 +2,7 @@ import { Box, Flex, HStack, Text } from "@chakra-ui/react";
 import React from "react";
 import {
   formatSpendMoney,
+  formatSpendMoneyExact,
   spendBarColor,
   USAGE_SPEND_ACCENT,
 } from "../../utils/usageSpendHelpers";
@@ -27,6 +28,34 @@ export function AllocatedPctPill({ pct }: { pct: number }) {
     >
       {formatApplicationPct(pct)}
     </Text>
+  );
+}
+
+/** Spend in the period (kept to paise) and its share of the allocation, when there is one. */
+export function PeriodSpendCell({
+  amount,
+  percentage,
+  currency,
+  hasBudget,
+  ofAllocationLabel,
+}: Readonly<{
+  amount: number;
+  percentage: number;
+  currency: string;
+  hasBudget: boolean;
+  ofAllocationLabel: string;
+}>) {
+  return (
+    <Box>
+      <Text fontSize="13.5px" fontWeight="bold" color="gray.800">
+        {formatSpendMoneyExact(amount, currency)}
+      </Text>
+      {hasBudget ? (
+        <Text fontSize="11.5px" color="gray.500" mt="2px">
+          {formatApplicationPct(percentage)} {ofAllocationLabel}
+        </Text>
+      ) : null}
+    </Box>
   );
 }
 

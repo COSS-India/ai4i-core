@@ -8,6 +8,7 @@ import {
   AllocatedPctPill,
   ApplicationRemainingCell,
   ApplicationSpendCell,
+  PeriodSpendCell,
 } from "./ApplicationUsageCells";
 import { TenantAvatar } from "./UsageSpendCells";
 
@@ -38,7 +39,7 @@ const ApplicationUsageTable: React.FC<ApplicationUsageTableProps> = ({
         header: cols.APPLICATION,
         sortable: true,
         sortAccessor: (row) => row.name,
-        width: "24%",
+        width: "22%",
         cell: (row) => (
           <HStack spacing="11px">
             <TenantAvatar name={row.name} />
@@ -53,7 +54,7 @@ const ApplicationUsageTable: React.FC<ApplicationUsageTableProps> = ({
         header: cols.DOMAIN,
         sortable: true,
         sortAccessor: (row) => row.domain ?? "",
-        width: "12%",
+        width: "10%",
         cell: (row) => (
           <Badge variant="subtle" colorScheme="gray" fontSize="11px" textTransform="none">
             {row.domain || "—"}
@@ -66,7 +67,7 @@ const ApplicationUsageTable: React.FC<ApplicationUsageTableProps> = ({
         tip: tips.ALLOCATED_COL,
         sortable: true,
         sortAccessor: (row) => row.allocatedBudget.amount,
-        width: "18%",
+        width: "16%",
         cell: (row) => {
           const limit = row.allocatedBudget.amount;
           if (limit <= 0) {
@@ -83,6 +84,23 @@ const ApplicationUsageTable: React.FC<ApplicationUsageTableProps> = ({
             </Text>
           );
         },
+      },
+      {
+        id: "periodSpend",
+        header: cols.PERIOD_SPEND,
+        tip: tips.PERIOD_SPEND_COL,
+        sortable: true,
+        sortAccessor: (row) => row.periodSpend.amount,
+        width: "14%",
+        cell: (row) => (
+          <PeriodSpendCell
+            amount={row.periodSpend.amount}
+            percentage={row.periodSpend.percentage}
+            currency={currency}
+            hasBudget={row.allocatedBudget.amount > 0}
+            ofAllocationLabel={cols.PERIOD_OF_ALLOCATION}
+          />
+        ),
       },
       {
         id: "spend",
@@ -138,7 +156,7 @@ const ApplicationUsageTable: React.FC<ApplicationUsageTableProps> = ({
       columns={columns}
       rows={applications}
       rowKey={(row) => row.applicationId}
-      defaultSortKey="spend"
+      defaultSortKey="periodSpend"
       defaultSortDirection="desc"
       isLoading={isLoading}
       isEmpty={!isLoading && applications.length === 0}

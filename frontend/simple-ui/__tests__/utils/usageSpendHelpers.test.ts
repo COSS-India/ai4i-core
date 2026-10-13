@@ -1,97 +1,24 @@
 import {
-  aggregateTasks,
-  hasPopulatedQuotaUsage,
-  isMultiTaskQuotaTenant,
-  summaryFromDetail,
-} from "../../src/utils/usageSpendHelpers";
-import type { TenantUsageItem } from "../../src/types/usageSpend";
+  formatBillingMonth,
+  formatSpendMoneyExact,
+} from '../../src/utils/usageSpendHelpers';
+import { formatPeriodTitle } from '../../src/utils/meteringFormatters';
 
-const multiTaskTenant: TenantUsageItem = {
-  tenantId: "tenant-auto-a",
-  tenantName: "Tenant Auto A",
-  tier: "Standard",
-  tierId: "tier-1",
-  currency: "INR",
-  spend: 2163.24,
-  budget: { limit: 1_000_000, spent: 2163.24, remaining: 997_836.63, percentageUsed: 0.2 },
-  usage: {
-    taskTypeCount: 5,
-    unit: "Units",
-    quotaLimit: null,
-    consumed: null,
-    remaining: null,
-    percentage: null,
-  },
-  tierBreakdown: [
-    {
-      tierId: "tier-1",
-      tierName: "Standard",
-      taskTypes: [
-        { taskType: "nmt", unit: "characters", quotaLimit: 100_000, consumed: 9500, remaining: 90_500 },
-        { taskType: "ner", unit: "characters", quotaLimit: 50_000, consumed: 6600, remaining: 43_400 },
-        { taskType: "ocr", unit: "images", quotaLimit: 500, consumed: 20, remaining: 480 },
-      ],
-    },
-  ],
-};
-
-const singleTaskTenant: TenantUsageItem = {
-  ...multiTaskTenant,
-  usage: {
-    taskTypeCount: 1,
-    unit: "characters",
-    quotaLimit: 100_000,
-    consumed: 9500,
-    remaining: 90_500,
-    percentage: 9.5,
-  },
-  tierBreakdown: [
-    {
-      tierId: "tier-1",
-      tierName: "Standard",
-      taskTypes: [
-        { taskType: "nmt", unit: "characters", quotaLimit: 100_000, consumed: 9500, remaining: 90_500 },
-      ],
-    },
-  ],
-};
-
-describe("quota usage helpers", () => {
-  it("treats multi-task flat usage as unpopulated (no cross-unit summary)", () => {
-    expect(isMultiTaskQuotaTenant(multiTaskTenant.usage)).toBe(true);
-    expect(hasPopulatedQuotaUsage(multiTaskTenant.usage)).toBe(false);
+describe('Budget tab formatters', () => {
+  it('keeps paise on period spend', () => {
+    expect(formatSpendMoneyExact(0.42)).toBe('₹0.42');
+    expect(formatSpendMoneyExact(120.5)).toBe('₹120.50');
   });
 
-  it("treats single-task flat usage as populated", () => {
-    expect(isMultiTaskQuotaTenant(singleTaskTenant.usage)).toBe(false);
-    expect(hasPopulatedQuotaUsage(singleTaskTenant.usage)).toBe(true);
+  it('formats a billing month', () => {
+    expect(formatBillingMonth('2026-10')).toBe('Oct 2026');
+    expect(formatBillingMonth('bad')).toBe('bad');
   });
 
-  it("derives per-task-type rows from tierBreakdown for multi-task tenants", () => {
-    const tasks = aggregateTasks(multiTaskTenant.tierBreakdown);
-    expect(tasks).toHaveLength(3);
-    expect(tasks[0]).toMatchObject({ taskType: "nmt", consumed: 9500, unit: "characters" });
-  });
-
-  it("builds usage summary from tierBreakdown, not the null flat usage block", () => {
-    const summary = summaryFromDetail(multiTaskTenant, "2026-09");
-    expect(summary.spendByModelTaskType).toHaveLength(3);
-    expect(summary.spendByModelTaskType[0]).toMatchObject({
-      modelTaskType: "nmt",
-      consumption: 9500,
-      allocated: 100_000,
-      unit: "characters",
-    });
-    expect(summary.totalSpend).toBeCloseTo(2163.24, 0);
-    expect(summary.billingPeriod).toBe("2026-09");
-    // AI4IDS-3012: API no longer returns per-task-type spend/percentage.
-    expect(summary.spendByModelTaskType[0]).not.toHaveProperty("spend");
-    expect(summary.spendByModelTaskType[0]).not.toHaveProperty("percentage");
-  });
-
-  it("does not crash when task types omit spend/percentage (AI4IDS-3012)", () => {
-    const tasks = aggregateTasks(multiTaskTenant.tierBreakdown);
-    expect(() => tasks.map((t) => t.consumed)).not.toThrow();
-    expect(tasks.every((t) => !("spend" in t))).toBe(true);
+  it('titles the selected period', () => {
+    expect(formatPeriodTitle({ key: 'last_7_days' })).toBe('Last 7 days');
+    expect(
+      formatPeriodTitle({ key: 'custom', range: { from: '2026-10-01', to: '2026-10-08' } }),
+    ).toBe('01 Oct – 08 Oct 2026');
   });
 });

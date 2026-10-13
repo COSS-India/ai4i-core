@@ -18,13 +18,14 @@ import {
 import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
 import type { ApplicationUsageDetail } from "../../types/applicationUsage";
-import { formatSpendMoney } from "../../utils/usageSpendHelpers";
+import { formatSpendMoney, formatSpendMoneyExact } from "../../utils/usageSpendHelpers";
 import DataTable, { type DataTableColumn } from "../common/table";
 import {
   AllocatedPctPill,
   ApiKeyStatusBadge,
   ApplicationRemainingCell,
   ApplicationSpendCell,
+  PeriodSpendCell,
 } from "./ApplicationUsageCells";
 import { BudgetCell, TenantAvatar } from "./UsageSpendCells";
 
@@ -32,6 +33,8 @@ interface ApplicationUsageDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   detail: ApplicationUsageDetail | null;
+  /** Selected period, e.g. "Last 7 days". */
+  periodTitle: string;
   isLoading: boolean;
   errorMessage?: string | null;
   currency?: string;
@@ -45,6 +48,7 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
   isOpen,
   onClose,
   detail,
+  periodTitle,
   isLoading,
   errorMessage = null,
   currency = "INR",
@@ -59,7 +63,7 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
       {
         id: "keyName",
         header: cols.API_KEY,
-        width: "26%",
+        width: "22%",
         minWidth: "120px",
         sortable: true,
         sortAccessor: (key) => key.keyName ?? "",
@@ -84,7 +88,7 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
         id: "allocated",
         header: cols.ALLOCATED_SHORT,
         hint: tips.API_KEY_ALLOCATED,
-        width: "22%",
+        width: "18%",
         sortable: true,
         sortAccessor: (key) => key.allocatedBudget.amount,
         cell: (key) => {
@@ -108,10 +112,32 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
         ),
       },
       {
+        id: "periodSpend",
+        header: cols.PERIOD_SPEND_SHORT,
+        hint: tips.API_KEY_PERIOD_SPEND,
+        width: "16%",
+        sortable: true,
+        sortAccessor: (key) => key.periodSpend.amount,
+        cell: (key) => (
+          <PeriodSpendCell
+            amount={key.periodSpend.amount}
+            percentage={key.periodSpend.percentage}
+            currency={currency}
+            hasBudget={key.allocatedBudget.amount > 0}
+            ofAllocationLabel={cols.PERIOD_OF_ALLOCATION}
+          />
+        ),
+        footer: (
+          <Text fontWeight="extrabold" fontSize="13px" color="gray.800">
+            {formatSpendMoneyExact(detail.totals.periodSpend, currency)}
+          </Text>
+        ),
+      },
+      {
         id: "spend",
         header: cols.SPEND_SHORT,
         hint: tips.API_KEY_SPEND,
-        width: "30%",
+        width: "26%",
         sortable: true,
         sortAccessor: (key) => key.spendBudget.amount,
         cell: (key) => {
@@ -142,7 +168,7 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
         id: "remaining",
         header: cols.REMAINING_SHORT,
         hint: tips.API_KEY_REMAINING,
-        width: "22%",
+        width: "18%",
         sortable: true,
         sortAccessor: (key) => key.remainingBudget.amount,
         cell: (key) => {
@@ -223,6 +249,33 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
                 {copy.DRAWER_NO_BUDGET}
               </Text>
             )}
+          </Box>
+        </Box>
+
+        <Box>
+          <HStack justify="space-between" align="baseline" mb="10px">
+            <Text fontSize="11.5px" letterSpacing="0.05em" color="gray.500" fontWeight="bold">
+              {copy.DRAWER_PERIOD_SPEND}
+            </Text>
+            <Text fontSize="12px" color="gray.500">
+              {periodTitle}
+            </Text>
+          </HStack>
+          <Box
+            bg={CARD_BG}
+            borderRadius="12px"
+            borderWidth="1px"
+            borderColor="gray.200"
+            p="18px 20px"
+            opacity={isLoading ? 0.55 : 1}
+          >
+            <PeriodSpendCell
+              amount={detail.periodSpend.amount}
+              percentage={detail.periodSpend.percentage}
+              currency={currency}
+              hasBudget={hasBudget}
+              ofAllocationLabel={cols.PERIOD_OF_ALLOCATION}
+            />
           </Box>
         </Box>
 
