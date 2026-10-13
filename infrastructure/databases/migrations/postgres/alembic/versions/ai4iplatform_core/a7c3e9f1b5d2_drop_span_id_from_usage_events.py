@@ -1,30 +1,5 @@
 """drop span_id from usage_events: one row per request
 
-The inference service now emits one billable ai-inference span per request,
-carrying the request's summed units; services that call the model more than
-once per request (TTS chunks, per-item audio) record each call as an
-ai-inference-call child span, which the billing consumer ignores. With one
-billed span per request, span_id no longer tells rows apart, so the primary
-key becomes (correlation_id, occurred_at). occurred_at is the span's end time
-and is identical on a Kafka redelivery, so a redelivered span still hits the
-key and writes nothing (ON CONFLICT DO NOTHING). Postgres requires the
-partition column in every unique key, which occurred_at is.
-
-Existing rows: rows written before this change keep one row per span (a
-chunked TTS request stays several rows, each with its own occurred_at). Two
-rows can only collide on the new key if two spans of one correlation id
-ended in the same microsecond. The migration doesn't guess how to combine
-them: it checks first and stops with an error listing them, before changing
-anything, so they can be resolved by hand (DUPLICATES_SQL finds them all).
-
-Locking: dropping and re-adding the primary key on the partitioned parent
-rebuilds the unique index on every partition under an exclusive lock, so
-writes to usage_events wait for the duration. The billing consumer's insert
-runs in a savepoint and retries through Kafka, so nothing is lost.
-
-downgrade() restores span_id with a constant placeholder; (correlation_id,
-occurred_at) is unique at that point, so the old key accepts every row.
-
 Revision ID: a7c3e9f1b5d2
 Revises: e8972603749c
 Create Date: 2026-10-13
