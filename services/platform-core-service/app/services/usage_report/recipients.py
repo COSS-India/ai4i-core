@@ -8,6 +8,7 @@ user whose email fails to decrypt is skipped, as RecipientResolver does.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Callable, Optional
 
 from sqlalchemy import text
@@ -30,12 +31,19 @@ _ROLE_USERS_SQL = text(
 )
 
 
-async def usage_viewer_emails(
+@dataclass(frozen=True)
+class Recipient:
+    user_id: str
+    email: str
+
+
+async def usage_viewers(
     auth_db: AsyncSession, decrypt_email: Callable[[Optional[str]], Optional[str]]
-) -> list[str]:
-    """Active Usage Viewers' emails, one per address (case-insensitive), sorted."""
+) -> list[Recipient]:
+    """Active Usage Viewers, one per address (case-insensitive), sorted by email.
+    Two accounts sharing an address get one email, logged under the first id."""
     rows = (await auth_db.execute(_ROLE_USERS_SQL, {"role": USAGE_VIEWER_ROLE})).all()
-    emails: dict[str, str] = {}
+    by_email: dict[str, Recipient] = {}
     for user_id, encrypted in rows:
         try:
             email = decrypt_email(encrypted)
@@ -43,5 +51,12 @@ async def usage_viewer_emails(
             logger.warning("Skipping Usage Viewer %s: email failed to decrypt: %s", user_id, exc)
             continue
         if email:
-            emails.setdefault(email.strip().lower(), email.strip())
-    return sorted(emails.values(), key=str.lower)
+            by_email.setdefault(email.strip().lower(), Recipient(str(user_id), email.strip()))
+    return sorted(by_email.values(), key=lambda r: r.email.lower())
+
+
+async def usage_viewer_emails(
+    auth_db: AsyncSession, decrypt_email: Callable[[Optional[str]], Optional[str]]
+) -> list[str]:
+    """Active Usage Viewers' emails, one per address (case-insensitive), sorted."""
+    return [r.email for r in await usage_viewers(auth_db, decrypt_email)]

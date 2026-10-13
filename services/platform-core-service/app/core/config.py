@@ -8,6 +8,7 @@ All env vars use UPPER_SNAKE_CASE; pydantic-settings is case-insensitive so
 both .env and OS-level vars are accepted.
 """
 
+from datetime import date
 from typing import Optional
 
 from pydantic import Field, field_validator
@@ -213,6 +214,15 @@ class CoreSettings(BaseSettings):
     # Name signed above "AI4I Orchestrate Support Team" in the Usage Viewer
     # report email (app.scripts.send_usage_report). None → team name only.
     usage_report_sender_name: Optional[str] = None
+    # Scheduled Usage Viewer report (POST /internal/usage-report/run, triggered
+    # daily by the pyjob `usage_report` CronJob). The job usually passes its own
+    # frequency; this is the fallback when it doesn't. weekly | fortnightly | monthly.
+    usage_report_frequency: str = "monthly"
+    # Fortnights are 14-day blocks counted from this Monday, so every run agrees
+    # on where a fortnight starts.
+    usage_report_fortnight_anchor: date = date(2026, 1, 5)
+    # Sends tried per recipient per period (one per daily run) before giving up.
+    usage_report_max_attempts: int = Field(default=3, ge=1)
 
     # ── Branding (same PLATFORM_NAME / ADOPTER_LOGO_URL pair as auth-service
     # and kafka-consumers — AI4IDS-3043), copied from the root .env by

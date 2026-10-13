@@ -1,4 +1,4 @@
-"""Email the monthly programme report to every Usage Viewer (AI4IDS-3278).
+"""Email the programme report to every Usage Viewer (AI4IDS-3278).
 
 Run manually inside the platform-core container (it reuses the service's
 .env: databases, PROMETHEUS_URL, SMTP, PII_ENCRYPTION_KEY, PORTAL_URL):
@@ -7,12 +7,17 @@ Run manually inside the platform-core container (it reuses the service's
     python -m app.scripts.send_usage_report --period 2026-09
     python -m app.scripts.send_usage_report --to me@example.com  # test: only these address(es)
     python -m app.scripts.send_usage_report --dry-run --out-dir /tmp/report
+    python -m app.scripts.send_usage_report --scheduled [--frequency weekly]
 
 --dry-run sends nothing: it writes the PDF and the email (HTML + text) to
 --out-dir so they can be checked first.
 
-There is no scheduler and no duplicate check (agreed for this release):
+A manual run (--period / default) has no duplicate check and isn't logged:
 every run sends the report again to every recipient.
+
+--scheduled runs what the daily pyjob `usage_report` CronJob triggers
+(POST /internal/usage-report/run): the due period of the configured
+frequency, once per Usage Viewer, retried and logged in usage_report_send_log.
 
 If any figure fails to load (e.g. Prometheus unreachable mid-run), nothing
 is sent unless --allow-partial is given, so officials never get a report
@@ -40,7 +45,7 @@ EXIT_OK, EXIT_FAILED, EXIT_USAGE = 0, 1, 2
 def _parse_args(argv: Optional[list[str]]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="python -m app.scripts.send_usage_report",
-        description="Email the monthly programme report to every Usage Viewer.",
+        description="Email the programme report to every Usage Viewer.",
     )
     p.add_argument("--period", metavar="YYYY-MM",
                    help="month to report on (default: the last complete month, IST)")
@@ -51,6 +56,10 @@ def _parse_args(argv: Optional[list[str]]) -> argparse.Namespace:
     p.add_argument("--out-dir", default=".", help="where --dry-run writes its files (default: .)")
     p.add_argument("--allow-partial", action="store_true",
                    help="send even if some figures failed to load (they show as N/A)")
+    p.add_argument("--scheduled", action="store_true",
+                   help="run the scheduled send (due period, once per Usage Viewer, logged)")
+    p.add_argument("--frequency", choices=("weekly", "fortnightly", "monthly"),
+                   help="with --scheduled: overrides USAGE_REPORT_FREQUENCY")
     return p.parse_args(argv)
 
 
@@ -88,12 +97,16 @@ async def run(args: argparse.Namespace) -> int:
     from app.services.usage_report.collector import UsageReportCollector
     from app.services.usage_report.mailer import deliver, email_settings
     from app.services.usage_report.pdf import render_report_pdf
-    from app.services.usage_report.period import ReportMonth
+    from app.services.usage_report.period import MONTHLY, ReportPeriod
+    from app.services.usage_report.scheduler import BUSY, DONE, NOTHING_DUE, run_scheduled_report
     from app.services.usage_report.recipients import usage_viewer_emails
     from app.utils.prometheus_client import PrometheusClient
 
+    if args.scheduled and (args.period or args.to or args.dry_run or args.allow_partial):
+        logger.error("--scheduled takes only --frequency; it always sends the due period to the Usage Viewers")
+        return EXIT_USAGE
     try:
-        month = ReportMonth.parse(args.period) if args.period else ReportMonth.last_complete()
+        month = ReportPeriod.parse_month(args.period) if args.period else ReportPeriod.latest_complete(MONTHLY)
     except ValueError as exc:
         logger.error("%s", exc)
         return EXIT_USAGE
@@ -107,6 +120,15 @@ async def run(args: argparse.Namespace) -> int:
     init_auth_database()
     http = httpx.AsyncClient()
     try:
+        if args.scheduled:
+            try:
+                result = await run_scheduled_report(args.frequency, http)
+            except (ValueError, RuntimeError) as exc:
+                logger.error("%s", exc)
+                return EXIT_FAILED
+            logger.info("Scheduled usage report: %s", result.as_dict())
+            ok = result.status in (NOTHING_DUE, BUSY) or (result.status == DONE and not result.failed)
+            return EXIT_OK if ok else EXIT_FAILED
         auth_factory = get_auth_session_factory()
         if auth_factory is None:
             logger.error("AUTH_DB_NAME is not set; institutions, budgets and recipients live in the auth DB")

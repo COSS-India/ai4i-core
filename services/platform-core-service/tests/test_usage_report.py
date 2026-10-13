@@ -24,11 +24,11 @@ from app.services.usage_report.collector import (
     UsageReportCollector,
 )
 from app.services.usage_report.pdf import render_report_html, render_report_pdf, report_context
-from app.services.usage_report.period import ReportMonth
+from app.services.usage_report.period import ReportPeriod
 from app.services.usage_report.recipients import usage_viewer_emails
 
 UTC = timezone.utc
-SEP = ReportMonth(2026, 9)
+SEP = ReportPeriod.month(2026, 9)
 AFTER_SEP = datetime(2026, 10, 13, 9, 0, tzinfo=UTC)
 SEP_START = datetime(2026, 8, 31, 18, 30, tzinfo=UTC)  # 1 Sep 00:00 IST
 SEP_END = datetime(2026, 9, 30, 18, 30, tzinfo=UTC)    # 1 Oct 00:00 IST
@@ -37,14 +37,14 @@ SEP_END = datetime(2026, 9, 30, 18, 30, tzinfo=UTC)    # 1 Oct 00:00 IST
 # ── period ───────────────────────────────────────────────────────────────────
 
 
-class TestReportMonth:
+class TestMonthlyPeriod:
     def test_parse(self):
-        assert ReportMonth.parse("2026-08") == ReportMonth(2026, 8)
+        assert ReportPeriod.parse_month("2026-08") == ReportPeriod.month(2026, 8)
 
     @pytest.mark.parametrize("bad", ["2026-13", "2026-00", "2026-8", "Aug 2026", ""])
     def test_parse_rejects_bad_values(self, bad):
         with pytest.raises(ValueError):
-            ReportMonth.parse(bad)
+            ReportPeriod.parse_month(bad)
 
     def test_resolves_to_the_dashboards_ist_day_period(self):
         p = SEP.usage_period(AFTER_SEP)
@@ -54,12 +54,12 @@ class TestReportMonth:
 
     def test_unfinished_month_is_rejected(self):
         with pytest.raises(ValueError, match="October 2026"):
-            ReportMonth(2026, 10).usage_period(AFTER_SEP)
+            ReportPeriod.month(2026, 10).usage_period(AFTER_SEP)
 
     def test_last_complete_wraps_year_in_ist(self):
-        assert ReportMonth(2026, 1).previous() == ReportMonth(2025, 12)
+        assert ReportPeriod.month(2026, 1).previous() == ReportPeriod.month(2025, 12)
         # 1 Jan 03:00 IST is still 31 Dec in UTC; the last complete IST month is December.
-        assert ReportMonth.last_complete(datetime(2025, 12, 31, 21, 30, tzinfo=UTC)) == ReportMonth(2025, 12)
+        assert ReportPeriod.latest_complete("monthly", datetime(2025, 12, 31, 21, 30, tzinfo=UTC)) == ReportPeriod.month(2025, 12)
 
 
 # ── formatting ───────────────────────────────────────────────────────────────
@@ -305,7 +305,7 @@ class TestCollector:
     async def test_refuses_a_month_that_has_not_ended(self, retention_90d, repo):
         collector, _, _ = self._collector()
         with pytest.raises(ValueError, match="yesterday or earlier"):
-            await collector.collect(ReportMonth(2026, 10), now=AFTER_SEP)
+            await collector.collect(ReportPeriod.month(2026, 10), now=AFTER_SEP)
 
     @pytest.mark.asyncio
     async def test_refuses_a_month_older_than_prometheus_retention(self, monkeypatch, repo):
@@ -533,7 +533,8 @@ class TestDeliver:
             _full_data(), b"%PDF", ["a@x.gov.in", "b@x.gov.in", "c@x.gov.in"], _email_cfg(), send=send
         )
         assert seen == ["a@x.gov.in", "b@x.gov.in", "c@x.gov.in"]  # never more than one To
-        assert sent == ["a@x.gov.in", "c@x.gov.in"] and failed == ["b@x.gov.in"]
+        assert sent == ["a@x.gov.in", "c@x.gov.in"] and list(failed) == ["b@x.gov.in"]
+        assert "relay refused" in failed["b@x.gov.in"]
 
     @pytest.mark.asyncio
     async def test_header_injection_in_to_fails_that_recipient_only(self, portal):
@@ -684,11 +685,11 @@ class TestSendScript:
 
         monkeypatch.setattr(database, "get_auth_session_factory", lambda: _Session, raising=False)
         monkeypatch.setattr(database, "get_primary_session_factory", lambda: _Session, raising=False)
-        state = SimpleNamespace(data=_full_data(), deliver=AsyncMock(return_value=(["v@x.gov.in"], [])),
+        state = SimpleNamespace(data=_full_data(), deliver=AsyncMock(return_value=(["v@x.gov.in"], {})),
                                 prom_query=prom_query)
         monkeypatch.setattr(
             "app.services.usage_report.collector.UsageReportCollector.collect",
-            AsyncMock(side_effect=lambda month: state.data),
+            AsyncMock(side_effect=lambda period: state.data),
         )
         monkeypatch.setattr("app.services.usage_report.recipients.usage_viewer_emails",
                             AsyncMock(return_value=["v@x.gov.in"]))
@@ -732,7 +733,7 @@ class TestSendScript:
     @pytest.mark.asyncio
     async def test_partial_send_exits_non_zero(self, wired):
         script, state = wired
-        state.deliver.return_value = (["a@x.gov.in"], ["b@x.gov.in"])
+        state.deliver.return_value = (["a@x.gov.in"], {"b@x.gov.in": "relay refused"})
         assert await script.run(script._parse_args(["--period", "2026-09"])) == script.EXIT_FAILED
 
     @pytest.mark.asyncio
@@ -741,6 +742,26 @@ class TestSendScript:
         state.prom_query.side_effect = RuntimeError("connection refused")
         assert await script.run(script._parse_args(["--period", "2026-09"])) == script.EXIT_FAILED
         state.deliver.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status,failed,code", [
+        ("done", [], 0), ("nothing_due", [], 0), ("busy", [], 0),
+        ("done", ["u2"], 1), ("not_ready", [], 1), ("no_recipients", [], 1),
+    ])
+    async def test_scheduled_runs_the_scheduler_and_maps_its_outcome(self, wired, monkeypatch, status, failed, code):
+        from app.services.usage_report import scheduler
+
+        script, state = wired
+        run = AsyncMock(return_value=scheduler.RunResult(status, "weekly", "p", [], failed))
+        monkeypatch.setattr(scheduler, "run_scheduled_report", run)
+        assert await script.run(script._parse_args(["--scheduled", "--frequency", "weekly"])) == code
+        assert run.await_args.args[0] == "weekly"
+        state.deliver.assert_not_awaited()  # the manual path is not used
+
+    @pytest.mark.asyncio
+    async def test_scheduled_rejects_manual_options(self, wired):
+        script, state = wired
+        assert await script.run(script._parse_args(["--scheduled", "--to", "me@x.gov.in"])) == script.EXIT_USAGE
 
     @pytest.mark.asyncio
     async def test_bad_period_is_a_usage_error(self, wired):

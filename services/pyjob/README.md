@@ -37,6 +37,7 @@ It is picked up automatically. The launcher opens the DB engines before `run()` 
 |---|---|---|
 | `daily_usage_consolidation` | `30 18 * * *` (00:00 IST) | Keeps `usage_events` partitioned by IST day (converts the migration's UTC month partitions, and any UTC day partitions, on its first run; creates `USAGE_EVENTS_DAYS_AHEAD` days ahead; past days are kept), then rolls the IST day that just ended and the `USAGE_ROLLUP_LOOKBACK_DAYS` before it into `daily_usage`, with `billing_month` the UTC month of `occurred_at` |
 | `monthly_partition_rollover` | `0 0 1 * *` (05:30 IST) | Creates `daily_usage` month partitions `PARTITION_MONTHS_AHEAD` months ahead (moving any of their rows out of the DEFAULT partition first); past months are kept |
+| `usage_report` | daily, business hours, after `daily_usage_consolidation` (DevOps) | Calls platform-core `POST /internal/usage-report/run`: emails the Usage Viewer report for the latest complete period of `USAGE_REPORT_FREQUENCY` (weekly / fortnightly / monthly) to every Usage Viewer who hasn't had it, retries earlier failures, and logs each send in `usage_report_send_log`. Nothing due → sends nothing |
 
 ## Running
 

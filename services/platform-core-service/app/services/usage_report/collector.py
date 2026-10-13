@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.pay_per_use.usage_repository import UsageRepository
 from app.services.metering_service import MeteringService
-from app.services.usage_report.period import ReportMonth
+from app.services.usage_report.period import ReportPeriod
 from app.utils.metering_promql_builder import (
     SERVICE_BREAKDOWN_CONFIG,
     AbsoluteRange,
@@ -103,7 +103,7 @@ class PeriodSpend:
 
 @dataclass
 class ReportData:
-    period: ReportMonth
+    period: ReportPeriod
     generated_at: datetime
     # Platform health
     total_requests: Optional[int] = None
@@ -132,7 +132,7 @@ class ReportData:
 
     @property
     def days(self) -> int:
-        return self.period.last_day.day
+        return self.period.days
 
     @property
     def error_rate_pct(self) -> Optional[float]:
@@ -176,21 +176,21 @@ class UsageReportCollector:
         self._auth_db = auth_db
         self._core_db = core_db
 
-    async def collect(self, month: ReportMonth, now: Optional[datetime] = None) -> ReportData:
-        """Raises ValueError for a month that hasn't ended or that Prometheus no
+    async def collect(self, report_period: ReportPeriod, now: Optional[datetime] = None) -> ReportData:
+        """Raises ValueError for a period that hasn't ended or that Prometheus no
         longer fully retains — either would report silently wrong numbers."""
         now = now or datetime.now(timezone.utc)
-        period = month.usage_period(now)
+        period = report_period.usage_period(now)
         await self._metering.refresh_retention()
         edge = retention_edge(now)
         if period.start < edge:
             raise ValueError(
-                f"{month.label} starts before the oldest retained metering data "
+                f"{report_period.label} starts before the oldest retained metering data "
                 f"({edge:%Y-%m-%d}); its request figures would be incomplete"
             )
-        prev = month.previous().usage_period(now)
+        prev = report_period.previous().usage_period(now)
         prev_retained = prev.start >= edge
-        data = ReportData(period=month, generated_at=now)
+        data = ReportData(period=report_period, generated_at=now)
         rng = _range(period)
 
         data.total_requests = await self._try(data, "total_requests", self._metering.inference_request_total(rng))

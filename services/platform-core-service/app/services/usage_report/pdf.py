@@ -126,14 +126,14 @@ def _adoption(d: ReportData) -> dict:
 
 def _budget(d: ReportData) -> dict:
     b, ps = d.budget, d.period_spend
-    month = d.period.first_day.strftime("%b")
+    span = d.period.short_label
     if ps is None:
-        spent_card = _card(f"Spent ({month})", None, "Usage not recorded for this period")
+        spent_card = _card(f"Spent ({span})", None, "Usage not recorded for this period")
         burn_card = _card("Burn rate (per day)", None, "Usage not recorded for this period")
     else:
         note = (f"Recorded since {ps.since.astimezone(IST):%d %b}" if ps.since
                 else (f"Lifetime to date: {fmt.inr(b.spent)}" if b else None))
-        spent_card = _card(f"Spent ({month})", fmt.inr(ps.amount), note)
+        spent_card = _card(f"Spent ({span})", fmt.inr(ps.amount), note)
         burn_card = _card("Burn rate (per day)", fmt.inr(ps.burn_rate), f"Average over {ps.covered_days} day(s)")
     used = b.used_pct if b else None
     return {

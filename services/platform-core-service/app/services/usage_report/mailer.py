@@ -36,7 +36,7 @@ def attachment_name(data: ReportData) -> str:
 
 
 def subject(data: ReportData) -> str:
-    return f"{SUBJECT_BRAND} – Monthly programme report – {data.period.label}"
+    return f"{SUBJECT_BRAND} – {data.period.title} programme report – {data.period.label}"
 
 
 def portal_link() -> Optional[str]:
@@ -46,10 +46,8 @@ def portal_link() -> Optional[str]:
 def summary_lines(data: ReportData) -> list[str]:
     """Only figures the platform tracks. Availability, P95 latency, providers,
     financial-year totals and the budget line are left out until they are."""
-    month = data.period.month_name
-    prev_month = data.period.previous().month_name
     live_change = (
-        f" ({fmt.signed_int(data.active_institutions_change)} vs {prev_month})"
+        f" ({fmt.signed_int(data.active_institutions_change)} {data.period.vs_phrase})"
         if data.active_institutions_change is not None else ""
     )
     requests_change = (
@@ -58,7 +56,7 @@ def summary_lines(data: ReportData) -> list[str]:
     return [
         f"Platform health: {fmt.pct(data.error_rate_pct)} error rate.",
         f"Model portfolio: {fmt.count(data.total_models)} Models; "
-        f"{fmt.count(data.active_models)} were used in {month}.",
+        f"{fmt.count(data.active_models)} were used {data.period.in_phrase}.",
         f"Adoption: {fmt.count(data.active_institutions)} of {fmt.count(data.total_institutions)} "
         f"Institutions were live{live_change}. {fmt.count(data.total_requests)} requests were "
         f"served{requests_change}.",
@@ -144,21 +142,21 @@ async def deliver(
     recipients: list[str],
     email_cfg: EmailSettings,
     send: Sender = send_report_mime,
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], dict[str, str]]:
     """One email per recipient, so no recipient sees another's address. A
     failed recipient is logged and the rest still get theirs.
 
-    Returns (sent, failed) recipient lists."""
+    Returns (sent recipients, {failed recipient: error})."""
     filename = attachment_name(data)
     sent: list[str] = []
-    failed: list[str] = []
+    failed: dict[str, str] = {}
     for to in recipients:
         try:
             await send(build_report_mime(render_email(data, to), pdf, filename, email_cfg), email_cfg)
             sent.append(to)
             logger.info("usage report %s sent to %s", data.period.key, to)
         except Exception as exc:
-            failed.append(to)
             reason = exc.__cause__.__class__.__name__ if exc.__cause__ else exc.__class__.__name__
-            logger.error("usage report %s NOT sent to %s: %s (%s)", data.period.key, to, exc, reason)
+            failed[to] = f"{exc} ({reason})"
+            logger.error("usage report %s NOT sent to %s: %s", data.period.key, to, failed[to])
     return sent, failed
