@@ -161,8 +161,18 @@ export const validatePricePerUnit = (
   return null;
 };
 
-/** Field labels; LLM prices its tokens per category. */
+/** Field labels. LLM replaces the single price with the three token prices. */
 export const PRICE_LABEL = "Price per unit size";
-export const LLM_INPUT_PRICE_LABEL = "Input price per unit size";
-export const LLM_CACHED_INPUT_PRICE_LABEL = "Cached input price per unit size";
-export const LLM_OUTPUT_PRICE_LABEL = "Output price per unit size";
+export const LLM_INPUT_PRICE_LABEL = "Input Token Price";
+export const LLM_CACHED_INPUT_PRICE_LABEL = "Cached Input Token Price";
+export const LLM_OUTPUT_PRICE_LABEL = "Output Token Price";
+
+/**
+ * Empty stays unset. "0" stays 0 — a free price is valid and must be sent.
+ */
+export const parsePricePerUnit = (value: string): number | undefined => {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const price = Number(trimmed);
+  return Number.isFinite(price) ? price : undefined;
+};

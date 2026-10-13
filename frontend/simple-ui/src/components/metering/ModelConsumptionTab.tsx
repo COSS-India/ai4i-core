@@ -174,7 +174,10 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
                 visibility={hasTokenBreakdown(row) ? "visible" : "hidden"}
                 transform={isOpen ? "rotate(90deg)" : undefined}
                 transition="transform 0.15s ease"
-                onClick={() => toggleRow(key)}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  toggleRow(key);
+                }}
               />
               {row.task_type ? (
                 <TaskTypeLabel

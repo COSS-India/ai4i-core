@@ -120,19 +120,27 @@ export const FIELD_HINTS = {
         `${min}–${max} characters. Describes the infrastructure this service runs on.`,
     },
     unitType: { helper: "Auto-set based on the task type", needTaskType: "Select a task type first" },
-    unitSize: { placeholder: "Select unit size", helper: "Defines the unit size for pricing" },
+    unitSize: {
+      placeholder: "Select unit size",
+      helper: "Defines the unit size for pricing",
+      llmHelper:
+        "Input, cached input, and output token prices are all charged per this many tokens.",
+    },
     price: {
       placeholder: "Enter price",
       helper: `e.g., 600. Must be between 0 and ${PRICE_PER_UNIT_MAX_LABEL}`,
     },
     llmInputPrice: {
-      helper: `Price of input tokens that were not cached. Between 0 and ${PRICE_PER_UNIT_MAX_LABEL}`,
+      placeholder: "Enter input token price",
+      helper: `Price of input tokens that were not cached, per the selected unit size. Between 0 and ${PRICE_PER_UNIT_MAX_LABEL}. Zero is allowed.`,
     },
     llmCachedInputPrice: {
-      helper: `Price of input tokens served from the model's prefix cache. Between 0 and ${PRICE_PER_UNIT_MAX_LABEL}`,
+      placeholder: "Enter cached input token price",
+      helper: `Price of input tokens served from the prefix cache, per the selected unit size. Between 0 and ${PRICE_PER_UNIT_MAX_LABEL}. Zero is allowed.`,
     },
     llmOutputPrice: {
-      helper: `Price of generated output tokens. Between 0 and ${PRICE_PER_UNIT_MAX_LABEL}`,
+      placeholder: "Enter output token price",
+      helper: `Price of generated output tokens, per the selected unit size. Between 0 and ${PRICE_PER_UNIT_MAX_LABEL}. Zero is allowed.`,
     },
     tier: { placeholder: "Select applicable tier(s)", helper: "Select at least one" },
     tierSearch: { placeholder: "Search tiers..." },

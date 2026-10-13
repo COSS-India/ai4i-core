@@ -35,6 +35,7 @@ import {
   SERVICE_NAME_MAX_LEN,
   sanitizeServiceId,
   validateHardwareDescription,
+  parsePricePerUnit,
   validatePricePerUnit,
   LLM_CACHED_INPUT_PRICE_LABEL,
   LLM_INPUT_PRICE_LABEL,
@@ -893,8 +894,8 @@ export function useServicesManagement() {
   const llmPrices = (): Pick<Service, "cachedInputCostPerUnit" | "outputCostPerUnit"> =>
     isLlmTaskType
       ? {
-          cachedInputCostPerUnit: Number(cachedInputPricePerUnit),
-          outputCostPerUnit: Number(outputPricePerUnit),
+          cachedInputCostPerUnit: parsePricePerUnit(cachedInputPricePerUnit),
+          outputCostPerUnit: parsePricePerUnit(outputPricePerUnit),
         }
       : {};
 
@@ -920,7 +921,7 @@ export function useServicesManagement() {
           serviceId,
           serviceDescription: formData.serviceDescription,
           task_type: formData.task_type,
-          costPerUnit: pricePerUnit ? Number(pricePerUnit) : undefined,
+          costPerUnit: parsePricePerUnit(pricePerUnit),
           ...llmPrices(),
           unitSize: unitSize ? Number(unitSize) : undefined,
           tierIds: selectedTiers,
@@ -985,7 +986,7 @@ export function useServicesManagement() {
           hardwareDescription: formData.hardwareDescription?.trim() || "",
           api_key: "",
           status: "active",
-          costPerUnit: pricePerUnit ? Number(pricePerUnit) : undefined,
+          costPerUnit: parsePricePerUnit(pricePerUnit),
           ...llmPrices(),
           unitSize: unitSize ? Number(unitSize) : undefined,
           tierIds,
