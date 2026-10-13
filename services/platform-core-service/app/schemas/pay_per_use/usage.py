@@ -7,49 +7,55 @@ from pydantic import BaseModel
 from app.schemas.period import Period
 
 
-class SpendItem(BaseModel):
+class QuotaUsageItem(BaseModel):
+    """One task type's quota usage in the summary's billing month."""
     modelTaskType: str
     unit: str
+    # Units used in the billing month (ppu_quota_usage), summed across tenants.
     consumption: float
-    # Quota allocated for this task type this billing_month, summed across tenants'
-    # CURRENT tier only (see UsageService.get_summary) — None when no tenant in
-    # scope has a quota snapshot for it. consumption is the used-side counterpart,
-    # already in the same unit; a per-type field generalizes to any number of task
-    # types in scope (unlike a single flat total, which can only ever hold one unit).
+    # Quota allocated for this task type, summed across tenants' CURRENT tier only
+    # (a grant resets on reassignment, it isn't cumulative) — None when no tenant in
+    # scope has a quota snapshot for it. Same unit as consumption.
     allocated: Optional[float] = None
-    # No spend/percentage here (and never one) — ppu_quota_usage has no per-task-type
-    # money column; real spend only exists at the tenant-total level, sourced from
-    # budget_usage.api_key_budget_used (see UsageSummaryResponse.totalSpend).
+    # No money here: ppu_quota_usage has no per-task-type money column; spend only
+    # exists per institution, in SummaryBudget.
+
+
+class SummaryBudget(BaseModel):
+    """Budget across institutions — all-time, never scoped by billing_period.
+
+    budget_usage is a running total with no month dimension, so spend and the
+    balance are lifetime figures. Covers every institution with a budget on file
+    (tenants.allocated_budget set), whether or not it has quota rows, so
+    institutions on untiered keys count too; DEACTIVATED institutions are left out.
+    """
+    basis: Literal["all_time"] = "all_time"
+    institutions: int           # institutions with a budget on file, in scope
+    allocated: float            # sum of their allocated budgets
+    spent: float                # sum of their lifetime spend (budget_usage)
+    remaining: float            # allocated − spent; negative when overspent overall
+    # Institutions whose lifetime spend has reached their budget (spent >= budget,
+    # the same rule billing uses to block a key); a zero budget doesn't count.
+    exceededTenants: int
+
+
+class SummaryQuota(BaseModel):
+    """Quota usage — one billing month (all months when billingMonth is null)."""
+    basis: Literal["billing_month", "all_time"]
+    # The billing_period requested; null when omitted (all months up to now). Null
+    # rather than a sentinel string, so echoing it back as billing_period works.
+    billingMonth: Optional[str] = None
+    # Institutions with quota usage in scope.
+    activeTenants: int
+    byTaskType: list[QuotaUsageItem]
 
 
 class UsageSummaryResponse(BaseModel):
-    # None (all-time) rather than a sentinel string like "lifetime": billing_period on
-    # this and the other /usage-* routes is validated against
-    # ^\d{4}-(0[1-9]|1[0-2])$, which "lifetime" would fail — a client that reads this
-    # value and echoes it back as billing_period (e.g. into /usage-tenant) must get a
-    # value that round-trips, and omitting the param is how all-time is requested there
-    # too. application_usage_service's own ApplicationUsageSummaryResponse.billingPeriod
-    # is NOT the same case: those routes declare no billing_period param at all, so
-    # its "lifetime" constant can never be fed back into a query string.
-    billingPeriod: Optional[str] = None
-    # Real, tenant-total spend (sum of budget_usage.api_key_budget_used across every
-    # tenant in scope) — always lifetime-cumulative, since budget_usage carries no
-    # per-month dimension (see UsageService.get_summary / get_tenant_budgets).
-    totalSpend: float
+    """Key metrics strip: budget (all-time) and quota (monthly), kept apart because
+    they have different time bases — billing_period scopes quota only."""
     currency: str
-    activeTenants: int
-    budgetExceededTenants: int
-    # No spendChangePercent (month-over-month spend delta) here, and never one —
-    # budget_usage (where real spend lives) has no per-month breakdown to compare
-    # against; this isn't "not yet populated," it's structurally uncomputable, so
-    # it's not a field at all rather than a permanently-null one (see
-    # UsageService.get_summary's docstring).
-    spendByModelTaskType: list[SpendItem]
-    # Money totals: always computable (single currency, one INR figure per tenant),
-    # summed across every tenant with a budget assignment covering this billing_month
-    # (see UsageService.get_summary / _resolve_budget's has_budget).
-    totalAllocatedBudget: float = 0
-    totalRemainingBudget: float = 0
+    budget: SummaryBudget
+    quota: SummaryQuota
 
 
 class MonthlyQuota(BaseModel):

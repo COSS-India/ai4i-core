@@ -1,7 +1,8 @@
 """Usage service — the Usage Dashboard's Budget tab.
 
-/usage-summary (the Key metrics strip) is unchanged: all-time spend from
-budget_usage and usage from quota_usage. /usage-tenants and /usage-tenant
+/usage-summary (the Key metrics strip) returns two blocks with their own time
+basis: budget (all-time, budget_usage) and quota (a billing month,
+quota_usage). /usage-tenants and /usage-tenant
 report the selected period: spend and usage from usage_events or
 daily_usage (see period_usage.period_source), next to the all-time budget balance
 (budget_usage) and the current billing month's quota (quota_usage).
@@ -26,7 +27,9 @@ from app.schemas.pay_per_use.usage import (
     CostShare,
     MonthlyQuota,
     PeriodUsage,
-    SpendItem,
+    QuotaUsageItem,
+    SummaryBudget,
+    SummaryQuota,
     TaskTypeUsage,
     TenantBudget,
     TenantBudgetDetail,
@@ -365,49 +368,69 @@ class UsageService:
         task_type_ids: list[int] | None = None,
         auth_db: Optional[AsyncSession] = None,
     ) -> UsageSummaryResponse:
-        """``task_type_ids`` (from the frontend) filters consumption/allocated to those
-        task types at the query level; tier_id narrows which tenants are counted.
-        totalSpend/budgetExceededTenants are real (sum of budget_usage.
-        api_key_budget_used, see get_tenant_budgets) and always lifetime-cumulative —
-        billing_month does NOT scope them, only which tenants/usage rows are in scope
-        for consumption/allocated/activeTenants (budget_usage has no per-month
-        dimension, same reason budget/available_balance are always current-balance
-        everywhere else in this service).
+        """The Key metrics strip, as two independent blocks with their own time
+        basis: ``budget`` is all-time (see _budget_summary) and ``quota`` is the
+        billing month (see _quota_summary). billing_month scopes quota only.
+        tier_id narrows both; task_type_ids narrows quota only, as spend has no
+        per-task-type split. Without auth_db the budget block is all zeros."""
+        return UsageSummaryResponse(
+            currency=_CURRENCY,
+            budget=await self._budget_summary(tier_id, auth_db),
+            quota=await self._quota_summary(billing_month, tier_id, task_type_ids),
+        )
 
-        billing_month=None means all-time usage up to now (no month filter) for
-        consumption/allocated/tier figures; billingPeriod is null in that case (not a
-        sentinel string like "lifetime") so a caller that echoes it back as this or a
-        sibling endpoint's billing_period query param gets a value that's actually
-        valid there — omitted, meaning all-time again — instead of a 422
-        (billing_period is validated against ^\d{4}-(0[1-9]|1[0-2])$ on every
-        /usage-* route). There is no month-over-month spendChangePercent field —
-        removed entirely rather than kept as a permanently-null one, since there's
-        no per-month money breakdown to ever compare, regardless of billing_month
-        (see UsageSummaryResponse's own docstring).
+    async def _budget_summary(self, tier_id: str | None, auth_db: Optional[AsyncSession]) -> SummaryBudget:
+        """Budget across every institution with a budget on file — all-time,
+        since budget_usage is a lifetime running total. Institutions come from
+        tenants, not quota rows, so ones on untiered keys (spend, no quota rows)
+        are counted; tier_id keeps those currently on that tier.
 
-        auth_db is optional (defaults to None, matching every existing caller/test
-        that predates get_tenant_budgets needing cross-DB access) — without it,
-        budget/spend/remaining figures degrade to 0 the same way a tenant with no
-        budget on file already does (see _resolve_budget/_resolve_spent), rather than
-        raising.
-        """
+        exceededTenants counts institutions whose lifetime spend has reached
+        their budget — spent >= budget, the rule billing uses to block a key. A
+        zero budget isn't counted: nothing was allocated to exhaust."""
+        tenant_ids = await self._repo.get_budgeted_tenant_ids(auth_db, tier_id)
+        budgets = await self._repo.get_tenant_budgets(tenant_ids, auth_db)
+        allocated = spent = remaining = Decimal("0")
+        exceeded = 0
+        for tid in tenant_ids:
+            budget_limit, available_balance, has_budget = _resolve_budget(tid, budgets)
+            if not has_budget:
+                continue
+            tenant_spent = _resolve_spent(tid, budgets)
+            allocated += budget_limit
+            spent += tenant_spent
+            remaining += available_balance
+            if budget_limit > 0 and tenant_spent >= budget_limit:
+                exceeded += 1
+        return SummaryBudget(
+            institutions=len(budgets),
+            allocated=round(allocated, 2),
+            spent=round(spent, 2),
+            remaining=round(remaining, 2),
+            exceededTenants=exceeded,
+        )
+
+    async def _quota_summary(
+        self, billing_month: str | None, tier_id: str | None, task_type_ids: list[int] | None,
+    ) -> SummaryQuota:
+        """Quota usage per task type in billing_month (all months when None),
+        across institutions with ppu_quota_usage rows in scope — tier_id keeps
+        those whose most recent tier in scope is that tier."""
         assignments, usage_rows = await self._tenant_assignments_and_usage(
             billing_month, tier_id, task_type_ids
         )
 
         by_task_type: dict[str, dict] = {}
         for row in usage_rows:
-            units = _to_decimal(row.total_units)
             bucket = by_task_type.setdefault(
                 _task_type_key(row),
                 {"name": row.task_type, "unit": _row_unit(row), "units": Decimal("0")},
             )
-            bucket["units"] += units
+            bucket["units"] += _to_decimal(row.total_units)
 
         # Quota allocated per task type, summed across tenants' CURRENT tier only (not
         # summed across every tier a tenant held that month): a quota grant resets
-        # on reassignment, it isn't cumulative. Keyed by task type rather than gated to a
-        # single one in scope, so it generalizes to however many are actually present.
+        # on reassignment, it isn't cumulative.
         current_tier_by_tenant = {a.tenant_id: _tier_key(a.tier_id) for a in assignments}
         allocated_by_task_type: dict[str, Decimal] = {}
         for row in usage_rows:
@@ -419,10 +442,9 @@ class UsageService:
                 allocated_by_task_type.get(_task_type_key(row), Decimal("0")) + _to_decimal(row.quota_snap)
             )
 
-        # Keyed by catalogue id, but modelTaskType stays the name string the API
-        # has always returned.
-        spend_items = [
-            SpendItem(
+        # Keyed by catalogue id, but modelTaskType stays the name string.
+        items = [
+            QuotaUsageItem(
                 modelTaskType=b["name"],
                 unit=b["unit"],
                 consumption=b["units"],
@@ -430,45 +452,12 @@ class UsageService:
             )
             for key, b in by_task_type.items()
         ]
-        # No spend field to sort by any more (see SpendItem's docstring) — consumption
-        # (real usage volume) is the closest meaningful substitute for "biggest first".
-        spend_items.sort(key=lambda i: i.consumption, reverse=True)
-
-        active_tenants = len(assignments)
-        tenant_ids = [a.tenant_id for a in assignments]
-        budgets = await self._repo.get_tenant_budgets(billing_month, tenant_ids, auth_db)
-        # Real, tenant-total spend (sum of budget_usage.api_key_budget_used) — always
-        # lifetime-cumulative, since budget_usage carries no per-month dimension (see
-        # get_tenant_budgets' own docstring). billing_month therefore no longer scopes
-        # totalSpend/budgetExceededTenants, same as it already never scoped budget/
-        # available_balance.
-        total_spend = sum(
-            (_resolve_spent(a.tenant_id, budgets) for a in assignments), Decimal("0")
-        )
-        # A tenant with no budget row on file has an unknown limit, not a limit of 0 —
-        # they must not count as "exceeded" just for having any spend at all. This keeps
-        # the summary card consistent with the tenant list/detail view, which shows the
-        # same tenant at 0% used (see _resolve_budget) rather than "over budget."
-        budget_exceeded = 0
-        total_allocated_budget = Decimal("0")
-        total_remaining_budget = Decimal("0")
-        for a in assignments:
-            budget_limit, available_balance, has_budget = _resolve_budget(a.tenant_id, budgets)
-            if has_budget:
-                total_allocated_budget += budget_limit
-                total_remaining_budget += available_balance
-                if _resolve_spent(a.tenant_id, budgets) > budget_limit:
-                    budget_exceeded += 1
-
-        return UsageSummaryResponse(
-            billingPeriod=billing_month,
-            totalSpend=round(total_spend, 2),
-            currency=_CURRENCY,
-            activeTenants=active_tenants,
-            budgetExceededTenants=budget_exceeded,
-            spendByModelTaskType=spend_items,
-            totalAllocatedBudget=round(total_allocated_budget, 2),
-            totalRemainingBudget=round(total_remaining_budget, 2),
+        items.sort(key=lambda i: i.consumption, reverse=True)
+        return SummaryQuota(
+            basis="billing_month" if billing_month else "all_time",
+            billingMonth=billing_month,
+            activeTenants=len(assignments),
+            byTaskType=items,
         )
 
     async def get_tenant_list(
@@ -527,7 +516,7 @@ class UsageService:
             billing_month, page_ids, task_type_ids=task_type_ids
         )
         tier_names = await self._repo.get_tier_names()
-        budgets = await self._repo.get_tenant_budgets(None, page_ids, auth_db)
+        budgets = await self._repo.get_tenant_budgets(page_ids, auth_db)
         org_map = await _resolve_tenant_names(page_ids, auth_db)
 
         quota_by_tenant: dict[str, list] = {}
@@ -571,7 +560,7 @@ class UsageService:
             billing_month, [tenant_id], task_type_ids=task_type_ids
         )
         tier_names = await self._repo.get_tier_names()
-        budgets = await self._repo.get_tenant_budgets(None, [tenant_id], auth_db)
+        budgets = await self._repo.get_tenant_budgets([tenant_id], auth_db)
 
         item = _build_period_item(
             tenant_id, org_map.get(tenant_id, tenant_id), period_rows, quota_rows,
