@@ -5,7 +5,7 @@ with a flat {"custom_field": [...]} list containing all PII entities combined.
 PHONE_NUMBER is deduplicated (appeared in both Education and Healthcare).
 
 Revision ID: f4a7c2e9d1b3
-Revises: e8972603749c, c2e4a6f8b0d1
+Revises: a7c3e9f1b5d2, c2e4a6f8b0d1
 Create Date: 2026-10-13
 
 """
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "f4a7c2e9d1b3"
-down_revision: Union[str, Sequence[str], None] = ("e8972603749c", "c2e4a6f8b0d1")
+down_revision: Union[str, Sequence[str], None] = ("a7c3e9f1b5d2", "c2e4a6f8b0d1")
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
