@@ -176,11 +176,36 @@ def test_invalid_regex_raises_invalid_policy(fake_engine):
 
 def test_catastrophic_regex_is_cut_off(fake_engine):
     evil = PolicyType(name="Evil", custom_fields=[CustomField("X", r"(a|aa)+$")])
-    with patch.object(simulation, "REGEX_TIMEOUT_SECONDS", 0.2):
+    with patch.object(simulation, "REGEX_BUDGET_SECONDS", 0.2):
         started = time.monotonic()
         with pytest.raises(RegexTimeoutError, match="Evil:X"):
             simulate("a" * 40 + "!", [evil])
     assert time.monotonic() - started < 5
+
+
+def test_regex_budget_is_per_request_not_per_pattern(fake_engine):
+    # 20 fast patterns, each well under the budget on its own; a fake clock
+    # advances 0.1s per check. A shared budget of 1s must run out partway
+    # through, which a per-pattern limit never would.
+    clock = iter(i * 0.1 for i in range(1000))
+    many = PolicyType(name="Many", custom_fields=[
+        CustomField(f"X{i}", r"a") for i in range(20)
+    ])
+    with patch.object(simulation, "REGEX_BUDGET_SECONDS", 1.0), \
+         patch.object(simulation.time, "monotonic", lambda: next(clock)):
+        with pytest.raises(RegexTimeoutError, match="1.0s in total"):
+            simulate("a", [many])
+
+
+def test_language_falls_back_to_policy_languages(fake_engine):
+    # langdetect alone reads this as "et"; the policy only lists "en".
+    assert detect_language("Email arjun@college.edu") == "et"
+    fake_engine.model_hits = {"EMAIL_ADDRESS": ["arjun@college.edu"]}
+    policy = PolicyType(name="Contact", model_entities={"en": ["EMAIL_ADDRESS"]})
+
+    result = simulate("Email arjun@college.edu", [policy])
+    assert result.sanitized_text == "Email <EMAIL_ADDRESS_1>"
+    assert fake_engine.calls[-1]["language"] == "en"
 
 
 # ── route validation (400, not 500) ──────────────────────────────────────────
@@ -195,47 +220,70 @@ def client():
     return TestClient(app)
 
 
-@pytest.mark.parametrize("policy_fields", [
+def _simulate_body(policy_fields, text="abc"):
+    return {
+        "text": text,
+        "policyTypes": [{"policy_type": "PII", "policy_fields": policy_fields}],
+    }
+
+
+PAN_FIELD = {"entity_name": "PAN_NUMBER", "regex": r"\b[A-Z]{5}\d{4}[A-Z]\b",
+             "examples": ["ABCDE1234F", "PQRSX5678K", "LMNOP4321Z"]}
+STUDENT_ID_FIELD = {"entity_name": "STUDENT_ID", "regex": r"\bSTU\d{4}\b",
+                    "examples": ["STU1234", "STU5678", "STU9012"]}
+
+
+@pytest.mark.parametrize("domain_fields", [
     {"custom_field": "oops"},
     {"custom_field": [{"entity_name": 5, "regex": "a"}]},
     {"custom_field": [{"entity_name": "X"}]},
     {"custom_field": [{"entity_name": "X", "regex": "   "}]},
     {"custom_field": [{"entity_name": "   ", "regex": "a"}]},
+    {"custom_field": [{"entity_name": "\u200b", "regex": "a"}]},       # invisible only
+    {"custom_field": [{"entity_name": " \ufeff\u2060 ", "regex": "a"}]},
     {"model_supported_field": {"en": []}},
     {"model_supported_field": [{"en": ["PERSON"]}]},
+    {"custom_fields": [PAN_FIELD]},                                    # typo: unknown key
 ])
-def test_simulate_rejects_malformed_policy_fields(client, policy_fields):
-    resp = client.post("/pii/simulate", json={
-        "text": "abc", "policyTypes": [{"policy_type": "X", "policy_fields": policy_fields}],
-    })
+def test_simulate_rejects_malformed_policy_fields(client, domain_fields):
+    resp = client.post("/pii/simulate", json=_simulate_body({"Finance": domain_fields}))
     assert resp.status_code == 400
 
 
+def test_simulate_rejects_the_flat_policy_fields_shape(client):
+    # The pre-#1738 shape: must be a 400, not an empty "no PII" result.
+    resp = client.post("/pii/simulate", json=_simulate_body({"custom_field": [PAN_FIELD]}))
+    assert resp.status_code == 400
+
+
+def test_simulate_applies_every_domain_sent(client, fake_engine):
+    fields = {"Finance": {"custom_field": [PAN_FIELD]},
+              "Education": {"custom_field": [STUDENT_ID_FIELD]}}
+    resp = client.post("/pii/simulate", json=_simulate_body(
+        fields, text="PAN ABCDE1234F, student STU1234"))
+    assert resp.status_code == 200
+    assert resp.json()["sanitizedText"] == "PAN <PAN_NUMBER_1>, student <STUDENT_ID_1>"
+
+
 def test_simulate_rejects_text_over_the_limit(client):
-    resp = client.post("/pii/simulate", json={
-        "text": "a" * (MAX_SIMULATE_TEXT_LEN + 1), "policyTypes": [],
-    })
+    resp = client.post("/pii/simulate", json=_simulate_body(
+        {}, text="a" * (MAX_SIMULATE_TEXT_LEN + 1)))
     assert resp.status_code == 400
 
 
 def test_simulate_maps_invalid_regex_to_400(client, fake_engine):
-    resp = client.post("/pii/simulate", json={
-        "text": "abc",
-        "policyTypes": [{"policy_type": "Bad", "policy_fields": {
-            "custom_field": [{"entity_name": "X", "regex": "(", "examples": ["a", "b", "c"]}]}}],
-    })
+    resp = client.post("/pii/simulate", json=_simulate_body({"Finance": {"custom_field": [
+        {"entity_name": "X", "regex": "(", "examples": ["a", "b", "c"]}]}}))
     assert resp.status_code == 400
-    assert "Bad: invalid regex for X" in resp.json()["detail"]
+    assert "PII: invalid regex for X" in resp.json()["detail"]
 
 
-def test_simulate_accepts_platform_core_rows_with_extra_keys(client, fake_engine):
+def test_simulate_accepts_platform_core_rows(client, fake_engine):
+    # A row as #1738 stores it; entries carry examples (and may carry mode).
     resp = client.post("/pii/simulate", json={
         "text": "PAN ABCDE1234F",
-        "policyTypes": [{"id": 2, "policy_type": "Finance-PII", "policy_fields": {
-            "handling": "mask", "implementation_method": "regex",
-            "custom_field": [{"entity_name": "PAN_NUMBER", "regex": r"\b[A-Z]{5}\d{4}[A-Z]\b",
-                              "examples": ["ABCDE1234F", "PQRSX5678K", "LMNOP4321Z"],
-                              "mode": "mask"}]}}],
+        "policyTypes": [{"id": 1, "policy_type": "PII", "policy_fields": {
+            "Finance": {"custom_field": [{**PAN_FIELD, "mode": "mask"}]}}}],
     })
     assert resp.status_code == 200
     assert resp.json()["sanitizedText"] == "PAN <PAN_NUMBER_1>"
@@ -267,6 +315,16 @@ def test_anonymize_rejects_bad_spans(client, span):
 ])
 def test_detect_language(text, expected):
     assert detect_language(text) == expected
+
+
+@pytest.mark.parametrize("text, candidates, expected", [
+    ("Email arjun@college.edu", {"en", "hi"}, "en"),                      # misread as "et"
+    ("Patient Meena Raj, Aadhaar 1234 5678 9012", {"en"}, "en"),         # misread as "nl"
+    ("मेरा नाम राहुल है और मैं दिल्ली में रहता हूँ", {"en", "hi"}, "hi"),
+    ("मेरा नाम राहुल है और मैं दिल्ली में रहता हूँ", {"en"}, "en"),
+])
+def test_detect_language_among_candidates(text, candidates, expected):
+    assert detect_language(text, candidates) == expected
 
 
 def test_detected_language_maps_to_spacy_pipeline():
