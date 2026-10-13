@@ -1,19 +1,21 @@
 """Run a PII policy against sample text (the Playground "Run Simulation").
 
-A policy is the list of policy_type rows it references, in the shape
-platform-core-service stores them (policy_type.policy_fields JSONB):
+A policy is the list of policy_type rows it references. routes/pii.py
+flattens each row's policy_fields (keyed by domain, e.g. "Finance") and
+passes the result here as PolicyType:
 
-    custom_field:          [{entity_name, regex, examples}]  -> regex recognizer
-    model_supported_field: [{<lang>: [{entity_name}]}]       -> Presidio's built-in
-                                                                 recognizers / spaCy NER
+    custom_field:          [{entity_name, regex}]   -> regex recognizer
+    model_supported_field: [{<lang>: [{entity_name}]}] -> Presidio's built-in
+                                                         recognizers / spaCy NER
 
-The text's language is detected (services/pii/language.py); it picks the
-spaCy model and the model_supported_field list. Only the policy's entities
-are detected. Each detection is replaced with a
-numbered token by the entity_counter operator. Per-type actions (mask,
+The text's language is detected among the languages the policy lists in
+model_supported_field (services/pii/language.py); it picks the spaCy model
+and the model_supported_field list. Only the policy's entities are detected.
+Each detection is replaced with a numbered token by the entity_counter operator. Per-type actions (mask,
 redact, hash) are not part of policy_fields yet, so they are not applied.
 """
 
+import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -21,7 +23,7 @@ import regex
 from presidio_analyzer import EntityRecognizer, Pattern, PatternRecognizer, RecognizerResult
 
 from services.pii.engine import get_engine
-from services.pii.language import detect_language
+from services.pii.language import DEFAULT_LANGUAGE, detect_language
 from services.pii.model_registry import get_spacy_lang_code
 
 # Score for policy regex matches. Policy regexes are explicit admin config,
@@ -32,9 +34,9 @@ CUSTOM_FIELD_SCORE = 1.0
 # ([A-Z]{4}0...) and PAN rely on case, so match them as written.
 CUSTOM_FIELD_REGEX_FLAGS = regex.MULTILINE | regex.DOTALL
 
-# Time limit for one policy regex over one text. A regex with catastrophic
-# backtracking is cut off here instead of holding a worker thread.
-REGEX_TIMEOUT_SECONDS = 1.0
+# Total time all of one request's policy regexes may take. A per-pattern
+# limit is not enough: a request can carry thousands of patterns.
+REGEX_BUDGET_SECONDS = 2.0
 
 
 class InvalidPolicyError(ValueError):
@@ -42,7 +44,24 @@ class InvalidPolicyError(ValueError):
 
 
 class RegexTimeoutError(InvalidPolicyError):
-    """A policy regex ran longer than REGEX_TIMEOUT_SECONDS."""
+    """The request's policy regexes ran past REGEX_BUDGET_SECONDS."""
+
+
+class RegexBudget:
+    """One deadline shared by every policy regex in a request.
+
+    The clock starts at the first regex, so spaCy's processing of the text
+    (which runs before the recognizers) does not use up the budget.
+    """
+
+    def __init__(self, seconds: float) -> None:
+        self.seconds = seconds
+        self._deadline: Optional[float] = None
+
+    def remaining(self) -> float:
+        if self._deadline is None:
+            self._deadline = time.monotonic() + self.seconds
+        return self._deadline - time.monotonic()
 
 
 @dataclass
@@ -75,16 +94,16 @@ class SimulationResult:
 
 
 class TimedPatternRecognizer(PatternRecognizer):
-    """PatternRecognizer that stops a regex after a time limit.
+    """PatternRecognizer whose regexes stop when the request's budget runs out.
 
     Presidio matches with regex.finditer and no timeout. These regexes come
     from the request, so one with catastrophic backtracking ("(a|aa)+$")
     would otherwise hold a worker thread indefinitely.
     """
 
-    def __init__(self, *, timeout: float, **kwargs) -> None:
+    def __init__(self, *, budget: RegexBudget, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._timeout = timeout
+        self._budget = budget
         # Raises regex.error for an invalid pattern.
         self._compiled = [
             (pattern, regex.compile(pattern.regex, self.global_regex_flags))
@@ -100,11 +119,15 @@ class TimedPatternRecognizer(PatternRecognizer):
     ) -> List[RecognizerResult]:
         results = []
         for pattern, compiled in self._compiled:
+            remaining = self._budget.remaining()
             try:
-                spans = [m.span() for m in compiled.finditer(text, timeout=self._timeout)]
+                if remaining <= 0:
+                    raise TimeoutError
+                spans = [m.span() for m in compiled.finditer(text, timeout=remaining)]
             except TimeoutError as exc:
                 raise RegexTimeoutError(
-                    f"{self.name}: regex took longer than {self._timeout}s on this text."
+                    f"{self.name}: the policy's regexes took longer than "
+                    f"{self._budget.seconds}s in total on this text."
                 ) from exc
             for start, end in spans:
                 if start == end:
@@ -133,6 +156,7 @@ def _build_recognizers(
 ) -> tuple[List[PatternRecognizer], Dict[str, str]]:
     """Return the ad-hoc recognizers and {entity_type: policy_type name}."""
     lang_code = get_spacy_lang_code(language)
+    budget = RegexBudget(REGEX_BUDGET_SECONDS)
     recognizers: List[PatternRecognizer] = []
     entity_source: Dict[str, str] = {}
 
@@ -141,7 +165,7 @@ def _build_recognizers(
             try:
                 recognizers.append(
                     TimedPatternRecognizer(
-                        timeout=REGEX_TIMEOUT_SECONDS,
+                        budget=budget,
                         supported_entity=cf.entity_name,
                         name=f"{pt.name}:{cf.entity_name}",
                         supported_language=lang_code,
@@ -162,7 +186,10 @@ def _build_recognizers(
 
 
 def simulate(text: str, policy_types: List[PolicyType]) -> SimulationResult:
-    language = detect_language(text)
+    # Only languages the policy configures can change the result; restricting
+    # detection to them avoids short English text being read as "et" or "nl".
+    policy_languages = {lang for pt in policy_types for lang in pt.model_entities}
+    language = detect_language(text, policy_languages) if policy_languages else DEFAULT_LANGUAGE
     recognizers, entity_source = _build_recognizers(policy_types, language)
     if not entity_source or not text.strip():
         # entities=[] would mean "all entities" to Presidio; a policy with no

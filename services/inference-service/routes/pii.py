@@ -12,11 +12,20 @@ NAME_MAX_LEN = 100
 # spaCy refuses text over 1,000,000 characters (a 500); stay well below it.
 MAX_SIMULATE_TEXT_LEN = 100_000
 MAX_POLICY_TYPES = 50
+MAX_DOMAINS = 20
 MAX_CUSTOM_FIELDS = 100
 MAX_REGEX_LEN = 1000
 
+# strip_whitespace leaves zero-width characters, so "\u200b" would pass
+# min_length and show up as a token like <_1>; require a visible character.
 EntityName = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=NAME_MAX_LEN)
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=NAME_MAX_LEN,
+        pattern=r"[^\s\u200b-\u200d\u2060\ufeff]",
+    ),
 ]
 
 
@@ -119,8 +128,12 @@ def anonymize(req: AnonymizeRequest):
     )
 
 
-# platform-core's policy_fields JSONB. extra="allow": keys this endpoint does
-# not use (examples, handling, implementation_method, ...) are accepted.
+# platform-core's policy_fields JSONB, keyed by domain (#1738):
+#   {"Finance": {"custom_field": [...], "model_supported_field": [...]}}
+# Every domain section sent is applied; the caller sends only the policy
+# types (and domains) it wants simulated.
+# Entries allow extra keys (examples, mode, ...); a domain's own keys do not,
+# so a shape mismatch is a 400 rather than a silently empty result.
 class CustomFieldIn(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -135,8 +148,8 @@ class ModelEntityIn(BaseModel):
     entity_name: EntityName
 
 
-class PolicyFieldsIn(BaseModel):
-    model_config = ConfigDict(extra="allow")
+class DomainFieldsIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
     custom_field: List[CustomFieldIn] = Field(default_factory=list, max_length=MAX_CUSTOM_FIELDS)
     # [{"en": [{"entity_name": "PERSON"}], "hi": [...]}]
@@ -150,7 +163,9 @@ class SimulatePolicyType(BaseModel):
     policy_type: Annotated[
         str, StringConstraints(strip_whitespace=True, min_length=1, max_length=NAME_MAX_LEN)
     ]
-    policy_fields: PolicyFieldsIn = Field(default_factory=PolicyFieldsIn)
+    policy_fields: Dict[EntityName, DomainFieldsIn] = Field(
+        default_factory=dict, max_length=MAX_DOMAINS
+    )
 
 
 class SimulateRequest(BaseModel):
@@ -179,7 +194,7 @@ class SimulateResponse(BaseModel):
 @router.post(
     "/simulate",
     response_model=SimulateResponse,
-    responses={400: {"description": "Malformed request or policy fields, an invalid regex, or a regex that timed out."}},
+    responses={400: {"description": "Malformed request or policy fields, an invalid regex, or regexes that ran out of time."}},
 )
 def simulate(req: SimulateRequest):
     """Detect the policy's PII types in text and replace them with numbered tokens.
@@ -190,16 +205,19 @@ def simulate(req: SimulateRequest):
 
     policy_types = []
     for pt in req.policyTypes:
+        custom_fields: List[CustomField] = []
         model_entities: Dict[str, List[str]] = {}
-        for by_language in pt.policy_fields.model_supported_field:
-            for lang, entries in by_language.items():
-                model_entities.setdefault(lang, []).extend(e.entity_name for e in entries)
+        for fields in pt.policy_fields.values():
+            for cf in fields.custom_field:
+                if CustomField(cf.entity_name, cf.regex) not in custom_fields:
+                    custom_fields.append(CustomField(cf.entity_name, cf.regex))
+            for by_language in fields.model_supported_field:
+                for lang, entries in by_language.items():
+                    model_entities.setdefault(lang, []).extend(e.entity_name for e in entries)
         policy_types.append(
             PolicyType(
                 name=pt.policy_type,
-                custom_fields=[
-                    CustomField(cf.entity_name, cf.regex) for cf in pt.policy_fields.custom_field
-                ],
+                custom_fields=custom_fields,
                 model_entities=model_entities,
             )
         )
