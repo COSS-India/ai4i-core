@@ -16,7 +16,10 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import redis.asyncio as aioredis
+
 from app.core.database import get_auth_db, get_db
+from app.core.redis import get_redis
 from app.core.exceptions import InsufficientPermissionsError
 from app.core.permissions import is_admin
 from app.schemas.common import DeletedIdData, MessageMeta, error_responses
@@ -211,11 +214,12 @@ async def update_sub_category_status(
 async def list_policy_types(
     request: Request,
     session: AsyncSession = Depends(get_db),
+    domain: Optional[str] = Query(None, description="Filter policy_fields to a specific domain (e.g. Education, Finance, Healthcare)."),
 ) -> ListPolicyTypeResponse:
-    """List every policy type. Adopter Admin only."""
+    """List policy types. Pass ?domain=Education to get only Education fields. Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
-    items = await policy_type_service.list_policy_types(session)
+    items = await policy_type_service.list_policy_types(session, domain=domain)
     return ListPolicyTypeResponse(success=True, data=PolicyTypeListData(items=items))
 
 
@@ -270,6 +274,7 @@ async def update_policy_type(
     request: Request,
     payload: PolicyTypeUpdate,
     session: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis),
 ) -> UpdatePolicyTypeResponse:
     """Update name and/or policy_fields of a policy type. policy_type_id is
     required in the request body. 404 if it does not exist, 409 if the new
@@ -277,7 +282,7 @@ async def update_policy_type(
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
-    item = await policy_type_service.update_policy_type(session, payload.policy_type_id, payload, updated_by=user_id)
+    item = await policy_type_service.update_policy_type(session, payload.policy_type_id, payload, updated_by=user_id, redis=redis)
     return UpdatePolicyTypeResponse(
         success=True,
         data=item,
@@ -348,6 +353,7 @@ async def create_policy(
     payload: PolicyCreate,
     request: Request,
     session: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis),
 ) -> CreatePolicyResponse:
     """Create a policy. Name must be unique (case-insensitive); policy_id is
     auto-generated in SPP-XXXX format. 409 if the name already exists.
@@ -355,7 +361,7 @@ async def create_policy(
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
-    item = await policy_service.create_policy(session, payload, created_by=user_id)
+    item = await policy_service.create_policy(session, payload, created_by=user_id, redis=redis)
     return CreatePolicyResponse(
         success=True,
         data=CreatedPolicyData(policy_id=item.policy_id),
@@ -390,6 +396,7 @@ async def update_policy(
     request: Request,
     payload: PolicyUpdate,
     session: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis),
 ) -> UpdatePolicyResponse:
     """Update a policy. ``id`` (integer primary key) is required in the request
     body. 404 if it does not exist, 409 if the new name is already taken.
@@ -397,7 +404,7 @@ async def update_policy(
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
-    item = await policy_service.update_policy(session, payload.id, payload, updated_by=user_id)
+    item = await policy_service.update_policy(session, payload.id, payload, updated_by=user_id, redis=redis)
     return UpdatePolicyResponse(
         success=True,
         data=item,
@@ -415,12 +422,13 @@ async def delete_policy(
     id: int = Path(..., gt=0, le=2_147_483_647),
     session: AsyncSession = Depends(get_db),
     auth_db: AsyncSession = Depends(get_auth_db),
+    redis: aioredis.Redis = Depends(get_redis),
 ) -> DeletePolicyResponse:
     """Delete a policy by integer primary key. 404 if it does not exist.
     409 if it is linked to one or more applications. Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
-    deleted_id = await policy_service.delete_policy(session, id, auth_db=auth_db)
+    deleted_id = await policy_service.delete_policy(session, id, auth_db=auth_db, redis=redis)
     return DeletePolicyResponse(
         success=True,
         data=DeletedIdData(id=deleted_id),

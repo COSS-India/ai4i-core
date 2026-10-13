@@ -19,10 +19,19 @@ from app.schemas.policy_management.policy_type import (
 )
 
 
-async def list_policy_types(session: AsyncSession) -> List[PolicyTypeItem]:
+async def list_policy_types(session: AsyncSession, domain: str | None = None) -> List[PolicyTypeItem]:
     repo = PolicyTypeRepository(session)
     rows = await repo.get_all()
-    return [PolicyTypeItem.model_validate(row) for row in rows]
+    items = []
+    for row in rows:
+        item = PolicyTypeItem.model_validate(row)
+        if domain is not None:
+            matched = {k: v for k, v in item.policy_fields.items() if k.lower() == domain.strip().lower()}
+            if not matched:
+                continue
+            item = item.model_copy(update={"policy_fields": matched})
+        items.append(item)
+    return items
 
 
 async def get_policy_type(session: AsyncSession, policy_type_id: int) -> PolicyTypeItem:
@@ -48,7 +57,7 @@ async def create_policy_type(session: AsyncSession, body: PolicyTypeCreate, crea
 
 
 async def update_policy_type(
-    session: AsyncSession, policy_type_id: int, body: PolicyTypeUpdate, updated_by: str | None = None
+    session: AsyncSession, policy_type_id: int, body: PolicyTypeUpdate, updated_by: str | None = None, redis=None
 ) -> PolicyTypeItem:
     repo = PolicyTypeRepository(session)
     existing = await repo.get_by_id(policy_type_id)
@@ -62,6 +71,18 @@ async def update_policy_type(
         return PolicyTypeItem.model_validate(existing)
 
     row = await repo.update(policy_type_id, data)
+
+    if redis is not None:
+        from sqlalchemy import select, text
+        from app.models.policy_management.policy import Policy
+        from app.services.policy_management.policy_cache import cache_policy
+
+        affected = await session.execute(
+            select(Policy).where(text(":id = ANY(policy_type_id)")).params(id=policy_type_id)
+        )
+        for policy in affected.scalars().all():
+            await cache_policy(policy, session, redis)
+
     return PolicyTypeItem.model_validate(row)
 
 

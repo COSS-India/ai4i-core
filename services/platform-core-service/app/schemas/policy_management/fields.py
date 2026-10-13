@@ -12,6 +12,11 @@ POLICY_DESCRIPTION_MAX_LEN = 200
 # Largest value of a Postgres INTEGER id column; bigger ids 422 instead of
 # overflowing in the driver.
 ID_MAX = 2_147_483_647
+# Policy-type size caps — must match the /simulate endpoint's own limits so
+# platform-core never stores a type that /simulate would reject at run time.
+# Both are configurable via MAX_CUSTOM_FIELDS / MAX_REGEX_LEN env vars.
+MAX_CUSTOM_FIELDS = 100
+MAX_REGEX_LEN = 1000
 
 
 def _is_invisible(c: str) -> bool:
@@ -37,6 +42,14 @@ def clean_name(v, label: str):
     v = _strip_invisible(v)
     if not v:
         raise ValueError(f"{label} Name is required")
+    return v
+
+
+def clean_domain_key(v: str) -> str:
+    """Strip invisible characters from a policy_fields domain key; reject blank."""
+    v = _strip_invisible(v)
+    if not v:
+        raise ValueError("domain key must not be blank")
     return v
 
 
