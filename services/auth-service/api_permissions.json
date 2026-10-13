@@ -185,6 +185,8 @@
     { "endpoint": "POST:/api/v1/policies",                                "permissionRequired": 1,   "description": "Create a policy (admin sentinel — ADMIN only)" },
     { "endpoint": "GET:/api/v1/policies/{id}",                            "permissionRequired": 1,   "description": "Get policy by ID (admin sentinel — ADMIN only)" },
     { "endpoint": "PUT:/api/v1/policies",                                 "permissionRequired": 1,   "description": "Update a policy (admin sentinel — ADMIN only)" },
-    { "endpoint": "DELETE:/api/v1/policies/{id}",                         "permissionRequired": 1,   "description": "Delete a policy (admin sentinel — ADMIN only)" }
+    { "endpoint": "DELETE:/api/v1/policies/{id}",                         "permissionRequired": 1,   "description": "Delete a policy (admin sentinel — ADMIN only)" },
+
+    { "endpoint": "POST:/api/v1/pii/simulate",                            "permissionRequired": 1,   "description": "Run a PII policy against sample text in the Playground (admin sentinel — ADMIN only)" }
   ]
 }
