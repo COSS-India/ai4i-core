@@ -1,4 +1,4 @@
-import type { PiiType, Policy } from "./model";
+import type { PiiType } from "./model";
 
 export interface DetectionHit {
   typeId: string;
@@ -52,10 +52,8 @@ const SAMPLE_VALUES: Record<string, string> = {
   "pii-health-icd": "E11.9",
 };
 
-export function buildSample(policy: Policy, types: PiiType[]): string {
-  const linked = types.filter((type) => policy.typeIds.includes(type.id));
-  const source = linked.length > 0 ? linked : types;
-  return source
+export function buildSample(types: PiiType[]): string {
+  return types
     .map((type) => {
       const value = SAMPLE_VALUES[type.id] ?? type.examples[0];
       if (!value) return null;

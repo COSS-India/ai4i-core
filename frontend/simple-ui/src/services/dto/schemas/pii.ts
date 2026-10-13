@@ -39,4 +39,12 @@ export const piiAuditRowSchema = z
 
 export const piiRedactResponseSchema = z.unknown();
 
+export const piiSupportedEntitiesSchema = z
+  .object({
+    language: z.string(),
+    model: z.string(),
+    entities: z.array(z.string()),
+  })
+  .passthrough();
+
 export const stringArraySchema = z.array(z.string());

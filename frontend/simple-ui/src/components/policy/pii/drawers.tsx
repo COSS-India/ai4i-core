@@ -18,7 +18,8 @@ import {
   Textarea,
   Wrap,
 } from "@chakra-ui/react";
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { piiService } from "../../../services/piiService";
 import FieldLabel from "../../common/FieldLabel";
 import FormActions from "../../common/FormActions";
 import FormDrawer from "../../common/FormDrawer";
@@ -31,7 +32,6 @@ import {
   INSTITUTIONS,
   LANGUAGES,
   MODEL_FIELD_LANGUAGES,
-  MODEL_SUPPORTED_ENTITIES,
   SCOPE_OPTIONS,
   type PolicyField,
   type PolicyScope,
@@ -108,11 +108,47 @@ function languageOptions(current: string): string[] {
   return [...MODEL_FIELD_LANGUAGES];
 }
 
-function modelEntityOptions(current: string): string[] {
-  if (current && !MODEL_SUPPORTED_ENTITIES.includes(current as (typeof MODEL_SUPPORTED_ENTITIES)[number])) {
-    return [current, ...MODEL_SUPPORTED_ENTITIES];
-  }
-  return [...MODEL_SUPPORTED_ENTITIES];
+interface EntityList {
+  status: "loading" | "ready" | "error";
+  entities: string[];
+}
+
+/** Detectable entities per language, loaded once per language from inference-service. */
+function useModelEntities(languages: string[]): Record<string, EntityList> {
+  const [lists, setLists] = useState<Record<string, EntityList>>({});
+  const requested = useRef(new Set<string>());
+  const languageKey = Array.from(new Set(languages)).sort().join(",");
+
+  useEffect(() => {
+    languageKey
+      .split(",")
+      .filter(Boolean)
+      .forEach((language) => {
+        if (requested.current.has(language)) return;
+        requested.current.add(language);
+        setLists((prev) => ({ ...prev, [language]: { status: "loading", entities: [] } }));
+        piiService.getSupportedEntities(language).then(
+          (entities) => setLists((prev) => ({ ...prev, [language]: { status: "ready", entities } })),
+          () => {
+            requested.current.delete(language);
+            setLists((prev) => ({ ...prev, [language]: { status: "error", entities: [] } }));
+          },
+        );
+      });
+  }, [languageKey]);
+
+  return lists;
+}
+
+function modelEntityOptions(current: string, list: EntityList | undefined): string[] {
+  const entities = list?.entities ?? [];
+  return current && !entities.includes(current) ? [current, ...entities] : entities;
+}
+
+function modelEntityPlaceholder(list: EntityList | undefined): string {
+  if (list?.status === "ready") return "Select an entity";
+  if (list?.status === "error") return "Entities unavailable";
+  return "Loading entities…";
 }
 
 function blankField(key: string): FieldRow {
@@ -147,6 +183,9 @@ function TypeForm({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const keyRef = useRef(initial.fields.length + 1);
+  const entityLists = useModelEntities(
+    fields.filter((field) => field.mode === "model").map((field) => field.language || "en"),
+  );
 
   const updateField = (key: string, patch: Partial<FieldRow>) => {
     setFields((prev) => prev.map((field) => (field.key === key ? { ...field, ...patch } : field)));
@@ -161,13 +200,20 @@ function TypeForm({
     fields.forEach((field) => {
       if (!field.entityName.trim()) next[`${field.key}-entity`] = "Entity name is required.";
       const language = field.language.trim().toLowerCase() || "en";
+      const entityName = field.entityName.trim();
       const identity =
         field.mode === "model"
-          ? `${field.domain.trim().toLowerCase()}:${field.entityName.trim().toLowerCase()}:${language}`
-          : `${field.domain.trim().toLowerCase()}:${field.entityName.trim().toLowerCase()}`;
-      if (field.entityName.trim()) {
+          ? `model:${entityName.toLowerCase()}:${language}`
+          : `custom:${entityName.toLowerCase()}`;
+      if (entityName) {
         if (seen.has(identity)) next[`${field.key}-entity`] = "This entity is already listed.";
         seen.add(identity);
+      }
+      if (field.mode === "model" && entityName && !next[`${field.key}-entity`]) {
+        const list = entityLists[language];
+        if (list?.status === "ready" && !list.entities.includes(entityName)) {
+          next[`${field.key}-entity`] = `${entityName} cannot be detected in ${language}.`;
+        }
       }
       if (field.mode === "custom") {
         if (field.examples.length < MIN_REGEX_EXAMPLES) {
@@ -185,7 +231,7 @@ function TypeForm({
         name: name.trim(),
         fields: fields.map(({ key: _key, ...field }) => ({
           ...field,
-          domain: field.domain.trim(),
+          domain: "",
           entityName: field.entityName.trim(),
           regex: field.regex.trim(),
           examples: field.examples.map((example) => example.trim()).filter(Boolean),
@@ -258,13 +304,9 @@ function TypeForm({
                     value={field.mode}
                     onChange={(e) => {
                       const mode = e.target.value === "model" ? "model" : "custom";
+                      const detectable = entityLists[field.language || "en"]?.entities ?? [];
                       const entityName =
-                        mode === "model" &&
-                        !MODEL_SUPPORTED_ENTITIES.includes(
-                          field.entityName as (typeof MODEL_SUPPORTED_ENTITIES)[number],
-                        )
-                          ? ""
-                          : field.entityName;
+                        mode === "model" && !detectable.includes(field.entityName) ? "" : field.entityName;
                       updateField(field.key, { mode, entityName });
                     }}
                   >
@@ -277,20 +319,36 @@ function TypeForm({
                     <FormField label="Entity name" required error={errors[`${field.key}-entity`]}>
                       <Select
                         value={field.entityName}
-                        placeholder="Select an entity"
+                        placeholder={modelEntityPlaceholder(entityLists[field.language || "en"])}
                         onChange={(e) => updateField(field.key, { entityName: e.target.value })}
                       >
-                        {modelEntityOptions(field.entityName).map((entity) => (
-                          <option key={entity} value={entity}>
-                            {entity}
-                          </option>
-                        ))}
+                        {modelEntityOptions(field.entityName, entityLists[field.language || "en"]).map(
+                          (entity) => (
+                            <option key={entity} value={entity}>
+                              {entity}
+                            </option>
+                          ),
+                        )}
                       </Select>
+                      {entityLists[field.language || "en"]?.status === "error" ? (
+                        <Text fontSize="xs" color="red.500" mt={1}>
+                          Could not load the entities for {field.language || "en"}. Change the language
+                          or reopen the form to retry.
+                        </Text>
+                      ) : null}
                     </FormField>
                     <FormField label="Language" required>
                       <Select
                         value={field.language || "en"}
-                        onChange={(e) => updateField(field.key, { language: e.target.value })}
+                        onChange={(e) => {
+                          const language = e.target.value;
+                          const list = entityLists[language];
+                          const entityName =
+                            list?.status === "ready" && !list.entities.includes(field.entityName)
+                              ? ""
+                              : field.entityName;
+                          updateField(field.key, { language, entityName });
+                        }}
                       >
                         {languageOptions(field.language).map((language) => (
                           <option key={language} value={language}>
@@ -639,7 +697,10 @@ function PolicyForm({
     );
   }, [domainChoices, typeQuery]);
 
-  const selectedTypeIds = typeIds.filter((id) => domainChoices.some((choice) => choice.id === id));
+  const selectedTypeIds =
+    typesStatus === "ready"
+      ? typeIds.filter((id) => domainChoices.some((choice) => choice.id === id))
+      : typeIds;
 
   const toggle = (list: string[], value: string, setter: (next: string[]) => void) => {
     setter(list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);

@@ -33,9 +33,6 @@ export interface DefinitionFields {
   fields: PolicyField[];
 }
 
-/** Fields with no domain are stored under this key. The policy type screens do not show it. */
-export const UNSCOPED_POLICY_DOMAIN = "*";
-
 /** Catalog labels such as "Finance / Banking" are stored as the API domain key "Finance". */
 export function apiDomainName(name: string): string {
   const trimmed = name.trim();
@@ -43,61 +40,44 @@ export function apiDomainName(name: string): string {
   return trimmed;
 }
 
-export interface DomainEntity {
-  key: string;
-  policyTypeId: string;
-  policyTypeName: string;
-  domain: string;
-  entityName: string;
-  mode: PolicyField["mode"];
-}
-
-interface FieldBucket {
-  custom: { entity_name: string; examples: string[]; regex: string }[];
-  model: Map<string, { entity_name: string }[]>;
-}
-
+/** Writes the flat shape: top-level custom_field and model_supported_field. */
 export function policyFieldsFromDefinition(input: DefinitionFields): Record<string, unknown> {
-  const grouped = new Map<string, FieldBucket>();
+  const custom: { entity_name: string; examples: string[]; regex: string }[] = [];
+  const model = new Map<string, { entity_name: string }[]>();
   input.fields.forEach((field) => {
-    const domain = apiDomainName(field.domain) || UNSCOPED_POLICY_DOMAIN;
     const entityName = field.entityName.trim();
     if (!entityName) return;
-    const bucket: FieldBucket = grouped.get(domain) ?? { custom: [], model: new Map() };
     if (field.mode === "model") {
       const language = field.language.trim() || "en";
-      const entities = bucket.model.get(language) ?? [];
+      const entities = model.get(language) ?? [];
       if (!entities.some((entity) => entity.entity_name === entityName)) {
         entities.push({ entity_name: entityName });
       }
-      bucket.model.set(language, entities);
+      model.set(language, entities);
     } else {
-      bucket.custom.push({
+      custom.push({
         entity_name: entityName,
         examples: field.examples.map((example) => example.trim()).filter(Boolean),
         regex: field.regex.trim(),
       });
     }
-    grouped.set(domain, bucket);
   });
 
   const policyFields: Record<string, unknown> = {};
-  grouped.forEach((bucket, domain) => {
-    const value: Record<string, unknown> = {};
-    if (bucket.custom.length > 0) value.custom_field = bucket.custom;
-    if (bucket.model.size > 0) {
-      const entry: Record<string, { entity_name: string }[]> = {};
-      bucket.model.forEach((entities, language) => {
-        entry[language] = entities;
-      });
-      value.model_supported_field = [entry];
-    }
-    policyFields[domain] = value;
-  });
+  if (custom.length > 0) policyFields.custom_field = custom;
+  if (model.size > 0) {
+    const entry: Record<string, { entity_name: string }[]> = {};
+    model.forEach((entities, language) => {
+      entry[language] = entities;
+    });
+    policyFields.model_supported_field = [entry];
+  }
   return policyFields;
 }
 
+/** Reads the flat shape, and also rows still keyed by domain from before the flatten migration. */
 function fieldsFromPolicyFields(policyFields: Record<string, unknown>): PolicyField[] {
+  if (isDomainBucket(policyFields)) return rowsFromBucket("", policyFields);
   const entries = Object.entries(policyFields);
   const domainBuckets = entries.filter((entry): entry is [string, Record<string, unknown>] =>
     isDomainBucket(entry[1]),
@@ -114,8 +94,7 @@ function isDomainBucket(value: unknown): value is Record<string, unknown> {
   return "custom_field" in record || "model_supported_field" in record;
 }
 
-function rowsFromBucket(domain: string, bucket: Record<string, unknown>): PolicyField[] {
-  const storedDomain = domain === UNSCOPED_POLICY_DOMAIN ? "" : domain;
+function rowsFromBucket(storedDomain: string, bucket: Record<string, unknown>): PolicyField[] {
   const rows: PolicyField[] = [];
   if (Array.isArray(bucket.custom_field)) {
     bucket.custom_field.forEach((entry) => {
@@ -175,23 +154,6 @@ export function definitionFromPolicyType(item: PolicyTypeItem): PiiType {
     isDefault: false,
     fields,
   };
-}
-
-/** Entity names inside a domain-filtered policy-type list. */
-export function entitiesFromPolicyTypes(items: PolicyTypeItem[], domain?: string): DomainEntity[] {
-  const wanted = domain ? apiDomainName(domain).toLowerCase() : "";
-  return items.flatMap((item) =>
-    fieldsFromPolicyFields(item.policy_fields)
-      .filter((field) => field.entityName && (!wanted || field.domain.toLowerCase() === wanted))
-      .map((field) => ({
-        key: `${item.id}:${field.domain}:${field.entityName}`,
-        policyTypeId: String(item.id),
-        policyTypeName: item.policy_type,
-        domain: field.domain,
-        entityName: field.entityName,
-        mode: field.mode,
-      })),
-  );
 }
 
 /** Custom regex fields for the selected policy types and domains, for the playground. */

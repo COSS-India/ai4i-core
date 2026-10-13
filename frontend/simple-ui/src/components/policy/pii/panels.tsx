@@ -565,7 +565,7 @@ export function PlaygroundPanel() {
                 const policy = policies.find((p) => p.policyId === e.target.value);
                 setPlaygroundPolicy(
                   e.target.value,
-                  policy ? buildSample(policy, detectionTypesForPolicy(policy, types, domains)) : "",
+                  policy ? buildSample(detectionTypesForPolicy(policy, types, domains)) : "",
                 );
               }}
             >
@@ -607,7 +607,7 @@ export function PlaygroundPanel() {
             <Button
               variant="link"
               size="xs"
-              onClick={() => loadPlaygroundSample(buildSample(selected, detectionTypesForPolicy(selected, types, domains)))}
+              onClick={() => loadPlaygroundSample(buildSample(detectionTypesForPolicy(selected, types, domains)))}
             >
               Load sample
             </Button>
