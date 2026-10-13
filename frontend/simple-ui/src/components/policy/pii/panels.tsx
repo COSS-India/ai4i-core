@@ -26,7 +26,7 @@ import DataTable, {
   createActionsColumn,
   type DataTableColumn,
 } from "../../common/table";
-import { detectionTypesForPolicy } from "./apiMap";
+import { detectionTypesForPolicy, entityNamesForPolicy } from "./apiMap";
 import { buildSample, runDetection, type DetectionHit } from "./detection";
 import { useDeferredColumnSort } from "../../../utils/tableSort";
 import {
@@ -298,6 +298,10 @@ export function ConfigurationPanel() {
   );
 }
 
+function fieldNames(type: PiiType): string[] {
+  return Array.from(new Set(type.fields.map((field) => field.entityName)));
+}
+
 function TypeLibrary() {
   const {
     types,
@@ -316,17 +320,14 @@ function TypeLibrary() {
     if (!query) return true;
     return (
       t.name.toLowerCase().includes(query) ||
-      t.fields.some(
-        (field) =>
-          field.entityName.toLowerCase().includes(query) || field.domain.toLowerCase().includes(query),
-      )
+      t.fields.some((field) => field.entityName.toLowerCase().includes(query))
     );
   });
 
   const typeSortAccessors = useMemo(
     () => ({
       name: (row: PiiType) => row.name,
-      fields: (row: PiiType) => row.fields.map((field) => field.entityName).join(", "),
+      fields: (row: PiiType) => fieldNames(row).join(", "),
     }),
     [],
   );
@@ -347,22 +348,13 @@ function TypeLibrary() {
         ),
       },
       {
-        id: "domains",
-        header: "Domains",
-        cell: (row) => (
-          <Text fontSize="sm" color="ink.500">
-            {Array.from(new Set(row.fields.map((field) => field.domain).filter(Boolean))).join(", ") || "—"}
-          </Text>
-        ),
-      },
-      {
         id: "fields",
         header: "Fields",
         sortable: true,
-        sortAccessor: (row) => row.fields.map((field) => field.entityName).join(", "),
+        sortAccessor: (row) => fieldNames(row).join(", "),
         cell: (row) => (
           <Text fontSize="sm" color="ink.500">
-            {row.fields.map((field) => field.entityName).join(", ") || "—"}
+            {fieldNames(row).join(", ") || "—"}
           </Text>
         ),
       },
@@ -713,7 +705,7 @@ export function PlaygroundPanel() {
 
 function SimplePolicySummary({ policy }: { policy: Policy }) {
   const { types, domains } = usePiiPolicies();
-  const entityNames = detectionTypesForPolicy(policy, types, domains).map((type) => type.name);
+  const entityNames = entityNamesForPolicy(policy, types, domains);
   return (
     <Flex wrap="wrap" gap={4} borderTopWidth="1px" borderColor="ink.200" pt={3} mt={3}>
       <Box>

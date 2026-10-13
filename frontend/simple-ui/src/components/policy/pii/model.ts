@@ -31,15 +31,40 @@ export interface PolicyField {
   language: string;
 }
 
-/** Entity names the model-supported dropdown can offer. */
+/**
+ * Entity names Presidio 2.2.35 reports for English from `detectable_entities`.
+ * Pattern recognizers registered for "en" and "ALL", plus spaCy NER entities.
+ */
 export const MODEL_SUPPORTED_ENTITIES = [
-  "CREDIT_CARD_NUMBER",
+  "AU_ABN",
+  "AU_ACN",
+  "AU_MEDICARE",
+  "AU_TFN",
+  "CREDIT_CARD",
   "CRYPTO",
-  "EDUCATION_ID",
+  "DATE_TIME",
   "EMAIL_ADDRESS",
+  "IBAN_CODE",
   "IN_PAN",
-  "MEDICAL_ID",
+  "IP_ADDRESS",
+  "LOCATION",
+  "MEDICAL_LICENSE",
+  "NRP",
+  "ORGANIZATION",
+  "PERSON",
+  "PHONE_NUMBER",
+  "SG_NRIC_FIN",
+  "UK_NHS",
+  "URL",
+  "US_BANK_NUMBER",
+  "US_DRIVER_LICENSE",
+  "US_ITIN",
+  "US_PASSPORT",
+  "US_SSN",
 ] as const;
+
+/** Language codes stored on model_supported_field. */
+export const MODEL_FIELD_LANGUAGES = ["en", "hi", "ta", "te", "kn", "mr", "bn"] as const;
 
 export interface PiiType {
   id: string;

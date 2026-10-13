@@ -1,10 +1,12 @@
 import {
   apiDomainName,
   definitionFromPolicyType,
+  detectionTypesForPolicy,
   entitiesFromPolicyTypes,
+  entityNamesForPolicy,
   policyFieldsFromDefinition,
 } from "../../src/components/policy/pii/apiMap";
-import type { PolicyField } from "../../src/components/policy/pii/model";
+import type { Domain, PiiType, Policy, PolicyField } from "../../src/components/policy/pii/model";
 
 const educationCustom: PolicyField = {
   mode: "custom",
@@ -59,5 +61,46 @@ describe("policy type fields", () => {
     const education = entitiesFromPolicyTypes([item], "education");
     expect(education.map((entity) => entity.entityName)).toEqual(["STUDENT_ID"]);
     expect(education[0]?.policyTypeId).toBe("7");
+  });
+
+  it("keeps playground detection inside the policy domain and still lists model entities", () => {
+    const item = {
+      id: 7,
+      policy_type: "PII",
+      policy_fields: policyFieldsFromDefinition({ fields: [educationCustom, financeModel] }),
+    };
+    const type = definitionFromPolicyType(item);
+    const domains: Domain[] = [
+      { id: "dom-finance", name: "Finance / Banking", description: "", isDefault: true },
+    ];
+    const policy: Policy = {
+      id: "1",
+      policyId: "SPP-1",
+      name: "Finance",
+      description: "",
+      subcategoryId: "1",
+      domainIds: ["dom-finance"],
+      languages: [],
+      typeIds: [type.id],
+      policyType: "Global",
+      scope: "Both",
+      status: "Active",
+    };
+
+    expect(detectionTypesForPolicy(policy, [type as PiiType], domains)).toEqual([]);
+    expect(entityNamesForPolicy(policy, [type], domains)).toEqual(["EMAIL_ADDRESS"]);
+  });
+
+  it("stores a policy field that has no domain without showing a domain name", () => {
+    const written = policyFieldsFromDefinition({
+      fields: [{ ...educationCustom, domain: "" }],
+    });
+    const read = definitionFromPolicyType({
+      id: 1,
+      policy_type: "PII",
+      policy_fields: written,
+    });
+    expect(read.fields[0]?.domain).toBe("");
+    expect(read.fields[0]?.entityName).toBe("STUDENT_ID");
   });
 });

@@ -18,18 +18,19 @@ import {
   Textarea,
   Wrap,
 } from "@chakra-ui/react";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import FieldLabel from "../../common/FieldLabel";
 import FormActions from "../../common/FormActions";
 import FormDrawer from "../../common/FormDrawer";
 import FormSection from "../../common/FormSection";
 import ReadOnlyField from "../../common/ReadOnlyField";
-import { apiDomainName, entitiesFromPolicyTypes, MIN_REGEX_EXAMPLES, type DomainEntity } from "./apiMap";
+import { apiDomainName, entityNamesForPolicy, MIN_REGEX_EXAMPLES } from "./apiMap";
 import { regexCompiles } from "./detection";
 import {
   domainLabel,
   INSTITUTIONS,
   LANGUAGES,
+  MODEL_FIELD_LANGUAGES,
   MODEL_SUPPORTED_ENTITIES,
   SCOPE_OPTIONS,
   type PolicyField,
@@ -37,7 +38,6 @@ import {
   type PolicyType,
 } from "./model";
 import { usePiiPolicies, type PolicyInput, type TypeInput } from "./PiiPoliciesProvider";
-import { listPolicyTypes } from "../../../services/policyHierarchyService";
 import { ChoiceCard } from "./ui";
 
 function FormField({
@@ -77,11 +77,10 @@ interface FieldRow extends PolicyField {
 }
 
 function TypeDrawer() {
-  const { drawer, closeDrawer, types, domains, addType, updateType } = usePiiPolicies();
+  const { drawer, closeDrawer, types, addType, updateType } = usePiiPolicies();
   const open = drawer.kind === "add-type" || drawer.kind === "edit-type";
   const existing = drawer.kind === "edit-type" ? types.find((t) => t.id === drawer.id) : undefined;
   if (!open) return null;
-  const defaultDomain = domains[0] ? apiDomainName(domains[0].name) : "";
 
   return (
     <TypeForm
@@ -89,18 +88,24 @@ function TypeDrawer() {
       title={existing ? "Edit Policy Type" : "Create Policy Type"}
       submitLabel={existing ? "Save" : "Create Policy Type"}
       nameLocked={Boolean(existing)}
-      domainOptions={domainOptionsFor(domains.map((domain) => domain.name), existing?.fields ?? [])}
       initial={{
         name: existing?.name ?? "",
         fields:
           existing && existing.fields.length > 0
             ? existing.fields.map((field, index) => ({ ...field, key: `${existing.id}-${index}` }))
-            : [blankField("field-1", defaultDomain)],
+            : [blankField("field-1")],
       }}
       onClose={closeDrawer}
       onSave={(input) => (existing ? updateType(existing.id, input) : addType(input))}
     />
   );
+}
+
+function languageOptions(current: string): string[] {
+  if (current && !MODEL_FIELD_LANGUAGES.includes(current as (typeof MODEL_FIELD_LANGUAGES)[number])) {
+    return [current, ...MODEL_FIELD_LANGUAGES];
+  }
+  return [...MODEL_FIELD_LANGUAGES];
 }
 
 function modelEntityOptions(current: string): string[] {
@@ -110,11 +115,11 @@ function modelEntityOptions(current: string): string[] {
   return [...MODEL_SUPPORTED_ENTITIES];
 }
 
-function blankField(key: string, domain: string): FieldRow {
+function blankField(key: string): FieldRow {
   return {
     key,
     mode: "custom",
-    domain,
+    domain: "",
     entityName: "",
     examples: [],
     regex: "",
@@ -122,23 +127,10 @@ function blankField(key: string, domain: string): FieldRow {
   };
 }
 
-function domainOptionsFor(names: string[], fields: { domain: string }[]): string[] {
-  const options = new Set<string>();
-  names.forEach((name) => {
-    const domain = apiDomainName(name);
-    if (domain) options.add(domain);
-  });
-  fields.forEach((field) => {
-    if (field.domain) options.add(field.domain);
-  });
-  return Array.from(options);
-}
-
 function TypeForm({
   title,
   submitLabel,
   nameLocked,
-  domainOptions,
   initial,
   onClose,
   onSave,
@@ -146,7 +138,6 @@ function TypeForm({
   title: string;
   submitLabel: string;
   nameLocked: boolean;
-  domainOptions: string[];
   initial: { name: string; fields: FieldRow[] };
   onClose: () => void;
   onSave: (input: TypeInput) => Promise<string | null>;
@@ -168,11 +159,14 @@ function TypeForm({
     if (fields.length === 0) next.fields = "Add at least one policy field.";
     const seen = new Set<string>();
     fields.forEach((field) => {
-      if (!field.domain.trim()) next[`${field.key}-domain`] = "Select a domain.";
       if (!field.entityName.trim()) next[`${field.key}-entity`] = "Entity name is required.";
-      const identity = `${field.domain.trim().toLowerCase()}:${field.entityName.trim().toLowerCase()}`;
-      if (field.domain.trim() && field.entityName.trim()) {
-        if (seen.has(identity)) next[`${field.key}-entity`] = "This entity is already listed for the domain.";
+      const language = field.language.trim().toLowerCase() || "en";
+      const identity =
+        field.mode === "model"
+          ? `${field.domain.trim().toLowerCase()}:${field.entityName.trim().toLowerCase()}:${language}`
+          : `${field.domain.trim().toLowerCase()}:${field.entityName.trim().toLowerCase()}`;
+      if (field.entityName.trim()) {
+        if (seen.has(identity)) next[`${field.key}-entity`] = "This entity is already listed.";
         seen.add(identity);
       }
       if (field.mode === "custom") {
@@ -191,7 +185,7 @@ function TypeForm({
         name: name.trim(),
         fields: fields.map(({ key: _key, ...field }) => ({
           ...field,
-          domain: apiDomainName(field.domain),
+          domain: field.domain.trim(),
           entityName: field.entityName.trim(),
           regex: field.regex.trim(),
           examples: field.examples.map((example) => example.trim()).filter(Boolean),
@@ -259,19 +253,6 @@ function TypeForm({
                 </Button>
               </Flex>
               <Stack spacing={3}>
-                <FormField label="Domain" required error={errors[`${field.key}-domain`]}>
-                  <Select
-                    value={field.domain}
-                    placeholder="Select a domain"
-                    onChange={(e) => updateField(field.key, { domain: e.target.value })}
-                  >
-                    {domainOptions.map((domain) => (
-                      <option key={domain} value={domain}>
-                        {domain}
-                      </option>
-                    ))}
-                  </Select>
-                </FormField>
                 <FormField label="Field mode" required>
                   <Select
                     value={field.mode}
@@ -292,19 +273,33 @@ function TypeForm({
                   </Select>
                 </FormField>
                 {field.mode === "model" ? (
-                  <FormField label="Entity name" required error={errors[`${field.key}-entity`]}>
-                    <Select
-                      value={field.entityName}
-                      placeholder="Select an entity"
-                      onChange={(e) => updateField(field.key, { entityName: e.target.value })}
-                    >
-                      {modelEntityOptions(field.entityName).map((entity) => (
-                        <option key={entity} value={entity}>
-                          {entity}
-                        </option>
-                      ))}
-                    </Select>
-                  </FormField>
+                  <>
+                    <FormField label="Entity name" required error={errors[`${field.key}-entity`]}>
+                      <Select
+                        value={field.entityName}
+                        placeholder="Select an entity"
+                        onChange={(e) => updateField(field.key, { entityName: e.target.value })}
+                      >
+                        {modelEntityOptions(field.entityName).map((entity) => (
+                          <option key={entity} value={entity}>
+                            {entity}
+                          </option>
+                        ))}
+                      </Select>
+                    </FormField>
+                    <FormField label="Language" required>
+                      <Select
+                        value={field.language || "en"}
+                        onChange={(e) => updateField(field.key, { language: e.target.value })}
+                      >
+                        {languageOptions(field.language).map((language) => (
+                          <option key={language} value={language}>
+                            {language}
+                          </option>
+                        ))}
+                      </Select>
+                    </FormField>
+                  </>
                 ) : (
                   <>
                     <FormField label="Entity name" required error={errors[`${field.key}-entity`]}>
@@ -347,7 +342,7 @@ function TypeForm({
           mt={3}
           onClick={() => {
             const key = `field-${keyRef.current++}`;
-            setFields((prev) => [...prev, blankField(key, domainOptions[0] ?? "")]);
+            setFields((prev) => [...prev, blankField(key)]);
           }}
         >
           Add field
@@ -360,15 +355,12 @@ function TypeForm({
 function ExampleTags({ values, onChange }: { values: string[]; onChange: (next: string[]) => void }) {
   const [draft, setDraft] = useState("");
   const commit = () => {
-    const next = draft
-      .split(",")
-      .map((value) => value.trim())
-      .filter((value) => value && !values.includes(value));
-    if (next.length === 0) {
+    const next = draft.trim();
+    if (!next || values.includes(next)) {
       setDraft("");
       return;
     }
-    onChange([...values, ...next]);
+    onChange([...values, next]);
     setDraft("");
   };
   return (
@@ -377,9 +369,8 @@ function ExampleTags({ values, onChange }: { values: string[]; onChange: (next: 
         value={draft}
         placeholder="1234-5678"
         onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
         onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === ",") {
+          if (e.key === "Enter") {
             e.preventDefault();
             commit();
           }
@@ -404,7 +395,6 @@ function TypeViewDrawer() {
   if (drawer.kind !== "view-type") return null;
   const t = types.find((x) => x.id === drawer.id);
   if (!t) return null;
-  const domains = Array.from(new Set(t.fields.map((field) => field.domain).filter(Boolean)));
 
   return (
     <FormDrawer
@@ -424,11 +414,10 @@ function TypeViewDrawer() {
     >
       <Stack spacing={4}>
         <ReadOnlyField label="Policy Type Name">{t.name}</ReadOnlyField>
-        <ReadOnlyField label="Domains">{domains.join(", ") || "—"}</ReadOnlyField>
         <Stack spacing={3}>
           {t.fields.map((field) => (
             <Box
-              key={`${field.domain}:${field.entityName}:${field.mode}`}
+              key={`${field.domain}:${field.language}:${field.entityName}:${field.mode}`}
               borderWidth="1px"
               borderColor="ink.200"
               borderRadius="md"
@@ -440,9 +429,11 @@ function TypeViewDrawer() {
                 </Text>
                 <Badge textTransform="none">{field.mode === "model" ? "Model-supported" : "Custom"}</Badge>
               </Flex>
-              <Text fontSize="xs" color="ink.500" mb={2}>
-                {field.domain || "No domain"}
-              </Text>
+              {field.mode === "model" ? (
+                <Text fontSize="xs" color="ink.500" mb={2}>
+                  {field.language || "en"}
+                </Text>
+              ) : null}
               {field.mode === "custom" ? (
                 <Stack spacing={2}>
                   <Wrap>
@@ -605,15 +596,12 @@ function PolicyForm({
   onClose: () => void;
   onSave: (input: PolicyInput) => Promise<string | null>;
 }) {
-  const { domains } = usePiiPolicies();
+  const { domains, types, typesStatus, typesError } = usePiiPolicies();
   const [name, setName] = useState(initial.name);
   const [description, setDescription] = useState(initial.description);
   const [domainIds, setDomainIds] = useState(initial.domainIds);
   const [languages, setLanguages] = useState(initial.languages);
-  const [selectedEntities, setSelectedEntities] = useState<string[]>([]);
-  const [entities, setEntities] = useState<DomainEntity[]>([]);
-  const [entitiesStatus, setEntitiesStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
-  const [entitiesError, setEntitiesError] = useState("");
+  const [typeIds, setTypeIds] = useState(initial.typeIds);
   const [policyType, setPolicyType] = useState<PolicyType>(initial.policyType);
   const [scope, setScope] = useState<PolicyScope | "">(initial.scope);
   const [domainOpen, setDomainOpen] = useState(false);
@@ -622,77 +610,36 @@ function PolicyForm({
   const [typeQuery, setTypeQuery] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
-  const seededEntities = useRef(initial.typeIds.length === 0);
-  const initialTypeIds = useRef(initial.typeIds);
-  const domainKey = domainIds.join("|");
 
-  useEffect(() => {
-    let cancelled = false;
-    const selected = domainIds
-      .map((id) => domains.find((domain) => domain.id === id))
-      .filter((domain): domain is (typeof domains)[number] => Boolean(domain));
-    if (selected.length === 0) {
-      setEntities([]);
-      setEntitiesStatus("idle");
-      setEntitiesError("");
-      setSelectedEntities([]);
-      return;
-    }
-    setEntitiesStatus("loading");
-    setEntitiesError("");
-    void Promise.all(
-      selected.map(async (domain) => {
-        const items = await listPolicyTypes(apiDomainName(domain.name));
-        return entitiesFromPolicyTypes(items, apiDomainName(domain.name));
-      }),
-    )
-      .then((groups) => {
-        if (cancelled) return;
-        const next = groups.flat();
-        const unique = new Map<string, DomainEntity>();
-        next.forEach((entity) => unique.set(entity.key, entity));
-        const loaded = Array.from(unique.values());
-        setEntities(loaded);
-        setSelectedEntities((prev) => {
-          if (!seededEntities.current) {
-            seededEntities.current = true;
-            return loaded
-              .filter((entity) => initialTypeIds.current.includes(entity.policyTypeId))
-              .map((entity) => entity.key);
-          }
-          return prev.filter((key) => loaded.some((entity) => entity.key === key));
-        });
-        setEntitiesStatus("ready");
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setEntities([]);
-        setEntitiesError("Couldn't load entity names for the selected domain.");
-        setEntitiesStatus("error");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [domainKey, domains, domainIds]);
-
-  const visibleEntities = useMemo(() => {
-    const query = typeQuery.trim().toLowerCase();
-    if (!query) return entities;
-    return entities.filter(
-      (entity) =>
-        entity.entityName.toLowerCase().includes(query) || entity.domain.toLowerCase().includes(query),
+  const domainChoices = useMemo(() => {
+    const wanted = new Set(
+      domainIds.map((id) => apiDomainName(domainLabel(id, domains)).toLowerCase()),
     );
-  }, [entities, typeQuery]);
+    return types
+      .map((type) => {
+        const entities: string[] = [];
+        type.fields.forEach((field) => {
+          if (!field.entityName) return;
+          const matchesDomain = !field.domain || wanted.has(field.domain.toLowerCase());
+          if (!matchesDomain || entities.includes(field.entityName)) return;
+          entities.push(field.entityName);
+        });
+        return { id: type.id, name: type.name, entities };
+      })
+      .filter((choice) => choice.entities.length > 0);
+  }, [types, domainIds, domains]);
 
-  const entitiesByDomain = useMemo(() => {
-    const groups = new Map<string, DomainEntity[]>();
-    visibleEntities.forEach((entity) => {
-      const list = groups.get(entity.domain) ?? [];
-      list.push(entity);
-      groups.set(entity.domain, list);
-    });
-    return Array.from(groups.entries());
-  }, [visibleEntities]);
+  const visibleChoices = useMemo(() => {
+    const query = typeQuery.trim().toLowerCase();
+    if (!query) return domainChoices;
+    return domainChoices.filter(
+      (choice) =>
+        choice.name.toLowerCase().includes(query) ||
+        choice.entities.some((name) => name.toLowerCase().includes(query)),
+    );
+  }, [domainChoices, typeQuery]);
+
+  const selectedTypeIds = typeIds.filter((id) => domainChoices.some((choice) => choice.id === id));
 
   const toggle = (list: string[], value: string, setter: (next: string[]) => void) => {
     setter(list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
@@ -705,14 +652,7 @@ function PolicyForm({
     if (description.length > 200) next.description = "Description is limited to 200 characters.";
     if (domainIds.length === 0) next.domain = "Select at least one domain.";
     if (languages.length === 0) next.languages = "Select at least one language.";
-    const typeIds = Array.from(
-      new Set(
-        entities
-          .filter((entity) => selectedEntities.includes(entity.key))
-          .map((entity) => entity.policyTypeId),
-      ),
-    );
-    if (selectedEntities.length === 0) next.types = "Select at least one entity name.";
+    if (selectedTypeIds.length === 0) next.types = "Select at least one policy type.";
     if (!scope) next.scope = "Select a scope.";
     setErrors(next);
     if (Object.keys(next).length || !scope) return;
@@ -723,7 +663,7 @@ function PolicyForm({
         description: description.trim(),
         domainIds,
         languages,
-        typeIds,
+        typeIds: selectedTypeIds,
         policyType,
         scope,
       });
@@ -830,45 +770,45 @@ function PolicyForm({
         />
         <Box borderTopWidth="1px" borderColor="ink.200" />
         <FormField
-          label={`Entity Names (${selectedEntities.length}/${entities.length})`}
+          label={`Policy Types (${selectedTypeIds.length}/${domainChoices.length})`}
           required
           error={errors.types}
         >
           {domainIds.length === 0 ? (
             <Text fontSize="sm" color="ink.500">
-              Select a domain to see its entity names.
+              Select a domain to see its policy types.
             </Text>
           ) : null}
-          {entitiesStatus === "loading" ? (
+          {typesStatus === "loading" ? (
             <Text fontSize="sm" color="ink.500" mb={2}>
-              Loading entity names…
+              Loading policy types…
             </Text>
           ) : null}
-          {entitiesStatus === "error" ? (
+          {typesStatus === "error" ? (
             <Text fontSize="sm" color="red.500" mb={2}>
-              {entitiesError}
+              {typesError}
             </Text>
           ) : null}
-          {domainIds.length > 0 && entitiesStatus === "ready" && entities.length === 0 ? (
+          {domainIds.length > 0 && typesStatus !== "loading" && domainChoices.length === 0 ? (
             <Text fontSize="sm" color="ink.500">
-              No entity names for the selected domain.
+              No policy types for the selected domain.
             </Text>
           ) : null}
-          {entities.length > 0 ? (
+          {domainChoices.length > 0 ? (
             <>
               <Flex justify="space-between" mb={2}>
                 <Button size="sm" variant="ghost" onClick={() => setTypesOpen((v) => !v)}>
-                  {typesOpen ? "Hide" : "Show"} entities
+                  {typesOpen ? "Hide" : "Show"} types
                 </Button>
                 <HStack spacing={2}>
                   <Button
                     size="xs"
                     variant="link"
-                    onClick={() => setSelectedEntities(entities.map((entity) => entity.key))}
+                    onClick={() => setTypeIds(domainChoices.map((choice) => choice.id))}
                   >
                     Select All
                   </Button>
-                  <Button size="xs" variant="link" color="ink.500" onClick={() => setSelectedEntities([])}>
+                  <Button size="xs" variant="link" color="ink.500" onClick={() => setTypeIds([])}>
                     Clear
                   </Button>
                 </HStack>
@@ -880,30 +820,25 @@ function PolicyForm({
                     <Input
                       size="sm"
                       pl={8}
-                      placeholder="Search entity names..."
+                      placeholder="Search policy types..."
                       value={typeQuery}
                       onChange={(e) => setTypeQuery(e.target.value)}
                     />
                   </Box>
-                  <Box maxH="220px" overflowY="auto" borderWidth="1px" borderColor="ink.200" borderRadius="md" p={3}>
-                    <Stack spacing={4}>
-                      {entitiesByDomain.map(([domain, rows]) => (
-                        <Box key={domain}>
-                          <Badge mb={2} textTransform="none" fontSize="10px">
-                            {domain}
-                          </Badge>
-                          <Box display="grid" gridTemplateColumns="1fr 1fr" gap={1}>
-                            {rows.map((entity) => (
-                              <Checkbox
-                                key={entity.key}
-                                size="sm"
-                                isChecked={selectedEntities.includes(entity.key)}
-                                onChange={() => toggle(selectedEntities, entity.key, setSelectedEntities)}
-                              >
-                                {entity.entityName}
-                              </Checkbox>
-                            ))}
-                          </Box>
+                  <Box maxH="240px" overflowY="auto" borderWidth="1px" borderColor="ink.200" borderRadius="md" p={3}>
+                    <Stack spacing={3}>
+                      {visibleChoices.map((choice) => (
+                        <Box key={choice.id}>
+                          <Checkbox
+                            size="sm"
+                            isChecked={selectedTypeIds.includes(choice.id)}
+                            onChange={() => toggle(typeIds, choice.id, setTypeIds)}
+                          >
+                            {choice.name}
+                          </Checkbox>
+                          <Text pl={6} mt={1} fontSize="xs" color="ink.500">
+                            {choice.entities.join(", ")}
+                          </Text>
                         </Box>
                       ))}
                     </Stack>
@@ -1004,32 +939,13 @@ function ChipPicker({
   );
 }
 
-function entityNamesForPolicy(
-  policy: { typeIds: string[]; domainIds: string[] },
-  types: { id: string; name: string; fields: PolicyField[] }[],
-  domains: { id: string; name: string }[],
-): string[] {
-  const wanted = new Set(
-    policy.domainIds.map((id) => apiDomainName(domainLabel(id, domains)).toLowerCase()),
-  );
-  const names = types
-    .filter((type) => policy.typeIds.includes(type.id))
-    .flatMap((type) =>
-      type.fields
-        .filter((field) => wanted.size === 0 || wanted.has(field.domain.toLowerCase()))
-        .map((field) => field.entityName),
-    );
-  const unique = Array.from(new Set(names));
-  if (unique.length > 0) return unique;
-  return types.filter((type) => policy.typeIds.includes(type.id)).map((type) => type.name);
-}
-
 function PolicyViewDrawer() {
   const { drawer, closeDrawer, policies, types, domains, subscriptions } = usePiiPolicies();
   if (drawer.kind !== "view-policy") return null;
   const p = policies.find((x) => x.id === drawer.id);
   if (!p) return null;
   const subscribers = subscriptions[p.policyId] ?? [];
+  const entityNames = entityNamesForPolicy(p, types, domains);
   return (
     <FormDrawer
       isOpen
@@ -1094,13 +1010,19 @@ function PolicyViewDrawer() {
           <Text fontSize="xs" fontWeight="medium" color="ink.500" textTransform="uppercase" mb={1}>
             Entity Names
           </Text>
-          <Wrap>
-            {entityNamesForPolicy(p, types, domains).map((name) => (
-              <Badge textTransform="none" key={name}>
-                {name}
-              </Badge>
-            ))}
-          </Wrap>
+          {entityNames.length === 0 ? (
+            <Text fontSize="sm" color="ink.500">
+              —
+            </Text>
+          ) : (
+            <Wrap>
+              {entityNames.map((name) => (
+                <Badge textTransform="none" key={name}>
+                  {name}
+                </Badge>
+              ))}
+            </Wrap>
+          )}
         </Box>
       </Stack>
     </FormDrawer>

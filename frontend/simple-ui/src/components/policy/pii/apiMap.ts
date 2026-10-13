@@ -33,6 +33,9 @@ export interface DefinitionFields {
   fields: PolicyField[];
 }
 
+/** Fields with no domain are stored under this key. The policy type screens do not show it. */
+export const UNSCOPED_POLICY_DOMAIN = "*";
+
 /** Catalog labels such as "Finance / Banking" are stored as the API domain key "Finance". */
 export function apiDomainName(name: string): string {
   const trimmed = name.trim();
@@ -57,9 +60,9 @@ interface FieldBucket {
 export function policyFieldsFromDefinition(input: DefinitionFields): Record<string, unknown> {
   const grouped = new Map<string, FieldBucket>();
   input.fields.forEach((field) => {
-    const domain = apiDomainName(field.domain);
+    const domain = apiDomainName(field.domain) || UNSCOPED_POLICY_DOMAIN;
     const entityName = field.entityName.trim();
-    if (!domain || !entityName) return;
+    if (!entityName) return;
     const bucket: FieldBucket = grouped.get(domain) ?? { custom: [], model: new Map() };
     if (field.mode === "model") {
       const language = field.language.trim() || "en";
@@ -112,6 +115,7 @@ function isDomainBucket(value: unknown): value is Record<string, unknown> {
 }
 
 function rowsFromBucket(domain: string, bucket: Record<string, unknown>): PolicyField[] {
+  const storedDomain = domain === UNSCOPED_POLICY_DOMAIN ? "" : domain;
   const rows: PolicyField[] = [];
   if (Array.isArray(bucket.custom_field)) {
     bucket.custom_field.forEach((entry) => {
@@ -121,7 +125,7 @@ function rowsFromBucket(domain: string, bucket: Record<string, unknown>): Policy
       if (!entityName) return;
       rows.push({
         mode: "custom",
-        domain,
+        domain: storedDomain,
         entityName,
         examples: stringList(record.examples),
         regex: stringValue(record.regex),
@@ -140,7 +144,7 @@ function rowsFromBucket(domain: string, bucket: Record<string, unknown>): Policy
           if (!entityName) return;
           rows.push({
             mode: "model",
-            domain,
+            domain: storedDomain,
             entityName,
             examples: [],
             regex: "",
@@ -202,7 +206,9 @@ export function detectionTypesForPolicy(policy: Policy, types: PiiType[], domain
         (field) =>
           field.mode === "custom" &&
           field.regex &&
-          (wanted.size === 0 || wanted.has(field.domain.toLowerCase())),
+          (wanted.size === 0 ||
+            wanted.has(field.domain.toLowerCase()) ||
+            field.domain === ""),
       )
       .map((field) => ({
         ...type,
@@ -216,8 +222,28 @@ export function detectionTypesForPolicy(policy: Policy, types: PiiType[], domain
         fields: [field],
       })),
   );
-  if (flattened.length > 0) return flattened;
-  return linked.filter((type) => type.regex);
+  return flattened;
+}
+
+/** Entity names for a policy's types in its domains, including model-supported rows. */
+export function entityNamesForPolicy(policy: Policy, types: PiiType[], domains: Domain[]): string[] {
+  const wanted = new Set(
+    policy.domainIds.map((id) => apiDomainName(domainLabel(id, domains)).toLowerCase()),
+  );
+  const names = types
+    .filter((type) => policy.typeIds.includes(type.id))
+    .flatMap((type) =>
+      type.fields
+        .filter(
+          (field) =>
+            field.entityName &&
+            (wanted.size === 0 ||
+              wanted.has(field.domain.toLowerCase()) ||
+              field.domain === ""),
+        )
+        .map((field) => field.entityName),
+    );
+  return Array.from(new Set(names));
 }
 
 export function guardrailToApi(scope: PolicyScope): GuardrailScope {
