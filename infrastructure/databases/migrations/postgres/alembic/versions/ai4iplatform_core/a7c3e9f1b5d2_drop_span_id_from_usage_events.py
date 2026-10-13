@@ -17,7 +17,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 TABLE = "usage_events"
 PK = "pk_usage_events"
-# span_id restored on downgrade for rows written while it didn't exist.
+# The span_id every row gets on downgrade — all rows, including those written
+# before the upgrade, since the upgrade dropped the column and its values. The
+# original span ids can't be recovered by a downgrade: restore the
+# pre-migration backup if they're needed.
 _PLACEHOLDER_SPAN_ID = "0000000000000000"
 
 # Rows that would share a key once span_id is gone.
