@@ -26,10 +26,10 @@ import DataTable, {
   createActionsColumn,
   type DataTableColumn,
 } from "../../common/table";
+import { detectionTypesForPolicy } from "./apiMap";
 import { buildSample, runDetection, type DetectionHit } from "./detection";
 import { useDeferredColumnSort } from "../../../utils/tableSort";
 import {
-  HANDLING_OPTIONS,
   domainLabel,
   policyEffective,
   subcategoryEffective,
@@ -303,8 +303,6 @@ function TypeLibrary() {
     types,
     typeSearch,
     setTypeSearch,
-    typeHandlingFilter,
-    setTypeHandlingFilter,
     openDrawer,
     askConfirm,
     deleteType,
@@ -314,15 +312,21 @@ function TypeLibrary() {
   } = usePiiPolicies();
 
   const rows = types.filter((t) => {
-    const matchesName = t.name.toLowerCase().includes(typeSearch.toLowerCase());
-    const matchesHandling = !typeHandlingFilter || t.handling === typeHandlingFilter;
-    return matchesName && matchesHandling;
+    const query = typeSearch.toLowerCase();
+    if (!query) return true;
+    return (
+      t.name.toLowerCase().includes(query) ||
+      t.fields.some(
+        (field) =>
+          field.entityName.toLowerCase().includes(query) || field.domain.toLowerCase().includes(query),
+      )
+    );
   });
 
   const typeSortAccessors = useMemo(
     () => ({
       name: (row: PiiType) => row.name,
-      detection: (row: PiiType) => row.detectionMode,
+      fields: (row: PiiType) => row.fields.map((field) => field.entityName).join(", "),
     }),
     [],
   );
@@ -333,7 +337,7 @@ function TypeLibrary() {
     () => [
       {
         id: "name",
-        header: "PII Type",
+        header: "Policy Type",
         sortable: true,
         sortAccessor: (row) => row.name,
         cell: (row) => (
@@ -343,22 +347,22 @@ function TypeLibrary() {
         ),
       },
       {
-        id: "handling",
-        header: "Handling",
+        id: "domains",
+        header: "Domains",
         cell: (row) => (
-          <Badge colorScheme={handlingBadgeColor(row.handling)} textTransform="none">
-            {row.handling}
-          </Badge>
+          <Text fontSize="sm" color="ink.500">
+            {Array.from(new Set(row.fields.map((field) => field.domain).filter(Boolean))).join(", ") || "—"}
+          </Text>
         ),
       },
       {
-        id: "detection",
-        header: "Detection",
+        id: "fields",
+        header: "Fields",
         sortable: true,
-        sortAccessor: (row) => row.detectionMode,
+        sortAccessor: (row) => row.fields.map((field) => field.entityName).join(", "),
         cell: (row) => (
           <Text fontSize="sm" color="ink.500">
-            {row.detectionMode}
+            {row.fields.map((field) => field.entityName).join(", ") || "—"}
           </Text>
         ),
       },
@@ -373,8 +377,8 @@ function TypeLibrary() {
             tooltip: row.isDefault ? "This cannot be removed" : "Delete",
             onClick: () =>
               askConfirm({
-                title: "Delete PII type?",
-                body: "This will remove the PII type from the library. Policies using this type will need to be updated. This action cannot be undone.",
+                title: "Delete policy type?",
+                body: "This will remove the policy type and its fields. Policies using it will need to be updated. This action cannot be undone.",
                 confirmLabel: "Delete",
                 confirmColorScheme: "red",
                 onConfirm: () => deleteType(row.id),
@@ -401,7 +405,7 @@ function TypeLibrary() {
       ) : null}
       {typesStatus === "loading" && types.length === 0 ? (
         <Center py={10}>
-          <LoadingSpinner label="Loading PII definitions…" />
+          <LoadingSpinner label="Loading policy types…" />
         </Center>
       ) : (
     <DataTable
@@ -414,37 +418,22 @@ function TypeLibrary() {
       paginate="client"
       paginationPosition="bottom"
       unfilteredCount={types.length}
-      hasActiveFilters={Boolean(typeSearch || typeHandlingFilter)}
+      hasActiveFilters={Boolean(typeSearch)}
       onClearFilters={() => {
         setTypeSearch("");
-        setTypeHandlingFilter("");
       }}
-      emptyMessage="No PII types yet."
-      noResultsMessage="No PII types match your search."
+      emptyMessage="No policy types yet."
+      noResultsMessage="No policy types match your search."
       onRowClick={(row) => openDrawer({ kind: "view-type", id: row.id })}
       filterToolbarRightContent={
-        <CreateButton onClick={() => openDrawer({ kind: "add-type" })}>Add PII Type</CreateButton>
+        <CreateButton onClick={() => openDrawer({ kind: "add-type" })}>Add Policy Type</CreateButton>
       }
       search={{
         value: typeSearch,
         onChange: setTypeSearch,
-        placeholder: "Search PII types...",
+        placeholder: "Search policy types...",
         fields: ["name"],
       }}
-      filterDefs={[
-        {
-          id: "handling",
-          label: "Handling",
-          type: "select",
-          value: typeHandlingFilter,
-          onChange: setTypeHandlingFilter,
-          width: "150px",
-          options: [
-            { value: "", label: "All Handling" },
-            ...HANDLING_OPTIONS.map((h) => ({ value: h, label: h })),
-          ],
-        },
-      ]}
     />
       )}
     </Box>
@@ -541,6 +530,7 @@ export function PlaygroundPanel() {
   const {
     policies,
     types,
+    domains,
     playgroundPolicyId,
     playgroundTarget,
     playgroundInput,
@@ -581,7 +571,10 @@ export function PlaygroundPanel() {
               value={playgroundPolicyId}
               onChange={(e) => {
                 const policy = policies.find((p) => p.policyId === e.target.value);
-                setPlaygroundPolicy(e.target.value, policy ? buildSample(policy, types) : "");
+                setPlaygroundPolicy(
+                  e.target.value,
+                  policy ? buildSample(policy, detectionTypesForPolicy(policy, types, domains)) : "",
+                );
               }}
             >
               {activePolicies.map((p) => (
@@ -622,7 +615,7 @@ export function PlaygroundPanel() {
             <Button
               variant="link"
               size="xs"
-              onClick={() => loadPlaygroundSample(buildSample(selected, types))}
+              onClick={() => loadPlaygroundSample(buildSample(selected, detectionTypesForPolicy(selected, types, domains)))}
             >
               Load sample
             </Button>
@@ -639,10 +632,9 @@ export function PlaygroundPanel() {
         />
         <Button mt={3} size="sm" isDisabled={!canRun} onClick={() => {
           if (!selected) return;
-          const linked = selected.typeIds
-            .map((id) => types.find((t) => t.id === id))
-            .filter((t): t is PiiType => Boolean(t));
-          setPlaygroundResult(runDetection(playgroundInput, linked));
+          setPlaygroundResult(
+            runDetection(playgroundInput, detectionTypesForPolicy(selected, types, domains)),
+          );
         }}>
           Run Simulation
         </Button>
@@ -720,7 +712,8 @@ export function PlaygroundPanel() {
 }
 
 function SimplePolicySummary({ policy }: { policy: Policy }) {
-  const { types } = usePiiPolicies();
+  const { types, domains } = usePiiPolicies();
+  const entityNames = detectionTypesForPolicy(policy, types, domains).map((type) => type.name);
   return (
     <Flex wrap="wrap" gap={4} borderTopWidth="1px" borderColor="ink.200" pt={3} mt={3}>
       <Box>
@@ -736,16 +729,16 @@ function SimplePolicySummary({ policy }: { policy: Policy }) {
         </Text>
       </Box>
       <Box flex="1" minW="200px">
-        <FieldLabel variant="metric">PII Types</FieldLabel>
+        <FieldLabel variant="metric">Entity Names</FieldLabel>
         <Flex wrap="wrap" gap={1} mt={1.5}>
-          {policy.typeIds.map((id) => {
-            const t = types.find((x) => x.id === id);
-            return t ? (
-              <Badge key={id} colorScheme="blue" textTransform="none">
-                {t.name}
-              </Badge>
-            ) : null;
-          })}
+          {(entityNames.length > 0
+            ? entityNames
+            : policy.typeIds.map((id) => types.find((type) => type.id === id)?.name).filter(Boolean)
+          ).map((name) => (
+            <Badge key={name} colorScheme="blue" textTransform="none">
+              {name}
+            </Badge>
+          ))}
         </Flex>
       </Box>
     </Flex>

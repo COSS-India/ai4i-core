@@ -19,6 +19,28 @@ export interface Domain {
   isDefault: boolean;
 }
 
+/** A row on a policy type: a Presidio entity, or a custom regex entity. */
+export interface PolicyField {
+  mode: "model" | "custom";
+  /** Domain key stored on policy_fields, such as Education or Finance. */
+  domain: string;
+  entityName: string;
+  examples: string[];
+  regex: string;
+  /** Language key inside model_supported_field. Custom rows keep "en". */
+  language: string;
+}
+
+/** Entity names the model-supported dropdown can offer. */
+export const MODEL_SUPPORTED_ENTITIES = [
+  "CREDIT_CARD_NUMBER",
+  "CRYPTO",
+  "EDUCATION_ID",
+  "EMAIL_ADDRESS",
+  "IN_PAN",
+  "MEDICAL_ID",
+] as const;
+
 export interface PiiType {
   id: string;
   name: string;
@@ -30,6 +52,7 @@ export interface PiiType {
   nerModel: string;
   examples: string[];
   isDefault: boolean;
+  fields: PolicyField[];
 }
 
 export interface Policy {
@@ -124,14 +147,16 @@ const DOMAINS: Domain[] = [
   },
 ];
 
-function type(partial: Omit<PiiType, "nerModel" | "detectionMode" | "maskingPattern"> & {
+function type(partial: Omit<PiiType, "nerModel" | "detectionMode" | "maskingPattern" | "fields"> & {
   nerModel?: string;
   detectionMode?: DetectionMode;
   maskingPattern?: MaskingPattern | null;
+  fields?: PolicyField[];
 }): PiiType {
   return {
     nerModel: NER_MODELS[0],
     detectionMode: "Regex",
+    fields: [],
     ...partial,
     maskingPattern: partial.handling === "Mask" ? partial.maskingPattern ?? "Partial" : null,
   };

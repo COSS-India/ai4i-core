@@ -53,14 +53,14 @@ const SAMPLE_VALUES: Record<string, string> = {
 };
 
 export function buildSample(policy: Policy, types: PiiType[]): string {
-  return policy.typeIds
-    .map((id) => {
-      const t = types.find((x) => x.id === id);
-      if (!t) return null;
-      const value = SAMPLE_VALUES[id] ?? t.examples[0];
+  const linked = types.filter((type) => policy.typeIds.includes(type.id));
+  const source = linked.length > 0 ? linked : types;
+  return source
+    .map((type) => {
+      const value = SAMPLE_VALUES[type.id] ?? type.examples[0];
       if (!value) return null;
-      const line = SAMPLE_LINES[id];
-      return line ? line(value) : `${t.name}: ${value}.`;
+      const line = SAMPLE_LINES[type.id];
+      return line ? line(value) : `${type.name}: ${value}.`;
     })
     .filter((line): line is string => Boolean(line))
     .join(" ");

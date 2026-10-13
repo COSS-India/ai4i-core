@@ -5,24 +5,17 @@ import type {
 } from "../../../services/dto/schemas/policyHierarchy";
 import {
   NER_MODELS,
+  domainLabel,
   type DetectionMode,
   type Domain,
-  type Handling,
-  type MaskingPattern,
   type PiiType,
   type Policy,
+  type PolicyField,
   type PolicyScope,
-  type PolicyType,
 } from "./model";
 
 /** Regex definitions go in custom_field, which the API rejects with fewer than three examples. */
 export const MIN_REGEX_EXAMPLES = 3;
-
-const HANDLING_TO_API: Record<Handling, string> = {
-  Mask: "mask",
-  Hash: "hash",
-  Redact: "redact",
-};
 
 const SCOPE_TO_API: Record<PolicyScope, GuardrailScope> = {
   "Input requests": "input",
@@ -37,65 +30,194 @@ const SCOPE_FROM_API: Record<GuardrailScope, PolicyScope> = {
 };
 
 export interface DefinitionFields {
-  name: string;
-  examples: string[];
-  handling: Handling;
-  maskingPattern: MaskingPattern | null;
-  detectionMode: DetectionMode;
-  regex: string;
-  nerModel: string;
+  fields: PolicyField[];
+}
+
+/** Catalog labels such as "Finance / Banking" are stored as the API domain key "Finance". */
+export function apiDomainName(name: string): string {
+  const trimmed = name.trim();
+  if (/^finance\b/i.test(trimmed)) return "Finance";
+  return trimmed;
+}
+
+export interface DomainEntity {
+  key: string;
+  policyTypeId: string;
+  policyTypeName: string;
+  domain: string;
+  entityName: string;
+  mode: PolicyField["mode"];
+}
+
+interface FieldBucket {
+  custom: { entity_name: string; examples: string[]; regex: string }[];
+  model: Map<string, { entity_name: string }[]>;
 }
 
 export function policyFieldsFromDefinition(input: DefinitionFields): Record<string, unknown> {
-  const handling = HANDLING_TO_API[input.handling];
-  const fields: Record<string, unknown> = {
-    handling,
-    implementation_method: input.detectionMode === "Model" ? "model" : "regex",
-    examples: input.examples,
-  };
-  if (input.handling === "Mask" && input.maskingPattern) {
-    fields.masking_pattern = input.maskingPattern.toLowerCase();
+  const grouped = new Map<string, FieldBucket>();
+  input.fields.forEach((field) => {
+    const domain = apiDomainName(field.domain);
+    const entityName = field.entityName.trim();
+    if (!domain || !entityName) return;
+    const bucket: FieldBucket = grouped.get(domain) ?? { custom: [], model: new Map() };
+    if (field.mode === "model") {
+      const language = field.language.trim() || "en";
+      const entities = bucket.model.get(language) ?? [];
+      if (!entities.some((entity) => entity.entity_name === entityName)) {
+        entities.push({ entity_name: entityName });
+      }
+      bucket.model.set(language, entities);
+    } else {
+      bucket.custom.push({
+        entity_name: entityName,
+        examples: field.examples.map((example) => example.trim()).filter(Boolean),
+        regex: field.regex.trim(),
+      });
+    }
+    grouped.set(domain, bucket);
+  });
+
+  const policyFields: Record<string, unknown> = {};
+  grouped.forEach((bucket, domain) => {
+    const value: Record<string, unknown> = {};
+    if (bucket.custom.length > 0) value.custom_field = bucket.custom;
+    if (bucket.model.size > 0) {
+      const entry: Record<string, { entity_name: string }[]> = {};
+      bucket.model.forEach((entities, language) => {
+        entry[language] = entities;
+      });
+      value.model_supported_field = [entry];
+    }
+    policyFields[domain] = value;
+  });
+  return policyFields;
+}
+
+function fieldsFromPolicyFields(policyFields: Record<string, unknown>): PolicyField[] {
+  const entries = Object.entries(policyFields);
+  const domainBuckets = entries.filter((entry): entry is [string, Record<string, unknown>] =>
+    isDomainBucket(entry[1]),
+  );
+  if (domainBuckets.length > 0) {
+    return domainBuckets.flatMap(([domain, bucket]) => rowsFromBucket(domain, bucket));
   }
-  if (input.detectionMode === "Model") {
-    fields.ner_model = input.nerModel;
-    fields.model_supported_field = [{ en: [{ entity_name: input.name }] }];
-    return fields;
+  return rowsFromBucket("", policyFields);
+}
+
+function isDomainBucket(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return "custom_field" in record || "model_supported_field" in record;
+}
+
+function rowsFromBucket(domain: string, bucket: Record<string, unknown>): PolicyField[] {
+  const rows: PolicyField[] = [];
+  if (Array.isArray(bucket.custom_field)) {
+    bucket.custom_field.forEach((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return;
+      const record = entry as Record<string, unknown>;
+      const entityName = stringValue(record.entity_name);
+      if (!entityName) return;
+      rows.push({
+        mode: "custom",
+        domain,
+        entityName,
+        examples: stringList(record.examples),
+        regex: stringValue(record.regex),
+        language: "en",
+      });
+    });
   }
-  fields.custom_field = [
-    {
-      entity_name: input.name,
-      examples: input.examples,
-      regex: input.regex,
-      mode: handling,
-    },
-  ];
-  return fields;
+  if (Array.isArray(bucket.model_supported_field)) {
+    bucket.model_supported_field.forEach((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return;
+      Object.entries(entry as Record<string, unknown>).forEach(([language, entities]) => {
+        if (!Array.isArray(entities)) return;
+        entities.forEach((entity) => {
+          if (!entity || typeof entity !== "object" || Array.isArray(entity)) return;
+          const entityName = stringValue((entity as Record<string, unknown>).entity_name);
+          if (!entityName) return;
+          rows.push({
+            mode: "model",
+            domain,
+            entityName,
+            examples: [],
+            regex: "",
+            language: language || "en",
+          });
+        });
+      });
+    });
+  }
+  return rows;
 }
 
 export function definitionFromPolicyType(item: PolicyTypeItem): PiiType {
-  const fields = item.policy_fields;
-  const custom = firstRecord(fields.custom_field);
-  const regex = stringValue(custom?.regex) || stringValue(fields.regex);
-  const nerModel = stringValue(fields.ner_model);
-  const method = stringValue(fields.implementation_method).toLowerCase();
-  const detectionMode: DetectionMode =
-    method === "model" || (!regex && (Boolean(nerModel) || fields.model_supported_field != null))
-      ? "Model"
-      : "Regex";
-  const handling = handlingFromApi(fields.handling ?? custom?.mode);
-  const examples = stringList(fields.examples);
+  const fields = fieldsFromPolicyFields(item.policy_fields);
+  const firstCustom = fields.find((field) => field.mode === "custom");
+  const firstModel = fields.find((field) => field.mode === "model");
+  const detectionMode: DetectionMode = firstCustom ? "Regex" : "Model";
   return {
     id: String(item.id),
     name: item.policy_type,
     domainId: null,
-    handling,
-    maskingPattern: handling === "Mask" ? maskingFromApi(fields.masking_pattern) : null,
+    handling: "Mask",
+    maskingPattern: null,
     detectionMode,
-    regex,
-    nerModel: nerModel || NER_MODELS[0],
-    examples: examples.length > 0 ? examples : stringList(custom?.examples),
+    regex: firstCustom?.regex ?? "",
+    nerModel: firstModel?.entityName || NER_MODELS[0],
+    examples: firstCustom?.examples ?? [],
     isDefault: false,
+    fields,
   };
+}
+
+/** Entity names inside a domain-filtered policy-type list. */
+export function entitiesFromPolicyTypes(items: PolicyTypeItem[], domain?: string): DomainEntity[] {
+  const wanted = domain ? apiDomainName(domain).toLowerCase() : "";
+  return items.flatMap((item) =>
+    fieldsFromPolicyFields(item.policy_fields)
+      .filter((field) => field.entityName && (!wanted || field.domain.toLowerCase() === wanted))
+      .map((field) => ({
+        key: `${item.id}:${field.domain}:${field.entityName}`,
+        policyTypeId: String(item.id),
+        policyTypeName: item.policy_type,
+        domain: field.domain,
+        entityName: field.entityName,
+        mode: field.mode,
+      })),
+  );
+}
+
+/** Custom regex fields for the selected policy types and domains, for the playground. */
+export function detectionTypesForPolicy(policy: Policy, types: PiiType[], domains: Domain[]): PiiType[] {
+  const wanted = new Set(
+    policy.domainIds.map((id) => apiDomainName(domainLabel(id, domains)).toLowerCase()),
+  );
+  const linked = types.filter((type) => policy.typeIds.includes(type.id));
+  const flattened = linked.flatMap((type) =>
+    type.fields
+      .filter(
+        (field) =>
+          field.mode === "custom" &&
+          field.regex &&
+          (wanted.size === 0 || wanted.has(field.domain.toLowerCase())),
+      )
+      .map((field) => ({
+        ...type,
+        id: `${type.id}:${field.domain}:${field.entityName}`,
+        name: field.entityName,
+        regex: field.regex,
+        examples: field.examples,
+        detectionMode: "Regex" as const,
+        handling: "Redact" as const,
+        maskingPattern: null,
+        fields: [field],
+      })),
+  );
+  if (flattened.length > 0) return flattened;
+  return linked.filter((type) => type.regex);
 }
 
 export function guardrailToApi(scope: PolicyScope): GuardrailScope {
@@ -117,7 +239,11 @@ export function policyFromRecord(item: PolicyRecord, domains: Domain[]): Policy 
     description: item.description?.trim() ?? "",
     subcategoryId: String(item.sub_category_id),
     domainIds: item.domain.map((name) => {
-      const match = domains.find((domain) => domain.name.toLowerCase() === name.toLowerCase());
+      const match =
+        domains.find((domain) => domain.name.toLowerCase() === name.toLowerCase()) ??
+        domains.find(
+          (domain) => apiDomainName(domain.name).toLowerCase() === apiDomainName(name).toLowerCase(),
+        );
       return match?.id ?? name;
     }),
     languages: [],
@@ -126,17 +252,6 @@ export function policyFromRecord(item: PolicyRecord, domains: Domain[]): Policy 
     scope: SCOPE_FROM_API[item.guardrail_scope],
     status: item.is_active ? "Active" : "Inactive",
   };
-}
-
-function handlingFromApi(value: unknown): Handling {
-  const text = stringValue(value).toLowerCase();
-  if (text === "hash") return "Hash";
-  if (text === "redact") return "Redact";
-  return "Mask";
-}
-
-function maskingFromApi(value: unknown): MaskingPattern {
-  return stringValue(value).toLowerCase() === "full" ? "Full" : "Partial";
 }
 
 function stringValue(value: unknown): string {
@@ -149,11 +264,4 @@ function stringList(value: unknown): string[] {
     .filter((item): item is string => typeof item === "string")
     .map((item) => item.trim())
     .filter(Boolean);
-}
-
-function firstRecord(value: unknown): Record<string, unknown> | null {
-  if (!Array.isArray(value) || value.length === 0) return null;
-  const entry = value[0];
-  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
-  return entry as Record<string, unknown>;
 }

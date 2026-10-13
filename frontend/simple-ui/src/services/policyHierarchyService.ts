@@ -91,8 +91,11 @@ export interface PolicyTypeWrite {
   policy_fields: Record<string, unknown>;
 }
 
-export async function listPolicyTypes(): Promise<PolicyTypeItem[]> {
-  const response = await apiClient.get(apiEndpoints.policyHierarchy.policyTypes);
+/** GET /policies/policy-types. `domain` keeps only that domain's policy_fields. */
+export async function listPolicyTypes(domain?: string): Promise<PolicyTypeItem[]> {
+  const response = await apiClient.get(apiEndpoints.policyHierarchy.policyTypes, {
+    params: domain ? { domain } : undefined,
+  });
   return policyTypeListResponseSchema.parse(response.data).data.items;
 }
 
