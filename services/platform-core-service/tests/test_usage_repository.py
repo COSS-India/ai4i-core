@@ -391,7 +391,7 @@ class TestGetTenantBudgets:
         """Regression: a real auth_db failure (connection drop, aborted
         transaction) must NOT be swallowed into `{}` — that made _resolve_budget
         report has_budget=False for every tenant, so /usage-summary answered
-        200 OK with totalAllocatedBudget=0 during an actual outage, exactly the
+        200 OK with budget.allocated=0 during an actual outage, exactly the
         false zero application_usage_service._load_tenant_budget already
         refuses to produce (see its docstring). The caller-side route/global
         exception handler is what turns this into a 500 — this repository
