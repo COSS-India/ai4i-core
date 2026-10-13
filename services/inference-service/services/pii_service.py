@@ -28,10 +28,11 @@ class PIITaskService(BaseTaskService):
     #
     #     for text in source_texts:
     #         analyzer_results = engine.analyze(text, source_lang)
-    #         anonymized = engine.anonymize(text, analyzer_results)
+    #         anonymized, entity_mapping = engine.anonymize(text, analyzer_results)
     #         self.billed_input += len(text.split())
     #         response_data.append({
-    #             "anonymizedText": anonymized,
+    #             "anonymizedText": anonymized.text,
+    #             "entityMapping": entity_mapping,
     #             "entities": [
     #                 {
     #                     "entityType": r.entity_type,

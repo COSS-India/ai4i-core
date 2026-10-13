@@ -186,6 +186,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
     error: string | null | undefined,
     onChange: (value: string) => void,
     helper: string,
+    placeholder: string = FIELD_HINTS.service.price.placeholder,
   ) => {
     if (isView) {
       return <ReadOnlyField label={label}>{value || "—"}</ReadOnlyField>;
@@ -198,7 +199,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onBlur={() => markBlurred(field)}
-          placeholder={FIELD_HINTS.service.price.placeholder}
+          placeholder={placeholder}
           type="number"
           min={0}
           max={PRICE_PER_UNIT_MAX}
@@ -671,7 +672,11 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                       </option>
                     ))}
                   </Select>
-                  <FieldHint>{FIELD_HINTS.service.unitSize.helper}</FieldHint>
+                  <FieldHint>
+                    {isLlmTaskType
+                      ? FIELD_HINTS.service.unitSize.llmHelper
+                      : FIELD_HINTS.service.unitSize.helper}
+                  </FieldHint>
                 </FormControl>
                 )}
               </SimpleGrid>
@@ -686,6 +691,9 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   isLlmTaskType
                     ? FIELD_HINTS.service.llmInputPrice.helper
                     : FIELD_HINTS.service.price.helper,
+                  isLlmTaskType
+                    ? FIELD_HINTS.service.llmInputPrice.placeholder
+                    : FIELD_HINTS.service.price.placeholder,
                 )}
 
                 {isView ? (
@@ -717,6 +725,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   cachedInputPricePerUnitError,
                   onCachedInputPricePerUnitChange,
                   FIELD_HINTS.service.llmCachedInputPrice.helper,
+                  FIELD_HINTS.service.llmCachedInputPrice.placeholder,
                 )}
                 {renderPriceField(
                   "outputPricePerUnit",
@@ -725,6 +734,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   outputPricePerUnitError,
                   onOutputPricePerUnitChange,
                   FIELD_HINTS.service.llmOutputPrice.helper,
+                  FIELD_HINTS.service.llmOutputPrice.placeholder,
                 )}
               </SimpleGrid>
             ) : null}

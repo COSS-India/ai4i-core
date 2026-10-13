@@ -1,15 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { METERING, type MeteringSubTab } from "../config/meteringConstants";
 import { useInferenceTypes } from "./useInferenceTypes";
 import { toMeteringKey } from "../utils/meteringTaskKey";
 import { useTenantsList } from "./useTenantsList";
 import type {
-  MeteringDateRange,
+  MeteringDayKey,
+  MeteringPeriod,
   MeteringResponseMeta,
   MeteringTopN,
-  MeteringWindow,
 } from "../types/metering";
 import {
   fetchMeteringModelConsumption,
@@ -21,9 +21,15 @@ import { fetchUsageSummary } from "../services/usageSpendService";
 import { billingPeriodValue } from "../utils/usageSpendHelpers";
 import type { KeyMetricsSupplement } from "../types/metering";
 import { getMeteringRoleViewConfig } from "../utils/rbac";
-import { meteringQueryDefaults, meteringQueryKey } from "../utils/meteringQuery";
+import {
+  isInvalidPeriodError,
+  meteringQueryDefaults,
+  meteringQueryKey,
+} from "../utils/meteringQuery";
+import { showToast } from "../utils/toast";
 import { resolveMeteringGeneratedAt, formatMeteringDataStateBanner } from "../utils/meteringFormatters";
 import { getTenantIdFromToken } from "../utils/helpers";
+import { istDayKey, periodQueryKeyParts } from "../utils/meteringDateRange";
 
 function isMeteringSubTab(
   value: string,
@@ -68,10 +74,8 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
   const availableSubTabs = METERING.SUB_TABS;
 
   const [subTab, setSubTab] = useState<MeteringSubTab>(METERING.DEFAULTS.SUB_TAB);
-  const [timeWindow, setTimeWindow] = useState<MeteringWindow>(METERING.DEFAULTS.TIME_WINDOW);
-  // Applied custom range (IST dates); overrides timeWindow on the Institution
-  // and Model queries only.
-  const [customRange, setCustomRange] = useState<MeteringDateRange | null>(null);
+  const [period, setPeriod] = useState<MeteringPeriod>(METERING.DEFAULTS.PERIOD);
+  const isDefaultPeriod = period.key === METERING.DEFAULTS.PERIOD.key;
   const [topN, setTopN] = useState<MeteringTopN>(METERING.DEFAULTS.TOP_N);
   const [scopeTenantId, setScopeTenantId] = useState("");
   const [refreshNonce, setRefreshNonce] = useState(0);
@@ -83,16 +87,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     if (typeof raw !== "string" || !isMeteringSubTab(raw, availableSubTabs)) return;
     setSubTab(raw);
   }, [router.isReady, router.query.tab, availableSubTabs]);
-
-  const selectTimeWindow = useCallback((w: MeteringWindow) => {
-    setCustomRange(null);
-    setTimeWindow(w);
-  }, []);
-
-  const clearCustomRange = useCallback(() => {
-    setCustomRange(null);
-    setTimeWindow(METERING.DEFAULTS.TIME_WINDOW);
-  }, []);
 
   const tenantsQuery = useTenantsList({
     enabled: isAdopterView,
@@ -141,99 +135,83 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
 
   const overviewEnabled = enabledServicesReady && (isAdopterView || tenantOverviewEnabled);
 
-  const overviewQueryOptions = (range: MeteringDateRange | null) => ({
+  const overviewQueryOptions = (p: MeteringPeriod) => ({
     queryKey: meteringQueryKey(
       METERING.QUERY.SCOPES.OVERVIEW,
-      timeWindow,
+      ...periodQueryKeyParts(p),
       queryTenantId,
       roleViewConfig.defaultView,
       isAdopterView,
       enabledServicesKey,
       refreshNonce,
-      range?.from ?? null,
-      range?.to ?? null,
     ),
     queryFn: () =>
       fetchMeteringOverview(
-        timeWindow,
+        p,
         ctx,
         queryTenantId,
         enabledServices,
         METERING.USAGE_CONCENTRATION_FETCH_LIMIT,
-        range,
       ),
     ...meteringQueryDefaults,
   });
 
   const overviewQuery = useQuery({
-    ...overviewQueryOptions(customRange),
+    ...overviewQueryOptions(period),
     enabled: overviewEnabled,
   });
 
   const overview = overviewQuery.data;
 
-  // Key metrics ignore the custom range. Their values are window-independent,
-  // but a custom-range fetch (or its failure) must not blank them, so they
-  // read the preset overview — the same cache entry the dashboard used before
-  // the range was applied.
+  // The overview loads on every tab, so it is where a rejected custom range
+  // shows up first. The error toast carries the API's reason; fall back to the
+  // default period so every tab is not left on an error.
+  useEffect(() => {
+    if (period.key !== "custom" || !isInvalidPeriodError(overviewQuery.error)) return;
+    showToast({ type: "info", message: METERING.ERRORS.INVALID_PERIOD_RESET });
+    setPeriod(METERING.DEFAULTS.PERIOD);
+  }, [period.key, overviewQuery.error]);
+
+  // Date picker floor: the IST day the institution was onboarded, or the first
+  // recorded usage in scope when there is no single institution.
+  const firstPickableDay = useMemo((): MeteringDayKey | null => {
+    const ms = Date.parse(overview?.onboarded_at ?? overview?.first_usage_at ?? "");
+    return Number.isNaN(ms) ? null : istDayKey(ms);
+  }, [overview?.onboarded_at, overview?.first_usage_at]);
+
+  // Key metrics (`platform_adoption`) ignore the period, but a fetch for
+  // another period (or its failure) must not blank them, so they read the
+  // default-period overview — the cache entry from the dashboard's first load.
   const keyMetricsOverviewQuery = useQuery({
-    ...overviewQueryOptions(null),
-    enabled: overviewEnabled && isAdopterView && customRange != null,
+    ...overviewQueryOptions(METERING.DEFAULTS.PERIOD),
+    enabled: overviewEnabled && isAdopterView && !isDefaultPeriod,
   });
 
-  const keyMetricsOverview = customRange ? keyMetricsOverviewQuery.data : overview;
+  const keyMetricsOverview = isDefaultPeriod ? overview : keyMetricsOverviewQuery.data;
 
   const modelQueryEnabled =
     enabledServicesReady &&
     subTab === METERING.SUB_TAB.MODEL &&
     (isAdopterView || tenantOverviewEnabled);
 
-  const platformCtx: MeteringContext = useMemo(
-    () => ({ ...ctx, tenantId: null }),
-    [ctx],
-  );
-
-  // Model tab at 30d with no tenant filter already fetches the same platform snapshot.
-  const keyMetricsModelFromTab =
-    isAdopterView &&
-    modelQueryEnabled &&
-    timeWindow === "30d" &&
-    !customRange &&
-    !scopeTenantId;
-
   const modelQuery = useQuery({
     queryKey: meteringQueryKey(
       METERING.QUERY.SCOPES.MODEL,
-      timeWindow,
+      ...periodQueryKeyParts(period),
       queryTenantId,
       roleViewConfig.defaultView,
       isAdopterView,
       enabledServicesKey,
       refreshNonce,
-      customRange?.from ?? null,
-      customRange?.to ?? null,
     ),
     queryFn: () =>
       fetchMeteringModelConsumption(
-        timeWindow,
+        period,
         ctx,
         queryTenantId,
         enabledServices,
-        customRange,
       ),
     enabled: modelQueryEnabled,
-    ...meteringQueryDefaults,
-  });
-
-  const keyMetricsModelQuery = useQuery({
-    queryKey: meteringQueryKey(
-      METERING.QUERY.SCOPES.MODEL,
-      "30d",
-      "key-metrics",
-      refreshNonce,
-    ),
-    queryFn: () => fetchMeteringModelConsumption("30d", platformCtx),
-    enabled: isAdopterView && !keyMetricsModelFromTab,
     ...meteringQueryDefaults,
   });
 
@@ -247,19 +225,15 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
 
   const keyMetricsSupplement = useMemo((): KeyMetricsSupplement | undefined => {
     if (!isAdopterView) return undefined;
-    const summary = keyMetricsModelFromTab
-      ? modelQuery.data?.summary
-      : keyMetricsModelQuery.data?.summary;
+    const adoption = keyMetricsOverview?.platform_adoption;
     return {
-      total_models: summary?.total_models,
-      active_models_30d: summary?.active_models,
+      total_models: adoption?.total_models,
+      active_models_30d: adoption?.active_models_30d,
       tenants_budget_exhausted: keyMetricsBudgetQuery.data?.budgetExceededTenants,
     };
   }, [
     isAdopterView,
-    keyMetricsModelFromTab,
-    modelQuery.data?.summary,
-    keyMetricsModelQuery.data?.summary,
+    keyMetricsOverview?.platform_adoption,
     keyMetricsBudgetQuery.data?.budgetExceededTenants,
   ]);
 
@@ -283,8 +257,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     const err =
       overviewQuery.error ||
       modelQuery.error ||
-      (isAdopterView && customRange && keyMetricsOverviewQuery.error) ||
-      (isAdopterView && keyMetricsModelQuery.error) ||
+      (isAdopterView && !isDefaultPeriod && keyMetricsOverviewQuery.error) ||
       (isAdopterView && keyMetricsBudgetQuery.error);
     return err ? parseMeteringError(err) : null;
   }, [
@@ -292,9 +265,8 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     isAdopterView,
     overviewQuery.error,
     modelQuery.error,
-    customRange,
+    isDefaultPeriod,
     keyMetricsOverviewQuery.error,
-    keyMetricsModelQuery.error,
     keyMetricsBudgetQuery.error,
   ]);
 
@@ -311,8 +283,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
   const isRefreshing =
     overviewQuery.isFetching ||
     (modelQueryEnabled && modelQuery.isFetching) ||
-    (isAdopterView && customRange != null && keyMetricsOverviewQuery.isFetching) ||
-    (isAdopterView && keyMetricsModelQuery.isFetching) ||
+    (isAdopterView && !isDefaultPeriod && keyMetricsOverviewQuery.isFetching) ||
     (isAdopterView && keyMetricsBudgetQuery.isFetching);
 
   const handleRefresh = () => {
@@ -322,8 +293,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       modelQuery.refetch();
     }
     if (isAdopterView) {
-      if (customRange) keyMetricsOverviewQuery.refetch();
-      keyMetricsModelQuery.refetch();
+      if (!isDefaultPeriod) keyMetricsOverviewQuery.refetch();
       keyMetricsBudgetQuery.refetch();
     }
   };
@@ -352,11 +322,9 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     roleViewConfig,
     subTab,
     setSubTab,
-    timeWindow,
-    setTimeWindow: selectTimeWindow,
-    customRange,
-    applyCustomRange: setCustomRange,
-    clearCustomRange,
+    period,
+    setPeriod,
+    firstPickableDay,
     topN,
     setTopN,
     scopeTenantId,

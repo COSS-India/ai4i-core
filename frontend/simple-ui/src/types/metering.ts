@@ -1,8 +1,5 @@
 /** Metering & Usage Dashboard API types (matches platform-core-service contract). */
 
-export type MeteringWindow = "1h" | "24h" | "7d" | "30d";
-/** `scope.window` echo — "custom" when the request carried `from`/`to`. */
-export type MeteringScopeWindow = MeteringWindow | "custom";
 /** IST calendar date, "YYYY-MM-DD". */
 export type MeteringDayKey = string;
 
@@ -10,6 +7,29 @@ export type MeteringDayKey = string;
 export interface MeteringDateRange {
   from: MeteringDayKey;
   to: MeteringDayKey;
+}
+
+// The 4 values the API accepts
+export type MeteringPeriodKey = "today" | "yesterday" | "last_7_days" | "custom";
+
+/** The period the dashboard asks for; only "custom" carries its own dates. */
+export type MeteringPeriod =
+  | { key: Exclude<MeteringPeriodKey, "custom"> }
+  | { key: "custom"; range: MeteringDateRange };
+
+/** Period the API applied, echoed on every period-filtered response. */
+export interface MeteringPeriodEcho {
+  key: MeteringPeriodKey;
+  /** First IST day, inclusive. */
+  from: MeteringDayKey;
+  /** Last IST day, inclusive; equals `from` for "today". */
+  to: MeteringDayKey;
+  /** UTC ISO start of the queried range, inclusive. */
+  start: string;
+  /** UTC ISO end of the queried range, exclusive. */
+  end: string;
+  /** Always "Asia/Kolkata". */
+  timezone: string;
 }
 export type MeteringTopN = 10 | 25;
 export type MeteringDataState = "ok" | "error" | "empty" | "no_history";
@@ -43,7 +63,11 @@ export interface MeteringGraphSeries {
   points: MeteringGraphPoint[];
 }
 
+/** Request-volume bucket size: hourly for a 1-day period, daily up to 31 days, weekly beyond. */
+export type MeteringGraphStep = "1h" | "1d" | "1w";
+
 export interface MeteringGraph {
+  step?: MeteringGraphStep;
   series: MeteringGraphSeries[];
 }
 
@@ -51,10 +75,7 @@ export interface MeteringScope {
   role: string;
   tenant_id: string | null;
   organisation: string | null;
-  window: MeteringScopeWindow;
-  /** Effective UTC bounds of a custom range; `to` is exclusive. */
-  from?: string | null;
-  to?: string | null;
+  period: MeteringPeriodEcho;
   task_types?: string[] | null;
 }
 
@@ -65,9 +86,13 @@ export interface PlatformAdoption {
   active_7d?: number | null;
   active_30d?: number | null;
   model_usage_growth_pct?: number | null;
+  /** Registered models, platform-wide. */
+  total_models?: number | null;
+  /** Distinct registered models with requests in the last 30 days. */
+  active_models_30d?: number | null;
 }
 
-/** Composed client-side from model-consumption (30d) and usage-summary APIs. */
+/** Key metrics read from `platform_adoption` (overview) and the usage-summary API. */
 export interface KeyMetricsSupplement {
   total_models?: number | null;
   active_models_30d?: number | null;
@@ -125,8 +150,24 @@ export interface OverviewResponse extends MeteringResponseMeta {
   throughput?: ThroughputData;
   /** First recorded usage for the tenant scope (UTC); null when there is none yet. */
   first_usage_at?: string | null;
-  /** Earliest `from` the metering history still covers (UTC, an IST midnight). */
-  earliest_from?: string | null;
+  /**
+   * When the scoped institution was onboarded (IST, with offset); the date
+   * picker's floor. Null for the platform-wide view.
+   */
+  onboarded_at?: string | null;
+}
+
+/** LLM token category in a usage breakdown. */
+export type MeteringTokenKey = "input" | "cached_input" | "output";
+
+/** One token category of an LLM row on the Model tab. */
+export interface MeteringTokenShare {
+  key: MeteringTokenKey;
+  /** Display label from the API, e.g. "Cached input tokens". */
+  label: string;
+  units: number;
+  /** Share of the row's total tokens, 0–100. */
+  percentage: number;
 }
 
 /** Per-service row from GET /metering/model-consumption (no roll-up by model_name). */
@@ -139,6 +180,11 @@ export interface ModelConsumptionRow {
   requests: number;
   native_units: number;
   native_unit_suffix: string;
+  /**
+   * LLM only: input (uncached), cached input and output tokens, summing to
+   * `native_units`. Cached input is left out when there is none. Null otherwise.
+   */
+  native_breakdown?: MeteringTokenShare[] | null;
   success_pct: number;
   failure_rate_pct: number;
 }

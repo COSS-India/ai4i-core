@@ -507,8 +507,10 @@ export interface ServiceUpdateRequest {
   policy?: ServicePolicy;
   taskType?: string;
   costPerUnit?: number;
-  cachedInputCostPerUnit?: number;
-  outputCostPerUnit?: number;
+  /** Required with the billing group when `taskType` is `llm`. Omit or null otherwise. */
+  cachedInputCostPerUnit?: number | null;
+  /** Required with the billing group when `taskType` is `llm`. Omit or null otherwise. */
+  outputCostPerUnit?: number | null;
   unitSize?: number;
   tierIds?: string[];
 }

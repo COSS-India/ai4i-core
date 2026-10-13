@@ -6,10 +6,9 @@ import {
   modelConsumptionResponseSchema,
   overviewResponseSchema,
 } from "./dto/schemas/metering";
-import { buildMeteringRangeParams } from "../utils/meteringDateRange";
+import { buildPeriodParams } from "../utils/meteringDateRange";
 import type {
-  MeteringDateRange,
-  MeteringWindow,
+  MeteringPeriod,
   ModelConsumptionResponse,
   OverviewResponse,
 } from "../types/metering";
@@ -52,12 +51,12 @@ function resolveScopedTenantId(
 }
 
 function buildMeteringParams(
-  timeWindow: MeteringWindow,
+  period: MeteringPeriod,
   ctx: MeteringContext,
   tenantId?: string | null,
   extra?: Record<string, string>,
 ): URLSearchParams {
-  const params = new URLSearchParams({ window: timeWindow, ...extra });
+  const params = new URLSearchParams({ ...buildPeriodParams(period), ...extra });
   const scopedTenantId = resolveScopedTenantId(ctx, tenantId);
   if (scopedTenantId) {
     params.set("tenant_id", scopedTenantId);
@@ -72,31 +71,18 @@ function appendTaskTypesParam(
   if (taskTypes?.length) params.set("task_types", taskTypes.join(","));
 }
 
-/** Custom range overrides `window` on the API; bounds are resolved at request time. */
-function appendRangeParams(
-  params: URLSearchParams,
-  range?: MeteringDateRange | null,
-): void {
-  if (!range) return;
-  const { from, to } = buildMeteringRangeParams(range);
-  params.set("from", from);
-  params.set("to", to);
-}
-
 /** GET /api/v1/metering/overview */
 export async function fetchMeteringOverview(
-  timeWindow: MeteringWindow,
+  period: MeteringPeriod,
   ctx: MeteringContext,
   tenantId?: string | null,
   taskTypes?: string[] | null,
   limit: number = METERING.USAGE_CONCENTRATION_FETCH_LIMIT,
-  range?: MeteringDateRange | null,
 ): Promise<OverviewResponse> {
-  const params = buildMeteringParams(timeWindow, ctx, tenantId, {
+  const params = buildMeteringParams(period, ctx, tenantId, {
     limit: String(limit),
   });
   appendTaskTypesParam(params, taskTypes);
-  appendRangeParams(params, range);
   const { data } = await apiService.get<OverviewResponse>(
     withQuery(apiEndpoints.metering.overview, params),
     { responseSchema: overviewResponseSchema },
@@ -106,15 +92,13 @@ export async function fetchMeteringOverview(
 
 /** GET /api/v1/metering/model-consumption — scoped via frontend enabled task types. */
 export async function fetchMeteringModelConsumption(
-  timeWindow: MeteringWindow,
+  period: MeteringPeriod,
   ctx: MeteringContext,
   tenantId?: string | null,
   taskTypes?: string[] | null,
-  range?: MeteringDateRange | null,
 ): Promise<ModelConsumptionResponse> {
-  const params = buildMeteringParams(timeWindow, ctx, tenantId);
+  const params = buildMeteringParams(period, ctx, tenantId);
   appendTaskTypesParam(params, taskTypes);
-  appendRangeParams(params, range);
   const { data } = await apiService.get<ModelConsumptionResponse>(
     withQuery(apiEndpoints.metering.modelConsumption, params),
     { responseSchema: modelConsumptionResponseSchema },

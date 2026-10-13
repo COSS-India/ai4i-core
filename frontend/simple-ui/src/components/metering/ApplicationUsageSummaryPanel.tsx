@@ -4,6 +4,7 @@ import { METERING } from "../../config/meteringConstants";
 import type { ApplicationUsageSummary } from "../../types/applicationUsage";
 import {
   formatSpendMoney,
+  formatSpendMoneyExact,
   USAGE_SPEND_ACCENT,
 } from "../../utils/usageSpendHelpers";
 import InfoTip from "../common/InfoTip";
@@ -63,6 +64,8 @@ function SummaryCard({
 
 interface ApplicationUsageSummaryPanelProps {
   summary?: ApplicationUsageSummary;
+  /** Selected period, e.g. "Last 7 days". */
+  periodTitle: string;
   isLoading: boolean;
   error: string | null;
   currency?: string;
@@ -70,6 +73,7 @@ interface ApplicationUsageSummaryPanelProps {
 
 const ApplicationUsageSummaryPanel: React.FC<ApplicationUsageSummaryPanelProps> = ({
   summary,
+  periodTitle,
   isLoading,
   error,
   currency = "INR",
@@ -85,7 +89,7 @@ const ApplicationUsageSummaryPanel: React.FC<ApplicationUsageSummaryPanelProps> 
       emptyMessage={copy.EMPTY}
     >
       {summary ? (
-        <SimpleGrid columns={{ base: 1, sm: 2, lg: 4 }} spacing={5}>
+        <SimpleGrid columns={{ base: 1, sm: 2, lg: 3, xl: 5 }} spacing={5}>
           <SummaryCard
             label={copy.SUMMARY.TOTAL_APPLICATIONS}
             tooltip={copy.TOOLTIPS.TOTAL_APPLICATIONS}
@@ -112,6 +116,13 @@ const ApplicationUsageSummaryPanel: React.FC<ApplicationUsageSummaryPanelProps> 
             primary={formatSpendMoney(summary.remainingBudget.amount, currency)}
             scope={copy.SUMMARY.SCOPE_ACROSS_APPS}
             pctLabel={`${formatApplicationPct(summary.remainingBudget.percentage)} ${pctSuffix}`}
+          />
+          <SummaryCard
+            label={copy.SUMMARY.PERIOD_SPEND}
+            tooltip={copy.TOOLTIPS.PERIOD_SPEND}
+            primary={formatSpendMoneyExact(summary.periodSpend.amount, currency)}
+            scope={periodTitle}
+            pctLabel={`${formatApplicationPct(summary.periodSpend.percentage)} ${pctSuffix}`}
           />
         </SimpleGrid>
       ) : null}

@@ -18,10 +18,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 SEEDER_ID = "5eed0001-0000-0000-0000-000000000001"
 
-_POLICY_TYPES = [
-    {
-        "policy_type": "Education-PII",
-        "policy_fields": {
+_PII_POLICY_TYPE = {
+    "policy_type": "PII",
+    "policy_fields": {
+        "Education": {
             "custom_field": [
                 {
                     "entity_name": "STUDENT_NAME",
@@ -63,10 +63,7 @@ _POLICY_TYPES = [
                 },
             ]
         },
-    },
-    {
-        "policy_type": "Finance-PII",
-        "policy_fields": {
+        "Finance": {
             "custom_field": [
                 {
                     "entity_name": "BANK_ACCOUNT_NUMBER",
@@ -104,10 +101,7 @@ _POLICY_TYPES = [
                 },
             ]
         },
-    },
-    {
-        "policy_type": "Healthcare-PII",
-        "policy_fields": {
+        "Healthcare": {
             "custom_field": [
                 {
                     "entity_name": "PATIENT_NAME",
@@ -142,26 +136,25 @@ _POLICY_TYPES = [
             ]
         },
     },
-]
+}
 
 
 def upgrade() -> None:
     bind = op.get_bind()
-    for entry in _POLICY_TYPES:
-        bind.execute(
-            sa.text(
-                """
-                INSERT INTO policy_type (policy_type, policy_fields, created_by, updated_by)
-                VALUES (:policy_type, :policy_fields, :seeder_id, :seeder_id)
-                ON CONFLICT ON CONSTRAINT uq_policy_type_policy_type DO NOTHING
-                """
-            ),
-            {
-                "policy_type": entry["policy_type"],
-                "policy_fields": json.dumps(entry["policy_fields"]),
-                "seeder_id": SEEDER_ID,
-            },
-        )
+    bind.execute(
+        sa.text(
+            """
+            INSERT INTO policy_type (policy_type, policy_fields, created_by, updated_by)
+            VALUES (:policy_type, :policy_fields, :seeder_id, :seeder_id)
+            ON CONFLICT ON CONSTRAINT uq_policy_type_policy_type DO NOTHING
+            """
+        ),
+        {
+            "policy_type": _PII_POLICY_TYPE["policy_type"],
+            "policy_fields": json.dumps(_PII_POLICY_TYPE["policy_fields"]),
+            "seeder_id": SEEDER_ID,
+        },
+    )
 
 
 def downgrade() -> None:

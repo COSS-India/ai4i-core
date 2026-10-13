@@ -72,11 +72,8 @@ async def session():
             "SELECT 1 FROM information_schema.columns"
             " WHERE table_name = 'usage_events' AND column_name = 'span_id'"
         ))
-        if not has_span_id:
-            pytest.skip(
-                "usage_events is from before the review fixes (no span_id): run "
-                "`downgrade f4a8c2d6e1b7` then `upgrade head` on ai4iplatform_core"
-            )
+        if has_span_id:
+            pytest.skip("usage_events still has span_id: run `upgrade head` on ai4iplatform_core")
         yield AsyncSession(bind=conn)
     finally:
         await trans.rollback()
@@ -102,12 +99,12 @@ async def _type_id(session, name: str) -> int:
 async def _event(session, *, span: str, occurred_at, tenant=_TENANT, key=_KEY, type_id=None,
                  units=0, cached=0, output=0, costs=(0, 0, 0)) -> None:
     await session.execute(text(
-        "INSERT INTO usage_events (correlation_id, span_id, occurred_at, tenant_id, api_key_id,"
+        "INSERT INTO usage_events (correlation_id, occurred_at, tenant_id, api_key_id,"
         " inference_type_id, task_type, total_units, cached_input_units, output_units,"
         " input_units_cost, cached_input_units_cost, output_units_cost)"
-        " VALUES ('test-period', :span, :at, :tenant, :key, :type_id, 'llm', :units, :cached, :output,"
+        " VALUES (:correlation_id, :at, :tenant, :key, :type_id, 'llm', :units, :cached, :output,"
         " :c1, :c2, :c3)"
-    ), {"span": span, "at": occurred_at, "tenant": tenant, "key": key, "type_id": type_id,
+    ), {"correlation_id": f"test-period-{span}", "at": occurred_at, "tenant": tenant, "key": key, "type_id": type_id,
         "units": units, "cached": cached, "output": output,
         "c1": costs[0], "c2": costs[1], "c3": costs[2]})
 

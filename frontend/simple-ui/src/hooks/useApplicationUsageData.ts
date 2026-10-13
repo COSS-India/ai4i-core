@@ -5,15 +5,20 @@ import {
 } from "../services/applicationUsageService";
 import { parseError } from "../utils/errorHandler";
 import { USAGE_SPEND_STALE_MS } from "../utils/usageSpendHelpers";
+import { retryUnlessInvalidPeriod } from "../utils/meteringQuery";
+import { periodQueryKeyParts } from "../utils/meteringDateRange";
+import type { MeteringPeriod } from "../types/metering";
 
 interface UseApplicationUsageDataArgs {
   tenantId: string | null;
+  period: MeteringPeriod;
   refreshNonce: number;
   sortOrder?: "asc" | "desc";
 }
 
 export function useApplicationUsageData({
   tenantId,
+  period,
   refreshNonce,
   sortOrder = "desc",
 }: UseApplicationUsageDataArgs) {
@@ -21,22 +26,23 @@ export function useApplicationUsageData({
   const enabled = Boolean(scopedId);
 
   const summaryQuery = useQuery({
-    queryKey: ["usage-applications-summary", scopedId, refreshNonce],
+    queryKey: ["usage-applications-summary", scopedId, ...periodQueryKeyParts(period), refreshNonce],
     queryFn: () => {
       if (!scopedId) throw new Error("Institution id is required");
-      return fetchApplicationUsageSummary(scopedId);
+      return fetchApplicationUsageSummary(scopedId, period);
     },
     enabled,
     staleTime: USAGE_SPEND_STALE_MS,
-    retry: 1,
+    retry: retryUnlessInvalidPeriod,
   });
 
   const listQuery = useQuery({
-    queryKey: ["usage-applications", scopedId, sortOrder, refreshNonce],
+    queryKey: ["usage-applications", scopedId, ...periodQueryKeyParts(period), sortOrder, refreshNonce],
     queryFn: () => {
       if (!scopedId) throw new Error("Institution id is required");
       return fetchApplicationUsageList({
         tenantId: scopedId,
+        period,
         sortOrder,
         limit: 500,
         offset: 0,
@@ -44,7 +50,7 @@ export function useApplicationUsageData({
     },
     enabled,
     staleTime: USAGE_SPEND_STALE_MS,
-    retry: 1,
+    retry: retryUnlessInvalidPeriod,
   });
 
   const errMsg = (e: unknown) => (e ? parseError(e).message : null);

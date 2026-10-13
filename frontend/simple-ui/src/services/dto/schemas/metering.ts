@@ -1,6 +1,13 @@
 import { z } from "zod";
 
-const meteringScopeWindowSchema = z.enum(["1h", "24h", "7d", "30d", "custom"]);
+export const meteringPeriodSchema = z.object({
+  key: z.enum(["today", "yesterday", "last_7_days", "custom"]),
+  from: z.string(),
+  to: z.string(),
+  start: z.string(),
+  end: z.string(),
+  timezone: z.string(),
+});
 
 export const meteringCellSchema = z.object({
   key: z.string(),
@@ -23,6 +30,7 @@ export const meteringGraphSeriesSchema = z.object({
 });
 
 export const meteringGraphSchema = z.object({
+  step: z.enum(["1h", "1d", "1w"]).optional(),
   series: z.array(meteringGraphSeriesSchema),
 });
 
@@ -30,9 +38,7 @@ export const meteringScopeSchema = z.object({
   role: z.string(),
   tenant_id: z.string().nullable(),
   organisation: z.string().nullable(),
-  window: meteringScopeWindowSchema,
-  from: z.string().nullable().optional(),
-  to: z.string().nullable().optional(),
+  period: meteringPeriodSchema,
   task_types: z.array(z.string()).nullable().optional(),
 });
 
@@ -43,6 +49,8 @@ export const platformAdoptionSchema = z.object({
   active_7d: z.number().nullable().optional(),
   active_30d: z.number().nullable().optional(),
   model_usage_growth_pct: z.number().nullable().optional(),
+  total_models: z.number().nullable().optional(),
+  active_models_30d: z.number().nullable().optional(),
 });
 
 export const tenantRowSchema = z.object({
@@ -103,8 +111,17 @@ export const overviewResponseSchema = z.object({
   request_volume: meteringGraphSchema.nullable().optional(),
   throughput: throughputDataSchema.optional(),
   first_usage_at: z.string().nullable().optional(),
-  earliest_from: z.string().nullable().optional(),
+  onboarded_at: z.string().nullable().optional(),
   ...meteringResponseMetaSchema,
+});
+
+export const meteringTokenKeySchema = z.enum(["input", "cached_input", "output"]);
+
+export const meteringTokenShareSchema = z.object({
+  key: meteringTokenKeySchema,
+  label: z.string(),
+  units: z.number(),
+  percentage: z.number(),
 });
 
 export const modelConsumptionRowSchema = z.object({
@@ -115,6 +132,7 @@ export const modelConsumptionRowSchema = z.object({
   requests: z.number(),
   native_units: z.number(),
   native_unit_suffix: z.string(),
+  native_breakdown: z.array(meteringTokenShareSchema).nullable().optional(),
   success_pct: z.number(),
   failure_rate_pct: z.number(),
 });

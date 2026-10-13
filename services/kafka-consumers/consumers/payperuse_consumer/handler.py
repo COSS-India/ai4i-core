@@ -277,10 +277,12 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
     # which is what makes it useful for dedup. But a single request can emit
     # multiple ai-inference spans sharing one correlation_id (e.g. TTS chunks
     # text >400 chars into several per_item Triton calls, each its own span —
-    # see tts_service.py). Keying on correlation_id alone would make every
-    # chunk after the first look like a duplicate of it and get skipped,
-    # silently under-billing the request. span_id disambiguates chunks while
-    # correlation_id still catches true redeliveries of the same span. The
+    # see tts_service.py), and RequestMiddleware takes a client-sent
+    # X-Correlation-ID as is, so two requests can share one too. Keying on
+    # correlation_id alone would skip every such span after the first as a
+    # "duplicate", silently under-billing. span_id tells them apart, read from
+    # the message here only: usage_events no longer stores it (migration
+    # a7c3e9f1b5d2). The
     # exporter (trace/setup.py) already drops spans with span_id==0, so every
     # span_id reaching this consumer is valid and unique.
     attrs = data.get("attributes", {})
@@ -654,7 +656,6 @@ def _usage_event(
         costs = (cost, Decimal(0), Decimal(0))
     return UsageEvent(
         correlation_id=ctx.correlation_id,
-        span_id=ctx.span_id,
         occurred_at=ctx.occurred_at or _span_end_time(None),
         tenant_id=_optional_int(ctx.tenant_id),
         application_id=ctx.application_id,

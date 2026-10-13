@@ -93,6 +93,7 @@
     { "endpoint": "POST:/api/v1/pii/admin/tenant-domain",                  "permissionRequired": 91, "description": "Upsert tenant→PII-domain mapping (pii_guard.admin)" },
     { "endpoint": "POST:/api/v1/pii/admin/tenant-domain/delete",           "permissionRequired": 91, "description": "Delete tenant→PII-domain mapping (pii_guard.admin)" },
     { "endpoint": "GET:/api/v1/pii/admin/audit-logs",                      "permissionRequired": 92, "description": "List PII audit logs (pii_guard.audit.read)" },
+    { "endpoint": "GET:/api/v1/pii/entities",                              "permissionRequired": 1, "description": "List supported PII entities (admin sentinel — ADMIN only)" },
 
     { "endpoint": "GET:/api/v1/policy-service/pii-types",                  "permissionRequired": 105, "description": "List PII types (pii_types.read)" },
     { "endpoint": "POST:/api/v1/policy-service/pii-types",                 "permissionRequired": 106, "description": "Create PII type (pii_types.create)" },
@@ -185,6 +186,8 @@
     { "endpoint": "POST:/api/v1/policies",                                "permissionRequired": 1,   "description": "Create a policy (admin sentinel — ADMIN only)" },
     { "endpoint": "GET:/api/v1/policies/{id}",                            "permissionRequired": 1,   "description": "Get policy by ID (admin sentinel — ADMIN only)" },
     { "endpoint": "PUT:/api/v1/policies",                                 "permissionRequired": 1,   "description": "Update a policy (admin sentinel — ADMIN only)" },
-    { "endpoint": "DELETE:/api/v1/policies/{id}",                         "permissionRequired": 1,   "description": "Delete a policy (admin sentinel — ADMIN only)" }
+    { "endpoint": "DELETE:/api/v1/policies/{id}",                         "permissionRequired": 1,   "description": "Delete a policy (admin sentinel — ADMIN only)" },
+
+    { "endpoint": "POST:/api/v1/pii/simulate",                            "permissionRequired": 1,   "description": "Run a PII policy against sample text in the Playground (admin sentinel — ADMIN only)" }
   ]
 }

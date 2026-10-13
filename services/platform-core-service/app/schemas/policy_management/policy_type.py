@@ -1,38 +1,94 @@
+import re
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.common import DeletedIdData, MessageMeta, SuccessResponse, SuccessResponseWithMeta
-from app.schemas.policy_management.fields import NAME_MAX_LEN, clean_name
+from app.schemas.policy_management.fields import (
+    MAX_CUSTOM_FIELDS,
+    MAX_REGEX_LEN,
+    NAME_MAX_LEN,
+    clean_name,
+)
 
 
 def _validate_custom_fields(policy_fields: Dict[str, Any]) -> Dict[str, Any]:
-    """If policy_fields contains a 'custom_field' list, every entry must have
-    at least 3 examples and a non-empty regex."""
+    """policy_fields must be a flat object with a 'custom_field' list.
+    Each entry must have entity_name, at least 3 non-blank string examples,
+    and a non-blank compilable regex."""
     custom_field_entries = policy_fields.get("custom_field")
-    if not custom_field_entries:
-        return policy_fields
+    if custom_field_entries:
+        if not isinstance(custom_field_entries, list):
+            raise ValueError("policy_fields['custom_field'] must be a list.")
 
-    if not isinstance(custom_field_entries, list):
-        raise ValueError("'custom_field' must be a list of objects.")
-
-    for entry in custom_field_entries:
-        if not isinstance(entry, dict):
-            raise ValueError("Each item inside 'custom_field' must be an object.")
-
-        entity_name = entry.get("entity_name", "<unknown>")
-
-        examples = entry.get("examples")
-        if not examples or not isinstance(examples, list) or len(examples) < 3:
+        if len(custom_field_entries) > MAX_CUSTOM_FIELDS:
             raise ValueError(
-                f"custom_field entry '{entity_name}': at least 3 examples are required."
+                f"policy_fields custom_field entries must not exceed {MAX_CUSTOM_FIELDS} "
+                f"(got {len(custom_field_entries)})."
             )
 
-        regex = entry.get("regex")
-        if not regex or not str(regex).strip():
-            raise ValueError(
-                f"custom_field entry '{entity_name}': 'regex' is required."
-            )
+        for entry in custom_field_entries:
+            if not isinstance(entry, dict):
+                raise ValueError("Each item in policy_fields['custom_field'] must be an object.")
+
+            try:
+                entity_name = clean_name(entry.get("entity_name"), "Entity")
+            except ValueError as exc:
+                raise ValueError(f"policy_fields custom_field entry: {exc}") from exc
+
+            examples = entry.get("examples")
+            if not examples or not isinstance(examples, list) or len(examples) < 3:
+                raise ValueError(
+                    f"policy_fields custom_field entry '{entity_name}': "
+                    "at least 3 examples are required."
+                )
+            for i, ex in enumerate(examples):
+                if not isinstance(ex, str) or not ex.strip():
+                    raise ValueError(
+                        f"policy_fields custom_field entry '{entity_name}': "
+                        f"examples[{i}] must be a non-blank string."
+                    )
+
+            regex = entry.get("regex")
+            if not isinstance(regex, str) or not regex.strip():
+                raise ValueError(
+                    f"policy_fields custom_field entry '{entity_name}': "
+                    "'regex' must be a non-blank string."
+                )
+            if len(regex) > MAX_REGEX_LEN:
+                raise ValueError(
+                    f"policy_fields custom_field entry '{entity_name}': "
+                    f"'regex' must not exceed {MAX_REGEX_LEN} characters (got {len(regex)})."
+                )
+            # Regex provided by the product team — compiled here to catch invalid patterns at validation time
+            try:
+                re.compile(regex)
+            except re.error as exc:
+                raise ValueError(
+                    f"policy_fields custom_field entry '{entity_name}': "
+                    f"invalid regex — {exc}."
+                )
+
+    model_supported_entries = policy_fields.get("model_supported_field")
+    if model_supported_entries:
+        if not isinstance(model_supported_entries, list):
+            raise ValueError("policy_fields['model_supported_field'] must be a list.")
+        for entry in model_supported_entries:
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    "Each item in policy_fields['model_supported_field'] must be an object."
+                )
+            for lang, entities in entry.items():
+                if not isinstance(entities, list):
+                    raise ValueError(
+                        f"policy_fields['model_supported_field']['{lang}'] must be a list."
+                    )
+                for entity in entities:
+                    if not isinstance(entity, dict) or not entity.get("entity_name"):
+                        raise ValueError(
+                            f"policy_fields['model_supported_field']['{lang}']: "
+                            "each entry must have 'entity_name'."
+                        )
 
     return policy_fields
 
@@ -58,30 +114,35 @@ class PolicyTypeCreate(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "policy_type": "Medical Policy PII",
+                "policy_type": "PII",
                 "policy_fields": {
+                    "custom_field": [
+                        {
+                            "entity_name": "STUDENT_NAME",
+                            "examples": ["Arjun Kumar", "Priya Sharma", "Ravi Verma"],
+                            "regex": "\\b[A-Z][a-z]+(?:\\s[A-Z][a-z]+){1,3}\\b",
+                        },
+                        {
+                            "entity_name": "BANK_ACCOUNT_NUMBER",
+                            "examples": ["123456789012", "987654321098", "112233445566"],
+                            "regex": "\\b\\d{9,18}\\b",
+                        },
+                        {
+                            "entity_name": "AADHAAR_NUMBER",
+                            "examples": ["1234 5678 9012", "9876 5432 1098", "1111 2222 3333"],
+                            "regex": "\\b\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4}\\b",
+                        },
+                    ],
                     "model_supported_field": [
                         {
                             "en": [
-                                {"entity_name": "MEDICAL_ID"},
+                                {"entity_name": "CREDIT_CARD_NUMBER"},
                                 {"entity_name": "EMAIL_ADDRESS"},
                             ],
                             "hi": [
-                                {"entity_name": "EDUCATION_ID"},
+                                {"entity_name": "IN_PAN"},
                             ],
                         }
-                    ],
-                    "custom_field": [
-                        {
-                            "entity_name": "MEDICAL_ID",
-                            "examples": ["MED001", "MED002", "MED003"],
-                            "regex": "MED-\\d{6}",
-                        },
-                        {
-                            "entity_name": "EMPLOYEE_NUM",
-                            "examples": ["ED001", "ED002", "ED003"],
-                            "regex": "EMP\\d{4}",
-                        },
                     ],
                 },
             }
@@ -98,7 +159,7 @@ class PolicyTypeCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_custom_fields(self):
-        _validate_custom_fields(self.policy_fields)
+        self.policy_fields = _validate_custom_fields(self.policy_fields)
         return self
 
 
@@ -108,8 +169,25 @@ class PolicyTypeUpdate(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "policy_type_id": 2,
+                "policy_type_id": 1,
                 "policy_fields": {
+                    "custom_field": [
+                        {
+                            "entity_name": "PATIENT_NAME",
+                            "examples": ["Meena Raj", "Suresh Kumar", "Anita Singh"],
+                            "regex": "\\b[A-Z][a-z]+(?:\\s[A-Z][a-z]+){1,3}\\b",
+                        },
+                        {
+                            "entity_name": "AADHAAR_NUMBER",
+                            "examples": ["1234 5678 9012", "9876 5432 1098", "1111 2222 3333"],
+                            "regex": "\\b\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4}\\b",
+                        },
+                        {
+                            "entity_name": "HEALTH_INSURANCE_ID",
+                            "examples": ["HIN9876543", "INS123456789", "POL987654321"],
+                            "regex": "\\b[A-Z0-9]{6,20}\\b",
+                        },
+                    ],
                     "model_supported_field": [
                         {
                             "en": [
@@ -117,21 +195,9 @@ class PolicyTypeUpdate(BaseModel):
                                 {"entity_name": "EMAIL_ADDRESS"},
                             ],
                             "hi": [
-                                {"entity_name": "EDUCATION_ID"},
+                                {"entity_name": "IN_AADHAAR"},
                             ],
                         }
-                    ],
-                    "custom_field": [
-                        {
-                            "entity_name": "MEDICAL_ID",
-                            "examples": ["MED001", "MED002", "MED003"],
-                            "regex": "MED-\\d{6}",
-                        },
-                        {
-                            "entity_name": "EMPLOYEE_NUM",
-                            "examples": ["ED001", "ED002", "ED003"],
-                            "regex": "EMP\\d{4}",
-                        },
                     ],
                 },
             }
@@ -144,7 +210,7 @@ class PolicyTypeUpdate(BaseModel):
     @model_validator(mode="after")
     def validate_custom_fields(self):
         if self.policy_fields is not None:
-            _validate_custom_fields(self.policy_fields)
+            self.policy_fields = _validate_custom_fields(self.policy_fields)
         return self
 
 

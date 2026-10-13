@@ -26,7 +26,9 @@ import React, { useEffect, useRef, useState } from "react";
 import { METERING } from "../../config/meteringConstants";
 import type { MeteringDateRange, MeteringDayKey } from "../../types/metering";
 import {
+  addDays,
   buildCalendarWeeks,
+  isPickableDay,
   clampMonth,
   compareMonths,
   formatCalendarMonth,
@@ -36,12 +38,15 @@ import {
   monthOfDayKey,
   shiftMonth,
   type MeteringCalendarMonth,
+  type PickableDays,
 } from "../../utils/meteringDateRange";
 
 interface CustomRangePickerProps {
   appliedRange: MeteringDateRange | null;
   onApply: (range: MeteringDateRange) => void;
   onClear: () => void;
+  /** Earliest pickable IST day (onboarding, else first usage); null = no floor. */
+  minDay?: MeteringDayKey | null;
 }
 
 const MONTH_INDEXES = Array.from({ length: 12 }, (_, i) => i);
@@ -59,18 +64,14 @@ interface DayCellState {
   style: (typeof DAY_STYLES)[keyof typeof DAY_STYLES];
 }
 
-/**
- * Future days are never pickable. While the end is being picked, days before
- * the start are disabled in both calendars.
- */
 function getDayCellState(
   day: MeteringDayKey,
-  today: MeteringDayKey,
+  pickable: PickableDays,
   start: MeteringDayKey | null,
   end: MeteringDayKey | null,
   rangeEnd: MeteringDayKey | null,
 ): DayCellState {
-  const isDisabled = day > today || (start != null && end == null && day < start);
+  const isDisabled = !isPickableDay(day, pickable, start, end);
   const isEndpoint = day === start || day === end;
   const isInRange = !!start && !!rangeEnd && day > start && day < rangeEnd;
   return { isDisabled, isEndpoint, style: dayStyleFor(isEndpoint, isInRange) };
@@ -91,7 +92,9 @@ interface CalendarMonthProps {
   minMonth: MeteringCalendarMonth;
   maxMonth: MeteringCalendarMonth;
   onMonthChange: (month: MeteringCalendarMonth) => void;
+  /** Highlighted for orientation, though it is not pickable. */
   today: MeteringDayKey;
+  pickable: PickableDays;
   start: MeteringDayKey | null;
   end: MeteringDayKey | null;
   hoverDay: MeteringDayKey | null;
@@ -105,6 +108,7 @@ const CalendarMonth: React.FC<CalendarMonthProps> = ({
   maxMonth,
   onMonthChange,
   today,
+  pickable,
   start,
   end,
   hoverDay,
@@ -230,7 +234,7 @@ const CalendarMonth: React.FC<CalendarMonthProps> = ({
         if (!day) return <Box key={`pad-${i}`} />;
         const { isDisabled, isEndpoint, style } = getDayCellState(
           day,
-          today,
+          pickable,
           start,
           end,
           rangeEnd,
@@ -297,42 +301,64 @@ const CalendarMonth: React.FC<CalendarMonthProps> = ({
   );
 };
 
+/** First and last month the calendars may show, from the pickable days. */
+function monthBounds(
+  today: MeteringDayKey,
+  minDay: MeteringDayKey | null,
+): { min: MeteringCalendarMonth; max: MeteringCalendarMonth } {
+  const max = monthOfDayKey(addDays(today, -1));
+  const floor: MeteringCalendarMonth = { year: METERING.CUSTOM_RANGE.MIN_YEAR, month: 0 };
+  const min = minDay ? clampMonth(monthOfDayKey(minDay), floor, max) : floor;
+  return { min, max };
+}
+
+/** Calendars on open: yesterday's month on the right, the month before on the left. */
+function initialMonths(
+  today: MeteringDayKey,
+  minDay: MeteringDayKey | null,
+): { left: MeteringCalendarMonth; right: MeteringCalendarMonth } {
+  const { min, max } = monthBounds(today, minDay);
+  return { left: clampMonth(shiftMonth(max, -1), min, max), right: max };
+}
+
 /** "Custom range" time filter: a two-month IST calendar with Apply / Cancel. */
 const CustomRangePicker: React.FC<CustomRangePickerProps> = ({
   appliedRange,
   onApply,
   onClear,
+  minDay = null,
 }) => {
   const copy = METERING.CUSTOM_RANGE;
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [today, setToday] = useState(() => istDayKey(Date.now()));
   // The calendars move independently: picking a month in one never shifts the
   // other. The right is never earlier than the left (the same month is fine,
-  // e.g. to pick the end date there), and at most this month.
-  const [leftMonth, setLeftMonth] = useState(() => shiftMonth(monthOfDayKey(today), -1));
-  const [rightMonth, setRightMonth] = useState(() => monthOfDayKey(today));
+  // e.g. to pick the end date there), and at most yesterday's month.
+  const [leftMonth, setLeftMonth] = useState(() => initialMonths(today, minDay).left);
+  const [rightMonth, setRightMonth] = useState(() => initialMonths(today, minDay).right);
   const [start, setStart] = useState<MeteringDayKey | null>(null);
   const [end, setEnd] = useState<MeteringDayKey | null>(null);
   const [hoverDay, setHoverDay] = useState<MeteringDayKey | null>(null);
 
-  const currentMonth = monthOfDayKey(today);
-  const leftMin: MeteringCalendarMonth = { year: copy.MIN_YEAR, month: 0 };
+  const pickable: PickableDays = { min: minDay, max: addDays(today, -1) };
+  const { min: leftMin, max: rightMax } = monthBounds(today, minDay);
   const leftMax = rightMonth;
   const rightMin = leftMonth;
   // The arrows step both calendars together, keeping the gap between them.
   const canGoBack = compareMonths(leftMonth, leftMin) > 0;
-  const canGoForward = compareMonths(rightMonth, currentMonth) < 0;
+  const canGoForward = compareMonths(rightMonth, rightMax) < 0;
   const stepBoth = (delta: number) => {
     setLeftMonth((m) => shiftMonth(m, delta));
     setRightMonth((m) => shiftMonth(m, delta));
   };
 
-  // Every open starts fresh: previous + current month, nothing preselected.
+  // Every open starts fresh: yesterday's month + the one before, nothing preselected.
   const handleOpen = () => {
     const now = istDayKey(Date.now());
+    const months = initialMonths(now, minDay);
     setToday(now);
-    setLeftMonth(shiftMonth(monthOfDayKey(now), -1));
-    setRightMonth(monthOfDayKey(now));
+    setLeftMonth(months.left);
+    setRightMonth(months.right);
     setStart(null);
     setEnd(null);
     setHoverDay(null);
@@ -409,9 +435,10 @@ const CustomRangePicker: React.FC<CustomRangePickerProps> = ({
                     key={index === 0 ? "left" : "right"}
                     month={month}
                     minMonth={index === 0 ? leftMin : rightMin}
-                    maxMonth={index === 0 ? leftMax : currentMonth}
+                    maxMonth={index === 0 ? leftMax : rightMax}
                     onMonthChange={index === 0 ? setLeftMonth : setRightMonth}
                     today={today}
+                    pickable={pickable}
                     start={start}
                     end={end}
                     hoverDay={hoverDay}

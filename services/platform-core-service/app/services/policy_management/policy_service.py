@@ -58,7 +58,7 @@ async def get_policy(session: AsyncSession, policy_id: int) -> PolicyItem:
 
 
 async def create_policy(
-    session: AsyncSession, body: PolicyCreate, created_by: str | None = None
+    session: AsyncSession, body: PolicyCreate, created_by: str | None = None, redis=None
 ) -> PolicyItem:
     repo = PolicyRepository(session)
     if await repo.get_by_name(body.name) is not None:
@@ -82,11 +82,16 @@ async def create_policy(
         if "fk_policy_sub_category_id" in orig:
             raise EntityNotFoundError(f"SubCategory {body.sub_category_id}")
         raise
+
+    if redis is not None:
+        from app.services.policy_management.policy_cache import cache_policy
+        await cache_policy(row, session, redis)
+
     return PolicyItem.model_validate(row)
 
 
 async def update_policy(
-    session: AsyncSession, policy_id: int, body: PolicyUpdate, updated_by: str | None = None
+    session: AsyncSession, policy_id: int, body: PolicyUpdate, updated_by: str | None = None, redis=None
 ) -> PolicyItem:
     repo = PolicyRepository(session)
     existing = await repo.get_by_id(policy_id)
@@ -110,6 +115,11 @@ async def update_policy(
         if "fk_policy_sub_category_id" in orig:
             raise EntityNotFoundError(f"SubCategory {data.get('sub_category_id')}")
         raise
+
+    if redis is not None:
+        from app.services.policy_management.policy_cache import cache_policy
+        await cache_policy(row, session, redis)
+
     return PolicyItem.model_validate(row)
 
 
@@ -117,6 +127,7 @@ async def delete_policy(
     session: AsyncSession,
     policy_id: int,
     auth_db: Optional[AsyncSession] = None,
+    redis=None,
 ) -> int:
     repo = PolicyRepository(session)
     existing = await repo.get_by_id(policy_id)
@@ -136,4 +147,9 @@ async def delete_policy(
             )
 
     await repo.delete(policy_id)
+
+    if redis is not None:
+        from app.services.policy_management.policy_cache import delete_policy_cache
+        await delete_policy_cache(policy_id, redis)
+
     return policy_id
