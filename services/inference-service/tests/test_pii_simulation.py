@@ -19,7 +19,7 @@ from presidio_analyzer import RecognizerResult
 import services.pii.engine as engine_module
 from app_factory import _setup_exception_handlers
 import services.pii.simulation as simulation
-from routes.pii import MAX_SIMULATE_TEXT_LEN, router
+from routes.pii import MAX_CUSTOM_FIELDS, MAX_MODEL_ENTITIES, MAX_SIMULATE_TEXT_LEN, router
 from services.pii.language import detect_language
 from services.pii.model_registry import get_spacy_lang_code
 from services.pii.operators import InstanceCounterAnonymizer
@@ -315,26 +315,27 @@ def test_simulate_accepts_platform_core_rows(client, fake_engine):
 
 
 def test_simulate_caps_custom_fields_per_request(client):
-    # 3 policy types x 70 fields: each list is under its own cap, the total is not.
+    # 3 policy types, each list under its own cap; the total is over.
+    per_type = MAX_CUSTOM_FIELDS // 2 + 1
     field = {"entity_name": "X", "regex": "a"}
     body = {"text": "abc", "policyTypes": [
-        {"policy_type": f"T{i}", "policy_fields": {"D": {"custom_field": [field] * 70}}}
+        {"policy_type": f"T{i}", "policy_fields": {"D": {"custom_field": [field] * per_type}}}
         for i in range(3)
     ]}
     resp = client.post("/pii/simulate", json=body)
     assert resp.status_code == 400
-    assert "at most 200 per request" in resp.json()["detail"]
+    assert f"at most {MAX_CUSTOM_FIELDS} per request" in resp.json()["detail"]
 
 
 def test_simulate_caps_model_entities_per_request(client):
-    entities = [{"entity_name": "PERSON"}] * 70
+    entities = [{"entity_name": "PERSON"}] * (MAX_MODEL_ENTITIES // 2 + 1)
     body = {"text": "abc", "policyTypes": [
         {"policy_type": f"T{i}", "policy_fields": {"D": {"model_supported_field": [{"en": entities}]}}}
         for i in range(3)
     ]}
     resp = client.post("/pii/simulate", json=body)
     assert resp.status_code == 400
-    assert "at most 200 per request" in resp.json()["detail"]
+    assert f"at most {MAX_MODEL_ENTITIES} per request" in resp.json()["detail"]
 
 
 def test_simulate_response_lists_policy_types(client, fake_engine):
