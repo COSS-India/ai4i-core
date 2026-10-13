@@ -19,18 +19,25 @@ from app.schemas.policy_management.policy_type import (
 )
 
 
-async def list_policy_types(session: AsyncSession, domain: str | None = None) -> List[PolicyTypeItem]:
+def _matches_entity(policy_fields: dict, search: str) -> bool:
+    term = search.strip().lower()
+    for entry in policy_fields.get("custom_field") or []:
+        if term in str(entry.get("entity_name", "")).lower():
+            return True
+    for entry in policy_fields.get("model_supported_field") or []:
+        for entities in entry.values():
+            for e in entities:
+                if term in str(e.get("entity_name", "")).lower():
+                    return True
+    return False
+
+
+async def list_policy_types(session: AsyncSession, entity: str | None = None) -> List[PolicyTypeItem]:
     repo = PolicyTypeRepository(session)
     rows = await repo.get_all()
-    items = []
-    for row in rows:
-        item = PolicyTypeItem.model_validate(row)
-        if domain is not None:
-            matched = {k: v for k, v in item.policy_fields.items() if k.lower() == domain.strip().lower()}
-            if not matched:
-                continue
-            item = item.model_copy(update={"policy_fields": matched})
-        items.append(item)
+    items = [PolicyTypeItem.model_validate(row) for row in rows]
+    if entity:
+        items = [item for item in items if _matches_entity(item.policy_fields, entity)]
     return items
 
 

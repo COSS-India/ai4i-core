@@ -214,12 +214,12 @@ async def update_sub_category_status(
 async def list_policy_types(
     request: Request,
     session: AsyncSession = Depends(get_db),
-    domain: Optional[str] = Query(None, description="Filter policy_fields to a specific domain (e.g. Education, Finance, Healthcare)."),
+    entity: Optional[str] = Query(None, description="Case-insensitive partial match on entity name (e.g. aadhaar, phone_number)."),
 ) -> ListPolicyTypeResponse:
-    """List policy types. Pass ?domain=Education to get only Education fields. Adopter Admin only."""
+    """List policy types. Optionally filter by entity name. Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
-    items = await policy_type_service.list_policy_types(session, domain=domain)
+    items = await policy_type_service.list_policy_types(session, entity=entity)
     return ListPolicyTypeResponse(success=True, data=PolicyTypeListData(items=items))
 
 
