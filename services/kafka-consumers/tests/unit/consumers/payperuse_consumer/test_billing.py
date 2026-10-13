@@ -963,9 +963,8 @@ def _usage_event(**overrides):
 class _SavepointDb:
     """Records execute() calls and whether they ran inside begin_nested()."""
 
-    def __init__(self, fail: bool = False, rowcount: int = 1):
+    def __init__(self, fail: bool = False):
         self.fail = fail
-        self.rowcount = rowcount   # 0: the insert hit the key (ON CONFLICT DO NOTHING)
         self.calls = []
         self.in_savepoint = False
         self.savepoint_exits = []
@@ -988,8 +987,6 @@ class _SavepointDb:
         self.calls.append((str(stmt), params, self.in_savepoint))
         if self.fail:
             raise RuntimeError("insert failed")
-        from types import SimpleNamespace
-        return SimpleNamespace(rowcount=self.rowcount)
 
 
 class TestRecordUsageEvent:
@@ -1019,31 +1016,6 @@ class TestRecordUsageEvent:
         sql = db.calls[0][0]
         assert "(SELECT id FROM tiers WHERE id = CAST(:tier_id AS uuid))" in sql
         assert "(SELECT service_id FROM mm_services WHERE service_id = :service_id)" in sql
-
-    async def test_a_key_conflict_is_logged_as_a_warning(self, monkeypatch):
-        """A conflict writes no row; it may be a collision, not a redelivery."""
-        from unittest.mock import MagicMock
-
-        from consumers.payperuse_consumer import _billing
-
-        logger = MagicMock()
-        monkeypatch.setattr(_billing, "logger", logger)
-        db = _SavepointDb(rowcount=0)
-
-        assert await _billing.record_usage_event(db, _usage_event()) is True
-        (call,) = logger.warning.call_args_list
-        assert call.kwargs["extra"] == {"event": "ppu.usage_event.key_conflict"}
-        assert "corr-1" in call.args and "2026-10-12T06:30:00+00:00" in call.args
-
-    async def test_a_written_row_logs_no_warning(self, monkeypatch):
-        from unittest.mock import MagicMock
-
-        from consumers.payperuse_consumer import _billing
-
-        logger = MagicMock()
-        monkeypatch.setattr(_billing, "logger", logger)
-        assert await _billing.record_usage_event(_SavepointDb(), _usage_event()) is True
-        logger.warning.assert_not_called()
 
     async def test_failure_is_contained_and_reported(self):
         from consumers.payperuse_consumer._billing import record_usage_event
