@@ -24,8 +24,11 @@ ALLOWED_ROLES = {_ROLE_ADMIN, _ROLE_MODERATOR, _ROLE_TENANT_ADMIN}
 
 # Fixed display order for the trace-detail waterfall: every task type
 # (LLM, NMT, ASR, ...) resolves a model before calling it, so this sequence
-# is always correct regardless of task type or nesting shape.
-_SPAN_ORDER = {"request": 0, "model": 1, "ai-inference": 2}
+# is always correct regardless of task type or nesting shape. A request that
+# calls the model more than once (TTS chunks, per-item audio) has one
+# ai-inference-call span per call under its ai-inference span; the sort is
+# stable, so those keep their call order.
+_SPAN_ORDER = {"request": 0, "model": 1, "ai-inference": 2, "ai-inference-call": 3}
 
 # Safety cap on how many matching trace_ids we'll enumerate to build the
 # by_level/by_task breakdown. Keeps a very large filtered result set from

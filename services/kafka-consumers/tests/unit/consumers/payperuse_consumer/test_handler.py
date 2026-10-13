@@ -734,7 +734,8 @@ class TestUsageEventRow:
         captured, _ = self._run(monkeypatch, ctx, pricing=pricing)
 
         event = captured["event"]
-        assert (event.correlation_id, event.span_id) == ("corr-1", "span-1")
+        assert event.correlation_id == "corr-1"
+        assert not hasattr(event, "span_id")   # not stored (migration a7c3e9f1b5d2)
         assert event.occurred_at == datetime(2026, 10, 12, 6, 30, tzinfo=timezone.utc)
         assert (event.tenant_id, event.application_id, event.api_key_id) == (12, 7, 31)
         assert (event.tier_id, event.service_id, event.inference_type_id) == ("tier-1", "svc-1", 7)
