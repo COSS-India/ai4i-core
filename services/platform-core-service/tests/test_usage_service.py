@@ -61,6 +61,9 @@ def _make_repo(**method_returns) -> MagicMock:
     repo = MagicMock()
     method_returns.setdefault("get_tier_names", {"1": "Pro", "2": "Enterprise"})
     method_returns.setdefault("get_tenant_budgets", {})
+    method_returns.setdefault("get_budgeted_tenant_budgets", {})
+    method_returns.setdefault("get_tenants_with_usage_tier", [])
+    method_returns.setdefault("get_tenant_tier_usage_breakdown", [])
     method_returns.setdefault("get_usage_data_from", _DATA_SINCE)
     for method, value in method_returns.items():
         if isinstance(value, _Seq):
@@ -134,290 +137,206 @@ def _usage_row(**kwargs):
 
 # ── get_summary ───────────────────────────────────────────────────────────────
 
-class TestGetSummary:
-    """get_summary's totalSpend/budgetExceededTenants are real (sum of
-    budget_usage.api_key_budget_used via get_tenant_budgets/_resolve_spent) and
-    always lifetime-cumulative — billing_month never scopes them, matching every
-    other spend figure in this service (see get_summary's own docstring).
-    """
+_AUTH_DB = object()   # stands in for the auth session; the repo is mocked
+
+
+class TestSummaryBudget:
+    """The budget block: all-time, every institution with a budget on file —
+    picked from tenants, not quota rows, and never scoped by billing_period."""
 
     @pytest.mark.asyncio
-    async def test_total_spend_and_active_tenants(self):
+    async def test_totals_across_every_budgeted_institution(self):
+        repo = _make_repo(
+            get_budgeted_tenant_budgets=_budgets(
+                _budget_row(tenant_id="t1", budget_limit=Decimal("1000"),
+                            available_balance=Decimal("700"), spent=Decimal("300")),
+                _budget_row(tenant_id="t2", budget_limit=Decimal("500"),
+                            available_balance=Decimal("200"), spent=Decimal("300")),
+            ),
+        )
+        budget = (await UsageService(repo).get_summary("2026-06", auth_db=_AUTH_DB)).budget
+
+        assert budget.basis == "all_time"
+        assert (budget.institutions, budget.allocated, budget.spent, budget.remaining) == (2, 1500, 600, 900)
+        repo.get_budgeted_tenant_budgets.assert_awaited_once_with(_AUTH_DB, None)
+        repo.get_tenant_budgets.assert_not_called()   # one read of tenants, not two
+
+    @pytest.mark.asyncio
+    async def test_institution_without_quota_rows_still_counts(self):
+        """Untiered keys: spend in budget_usage, no ppu_quota_usage rows. It used
+        to drop out of the summary; the budget block doesn't read quota rows."""
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[],          # no quota rows at all
+            get_tenant_tier_usage_breakdown=[],
+            get_budgeted_tenant_budgets=_budgets(_budget_row(budget_limit=Decimal("10"), spent=Decimal("50"))),
+        )
+        result = await UsageService(repo).get_summary("2026-06", auth_db=_AUTH_DB)
+
+        assert (result.budget.spent, result.budget.exceededTenants) == (50, 1)
+        assert result.quota.activeTenants == 0
+
+    @pytest.mark.asyncio
+    async def test_billing_period_does_not_change_the_budget(self):
+        repo = _make_repo(
+            get_budgeted_tenant_budgets=_budgets(_budget_row(spent=Decimal("50"))),
+        )
+        svc = UsageService(repo)
+        june = await svc.get_summary("2026-06", auth_db=_AUTH_DB)
+        all_months = await svc.get_summary(None, auth_db=_AUTH_DB)
+
+        assert june.budget == all_months.budget
+        for call in repo.get_budgeted_tenant_budgets.await_args_list:
+            assert call.args == (_AUTH_DB, None)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("limit", "spent", "exceeded"),
+        [("100", "100", 1),     # reached: the >= billing applies per key, per institution
+         ("100", "150", 1),     # over
+         ("100", "99.99", 0),   # just under
+         ("0", "0", 0)],        # nothing allocated, nothing to exhaust
+    )
+    async def test_exceeded_means_spend_reached_the_budget(self, limit, spent, exceeded):
+        repo = _make_repo(
+            get_budgeted_tenant_budgets=_budgets(_budget_row(budget_limit=Decimal(limit), spent=Decimal(spent))),
+        )
+        result = await UsageService(repo).get_summary("2026-06", auth_db=_AUTH_DB)
+        assert result.budget.exceededTenants == exceeded
+
+    @pytest.mark.asyncio
+    async def test_tier_filter_is_the_current_tier_and_says_so(self):
+        """The two blocks filter on different tiers: budget on the current tier
+        (tenants.tier_id), quota on the most recent tier in the quota rows. An
+        institution whose tier was removed is out of budget but can be in quota,
+        so each block names the rule it used."""
+        repo = _make_repo(
+            get_budgeted_tenant_budgets={},                  # tenants.tier_id is NULL now
+            get_tenants_with_usage_tier=[_tier_row()],       # still on tier "1" in its quota rows
+            get_tenant_tier_usage_breakdown=[_usage_row()],
+        )
+        result = await UsageService(repo).get_summary("2026-06", tier_id="1", auth_db=_AUTH_DB)
+
+        repo.get_budgeted_tenant_budgets.assert_awaited_once_with(_AUTH_DB, "1")
+        assert (result.budget.institutions, result.budget.tierFilter) == (0, "current_tier")
+        assert (result.quota.activeTenants, result.quota.tierFilter) == (1, "most_recent_quota_tier")
+
+    @pytest.mark.asyncio
+    async def test_no_tier_filter_no_tier_rule(self):
+        result = await UsageService(_make_repo()).get_summary("2026-06", auth_db=_AUTH_DB)
+        assert (result.budget.tierFilter, result.quota.tierFilter) == (None, None)
+
+    @pytest.mark.asyncio
+    async def test_only_the_two_blocks_and_currency(self):
+        """Spend is lifetime only: no month-scoped money and no month-over-month
+        change anywhere in the response."""
+        result = await UsageService(_make_repo()).get_summary("2026-06", auth_db=_AUTH_DB)
+
+        assert set(result.model_dump()) == {"currency", "budget", "quota"}
+        assert "spendChangePercent" not in str(result.model_dump())
+
+
+class TestSummaryQuota:
+    """The quota block: one billing month (all months when omitted), across
+    institutions with ppu_quota_usage rows in scope."""
+
+    @pytest.mark.asyncio
+    async def test_consumption_and_active_tenants(self):
         repo = _make_repo(
             get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[_usage_row()],
-            get_tenant_budgets=_budgets(_budget_row(spent=Decimal("50"))),
         )
-        svc = UsageService(repo)
-        result = await svc.get_summary("2026-06")
+        quota = (await UsageService(repo).get_summary("2026-06")).quota
 
-        assert result.totalSpend == 50.0
-        assert result.activeTenants == 1
-        assert result.spendByModelTaskType[0].consumption == 100.0
+        assert (quota.basis, quota.billingMonth, quota.activeTenants) == ("billing_month", "2026-06", 1)
+        assert quota.byTaskType[0].consumption == 100.0
 
     @pytest.mark.asyncio
-    async def test_spend_item_has_no_spend_or_percentage_field(self):
-        """Regression: SpendItem used to carry spend/percentage sourced from
-        ppu_quota_usage's dropped cost_accum column (always 0, a silent lie) — there
-        is no per-task-type money column anywhere, so these fields are removed
-        entirely rather than continuing to show a fake number."""
+    async def test_items_carry_no_money(self):
+        """ppu_quota_usage has no per-task-type money column."""
         repo = _make_repo(
             get_tenants_with_usage_tier=[_tier_row()],
-            get_tenant_tier_usage_breakdown=[
-                _usage_row(task_type="llm"),
-                _usage_row(task_type="asr"),
-            ],
-            get_tenant_budgets=_budgets(),
+            get_tenant_tier_usage_breakdown=[_usage_row(task_type="llm"), _usage_row(task_type="asr")],
         )
-        svc = UsageService(repo)
-        result = await svc.get_summary("2026-06")
+        quota = (await UsageService(repo).get_summary("2026-06")).quota
 
-        assert len(result.spendByModelTaskType) == 2
-        assert not hasattr(result.spendByModelTaskType[0], "spend")
-        assert not hasattr(result.spendByModelTaskType[0], "percentage")
+        assert len(quota.byTaskType) == 2
+        assert not hasattr(quota.byTaskType[0], "spend")
+        assert not hasattr(quota.byTaskType[0], "percentage")
 
     @pytest.mark.asyncio
-    async def test_budget_exceeded_tenant_is_counted(self):
+    async def test_omitted_billing_period_is_all_months(self):
+        """None reaches the repository (no month filter), and billingMonth is
+        null — not a sentinel string — so echoing it back as billing_period works
+        (the route's YYYY-MM pattern would reject "lifetime")."""
         repo = _make_repo(
             get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[_usage_row()],
-            get_tenant_budgets=_budgets(_budget_row(budget_limit=Decimal("10"), spent=Decimal("50"))),
         )
-        svc = UsageService(repo)
-        result = await svc.get_summary("2026-06")
+        quota = (await UsageService(repo).get_summary(None)).quota
 
-        assert result.budgetExceededTenants == 1
-
-    @pytest.mark.asyncio
-    async def test_tenant_with_no_budget_row_is_not_falsely_exceeded(self):
-        """A tenant with usage but no ppu_tenant_tier_assignments row covering this
-        period's end has no budget figure at all — must not be treated as budget=0
-        and therefore always 'exceeded' the moment they have any spend."""
-        repo = _make_repo(
-            get_tenants_with_usage_tier=[_tier_row()],
-            get_tenant_tier_usage_breakdown=[_usage_row()],
-            get_tenant_budgets=_budgets(),  # no row for t1
-        )
-        svc = UsageService(repo)
-        result = await svc.get_summary("2026-06")
-
-        # unknown budget != a budget of 0 -- excluded from the count, not flagged as
-        # exceeded, matching the 0%-used (not "over budget") treatment in the tenant
-        # list/detail view for the same missing-budget-row case (see _resolve_budget).
-        assert result.budgetExceededTenants == 0
-
-    @pytest.mark.asyncio
-    async def test_no_spend_change_percent_field(self):
-        """Regression: spendChangePercent used to compare a (bugged, always-0)
-        "current month" cost sum against get_total_cost_for_month's real-but-
-        differently-scoped (global, all-time) total — comparing a fake number to a
-        real one, already meaningless before this fix. Now that totalSpend is real,
-        it's also always lifetime-cumulative (budget_usage has no per-month
-        dimension), so there is no "this month vs last month" to ever compute — the
-        field is removed entirely (not kept as a permanently-null one), even with
-        substantial real spend present."""
-        repo = _make_repo(
-            get_tenants_with_usage_tier=[_tier_row()],
-            get_tenant_tier_usage_breakdown=[_usage_row()],
-            get_tenant_budgets=_budgets(_budget_row(spent=Decimal("500"))),
-        )
-        svc = UsageService(repo)
-        result = await svc.get_summary("2026-06")
-
-        assert result.totalSpend == 500.0
-        assert not hasattr(result, "spendChangePercent")
-
-    @pytest.mark.asyncio
-    async def test_omitted_billing_period_defaults_to_all_time_not_current_month(self):
-        """Regression: billing_period=None used to collapse to the current calendar
-        month before reaching the repository, silently narrowing the dashboard's
-        "up to now" figure to whatever's happened since the 1st. It must now reach
-        the repository as None (all-time, no month filter) instead."""
-        repo = _make_repo(
-            get_tenants_with_usage_tier=[_tier_row()],
-            get_tenant_tier_usage_breakdown=[_usage_row()],
-            get_tenant_budgets=_budgets(_budget_row(spent=Decimal("50"))),
-        )
-        svc = UsageService(repo)
-        result = await svc.get_summary(None)
-
-        assert result.totalSpend == 50.0
-        # null, not a sentinel string like "lifetime" — billing_period is validated
-        # against ^\d{4}-(0[1-9]|1[0-2])$ on every /usage-* route, so a client echoing
-        # this value back as billing_period must get something that round-trips
-        # (omitted == all-time again), not a value that 422s.
-        assert result.billingPeriod is None
+        assert (quota.basis, quota.billingMonth) == ("all_time", None)
+        assert not re.compile(r"^\d{4}-(0[1-9]|1[0-2])$").match("lifetime")
         repo.get_tenants_with_usage_tier.assert_called_once_with(None, None, task_type_ids=None)
         repo.get_tenant_tier_usage_breakdown.assert_called_once_with(None, ["t1"], task_type_ids=None)
 
     @pytest.mark.asyncio
-    async def test_billing_period_response_value_is_valid_query_input_elsewhere(self):
-        """Regression: a client calling GET /usage-summary with no billing_period used
-        to get back billingPeriod="lifetime" in the response. Every /usage-* route
-        (including /usage-tenant and /usage-tenants) validates its billing_period
-        query param against ^\\d{4}-(0[1-9]|1[0-2])$ — "lifetime" fails that pattern,
-        so a client echoing the response value back in as billing_period=lifetime
-        would get a 422 instead of the all-time view it asked for. The fix must
-        return a value a client CAN legally pass back: None, which every route
-        already treats as "omit the param" == all-time."""
-        # Same pattern the three routes use (app/routes/usage.py) — kept inline so this
-        # test still fails if that pattern ever changes without this assertion being
-        # revisited, rather than importing it and silently tracking any drift.
-        billing_period_pattern = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
-
+    async def test_tier_and_task_types_scope_the_quota_rows(self):
         repo = _make_repo(
             get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[_usage_row()],
-            get_tenant_budgets=_budgets(),
         )
-        svc = UsageService(repo)
-        result = await svc.get_summary(None)
+        await UsageService(repo).get_summary("2026-06", tier_id="1", task_type_ids=[2])
 
-        # The old sentinel would have failed the very pattern it needed to round-trip
-        # through — confirms this was a real, reachable bug, not a hypothetical one.
-        assert not billing_period_pattern.match("lifetime")
-        assert result.billingPeriod is None
+        repo.get_tenants_with_usage_tier.assert_called_once_with("2026-06", "1", task_type_ids=[2])
 
     @pytest.mark.asyncio
-    async def test_omitted_billing_period_has_no_spend_change_percent(self):
-        """Same as test_no_spend_change_percent_field, for the omitted-billing_period
-        (all-time) path specifically — the field's absence doesn't depend on
-        billing_month at all, but this locks in that the all-time path doesn't
-        somehow reintroduce it."""
-        repo = _make_repo(
-            get_tenants_with_usage_tier=[_tier_row()],
-            get_tenant_tier_usage_breakdown=[_usage_row()],
-            get_tenant_budgets=_budgets(),
-        )
-        svc = UsageService(repo)
-        result = await svc.get_summary(None)
-
-        assert not hasattr(result, "spendChangePercent")
-
-    @pytest.mark.asyncio
-    async def test_allocated_and_remaining_budget_summed_across_tenants(self):
-        repo = _make_repo(
-            get_tenants_with_usage_tier=[_tier_row(tenant_id="t1"), _tier_row(tenant_id="t2")],
-            get_tenant_tier_usage_breakdown=[
-                _usage_row(tenant_id="t1"),
-                _usage_row(tenant_id="t2"),
-            ],
-            get_tenant_budgets=_budgets(
-                _budget_row(tenant_id="t1", budget_limit=Decimal("1000"), available_balance=Decimal("700")),
-                _budget_row(tenant_id="t2", budget_limit=Decimal("500"), available_balance=Decimal("200")),
-            ),
-        )
-        svc = UsageService(repo)
-        result = await svc.get_summary("2026-06")
-
-        assert result.totalAllocatedBudget == 1500.0
-        assert result.totalRemainingBudget == 900.0
-
-    @pytest.mark.asyncio
-    async def test_tenant_with_no_budget_row_excluded_from_budget_totals(self):
-        """Same "unknown limit != 0" treatment as budgetExceededTenants — a tenant
-        with no assignment row on file must not contribute a 0 to either total."""
-        repo = _make_repo(
-            get_tenants_with_usage_tier=[_tier_row()],
-            get_tenant_tier_usage_breakdown=[_usage_row()],
-            get_tenant_budgets=_budgets(),  # no row for t1
-        )
-        svc = UsageService(repo)
-        result = await svc.get_summary("2026-06")
-
-        assert result.totalAllocatedBudget == 0.0
-        assert result.totalRemainingBudget == 0.0
-
-    @pytest.mark.asyncio
-    async def test_spend_item_allocated_summed_across_tenants_current_tier(self):
+    async def test_allocated_summed_across_tenants_current_tier(self):
         repo = _make_repo(
             get_tenants_with_usage_tier=[_tier_row(tenant_id="t1"), _tier_row(tenant_id="t2", tier_id="2")],
             get_tenant_tier_usage_breakdown=[
                 _usage_row(tenant_id="t1", tier_id="1", total_units=100.0, quota_snap=200.0),
                 _usage_row(tenant_id="t2", tier_id="2", total_units=50.0, quota_snap=300.0),
             ],
-            get_tenant_budgets=_budgets(),
         )
-        svc = UsageService(repo)
-        result = await svc.get_summary("2026-06")
+        quota = (await UsageService(repo).get_summary("2026-06")).quota
 
-        llm_item = next(i for i in result.spendByModelTaskType if i.modelTaskType == "llm")
-        assert llm_item.consumption == 150.0
-        assert llm_item.allocated == 500.0
+        llm = next(i for i in quota.byTaskType if i.modelTaskType == "llm")
+        assert (llm.consumption, llm.allocated) == (150.0, 500.0)
 
     @pytest.mark.asyncio
-    async def test_spend_item_allocated_null_when_no_quota_snapshot(self):
+    async def test_allocated_null_when_no_quota_snapshot(self):
         repo = _make_repo(
             get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[_usage_row(quota_snap=None)],
-            get_tenant_budgets=_budgets(),
         )
-        svc = UsageService(repo)
-        result = await svc.get_summary("2026-06")
-
-        assert result.spendByModelTaskType[0].allocated is None
+        quota = (await UsageService(repo).get_summary("2026-06")).quota
+        assert quota.byTaskType[0].allocated is None
 
     @pytest.mark.asyncio
-    async def test_spend_item_allocated_populated_independently_per_task_type(self):
-        """Unlike a single flat total (which can only ever hold one unit), each
-        SpendItem carries its own allocated figure — LLM and ASR can both show
-        allocated at once, in their own units, on the same unfiltered call."""
+    async def test_allocated_per_task_type_in_its_own_unit(self):
         repo = _make_repo(
             get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[
                 _usage_row(task_type="llm", total_units=100.0, quota_snap=200.0),
                 _usage_row(task_type="asr", total_units=10.0, quota_snap=50.0),
             ],
-            get_tenant_budgets=_budgets(),
         )
-        svc = UsageService(repo)
-        result = await svc.get_summary("2026-06")
-
-        by_type = {i.modelTaskType: i for i in result.spendByModelTaskType}
-        assert by_type["llm"].allocated == 200.0
-        assert by_type["asr"].allocated == 50.0
+        by_type = {i.modelTaskType: i for i in (await UsageService(repo).get_summary("2026-06")).quota.byTaskType}
+        assert (by_type["llm"].allocated, by_type["asr"].allocated) == (200.0, 50.0)
 
     @pytest.mark.asyncio
-    async def test_spend_item_allocated_excludes_quota_from_non_current_tier(self):
-        """Quota isn't cumulative across tiers a tenant held mid-period — only the
-        row matching the tenant's CURRENT (end-of-period) tier counts toward
-        allocated, though consumption still sums across every tier they used."""
+    async def test_allocated_excludes_quota_from_non_current_tier(self):
+        """A quota grant resets on reassignment: only the current tier's row
+        counts toward allocated; consumption sums across every tier used."""
         repo = _make_repo(
-            get_tenants_with_usage_tier=[_tier_row(tier_id="2")],  # current tier is "2"
+            get_tenants_with_usage_tier=[_tier_row(tier_id="2")],
             get_tenant_tier_usage_breakdown=[
-                _usage_row(tier_id="1", total_units=100.0, quota_snap=500.0),  # old tier, excluded
-                _usage_row(tier_id="2", total_units=50.0, quota_snap=100.0),  # current tier, counted
+                _usage_row(tier_id="1", total_units=100.0, quota_snap=500.0),
+                _usage_row(tier_id="2", total_units=50.0, quota_snap=100.0),
             ],
-            get_tenant_budgets=_budgets(),
         )
-        svc = UsageService(repo)
-        result = await svc.get_summary("2026-06")
-
-        assert result.spendByModelTaskType[0].consumption == 150.0
-        assert result.spendByModelTaskType[0].allocated == 100.0
-
-
-class TestGetSummaryFiltered:
-    """get_summary(tier_id=<id>) scopes tenant selection (and therefore totalSpend/
-    budgetExceededTenants) by "who was on this tier," not by usage row."""
-
-    @pytest.mark.asyncio
-    async def test_total_spend_real_with_tier_id_set(self):
-        """totalSpend behaves the same real/lifetime way whether or not tier_id
-        narrows tenant selection — tier_id only changes WHICH tenants are in scope
-        (via get_tenants_with_usage_tier), not how their spend is sourced (see
-        get_summary's docstring)."""
-        repo = _make_repo(
-            get_tenants_with_usage_tier=[_tier_row()],
-            get_tenant_tier_usage_breakdown=[_usage_row()],
-            get_tenant_budgets=_budgets(_budget_row(spent=Decimal("150"))),
-        )
-        svc = UsageService(repo)
-        result = await svc.get_summary("2026-06", tier_id="1")
-
-        assert result.totalSpend == 150.0
-        assert not hasattr(result, "spendChangePercent")
-        repo.get_tenants_with_usage_tier.assert_called_once_with("2026-06", "1", task_type_ids=None)
+        item = (await UsageService(repo).get_summary("2026-06")).quota.byTaskType[0]
+        assert (item.consumption, item.allocated) == (150.0, 100.0)
 
 
 # ── get_tenant_list ───────────────────────────────────────────────────────────
@@ -519,7 +438,7 @@ class TestGetTenantList:
         result = await UsageService(repo).get_tenant_list(_TODAY, None, None, None, limit=2, offset=1)
         assert result.total == 4
         assert [i.tenantId for i in result.data] == ["3", "2"]
-        assert repo.get_tenant_budgets.call_args.args[1] == ["3", "2"]
+        assert repo.get_tenant_budgets.call_args.args[0] == ["3", "2"]
 
     async def test_tier_filter_uses_the_most_recent_tier_in_the_period(self):
         tier_a, tier_b = "6f1c2a9e-4b1d-4f0e-9a51-3c7d2e8b1f04", "0b5e0d2a-9c41-4a7e-8e0f-2d6c4f1a3b77"

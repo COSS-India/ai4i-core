@@ -175,7 +175,7 @@ class TestGetTenantBudgets:
         repo = UsageRepository(db=AsyncMock())
         auth_db = self._auth_db([])
 
-        result = await repo.get_tenant_budgets("2026-08", [], auth_db)
+        result = await repo.get_tenant_budgets([], auth_db)
 
         assert result == {}
         auth_db.execute.assert_not_called()
@@ -184,7 +184,7 @@ class TestGetTenantBudgets:
     async def test_auth_db_none_returns_empty(self):
         repo = UsageRepository(db=AsyncMock())
 
-        result = await repo.get_tenant_budgets("2026-08", ["2"], None)
+        result = await repo.get_tenant_budgets(["2"], None)
 
         assert result == {}
 
@@ -222,7 +222,7 @@ class TestGetTenantBudgets:
         )
         repo = UsageRepository(db=db)
 
-        result = await repo.get_tenant_budgets("2026-08", ["2"], auth_db)
+        result = await repo.get_tenant_budgets(["2"], auth_db)
 
         assert set(result.keys()) == {"2"}
         budget = result["2"]
@@ -256,7 +256,7 @@ class TestGetTenantBudgets:
         )
         repo = UsageRepository(db=AsyncMock())
 
-        result = await repo.get_tenant_budgets("2026-08", ["2"], auth_db)
+        result = await repo.get_tenant_budgets(["2"], auth_db)
 
         assert result["2"].budget_effective_from == effective_from
         assert result["2"].budget_effective_to == effective_to
@@ -266,7 +266,7 @@ class TestGetTenantBudgets:
         auth_db = self._auth_db([self._rows([])])  # tenants query returns nothing
 
         repo = UsageRepository(db=AsyncMock())
-        result = await repo.get_tenant_budgets("2026-08", ["999"], auth_db)
+        result = await repo.get_tenant_budgets(["999"], auth_db)
 
         assert result == {}
 
@@ -285,7 +285,7 @@ class TestGetTenantBudgets:
         )
         repo = UsageRepository(db=AsyncMock())
 
-        result = await repo.get_tenant_budgets("2026-08", ["5"], auth_db)
+        result = await repo.get_tenant_budgets(["5"], auth_db)
 
         budget = result["5"]
         assert budget.budget_limit == Decimal("50000.00")
@@ -296,7 +296,7 @@ class TestGetTenantBudgets:
         auth_db = self._auth_db([])
         repo = UsageRepository(db=AsyncMock())
 
-        result = await repo.get_tenant_budgets("2026-08", ["not-a-number"], auth_db)
+        result = await repo.get_tenant_budgets(["not-a-number"], auth_db)
 
         assert result == {}
         auth_db.execute.assert_not_called()
@@ -332,7 +332,7 @@ class TestGetTenantBudgets:
         )
         repo = UsageRepository(db=db)
 
-        result = await repo.get_tenant_budgets("2026-08", ["42"], auth_db)
+        result = await repo.get_tenant_budgets(["42"], auth_db)
 
         assert result == {}
 
@@ -380,7 +380,7 @@ class TestGetTenantBudgets:
         )
         repo = UsageRepository(db=db)
 
-        result = await repo.get_tenant_budgets("2026-08", ["2", "42"], auth_db)
+        result = await repo.get_tenant_budgets(["2", "42"], auth_db)
 
         assert set(result.keys()) == {"2"}
         assert result["2"].budget_limit == Decimal("1000.00")
@@ -391,7 +391,7 @@ class TestGetTenantBudgets:
         """Regression: a real auth_db failure (connection drop, aborted
         transaction) must NOT be swallowed into `{}` — that made _resolve_budget
         report has_budget=False for every tenant, so /usage-summary answered
-        200 OK with totalAllocatedBudget=0 during an actual outage, exactly the
+        200 OK with budget.allocated=0 during an actual outage, exactly the
         false zero application_usage_service._load_tenant_budget already
         refuses to produce (see its docstring). The caller-side route/global
         exception handler is what turns this into a 500 — this repository
@@ -401,7 +401,7 @@ class TestGetTenantBudgets:
         repo = UsageRepository(db=AsyncMock())
 
         with pytest.raises(RuntimeError, match="connection lost"):
-            await repo.get_tenant_budgets("2026-08", ["2"], auth_db)
+            await repo.get_tenant_budgets(["2"], auth_db)
 
     @pytest.mark.asyncio
     async def test_auth_db_failure_mid_sequence_also_propagates(self):
@@ -421,7 +421,7 @@ class TestGetTenantBudgets:
         repo = UsageRepository(db=AsyncMock())
 
         with pytest.raises(RuntimeError, match="transaction aborted"):
-            await repo.get_tenant_budgets("2026-08", ["2"], auth_db)
+            await repo.get_tenant_budgets(["2"], auth_db)
 
 
 def _make_min_db(created_at, billing_month) -> AsyncMock:
@@ -476,3 +476,55 @@ class TestGetFirstUsageAt:
         db = _make_min_db(datetime(2026, 5, 10, 8, 0), "2026-05")
         result = await UsageRepository(db).get_first_usage_at("7")
         assert result == datetime(2026, 5, 10, 8, 0, tzinfo=timezone.utc)
+
+
+def _rows(rows: list) -> SimpleNamespace:
+    return SimpleNamespace(all=lambda: rows)
+
+
+@pytest.mark.asyncio
+class TestGetBudgetedTenantBudgets:
+    """The /usage-summary budget block: budgets for every tenant with a budget
+    on file, not picked by quota rows, from one read of tenants."""
+
+    async def test_no_auth_db_returns_empty(self):
+        assert await UsageRepository(MagicMock()).get_budgeted_tenant_budgets(None) == {}
+
+    async def test_budgets_of_budgeted_non_deactivated_tenants_in_one_read(self):
+        auth_db = MagicMock()
+        auth_db.execute = AsyncMock(side_effect=[
+            _rows([SimpleNamespace(id=2, allocated_budget=Decimal("1000"), tier_id=None,
+                                   budget_effective_from=None, budget_effective_to=None)]),  # tenants
+            _rows([SimpleNamespace(id=39, tenant_id=2)]),                                     # applications
+            _rows([SimpleNamespace(id=10, application_id=39)]),                               # api_key
+        ])
+        db = AsyncMock()
+        db.execute = AsyncMock(return_value=_rows(
+            [SimpleNamespace(api_key_id=10, api_key_budget_used=Decimal("300"))]
+        ))
+
+        result = await UsageRepository(db=db).get_budgeted_tenant_budgets(auth_db)
+
+        assert (result["2"].spent, result["2"].available_balance) == (Decimal("300"), Decimal("700"))
+        sqls = [str(call.args[0]) for call in auth_db.execute.call_args_list]
+        assert sum("FROM tenants" in q for q in sqls) == 1
+        assert "allocated_budget IS NOT NULL" in sqls[0]
+        assert "status <> 'DEACTIVATED'" in sqls[0]
+        assert "tier_id =" not in sqls[0]
+
+    async def test_tier_filter_is_the_current_tier(self):
+        auth_db = MagicMock()
+        auth_db.execute = AsyncMock(return_value=_rows([]))
+        tier = "6f1c2a9e-4b1d-4f0e-9a51-3c7d2e8b1f04"
+
+        assert await UsageRepository(MagicMock()).get_budgeted_tenant_budgets(auth_db, tier) == {}
+        stmt, params = auth_db.execute.call_args.args
+        assert "tier_id = CAST(:tier_id AS uuid)" in str(stmt)
+        assert params == {"tier_id": tier}
+
+    async def test_auth_db_failure_propagates(self):
+        """A DB error must not read as "no budgeted institutions"."""
+        auth_db = MagicMock()
+        auth_db.execute = AsyncMock(side_effect=RuntimeError("connection dropped"))
+        with pytest.raises(RuntimeError):
+            await UsageRepository(MagicMock()).get_budgeted_tenant_budgets(auth_db)
