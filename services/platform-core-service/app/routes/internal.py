@@ -1,14 +1,20 @@
 """Internal endpoints — service-to-service calls, not exposed to end users."""
 
+import logging
 import secrets
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
 from app.dependencies.services import ServiceService, get_service_service
+from app.models.policy_management.audit_log import PolicyAuditLog
 from app.services.pay_per_use import tier_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Internal"])
 
@@ -36,6 +42,35 @@ async def _require_internal_caller(
         x_internal_service_token.encode(), expected.encode()
     ):
         raise HTTPException(status_code=403, detail="Forbidden")
+
+
+class _AuditLogCreate(BaseModel):
+    policy_id: Optional[List[int]] = None
+    trace_id: Optional[str] = None
+    model_request: Optional[Dict[str, Any]] = None
+    response: Optional[Dict[str, Any]] = None
+    guardrail_info: Optional[Dict[str, Any]] = None
+    created_by: Optional[str] = None
+
+
+@router.post("/policy-audit-logs", include_in_schema=False)
+async def create_policy_audit_log(
+    body: _AuditLogCreate,
+    session: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """Write a policy guardrail audit log entry. Called by inference-service
+    after each LLM request where a PII policy was applied."""
+    log = PolicyAuditLog(
+        policy_id=body.policy_id,
+        trace_id=body.trace_id,
+        model_request=body.model_request,
+        response=body.response,
+        guardrail_info=body.guardrail_info,
+        created_by=body.created_by,
+    )
+    session.add(log)
+    await session.commit()
+    return {"id": log.id}
 
 
 @router.get(

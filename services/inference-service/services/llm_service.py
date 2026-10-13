@@ -7,6 +7,8 @@ from typing import Any, AsyncIterator, Dict, Optional, Tuple
 import httpx
 
 from ai4i_core.context import (
+    get_application_id,
+    get_trace_id,
     set_llm_usage_input_tokens,
     set_llm_usage_model_id,
     set_llm_usage_model_name,
@@ -16,6 +18,13 @@ from ai4i_core.context import (
 from ai4i_core.observability.utils import get_llm_cached_tokens, get_llm_usage
 from config import settings
 from inference.inference_server_resolver import InferenceServerResolver
+from services.guardrail import (
+    GuardrailContext,
+    apply_input_guardrail,
+    build_guardrail_context,
+    process_response_text,
+    schedule_audit_log,
+)
 from trace.request_span import traced_span, traced_inference, get_context_attributes
 
 
@@ -315,6 +324,20 @@ class OpenAIProxyService:
                 )
             return exc.status_code, exc.body
 
+        # ── PII guardrail: build context + mask input ─────────────────────
+        app_id = get_application_id()
+        guardrail_ctx = GuardrailContext()
+        original_payload = payload
+        if app_id:
+            guardrail_ctx = await build_guardrail_context(app_id)
+            if guardrail_ctx.active:
+                logger.info("══ GUARDRAIL REQUEST (app_id=%s) ══════════════", app_id)
+                logger.info("Payload BEFORE masking: %s", payload.get("messages"))
+                payload = apply_input_guardrail(payload, guardrail_ctx)
+                logger.info("Payload AFTER  masking: %s", payload.get("messages"))
+                logger.info("Scope: %s", guardrail_ctx.scopes)
+        # ─────────────────────────────────────────────────────────────────
+
         with traced_span("model") as model_attrs:
             self._seed_model_attrs(model_attrs, service_id, model_name)
 
@@ -374,6 +397,35 @@ class OpenAIProxyService:
                     set_llm_usage_output_tokens(output_tokens)
                     set_llm_usage_cached_input_tokens(infer_attrs["cached_input_tokens"])
                     set_llm_usage_model_name(model_attrs["model_name"])
+
+        # ── PII guardrail: process response + fire-and-forget audit log ───
+        if guardrail_ctx.active and status_code == 200 and isinstance(body, dict):
+            try:
+                choices = body.get("choices") or []
+                if choices and isinstance((choices[0].get("message") or {}).get("content"), str):
+                    content = choices[0]["message"]["content"]
+                    logger.info("══ GUARDRAIL RESPONSE ══════════════════════════")
+                    logger.info("LLM response BEFORE processing : %s", content)
+                    logger.info("Token→Original map             : %s", guardrail_ctx.token_to_original)
+                    content = process_response_text(content, guardrail_ctx)
+                    logger.info("LLM response AFTER  processing : %s", content)
+                    body = {
+                        **body,
+                        "choices": [
+                            {**choices[0], "message": {**choices[0]["message"], "content": content}},
+                            *choices[1:],
+                        ],
+                    }
+            except Exception:
+                logger.warning("Guardrail response processing failed", exc_info=True)
+            schedule_audit_log(
+                ctx=guardrail_ctx,
+                trace_id=get_trace_id(),
+                model_request=original_payload,
+                response=body,
+                app_id=app_id,
+            )
+        # ─────────────────────────────────────────────────────────────────
 
         return status_code, body
 
@@ -529,6 +581,16 @@ class OpenAIProxyService:
             model_ctx = {"service_id": exc.service_id, "model_name": exc.model_name}
             return "error", exc.status_code, exc.body, model_ctx
 
+        # ── PII guardrail: mask input before opening stream ───────────────
+        app_id = get_application_id()
+        guardrail_ctx = GuardrailContext()
+        original_payload = payload
+        if app_id:
+            guardrail_ctx = await build_guardrail_context(app_id)
+            if guardrail_ctx.active:
+                payload = apply_input_guardrail(payload, guardrail_ctx)
+        # ─────────────────────────────────────────────────────────────────
+
         payload = self._with_include_usage(payload)
 
         kind, status_code, result = await self.proxy_stream(path=url, payload=payload, service_info=service_info)
@@ -549,9 +611,62 @@ class OpenAIProxyService:
                     infer_attrs["model_name"] = model_attrs["model_name"]
                     infer_attrs["output_type"] = "text"
 
-                    async for line in result:
-                        self._record_stream_usage(line, infer_attrs)
-                        yield line
+                    if not guardrail_ctx.active:
+                        # No guardrail — pass lines through unchanged.
+                        async for line in result:
+                            self._record_stream_usage(line, infer_attrs)
+                            yield line
+                    else:
+                        # Guardrail active — buffer full content, process, re-emit.
+                        # PII masking requires the complete text; streaming is
+                        # sacrificed for correctness when a policy is applied.
+                        all_lines: list[str] = []
+                        full_content: list[str] = []
+                        last_chunk: Optional[Dict[str, Any]] = None
+                        async for line in result:
+                            self._record_stream_usage(line, infer_attrs)
+                            all_lines.append(line)
+                            if line.startswith("data:"):
+                                data = line[len("data:"):].strip()
+                                if data and data != "[DONE]":
+                                    try:
+                                        chunk = json.loads(data)
+                                        delta_content = (
+                                            (chunk.get("choices") or [{}])[0]
+                                            .get("delta", {})
+                                            .get("content") or ""
+                                        )
+                                        if delta_content:
+                                            full_content.append(delta_content)
+                                        last_chunk = chunk
+                                    except Exception:
+                                        pass
+
+                        # Process the complete reconstructed response text.
+                        processed = process_response_text("".join(full_content), guardrail_ctx)
+
+                        if last_chunk is not None:
+                            # Emit one synthetic chunk with the full processed content.
+                            choices = last_chunk.get("choices") or [{}]
+                            synthetic = {
+                                **last_chunk,
+                                "choices": [{
+                                    **choices[0],
+                                    "delta": {"content": processed, "role": "assistant"},
+                                    "finish_reason": "stop",
+                                }],
+                            }
+                            yield f"data: {json.dumps(synthetic)}\n"
+
+                            # Fire-and-forget audit log.
+                            schedule_audit_log(
+                                ctx=guardrail_ctx,
+                                trace_id=get_trace_id(),
+                                model_request=original_payload,
+                                response=synthetic,
+                                app_id=app_id,
+                            )
+                        yield "data: [DONE]\n"
 
         return "stream", 200, gen(), None
 

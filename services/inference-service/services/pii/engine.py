@@ -5,6 +5,13 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from presidio_analyzer import AnalyzerEngine, RecognizerResult
 from presidio_analyzer.predefined_recognizers import SpacyRecognizer
+from presidio_analyzer.predefined_recognizers.country_specific.india import (
+    InAadhaarRecognizer,
+    InGstinRecognizer,
+    InPassportRecognizer,
+    InVehicleRegistrationRecognizer,
+    InVoterRecognizer,
+)
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 from presidio_anonymizer import AnonymizerEngine
 from presidio_anonymizer.entities import EngineResult, OperatorConfig
@@ -36,6 +43,14 @@ class PresidioEngine:
             nlp_engine=nlp_engine,
             supported_languages=["en", "xx"],
         )
+        for recognizer in [
+            InAadhaarRecognizer(),
+            InGstinRecognizer(),
+            InPassportRecognizer(),
+            InVehicleRegistrationRecognizer(),
+            InVoterRecognizer(),
+        ]:
+            self._analyzer.registry.add_recognizer(recognizer)
         self._anonymizer = AnonymizerEngine()
         # Older presidio-anonymizer (e.g. the pinned 2.2.35) has no add_anonymizer;
         # it discovers Operator subclasses automatically, so the import is enough.

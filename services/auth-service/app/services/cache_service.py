@@ -21,6 +21,11 @@ logger = logging.getLogger(__name__)
 # Defined once here — no other file should construct this key manually.
 REDIS_API_KEY_PREFIX = "auth:apikey:"
 
+# Redis key pattern: auth:app:{app_id}:policy_ids -> JSON list of policy IDs.
+# Written by auth-service on application create/update; read by inference-service
+# to resolve which policies apply to a request without an extra API call.
+REDIS_APP_POLICY_PREFIX = "auth:app:"
+
 # Redis key pattern: auth:logout:{user_id} -> unix timestamp of last logout.
 # Access tokens issued before this timestamp are considered revoked.
 REDIS_LOGOUT_PREFIX = "auth:logout:"
@@ -139,6 +144,27 @@ class CacheService(_BaseCacheService):
         """Return the unix timestamp of the user's last logout, or None if none/expired."""
         value = await self._redis.get(f"{REDIS_LOGOUT_PREFIX}{user_id}")
         return float(value) if value else None
+
+    async def set_app_policy_ids(self, app_id: int, policy_ids: list) -> None:
+        """Persist the application's policy_id list so inference-service can read it
+        without an extra API call. No TTL — the value is managed explicitly on
+        application create/update and deleted on application delete."""
+        try:
+            await self._redis.set(
+                f"{REDIS_APP_POLICY_PREFIX}{app_id}:policy_ids",
+                json.dumps(policy_ids or []),
+            )
+        except Exception as exc:
+            logger.warning("Failed to set app policy_ids for app_id=%s: %s", app_id, exc)
+
+    async def get_app_policy_ids(self, app_id: int) -> Optional[list]:
+        """Return the cached policy_id list for an application, or None on miss."""
+        try:
+            raw = await self._redis.get(f"{REDIS_APP_POLICY_PREFIX}{app_id}:policy_ids")
+            return json.loads(raw) if raw is not None else None
+        except Exception as exc:
+            logger.warning("Failed to get app policy_ids for app_id=%s: %s", app_id, exc)
+            return None
 
     async def patch_api_key_cache_field(self, api_key: str, field: str, value: str) -> bool:
         """Update a single field on an existing API key hash. No-op if key is absent from Redis."""

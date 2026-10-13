@@ -97,6 +97,13 @@ class Settings(BaseSettings):
     PII_SPACY_EN_MODEL: str = Field("en_core_web_lg", description="spaCy model for English PII detection")
     PII_SPACY_MULTILINGUAL_MODEL: str = Field("xx_ent_wiki_sm", description="spaCy model for non-English PII detection")
 
+    # Platform-core — used by the guardrail to re-cache expired policies and write audit logs.
+    # Must match MODEL_MANAGEMENT_SERVICE_URL when both point at platform-core-service.
+    PLATFORM_CORE_URL: Optional[str] = Field(None, description="Internal URL of platform-core-service")
+    # Sent as X-Internal-Service-Token when calling platform-core internal endpoints.
+    # Must match INTERNAL_SERVICE_SHARED_SECRET set on platform-core-service.
+    PLATFORM_CORE_INTERNAL_TOKEN: Optional[str] = Field(None, description="Shared secret for platform-core internal calls")
+
     # Security — user-supplied audio/image URI downloads (SSRF guard)
     ALLOW_PRIVATE_DOWNLOAD_HOSTS: bool = Field(
         False,
