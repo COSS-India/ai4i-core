@@ -1,33 +1,28 @@
-import { Td, Text, Tr, VStack } from "@chakra-ui/react";
+import { Box, HStack, Td, Text, Tr } from "@chakra-ui/react";
 import React from "react";
 import { METERING } from "../../config/meteringConstants";
-import type { TierTaskTypeUsage } from "../../types/usageSpend";
-import { formatSpendMoneyExact, formatSpendUnitCompact } from "../../utils/usageSpendHelpers";
+import type { MeteringCostShare, TierTaskTypeUsage } from "../../types/usageSpend";
+import { formatTokenCount } from "../../utils/llmTokenBreakdown";
+import { formatSpendMoneyExact } from "../../utils/usageSpendHelpers";
+import { TokenShareBar } from "./UsageSpendCells";
+
+function visibleShares(shares: MeteringCostShare[] | null | undefined): MeteringCostShare[] {
+  return (shares ?? []).filter((share) => share.key !== "cached_input" || share.units > 0);
+}
 
 const childTd = { borderColor: "gray.100", py: 2 } as const;
 
-function PeriodFigure({
-  units,
-  unit,
-  detail,
-  isTotal = false,
-}: Readonly<{ units: number; unit: string; detail: string; isTotal?: boolean }>) {
-  return (
-    <VStack align="flex-start" spacing={0}>
-      <Text fontSize="13px" fontWeight={isTotal ? "bold" : "medium"} color="gray.800">
-        {formatSpendUnitCompact(units, unit)}
-      </Text>
-      <Text fontSize="12px" color="gray.500">
-        {detail}
-      </Text>
-    </VStack>
-  );
-}
+const figureLabel = {
+  fontSize: "11px",
+  color: "gray.500",
+  fontWeight: "semibold",
+} as const;
 
 /**
- * LLM cost breakdown under a task-type row: one row per token category, in
- * the API's order, then a Total row from `periodUsage`. Figures sit under the
- * "Usage in period" column; the quota column is left blank.
+ * LLM cost breakdown under a task-type row. `periodUsage.breakdown` is the
+ * deployed split: units, cost, and costShare. Cached input is omitted when
+ * its units are zero. The Total row is `periodUsage.units` / `periodUsage.cost`.
+ * Figures span the usage and quota columns.
  */
 export function UsageSpendCostBreakdownRows({
   task,
@@ -40,25 +35,45 @@ export function UsageSpendCostBreakdownRows({
   leadingColSpan: number;
 }>) {
   const copy = METERING.USAGE_SPEND;
-  const { periodUsage, unit } = task;
+  const shares = visibleShares(task.periodUsage.breakdown);
+  const { periodUsage } = task;
 
   return (
     <>
-      {(periodUsage.breakdown ?? []).map((share) => (
+      <Tr bg="gray.50">
+        <Td colSpan={leadingColSpan} {...childTd} />
+        <Td colSpan={2} {...childTd}>
+          <HStack spacing={4}>
+            <Text {...figureLabel} w="88px" textAlign="right">
+              Tokens
+            </Text>
+            <Text {...figureLabel} flex="1">
+              Share of usage cost
+            </Text>
+            <Text {...figureLabel} w="96px" textAlign="right">
+              Usage cost
+            </Text>
+          </HStack>
+        </Td>
+      </Tr>
+      {shares.map((share) => (
         <Tr key={share.key} bg="gray.50">
           <Td pl={10} colSpan={leadingColSpan} {...childTd}>
             <Text fontSize="13px" color="gray.700">
               {share.label}
             </Text>
           </Td>
-          <Td {...childTd}>
-            <PeriodFigure
-              units={share.units}
-              unit={unit}
-              detail={`${formatSpendMoneyExact(share.cost, currency)} · ${share.costShare.toFixed(2)}${copy.COST_SHARE_SUFFIX}`}
-            />
+          <Td colSpan={2} {...childTd}>
+            <HStack spacing={4}>
+              <Text fontSize="sm" color="gray.800" w="88px" textAlign="right">
+                {formatTokenCount(share.units)}
+              </Text>
+              <TokenShareBar pct={share.costShare} />
+              <Text fontSize="sm" color="gray.800" w="96px" textAlign="right">
+                {formatSpendMoneyExact(share.cost, currency)}
+              </Text>
+            </HStack>
           </Td>
-          <Td {...childTd} />
         </Tr>
       ))}
       <Tr bg="gray.50">
@@ -67,15 +82,17 @@ export function UsageSpendCostBreakdownRows({
             {copy.BREAKDOWN_TOTAL}
           </Text>
         </Td>
-        <Td {...childTd}>
-          <PeriodFigure
-            units={periodUsage.units}
-            unit={unit}
-            detail={formatSpendMoneyExact(periodUsage.cost, currency)}
-            isTotal
-          />
+        <Td colSpan={2} {...childTd}>
+          <HStack spacing={4}>
+            <Text fontSize="sm" fontWeight="bold" color="gray.800" w="88px" textAlign="right">
+              {formatTokenCount(periodUsage.units)}
+            </Text>
+            <Box flex="1" />
+            <Text fontSize="sm" fontWeight="bold" color="gray.800" w="96px" textAlign="right">
+              {formatSpendMoneyExact(periodUsage.cost, currency)}
+            </Text>
+          </HStack>
         </Td>
-        <Td {...childTd} />
       </Tr>
     </>
   );

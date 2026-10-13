@@ -90,7 +90,10 @@ const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
                 visibility={hasCostBreakdown(row) ? "visible" : "hidden"}
                 transform={isOpen ? "rotate(90deg)" : undefined}
                 transition="transform 0.15s ease"
-                onClick={() => toggleRow(key)}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  toggleRow(key);
+                }}
               />
               <TaskTypeLabel
                 taskType={row.task.taskType}

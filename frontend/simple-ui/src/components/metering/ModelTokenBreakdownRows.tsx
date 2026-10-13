@@ -1,8 +1,14 @@
 import { Td, Text, Tr } from "@chakra-ui/react";
 import React from "react";
 import { METERING } from "../../config/meteringConstants";
-import type { ModelConsumptionRow } from "../../types/metering";
+import type { MeteringTokenShare, ModelConsumptionRow } from "../../types/metering";
 import { formatNativeConsumption } from "../../utils/meteringFormatters";
+import { TokenShareBar } from "./UsageSpendCells";
+
+/** Cached input is omitted when it is zero; the API already drops it, this keeps the rule local. */
+function visibleShares(shares: MeteringTokenShare[] | null | undefined): MeteringTokenShare[] {
+  return (shares ?? []).filter((share) => share.key !== "cached_input" || share.units > 0);
+}
 
 const childTd = { borderColor: "gray.100", py: 2 } as const;
 
@@ -14,9 +20,10 @@ const childTd = { borderColor: "gray.100", py: 2 } as const;
  */
 export function ModelTokenBreakdownRows({ row }: Readonly<{ row: ModelConsumptionRow }>) {
   const section = METERING.SECTIONS.MODEL;
+  const shares = visibleShares(row.native_breakdown);
   return (
     <>
-      {(row.native_breakdown ?? []).map((share) => (
+      {shares.map((share) => (
         <Tr key={share.key} bg="gray.50">
           <Td pl={12} colSpan={4} {...childTd}>
             <Text fontSize="sm" color="gray.700">
@@ -29,10 +36,7 @@ export function ModelTokenBreakdownRows({ row }: Readonly<{ row: ModelConsumptio
             </Text>
           </Td>
           <Td colSpan={2} {...childTd}>
-            <Text fontSize="sm" color="gray.500">
-              {share.percentage.toFixed(2)}
-              {section.TOKEN_SHARE_SUFFIX}
-            </Text>
+            <TokenShareBar pct={share.percentage} />
           </Td>
         </Tr>
       ))}

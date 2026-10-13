@@ -186,7 +186,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
     error: string | null | undefined,
     onChange: (value: string) => void,
     helper: string,
-    placeholder = FIELD_HINTS.service.price.placeholder,
+    placeholder: string = FIELD_HINTS.service.price.placeholder,
   ) => {
     if (isView) {
       return <ReadOnlyField label={label}>{value || "—"}</ReadOnlyField>;
