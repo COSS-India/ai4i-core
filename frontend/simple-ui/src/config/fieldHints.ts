@@ -150,6 +150,20 @@ export const FIELD_HINTS = {
     startTime: { helper: "Filter logs from this date & time" },
     endTime: { helper: "Filter logs up to this date & time; must be after Start Time" },
     tenant: { helper: `Filter logs by ${org}.` },
+    endUser: {
+      placeholder: "e.g. customer-8812",
+      helper: "end-user ID sent as user",
+      tooLong: "End user must be at most 256 characters",
+    },
+    metadata: {
+      placeholder: "e.g. session_id=s-77",
+      helper: "key=value pair sent in metadata",
+      missingSeparator: "Use key=value",
+      missingKey: "Enter a key before =",
+      missingValue: "Enter a value after =",
+      keyTooLong: "Key must be at most 64 characters",
+      valueTooLong: "Value must be at most 512 characters",
+    },
     autoRefresh: { helper: "Automatically refresh this list at regular intervals." },
   },
   profile: {
