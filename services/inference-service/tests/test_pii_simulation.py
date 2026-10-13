@@ -14,7 +14,8 @@ from unittest.mock import patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from presidio_analyzer import RecognizerResult
+from presidio_analyzer import Pattern, PatternRecognizer, RecognizerResult
+from presidio_analyzer.predefined_recognizers import SpacyRecognizer
 
 import services.pii.engine as engine_module
 from app_factory import _setup_exception_handlers
@@ -41,23 +42,32 @@ FINANCE = PolicyType(
 )
 
 
+class FakeRegistry:
+    """Like Presidio's registry for en and xx: spaCy NER plus pattern
+    recognizers for email and phone. No IN_PAN / IN_AADHAAR."""
+
+    def get_recognizers(self, language, all_fields=False):
+        return [
+            SpacyRecognizer(supported_language=language, supported_entities=["PERSON", "LOCATION"]),
+            PatternRecognizer(supported_entity="EMAIL_ADDRESS", supported_language=language,
+                              patterns=[Pattern("email", "@", 0.5)]),
+            PatternRecognizer(supported_entity="PHONE_NUMBER", supported_language=language,
+                              patterns=[Pattern("phone", r"\d{10}", 0.5)]),
+        ]
+
+
 class FakeAnalyzer:
     """Stands in for Presidio's AnalyzerEngine without spaCy."""
 
     def __init__(self, model_hits=None):
-        # {entity_type: [substring, ...]} the "NER model" finds
+        # {entity_type: [substring, ...]} the built-in recognizers find
         self.model_hits = model_hits or {}
         self.calls = []
+        self.registry = FakeRegistry()
 
-    def analyze(self, text, language, entities=None, ad_hoc_recognizers=None):
+    def analyze(self, text, language, entities=None):
         self.calls.append({"language": language, "entities": entities})
         results = []
-        for rec in ad_hoc_recognizers or []:
-            if rec.supported_language != language:
-                continue
-            if entities is not None and rec.supported_entities[0] not in entities:
-                continue
-            results.extend(rec.analyze(text, entities))
         for entity, values in self.model_hits.items():
             if entities is not None and entity not in entities:
                 continue
@@ -128,9 +138,40 @@ def test_simulate_replaces_each_policy_entity(fake_engine):
     ]
 
 
-def test_simulate_only_asks_for_the_policys_entities(fake_engine):
+def test_regex_only_policy_does_not_call_presidio(fake_engine):
+    # Policy regexes run on their own; Presidio (and spaCy) only run for
+    # model_supported_field entities.
     simulate("PAN ABCDE1234F", [FINANCE])
-    assert fake_engine.calls[-1]["entities"] == ["BANK_ACCOUNT_NUMBER", "IFSC_CODE", "PAN_NUMBER"]
+    assert fake_engine.calls == []
+
+
+def test_policy_regex_wins_a_tie_with_a_builtin(fake_engine):
+    # EmailRecognizer scores a valid address 1.0, the same as a policy regex.
+    # With both on one span Presidio may keep either; the policy's match must
+    # not be lost, so built-ins are not asked for regex-only entities at all.
+    fake_engine.model_hits = {"EMAIL_ADDRESS": ["arjun@college.edu"]}
+    email = CustomField("EMAIL_ADDRESS", r"\b[\w.]+@[\w.]+\.[a-z]{2,}\b")
+    result = simulate("Write to arjun@college.edu today", [PolicyType("PII", [email])])
+    assert result.sanitized_text == "Write to <EMAIL_ADDRESS_1> today"
+    assert fake_engine.calls == []
+
+
+@pytest.mark.parametrize("text, model_entities, missing", [
+    ("Aadhaar 1234 5678 9012", {"en": ["IN_AADHAAR"]}, "IN_AADHAAR"),         # no recognizer
+    ("मेरा नाम राहुल शर्मा है, मैं दिल्ली में रहता हूँ", {"hi": ["PERSON"]}, "PERSON"),  # no Hindi NER
+])
+def test_undetectable_model_entities_are_rejected(fake_engine, text, model_entities, missing):
+    with pytest.raises(InvalidPolicyError, match=f"cannot be detected .*{missing}"):
+        simulate(text, [PolicyType("PII", model_entities=model_entities)])
+    assert fake_engine.calls == []
+
+
+def test_detectable_entities_per_language(fake_engine):
+    engine = simulation.get_engine()
+    assert {"PERSON", "EMAIL_ADDRESS"} <= engine.detectable_entities("en")
+    assert {"PERSON", "EMAIL_ADDRESS"} <= engine.detectable_entities("fr")   # WikiNER language
+    hindi = engine.detectable_entities("hi")
+    assert "EMAIL_ADDRESS" in hindi and "PERSON" not in hindi
 
 
 def test_repeated_value_counts_instances_and_keeps_one_token(fake_engine):
@@ -366,6 +407,14 @@ def test_anonymize_with_supplied_analyzer_results(client, fake_engine):
         ("PERSON", "<PERSON_1>", "entity_counter"),
     ]
     assert fake_engine.calls == []   # supplied results: no analysis
+
+
+def test_simulate_undetectable_model_entity_is_400_not_500(client, fake_engine):
+    resp = client.post("/pii/simulate", json=_simulate_body(
+        {"Healthcare": {"model_supported_field": [{"en": [{"entity_name": "IN_AADHAAR"}]}]}},
+        text="Aadhaar 1234 5678 9012"))
+    assert resp.status_code == 400
+    assert "IN_AADHAAR" in resp.json()["detail"]
 
 
 @pytest.mark.parametrize("span", [
