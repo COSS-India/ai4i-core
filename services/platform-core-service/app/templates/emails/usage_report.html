@@ -1,0 +1,29 @@
+{% extends "_base.html" %}
+{# Usage Viewer programme report (AI4IDS-3278). Every value arrives
+   pre-formatted from app.services.usage_report.mailer. #}
+{% block title %}{{ subject }}{% endblock %}
+{% block preheader %}{{ report_name }} for {{ period_label }}{% endblock %}
+{% block heading_block %}{% endblock %}
+{% block body %}
+<p style="margin:0 0 16px 0;">Dear Sir/Madam,</p>
+<p style="margin:0 0 20px 0;">Please find attached the {{ report_name }} for {{ period_label }}.</p>
+
+<p style="margin:0 0 8px 0; font-weight:700; color:#111827;">Summary</p>
+<ul style="margin:0 0 20px 0; padding-left:20px;">
+  {% for line in summary %}
+  <li style="margin:0 0 8px 0;">{{ line }}</li>
+  {% endfor %}
+</ul>
+
+<p style="margin:0 0 20px 0;">Full report attached: <strong>{{ attachment_name }}</strong></p>
+
+{% if portal_link %}
+<p style="margin:0 0 24px 0;">Please log in to <a href="{{ portal_link }}" style="color:#0b66ff; text-decoration:none;">{{ portal_link }}</a> for more details.</p>
+{% else %}
+<p style="margin:0 0 24px 0;">Please log in to the {{ platform_name }} Portal for more details.</p>
+{% endif %}
+
+<p style="margin:0;">Regards,<br>
+{% if sender_name %}{{ sender_name }}<br>{% endif %}
+{{ team_name }}</p>
+{% endblock %}

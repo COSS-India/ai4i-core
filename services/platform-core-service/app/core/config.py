@@ -205,6 +205,9 @@ class CoreSettings(BaseSettings):
     # ("Log in to the <PLATFORM_NAME> Portal ..."). None → link renders as
     # plain text instead of an <a href>.
     portal_url: Optional[str] = None
+    # Name signed above "AI4I Orchestrate Support Team" in the Usage Viewer
+    # report email (app.scripts.send_usage_report). None → team name only.
+    usage_report_sender_name: Optional[str] = None
 
     # ── Branding (same PLATFORM_NAME / ADOPTER_LOGO_URL pair as auth-service
     # and kafka-consumers — AI4IDS-3043), copied from the root .env by
