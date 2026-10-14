@@ -329,7 +329,7 @@ class UsageReportCollector:
             )
         ).all()
         names = {str(r.id): r.organisation for r in rows}
-        budgets = await UsageRepository(self._core_db).get_tenant_budgets(None, list(names), self._auth_db)
+        budgets = await UsageRepository(self._core_db).get_tenant_budgets(list(names), self._auth_db)
         allocated = spent = remaining = Decimal("0")
         exhausted = nearing = 0
         spends: list[InstitutionSpend] = []

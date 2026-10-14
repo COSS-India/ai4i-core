@@ -6,11 +6,12 @@ import email
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import pytest
 from ai4i_core.email import EmailDeliveryError, EmailSettings
 
+from app.repositories.pay_per_use.usage_repository import UsageRepository
 from app.services.metering_service import MeteringService
 from app.services.usage_report import formatting as fmt
 from app.services.usage_report import mailer
@@ -252,16 +253,24 @@ def retention_90d(monkeypatch):
 
 @pytest.fixture
 def repo(monkeypatch):
-    """UsageRepository's budget / period-spend reads, stubbed."""
+    """UsageRepository's budget / period-spend reads, stubbed. Autospecced so a
+    call that no longer matches the real signature raises TypeError here as it
+    does in production — a `*a, **k` stub hid get_tenant_budgets dropping
+    billing_month while the collector still passed it."""
     state = SimpleNamespace(
         budgets={"1": _budget_ns(100, 40)},
         data_from=SEP_START - (SEP_END - SEP_START),  # recording began long before September
         period_rows=[SimpleNamespace(cost=Decimal("12.5")), SimpleNamespace(cost=Decimal("17.5"))],
     )
-    base = "app.services.usage_report.collector.UsageRepository"
-    monkeypatch.setattr(f"{base}.get_tenant_budgets", AsyncMock(side_effect=lambda *a, **k: state.budgets))
-    monkeypatch.setattr(f"{base}.get_usage_data_from", AsyncMock(side_effect=lambda p: state.data_from))
-    monkeypatch.setattr(f"{base}.get_period_usage", AsyncMock(side_effect=lambda p: state.period_rows))
+
+    def stub(name, side_effect):
+        fn = create_autospec(getattr(UsageRepository, name), side_effect=side_effect)
+        monkeypatch.setattr(UsageRepository, name, fn)
+        return fn
+
+    state.get_tenant_budgets = stub("get_tenant_budgets", lambda self, ids, auth_db=None: state.budgets)
+    stub("get_usage_data_from", lambda self, p: state.data_from)
+    stub("get_period_usage", lambda self, p, tenant_ids=None, task_type_ids=None: state.period_rows)
     return state
 
 
@@ -409,6 +418,20 @@ class TestRegistryCountsAreOneQuery:
 
 
 class TestBudgetSummary:
+    @pytest.mark.asyncio
+    async def test_budget_loads_through_the_current_repository_signature(self, retention_90d, repo):
+        # dev (release-2.9): get_tenant_budgets(None, ids, auth_db) raised "takes from
+        # 2 to 3 positional arguments but 4 were given"; _try swallowed it, so the
+        # report came back not_ready with "failed to load: budget" and no email went.
+        auth = _FakeAuthDB(tenants=TestCollector.TENANTS, budget_tenants=[(1, "Ministry A"), (7, "Ministry G")])
+        repo.budgets = {"1": _budget_ns(100, 40), "7": _budget_ns(50, 50)}
+        collector = UsageReportCollector(_fake_metering(), auth, AsyncMock())
+        d = await collector.collect(SEP, now=AFTER_SEP)
+        assert "budget" not in d.failed
+        assert d.budget.allocated == Decimal(150) and d.budget.exhausted == 1
+        (self_, ids, auth_db), kwargs = repo.get_tenant_budgets.await_args
+        assert isinstance(self_, UsageRepository) and ids == ["1", "7"] and auth_db is auth and kwargs == {}
+
     @pytest.mark.asyncio
     async def test_exactly_100_percent_counts_as_exhausted(self, retention_90d, repo):
         # The dashboard's budgetExceededTenants uses `spent > limit` ("exceeded"), so a
