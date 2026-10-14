@@ -3,6 +3,7 @@ import type {
   PolicyRecord,
   PolicyTypeItem,
 } from "../../../services/dto/schemas/policyHierarchy";
+import type { SimulationPolicyType } from "../../../services/policyHierarchyService";
 import {
   NER_MODELS,
   domainLabel,
@@ -153,6 +154,23 @@ export function definitionFromPolicyType(item: PolicyTypeItem): PiiType {
     examples: firstCustom?.examples ?? [],
     isDefault: false,
     fields,
+  };
+}
+
+/** platform-core stores policy_fields flat; /pii/simulate reads them as domain sections. */
+export function simulationPolicyType(item: PolicyTypeItem): SimulationPolicyType {
+  const fields = item.policy_fields;
+  return {
+    id: item.id,
+    policy_type: item.policy_type,
+    policy_fields: {
+      default: {
+        custom_field: Array.isArray(fields.custom_field) ? fields.custom_field : [],
+        model_supported_field: Array.isArray(fields.model_supported_field)
+          ? fields.model_supported_field
+          : [],
+      },
+    },
   };
 }
 

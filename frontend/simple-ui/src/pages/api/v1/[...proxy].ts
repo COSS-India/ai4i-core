@@ -45,6 +45,10 @@ const INFERENCE_TASKS = new Set([
   "chat",
 ]);
 
+// /api/v1/pii is platform-core's (domains, redact, admin) except these
+// Presidio routes, which the inference service serves.
+const INFERENCE_PII_PATH = /^\/api\/v1\/pii\/(simulate|analyze|anonymize|entities)(\/|$|\?)/;
+
 // Mirrors nginx public-auth-routes regex — no token required for these.
 const PUBLIC_AUTH_PATH =
   /^\/api\/v1\/auth\/(login|register|refresh|guest|verify-email|resend-verification|forgot-password|reset-password|set-password|resend-setup-link|validate|oauth)(\/|$|\?)/;
@@ -80,7 +84,7 @@ function resolveRoute(path: string): { target: string; requiresAuth: boolean } {
   }
   const isTryItPublic = TRY_IT_PUBLIC_PATH.test(path);
   const segment = path.split("/")[3]; // /api/v1/{segment}/...
-  if (segment && INFERENCE_TASKS.has(segment)) {
+  if ((segment && INFERENCE_TASKS.has(segment)) || INFERENCE_PII_PATH.test(path)) {
     return { target: INFERENCE_SERVICE, requiresAuth: !isTryItPublic };
   }
   return { target: PLATFORM_CORE_SERVICE, requiresAuth: !isTryItPublic };

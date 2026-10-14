@@ -26,14 +26,15 @@ import DataTable, {
   createActionsColumn,
   type DataTableColumn,
 } from "../../common/table";
-import { detectionTypesForPolicy, entityNamesForPolicy } from "./apiMap";
-import { buildSample, runDetection, type DetectionHit } from "./detection";
+import { entityNamesForPolicy } from "./apiMap";
+import { buildSample } from "./detection";
 import { useDeferredColumnSort } from "../../../utils/tableSort";
 import { showToast } from "../../../utils/toast";
 import {
   domainLabel,
   policyEffective,
   subcategoryEffective,
+  type Handling,
   type PiiType,
   type Policy,
   type PolicyField,
@@ -71,6 +72,7 @@ export function PolicyList() {
     policyDomainFilter,
     setPolicyDomainFilter,
     openDrawer,
+    openPlayground,
     askConfirm,
     setPolicyStatus,
     deletePolicy,
@@ -187,6 +189,7 @@ export function PolicyList() {
         getActions: (row) => [
           { id: "view", label: "View", onClick: () => openDrawer({ kind: "view-policy", id: row.id }) },
           { id: "edit", label: "Edit", onClick: () => openDrawer({ kind: "edit-policy", id: row.id }) },
+          { id: "test", label: "Test in Playground", onClick: () => openPlayground(row.policyId) },
           {
             id: "delete",
             label: "Delete",
@@ -202,7 +205,7 @@ export function PolicyList() {
         ],
       }),
     ],
-    [domains, parentActive, openDrawer, askConfirm, deletePolicy],
+    [domains, parentActive, openDrawer, openPlayground, askConfirm, deletePolicy],
   );
 
   return (
@@ -573,6 +576,14 @@ function DomainTable() {
   );
 }
 
+interface SimulationRow {
+  entityType: string;
+  found: string[];
+  outputs: string[];
+  instances: number;
+  handlings: Handling[];
+}
+
 export function PlaygroundPanel() {
   const {
     policies,
@@ -582,24 +593,41 @@ export function PlaygroundPanel() {
     playgroundTarget,
     playgroundInput,
     playgroundResult,
+    playgroundRunning,
+    playgroundError,
     setPlaygroundPolicy,
     setPlaygroundTarget,
     setPlaygroundInput,
-    setPlaygroundResult,
     loadPlaygroundSample,
+    runPlayground,
   } = usePiiPolicies();
   const { sub, parentActive } = useParentActive();
-  const activePolicies = policies.filter(
-    (p) => (!sub || p.subcategoryId === sub.id) && policyEffective(p, parentActive) === "Active",
-  );
+  const scopedPolicies = policies.filter((p) => !sub || p.subcategoryId === sub.id);
   const selected = policies.find((p) => p.policyId === playgroundPolicyId) ?? null;
   const canRun = Boolean(selected && playgroundTarget && playgroundInput.trim());
-  const resultRows = playgroundResult?.results ?? [];
+  const resultRows = useMemo<SimulationRow[]>(
+    () =>
+      (playgroundResult?.detected ?? []).map((d) => {
+        const handlings = new Set<Handling>();
+        d.policyTypes.forEach((name) => {
+          const t = types.find((x) => x.name.toLowerCase() === name.toLowerCase());
+          if (t) handlings.add(t.handling);
+        });
+        return {
+          entityType: d.entityType,
+          found: d.replacements.map((r) => r.original),
+          outputs: d.replacements.map((r) => r.output),
+          instances: d.instances,
+          handlings: Array.from(handlings),
+        };
+      }),
+    [playgroundResult, types],
+  );
   const resultSortAccessors = useMemo(
     () => ({
-      type: (row: DetectionHit) => row.typeName,
-      instances: (row: DetectionHit) => row.instances.length,
-      action: (row: DetectionHit) => row.handling,
+      type: (row: SimulationRow) => row.entityType,
+      instances: (row: SimulationRow) => row.instances,
+      action: (row: SimulationRow) => row.handlings.join(", "),
     }),
     [],
   );
@@ -616,17 +644,12 @@ export function PlaygroundPanel() {
               aria-label="Select policy"
               placeholder="Choose a policy to test"
               value={playgroundPolicyId}
-              onChange={(e) => {
-                const policy = policies.find((p) => p.policyId === e.target.value);
-                setPlaygroundPolicy(
-                  e.target.value,
-                  policy ? buildSample(detectionTypesForPolicy(policy, types, domains)) : "",
-                );
-              }}
+              onChange={(e) => setPlaygroundPolicy(e.target.value)}
             >
-              {activePolicies.map((p) => (
+              {scopedPolicies.map((p) => (
                 <option key={p.policyId} value={p.policyId}>
                   {p.policyId} · {p.name}
+                  {policyEffective(p, parentActive) === "Active" ? "" : " (Inactive)"}
                 </option>
               ))}
             </Select>
@@ -662,7 +685,7 @@ export function PlaygroundPanel() {
             <Button
               variant="link"
               size="xs"
-              onClick={() => loadPlaygroundSample(buildSample(detectionTypesForPolicy(selected, types, domains)))}
+              onClick={() => loadPlaygroundSample(buildSample(selected, types, domains))}
             >
               Load sample
             </Button>
@@ -677,31 +700,43 @@ export function PlaygroundPanel() {
           value={playgroundInput}
           onChange={(e) => setPlaygroundInput(e.target.value)}
         />
-        <Button mt={3} size="sm" isDisabled={!canRun} onClick={() => {
-          if (!selected) return;
-          setPlaygroundResult(
-            runDetection(playgroundInput, detectionTypesForPolicy(selected, types, domains)),
-          );
-        }}>
+        <Button
+          mt={3}
+          size="sm"
+          isDisabled={!canRun}
+          isLoading={playgroundRunning}
+          loadingText="Running…"
+          onClick={() => void runPlayground()}
+        >
           Run Simulation
         </Button>
       </Box>
 
-      {playgroundResult && selected ? (
+      {playgroundError ? (
+        <Alert status="error" borderRadius="md" mb={4}>
+          <AlertIcon />
+          <Text fontSize="sm">{playgroundError}</Text>
+        </Alert>
+      ) : null}
+
+      {playgroundResult ? (
         <Box>
           <Text fontSize="sm" fontWeight="semibold" mb={3}>
             Detected PII in this request
           </Text>
-          {playgroundResult.results.length === 0 ? (
-            <Text fontSize="sm" color="ink.500" mb={4}>
-              No PII detected for the types enabled in {selected.policyId}.
-            </Text>
+          {playgroundResult.detected.length === 0 ? (
+            <Alert status="info" borderRadius="md" mb={4}>
+              <AlertIcon />
+              <Text fontSize="sm">
+                No PII found in this text for the definitions in {playgroundResult.policyId}.
+              </Text>
+            </Alert>
           ) : (
             <Box mb={4}>
               <DataTable
                 layout="admin"
                 items={sortedResults}
-                getRowKey={(row) => row.typeId}
+                getRowKey={(row) => row.entityType}
                 sort={resultSort.sort}
                 onSortChange={resultSort.onSortChange}
                 paginate="client"
@@ -709,35 +744,51 @@ export function PlaygroundPanel() {
                 columns={[
                   {
                     id: "type",
-                    header: "PII Type",
+                    header: "PII Definition",
                     sortable: true,
-                    sortAccessor: (row) => row.typeName,
-                    cell: (row) => row.typeName,
+                    sortAccessor: (row) => row.entityType,
+                    cell: (row) => row.entityType,
+                  },
+                  {
+                    id: "found",
+                    header: "Found",
+                    cell: (row) => (
+                      <Text fontFamily="mono" fontSize="xs">
+                        {row.found.join(", ")}
+                      </Text>
+                    ),
                   },
                   {
                     id: "instances",
                     header: "Instances",
                     sortable: true,
-                    sortAccessor: (row) => row.instances.length,
-                    cell: (row) => row.instances.length,
+                    sortAccessor: (row) => row.instances,
+                    cell: (row) => row.instances,
                   },
                   {
                     id: "action",
                     header: "Action",
                     sortable: true,
-                    sortAccessor: (row) => row.handling,
-                    cell: (row) => (
-                      <Badge colorScheme={handlingBadgeColor(row.handling)} textTransform="none">
-                        {row.handling}
-                      </Badge>
-                    ),
+                    sortAccessor: (row) => row.handlings.join(", "),
+                    cell: (row) =>
+                      row.handlings.length > 0 ? (
+                        <HStack spacing={1}>
+                          {row.handlings.map((h) => (
+                            <Badge key={h} colorScheme={handlingBadgeColor(h)} textTransform="none">
+                              {h}
+                            </Badge>
+                          ))}
+                        </HStack>
+                      ) : (
+                        "—"
+                      ),
                   },
                   {
                     id: "output",
                     header: "Output",
                     cell: (row) => (
                       <Text fontFamily="mono" fontSize="xs" color="ink.500">
-                        {row.replacements.join(", ")}
+                        {row.outputs.join(", ")}
                       </Text>
                     ),
                   },
@@ -746,10 +797,10 @@ export function PlaygroundPanel() {
             </Box>
           )}
           <Flex direction={{ base: "column", lg: "row" }} gap={4}>
-            <PayloadCard title="Original Payload" text={playgroundInput} />
+            <PayloadCard title="Original Payload" text={playgroundResult.originalText} />
             <PayloadCard
-              title={playgroundTarget === "storage" ? "Storage Payload" : "Response Payload"}
-              text={playgroundResult.sanitized}
+              title={playgroundResult.target === "storage" ? "Storage Payload" : "Response Payload"}
+              text={playgroundResult.sanitizedText}
             />
           </Flex>
         </Box>

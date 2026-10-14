@@ -5,6 +5,7 @@ import {
   guardrailToApi,
   policyFieldsFromDefinition,
   policyFromRecord,
+  simulationPolicyType,
 } from "./apiMap";
 import {
   createPolicy,
@@ -17,6 +18,7 @@ import {
   listPolicyCategories,
   listPolicySubCategories,
   listPolicyTypes,
+  simulatePolicy,
   updatePolicy,
   updatePolicyCategoryStatus,
   updatePolicySubCategoryStatus,
@@ -24,10 +26,10 @@ import {
 } from "../../../services/policyHierarchyService";
 import type {
   PolicyCategoryItem,
+  PolicySimulation,
   PolicySubCategoryItem,
 } from "../../../services/dto/schemas/policyHierarchy";
 import { showToast } from "../../../utils/toast";
-import type { DetectionResult } from "./detection";
 import {
   createInitialCatalog,
   type Domain,
@@ -52,6 +54,12 @@ export type PiiTab = "policies" | "configuration" | "playground";
 export type ConfigTab = "types" | "domain";
 export type CatalogScope = "all" | "subscribed";
 export type ProcessingTarget = "response" | "storage";
+
+/** A simulation response plus the policy and target it was run with. */
+export interface PlaygroundResult extends PolicySimulation {
+  policyId: string;
+  target: ProcessingTarget;
+}
 
 export interface TypeInput {
   name: string;
@@ -135,14 +143,19 @@ interface PiiPoliciesContextValue {
   domainSearch: string;
   setDomainSearch: (value: string) => void;
   playgroundPolicyId: string;
-  playgroundTarget: ProcessingTarget;
+  /** Empty until the user picks one; Run stays disabled until then. */
+  playgroundTarget: ProcessingTarget | "";
   playgroundInput: string;
-  playgroundResult: DetectionResult | null;
-  setPlaygroundPolicy: (policyId: string, sample: string) => void;
+  playgroundResult: PlaygroundResult | null;
+  playgroundRunning: boolean;
+  playgroundError: string;
+  setPlaygroundPolicy: (policyId: string) => void;
   setPlaygroundTarget: (target: ProcessingTarget) => void;
   setPlaygroundInput: (value: string) => void;
-  setPlaygroundResult: (result: DetectionResult | null) => void;
   loadPlaygroundSample: (sample: string) => void;
+  runPlayground: () => Promise<void>;
+  /** Switches to the Playground tab with this policy selected. */
+  openPlayground: (policyId: string) => void;
   drawer: DrawerState;
   openDrawer: (drawer: Exclude<DrawerState, { kind: "none" }>) => void;
   closeDrawer: () => void;
@@ -208,9 +221,12 @@ export function PiiPoliciesProvider({
   const [typeHandlingFilter, setTypeHandlingFilter] = useState("");
   const [domainSearch, setDomainSearch] = useState("");
   const [playgroundPolicyId, setPlaygroundPolicyId] = useState("");
-  const [playgroundTarget, setPlaygroundTargetState] = useState<ProcessingTarget>("response");
+  const [playgroundTarget, setPlaygroundTargetState] = useState<ProcessingTarget | "">("");
   const [playgroundInput, setPlaygroundInputState] = useState("");
-  const [playgroundResult, setPlaygroundResult] = useState<DetectionResult | null>(null);
+  const [playgroundResult, setPlaygroundResult] = useState<PlaygroundResult | null>(null);
+  const [playgroundRunning, setPlaygroundRunning] = useState(false);
+  const [playgroundError, setPlaygroundError] = useState("");
+  const playgroundRequest = useRef(0);
   const [drawer, setDrawer] = useState<DrawerState>({ kind: "none" });
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
 
@@ -298,6 +314,12 @@ export function PiiPoliciesProvider({
 
   const value = useMemo<PiiPoliciesContextValue>(() => {
     const toast = (message: string) => showToast({ type: "success", message, messageOnly: true });
+    const clearPlaygroundRun = () => {
+      playgroundRequest.current += 1;
+      setPlaygroundRunning(false);
+      setPlaygroundError("");
+      setPlaygroundResult(null);
+    };
 
     return {
       domains,
@@ -385,23 +407,55 @@ export function PiiPoliciesProvider({
       playgroundTarget,
       playgroundInput,
       playgroundResult,
-      setPlaygroundPolicy: (policyId, sample) => {
+      playgroundRunning,
+      playgroundError,
+      setPlaygroundPolicy: (policyId) => {
+        clearPlaygroundRun();
         setPlaygroundPolicyId(policyId);
-        setPlaygroundInputState(sample);
-        setPlaygroundResult(null);
       },
       setPlaygroundTarget: (target) => {
+        clearPlaygroundRun();
         setPlaygroundTargetState(target);
-        setPlaygroundResult(null);
       },
       setPlaygroundInput: (input) => {
+        clearPlaygroundRun();
         setPlaygroundInputState(input);
-        setPlaygroundResult(null);
       },
-      setPlaygroundResult,
       loadPlaygroundSample: (sample) => {
+        clearPlaygroundRun();
         setPlaygroundInputState(sample);
+      },
+      runPlayground: async () => {
+        const policy = policies.find((p) => p.policyId === playgroundPolicyId);
+        const target = playgroundTarget;
+        const text = playgroundInput;
+        if (!policy || !target || !text.trim()) return;
+        const requestId = ++playgroundRequest.current;
+        setPlaygroundRunning(true);
+        setPlaygroundError("");
         setPlaygroundResult(null);
+        try {
+          const wanted = new Set(policy.typeIds);
+          const linked = (await listPolicyTypes()).filter((item) => wanted.has(String(item.id)));
+          if (requestId !== playgroundRequest.current) return;
+          if (linked.length === 0) {
+            setPlaygroundError(`${policy.policyId} has no PII definitions to test.`);
+            return;
+          }
+          const simulation = await simulatePolicy(text, linked.map(simulationPolicyType));
+          if (requestId !== playgroundRequest.current) return;
+          setPlaygroundResult({ ...simulation, policyId: policy.policyId, target });
+        } catch (error: unknown) {
+          if (requestId !== playgroundRequest.current) return;
+          setPlaygroundError(apiErrorMessage(error, "Couldn't run the simulation."));
+        } finally {
+          if (requestId === playgroundRequest.current) setPlaygroundRunning(false);
+        }
+      },
+      openPlayground: (policyId) => {
+        clearPlaygroundRun();
+        setPlaygroundPolicyId(policyId);
+        setTab("playground");
       },
       drawer,
       openDrawer: (next) => setDrawer(next),
@@ -681,6 +735,8 @@ export function PiiPoliciesProvider({
     playgroundTarget,
     playgroundInput,
     playgroundResult,
+    playgroundRunning,
+    playgroundError,
     drawer,
     confirm,
   ]);

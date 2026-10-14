@@ -7,6 +7,7 @@ import {
   policyCreateResponseSchema,
   policyItemResponseSchema,
   policyListResponseSchema,
+  policySimulationResponseSchema,
   policySubCategoryCreateResponseSchema,
   policySubCategoryListResponseSchema,
   policySubCategoryStatusResponseSchema,
@@ -16,6 +17,7 @@ import {
   type GuardrailScope,
   type PolicyCategoryItem,
   type PolicyRecord,
+  type PolicySimulation,
   type PolicySubCategoryItem,
   type PolicyTypeItem,
 } from "./dto/schemas/policyHierarchy";
@@ -192,4 +194,20 @@ export async function updatePolicy(id: number, body: PolicyPatch): Promise<Polic
 
 export async function deletePolicy(id: number): Promise<void> {
   await apiClient.delete(apiEndpoints.policyHierarchy.policyById(id));
+}
+
+export interface SimulationPolicyType {
+  id: number;
+  policy_type: string;
+  /** Keyed by domain: `{ [domain]: { custom_field, model_supported_field } }`. */
+  policy_fields: Record<string, { custom_field: unknown[]; model_supported_field: unknown[] }>;
+}
+
+/** POST /pii/simulate on the inference service. */
+export async function simulatePolicy(
+  text: string,
+  policyTypes: SimulationPolicyType[],
+): Promise<PolicySimulation> {
+  const response = await apiClient.post(apiEndpoints.pii.simulate, { text, policyTypes });
+  return policySimulationResponseSchema.parse(response.data);
 }

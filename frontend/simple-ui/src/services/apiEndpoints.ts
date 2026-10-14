@@ -221,6 +221,8 @@ export const apiEndpoints = {
     redact: `${API_V1}/pii/redact`,
     entities: `${API_V1}/pii/entities`,
     domains: `${API_V1}/pii/domains`,
+    /** Inference service. Runs a policy's PII definitions on sample text. */
+    simulate: `${API_V1}/pii/simulate`,
     policyByDomain: (domainId: string) =>
       `${API_V1}/pii/policy/${encodeURIComponent(domainId)}`,
     admin: {

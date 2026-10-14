@@ -147,8 +147,23 @@ export const policyItemResponseSchema = z.object({
   meta: policyWriteMetaSchema,
 });
 
+/** POST /pii/simulate (inference service). */
+export const policySimulationResponseSchema = z.object({
+  originalText: z.string(),
+  sanitizedText: z.string(),
+  detected: z.array(
+    z.object({
+      entityType: z.string(),
+      policyTypes: z.array(z.string()),
+      instances: z.number().int(),
+      replacements: z.array(z.object({ original: z.string(), output: z.string() })),
+    }),
+  ),
+});
+
 export type PolicyCategoryItem = z.infer<typeof policyCategoryItemSchema>;
 export type PolicySubCategoryItem = z.infer<typeof policySubCategoryItemSchema>;
 export type PolicyTypeItem = z.infer<typeof policyTypeItemSchema>;
 export type PolicyRecord = z.infer<typeof policyRecordSchema>;
 export type GuardrailScope = z.infer<typeof guardrailScopeSchema>;
+export type PolicySimulation = z.infer<typeof policySimulationResponseSchema>;
