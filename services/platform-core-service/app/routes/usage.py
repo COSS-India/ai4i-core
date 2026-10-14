@@ -85,13 +85,27 @@ async def get_usage_summary(
     request: Request,
     billing_period: Annotated[
         Optional[str],
-        Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="Billing month in YYYY-MM format. Omit for all-time usage up to now."),
+        Query(
+            pattern=r"^\d{4}-(0[1-9]|1[0-2])$",
+            description="Billing month (YYYY-MM) for the quota block only; omit for all months up to "
+            "now. The budget block is always all-time.",
+        ),
     ] = None,
-    tier_id: Optional[str] = Query(None, description="Filter by tier ID."),
-    task_types: Optional[str] = Query(None, description="Comma-separated task types to include (frontend allowlist)."),
+    tier_id: Optional[str] = Query(
+        None,
+        description="Tier ID. Budget: institutions currently on this tier. Quota: institutions "
+        "whose most recent tier in the billing month is this tier.",
+    ),
+    task_types: Optional[str] = Query(
+        None,
+        description="Comma-separated task types for the quota block (frontend allowlist). Doesn't "
+        "apply to the budget block: spend has no per-task-type split.",
+    ),
     db: AsyncSession = Depends(get_db),
     auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ):
+    """Key metrics: ``budget`` (all-time, every institution with a budget) and
+    ``quota`` (one billing month), each with its own time basis."""
     _require_admin(request)
     tier_id = _validate_tier_id(tier_id)
     svc = UsageService(UsageRepository(db))

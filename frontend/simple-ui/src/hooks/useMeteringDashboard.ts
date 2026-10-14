@@ -229,12 +229,12 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     return {
       total_models: adoption?.total_models,
       active_models_30d: adoption?.active_models_30d,
-      tenants_budget_exhausted: keyMetricsBudgetQuery.data?.budgetExceededTenants,
+      tenants_budget_exhausted: keyMetricsBudgetQuery.data?.budget?.exceededTenants,
     };
   }, [
     isAdopterView,
     keyMetricsOverview?.platform_adoption,
-    keyMetricsBudgetQuery.data?.budgetExceededTenants,
+    keyMetricsBudgetQuery.data?.budget?.exceededTenants,
   ]);
 
   const primaryMeteringResponse = useMemo((): MeteringResponseMeta | null => {

@@ -9,39 +9,36 @@ import {
   FormErrorMessage,
   HStack,
   Input,
-  Radio,
-  RadioGroup,
   Select,
   Stack,
+  Tag,
+  TagCloseButton,
+  TagLabel,
   Text,
   Textarea,
   Wrap,
 } from "@chakra-ui/react";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { piiService } from "../../../services/piiService";
 import FieldLabel from "../../common/FieldLabel";
 import FormActions from "../../common/FormActions";
 import FormDrawer from "../../common/FormDrawer";
 import FormSection from "../../common/FormSection";
 import ReadOnlyField from "../../common/ReadOnlyField";
-import { MIN_REGEX_EXAMPLES } from "./apiMap";
+import { apiDomainName, entityNamesForPolicy, MIN_REGEX_EXAMPLES } from "./apiMap";
 import { regexCompiles } from "./detection";
 import {
-  HANDLING_OPTIONS,
   domainLabel,
   INSTITUTIONS,
   LANGUAGES,
-  NER_MODELS,
+  MODEL_FIELD_LANGUAGES,
   SCOPE_OPTIONS,
-  parseExampleValues,
-  previewFor,
-  type DetectionMode,
-  type Handling,
-  type MaskingPattern,
+  type PolicyField,
   type PolicyScope,
   type PolicyType,
 } from "./model";
 import { usePiiPolicies, type PolicyInput, type TypeInput } from "./PiiPoliciesProvider";
-import { ChoiceCard, handlingBadgeColor } from "./ui";
+import { ChoiceCard } from "./ui";
 
 function FormField({
   label,
@@ -75,6 +72,10 @@ export function PiiDrawers() {
   );
 }
 
+interface FieldRow extends PolicyField {
+  key: string;
+}
+
 function TypeDrawer() {
   const { drawer, closeDrawer, types, addType, updateType } = usePiiPolicies();
   const open = drawer.kind === "add-type" || drawer.kind === "edit-type";
@@ -84,22 +85,82 @@ function TypeDrawer() {
   return (
     <TypeForm
       key={existing?.id ?? "new"}
-      title={existing ? "Edit PII Type" : "Add PII Type"}
-      submitLabel={existing ? "Save" : "Add PII Type"}
+      title={existing ? "Edit Policy Type" : "Create Policy Type"}
+      submitLabel={existing ? "Save" : "Create Policy Type"}
       nameLocked={Boolean(existing)}
       initial={{
         name: existing?.name ?? "",
-        examples: existing?.examples.join("\n") ?? "",
-        handling: existing?.handling ?? "Mask",
-        maskingPattern: existing?.maskingPattern ?? "Partial",
-        detectionMode: existing?.detectionMode ?? "Regex",
-        regex: existing?.regex ?? "",
-        nerModel: existing?.nerModel ?? NER_MODELS[0],
+        fields:
+          existing && existing.fields.length > 0
+            ? existing.fields.map((field, index) => ({ ...field, key: `${existing.id}-${index}` }))
+            : [blankField("field-1")],
       }}
       onClose={closeDrawer}
       onSave={(input) => (existing ? updateType(existing.id, input) : addType(input))}
     />
   );
+}
+
+function languageOptions(current: string): string[] {
+  if (current && !MODEL_FIELD_LANGUAGES.includes(current as (typeof MODEL_FIELD_LANGUAGES)[number])) {
+    return [current, ...MODEL_FIELD_LANGUAGES];
+  }
+  return [...MODEL_FIELD_LANGUAGES];
+}
+
+interface EntityList {
+  status: "loading" | "ready" | "error";
+  entities: string[];
+}
+
+/** Detectable entities per language, loaded once per language from inference-service. */
+function useModelEntities(languages: string[]): Record<string, EntityList> {
+  const [lists, setLists] = useState<Record<string, EntityList>>({});
+  const requested = useRef(new Set<string>());
+  const languageKey = Array.from(new Set(languages)).sort().join(",");
+
+  useEffect(() => {
+    languageKey
+      .split(",")
+      .filter(Boolean)
+      .forEach((language) => {
+        if (requested.current.has(language)) return;
+        requested.current.add(language);
+        setLists((prev) => ({ ...prev, [language]: { status: "loading", entities: [] } }));
+        piiService.getSupportedEntities(language).then(
+          (entities) => setLists((prev) => ({ ...prev, [language]: { status: "ready", entities } })),
+          () => {
+            requested.current.delete(language);
+            setLists((prev) => ({ ...prev, [language]: { status: "error", entities: [] } }));
+          },
+        );
+      });
+  }, [languageKey]);
+
+  return lists;
+}
+
+function modelEntityOptions(current: string, list: EntityList | undefined): string[] {
+  const entities = list?.entities ?? [];
+  return current && !entities.includes(current) ? [current, ...entities] : entities;
+}
+
+function modelEntityPlaceholder(list: EntityList | undefined): string {
+  if (list?.status === "ready") return "Select an entity";
+  if (list?.status === "error") return "Entities unavailable";
+  return "Loading entities…";
+}
+
+function blankField(key: string): FieldRow {
+  return {
+    key,
+    mode: "custom",
+    domain: "",
+    entityName: "",
+    examples: [],
+    regex: "",
+    language: "en",
+  };
 }
 
 function TypeForm({
@@ -113,54 +174,68 @@ function TypeForm({
   title: string;
   submitLabel: string;
   nameLocked: boolean;
-  initial: {
-    name: string;
-    examples: string;
-    handling: Handling;
-    maskingPattern: MaskingPattern;
-    detectionMode: DetectionMode;
-    regex: string;
-    nerModel: string;
-  };
+  initial: { name: string; fields: FieldRow[] };
   onClose: () => void;
   onSave: (input: TypeInput) => Promise<string | null>;
 }) {
   const [name, setName] = useState(initial.name);
-  const [examples, setExamples] = useState(initial.examples);
-  const [handling, setHandling] = useState<Handling>(initial.handling);
-  const [maskingPattern, setMaskingPattern] = useState<MaskingPattern>(initial.maskingPattern);
-  const [detectionMode, setDetectionMode] = useState<DetectionMode>(initial.detectionMode);
-  const [regex, setRegex] = useState(initial.regex);
-  const [nerModel, setNerModel] = useState(initial.nerModel);
+  const [fields, setFields] = useState<FieldRow[]>(initial.fields);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const keyRef = useRef(initial.fields.length + 1);
+  const entityLists = useModelEntities(
+    fields.filter((field) => field.mode === "model").map((field) => field.language || "en"),
+  );
+
+  const updateField = (key: string, patch: Partial<FieldRow>) => {
+    setFields((prev) => prev.map((field) => (field.key === key ? { ...field, ...patch } : field)));
+  };
 
   const save = async () => {
     if (saving) return;
     const next: Record<string, string> = {};
-    const parsed = parseExampleValues(examples);
-    if (!name.trim()) next.name = "Name is required.";
-    if (parsed.length === 0) next.examples = "Add at least one example value.";
-    else if (detectionMode === "Regex" && parsed.length < MIN_REGEX_EXAMPLES) {
-      next.examples = `Add at least ${MIN_REGEX_EXAMPLES} example values.`;
-    }
-    if (detectionMode === "Regex" && !regex.trim()) next.regex = "A regex pattern is required in Regex mode.";
-    else if (detectionMode === "Regex" && !regexCompiles(regex.trim())) {
-      next.regex = "Enter a valid regular expression.";
-    }
-    if (detectionMode === "Model" && !nerModel) next.model = "Select an NER model.";
+    if (!name.trim()) next.name = "Policy type name is required.";
+    if (fields.length === 0) next.fields = "Add at least one policy field.";
+    const seen = new Set<string>();
+    fields.forEach((field) => {
+      if (!field.entityName.trim()) next[`${field.key}-entity`] = "Entity name is required.";
+      const language = field.language.trim().toLowerCase() || "en";
+      const entityName = field.entityName.trim();
+      const identity =
+        field.mode === "model"
+          ? `model:${entityName.toLowerCase()}:${language}`
+          : `custom:${entityName.toLowerCase()}`;
+      if (entityName) {
+        if (seen.has(identity)) next[`${field.key}-entity`] = "This entity is already listed.";
+        seen.add(identity);
+      }
+      if (field.mode === "model" && entityName && !next[`${field.key}-entity`]) {
+        const list = entityLists[language];
+        if (list?.status === "ready" && !list.entities.includes(entityName)) {
+          next[`${field.key}-entity`] = `${entityName} cannot be detected in ${language}.`;
+        }
+      }
+      if (field.mode === "custom") {
+        if (field.examples.length < MIN_REGEX_EXAMPLES) {
+          next[`${field.key}-examples`] = `Add at least ${MIN_REGEX_EXAMPLES} examples.`;
+        }
+        if (!field.regex.trim()) next[`${field.key}-regex`] = "A regex pattern is required.";
+        else if (!regexCompiles(field.regex.trim())) next[`${field.key}-regex`] = "Enter a valid regular expression.";
+      }
+    });
     setErrors(next);
     if (Object.keys(next).length) return;
     setSaving(true);
     try {
       const error = await onSave({
         name: name.trim(),
-        examples: parsed,
-        handling,
-        maskingPattern: handling === "Mask" ? maskingPattern : null,
-        detectionMode,
-        regex: regex.trim(),
-        nerModel,
+        fields: fields.map(({ key: _key, ...field }) => ({
+          ...field,
+          domain: "",
+          entityName: field.entityName.trim(),
+          regex: field.regex.trim(),
+          examples: field.examples.map((example) => example.trim()).filter(Boolean),
+        })),
       });
       if (error) setErrors({ name: error });
       else onClose();
@@ -173,6 +248,7 @@ function TypeForm({
     <FormDrawer
       isOpen
       onClose={onClose}
+      size="wide"
       title={title}
       lockDismiss={saving}
       footer={
@@ -189,109 +265,201 @@ function TypeForm({
       }
     >
       <FormSection title="Identity">
-        <FormField label="PII Type Name" required error={errors.name}>
+        <FormField label="Policy Type Name" required error={errors.name}>
           <Input
             value={name}
             isDisabled={nameLocked}
             maxLength={100}
             onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Passport Number"
-          />
-        </FormField>
-        <FormField label="Example Values" required error={errors.examples}>
-          <Textarea
-            value={examples}
-            onChange={(e) => setExamples(e.target.value)}
-            rows={3}
-            placeholder={"One value per line\n9876543210"}
+            placeholder="e.g. PII, Rate Limiting"
           />
         </FormField>
       </FormSection>
-      <FormSection title="Handling">
-        <Flex gap={8} wrap="wrap">
-          <Box>
-            <FieldLabel required>Handling</FieldLabel>
-            <RadioGroup value={handling} onChange={(v) => setHandling(v as Handling)}>
-              <HStack spacing={4}>
-                {HANDLING_OPTIONS.map((h) => (
-                  <Radio key={h} value={h} size="sm">
-                    {h}
-                  </Radio>
-                ))}
-              </HStack>
-            </RadioGroup>
-          </Box>
-          {handling === "Mask" ? (
-            <Box>
-              <FieldLabel>Format</FieldLabel>
-              <RadioGroup value={maskingPattern} onChange={(v) => setMaskingPattern(v as MaskingPattern)}>
-                <HStack spacing={4}>
-                  {(["Full", "Partial"] as const).map((f) => (
-                    <Radio key={f} value={f} size="sm">
-                      {f}
-                    </Radio>
-                  ))}
-                </HStack>
-              </RadioGroup>
+      <FormSection title="Policy Fields">
+        {errors.fields ? (
+          <Text fontSize="xs" color="red.500">
+            {errors.fields}
+          </Text>
+        ) : null}
+        <Stack spacing={4}>
+          {fields.map((field, index) => (
+            <Box key={field.key} borderWidth="1px" borderColor="ink.200" borderRadius="md" p={3}>
+              <Flex justify="space-between" align="center" mb={3} gap={3}>
+                <Text fontSize="sm" fontWeight="semibold">
+                  Field {index + 1}
+                </Text>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  colorScheme="red"
+                  isDisabled={fields.length === 1}
+                  onClick={() => setFields((prev) => prev.filter((row) => row.key !== field.key))}
+                >
+                  Remove
+                </Button>
+              </Flex>
+              <Stack spacing={3}>
+                <FormField label="Field mode" required>
+                  <Select
+                    value={field.mode}
+                    onChange={(e) => {
+                      const mode = e.target.value === "model" ? "model" : "custom";
+                      const detectable = entityLists[field.language || "en"]?.entities ?? [];
+                      const entityName =
+                        mode === "model" && !detectable.includes(field.entityName) ? "" : field.entityName;
+                      updateField(field.key, { mode, entityName });
+                    }}
+                  >
+                    <option value="model">Model-supported</option>
+                    <option value="custom">Custom</option>
+                  </Select>
+                </FormField>
+                {field.mode === "model" ? (
+                  <>
+                    <FormField label="Entity name" required error={errors[`${field.key}-entity`]}>
+                      <Select
+                        value={field.entityName}
+                        placeholder={modelEntityPlaceholder(entityLists[field.language || "en"])}
+                        onChange={(e) => updateField(field.key, { entityName: e.target.value })}
+                      >
+                        {modelEntityOptions(field.entityName, entityLists[field.language || "en"]).map(
+                          (entity) => (
+                            <option key={entity} value={entity}>
+                              {entity}
+                            </option>
+                          ),
+                        )}
+                      </Select>
+                      {entityLists[field.language || "en"]?.status === "error" ? (
+                        <Text fontSize="xs" color="red.500" mt={1}>
+                          Could not load the entities for {field.language || "en"}. Change the language
+                          or reopen the form to retry.
+                        </Text>
+                      ) : null}
+                    </FormField>
+                    <FormField label="Language" required>
+                      <Select
+                        value={field.language || "en"}
+                        onChange={(e) => {
+                          const language = e.target.value;
+                          const list = entityLists[language];
+                          const entityName =
+                            list?.status === "ready" && !list.entities.includes(field.entityName)
+                              ? ""
+                              : field.entityName;
+                          updateField(field.key, { language, entityName });
+                        }}
+                      >
+                        {languageOptions(field.language).map((language) => (
+                          <option key={language} value={language}>
+                            {language}
+                          </option>
+                        ))}
+                      </Select>
+                    </FormField>
+                  </>
+                ) : (
+                  <>
+                    <FormField label="Entity name" required error={errors[`${field.key}-entity`]}>
+                      <Input
+                        value={field.entityName}
+                        onChange={(e) => updateField(field.key, { entityName: e.target.value })}
+                        placeholder="e.g. CUSTOM_ID"
+                      />
+                    </FormField>
+                    <FormField
+                      label="Examples"
+                      required
+                      error={errors[`${field.key}-examples`]}
+                    >
+                      <ExampleTags
+                        values={field.examples}
+                        onChange={(examples) => updateField(field.key, { examples })}
+                      />
+                      <Text fontSize="xs" color="ink.400" mt={1}>
+                        At least {MIN_REGEX_EXAMPLES} examples. Press Enter to add one.
+                      </Text>
+                    </FormField>
+                    <FormField label="Regex" required error={errors[`${field.key}-regex`]}>
+                      <Input
+                        fontFamily="mono"
+                        value={field.regex}
+                        onChange={(e) => updateField(field.key, { regex: e.target.value })}
+                        placeholder="e.g. \d{4}-\d{4}"
+                      />
+                    </FormField>
+                  </>
+                )}
+              </Stack>
             </Box>
-          ) : null}
-        </Flex>
-      </FormSection>
-      <FormSection title="Detection">
-        <Box>
-          <FieldLabel required>Detection Mode</FieldLabel>
-          <RadioGroup value={detectionMode} onChange={(v) => setDetectionMode(v as DetectionMode)}>
-            <HStack spacing={4}>
-              {(["Regex", "Model"] as const).map((m) => (
-                <Radio key={m} value={m} size="sm">
-                  {m}
-                </Radio>
-              ))}
-            </HStack>
-          </RadioGroup>
-        </Box>
-        {detectionMode === "Regex" ? (
-          <FormField label="Regex Pattern" required error={errors.regex}>
-            <Input
-              fontFamily="mono"
-              value={regex}
-              onChange={(e) => setRegex(e.target.value)}
-              placeholder="e.g. \b[A-Z]{5}\d{4}[A-Z]\b"
-            />
-          </FormField>
-        ) : (
-          <FormField label="NER Model" required error={errors.model}>
-            <Select value={nerModel} onChange={(e) => setNerModel(e.target.value)}>
-              {NER_MODELS.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </Select>
-          </FormField>
-        )}
-        <ReadOnlyField label="Preview">
-          <Badge colorScheme="orange" fontFamily="mono" textTransform="none">
-            {previewFor(handling, handling === "Mask" ? maskingPattern : null)}
-          </Badge>
-        </ReadOnlyField>
+          ))}
+        </Stack>
+        <Button
+          size="sm"
+          variant="outline"
+          mt={3}
+          onClick={() => {
+            const key = `field-${keyRef.current++}`;
+            setFields((prev) => [...prev, blankField(key)]);
+          }}
+        >
+          Add field
+        </Button>
       </FormSection>
     </FormDrawer>
   );
 }
 
+function ExampleTags({ values, onChange }: { values: string[]; onChange: (next: string[]) => void }) {
+  const [draft, setDraft] = useState("");
+  const commit = () => {
+    const next = draft.trim();
+    if (!next || values.includes(next)) {
+      setDraft("");
+      return;
+    }
+    onChange([...values, next]);
+    setDraft("");
+  };
+  return (
+    <Box>
+      <Input
+        value={draft}
+        placeholder="1234-5678"
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+          }
+        }}
+      />
+      {values.length > 0 ? (
+        <Wrap mt={2}>
+          {values.map((value) => (
+            <Tag key={value} size="sm" colorScheme="blue">
+              <TagLabel>{value}</TagLabel>
+              <TagCloseButton onClick={() => onChange(values.filter((item) => item !== value))} />
+            </Tag>
+          ))}
+        </Wrap>
+      ) : null}
+    </Box>
+  );
+}
+
 function TypeViewDrawer() {
-  const { drawer, closeDrawer, types, domains, openDrawer } = usePiiPolicies();
+  const { drawer, closeDrawer, types, openDrawer } = usePiiPolicies();
   if (drawer.kind !== "view-type") return null;
   const t = types.find((x) => x.id === drawer.id);
   if (!t) return null;
-  const domain = t.domainId ? domains.find((d) => d.id === t.domainId)?.name : "General";
 
   return (
     <FormDrawer
       isOpen
       onClose={closeDrawer}
-      title="View PII Type"
+      size="wide"
+      title="View Policy Type"
       footer={
         <FormActions
           cancelLabel="Close"
@@ -303,62 +471,46 @@ function TypeViewDrawer() {
       }
     >
       <Stack spacing={4}>
-        <ReadOnlyField label="PII Type Name">{t.name}</ReadOnlyField>
-        <ReadOnlyField label="Domain">{domain ?? "General"}</ReadOnlyField>
-        <ReadOnlyField label="Example Values">
-          <Wrap>
-            {t.examples.map((ex) => (
-              <Badge textTransform="none" key={ex}>{ex}</Badge>
-            ))}
-          </Wrap>
-        </ReadOnlyField>
-        <Box borderTopWidth="1px" borderColor="ink.200" />
-        <Flex gap={8} wrap="wrap">
-          <Segment label="Handling" options={HANDLING_OPTIONS} current={t.handling} />
-          {t.handling === "Mask" ? (
-            <Segment label="Format" options={["Full", "Partial"]} current={t.maskingPattern ?? "Partial"} />
-          ) : null}
-        </Flex>
-        <ReadOnlyField label="Detection Mode">
-          {t.detectionMode}
-          {t.detectionMode === "Model" ? ` · ${t.nerModel}` : ""}
-          {t.detectionMode === "Regex" ? (
-            <Text mt={1} fontFamily="mono" fontSize="xs" bg="ink.50" px={2} py={1} borderRadius="md" display="inline-block">
-              {t.regex}
-            </Text>
-          ) : null}
-        </ReadOnlyField>
-        <ReadOnlyField label="Preview">
-          <Badge colorScheme="orange" fontFamily="mono" textTransform="none">
-            {previewFor(t.handling, t.maskingPattern)}
-          </Badge>
-        </ReadOnlyField>
+        <ReadOnlyField label="Policy Type Name">{t.name}</ReadOnlyField>
+        <Stack spacing={3}>
+          {t.fields.map((field) => (
+            <Box
+              key={`${field.domain}:${field.language}:${field.entityName}:${field.mode}`}
+              borderWidth="1px"
+              borderColor="ink.200"
+              borderRadius="md"
+              p={3}
+            >
+              <Flex justify="space-between" gap={3} mb={2}>
+                <Text fontSize="sm" fontWeight="semibold">
+                  {field.entityName}
+                </Text>
+                <Badge textTransform="none">{field.mode === "model" ? "Model-supported" : "Custom"}</Badge>
+              </Flex>
+              {field.mode === "model" ? (
+                <Text fontSize="xs" color="ink.500" mb={2}>
+                  {field.language || "en"}
+                </Text>
+              ) : null}
+              {field.mode === "custom" ? (
+                <Stack spacing={2}>
+                  <Wrap>
+                    {field.examples.map((example) => (
+                      <Badge textTransform="none" key={example}>
+                        {example}
+                      </Badge>
+                    ))}
+                  </Wrap>
+                  <Text fontFamily="mono" fontSize="xs" bg="ink.50" px={2} py={1} borderRadius="md">
+                    {field.regex}
+                  </Text>
+                </Stack>
+              ) : null}
+            </Box>
+          ))}
+        </Stack>
       </Stack>
     </FormDrawer>
-  );
-}
-
-function Segment({ label, options, current }: { label: string; options: readonly string[]; current: string }) {
-  return (
-    <Box>
-      <FieldLabel>{label}</FieldLabel>
-      <HStack borderWidth="1px" borderColor="ink.200" borderRadius="lg" p={0.5} spacing={0} w="fit-content">
-        {options.map((o) => (
-          <Text
-            key={o}
-            px={3}
-            py={1.5}
-            fontSize="sm"
-            fontWeight="medium"
-            borderRadius="md"
-            bg={current === o ? "brand.500" : "transparent"}
-            color={current === o ? "white" : "ink.500"}
-          >
-            {o}
-          </Text>
-        ))}
-      </HStack>
-    </Box>
   );
 }
 
@@ -517,14 +669,38 @@ function PolicyForm({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
-  const grouped = useMemo(() => {
-    const q = typeQuery.toLowerCase();
-    const buckets: Record<Handling, typeof types> = { Mask: [], Redact: [], Hash: [] };
-    types
-      .filter((t) => t.name.toLowerCase().includes(q))
-      .forEach((t) => buckets[t.handling].push(t));
-    return buckets;
-  }, [types, typeQuery]);
+  const domainChoices = useMemo(() => {
+    const wanted = new Set(
+      domainIds.map((id) => apiDomainName(domainLabel(id, domains)).toLowerCase()),
+    );
+    return types
+      .map((type) => {
+        const entities: string[] = [];
+        type.fields.forEach((field) => {
+          if (!field.entityName) return;
+          const matchesDomain = !field.domain || wanted.has(field.domain.toLowerCase());
+          if (!matchesDomain || entities.includes(field.entityName)) return;
+          entities.push(field.entityName);
+        });
+        return { id: type.id, name: type.name, entities };
+      })
+      .filter((choice) => choice.entities.length > 0);
+  }, [types, domainIds, domains]);
+
+  const visibleChoices = useMemo(() => {
+    const query = typeQuery.trim().toLowerCase();
+    if (!query) return domainChoices;
+    return domainChoices.filter(
+      (choice) =>
+        choice.name.toLowerCase().includes(query) ||
+        choice.entities.some((name) => name.toLowerCase().includes(query)),
+    );
+  }, [domainChoices, typeQuery]);
+
+  const selectedTypeIds =
+    typesStatus === "ready"
+      ? typeIds.filter((id) => domainChoices.some((choice) => choice.id === id))
+      : typeIds;
 
   const toggle = (list: string[], value: string, setter: (next: string[]) => void) => {
     setter(list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
@@ -537,7 +713,7 @@ function PolicyForm({
     if (description.length > 200) next.description = "Description is limited to 200 characters.";
     if (domainIds.length === 0) next.domain = "Select at least one domain.";
     if (languages.length === 0) next.languages = "Select at least one language.";
-    if (typeIds.length === 0) next.types = "Link at least one PII type.";
+    if (selectedTypeIds.length === 0) next.types = "Select at least one policy type.";
     if (!scope) next.scope = "Select a scope.";
     setErrors(next);
     if (Object.keys(next).length || !scope) return;
@@ -548,7 +724,7 @@ function PolicyForm({
         description: description.trim(),
         domainIds,
         languages,
-        typeIds,
+        typeIds: selectedTypeIds,
         policyType,
         scope,
       });
@@ -654,10 +830,19 @@ function PolicyForm({
           onCheck={(value) => toggle(languages, value, setLanguages)}
         />
         <Box borderTopWidth="1px" borderColor="ink.200" />
-        <FormField label={`Link PII Types (${typeIds.length}/${types.length})`} required error={errors.types}>
+        <FormField
+          label={`Policy Types (${selectedTypeIds.length}/${domainChoices.length})`}
+          required
+          error={errors.types}
+        >
+          {domainIds.length === 0 ? (
+            <Text fontSize="sm" color="ink.500">
+              Select a domain to see its policy types.
+            </Text>
+          ) : null}
           {typesStatus === "loading" ? (
             <Text fontSize="sm" color="ink.500" mb={2}>
-              Loading PII definitions…
+              Loading policy types…
             </Text>
           ) : null}
           {typesStatus === "error" ? (
@@ -665,57 +850,63 @@ function PolicyForm({
               {typesError}
             </Text>
           ) : null}
-          <Flex justify="space-between" mb={2}>
-            <Button size="sm" variant="ghost" onClick={() => setTypesOpen((v) => !v)}>
-              {typesOpen ? "Hide" : "Show"} types
-            </Button>
-            <HStack spacing={2}>
-              <Button size="xs" variant="link" onClick={() => setTypeIds(types.map((t) => t.id))}>
-                Select All
-              </Button>
-              <Button size="xs" variant="link" color="ink.500" onClick={() => setTypeIds([])}>
-                Clear
-              </Button>
-            </HStack>
-          </Flex>
-          {typesOpen ? (
-            <Box>
-              <Box position="relative" mb={2}>
-                <SearchIcon position="absolute" left={2.5} top="50%" transform="translateY(-50%)" color="ink.400" boxSize={3} />
-                <Input
-                  size="sm"
-                  pl={8}
-                  placeholder="Search PII types..."
-                  value={typeQuery}
-                  onChange={(e) => setTypeQuery(e.target.value)}
-                />
-              </Box>
-              <Box maxH="200px" overflowY="auto" borderWidth="1px" borderColor="ink.200" borderRadius="md" p={3}>
-                <Stack spacing={4}>
-                  {(["Mask", "Redact", "Hash"] as const).map((handling) =>
-                    grouped[handling].length === 0 ? null : (
-                      <Box key={handling}>
-                        <Badge colorScheme={handlingBadgeColor(handling)} mb={2} textTransform="uppercase" fontSize="10px">
-                          {handling}
-                        </Badge>
-                        <Box display="grid" gridTemplateColumns="1fr 1fr" gap={1}>
-                          {grouped[handling].map((t) => (
-                            <Checkbox
-                              key={t.id}
-                              size="sm"
-                              isChecked={typeIds.includes(t.id)}
-                              onChange={() => toggle(typeIds, t.id, setTypeIds)}
-                            >
-                              {t.name}
-                            </Checkbox>
-                          ))}
+          {domainIds.length > 0 && typesStatus !== "loading" && domainChoices.length === 0 ? (
+            <Text fontSize="sm" color="ink.500">
+              No policy types for the selected domain.
+            </Text>
+          ) : null}
+          {domainChoices.length > 0 ? (
+            <>
+              <Flex justify="space-between" mb={2}>
+                <Button size="sm" variant="ghost" onClick={() => setTypesOpen((v) => !v)}>
+                  {typesOpen ? "Hide" : "Show"} types
+                </Button>
+                <HStack spacing={2}>
+                  <Button
+                    size="xs"
+                    variant="link"
+                    onClick={() => setTypeIds(domainChoices.map((choice) => choice.id))}
+                  >
+                    Select All
+                  </Button>
+                  <Button size="xs" variant="link" color="ink.500" onClick={() => setTypeIds([])}>
+                    Clear
+                  </Button>
+                </HStack>
+              </Flex>
+              {typesOpen ? (
+                <Box>
+                  <Box position="relative" mb={2}>
+                    <SearchIcon position="absolute" left={2.5} top="50%" transform="translateY(-50%)" color="ink.400" boxSize={3} />
+                    <Input
+                      size="sm"
+                      pl={8}
+                      placeholder="Search policy types..."
+                      value={typeQuery}
+                      onChange={(e) => setTypeQuery(e.target.value)}
+                    />
+                  </Box>
+                  <Box maxH="240px" overflowY="auto" borderWidth="1px" borderColor="ink.200" borderRadius="md" p={3}>
+                    <Stack spacing={3}>
+                      {visibleChoices.map((choice) => (
+                        <Box key={choice.id}>
+                          <Checkbox
+                            size="sm"
+                            isChecked={selectedTypeIds.includes(choice.id)}
+                            onChange={() => toggle(typeIds, choice.id, setTypeIds)}
+                          >
+                            {choice.name}
+                          </Checkbox>
+                          <Text pl={6} mt={1} fontSize="xs" color="ink.500">
+                            {choice.entities.join(", ")}
+                          </Text>
                         </Box>
-                      </Box>
-                    ),
-                  )}
-                </Stack>
-              </Box>
-            </Box>
+                      ))}
+                    </Stack>
+                  </Box>
+                </Box>
+              ) : null}
+            </>
           ) : null}
         </FormField>
         <Box>
@@ -815,6 +1006,7 @@ function PolicyViewDrawer() {
   const p = policies.find((x) => x.id === drawer.id);
   if (!p) return null;
   const subscribers = subscriptions[p.policyId] ?? [];
+  const entityNames = entityNamesForPolicy(p, types, domains);
   return (
     <FormDrawer
       isOpen
@@ -877,14 +1069,21 @@ function PolicyViewDrawer() {
         </Box>
         <Box>
           <Text fontSize="xs" fontWeight="medium" color="ink.500" textTransform="uppercase" mb={1}>
-            Linked PII Types ({p.typeIds.length})
+            Entity Names
           </Text>
-          <Wrap>
-            {p.typeIds.map((id) => {
-              const t = types.find((x) => x.id === id);
-              return t ? <Badge textTransform="none" key={id}>{t.name}</Badge> : null;
-            })}
-          </Wrap>
+          {entityNames.length === 0 ? (
+            <Text fontSize="sm" color="ink.500">
+              —
+            </Text>
+          ) : (
+            <Wrap>
+              {entityNames.map((name) => (
+                <Badge textTransform="none" key={name}>
+                  {name}
+                </Badge>
+              ))}
+            </Wrap>
+          )}
         </Box>
       </Stack>
     </FormDrawer>

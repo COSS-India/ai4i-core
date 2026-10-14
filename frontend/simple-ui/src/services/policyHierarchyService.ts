@@ -91,6 +91,7 @@ export interface PolicyTypeWrite {
   policy_fields: Record<string, unknown>;
 }
 
+/** GET /policies/policy-types. */
 export async function listPolicyTypes(): Promise<PolicyTypeItem[]> {
   const response = await apiClient.get(apiEndpoints.policyHierarchy.policyTypes);
   return policyTypeListResponseSchema.parse(response.data).data.items;

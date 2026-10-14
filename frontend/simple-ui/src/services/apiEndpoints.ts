@@ -219,6 +219,7 @@ export const apiEndpoints = {
   pii: {
     base: `${API_V1}/pii`,
     redact: `${API_V1}/pii/redact`,
+    entities: `${API_V1}/pii/entities`,
     domains: `${API_V1}/pii/domains`,
     policyByDomain: (domainId: string) =>
       `${API_V1}/pii/policy/${encodeURIComponent(domainId)}`,

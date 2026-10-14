@@ -252,6 +252,11 @@ export const searchTelemetryTraces = async (
     page?: number;
     pageSize?: number;
     tenant_id?: string;
+    /** Exact end-user ID the caller sent as OpenAI `user`. */
+    user?: string;
+    /** Caller metadata pair; sent only when both are set. */
+    metadataKey?: string;
+    metadataValue?: string;
   }
 ): Promise<TelemetryTraceSearchResponse> => {
   try {
@@ -262,6 +267,11 @@ export const searchTelemetryTraces = async (
     if (params.startDate) queryParams.append('start_date', params.startDate);
     if (params.endDate) queryParams.append('end_date', params.endDate);
     if (params.tenant_id) queryParams.append('tenant_id', params.tenant_id);
+    if (params.user) queryParams.append('user', params.user);
+    if (params.metadataKey && params.metadataValue) {
+      queryParams.append('metadata_key', params.metadataKey);
+      queryParams.append('metadata_value', params.metadataValue);
+    }
     queryParams.append('page', String(params.page ?? 1));
     queryParams.append('page_size', String(params.pageSize ?? 15));
 
