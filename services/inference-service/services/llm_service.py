@@ -334,6 +334,14 @@ class OpenAIProxyService:
                 guardrail_ctx = await build_guardrail_context(app_id)
             except GuardrailError as exc:
                 logger.error("PII policy evaluation failed, blocking request: %s", exc)
+                schedule_audit_log(
+                    ctx=guardrail_ctx,
+                    trace_id=get_trace_id(),
+                    model_request=payload,
+                    response={},
+                    app_id=app_id,
+                    status_code=503,
+                )
                 return 503, {"error": {"message": "Request blocked: PII policy could not be evaluated", "type": "guardrail_error"}}
             if guardrail_ctx.active:
                 logger.info("══ GUARDRAIL REQUEST (app_id=%s) ══════════════", app_id)
@@ -341,6 +349,14 @@ class OpenAIProxyService:
                     payload = await asyncio.to_thread(apply_input_guardrail, payload, guardrail_ctx)
                 except GuardrailError as exc:
                     logger.error("PII input masking failed, blocking request: %s", exc)
+                    schedule_audit_log(
+                        ctx=guardrail_ctx,
+                        trace_id=get_trace_id(),
+                        model_request=payload,
+                        response={},
+                        app_id=app_id,
+                        status_code=503,
+                    )
                     return 503, {"error": {"message": "Request blocked: PII policy enforcement failed", "type": "guardrail_error"}}
                 logger.info("Scope: %s", guardrail_ctx.scopes)
         # ─────────────────────────────────────────────────────────────────
@@ -430,7 +446,7 @@ class OpenAIProxyService:
                         app_id=app_id,
                         status_code=500,
                     )
-                    return 500, {"detail": "Response blocked: PII policy enforcement failed"}
+                    return 500, {"error": {"message": "Response blocked: PII policy enforcement failed", "type": "guardrail_error"}}
             schedule_audit_log(
                 ctx=guardrail_ctx,
                 trace_id=get_trace_id(),
@@ -603,6 +619,14 @@ class OpenAIProxyService:
                 guardrail_ctx = await build_guardrail_context(app_id)
             except GuardrailError as exc:
                 logger.error("PII policy evaluation failed, blocking stream request: %s", exc)
+                schedule_audit_log(
+                    ctx=guardrail_ctx,
+                    trace_id=get_trace_id(),
+                    model_request=payload,
+                    response={},
+                    app_id=app_id,
+                    status_code=503,
+                )
                 model_ctx = {"service_id": service_id, "model_name": model_name}
                 return "error", 503, {"error": {"message": "Request blocked: PII policy could not be evaluated", "type": "guardrail_error"}}, model_ctx
             if guardrail_ctx.active:
@@ -610,6 +634,14 @@ class OpenAIProxyService:
                     payload = await asyncio.to_thread(apply_input_guardrail, payload, guardrail_ctx)
                 except GuardrailError as exc:
                     logger.error("PII input masking failed, blocking stream request: %s", exc)
+                    schedule_audit_log(
+                        ctx=guardrail_ctx,
+                        trace_id=get_trace_id(),
+                        model_request=payload,
+                        response={},
+                        app_id=app_id,
+                        status_code=503,
+                    )
                     model_ctx = {"service_id": service_id, "model_name": model_name}
                     return "error", 503, {"error": {"message": "Request blocked: PII policy enforcement failed", "type": "guardrail_error"}}, model_ctx
         # ─────────────────────────────────────────────────────────────────

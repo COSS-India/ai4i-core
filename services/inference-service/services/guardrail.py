@@ -317,6 +317,39 @@ def _unmask(text: str, token_to_original: Dict[str, str]) -> str:
     return text
 
 
+def _mask_for_audit_payload(payload: Dict, policy_types: List[PolicyType]) -> Dict:
+    """Mask all message content in payload for audit, regardless of guardrail scope."""
+    messages = payload.get("messages") or []
+    if not messages:
+        return payload
+    masked_messages, _ = _mask_messages(messages, policy_types)
+    return {**payload, "messages": masked_messages}
+
+
+def _mask_for_audit_response(body: Dict, policy_types: List[PolicyType]) -> Dict:
+    """Mask response content for audit, regardless of guardrail scope.
+
+    Handles both buffered (choices[0].message.content) and stream synthetic
+    (choices[0].delta.content) response shapes.
+    """
+    if not isinstance(body, dict):
+        return body
+    choices = body.get("choices") or []
+    if not choices:
+        return body
+    first = choices[0]
+    for key in ("message", "delta"):
+        msg = first.get(key) or {}
+        content = msg.get("content")
+        if isinstance(content, str) and content:
+            masked, _ = _mask(content, policy_types)
+            return {
+                **body,
+                "choices": [{**first, key: {**msg, "content": masked}}, *choices[1:]],
+            }
+    return body
+
+
 # ── Guardrail context ─────────────────────────────────────────────────────────
 
 @dataclass
@@ -413,9 +446,13 @@ async def _write_audit_log(
     response: Dict,
     guardrail_info: Dict,
     created_by: Optional[str],
+    policy_types: List[PolicyType],
 ) -> None:
     if not settings.PLATFORM_CORE_URL:
         return
+    if policy_types:
+        model_request = await asyncio.to_thread(_mask_for_audit_payload, model_request, policy_types)
+        response = await asyncio.to_thread(_mask_for_audit_response, response, policy_types)
     try:
         headers = {"Content-Type": "application/json"}
         if settings.PLATFORM_CORE_INTERNAL_TOKEN:
@@ -458,6 +495,7 @@ def schedule_audit_log(
                 "model_entities": {lang: names for pt in ctx.policy_types for lang, names in pt.model_entities.items()},
             },
             created_by=app_id,
+            policy_types=ctx.policy_types,
         )
     )
     _background_tasks.add(task)
