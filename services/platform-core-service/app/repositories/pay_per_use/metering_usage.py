@@ -12,10 +12,8 @@ several. A request is failed when its status is 400 or above.
 Whole IST days read the daily_usage rollup when it's enabled and has the day;
 everything else — today, partial days at a range's edges, days not rolled up
 yet — reads usage_events, so a day missing from the rollup is never shown as
-zero. The rollup counts each day's requests as distinct correlation ids
-among rows with a status_code, so until it counts request rows one per row
-too, a client that reuses one X-Correlation-ID within a day is counted once
-there (rollup on only; off by default).
+zero. The rollup counts requests the same way (request rows one each,
+older status-carrying rows once per correlation id), so both paths agree.
 """
 from __future__ import annotations
 
