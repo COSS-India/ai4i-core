@@ -372,9 +372,9 @@ class GuardrailContext:
         return bool(self.applied_policy_ids)
 
 
-async def build_guardrail_context(app_id: str) -> GuardrailContext:
+async def build_guardrail_context(app_id: Optional[str]) -> GuardrailContext:
     ctx = GuardrailContext()
-    app_policy_ids = await get_policy_ids_for_app(app_id)
+    app_policy_ids = await get_policy_ids_for_app(app_id) if app_id else []
     global_policy_ids = await get_global_policy_ids()
 
     seen: set = set(app_policy_ids)
