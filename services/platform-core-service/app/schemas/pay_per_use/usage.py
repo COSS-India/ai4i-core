@@ -116,6 +116,9 @@ class TierUsageBreakdown(BaseModel):
 
 
 class TenantBudget(BaseModel):
+    """An institution's budget — all-time, never scoped by the period: spent is
+    lifetime spend (budget_usage). Spend in the period is periodSpend."""
+    basis: Literal["all_time"] = "all_time"
     limit: float
     spent: float
     remaining: float
