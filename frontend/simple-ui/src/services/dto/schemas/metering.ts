@@ -7,6 +7,10 @@ export const meteringPeriodSchema = z.object({
   start: z.string(),
   end: z.string(),
   timezone: z.string(),
+  dataFrom: z.string().nullable().optional(),
+  partial: z.boolean().optional(),
+  estimated: z.boolean().optional(),
+  estimatedUntil: z.string().nullable().optional(),
 });
 
 export const meteringCellSchema = z.object({

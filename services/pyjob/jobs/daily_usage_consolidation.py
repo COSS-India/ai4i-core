@@ -28,9 +28,10 @@ boundaries are IST midnight.
 
 2. Rollup of yesterday and the USAGE_ROLLUP_LOOKBACK_DAYS before it into
    daily_usage, one transaction per day, so events that arrive late are
-   picked up. Each day is aggregated per dimension key and upserted; rows of
-   that day the run did not write (a combination that no longer exists) are
-   deleted. billing_month is the UTC month of occurred_at, as the PPU
+   picked up. Each day is aggregated per dimension key and upserted; rollup
+   rows of that day the run did not write (a combination that no longer
+   exists) are deleted. Rows backfilled from Prometheus (source 'backfill',
+   see usage_backfill) are never touched. billing_month is the UTC month of occurred_at, as the PPU
    consumer bills it, so the 00:00-05:30 IST rows of the 1st get their own
    row under the previous month. Names come from tiers, mm_services and mm_models here and from
    tenants and applications in the auth DB. Requests are counted from the
@@ -65,11 +66,14 @@ TABLE = "usage_events"
 DEFAULT = f"{TABLE}_default"
 IST = ZoneInfo("Asia/Kolkata")
 
-# Upsert target of the rollup: uq_daily_usage_dimensions, NULLS NOT DISTINCT.
 DIMENSIONS = (
     "usage_date", "tenant_id", "application_id", "api_key_id",
     "tier_id", "service_id", "inference_type_id", "billing_month",
 )
+# Upsert target: uq_daily_usage_dimensions, NULLS NOT DISTINCT. source is
+# left to its default, 'rollup'; usage_backfill writes 'backfill' rows, which
+# this job never touches.
+CONFLICT_KEY = DIMENSIONS + ("source",)
 MEASURES = (
     "request_count", "success_count", "failed_count",
     "total_units", "cached_input_units", "output_units",
@@ -296,7 +300,7 @@ _UPSERT = text(
     f"""
     INSERT INTO daily_usage ({", ".join(DIMENSIONS + NAMES + MEASURES)})
     VALUES ({", ".join(f":{c}" for c in DIMENSIONS + NAMES + MEASURES)})
-    ON CONFLICT ({", ".join(DIMENSIONS)}) DO UPDATE SET
+    ON CONFLICT ({", ".join(CONFLICT_KEY)}) DO UPDATE SET
         {", ".join(f"{c} = EXCLUDED.{c}" for c in NAMES + MEASURES)},
         updated_at = now()
     """
@@ -304,7 +308,10 @@ _UPSERT = text(
 
 # now() is the transaction start, which every row upserted by this
 # transaction carries in updated_at; anything older wasn't written by it.
-_DELETE_STALE = text("DELETE FROM daily_usage WHERE usage_date = :usage_date AND updated_at < now()")
+# Rollup rows only: the day usage_events starts on also holds backfill rows.
+_DELETE_STALE = text(
+    "DELETE FROM daily_usage WHERE usage_date = :usage_date AND source = 'rollup' AND updated_at < now()"
+)
 
 
 async def _auth_names(

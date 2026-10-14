@@ -56,7 +56,7 @@ def _make_repo(**method_returns) -> MagicMock:
     an unconfigured-MagicMock-isn't-awaitable error.
 
     get_usage_data_from defaults to a date before every period (the usage
-    data covers it whole).
+    data covers it whole); get_estimated_until to None (nothing estimated).
     """
     repo = MagicMock()
     method_returns.setdefault("get_tier_names", {"1": "Pro", "2": "Enterprise"})
@@ -65,6 +65,7 @@ def _make_repo(**method_returns) -> MagicMock:
     method_returns.setdefault("get_tenants_with_usage_tier", [])
     method_returns.setdefault("get_tenant_tier_usage_breakdown", [])
     method_returns.setdefault("get_usage_data_from", _DATA_SINCE)
+    method_returns.setdefault("get_estimated_until", None)
     for method, value in method_returns.items():
         if isinstance(value, _Seq):
             setattr(repo, method, AsyncMock(side_effect=list(value)))

@@ -59,12 +59,12 @@ export const MeteringEmptyState: React.FC<{ height?: number; message?: string }>
 );
 
 export const MeteringSeriesLegend: React.FC<{
-  items: ReadonlyArray<{ label: string; color: string }>;
+  items: ReadonlyArray<{ label: string; color: string; opacity?: number }>;
 }> = ({ items }) => (
   <HStack spacing={5} mt={3} px={1} fontSize="xs" color="gray.500">
     {items.map((item) => (
       <HStack key={item.label} spacing={2}>
-        <Box w={2.5} h={2.5} borderRadius="sm" bg={item.color} />
+        <Box w={2.5} h={2.5} borderRadius="sm" bg={item.color} opacity={item.opacity} />
         <Text>{item.label}</Text>
       </HStack>
     ))}

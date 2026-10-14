@@ -10,8 +10,9 @@ variable fails at run time, after logging is configured.
 """
 from __future__ import annotations
 
+from datetime import date, datetime
 from functools import lru_cache
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings
@@ -72,6 +73,26 @@ class PyJobSettings(BaseSettings):
     )
     INTERNAL_HTTP_TIMEOUT_SECONDS: float = Field(
         300.0, description="Per-request timeout for internal calls"
+    )
+
+    # ── usage_backfill (one-off: Prometheus → daily_usage, see jobs/usage_backfill.py) ──
+    PROMETHEUS_URL: Optional[str] = Field(None, description="Base URL of the Prometheus to export from")
+    # Label carrying the HTTP path on telemetry_obsv_requests_total: "exported_endpoint"
+    # behind a ServiceMonitor, "endpoint" on local docker-compose (platform-core's
+    # PROMETHEUS_API_PATH_LABEL, same value).
+    PROMETHEUS_API_PATH_LABEL: str = "exported_endpoint"
+    PROMETHEUS_TIMEOUT_SECONDS: float = Field(60.0, gt=0)
+    USAGE_BACKFILL_MODE: Literal["export", "load", "all"] = Field(
+        "all", description="export: Prometheus → file; load: file → daily_usage; all: both"
+    )
+    USAGE_BACKFILL_FILE: str = Field(
+        "usage_backfill.json", description="Export written here, and read back by load; keep it"
+    )
+    USAGE_BACKFILL_FROM: Optional[date] = Field(
+        None, description="First IST day to export; unset → the first whole day Prometheus retains"
+    )
+    USAGE_BACKFILL_UNTIL: Optional[datetime] = Field(
+        None, description="Export up to this instant; unset → the first usage_events row"
     )
 
     # ── usage_report ──

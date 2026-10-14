@@ -117,7 +117,8 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
         hint: tips.API_KEY_PERIOD_SPEND,
         width: "16%",
         sortable: true,
-        sortAccessor: (key) => key.periodSpend.amount,
+        // A dash (spend unavailable) sorts below every amount.
+        sortAccessor: (key) => (key.periodSpendCoverage === "unavailable" ? -1 : key.periodSpend.amount),
         cell: (key) => (
           <PeriodSpendCell
             amount={key.periodSpend.amount}
@@ -125,6 +126,7 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
             currency={currency}
             hasBudget={key.allocatedBudget.amount > 0}
             ofAllocationLabel={cols.PERIOD_OF_ALLOCATION}
+            coverage={key.periodSpendCoverage}
           />
         ),
         footer: (
@@ -306,6 +308,11 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
               showAsyncState={false}
             />
           )}
+          {detail.unattributedPeriodSpend ? (
+            <Text fontSize="12px" color="gray.500" mt={2} lineHeight="1.6">
+              {formatSpendMoneyExact(detail.unattributedPeriodSpend, currency)} {METERING.COVERAGE.UNATTRIBUTED_SUFFIX}
+            </Text>
+          ) : null}
         </Box>
       </VStack>
     );

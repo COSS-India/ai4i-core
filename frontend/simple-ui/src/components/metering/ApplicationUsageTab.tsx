@@ -23,6 +23,7 @@ import { formatPeriodTitle } from "../../utils/meteringFormatters";
 import ApplicationUsageDrawer from "./ApplicationUsageDrawer";
 import ApplicationUsageSummaryPanel from "./ApplicationUsageSummaryPanel";
 import ApplicationUsageTable from "./ApplicationUsageTable";
+import PeriodCoverageNotice from "./PeriodCoverageNotice";
 
 interface ApplicationUsageTabProps {
   readonly period: MeteringPeriod;
@@ -120,6 +121,8 @@ const ApplicationUsageTab: React.FC<ApplicationUsageTabProps> = ({
         <AlertIcon />
         {copy.LIFETIME_NOTE}
       </Alert>
+
+      <PeriodCoverageNotice period={data.period} />
 
       <ApplicationUsageSummaryPanel
         summary={data.summary}

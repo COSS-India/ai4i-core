@@ -38,6 +38,14 @@ export interface ApplicationUsageListResponse {
   total: number;
 }
 
+/**
+ * How much of the period a key's `periodSpend` covers. Estimated days can't be
+ * split between an application's keys when it has several: their spend is the
+ * application's `unattributedPeriodSpend` instead. "partial" leaves those days
+ * out; "unavailable" means the whole period is such days (show a dash, not 0).
+ */
+export type PeriodSpendCoverage = "full" | "partial" | "unavailable";
+
 export interface ApiKeyUsageItem {
   keyId: number;
   keyName: string;
@@ -48,13 +56,15 @@ export interface ApiKeyUsageItem {
   remainingBudget: MoneyPercent;
   /** Spend in the period; % of this key's allocation. */
   periodSpend: MoneyPercent;
+  /** Absent from older responses: treat as "full". */
+  periodSpendCoverage?: PeriodSpendCoverage;
 }
 
 export interface ApplicationUsageTotals {
   allocatedBudget: number;
   spendBudget: number;
   remainingBudget: number;
-  /** Σ keys, period. */
+  /** Σ keys, period, plus the detail's `unattributedPeriodSpend`. */
   periodSpend: number;
 }
 
@@ -69,6 +79,8 @@ export interface ApplicationUsageDetail {
   /** Spend in the period; % of the application's allocation. */
   periodSpend: MoneyPercent;
   apiKeys: ApiKeyUsageItem[];
+  /** Estimated spend in the period no key can be given; part of `periodSpend`. */
+  unattributedPeriodSpend?: number;
   totals: ApplicationUsageTotals;
 }
 

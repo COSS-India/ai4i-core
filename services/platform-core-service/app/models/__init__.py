@@ -74,7 +74,7 @@ from app.models.pay_per_use.budget_usage import BudgetUsage  # noqa: E402
 # Range-partitioned (usage_events by day, daily_usage by month); the partitions
 # themselves are DDL (pay_per_use/partitioning.py)
 from app.models.pay_per_use.usage_event import UsageEvent  # noqa: E402
-from app.models.pay_per_use.daily_usage import DailyUsage  # noqa: E402
+from app.models.pay_per_use.daily_usage import DailyUsage, UsageBackfill  # noqa: E402
 
 # Usage Viewer report (AI4IDS-3278) — next release (retry + send log):
 # from app.models.usage_report.send_log import UsageReportSendLog  # noqa: E402

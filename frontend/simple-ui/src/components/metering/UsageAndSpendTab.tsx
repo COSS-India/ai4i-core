@@ -15,6 +15,7 @@ import type { TenantUsageItem } from "../../types/usageSpend";
 import { formatPeriodTitle } from "../../utils/meteringFormatters";
 import InstitutionUsageDetailPanel from "./InstitutionUsageDetailPanel";
 import MeteringAsyncState from "./MeteringAsyncState";
+import PeriodCoverageNotice from "./PeriodCoverageNotice";
 import UsageSpendTenantDrawer from "./UsageSpendTenantDrawer";
 import UsageSpendTenantTable from "./UsageSpendTenantTable";
 
@@ -119,6 +120,7 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
       >
         {tenantDetail ? (
           <VStack align="stretch" spacing={5}>
+            <PeriodCoverageNotice period={data.period} />
             <InstitutionUsageDetailPanel
               detail={tenantDetail}
               periodTitle={periodTitle}
@@ -133,6 +135,7 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
 
   return (
     <VStack align="stretch" spacing={5}>
+      <PeriodCoverageNotice period={data.period} />
       <HStack spacing={3} flexWrap="wrap" align="center">
         <Select
           size="sm"

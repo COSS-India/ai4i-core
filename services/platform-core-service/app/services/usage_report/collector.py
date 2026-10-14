@@ -350,12 +350,14 @@ class UsageReportCollector:
         return BudgetSummary(allocated, spent, remaining, exhausted, nearing, top)
 
     async def _period_spend(self, period: UsagePeriod, subdaily: bool = False) -> Optional[PeriodSpend]:
-        """None when usage recording had not started by the end of the period."""
+        """None when usage recording had not started by the end of the period.
+        Recorded usage only: the report leaves out the Prometheus backfill's
+        estimates, so a period before recording began reads as not covered."""
         repo = UsageRepository(self._core_db)
-        data_from = await repo.get_usage_data_from(period)
+        data_from = await repo.get_usage_data_from(period, include_backfill=False)
         if data_from is None:
             return None
-        rows = await repo.get_period_usage(period)
+        rows = await repo.get_period_usage(period, include_backfill=False)
         amount = sum((_decimal(r.cost) for r in rows), Decimal("0"))
         covered_from = max(period.start, data_from)
         covered_days = None if subdaily else max(1, math.ceil((period.end - covered_from).total_seconds() / 86_400))

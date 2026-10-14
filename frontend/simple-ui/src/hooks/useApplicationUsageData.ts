@@ -57,6 +57,8 @@ export function useApplicationUsageData({
 
   return {
     isScoped: enabled,
+    /** The period the API applied, with its coverage (dataFrom / partial / estimated). */
+    period: summaryQuery.data?.period ?? listQuery.data?.period,
     summary: summaryQuery.data,
     applications: listQuery.data?.data ?? [],
     total: listQuery.data?.total ?? 0,

@@ -367,6 +367,12 @@ class MeteringService:
         answered from what's left. Overridden per store."""
         return retention_edge()
 
+    async def estimated_until(self, period) -> Optional[datetime]:
+        """Where the figures in ``period`` stop being estimates, for the
+        period's ``estimated`` / ``estimatedUntil``; None when none are.
+        Prometheus' figures are what the dashboard always showed: none."""
+        return None
+
     async def refresh_retention(self) -> None:
         """Re-read how much history Prometheus keeps (cached per process;
         see metering_retention) before building retention-aware queries.

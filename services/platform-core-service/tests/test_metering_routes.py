@@ -397,6 +397,7 @@ def _overview_svc() -> MagicMock:
     svc.first_request_at = AsyncMock(return_value=None)
     svc.refresh_retention = AsyncMock()
     svc.data_since = AsyncMock(return_value=_utc(2020, 1, 1))
+    svc.estimated_until = AsyncMock(return_value=None)
     svc.registry_model_count = AsyncMock(return_value=None)
     svc.model_breakdown = AsyncMock(return_value=None)
     return svc
@@ -489,7 +490,7 @@ class TestOverviewPeriod:
             "key": "custom", "from": "2026-09-20", "to": "2026-09-22",
             "start": "2026-09-20T00:00:00+05:30", "end": "2026-09-23T00:00:00+05:30",
             "timezone": "Asia/Kolkata",
-            "dataFrom": "2026-09-20T00:00:00+05:30", "partial": False,
+            "dataFrom": "2026-09-20T00:00:00+05:30", "partial": False, "estimated": False, "estimatedUntil": None,
         }
         assert ":custom:" in redis.set.call_args.args[0]
 
@@ -500,6 +501,7 @@ class TestOverviewPeriod:
         of the figures looking complete."""
         svc = _overview_svc()
         svc.data_since = AsyncMock(return_value=_utc(2026, 9, 20, 18, 30))
+        svc.estimated_until = AsyncMock(return_value=None)
         response = await _call_overview(svc, period="custom", from_="2026-09-20", to="2026-09-22")
 
         period = response.scope.period
@@ -510,6 +512,7 @@ class TestOverviewPeriod:
     async def test_no_data_for_the_range_has_no_data_from(self):
         svc = _overview_svc()
         svc.data_since = AsyncMock(return_value=None)
+        svc.estimated_until = AsyncMock(return_value=None)
         response = await _call_overview(svc, period="custom", from_="2026-09-20", to="2026-09-22")
         assert (response.scope.period.dataFrom, response.scope.period.partial) == (None, True)
 
@@ -718,7 +721,7 @@ class TestOverviewFirstUsageAtHybrid:
     async def test_cache_key_is_v9(self, fake_usage_repo):
         redis = _empty_redis()
         await _call_overview(self._svc(), redis=redis)
-        assert _overview_keys(redis)[0].startswith("metering:overview:v9:")
+        assert _overview_keys(redis)[0].startswith("metering:overview:v10:")
 
 
 def _redis_with(entries: dict) -> AsyncMock:
@@ -743,7 +746,7 @@ class TestFirstRequestAtCache:
 
     async def test_cache_hit_skips_the_query(self, fake_usage_repo):
         svc = self._svc()
-        redis = _redis_with({"metering:first-usage:v4:all": {"first_request_at": "2026-07-02T09:00:00Z"}})
+        redis = _redis_with({"metering:first-usage:v5:all": {"first_request_at": "2026-07-02T09:00:00Z"}})
         response = await _call_overview(svc, redis=redis)
         svc.first_request_at.assert_not_called()
         assert response.first_usage_at == "2026-07-02T14:30:00+05:30"
@@ -768,14 +771,14 @@ class TestFirstRequestAtCache:
     async def test_miss_stores_value_with_long_ttl(self, fake_usage_repo):
         redis = _empty_redis()
         await _call_overview(self._svc(_utc(2026, 7, 2, 9)), redis=redis)
-        call = next(c for c in redis.set.call_args_list if c.args[0] == "metering:first-usage:v4:all")
+        call = next(c for c in redis.set.call_args_list if c.args[0] == "metering:first-usage:v5:all")
         assert json.loads(call.args[1]) == {"first_request_at": "2026-07-02T09:00:00Z"}
         assert call.kwargs["ex"] == _metering_route_mod._FIRST_USAGE_CACHE_TTL
         assert _metering_route_mod._FIRST_USAGE_CACHE_TTL >= 3600
 
     async def test_shared_across_periods_and_task_types(self, fake_usage_repo):
         svc = self._svc()
-        redis = _redis_with({"metering:first-usage:v4:all": {"first_request_at": "2026-07-02T09:00:00Z"}})
+        redis = _redis_with({"metering:first-usage:v5:all": {"first_request_at": "2026-07-02T09:00:00Z"}})
         await _call_overview(svc, redis=redis, period="last_7_days", task_types="llm")
         await _call_overview(svc, redis=redis, period="custom", from_="2026-09-20", to="2026-09-22")
         svc.first_request_at.assert_not_called()
@@ -783,11 +786,11 @@ class TestFirstRequestAtCache:
     async def test_tenant_scoped_key(self, fake_usage_repo):
         redis = _empty_redis()
         await _call_overview(self._svc(_utc(2026, 7, 2)), redis=redis, request=_tenant_admin_request())
-        assert "metering:first-usage:v4:7:Acme Corp" in _set_keys(redis)
+        assert "metering:first-usage:v5:7:Acme Corp" in _set_keys(redis)
 
     def test_name_only_scope_does_not_share_the_platform_wide_key(self):
         key = _metering_route_mod._first_usage_cache_key
-        assert key(None, None) == "metering:first-usage:v4:all"
+        assert key(None, None) == "metering:first-usage:v5:all"
         assert key(None, "Acme Corp") != key(None, None)
 
 
@@ -849,6 +852,7 @@ class TestRoutesRefreshRetention:
         svc.registry_model_count = AsyncMock(return_value=None)
         svc.refresh_retention = AsyncMock()
         svc.data_since = AsyncMock(return_value=_utc(2020, 1, 1))
+        svc.estimated_until = AsyncMock(return_value=None)
         await get_model_consumption(
             request=_admin_request(), svc=svc, redis=_empty_redis(), period=None,
             from_=None, to=None, tenant_id=None, limit=10, task_types=None,
@@ -886,6 +890,7 @@ class TestModelConsumptionPeriod:
         svc.registry_model_count = AsyncMock(return_value=None)
         svc.refresh_retention = AsyncMock()
         svc.data_since = AsyncMock(return_value=_utc(2020, 1, 1))
+        svc.estimated_until = AsyncMock(return_value=None)
         return svc
 
     async def _call(self, svc, **params):

@@ -49,6 +49,8 @@ def _make_repo(spend_by_key: dict, period_spend_by_key: dict | None = None) -> M
     repo.get_period_spend_by_api_key_ids = AsyncMock(return_value=period_spend_by_key or {})
     # Before every period the tests use: the usage data covers them whole.
     repo.get_usage_data_from = AsyncMock(return_value=datetime(2020, 1, 1, tzinfo=timezone.utc))
+    repo.get_estimated_until = AsyncMock(return_value=None)
+    repo.get_unattributed_period_spend = AsyncMock(return_value={})
     return repo
 
 

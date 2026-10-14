@@ -27,6 +27,25 @@ export const METERING = {
       ERROR_PREFIX: "Unable to refresh data. Last successful refresh at",
     },
   },
+  /** Period coverage (`period.dataFrom` / `partial` / `estimated` / `estimatedUntil`). */
+  COVERAGE: {
+    ESTIMATED_PREFIX: "Figures before",
+    ESTIMATED_SUFFIX:
+      "are estimates from monitoring data: requests and usage from daily totals, costs at current prices.",
+    // Before dataFrom there's either no data (Budget, Applications) or only
+    // billed requests (Overview, Model consumption, before request counting).
+    INCOMPLETE_PREFIX: "Figures before",
+    INCOMPLETE_SUFFIX: "may be incomplete: usage wasn't fully recorded then.",
+    ESTIMATED_LEGEND: "Estimated",
+    HOURLY_UNAVAILABLE_PREFIX: "Hourly figures aren't available before",
+    HOURLY_UNAVAILABLE_SUFFIX: ": estimated days only have daily totals, which the figures above include.",
+    KEY_SPEND_UNAVAILABLE: "—",
+    KEY_SPEND_PARTIAL: "excl. estimated days",
+    KEY_SPEND_PARTIAL_HINT:
+      "Leaves out estimated days: this Application has several API keys, and the monitoring data can't tell them apart.",
+    UNATTRIBUTED_SUFFIX:
+      "of this period's spend is estimated and can't be split between this Application's API keys; it's included in the total.",
+  },
   QUERY: {
     STALE_TIME_MS: 60_000,
     TENANT_DIRECTORY_STALE_MS: 5 * 60_000,

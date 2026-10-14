@@ -274,7 +274,7 @@ def repo(monkeypatch, repo_state):
     """UsageRepository's budget / period-spend reads, stubbed."""
     state = repo_state
     _stub_repo(monkeypatch, "get_tenant_budgets", lambda self, tenant_ids, auth_db=None: state.budgets)
-    _stub_repo(monkeypatch, "get_usage_data_from", lambda self, p: state.data_from)
+    _stub_repo(monkeypatch, "get_usage_data_from", lambda self, p, **k: state.data_from)
     _stub_repo(monkeypatch, "get_period_usage", lambda self, p, *a, **k: state.period_rows)
     return state
 
@@ -481,7 +481,7 @@ class TestBudgetAgainstTheRealRepository:
         from app.repositories.pay_per_use.usage_repository import UsageRepository
 
         # Only the period-spend reads are stubbed; get_tenant_budgets stays real.
-        _stub_repo(monkeypatch, "get_usage_data_from", lambda self, p: repo_state.data_from)
+        _stub_repo(monkeypatch, "get_usage_data_from", lambda self, p, **k: repo_state.data_from)
         _stub_repo(monkeypatch, "get_period_usage", lambda self, p, *a, **k: repo_state.period_rows)
         assert not isinstance(UsageRepository.get_tenant_budgets, Mock)
         # conftest's autouse catalogue stub must still be active (a monkeypatch.undo() would drop it).

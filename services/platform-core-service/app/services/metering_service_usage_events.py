@@ -10,8 +10,12 @@ token split). The counts come from request rows and the units from usage rows
 extrapolated increase(), and not limited by its retention.
 
 Only API-key traffic is recorded, which is what the dashboard already counted.
-Request rows exist from the cut-over onwards; data_since() reports when they
-begin, so an earlier range is flagged partial instead of shown incomplete.
+Request rows exist from the cut-over onwards. Before them, figures are
+estimates: the Prometheus backfill's days (see MeteringUsageRepository), then
+usage rows from before the cut-over, which count billed requests only.
+data_since() and estimated_until() say so, so a range from before request
+rows is flagged estimated (partial where even the backfill has no data;
+without a backfill, everything before request rows is partial).
 
 The rest of MeteringService (registry model counts, tenant names, the
 per-model shaping) is inherited unchanged. The Prometheus client is kept
@@ -88,11 +92,22 @@ class UsageEventsMeteringService(MeteringService):
     async def refresh_retention(self) -> None:
         """No retention to refresh: usage_events keeps every day."""
 
+    async def _coverage(self, start: datetime, end: datetime) -> tuple[Optional[datetime], Optional[datetime]]:
+        """(when data begins inside [start, end), where estimates end) — see
+        the module docstring. Data begins with the backfill when there is one
+        that reaches this far, else with request rows (None: none at all);
+        estimates last until request rows begin."""
+        recorded_from = await self._usage.request_rows_from(start, end)
+        backfill = await self._usage.backfill()
+        if backfill is None or backfill.start >= end:
+            return recorded_from, None
+        return max(start, backfill.start), recorded_from or end
+
     async def data_since(self, period) -> Optional[datetime]:
-        """When request rows begin inside the period: its start once they
-        cover it, the first one when they start inside it, None when there
-        are none — so a range from before the cut-over is reported partial."""
-        return await self._usage.request_rows_from(period.start, period.end)
+        return (await self._coverage(period.start, period.end))[0]
+
+    async def estimated_until(self, period) -> Optional[datetime]:
+        return (await self._coverage(period.start, period.end))[1]
 
     @staticmethod
     def _bounds(time_range: TimeRange) -> tuple[datetime, datetime, int]:
@@ -135,8 +150,8 @@ class UsageEventsMeteringService(MeteringService):
         return rows.get((), UsageAgg())
 
     async def _covered(self, start: datetime, end: datetime) -> bool:
-        """Request rows cover [start, end) from its start."""
-        return await self._usage.request_rows_from(start, end) == start
+        """Data (recorded, or the backfill's estimates) covers [start, end) from its start."""
+        return (await self._coverage(start, end))[0] == start
 
     # ── Overview ──────────────────────────────────────────────────────────────
 
@@ -152,8 +167,8 @@ class UsageEventsMeteringService(MeteringService):
     ) -> dict:
         """Total / successful / failed requests and average RPS, against the
         same span shifted back (for `today`, yesterday's same clock span).
-        The previous figures are None when request rows don't cover that span,
-        as Prometheus reported them past its retention."""
+        The previous figures are None when no data (recorded or backfilled)
+        covers that span, as Prometheus reported them past its retention."""
         start, end, shift = self._bounds(time_range)
         tid, type_ids = _tenant_pk(tenant_id, tenant), await self._type_ids(task_types)
         seconds = max(1, round((end - start).total_seconds()))
@@ -310,8 +325,9 @@ class UsageEventsMeteringService(MeteringService):
         }
 
     async def model_usage_growth_pct(self) -> Optional[float]:
-        """LLM requests, last 30 days vs the 30 before. None until request
-        rows cover the whole 60 days, or with no traffic in the earlier 30."""
+        """LLM requests, last 30 days vs the 30 before. None until data
+        (recorded or backfilled) covers the whole 60 days, or with no traffic
+        in the earlier 30."""
         now = datetime.now(timezone.utc)
         month = timedelta(days=30)
         if not await self._covered(now - 2 * month, now):
