@@ -20,9 +20,10 @@ const figureLabel = {
 
 /**
  * LLM cost breakdown under a task-type row. Figures are period usage
- * (`periodUsage`) and stay in the "Usage in period" column. The quota column
- * is the current billing month, so it stays blank. Cached input is omitted
- * when its units are zero.
+ * (`periodUsage`), starting under the "Usage in period" column and spanning
+ * the quota column too: the quota is the current billing month, so it has no
+ * figures here, and one column is too narrow for tokens, share and cost.
+ * Cached input is omitted when its units are zero.
  */
 export function UsageSpendCostBreakdownRows({
   task,
@@ -42,20 +43,19 @@ export function UsageSpendCostBreakdownRows({
     <>
       <Tr bg="gray.50">
         <Td colSpan={leadingColSpan} {...childTd} />
-        <Td {...childTd}>
+        <Td colSpan={2} {...childTd}>
           <HStack spacing={4}>
-            <Text {...figureLabel} w="104px" textAlign="right">
+            <Text {...figureLabel} w="104px" flexShrink={0} textAlign="right">
               Tokens in period
             </Text>
             <Text {...figureLabel} flex="1">
               Share of usage cost
             </Text>
-            <Text {...figureLabel} w="96px" textAlign="right">
+            <Text {...figureLabel} w="96px" flexShrink={0} textAlign="right">
               Usage cost
             </Text>
           </HStack>
         </Td>
-        <Td {...childTd} />
       </Tr>
       {shares.map((share) => (
         <Tr key={share.key} bg="gray.50">
@@ -64,18 +64,17 @@ export function UsageSpendCostBreakdownRows({
               {share.label}
             </Text>
           </Td>
-          <Td {...childTd}>
+          <Td colSpan={2} {...childTd}>
             <HStack spacing={4}>
-              <Text fontSize="sm" color="gray.800" w="104px" textAlign="right">
+              <Text fontSize="sm" color="gray.800" w="104px" flexShrink={0} textAlign="right">
                 {formatTokenCount(share.units)}
               </Text>
               <TokenShareBar pct={share.costShare} />
-              <Text fontSize="sm" color="gray.800" w="96px" textAlign="right">
+              <Text fontSize="sm" color="gray.800" w="96px" flexShrink={0} textAlign="right">
                 {formatSpendMoneyExact(share.cost, currency)}
               </Text>
             </HStack>
           </Td>
-          <Td {...childTd} />
         </Tr>
       ))}
       <Tr bg="gray.50">
@@ -84,18 +83,17 @@ export function UsageSpendCostBreakdownRows({
             {copy.BREAKDOWN_TOTAL}
           </Text>
         </Td>
-        <Td {...childTd}>
+        <Td colSpan={2} {...childTd}>
           <HStack spacing={4}>
-            <Text fontSize="sm" fontWeight="bold" color="gray.800" w="104px" textAlign="right">
+            <Text fontSize="sm" fontWeight="bold" color="gray.800" w="104px" flexShrink={0} textAlign="right">
               {formatTokenCount(periodUsage.units)}
             </Text>
             <Box flex="1" />
-            <Text fontSize="sm" fontWeight="bold" color="gray.800" w="96px" textAlign="right">
+            <Text fontSize="sm" fontWeight="bold" color="gray.800" w="96px" flexShrink={0} textAlign="right">
               {formatSpendMoneyExact(periodUsage.cost, currency)}
             </Text>
           </HStack>
         </Td>
-        <Td {...childTd} />
       </Tr>
     </>
   );
