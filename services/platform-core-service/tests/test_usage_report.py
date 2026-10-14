@@ -6,7 +6,7 @@ import email
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import pytest
 from ai4i_core.email import EmailDeliveryError, EmailSettings
@@ -258,10 +258,17 @@ def repo(monkeypatch):
         data_from=SEP_START - (SEP_END - SEP_START),  # recording began long before September
         period_rows=[SimpleNamespace(cost=Decimal("12.5")), SimpleNamespace(cost=Decimal("17.5"))],
     )
-    base = "app.services.usage_report.collector.UsageRepository"
-    monkeypatch.setattr(f"{base}.get_tenant_budgets", AsyncMock(side_effect=lambda *a, **k: state.budgets))
-    monkeypatch.setattr(f"{base}.get_usage_data_from", AsyncMock(side_effect=lambda p: state.data_from))
-    monkeypatch.setattr(f"{base}.get_period_usage", AsyncMock(side_effect=lambda p: state.period_rows))
+    # autospec keeps the real signatures: a call that no longer matches the
+    # repository (AI4IDS-3278 staging: 3 args to a 2-arg method) fails here too.
+    from app.repositories.pay_per_use.usage_repository import UsageRepository
+
+    def stub(name, side_effect):
+        monkeypatch.setattr(UsageRepository, name,
+                            create_autospec(getattr(UsageRepository, name), side_effect=side_effect))
+
+    stub("get_tenant_budgets", lambda self, tenant_ids, auth_db=None: state.budgets)
+    stub("get_usage_data_from", lambda self, p: state.data_from)
+    stub("get_period_usage", lambda self, p, *a, **k: state.period_rows)
     return state
 
 
@@ -432,6 +439,64 @@ class TestBudgetSummary:
 
     def test_used_pct_none_without_allocation(self):
         assert BudgetSummary(Decimal(0), Decimal(5), Decimal(-5), 0, 0, []).used_pct is None
+
+
+class _BudgetAuthDB(_FakeAuthDB):
+    """Also answers the real UsageRepository.get_tenant_budgets' auth-DB reads."""
+
+    def __init__(self, allocated, apps, keys, **kw):
+        super().__init__(**kw)
+        self.allocated = allocated  # tenant id -> allocated_budget
+        self.apps = apps            # application id -> tenant id
+        self.keys = keys            # api_key id -> application id
+
+    async def execute(self, stmt, params=None):
+        sql = str(stmt)
+        if "FROM tenants WHERE id = ANY(:ids)" in sql:
+            return _rows(*[SimpleNamespace(id=i, allocated_budget=self.allocated[i], tier_id=None,
+                                           budget_effective_from=None, budget_effective_to=None)
+                           for i in params["ids"] if i in self.allocated])
+        if sql.startswith("SELECT id, tenant_id FROM applications"):
+            return _rows(*[SimpleNamespace(id=a, tenant_id=t) for a, t in self.apps.items() if t in params["ids"]])
+        if sql.startswith("SELECT id, application_id FROM api_key"):
+            return _rows(*[SimpleNamespace(id=k, application_id=a) for k, a in self.keys.items()
+                           if a in params["app_ids"]])
+        return await super().execute(stmt, params)
+
+
+class TestBudgetAgainstTheRealRepository:
+    @pytest.mark.asyncio
+    async def test_budget_figure_loads_through_the_real_get_tenant_budgets(self, repo, monkeypatch):
+        # Staging (AI4IDS-3278): the collector passed a leftover billing_month
+        # (None) that get_tenant_budgets no longer takes → TypeError → "figures
+        # failed to load: budget" → status=not_ready and no email to anyone.
+        from app.repositories.pay_per_use.usage_repository import UsageRepository
+
+        monkeypatch.undo()  # drop the repo fixture's stubs; keep only what this test needs
+        monkeypatch.setattr("app.utils.metering_promql_builder.retention_days", lambda: 90)
+        base = UsageRepository
+        monkeypatch.setattr(base, "get_usage_data_from", AsyncMock(return_value=repo.data_from))
+        monkeypatch.setattr(base, "get_period_usage", AsyncMock(return_value=repo.period_rows))
+
+        auth = _BudgetAuthDB(
+            allocated={1: Decimal(100), 2: Decimal(50)},
+            apps={10: 1, 20: 2},
+            keys={100: 10, 101: 10, 200: 20},
+            tenants=TestCollector.TENANTS, budget_tenants=[("1", "Ministry A"), ("2", "Ministry B")],
+        )
+        core = AsyncMock()
+        core.execute = AsyncMock(return_value=_rows(
+            SimpleNamespace(api_key_id=100, api_key_budget_used=Decimal(30)),
+            SimpleNamespace(api_key_id=101, api_key_budget_used=Decimal(55)),  # tenant 1: 85 of 100
+            SimpleNamespace(api_key_id=200, api_key_budget_used=Decimal(50)),  # tenant 2: 50 of 50
+        ))
+        d = await UsageReportCollector(_fake_metering(), auth, core).collect(SEP, now=AFTER_SEP)
+
+        assert "budget" not in d.failed
+        b = d.budget
+        assert (b.allocated, b.spent, b.remaining) == (Decimal(150), Decimal(135), Decimal(15))
+        assert (b.exhausted, b.nearing_limit) == (1, 1)
+        assert [(s.name, s.spent) for s in b.top_by_spend] == [("Ministry A", Decimal(85)), ("Ministry B", Decimal(50))]
 
 
 # ── recipients ───────────────────────────────────────────────────────────────
