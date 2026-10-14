@@ -1,5 +1,6 @@
 import React from "react";
 import { Badge, HStack, Spinner, Text, VStack } from "@chakra-ui/react";
+import { formatServicePublishLabel } from "../../config/constants";
 import { framedEmpty, framedList, framedRow, getTaskTypeBadgeColor } from "./tierDisplay";
 
 export interface MappedService {
@@ -72,8 +73,10 @@ export function ServicesMappedSection({
                   fontSize="xs"
                   px={2}
                   py={0.5}
+                  minW="7rem"
+                  textAlign="center"
                 >
-                  {s.isPublished ? "PUBLISHED" : "DRAFT"}
+                  {formatServicePublishLabel(s.isPublished)}
                 </Badge>
                 {tierControl?.(s)}
               </HStack>
