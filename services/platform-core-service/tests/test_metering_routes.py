@@ -396,6 +396,7 @@ def _overview_svc() -> MagicMock:
     svc.model_usage_growth_pct = AsyncMock(return_value=None)
     svc.first_request_at = AsyncMock(return_value=None)
     svc.refresh_retention = AsyncMock()
+    svc.data_since = AsyncMock(return_value=_utc(2020, 1, 1))
     svc.registry_model_count = AsyncMock(return_value=None)
     svc.model_breakdown = AsyncMock(return_value=None)
     return svc
@@ -469,9 +470,8 @@ class TestOverviewPeriod:
         assert response.scope.period.key == "today"
         assert response.scope.period.from_ == response.scope.period.to == "2026-09-29"
 
-    async def test_custom_range_covers_whole_ist_days(self, monkeypatch):
-        # Retention reaching back past the range: Prometheus covers it whole.
-        monkeypatch.setattr(_metering_route_mod, "retention_edge", lambda: _utc(2026, 9, 1))
+    async def test_custom_range_covers_whole_ist_days(self):
+        # The source's data reaches back past the range: it covers it whole.
         svc = _overview_svc()
         redis = _empty_redis()
         await _call_overview(svc, redis=redis, period="custom", from_="2026-09-20", to="2026-09-22")
@@ -493,24 +493,24 @@ class TestOverviewPeriod:
         }
         assert ":custom:" in redis.set.call_args.args[0]
 
-    async def test_range_older_than_retention_is_flagged_partial(self, monkeypatch):
-        """Prometheus only holds retention_days of samples: a range starting
-        earlier is answered from what's left, and the period block says from
-        when (dataFrom) and that it's partial, instead of looking complete."""
-        monkeypatch.setattr(
-            _metering_route_mod, "retention_edge", lambda: _utc(2026, 9, 20, 18, 30),
-        )
-        response = await _call_overview(
-            _overview_svc(), period="custom", from_="2026-09-20", to="2026-09-22",
-        )
+    async def test_data_beginning_inside_the_range_is_flagged_partial(self):
+        """The source's data begins inside the range (usage_events: request
+        rows start at the cut-over; Prometheus: its retention edge): the
+        period block says from when (dataFrom) and that it's partial, instead
+        of the figures looking complete."""
+        svc = _overview_svc()
+        svc.data_since = AsyncMock(return_value=_utc(2026, 9, 20, 18, 30))
+        response = await _call_overview(svc, period="custom", from_="2026-09-20", to="2026-09-22")
+
         period = response.scope.period
         assert (period.dataFrom, period.partial) == ("2026-09-21T00:00:00+05:30", True)
+        (asked,) = svc.data_since.await_args.args
+        assert (asked.from_date.isoformat(), asked.to_date.isoformat()) == ("2026-09-20", "2026-09-22")
 
-    async def test_range_wholly_older_than_retention_has_no_data_from(self, monkeypatch):
-        monkeypatch.setattr(_metering_route_mod, "retention_edge", lambda: _utc(2026, 9, 25))
-        response = await _call_overview(
-            _overview_svc(), period="custom", from_="2026-09-20", to="2026-09-22",
-        )
+    async def test_no_data_for_the_range_has_no_data_from(self):
+        svc = _overview_svc()
+        svc.data_since = AsyncMock(return_value=None)
+        response = await _call_overview(svc, period="custom", from_="2026-09-20", to="2026-09-22")
         assert (response.scope.period.dataFrom, response.scope.period.partial) == (None, True)
 
     async def test_last_7_days_excludes_today(self):
@@ -678,17 +678,25 @@ class TestOverviewFirstUsageAtHybrid:
         response = await _call_overview(self._svc())
         assert response.first_usage_at is None
 
-    async def test_name_only_scope_skips_the_quota_lookup(self, fake_usage_repo):
-        """A tenant admin with X-Tenant-Name but no X-Tenant-Id: quota_usage
-        is keyed by id, so get_first_usage_at(None) would return the
-        platform-wide MIN. Only the name-filtered metering lookup runs."""
-        fake_usage_repo.result = _utc(2025, 1, 1)  # another tenant's usage
+    async def test_name_only_scope_is_refused(self, fake_usage_repo):
+        """A tenant admin with X-Tenant-Name but no X-Tenant-Id: the
+        usage_events source filters on the id, so without it every query
+        would be platform-wide. Refused (403) rather than widened — and no
+        lookup runs at all."""
         svc = self._svc(_utc(2026, 7, 2))
         request = SimpleNamespace(headers={"X-Permission-IDS": "5", "X-Tenant-Name": "Acme Corp"})
-        response = await _call_overview(svc, request=request)
+        with pytest.raises(HTTPException) as exc_info:
+            await _call_overview(svc, request=request)
+        assert exc_info.value.status_code == 403
         assert fake_usage_repo.calls == []
-        svc.first_request_at.assert_awaited_once_with("Acme Corp", None)
-        assert response.first_usage_at == "2026-07-02T05:30:00+05:30"
+        svc.first_request_at.assert_not_called()
+        svc.request_total.assert_not_called()
+
+    async def test_id_only_scope_is_refused(self, fake_usage_repo):
+        request = SimpleNamespace(headers={"X-Permission-IDS": "5", "X-Tenant-Id": "7"})
+        with pytest.raises(HTTPException) as exc_info:
+            await _call_overview(self._svc(), request=request)
+        assert exc_info.value.status_code == 403
 
     async def test_metering_lookup_is_scoped_to_the_callers_tenant(self, fake_usage_repo):
         svc = self._svc()
@@ -707,10 +715,10 @@ class TestOverviewFirstUsageAtHybrid:
         assert not any(k.startswith("metering:first-usage:") for k in _set_keys(redis))
         assert len(_overview_keys(redis)) == 1
 
-    async def test_cache_key_is_v7(self, fake_usage_repo):
+    async def test_cache_key_is_v9(self, fake_usage_repo):
         redis = _empty_redis()
         await _call_overview(self._svc(), redis=redis)
-        assert _overview_keys(redis)[0].startswith("metering:overview:v8:")
+        assert _overview_keys(redis)[0].startswith("metering:overview:v9:")
 
 
 def _redis_with(entries: dict) -> AsyncMock:
@@ -840,6 +848,7 @@ class TestRoutesRefreshRetention:
         svc.model_breakdown = AsyncMock(return_value=None)
         svc.registry_model_count = AsyncMock(return_value=None)
         svc.refresh_retention = AsyncMock()
+        svc.data_since = AsyncMock(return_value=_utc(2020, 1, 1))
         await get_model_consumption(
             request=_admin_request(), svc=svc, redis=_empty_redis(), period=None,
             from_=None, to=None, tenant_id=None, limit=10, task_types=None,
@@ -876,6 +885,7 @@ class TestModelConsumptionPeriod:
         svc.model_breakdown = AsyncMock(return_value=None)
         svc.registry_model_count = AsyncMock(return_value=None)
         svc.refresh_retention = AsyncMock()
+        svc.data_since = AsyncMock(return_value=_utc(2020, 1, 1))
         return svc
 
     async def _call(self, svc, **params):

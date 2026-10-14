@@ -1,12 +1,17 @@
 """Where a Usage Dashboard period's Postgres figures come from.
 
-usage_events (one row per billed span, occurred_at in [start, end)) serves
-``today``, and every other period too until the daily_usage rollup is
-switched on (USAGE_DAILY_ROLLUP_ENABLED). With it on, past periods read
+usage_events (occurred_at in [start, end)) serves ``today``, and every other
+period too until the daily_usage rollup is switched on
+(USAGE_DAILY_ROLLUP_ENABLED, off by default). With it on, past periods read
 daily_usage (usage_date, the IST day, between the period's first and last
 day). Both tables carry the same unit and cost columns; only the time
 column, the total-cost column and the unit-label column are named
 differently.
+
+Usage rows only: the Budget and Applications tabs show billed usage, so
+request rows (one per request: a status, no units or cost — see UsageEvent)
+are left out, and so are daily_usage groups made only of them (requests that
+failed before anything was billed).
 """
 from __future__ import annotations
 
@@ -14,14 +19,14 @@ from dataclasses import dataclass
 from datetime import datetime, time as day_start, timezone
 from typing import Any, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import Boolean, func, literal_column, not_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.config import settings
 from app.models.pay_per_use.daily_usage import DailyUsage
-from app.models.pay_per_use.usage_event import UsageEvent
+from app.models.pay_per_use.usage_event import REQUEST_ROWS, UsageEvent
 from app.utils.usage_period import IST, UsagePeriod
 
 
@@ -29,7 +34,7 @@ from app.utils.usage_period import IST, UsagePeriod
 class PeriodSource:
     model: Any                      # UsageEvent or DailyUsage
     time_column: ColumnElement      # occurred_at / usage_date
-    in_period: ColumnElement        # WHERE clause selecting the period's rows
+    in_period: ColumnElement        # WHERE clause selecting the period's usage rows
     total_cost: ColumnElement       # total_cost / cost (generated)
     unit: ColumnElement             # unit_of_measurement / unit
 
@@ -43,14 +48,18 @@ def period_source(period: UsagePeriod) -> PeriodSource:
         return PeriodSource(
             model=DailyUsage,
             time_column=DailyUsage.usage_date,
-            in_period=DailyUsage.usage_date.between(period.from_date, period.to_date),
+            # daily_usage rows carry no status: a group made only of request
+            # rows (REQUEST_ROWS) is one with no units and no cost.
+            in_period=DailyUsage.usage_date.between(period.from_date, period.to_date)
+            & ((DailyUsage.total_units > 0) | (DailyUsage.cost > 0)),
             total_cost=DailyUsage.cost,
             unit=DailyUsage.unit,
         )
     return PeriodSource(
         model=UsageEvent,
         time_column=UsageEvent.occurred_at,
-        in_period=(UsageEvent.occurred_at >= period.start) & (UsageEvent.occurred_at < period.end),
+        in_period=(UsageEvent.occurred_at >= period.start) & (UsageEvent.occurred_at < period.end)
+        & not_(literal_column(f"({REQUEST_ROWS})", Boolean)),
         total_cost=UsageEvent.total_cost,
         unit=UsageEvent.unit_of_measurement,
     )

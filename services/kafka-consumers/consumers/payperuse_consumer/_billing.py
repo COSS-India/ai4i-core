@@ -620,6 +620,10 @@ async def record_usage_event(db: AsyncSession, event: UsageEvent) -> bool:
         return False
 
 
+AI_INFERENCE_SPAN = "ai-inference"
+REQUEST_SPAN = "request"
+
+
 def _get_billing_data(message: Message) -> Optional[dict]:
     payload_bytes = message.value()
     logger.debug(
@@ -640,10 +644,11 @@ def _get_billing_data(message: Message) -> Optional[dict]:
         logger.error("Failed to parse Kafka message as JSON: %s", exc)
         return None
 
-    # Only process ai-inference spans — the model and request spans are noise for billing.
+    # ai-inference spans are billed; request spans give each request its
+    # usage_events row (see handler._record_request). model spans aren't used.
     span_name = data.get("name", "")
-    if span_name != "ai-inference":
-        logger.debug("Skipping non-billing span | span_name=%r offset=%d", span_name, message.offset())
+    if span_name not in (AI_INFERENCE_SPAN, REQUEST_SPAN):
+        logger.debug("Skipping span | span_name=%r offset=%d", span_name, message.offset())
         return None
 
     return data
