@@ -1,16 +1,21 @@
 """usage_events / daily_usage reads behind the Usage Dashboard's metering tabs
 (Overview, Model consumption) — see UsageEventsMeteringService.
 
-Requests and failures are counted from request rows only (status_code set:
-one per API-key request, written from its request span), units from usage
-rows (see UsageEvent), so a request is counted once whatever usage rows it
-has. A request is failed when its status is 400 or above.
+Requests and failures are counted from request rows (one per API-key
+request, written from its request span: one row, one request — not distinct
+correlation ids, which a client can reuse across calls via X-Correlation-ID),
+units from usage rows (see UsageEvent), so a request is counted once whatever
+usage rows it has. Rows from before the cut-over (PRE_CUTOVER_ROWS) are
+counted by distinct correlation id, as the request they stand in for may have
+several. A request is failed when its status is 400 or above.
 
 Whole IST days read the daily_usage rollup when it's enabled and has the day;
 everything else — today, partial days at a range's edges, days not rolled up
 yet — reads usage_events, so a day missing from the rollup is never shown as
-zero. Both give the same figures: the rollup counts requests the same way
-(rows with a status_code, distinct correlation ids).
+zero. The rollup counts each day's requests as distinct correlation ids
+among rows with a status_code, so until it counts request rows one per row
+too, a client that reuses one X-Correlation-ID within a day is counted once
+there (rollup on only; off by default).
 """
 from __future__ import annotations
 
@@ -24,9 +29,19 @@ from typing import Any, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.pay_per_use.usage_event import REQUEST_ROWS
+from app.models.pay_per_use.usage_event import PRE_CUTOVER_ROWS, REQUEST_ROWS
 from app.repositories.pay_per_use.period_usage import daily_rollup_enabled
 from app.utils.usage_period import IST
+
+# Requests and failed requests among usage_events rows (see the module docstring).
+_REQUESTS = (
+    f"count(*) FILTER (WHERE {REQUEST_ROWS})"
+    f" + count(DISTINCT correlation_id) FILTER (WHERE {PRE_CUTOVER_ROWS})"
+)
+_FAILED = (
+    f"count(*) FILTER (WHERE {REQUEST_ROWS} AND status_code >= 400)"
+    f" + count(DISTINCT correlation_id) FILTER (WHERE {PRE_CUTOVER_ROWS} AND status_code >= 400)"
+)
 
 # Grouping dimensions: (daily_usage expression, usage_events expression).
 _GROUPS = {
@@ -174,8 +189,7 @@ class MeteringUsageRepository:
             group_clause = f" GROUP BY {', '.join(exprs)}" if exprs else ""
             rows = await self._all(
                 f"SELECT {select_cols}"
-                " count(DISTINCT correlation_id) FILTER (WHERE status_code IS NOT NULL) AS requests,"
-                " count(DISTINCT correlation_id) FILTER (WHERE status_code >= 400) AS failed,"
+                f" {_REQUESTS} AS requests, {_FAILED} AS failed,"
                 " sum(total_units) AS units, sum(cached_input_units) AS cached_units,"
                 " sum(output_units) AS output_units"
                 f" FROM usage_events WHERE ({' OR '.join(ranges)}){where}{group_clause}",
@@ -204,8 +218,7 @@ class MeteringUsageRepository:
         where = self._filters(tenant_id, type_ids, params)
         rows = await self._all(
             "SELECT floor(extract(epoch FROM occurred_at - :start) / :step)::int AS bucket,"
-            " count(DISTINCT correlation_id) FILTER (WHERE status_code IS NOT NULL) AS requests,"
-            " count(DISTINCT correlation_id) FILTER (WHERE status_code >= 400) AS failed"
+            f" {_REQUESTS} AS requests, {_FAILED} AS failed"
             f" FROM usage_events WHERE occurred_at >= :start AND occurred_at < :end{where}"
             " GROUP BY 1",
             params,

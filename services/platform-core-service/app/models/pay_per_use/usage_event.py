@@ -20,8 +20,14 @@ from app.models import Base
 UNITS = Numeric()
 MONEY = Numeric(18, 6)
 
-# A request row (see UsageEvent): has a status, carries no units.
+# The one definition of a request row (see UsageEvent): a status, no units.
+# Every reader that tells request rows from usage rows builds on this.
 REQUEST_ROWS = "status_code IS NOT NULL AND total_units = 0"
+# A usage row written before request rows existed: it carries its request's
+# status (200) and stands in for the request. Several can share a request
+# (per-chunk rows), so these are counted by distinct correlation id, while
+# request rows are counted one per row.
+PRE_CUTOVER_ROWS = "status_code IS NOT NULL AND total_units > 0"
 
 
 class UsageEvent(Base):

@@ -339,15 +339,15 @@ async def _resolve_tenant_scope(
         scope_tenant_name = None
 
     # Security backstop: a tenant admin (role 5) MUST carry a tenant context —
-    # the gateway injects X-Tenant-Name from the JWT-resolved tenant. Without
-    # it, scope_tenant_name is None and the queries below would run unscoped,
-    # leaking platform-wide aggregates. Refuse rather than widen scope
-    # (defense-in-depth; the gateway should never let this through, but the
-    # backstop guarantees it).
-    if not is_admin and scope_tenant_name is None:
+    # the gateway injects X-Tenant-Id and X-Tenant-Name from the JWT-resolved
+    # tenant. Without either, the queries below would run unscoped, leaking
+    # platform-wide aggregates: the usage_events source filters on the id,
+    # Prometheus on the name. Refuse rather than widen scope (defense-in-depth;
+    # the gateway should never let this through, but the backstop guarantees it).
+    if not is_admin and (scope_tenant is None or scope_tenant_name is None):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Tenant admin requires a tenant context (X-Tenant-Name).",
+            detail="Tenant admin requires a tenant context (X-Tenant-Id and X-Tenant-Name).",
         )
 
     return scope_tenant, scope_tenant_name

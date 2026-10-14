@@ -283,3 +283,38 @@ class TestPreviousWindowCoverage:
         rt = await _svc(session).request_total(True, None, None, _day_range(_D3), tenant_id=str(_TENANT))
         assert rt["total_requests"]["count"] == 1
         assert rt["total_requests"]["previous_count"] is None
+
+
+@pytest.mark.asyncio
+class TestRequestRowCounting:
+    """Request rows are counted one per row, not by distinct correlation id:
+    a client can reuse one X-Correlation-ID across calls, and each call is
+    still a request (as Prometheus counted). Rows from before the cut-over
+    stand in for their request and are still counted by correlation id."""
+
+    async def test_reused_correlation_id_counts_every_request(self, session, rollup_off):
+        llm = await _llm_id(session)
+        await _add_service(session)
+        base = _mid(_D3) + timedelta(hours=1)
+        await _request(session, "mue-reused", base, 200, llm)
+        await _request(session, "mue-reused", base + timedelta(seconds=30), 502, llm)
+        rt = await _svc(session).request_total(True, None, None, _day_range(_D3), tenant_id=str(_TENANT))
+        assert (rt["total_requests"]["count"], rt["failed_requests"]["count"]) == (2, 1)
+
+        graph = await _svc(session).request_volume_chart(_day_range(_D3), None, tenant_id=str(_TENANT))
+        succ, fail = (s.points for s in graph.series)
+        assert (succ[1].value, fail[1].value) == (1, 1)
+
+    async def test_pre_cutover_rows_count_once_per_request(self, session, rollup_off):
+        """Old-style rows (a status and units): a chunked request's two rows
+        are one request."""
+        llm = await _llm_id(session)
+        await _add_service(session)
+        base = _mid(_D3) + timedelta(hours=2)
+        for i, units in enumerate((40, 60)):
+            await session.execute(text(
+                "INSERT INTO usage_events (correlation_id, occurred_at, tenant_id, service_id, inference_type_id,"
+                " task_type, status_code, total_units) VALUES ('mue-old', :at, :t, :s, :ty, 'llm', 200, :u)"
+            ), {"at": base + timedelta(seconds=i), "t": _TENANT, "s": _SERVICE, "ty": llm, "u": units})
+        rt = await _svc(session).request_total(True, None, None, _day_range(_D3), tenant_id=str(_TENANT))
+        assert rt["total_requests"]["count"] == 1

@@ -55,8 +55,17 @@ logger = logging.getLogger(__name__)
 _DAY_SECONDS = 86_400
 
 
-def _tenant_pk(tenant_id) -> Optional[int]:
-    return int(tenant_id) if tenant_id is not None and str(tenant_id).isdigit() else None
+def _tenant_pk(tenant_id, tenant: Optional[str] = None) -> Optional[int]:
+    """The tenant filter for a query: the id as an int, or None for no filter
+    (platform-wide). Fails closed: a scope that names a tenant but carries no
+    usable id raises instead of reading as "no filter" — these queries filter
+    on the id only, so dropping it would widen a tenant's view to every
+    tenant's totals."""
+    if tenant_id is not None and str(tenant_id).isdigit():
+        return int(tenant_id)
+    if tenant_id is not None or tenant:
+        raise PermissionError(f"tenant scope without a usable tenant id (tenant_id={tenant_id!r})")
+    return None
 
 
 class UsageEventsMeteringService(MeteringService):
@@ -146,7 +155,7 @@ class UsageEventsMeteringService(MeteringService):
         The previous figures are None when request rows don't cover that span,
         as Prometheus reported them past its retention."""
         start, end, shift = self._bounds(time_range)
-        tid, type_ids = _tenant_pk(tenant_id), await self._type_ids(task_types)
+        tid, type_ids = _tenant_pk(tenant_id, tenant), await self._type_ids(task_types)
         seconds = max(1, round((end - start).total_seconds()))
         cur = await self._counts(start, end, tid, type_ids)
         prev_start, prev_end = start - timedelta(seconds=shift), end - timedelta(seconds=shift)
@@ -182,7 +191,7 @@ class UsageEventsMeteringService(MeteringService):
         step, n_full, tail = _range_chart_buckets(window)
         step_secs = _step_seconds(step)
         n_buckets = n_full + (1 if tail else 0)
-        tid, type_ids = _tenant_pk(tenant_id), await self._type_ids(task_types)
+        tid, type_ids = _tenant_pk(tenant_id, tenant), await self._type_ids(task_types)
 
         succ = [0] * n_buckets
         fail = [0] * n_buckets
@@ -319,7 +328,7 @@ class UsageEventsMeteringService(MeteringService):
     ) -> Optional[datetime]:
         """When the institution's (all institutions' when none) API-key usage
         begins — one half of /overview's first_usage_at."""
-        return await self._usage.first_usage(_tenant_pk(tenant_id))
+        return await self._usage.first_usage(_tenant_pk(tenant_id, tenant))
 
     # ── Model consumption ─────────────────────────────────────────────────────
 
@@ -339,7 +348,7 @@ class UsageEventsMeteringService(MeteringService):
         unit_map = self._units   # {catalogue name: unit}, from the same catalogue read
         rows = await self._usage.aggregate(
             start, end, ("service_id", "inference_type_id"),
-            tenant_id=_tenant_pk(tenant_id), type_ids=await self._type_ids(task_types),
+            tenant_id=_tenant_pk(tenant_id, tenant), type_ids=await self._type_ids(task_types),
         )
 
         total_rows: list[dict] = []

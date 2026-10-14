@@ -19,14 +19,14 @@ from dataclasses import dataclass
 from datetime import datetime, time as day_start, timezone
 from typing import Any, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import Boolean, func, literal_column, not_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.config import settings
 from app.models.pay_per_use.daily_usage import DailyUsage
-from app.models.pay_per_use.usage_event import UsageEvent
+from app.models.pay_per_use.usage_event import REQUEST_ROWS, UsageEvent
 from app.utils.usage_period import IST, UsagePeriod
 
 
@@ -48,6 +48,8 @@ def period_source(period: UsagePeriod) -> PeriodSource:
         return PeriodSource(
             model=DailyUsage,
             time_column=DailyUsage.usage_date,
+            # daily_usage rows carry no status: a group made only of request
+            # rows (REQUEST_ROWS) is one with no units and no cost.
             in_period=DailyUsage.usage_date.between(period.from_date, period.to_date)
             & ((DailyUsage.total_units > 0) | (DailyUsage.cost > 0)),
             total_cost=DailyUsage.cost,
@@ -57,7 +59,7 @@ def period_source(period: UsagePeriod) -> PeriodSource:
         model=UsageEvent,
         time_column=UsageEvent.occurred_at,
         in_period=(UsageEvent.occurred_at >= period.start) & (UsageEvent.occurred_at < period.end)
-        & ~(UsageEvent.status_code.isnot(None) & (UsageEvent.total_units == 0) & (UsageEvent.total_cost == 0)),
+        & not_(literal_column(f"({REQUEST_ROWS})", Boolean)),
         total_cost=UsageEvent.total_cost,
         unit=UsageEvent.unit_of_measurement,
     )
