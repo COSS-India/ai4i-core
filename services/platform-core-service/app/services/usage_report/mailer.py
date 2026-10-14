@@ -54,7 +54,6 @@ def summary_lines(data: ReportData) -> list[str]:
         f" ({fmt.signed_pct(data.requests_change_pct)})" if data.requests_change_pct is not None else ""
     )
     return [
-        f"Platform health: {fmt.pct(data.error_rate_pct)} error rate.",
         f"Model portfolio: {fmt.count(data.total_models)} Models; "
         f"{fmt.count(data.active_models)} were used {data.period.in_phrase}.",
         f"Adoption: {fmt.count(data.active_institutions)} of {fmt.count(data.total_institutions)} "

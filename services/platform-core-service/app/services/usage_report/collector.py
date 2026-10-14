@@ -107,10 +107,9 @@ class PeriodSpend:
 class ReportData:
     period: ReportPeriod
     generated_at: datetime
-    # Platform health
+    # Requests
     total_requests: Optional[int] = None
     prev_total_requests: Optional[int] = None
-    server_errors: Optional[int] = None
     # Model portfolio
     total_models: Optional[int] = None
     models_by_task: dict[str, int] = field(default_factory=dict)
@@ -136,12 +135,6 @@ class ReportData:
     def days(self) -> Optional[int]:
         """Whole days in the period; None for a sub-day period."""
         return self.period.day_count
-
-    @property
-    def error_rate_pct(self) -> Optional[float]:
-        if self.server_errors is None or not self.total_requests:
-            return None
-        return self.server_errors / self.total_requests * 100
 
     @property
     def requests_change_pct(self) -> Optional[float]:
@@ -199,7 +192,6 @@ class UsageReportCollector:
         rng = _range(period)
 
         data.total_requests = await self._try(data, "total_requests", self._metering.inference_request_total(rng))
-        data.server_errors = await self._try(data, "error_rate", self._metering.server_error_total(rng))
         if prev_retained:
             data.prev_total_requests = await self._try(
                 data, "requests_vs_previous", self._metering.inference_request_total(_range(prev))

@@ -126,17 +126,6 @@ class TestInferenceRequestTotal:
             await svc.inference_request_total(_rng())
 
 
-class TestServerErrorTotal:
-    @pytest.mark.asyncio
-    async def test_counts_only_5xx_api_key_inference(self):
-        svc, client = _metering(scalar=73.6)
-        assert await svc.server_error_total(_rng()) == 74
-        promql = client.scalar.call_args.args[0]
-        assert 'status_code=~"5.."' in promql and 'auth_type=~"api_key|"' in promql
-        # Not the dashboard's non-2xx "failed" selector, which would include 4xx.
-        assert "2.." not in promql
-
-
 class TestActiveTenantIds:
     @pytest.mark.asyncio
     async def test_filters_to_active_tenants_and_drops_unlabelled_rows(self):
@@ -217,7 +206,6 @@ def _fake_metering(**overrides):
     m = MagicMock(spec=MeteringService)
     m.refresh_retention = AsyncMock()
     m.inference_request_total = AsyncMock(side_effect=lambda rng: 1000 if rng.start == SEP_START else 800)
-    m.server_error_total = AsyncMock(return_value=4)
     m.registry_model_count = AsyncMock(return_value=10)
     m.registry_model_counts_by_task = AsyncMock(return_value={"nmt": 6, "asr": 3, "language_detection": 1})
     m.model_breakdown = AsyncMock(return_value={
@@ -292,8 +280,7 @@ class TestCollector:
         collector, _, _ = self._collector()
         d = await collector.collect(SEP, now=AFTER_SEP)
         assert d.failed == []
-        assert (d.total_requests, d.prev_total_requests, d.server_errors) == (1000, 800, 4)
-        assert d.error_rate_pct == pytest.approx(0.4)
+        assert (d.total_requests, d.prev_total_requests) == (1000, 800)
         assert d.requests_change_pct == pytest.approx(25.0)
         assert (d.total_models, d.active_models, d.inactive_models) == (10, 2, 8)
         assert d.models_by_task == {"NMT": 6, "ASR": 3, "Language Detection": 1}
@@ -339,12 +326,12 @@ class TestCollector:
 
     @pytest.mark.asyncio
     async def test_one_failing_figure_is_marked_and_the_rest_still_load(self, retention_90d, repo):
-        metering = _fake_metering(server_error_total=AsyncMock(side_effect=RuntimeError("prom 502")))
+        metering = _fake_metering(tenant_task_usage=AsyncMock(side_effect=RuntimeError("prom 502")))
         auth = _FakeAuthDB(tenants=self.TENANTS, fail_on="FROM applications")
         collector, auth, core = self._collector(metering=metering, auth=auth)
         d = await collector.collect(SEP, now=AFTER_SEP)
-        assert set(d.failed) == {"error_rate", "total_applications"}
-        assert d.error_rate_pct is None and d.total_applications is None
+        assert set(d.failed) == {"institution_usage", "total_applications"}
+        assert d.top_institutions == [] and d.total_applications is None
         assert d.total_requests == 1000 and d.active_institutions == 2
         auth.rollback.assert_awaited()  # aborted transaction cleared before the next query
         core.rollback.assert_awaited()
@@ -466,17 +453,17 @@ class _BudgetAuthDB(_FakeAuthDB):
 
 class TestBudgetAgainstTheRealRepository:
     @pytest.mark.asyncio
-    async def test_budget_figure_loads_through_the_real_get_tenant_budgets(self, repo, monkeypatch):
+    async def test_budget_figure_loads_through_the_real_get_tenant_budgets(self, retention_90d, monkeypatch):
         # Staging (AI4IDS-3278): the collector passed a leftover billing_month
         # (None) that get_tenant_budgets no longer takes → TypeError → "figures
         # failed to load: budget" → status=not_ready and no email to anyone.
+        # No repo fixture: it stubs get_tenant_budgets, the method under test.
         from app.repositories.pay_per_use.usage_repository import UsageRepository
 
-        monkeypatch.undo()  # drop the repo fixture's stubs; keep only what this test needs
-        monkeypatch.setattr("app.utils.metering_promql_builder.retention_days", lambda: 90)
-        base = UsageRepository
-        monkeypatch.setattr(base, "get_usage_data_from", AsyncMock(return_value=repo.data_from))
-        monkeypatch.setattr(base, "get_period_usage", AsyncMock(return_value=repo.period_rows))
+        for name, value in (("get_usage_data_from", SEP_START - (SEP_END - SEP_START)),
+                            ("get_period_usage", [SimpleNamespace(cost=Decimal("30"))])):
+            monkeypatch.setattr(UsageRepository, name, create_autospec(
+                getattr(UsageRepository, name), side_effect=lambda *a, v=value, **k: v))
 
         auth = _BudgetAuthDB(
             allocated={1: Decimal(100), 2: Decimal(50)},
@@ -497,6 +484,9 @@ class TestBudgetAgainstTheRealRepository:
         assert (b.allocated, b.spent, b.remaining) == (Decimal(150), Decimal(135), Decimal(15))
         assert (b.exhausted, b.nearing_limit) == (1, 1)
         assert [(s.name, s.spent) for s in b.top_by_spend] == [("Ministry A", Decimal(85)), ("Ministry B", Decimal(50))]
+        # Only UsageRepository is patched here; conftest's autouse stubs stay in place.
+        from app.services.pay_per_use import inference_type_cache
+        assert inference_type_cache.get_all.__name__ == "_stub_get_all"
 
 
 # ── recipients ───────────────────────────────────────────────────────────────
@@ -525,7 +515,7 @@ class TestUsageViewerEmails:
 
 def _full_data() -> ReportData:
     d = ReportData(period=SEP, generated_at=AFTER_SEP)
-    d.total_requests, d.prev_total_requests, d.server_errors = 18_400_000, 15_600_000, 73_600
+    d.total_requests, d.prev_total_requests = 18_400_000, 15_600_000
     d.total_models, d.active_models = 42, 31
     d.models_by_task = {"NMT": 12, "ASR": 9}
     d.top_models = [RankedModel("IndicTrans2", "NMT", 22.0)]
@@ -617,7 +607,6 @@ class TestRenderEmail:
         assert msg.subject == "AI Switch – Monthly programme report – September 2026"
         lines = mailer.summary_lines(_full_data())
         assert lines == [
-            "Platform health: 0.4% error rate.",
             "Model portfolio: 42 Models; 31 were used in September.",
             "Adoption: 26 of 36 Institutions were live (+3 vs August). 18.4M requests were served (+17.9%).",
         ]
@@ -636,9 +625,16 @@ class TestRenderEmail:
 
     def test_failed_figures_show_na_and_drop_the_comparison(self, portal):
         lines = mailer.summary_lines(ReportData(period=SEP, generated_at=AFTER_SEP))
-        assert "N/A error rate" in lines[0]
-        assert "N/A of N/A Institutions were live." in lines[2]
-        assert " vs " not in lines[2]
+        assert "N/A Models; N/A were used" in lines[0]
+        assert "N/A of N/A Institutions were live." in lines[1]
+        assert " vs " not in lines[1]
+
+    def test_platform_health_is_not_in_the_email(self, portal):
+        # Removed on request: the body opened with "Platform health: 0.4% error rate."
+        msg = mailer.render_email(_full_data(), "viewer@x.gov.in")
+        for body in (msg.html_body, msg.text_body):
+            assert "Platform health" not in body and "error rate" not in body
+            assert body.index("Model portfolio:") < body.index("Adoption:")
 
     def test_sender_name_is_escaped_in_html(self, portal, monkeypatch):
         monkeypatch.setattr("app.services.usage_report.mailer.settings.usage_report_sender_name",
@@ -740,13 +736,20 @@ def _pages(html: str) -> int:
 class TestReportHtml:
     def test_real_values_and_placeholders(self):
         html = render_report_html(_full_data())
-        for real in ("September 2026", "0.4%", "42", "31 active", "11 inactive", "36 total",
+        for real in ("September 2026", "42", "31 active", "11 inactive", "36 total",
                      "+2 new this period", "84 total", "18.4M", "+17.9%", "6.1 L",
                      "₹500", "₹285", "₹6.3 Cr", "Ministry A", "IndicTrans2"):
             assert real in html, real
         # Availability, P95, fallback rate and providers are not tracked, so not shown.
         for untracked in ("Availability", "Latency P95", "Fallback rate", "Providers"):
             assert untracked not in html, untracked
+
+    def test_platform_health_section_is_removed_and_sections_renumbered(self):
+        # Removed on request: section 1 was "Platform Health" with an "Error rate (5xx)" card.
+        html = render_report_html(_full_data())
+        assert "Platform Health" not in html and "Error rate" not in html
+        headings = [h.split("</h2>")[0] for h in html.split("<h2>")[1:]]
+        assert headings == ["1 · Model Portfolio", "2 · Adoption Ratio", "3 · Budget Utilisation"]
 
     def test_untrusted_names_are_escaped(self):
         # An institution can be named by an admin; the name must stay text, not markup.
@@ -901,7 +904,7 @@ class TestSendScript:
     @pytest.mark.asyncio
     async def test_partial_figures_send_nothing_unless_allowed(self, wired):
         script, state = wired
-        state.data.failed = ["error_rate"]
+        state.data.failed = ["budget"]
         assert await script.run(script._parse_args(["--period", "2026-09"])) == script.EXIT_FAILED
         state.deliver.assert_not_awaited()
         assert await script.run(script._parse_args(["--period", "2026-09", "--allow-partial"])) == script.EXIT_OK

@@ -65,20 +65,8 @@
   <div class="eyebrow">{{ report_title | upper }}</div>
   <h1>{{ period_label }}</h1>
 
-  {# ── 1 · Platform Health ── #}
-  <h2>1 · Platform Health</h2>
-  <div class="row" style="width: 50mm">
-    {% for c in health_cards %}
-    <div class="card">
-      <div class="label">{{ c.label }}</div>
-      {% if c.value is none %}<div class="value na">—</div><div class="note">{{ c.note or not_tracked }}</div>
-      {% else %}<div class="value">{{ c.value }}</div><div class="note">{{ c.note or "" }}</div>{% endif %}
-    </div>
-    {% endfor %}
-  </div>
-
-  {# ── 2 · Model Portfolio ── #}
-  <h2>2 · Model Portfolio</h2>
+  {# ── 1 · Model Portfolio ── #}
+  <h2>1 · Model Portfolio</h2>
   <div class="row">
     <div class="card" style="flex: 0 0 22mm">
       <div class="label">Total models</div><div class="value">{{ models.total }}</div><div class="note">Versions</div>
@@ -105,8 +93,8 @@
   </div>
   {% if models.by_task %}<div class="muted-line">Registered by task type: {{ models.by_task }}</div>{% endif %}
 
-  {# ── 3 · Adoption Ratio ── #}
-  <h2>3 · Adoption Ratio</h2>
+  {# ── 2 · Adoption Ratio ── #}
+  <h2>2 · Adoption Ratio</h2>
   <div class="row">
     <div class="panel">
       <div class="head"><span class="title">Institutions · {{ adoption.institutions_total }} total</span>
@@ -140,8 +128,8 @@
     </div>
   </div>
 
-  {# ── 4 · Budget Utilisation ── #}
-  <h2>4 · Budget Utilisation</h2>
+  {# ── 3 · Budget Utilisation ── #}
+  <h2>3 · Budget Utilisation</h2>
   <div class="row">
     {% for c in budget.cards %}
     <div class="card">

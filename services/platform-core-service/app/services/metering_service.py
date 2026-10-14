@@ -1925,17 +1925,6 @@ class MeteringService:
         sel = build_base_selectors(inference_only=True, auth_type=API_KEY_AUTH_TYPE)
         return round(await self._client.scalar(sum_over_window(f"{_METRIC}{sel}", time_range)))
 
-    async def server_error_total(self, time_range: TimeRange) -> int:
-        """5xx inference responses in the range — the platform's own failures.
-
-        request_total's failed_requests is every non-2xx, so it also counts
-        4xx client errors (bad input, auth, quota), which the report's error
-        rate must not."""
-        sel = build_base_selectors(
-            inference_only=True, extra=['status_code=~"5.."'], auth_type=API_KEY_AUTH_TYPE
-        )
-        return round(await self._client.scalar(sum_over_window(f"{_METRIC}{sel}", time_range)))
-
     async def active_tenant_ids(self, time_range: TimeRange) -> set[str]:
         """Ids of currently-ACTIVE tenants with at least one request in the
         range — the population active_tenants() counts, as ids, so two
