@@ -100,7 +100,7 @@
       <div class="head"><span class="title">Institutions · {{ adoption.institutions_total }} total</span>
         {% if adoption.institutions_new %}<span class="new">+{{ adoption.institutions_new }} new this period</span>{% endif %}</div>
       <div class="stack">{% for s in adoption.institution_segments %}<div class="{{ s.css }}" style="width: {{ s.width }}%">{{ s.count }}</div>{% endfor %}</div>
-      <div class="legend"><span class="seg-active">active</span><span class="seg-other">not active this period</span>{% if adoption.dormant_tracked %}<span class="seg-dormant">dormant (2+ periods)</span>{% endif %}</div>
+      <div class="legend"><span class="seg-active">active</span><span class="seg-other">not active this period</span>{% if adoption.dormant_tracked %}<span class="seg-dormant">dormant</span>{% endif %}</div>
     </div>
     <div class="panel">
       <div class="head"><span class="title">Applications · {{ adoption.applications_total }} total</span><span class="note">{{ adoption.applications_active_pct }}</span></div>

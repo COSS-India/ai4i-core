@@ -789,6 +789,11 @@ class TestReportHtml:
             assert removed not in html, removed
         assert "health_cards" not in report_context(_full_data())
 
+    def test_dormant_legend_is_just_dormant(self):
+        html = render_report_html(_full_data())
+        assert '<span class="seg-dormant">dormant</span>' in html
+        assert "2+ periods" not in html
+
     def test_untrusted_names_are_escaped(self):
         # An institution can be named by an admin; the name must stay text, not markup.
         d = _full_data()
