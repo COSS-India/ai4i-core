@@ -3,6 +3,7 @@ recipients, email/attachment, PDF and the send script."""
 from __future__ import annotations
 
 import email
+import logging
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -886,6 +887,18 @@ class TestSendScript:
         assert await script.run(script._parse_args(["--scheduled", "--frequency", "weekly"])) == code
         assert run.await_args.args[0] == "weekly"
         state.deliver.assert_not_awaited()  # the manual path is not used
+
+    @pytest.mark.asyncio
+    async def test_scheduled_busy_is_logged_as_a_skip_not_a_send(self, wired, monkeypatch, caplog):
+        from app.services.usage_report import scheduler
+
+        script, _ = wired
+        monkeypatch.setattr(scheduler, "run_scheduled_report",
+                            AsyncMock(return_value=scheduler.RunResult("busy", "monthly")))
+        with caplog.at_level(logging.INFO, logger=script.logger.name):
+            assert await script.run(script._parse_args(["--scheduled"])) == script.EXIT_OK
+        [record] = [r for r in caplog.records if r.name == script.logger.name and "Scheduled usage report" in r.getMessage()]
+        assert record.levelno == logging.WARNING and "SKIPPED" in record.getMessage()
 
     @pytest.mark.asyncio
     async def test_scheduled_rejects_manual_options(self, wired):

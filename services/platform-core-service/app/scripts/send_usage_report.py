@@ -115,7 +115,11 @@ async def run(args: argparse.Namespace) -> int:
             except (ValueError, RuntimeError) as exc:
                 logger.error("%s", exc)
                 return EXIT_FAILED
-            logger.info("Scheduled usage report: %s", result.as_dict())
+            if result.status == BUSY:
+                logger.warning("Scheduled usage report SKIPPED: another run is in progress and sends this "
+                               "period; do not re-run: %s", result.as_dict())
+            else:
+                logger.info("Scheduled usage report: %s", result.as_dict())
             ok = result.status in (NOTHING_DUE, BUSY) or (result.status == DONE and not result.failed)
             return EXIT_OK if ok else EXIT_FAILED
         try:

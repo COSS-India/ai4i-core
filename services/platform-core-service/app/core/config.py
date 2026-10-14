@@ -225,7 +225,9 @@ class CoreSettings(BaseSettings):
     # Attachment file name: "<prefix>_<period>.pdf".
     usage_report_filename_prefix: Optional[str] = None
     # Scheduled Usage Viewer report (POST /internal/usage-report/run, triggered
-    # daily by the pyjob `usage_report` CronJob). Its frequency is set only on
+    # ONCE PER PERIOD by the pyjob `usage_report` CronJob — no send log in this
+    # release, so every run emails everyone again: a daily cron with a monthly
+    # frequency resends last month every day). Its frequency is set only on
     # that job (USAGE_REPORT_FREQUENCY). Allows frequencies under a day (30m,
     # 2h …) — test environments only, so a config slip can't email officials
     # every half hour.
