@@ -329,22 +329,19 @@ class OpenAIProxyService:
         # ── PII guardrail: build context + mask input ─────────────────────
         app_id = get_application_id()
         guardrail_ctx = GuardrailContext()
-        original_payload = payload
         if app_id:
             try:
                 guardrail_ctx = await build_guardrail_context(app_id)
             except GuardrailError as exc:
                 logger.error("PII policy evaluation failed, blocking request: %s", exc)
-                return 400, {"detail": "Request blocked: PII policy could not be evaluated"}
+                return 503, {"error": {"message": "Request blocked: PII policy could not be evaluated", "type": "guardrail_error"}}
             if guardrail_ctx.active:
                 logger.info("══ GUARDRAIL REQUEST (app_id=%s) ══════════════", app_id)
-                logger.info("Payload BEFORE masking: %s", payload.get("messages"))
                 try:
                     payload = await asyncio.to_thread(apply_input_guardrail, payload, guardrail_ctx)
                 except GuardrailError as exc:
                     logger.error("PII input masking failed, blocking request: %s", exc)
-                    return 400, {"detail": "Request blocked: PII policy enforcement failed"}
-                logger.info("Payload AFTER  masking: %s", payload.get("messages"))
+                    return 503, {"error": {"message": "Request blocked: PII policy enforcement failed", "type": "guardrail_error"}}
                 logger.info("Scope: %s", guardrail_ctx.scopes)
         # ─────────────────────────────────────────────────────────────────
 
@@ -410,18 +407,12 @@ class OpenAIProxyService:
 
         # ── PII guardrail: process response + fire-and-forget audit log ───
         if guardrail_ctx.active:
-            # Capture LLM's raw response (mask tokens intact) before unmasking.
-            audit_response = body
             if status_code == 200 and isinstance(body, dict):
                 try:
                     choices = body.get("choices") or []
                     if choices and isinstance((choices[0].get("message") or {}).get("content"), str):
                         content = choices[0]["message"]["content"]
-                        logger.info("══ GUARDRAIL RESPONSE ══════════════════════════")
-                        logger.info("LLM response BEFORE processing : %s", content)
-                        logger.info("Token→Original map             : %s", guardrail_ctx.token_to_original)
                         content = await asyncio.to_thread(process_response_text, content, guardrail_ctx)
-                        logger.info("LLM response AFTER  processing : %s", content)
                         body = {
                             **body,
                             "choices": [
@@ -435,7 +426,7 @@ class OpenAIProxyService:
                         ctx=guardrail_ctx,
                         trace_id=get_trace_id(),
                         model_request=payload,
-                        response=audit_response,
+                        response={},
                         app_id=app_id,
                         status_code=500,
                     )
@@ -444,7 +435,7 @@ class OpenAIProxyService:
                 ctx=guardrail_ctx,
                 trace_id=get_trace_id(),
                 model_request=payload,
-                response=audit_response,
+                response=body,
                 app_id=app_id,
                 status_code=status_code,
             )
@@ -607,21 +598,20 @@ class OpenAIProxyService:
         # ── PII guardrail: mask input before opening stream ───────────────
         app_id = get_application_id()
         guardrail_ctx = GuardrailContext()
-        original_payload = payload
         if app_id:
             try:
                 guardrail_ctx = await build_guardrail_context(app_id)
             except GuardrailError as exc:
                 logger.error("PII policy evaluation failed, blocking stream request: %s", exc)
                 model_ctx = {"service_id": service_id, "model_name": model_name}
-                return "error", 400, {"detail": "Request blocked: PII policy could not be evaluated"}, model_ctx
+                return "error", 503, {"error": {"message": "Request blocked: PII policy could not be evaluated", "type": "guardrail_error"}}, model_ctx
             if guardrail_ctx.active:
                 try:
                     payload = await asyncio.to_thread(apply_input_guardrail, payload, guardrail_ctx)
                 except GuardrailError as exc:
                     logger.error("PII input masking failed, blocking stream request: %s", exc)
                     model_ctx = {"service_id": service_id, "model_name": model_name}
-                    return "error", 400, {"detail": "Request blocked: PII policy enforcement failed"}, model_ctx
+                    return "error", 503, {"error": {"message": "Request blocked: PII policy enforcement failed", "type": "guardrail_error"}}, model_ctx
         # ─────────────────────────────────────────────────────────────────
 
         payload = self._with_include_usage(payload)
@@ -697,20 +687,11 @@ class OpenAIProxyService:
                                 }],
                             }
                             yield f"data: {json.dumps(synthetic)}\n\n"
-                            # Audit with masked content (mask tokens intact, not the unmasked reply).
-                            audit_synthetic = {
-                                **last_chunk,
-                                "choices": [{
-                                    **choices[0],
-                                    "delta": {"content": raw_content, "role": "assistant"},
-                                    "finish_reason": "stop",
-                                }],
-                            }
                             schedule_audit_log(
                                 ctx=guardrail_ctx,
                                 trace_id=get_trace_id(),
                                 model_request=payload,
-                                response=audit_synthetic,
+                                response=synthetic,
                                 app_id=app_id,
                                 status_code=200,
                             )

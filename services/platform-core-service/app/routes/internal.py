@@ -1,6 +1,5 @@
 """Internal endpoints — service-to-service calls, not exposed to end users."""
 
-import json
 import logging
 import secrets
 from typing import Any, Dict, List, Optional
@@ -22,7 +21,6 @@ from app.services.pay_per_use import tier_service
 from app.services.policy_management.policy_cache import (
     GLOBAL_POLICY_IDS_KEY,
     cache_policy,
-    policy_cache_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -175,7 +173,10 @@ async def internal_get_policy(
     policy = await repo.get_by_id(policy_id)
     if policy is None:
         raise HTTPException(status_code=404, detail=f"Policy {policy_id} not found")
-    await cache_policy(policy, session, redis)
-    raw = await redis.get(policy_cache_key(policy_id))
-    data = json.loads(raw) if raw else {}
+    data = await cache_policy(policy, session, redis)
+    if data is None:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Failed to cache policy {policy_id}; unable to serve guardrail data",
+        )
     return {"success": True, "data": data}

@@ -2,6 +2,7 @@
 
 import json
 import logging
+from typing import Optional
 
 from redis.asyncio import Redis
 from sqlalchemy import select
@@ -23,8 +24,11 @@ def policy_cache_key(policy_id: int) -> str:
 GLOBAL_POLICY_IDS_KEY = "global:policy_ids"
 
 
-async def cache_policy(policy: Policy, session: AsyncSession, redis: Redis) -> None:
-    """Store full policy data (with sub-category, category, and policy types) in Redis."""
+async def cache_policy(policy: Policy, session: AsyncSession, redis: Redis) -> Optional[dict]:
+    """Store full policy data (with sub-category, category, and policy types) in Redis.
+
+    Returns the cached payload dict on success, or None when caching fails.
+    """
     try:
         sub_cat_result = await session.execute(
             select(SubCategory).where(SubCategory.id == policy.sub_category_id)
@@ -95,7 +99,7 @@ async def cache_policy(policy: Policy, session: AsyncSession, redis: Redis) -> N
     except Exception:
         logger.warning("Failed to cache policy id=%s", policy.id, exc_info=True)
         await delete_policy_cache(policy.id, redis)
-        return
+        return None
 
     try:
         if policy.is_global:
@@ -104,6 +108,8 @@ async def cache_policy(policy: Policy, session: AsyncSession, redis: Redis) -> N
             await redis.srem(GLOBAL_POLICY_IDS_KEY, policy.id)
     except Exception:
         logger.warning("Failed to update global policy index for id=%s", policy.id, exc_info=True)
+
+    return payload
 
 
 async def delete_policy_cache(policy_id: int, redis: Redis) -> None:

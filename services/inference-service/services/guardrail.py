@@ -43,6 +43,8 @@ class GuardrailError(Exception):
 _APP_POLICY_KEY = "auth:app:{}:policy_ids"
 _POLICY_KEY = "policy:{}"
 _GLOBAL_POLICY_IDS_KEY = "global:policy_ids"
+_GLOBAL_POLICY_IDS_BUILT_KEY = "global:policy_ids:built"  # sentinel: index fetched, empty result is valid
+_GLOBAL_POLICY_IDS_TTL = 300
 
 _redis_client: Optional[aioredis.Redis] = None
 
@@ -80,9 +82,13 @@ async def get_policy_ids_for_app(app_id: str) -> List[int]:
 async def get_global_policy_ids() -> List[int]:
     """Return IDs of all active global policies.
 
-    Reads from the Redis Set written by platform-core's cache_policy. On a miss
-    (empty set = key evicted or never written), falls back to the platform-core
-    internal endpoint which rebuilds the index from the DB.
+    Reads from the Redis Set written by platform-core's cache_policy. An empty
+    smembers result is ambiguous (key evicted vs. genuinely no global policies),
+    so a separate sentinel key (_GLOBAL_POLICY_IDS_BUILT_KEY) marks "index was
+    built and is empty." Without the sentinel we fall back to platform-core.
+
+    Raises GuardrailError on any fetch failure so callers block the request
+    rather than silently skipping global policy enforcement.
     """
     redis = _get_redis()
     if redis is not None:
@@ -90,11 +96,15 @@ async def get_global_policy_ids() -> List[int]:
             members = await redis.smembers(_GLOBAL_POLICY_IDS_KEY)
             if members:
                 return [int(m) for m in members]
+            if await redis.exists(_GLOBAL_POLICY_IDS_BUILT_KEY):
+                return []
         except Exception as exc:
             logger.warning("Redis read failed for global policy IDs: %s", exc)
 
     if not settings.PLATFORM_CORE_URL:
-        return []
+        raise GuardrailError(
+            "Cannot fetch global policy IDs: PLATFORM_CORE_URL is not configured"
+        )
     try:
         headers = {}
         if settings.PLATFORM_CORE_INTERNAL_TOKEN:
@@ -104,12 +114,29 @@ async def get_global_policy_ids() -> List[int]:
                 f"{settings.PLATFORM_CORE_URL}/internal/policies/global",
                 headers=headers,
             )
-        if r.status_code == 200:
-            return r.json().get("data") or []
-        logger.warning("platform-core returned %s for global policy IDs", r.status_code)
+        if r.status_code != 200:
+            raise GuardrailError(
+                f"platform-core returned {r.status_code} for global policy IDs"
+            )
+        ids = r.json().get("data") or []
+        if redis is not None:
+            try:
+                pipe = redis.pipeline()
+                if ids:
+                    pipe.delete(_GLOBAL_POLICY_IDS_KEY)
+                    pipe.sadd(_GLOBAL_POLICY_IDS_KEY, *ids)
+                    pipe.expire(_GLOBAL_POLICY_IDS_KEY, _GLOBAL_POLICY_IDS_TTL)
+                pipe.set(_GLOBAL_POLICY_IDS_BUILT_KEY, "1", ex=_GLOBAL_POLICY_IDS_TTL)
+                await pipe.execute()
+            except Exception:
+                pass
+        return ids
+    except GuardrailError:
+        raise
     except Exception as exc:
-        logger.warning("Failed to fetch global policy IDs from platform-core: %s", exc)
-    return []
+        raise GuardrailError(
+            "Failed to fetch global policy IDs from platform-core"
+        ) from exc
 
 
 async def get_policy(policy_id: int) -> Dict:
