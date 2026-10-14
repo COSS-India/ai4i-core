@@ -299,3 +299,48 @@ class TestResolveSmtpFromName:
         monkeypatch.setattr(settings, "platform_name", "MahaVistaar")
         assert settings.resolve_smtp_from_name("") == "MahaVistaar"
         assert settings.resolve_smtp_from_name("   ") == "MahaVistaar"
+
+
+class TestResolveEmailSettings:
+    """A deployment that carries only the Alertmanager SMTP block
+    (SMTP_SMARTHOST/SMTP_FROM/SMTP_AUTH_*) must still send this service's own
+    emails; explicitly set EMAIL_FROM/SMTP_* values always win."""
+
+    @pytest.fixture
+    def alertmanager_block(self, monkeypatch):
+        monkeypatch.setattr(settings, "platform_name", "AI Switch")
+        monkeypatch.setattr(settings, "smtp_smarthost", "email-smtp.ap-south-1.amazonaws.com:2587")
+        monkeypatch.setattr(settings, "smtp_from", "alerts@x.org")
+        monkeypatch.setattr(settings, "smtp_auth_username", "AKIA-ALERTS")
+        monkeypatch.setattr(settings, "smtp_auth_password", "alerts-pw")
+
+    @staticmethod
+    def _email(**kw):
+        from ai4i_core.email import EmailSettings
+        return EmailSettings(_env_file=None, **kw)
+
+    def test_blank_fields_fall_back_to_the_alertmanager_block(self, alertmanager_block):
+        s = settings.resolve_email_settings(self._email())
+        assert (s.smtp_host, s.smtp_port) == ("email-smtp.ap-south-1.amazonaws.com", 2587)
+        assert (s.email_from, s.smtp_username, s.smtp_password) == ("alerts@x.org", "AKIA-ALERTS", "alerts-pw")
+        assert s.email_from_name == "AI Switch"
+
+    def test_explicit_values_win(self, alertmanager_block):
+        s = settings.resolve_email_settings(self._email(
+            smtp_host="smtp.own.org", smtp_port=465, email_from="noreply@x.org",
+            smtp_username="own-user", smtp_password="own-pw", email_from_name="AI4I",
+        ))
+        assert (s.smtp_host, s.smtp_port) == ("smtp.own.org", 465)
+        assert (s.email_from, s.smtp_username, s.smtp_password) == ("noreply@x.org", "own-user", "own-pw")
+        assert s.email_from_name == "AI4I"
+
+    def test_smarthost_without_port_keeps_the_default_port(self, alertmanager_block, monkeypatch):
+        monkeypatch.setattr(settings, "smtp_smarthost", "smtp.relay.org")
+        s = settings.resolve_email_settings(self._email())
+        assert (s.smtp_host, s.smtp_port) == ("smtp.relay.org", 587)
+
+    def test_nothing_configured_stays_blank(self, monkeypatch):
+        for name in ("smtp_smarthost", "smtp_from", "smtp_auth_username", "smtp_auth_password"):
+            monkeypatch.setattr(settings, name, None)
+        s = settings.resolve_email_settings(self._email())
+        assert s.smtp_host is None and s.email_from is None and s.smtp_username is None

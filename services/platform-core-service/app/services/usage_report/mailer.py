@@ -100,8 +100,7 @@ def render_email(data: ReportData, to: str, content: Optional[RenderedEmail] = N
 def email_settings() -> EmailSettings:
     """Same EmailSettings platform-core's EmailClient is built from
     (app.dependencies.services._email_client_singleton)."""
-    s = EmailSettings()
-    return s.model_copy(update={"email_from_name": settings.resolve_smtp_from_name(s.email_from_name)})
+    return settings.resolve_email_settings(EmailSettings())
 
 
 def build_report_mime(

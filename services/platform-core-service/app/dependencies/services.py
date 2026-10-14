@@ -57,15 +57,7 @@ _sync_service_singleton = SyncService()
 
 @lru_cache(maxsize=1)
 def _email_client_singleton() -> EmailClient:
-    email_settings = EmailSettings()
-    email_settings = email_settings.model_copy(
-        update={
-            "email_from_name": settings.resolve_smtp_from_name(
-                email_settings.email_from_name
-            )
-        }
-    )
-    return EmailClient(build_provider(email_settings))
+    return EmailClient(build_provider(settings.resolve_email_settings(EmailSettings())))
 
 
 def get_email_client() -> EmailClient:
@@ -73,6 +65,8 @@ def get_email_client() -> EmailClient:
 
     Distinct from the SMTP_SMARTHOST-based settings that feed alertmanager.yml —
     those configure Alertmanager's own delivery, this configures ours directly.
+    Any of EMAIL_FROM/SMTP_HOST/SMTP_USERNAME/SMTP_PASSWORD left blank falls
+    back to the Alertmanager block (see CoreSettings.resolve_email_settings).
     """
     return _email_client_singleton()
 

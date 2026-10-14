@@ -9,10 +9,13 @@ both .env and OS-level vars are accepted.
 """
 
 import re
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+if TYPE_CHECKING:
+    from ai4i_core.email import EmailSettings
 
 
 class CoreSettings(BaseSettings):
@@ -344,6 +347,34 @@ class CoreSettings(BaseSettings):
         dependencies/services.py passes that value in and applies this result
         when constructing the client."""
         return (email_from_name or "").strip() or self.get_platform_name()
+
+    def resolve_email_settings(self, email_settings: "EmailSettings") -> "EmailSettings":
+        """EmailSettings for this service's own emails (EmailClient, usage report).
+
+        Deployments that only carry the Alertmanager SMTP block (SMTP_SMARTHOST,
+        SMTP_FROM, SMTP_AUTH_USERNAME, SMTP_AUTH_PASSWORD) would otherwise send
+        nothing: ai4i_core reads only SMTP_HOST/SMTP_PORT/EMAIL_FROM/
+        SMTP_USERNAME/SMTP_PASSWORD. Each blank one is filled from its
+        Alertmanager counterpart; an explicitly set value always wins. The port
+        comes from SMTP_SMARTHOST only when the host does too, since
+        EmailSettings can't tell an unset SMTP_PORT from its 587 default."""
+        update: dict = {"email_from_name": self.resolve_smtp_from_name(email_settings.email_from_name)}
+        smarthost = (self.smtp_smarthost or "").strip()
+        if not (email_settings.smtp_host or "").strip() and smarthost:
+            host, _, port = smarthost.rpartition(":")
+            if host and port.isdigit():
+                update["smtp_host"], update["smtp_port"] = host, int(port)
+            else:
+                update["smtp_host"] = smarthost
+        fallbacks = {
+            "email_from": self.smtp_from,
+            "smtp_username": self.smtp_auth_username,
+            "smtp_password": self.smtp_auth_password,
+        }
+        for field, alt in fallbacks.items():
+            if not (getattr(email_settings, field) or "").strip() and (alt or "").strip():
+                update[field] = alt.strip()
+        return email_settings.model_copy(update=update)
 
     def _usage_report_text(self, value: Optional[str], default: str) -> str:
         return (value or "").strip() or default
