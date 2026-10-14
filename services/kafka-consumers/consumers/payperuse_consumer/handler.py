@@ -1,4 +1,5 @@
 import asyncio
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -25,6 +26,8 @@ from consumers.payperuse_consumer._billing import (
     get_inference_type_id,
     get_service_pricing,
     record_usage_event,
+    AI_INFERENCE_SPAN,
+    REQUEST_SPAN,
     _get_billing_data,
     _get_billed_key, _update_billing_on_cache,
 )
@@ -264,9 +267,9 @@ async def _fetch_tier_name(db, tier_id: Optional[str]) -> str:
     return row.name if row is not None else tier_id
 
 
-async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
-    data: dict | None = _get_billing_data(msg)
-    if not data:
+async def _prepare_billing_context(msg: Message, data: Optional[dict] = None) -> Optional[BillingContext]:
+    data = data if data is not None else _get_billing_data(msg)
+    if not data or data.get("name") != AI_INFERENCE_SPAN:
         return None
 
     span_id: str = (data.get("context", {})).get("span_id", "").strip()
@@ -645,7 +648,13 @@ def _usage_event(
     """The usage_events row for one billed span. LLM rows carry the units
     and cost split by category (cached input clamped to the input tokens,
     exactly as calculate_llm_cost prices it); every other task type has its
-    whole charge in input_units_cost and no cached/output units."""
+    whole charge in input_units_cost and no cached/output units.
+
+    No status_code: the request is counted (and its success or failure taken)
+    from its own row, written from the request span (_record_request). The
+    daily_usage rollup and the Usage Dashboard only count rows that have a
+    status_code, so a usage row never counts as a request — not even when a
+    request's usage rows fall on another day or tier than its request row."""
     if llm_cost is not None:
         input_tokens = Decimal(str(ctx.input_tokens))
         cached = min(max(Decimal(str(ctx.cached_input_tokens)), Decimal(0)), input_tokens)
@@ -664,7 +673,7 @@ def _usage_event(
         service_id=ctx.service_id,
         inference_type_id=inference_type_id,
         task_type=pricing.task_type,
-        status_code=ctx.status_code,
+        status_code=None,
         total_units=billed_units,
         cached_input_units=cached,
         output_units=output,
@@ -674,8 +683,84 @@ def _usage_event(
     )
 
 
+# The endpoints the Usage Dashboard counts requests for — the same paths
+# Prometheus' INFERENCE_ENDPOINT_REGEX matched (every /inference route and the
+# LLM chat routes); not try-it, audio upload or health routes.
+_COUNTED_PATH = re.compile(r"(.*/inference|/api/v1/chat(/completions)?)")
+
+
+async def _record_request(data: dict, msg: Message) -> None:
+    """The usage_events row for one API-key request, from its root "request"
+    span: zero units and cost, and the HTTP status the client got. It is the
+    row the Usage Dashboard and the daily_usage rollup count requests and
+    failures from — the rollup counts rows that have a status_code, and usage
+    rows (from ai-inference spans, see _usage_event) carry none, so every
+    request is counted exactly once whatever its usage rows look like.
+
+    Written for successes and failures alike: inference errors, timeouts,
+    invalid input, upstream 429s. Requests rejected at the gateway (auth,
+    budget/quota 429s) never reach the backend and have no span. Not billed:
+    budget and quota stay on the ai-inference spans. A Kafka redelivery hits
+    the (correlation_id, occurred_at) key and writes nothing."""
+    attrs = data.get("attributes", {})
+    correlation_id = str(attrs.get("correlation_id") or "").strip()
+    tenant_id = str(attrs.get("tenantId") or "").strip()
+    path = str(attrs.get("url") or "")
+    status_code = _optional_int(attrs.get("status_code"))
+    if str(attrs.get("authType", "")).strip() != "api_key":
+        return  # only API-key traffic is metered
+    if not _COUNTED_PATH.fullmatch(path):
+        return
+    if not (correlation_id and tenant_id and status_code):
+        logger.warning(
+            "request span missing fields — no usage_events row | offset=%d"
+            " correlation_id=%r tenant_id=%r status_code=%r",
+            msg.offset(), correlation_id, tenant_id, status_code,
+        )
+        return
+
+    service_id = str(attrs.get("service_id") or "").strip()
+    async with session_scope() as db:
+        # The service's catalogue task type when it resolves (same source the
+        # billed rows use); the span's own task type for a request that failed
+        # before its service was known.
+        pricing = await get_service_pricing(db, service_id) if service_id else None
+        task_type = (pricing.task_type if pricing and pricing.task_type else str(attrs.get("task_type") or "")).lower()
+        inference_type_id = await get_inference_type_id(db, task_type) if task_type else None
+        await record_usage_event(db, UsageEvent(
+            correlation_id=correlation_id,
+            occurred_at=_span_end_time(data.get("end_time")),
+            tenant_id=_optional_int(tenant_id),
+            application_id=_optional_int(attrs.get("app_id")),
+            api_key_id=_optional_int(attrs.get("api_key_id")),
+            tier_id=str(attrs.get("tier_id") or "").strip() or None,
+            service_id=service_id,
+            inference_type_id=inference_type_id,
+            task_type=task_type,
+            status_code=status_code,
+            total_units=Decimal(0),
+            cached_input_units=Decimal(0),
+            output_units=Decimal(0),
+            input_units_cost=Decimal(0),
+            cached_input_units_cost=Decimal(0),
+            output_units_cost=Decimal(0),
+        ))
+        await db.commit()
+    logger.debug(
+        "Request recorded | tenant=%s service=%s status=%s correlation_id=%s",
+        tenant_id, service_id, status_code, correlation_id,
+    )
+
+
 async def handle_ppu_usage(msg: Message) -> None:
-    ctx = await _prepare_billing_context(msg)
+    data = _get_billing_data(msg)
+    if data is None:
+        return
+    if data.get("name") == REQUEST_SPAN:
+        await _record_request(data, msg)
+        return
+
+    ctx = await _prepare_billing_context(msg, data)
     if ctx is None:
         return
 

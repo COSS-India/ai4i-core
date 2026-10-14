@@ -161,6 +161,9 @@ async def test_tagged_request_puts_tags_on_every_span_and_strips_them_upstream(e
     # Metering record = the ai-inference span: tokens + model must sit next to the tags.
     infer = spans["ai-inference"][0].attributes
     assert infer["model_name"] == UPSTREAM_MODEL
+    # The request's usage_events row is written from the request span.
+    req = spans["request"][0].attributes
+    assert (req["service_id"], req["task_type"]) == (SERVICE_ID, "llm")
     assert infer["input_tokens"] == 22
     assert infer["output_tokens"] == 285
 
@@ -265,6 +268,7 @@ async def test_invalid_tags_return_openai_400_and_are_never_proxied_or_billed(
     assert "ai-inference" not in spans, "a rejected request must not produce a billable span"
     # Still visible in the trace dashboard as a failed LLM request.
     assert spans["request"][0].attributes["status_code"] == 400
+    assert spans["request"][0].attributes["service_id"] == SERVICE_ID
     model = spans["model"][0].attributes
     assert model["task_type"] == "LLM"
     assert model["status"] == "failure"

@@ -92,6 +92,7 @@ def traced_span(
     classify_status: bool = False,
     mark_ok: bool = True,
     error_attrs=None,
+    status_for=None,
 ):
     """
     THE span-lifecycle primitive: opens a span, captures start_time, yields a
@@ -109,6 +110,10 @@ def traced_span(
             output parity)
         error_attrs: optional fn(attrs, exc) -> attrs to reshape the
             collected attrs on failure (e.g. zero token counts)
+        status_for: optional fn(exc) -> int giving the failure status_code
+            (with classify_status) instead of 400 for ValueError, else 500 —
+            the Triton "request" span passes http_status_for so it records
+            the HTTP status the client got
     """
     start_time = time.time()
     context = otel_context.Context() if root else None
@@ -122,7 +127,10 @@ def traced_span(
             attrs["total_time_ms"] = compute_total_time_ms(start_time)
             if classify_status:
                 attrs["status"] = "failure"
-                attrs["status_code"] = 400 if isinstance(e, ValueError) else 500
+                attrs["status_code"] = (
+                    status_for(e) if status_for is not None
+                    else 400 if isinstance(e, ValueError) else 500
+                )
             finalize_span(span, attrs, error=e)
             raise
         else:
@@ -144,6 +152,21 @@ def finalize_span(span, attributes: dict, *, error=None, ok: bool = False) -> No
         span.set_status(StatusCode.ERROR, str(error))
     elif ok:
         span.set_status(StatusCode.OK)
+
+
+
+def record_rejected_request(request, status_code: int) -> None:
+    """A finished "request" span for a request rejected before its route ran
+    (e.g. a body that fails validation), which otherwise leaves no span. The
+    billing consumer writes each API-key request's usage_events row from its
+    request span, and the Usage Dashboard counts this one as failed —
+    Prometheus already did, from ObservabilityMiddleware."""
+    with traced_span("request", root=True, classify_status=True, mark_ok=False) as attrs:
+        attrs["url"] = request.url.path
+        attrs["method"] = request.method
+        attrs.update(get_context_attributes())
+        attrs["status"] = "failure"
+        attrs["status_code"] = status_code
 
 
 @asynccontextmanager

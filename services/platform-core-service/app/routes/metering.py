@@ -44,7 +44,6 @@ from app.services.metering_service import MeteringService
 from app.utils.metering_promql_builder import (
     API_KEY_AUTH_TYPE,
     SERVICE_BREAKDOWN_CONFIG,
-    retention_edge,
 )
 from app.utils.usage_period import (
     FROM_DESCRIPTION,
@@ -598,9 +597,9 @@ async def get_overview(
     auth_type_filter = API_KEY_AUTH_TYPE
 
     ranking_active = is_admin and not scope_tenant
-    # v8: period.dataFrom/partial (v7: onboarded_at; v6: period filter and platform_adoption's model counts).
+    # v9: usage_events source (v8: period.dataFrom/partial; v7: onboarded_at; v6: period filter).
     cache_key = (
-        f"metering:overview:v8:{usage_period.cache_part}:{scope_tenant_name or 'all'}:"
+        f"metering:overview:v9:{usage_period.cache_part}:{scope_tenant_name or 'all'}:"
         f"{_caller_role_label(request)}:{','.join(task_type_filter) if task_type_filter else 'all'}"
         + (f":{limit}" if ranking_active else "")
     )
@@ -712,15 +711,16 @@ async def get_overview(
     )
     usage_conc = _usage_concentration_block(is_admin, conc)
 
+    # After the gather: it reads the shared core-DB session.
+    data_since = await svc.data_since(usage_period)
     generated_at = iso_ist(datetime.now(tz=timezone.utc))
 
     response = OverviewResponse(
         scope=PeriodScope(
             role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org,
             task_types=task_type_filter,
-            # Prometheus holds only retention_days of samples (see
-            # retained_range): an older start is answered from what's left.
-            period=usage_period.to_schema(retention_edge()),
+            # When the source's data begins in the period (dataFrom / partial).
+            period=usage_period.to_schema(data_since),
         ),
         kpis=kpis,
         platform_adoption=platform_adoption,
@@ -949,9 +949,9 @@ async def get_model_consumption(
     scope_tenant, scope_tenant_name = await _resolve_tenant_scope(request, svc, tenant_id, is_admin)
     task_type_filter = _parse_task_types(task_types)
 
-    # v6: period.dataFrom/partial (v5: period filter (scope.period) and the LLM native_breakdown).
+    # v7: usage_events source (v6: period.dataFrom/partial; v5: period filter and native_breakdown).
     cache_key = (
-        f"metering:model-consumption:v6:{usage_period.cache_part}:{limit}:"
+        f"metering:model-consumption:v7:{usage_period.cache_part}:{limit}:"
         f"{scope_tenant_name or 'all'}:"
         f"{','.join(task_type_filter) if task_type_filter else 'all'}:{_caller_role_label(request)}"
     )
@@ -990,15 +990,16 @@ async def get_model_consumption(
     summary = _model_consumption_summary(breakdown, total_models, most_used)
     top_models = [TopModelRow(**m) for m in ranked_models]
 
+    # After the gather: it reads the shared core-DB session.
+    data_since = await svc.data_since(usage_period)
     generated_at = iso_ist(datetime.now(tz=timezone.utc))
 
     response = ModelConsumptionResponse(
         scope=PeriodScope(
             role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org,
             task_types=task_type_filter,
-            # Prometheus holds only retention_days of samples (see
-            # retained_range): an older start is answered from what's left.
-            period=usage_period.to_schema(retention_edge()),
+            # When the source's data begins in the period (dataFrom / partial).
+            period=usage_period.to_schema(data_since),
         ),
         summary=summary,
         top_models=top_models,

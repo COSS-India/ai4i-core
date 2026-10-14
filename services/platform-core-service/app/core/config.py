@@ -247,12 +247,13 @@ class CoreSettings(BaseSettings):
         default="logs-*", description="OpenSearch request-log index pattern"
     )
 
-    # Which store serves metering request-count KPIs. "dual" computes from
-    # both stores and still serves Prometheus's numbers, for pre-cutover
-    # comparison; "opensearch" serves OpenSearch's numbers.
+    # Which store serves the Usage Dashboard's metering tabs (Overview, Model
+    # consumption). "usage_events" (default): usage_events / daily_usage, no
+    # Prometheus. "prometheus" / "opensearch": the earlier sources; "dual"
+    # computes from both of those and serves Prometheus's numbers.
     metering_data_source: str = Field(
-        default="prometheus",
-        description='Metering request-count KPI source: "prometheus" | "dual" | "opensearch"',
+        default="usage_events",
+        description='Metering source: "usage_events" | "prometheus" | "dual" | "opensearch"',
     )
 
     # SAME value auth-service's own PII_ENCRYPTION_KEY uses — needed here to

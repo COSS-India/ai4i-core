@@ -259,6 +259,94 @@ class _Unset:
 _UNSET = _Unset()
 
 
+def request_total_result(
+    total_v: int,
+    success_v: int,
+    avg_rps_v: float,
+    previous: Optional[tuple[int, int, float]],
+    filters: dict,
+) -> dict:
+    """request_total's result from its counts, shared by every metering
+    backend so the KPIs are computed the same way whatever the store.
+    ``previous`` is (total, successful, avg rps) for the vs-previous window,
+    or None when that window isn't covered (its figures are then None)."""
+    success_rate = round(success_v / total_v * 100, 2) if total_v else 0.0
+    failed_v = max(0, total_v - success_v)
+
+    total_vs_prev: Optional[float] = None
+    success_rate_vs_prev: Optional[float] = None
+    avg_rps_vs_prev: Optional[float] = None
+    failed_vs_prev: Optional[float] = None
+    successful_vs_prev: Optional[float] = None
+    prev_total_v: Optional[int] = None
+    prev_failed_v: Optional[int] = None
+    prev_success_v: Optional[int] = None
+    prev_success_rate_v: Optional[float] = None
+    prev_avg_rps_v: Optional[float] = None
+
+    if previous is not None:
+        prev_total, prev_success, prev_avg_rps = previous
+        prev_failed = max(0, prev_total - prev_success)
+        prev_total_v = prev_total
+        prev_failed_v = prev_failed
+        prev_success_v = prev_success
+        prev_avg_rps_v = round(prev_avg_rps, 4)
+        # Previous success rate is undefined without prior traffic → report 0.
+        prev_success_rate_v = (
+            round(prev_success / prev_total * 100, 2) if prev_total > 0 else 0.0
+        )
+
+        if prev_total > 0:
+            total_vs_prev = round((total_v - prev_total) / prev_total * 100, 1)
+            # pp change so that "97.35 → 97.45" reports as +0.1
+            success_rate_vs_prev = round(success_rate - prev_success_rate_v, 2)
+
+        if prev_failed > 0:
+            failed_vs_prev = round((failed_v - prev_failed) / prev_failed * 100, 1)
+
+        if prev_success > 0:
+            successful_vs_prev = round((success_v - prev_success) / prev_success * 100, 1)
+
+        if prev_avg_rps > 0:
+            avg_rps_vs_prev = round((avg_rps_v - prev_avg_rps) / prev_avg_rps * 100, 1)
+
+    fmt = MeteringService._format_count
+    return {
+        "total_requests": {
+            "count": total_v,
+            "formatted": fmt(total_v),
+            "vs_previous_pct": total_vs_prev,
+            "previous_count": prev_total_v,
+            "previous_formatted": fmt(prev_total_v) if prev_total_v is not None else None,
+        },
+        "successful_requests": {
+            "count": success_v,
+            "formatted": fmt(success_v),
+            "vs_previous_pct": successful_vs_prev,
+            "previous_count": prev_success_v,
+            "previous_formatted": fmt(prev_success_v) if prev_success_v is not None else None,
+        },
+        "failed_requests": {
+            "count": failed_v,
+            "formatted": fmt(failed_v),
+            "vs_previous_pct": failed_vs_prev,
+            "previous_count": prev_failed_v,
+            "previous_formatted": fmt(prev_failed_v) if prev_failed_v is not None else None,
+        },
+        "success_rate": {
+            "rate_pct": success_rate,
+            "vs_previous_pct": success_rate_vs_prev,
+            "previous_rate_pct": prev_success_rate_v,
+        },
+        "avg_rps": {
+            "value": avg_rps_v,
+            "vs_previous_pct": avg_rps_vs_prev,
+            "previous_value": prev_avg_rps_v,
+        },
+        "filters": filters,
+    }
+
+
 class MeteringService:
     def __init__(
         self,
@@ -271,6 +359,13 @@ class MeteringService:
         self._auth_db = auth_db
         self._service_repo = service_repo
         self._model_repo = model_repo
+
+    async def data_since(self, period) -> Optional[datetime]:
+        """When this store's data begins inside ``period`` (a UsagePeriod),
+        for its ``dataFrom`` / ``partial``: Prometheus holds only
+        retention_days of samples (see retained_range), so an older start is
+        answered from what's left. Overridden per store."""
+        return retention_edge()
 
     async def refresh_retention(self) -> None:
         """Re-read how much history Prometheus keeps (cached per process;
@@ -372,101 +467,26 @@ class MeteringService:
         # already renders up to 4dp for values < 1; this just gives it
         # something non-zero to show.
         avg_rps_v = round(_float(raw[2]), 4)
-        success_rate = round(success_v / total_v * 100, 2) if total_v else 0.0
-        raw_failed = total_v - success_v
-        if raw_failed < 0:
+        if success_v > total_v:
             # Independent total/success queries can skew across a scrape boundary,
-            # making success briefly exceed total. Clamp to 0 but flag it.
+            # making success briefly exceed total. Clamped to 0 failed below, but flagged.
             logger.warning(
                 "Failed-count clamp: success(%s) > total(%s) — Prometheus query skew; reporting 0 failed.",
                 success_v, total_v,
             )
-        failed_v = max(0, raw_failed)
-
-        total_vs_prev: Optional[float] = None
-        success_rate_vs_prev: Optional[float] = None
-        avg_rps_vs_prev: Optional[float] = None
-        failed_vs_prev: Optional[float] = None
-        successful_vs_prev: Optional[float] = None
-        prev_total_v: Optional[int] = None
-        prev_failed_v: Optional[int] = None
-        prev_success_v: Optional[int] = None
-        prev_success_rate_v: Optional[float] = None
-        prev_avg_rps_v: Optional[float] = None
-
-        if has_prev:
-            prev_total = max(0, round(_float(raw[3])))
-            prev_success = max(0, round(_float(raw[4])))
-            prev_avg_rps = _float(raw[5])
-            prev_failed = max(0, prev_total - prev_success)
-            prev_total_v = prev_total
-            prev_failed_v = prev_failed
-            prev_success_v = prev_success
-            prev_avg_rps_v = round(prev_avg_rps, 4)
-            # Previous success rate is undefined without prior traffic → report 0.
-            prev_success_rate_v = (
-                round(prev_success / prev_total * 100, 2) if prev_total > 0 else 0.0
-            )
-
-            if prev_total > 0:
-                total_vs_prev = round((total_v - prev_total) / prev_total * 100, 1)
-                # pp change so that "97.35 → 97.45" reports as +0.1
-                success_rate_vs_prev = round(success_rate - prev_success_rate_v, 2)
-
-            if prev_failed > 0:
-                failed_vs_prev = round((failed_v - prev_failed) / prev_failed * 100, 1)
-
-            if prev_success > 0:
-                successful_vs_prev = round((success_v - prev_success) / prev_success * 100, 1)
-
-            if prev_avg_rps > 0:
-                avg_rps_vs_prev = round((avg_rps_v - prev_avg_rps) / prev_avg_rps * 100, 1)
-
-        return {
-            "total_requests": {
-                "count": total_v,
-                "formatted": self._format_count(total_v),
-                "vs_previous_pct": total_vs_prev,
-                "previous_count": prev_total_v,
-                "previous_formatted": (
-                    self._format_count(prev_total_v) if prev_total_v is not None else None
-                ),
-            },
-            "successful_requests": {
-                "count": success_v,
-                "formatted": self._format_count(success_v),
-                "vs_previous_pct": successful_vs_prev,
-                "previous_count": prev_success_v,
-                "previous_formatted": (
-                    self._format_count(prev_success_v) if prev_success_v is not None else None
-                ),
-            },
-            "failed_requests": {
-                "count": failed_v,
-                "formatted": self._format_count(failed_v),
-                "vs_previous_pct": failed_vs_prev,
-                "previous_count": prev_failed_v,
-                "previous_formatted": (
-                    self._format_count(prev_failed_v) if prev_failed_v is not None else None
-                ),
-            },
-            "success_rate": {
-                "rate_pct": success_rate,
-                "vs_previous_pct": success_rate_vs_prev,
-                "previous_rate_pct": prev_success_rate_v,
-            },
-            "avg_rps": {
-                "value": avg_rps_v,
-                "vs_previous_pct": avg_rps_vs_prev,
-                "previous_value": prev_avg_rps_v,
-            },
-            "filters": {
+        previous = (
+            (max(0, round(_float(raw[3]))), max(0, round(_float(raw[4]))), _float(raw[5]))
+            if has_prev else None
+        )
+        return request_total_result(
+            total_v, success_v, avg_rps_v, previous,
+            filters={
                 "inference_only": inference_only,
                 "tenant": tenant,
                 "service_id": service_id,
                 "time_range": time_range or "all",
             },
-        }
+        )
 
     async def request_volume_chart(
         self,
