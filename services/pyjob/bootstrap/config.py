@@ -74,6 +74,12 @@ class PyJobSettings(BaseSettings):
         300.0, description="Per-request timeout for internal calls"
     )
 
+    # ── usage_report ──
+    USAGE_REPORT_FREQUENCY: Optional[str] = Field(
+        None, description="monthly, or a duration like 1d / 7d / 14d (under a day: test envs only); "
+        "unset → monthly"
+    )
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

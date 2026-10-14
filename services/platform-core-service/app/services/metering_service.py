@@ -1517,6 +1517,23 @@ class MeteringService:
             logger.warning("registry_model_count: DB query failed", exc_info=True)
             return None
 
+    async def registry_model_counts_by_task(self) -> dict[str, int]:
+        """Registered model versions per metering task type (the
+        SERVICE_BREAKDOWN_CONFIG keys), from ONE grouped query — the same grain
+        and task mapping as registry_model_count(task_types=[task]) per task.
+        Raises on a DB error (registry_model_count returns None instead); task
+        types with no models are omitted."""
+        if self._model_repo is None:
+            raise RuntimeError("model registry unavailable")
+        by_registry_type = await self._model_repo.count_models_by_task_type()
+        counts = {}
+        for task in SERVICE_BREAKDOWN_CONFIG:
+            registry = _to_registry_task_types([task])
+            n = by_registry_type.get(registry[0].lower(), 0) if registry else 0
+            if n:
+                counts[task] = n
+        return counts
+
     @staticmethod
     def model_consumption_ranking(
         model_totals: list[dict], limit: int
@@ -1870,6 +1887,91 @@ class MeteringService:
                 "time_range": time_range or "all",
                 "services": active_services,
             },
+        }
+
+    # ── usage report (AI4IDS-3278) ──────────────────────────────────────────
+    # Period queries for the Usage Viewer report. Unlike the preset-only
+    # service_breakdown/usage_by_tenant_service above, these take any
+    # TimeRange (a calendar month is an AbsoluteRange) and, like the
+    # dashboard, count API-key inference traffic only. Prometheus-backed:
+    # OpenSearchMeteringService does not override them. They raise on a
+    # Prometheus failure, where the dashboard methods (request_total,
+    # model_breakdown) degrade to 0 / empty — a report must not mail a
+    # silent 0.
+
+    async def inference_request_total(self, time_range: TimeRange) -> int:
+        """All inference requests in the range: the same PromQL as
+        request_total's total_requests (no tenant/task filter)."""
+        sel = build_base_selectors(inference_only=True, auth_type=API_KEY_AUTH_TYPE)
+        return round(await self._client.scalar(sum_over_window(f"{_METRIC}{sel}", time_range)))
+
+    async def server_error_total(self, time_range: TimeRange) -> int:
+        """5xx inference responses in the range — the platform's own failures.
+
+        request_total's failed_requests is every non-2xx, so it also counts
+        4xx client errors (bad input, auth, quota), which the report's error
+        rate must not."""
+        sel = build_base_selectors(
+            inference_only=True, extra=['status_code=~"5.."'], auth_type=API_KEY_AUTH_TYPE
+        )
+        return round(await self._client.scalar(sum_over_window(f"{_METRIC}{sel}", time_range)))
+
+    async def active_tenant_ids(self, time_range: TimeRange) -> set[str]:
+        """Ids of currently-ACTIVE tenants with at least one request in the
+        range — the population active_tenants() counts, as ids, so two
+        periods can be compared (dormant institutions).
+
+        Rows with no tenant_id (series from before the label existed) are
+        dropped: there is no id to compare them by."""
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, auth_type=API_KEY_AUTH_TYPE)}"
+        rows = await self._client.query(self._by_tenant_promql(metric, time_range, filter_zero=True))
+        valid_ids = await self._fetch_valid_tenant_ids()
+        ids = {m["tenant_id"] for m in self._merge_tenant_rows(rows) if m["tenant_id"]}
+        return ids if valid_ids is None else ids & valid_ids
+
+    async def active_application_count(self, time_range: TimeRange) -> int:
+        """Applications with at least one request in the range. application_id
+        is empty for JWT traffic and pre-cutover series, which are skipped."""
+        sel = build_base_selectors(
+            inference_only=True, extra=['application_id!=""'], auth_type=API_KEY_AUTH_TYPE
+        )
+        rows = await self._client.query(
+            f"{sum_over_window_by(f'{_METRIC}{sel}', 'application_id', time_range)} > 0"
+        )
+        return len(rows)
+
+    async def tenant_task_usage(self, time_range: TimeRange) -> dict:
+        """Requests per tenant per task type in the range, ranked by total.
+
+        Returns {"tenants": [{"tenant_id", "tenant", "total", "tasks"}],
+        "task_totals": {task: requests}, "grand_total": int}. Tenant names are
+        the current organisation names, falling back to the label."""
+        services = list(SERVICE_BREAKDOWN_CONFIG)
+        _ep = f'{PROMETHEUS_API_PATH_LABEL}=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
+        metric = f'{_METRIC}{{{_ep},tenant!="unknown",{api_key_auth_type_selector()}}}'
+        results = await self._client.query(
+            f"{sum_over_window_by(metric, f'tenant_id, tenant, {PROMETHEUS_API_PATH_LABEL}', time_range)} > 0"
+        )
+        ranked = self._rank_tenants_by_total(self._accumulate_tenant_task_counts(results, services))
+        names = await self._resolve_tenant_names(
+            {bucket["tenant_id"] for bucket, _ in ranked if bucket["tenant_id"]}
+        )
+        task_totals: dict[str, int] = {}
+        for bucket, _ in ranked:
+            for task, count in bucket["tasks"].items():
+                task_totals[task] = task_totals.get(task, 0) + count
+        return {
+            "tenants": [
+                {
+                    "tenant_id": bucket["tenant_id"],
+                    "tenant": names.get(bucket["tenant_id"], "") or bucket["tenant"] or "unknown",
+                    "total": total,
+                    "tasks": dict(bucket["tasks"]),
+                }
+                for bucket, total in ranked
+            ],
+            "task_totals": task_totals,
+            "grand_total": sum(total for _, total in ranked),
         }
 
     # ── private helpers ─────────────────────────────────────────────────────

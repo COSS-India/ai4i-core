@@ -113,6 +113,14 @@ class ModelRepository:
         result = await self._db.execute(stmt)
         return int(result.scalar() or 0)
 
+    async def count_models_by_task_type(self) -> Dict[str, int]:
+        """Model versions per task type, lower-cased — count_models' grain
+        and case-insensitive match, for every task type in one query."""
+        task_type = func.lower(Model.task["type"].astext)
+        stmt = select(task_type, func.count(Model.id)).group_by(task_type)
+        result = await self._db.execute(stmt)
+        return {t: int(n) for t, n in result.all() if t}
+
     async def get_model_names(
         self, model_ids: List[str], *, task_types: Optional[List[str]] = None
     ) -> Dict[str, str]:
