@@ -1,10 +1,9 @@
 """Where a Usage Dashboard period's Postgres figures come from.
 
 usage_events (one row per billed span, occurred_at in [start, end)) serves
-``today``, and every other period too until the daily_usage rollup is
-switched on (USAGE_DAILY_ROLLUP_ENABLED). With it on, past periods read
-daily_usage (usage_date, the IST day, between the period's first and last
-day). Both tables carry the same unit and cost columns; only the time
+``today``. Past periods read daily_usage (usage_date, the IST day, between
+the period's first and last day) while USAGE_DAILY_ROLLUP_ENABLED is on (the
+default), and usage_events too when it's off. Both tables carry the same unit and cost columns; only the time
 column, the total-cost column and the unit-label column are named
 differently.
 """

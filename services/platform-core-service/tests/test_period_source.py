@@ -9,6 +9,10 @@ from app.repositories.pay_per_use.period_usage import period_source
 from app.utils.usage_period import resolve_period
 
 
+def test_rollup_is_on_by_default():
+    assert type(settings).model_fields["usage_daily_rollup_enabled"].default is True
+
+
 @pytest.mark.parametrize("key", ["today", "yesterday", "last_7_days"])
 def test_usage_events_for_every_period_until_the_rollup_is_on(monkeypatch, key):
     monkeypatch.setattr(settings, "usage_daily_rollup_enabled", False)
@@ -21,8 +25,9 @@ def test_past_periods_read_daily_usage_once_the_rollup_is_on(monkeypatch):
     assert period_source(resolve_period("today", None, None)).model is UsageEvent
 
 
-def test_usage_events_range_is_half_open():
+def test_usage_events_range_is_half_open(monkeypatch):
     """[start, end): an event at exactly 00:00 IST belongs to the next day."""
+    monkeypatch.setattr(settings, "usage_daily_rollup_enabled", False)
     sql = str(period_source(resolve_period("yesterday", None, None)).in_period)
     assert ">=" in sql and "<" in sql and "<=" not in sql
 

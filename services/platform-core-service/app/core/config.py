@@ -134,9 +134,10 @@ class CoreSettings(BaseSettings):
     # tenant sends its first request.
     metering_first_usage_cache_ttl_seconds: int = 3600
     # Usage Dashboard (USAGE_DAILY_ROLLUP_ENABLED): whether past periods read
-    # the daily_usage rollup. Off until the rollup job runs; until then every
-    # period, past ones included, sums usage_events directly.
-    usage_daily_rollup_enabled: bool = False
+    # the daily_usage rollup (filled by pyjob's daily_usage_consolidation). On
+    # by default; set false to sum usage_events directly for every period, past
+    # ones included (e.g. where the rollup job doesn't run).
+    usage_daily_rollup_enabled: bool = True
     ppu_tier_cache_ttl_seconds: int = 600
     # Auto-refresh interval exposed to the dashboard (METERING_REFRESH_INTERVAL_SECONDS).
     metering_refresh_interval_seconds: int = 60
