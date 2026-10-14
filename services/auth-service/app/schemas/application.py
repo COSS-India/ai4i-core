@@ -10,7 +10,7 @@ contract predates it and didn't include it.
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import ConfigDict, Field, field_validator
 
@@ -83,6 +83,7 @@ _APPLICATION_UPDATE_EXAMPLE = {
     "description": "Updated description for the customer portal integration",
     "domain": "portal.example.com",
     "status": "ACTIVE",
+    "policy_id": [1, 2],
 }
 
 
@@ -101,6 +102,7 @@ class ApplicationUpdate(BaseSchema):
     description: Optional[str] = Field(None, max_length=500)
     domain: Optional[str] = Field(None, max_length=255)
     status: Optional[ApplicationStatus] = None
+    policy_id: Optional[List[int]] = None
 
     @field_validator("name", mode="before")
     @classmethod
@@ -151,6 +153,7 @@ class ApplicationResponse(BaseSchema):
     allocated_percentage: Optional[Decimal] = None
     allocated_budget: Optional[Decimal] = None
     status: ApplicationStatus
+    policy_id: Optional[List[int]] = None
     created_at: datetime
 
 
@@ -164,6 +167,7 @@ class ApplicationListItem(BaseSchema):
     allocated_percentage: Optional[Decimal] = None
     allocated_budget: Optional[Decimal] = None
     status: ApplicationStatus
+    policy_id: Optional[List[int]] = None
 
 
 class ApplicationListData(BaseSchema):

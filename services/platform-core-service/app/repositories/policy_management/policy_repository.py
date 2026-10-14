@@ -36,6 +36,12 @@ class PolicyRepository:
         rows_result = await self._db.execute(base.order_by(Policy.id).offset(offset).limit(limit))
         return list(rows_result.scalars().all()), total
 
+    async def get_global_active(self) -> List[Policy]:
+        result = await self._db.execute(
+            select(Policy).where(Policy.is_global.is_(True), Policy.is_active.is_(True))
+        )
+        return list(result.scalars().all())
+
     async def get_by_id(self, policy_id: int) -> Optional[Policy]:
         result = await self._db.execute(select(Policy).where(Policy.id == policy_id))
         return result.scalar_one_or_none()

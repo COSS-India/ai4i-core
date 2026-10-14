@@ -63,7 +63,17 @@ Credentials and overrides are in `docker-compose-local.yml` and root `.env` (`GR
 
 Keep running **auth** (`:8081`), **platform-core** (`:8095`), and **inference** (`:8090`) as in the end-to-end guide Part C.
 
-Without Kafka, `inference-service` logs `KafkaConnectionError` and falls back — **NMT inference still works**. With Kafka up, spans export to the telemetry pipeline.
+### Turn on trace export (required)
+
+`KAFKA_ENABLED` defaults to `false` in `services/inference-service/.env`. While it's `false`, no spans reach Kafka and OpenSearch stays empty. Inference still works. Set it to `true` from the repo root:
+
+```bash
+sed -i 's/^KAFKA_ENABLED=.*/KAFKA_ENABLED=true/' services/inference-service/.env
+```
+
+Restart inference-service (`--reload` doesn't pick up `.env` changes). It's working when the startup log shows `✓ Kafka span exporter initialized`. If it shows `Kafka span export disabled`, the flag is still `false`.
+
+> Re-running `setup-env.sh` resets this to `false`, so set it again afterwards.
 
 ---
 

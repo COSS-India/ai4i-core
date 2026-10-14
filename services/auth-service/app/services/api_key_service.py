@@ -306,7 +306,8 @@ class APIKeyService:
         # keeps both stores converging on the same values instead of just one.
         preserved = {**self._preserved_billing_fields(db_key), **preserved_from_redis}
         payload = self._build_cache_payload(
-            db_key, tenant_id, budget_effective_to, {**self._preserved_tier_id(db_key), **preserved}
+            db_key, tenant_id, budget_effective_to,
+            {**self._preserved_tier_id(db_key), **preserved},
         )
         # Same fields under every live value of the row (the rotated key's
         # entry too), each with its own TTL.

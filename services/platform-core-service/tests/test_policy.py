@@ -54,9 +54,13 @@ _VALID_CREATE = dict(
 )
 
 
-def _request(*, is_admin: bool = True) -> MagicMock:
+def _request(*, is_admin: bool = True, permission_id: int | None = None) -> MagicMock:
     request = MagicMock()
-    request.headers = {"X-Permission-IDS": "1"} if is_admin else {"X-Permission-IDS": "5"}
+    if permission_id is not None:
+        perm = str(permission_id)
+    else:
+        perm = "1" if is_admin else "5"
+    request.headers = {"X-Permission-IDS": perm}
     return request
 
 
@@ -165,12 +169,27 @@ class TestListPoliciesRoute:
         assert resp.meta.offset == 0
         assert resp.meta.limit == 100
 
+    async def test_tenant_admin_is_allowed(self, monkeypatch):
+        stub = AsyncMock(return_value=([], 0))
+        monkeypatch.setattr(_policy_routes.policy_service, "list_policies", stub)
+        resp = await _policy_routes.list_policies(
+            request=_request(is_admin=False),  # permission 5 = TENANT_ADMIN
+            response=MagicMock(),
+            name=None,
+            sub_category_id=None,
+            offset=0,
+            limit=100,
+            session=MagicMock(),
+        )
+        assert resp.success is True
+        stub.assert_awaited_once()
+
     async def test_non_admin_is_rejected(self, monkeypatch):
         stub = AsyncMock(return_value=([], 0))
         monkeypatch.setattr(_policy_routes.policy_service, "list_policies", stub)
         with pytest.raises(InsufficientPermissionsError):
             await _policy_routes.list_policies(
-                request=_request(is_admin=False),
+                request=_request(permission_id=2),  # not ADMIN (1) or TENANT_ADMIN (5)
                 response=MagicMock(),
                 name=None,
                 sub_category_id=None,
