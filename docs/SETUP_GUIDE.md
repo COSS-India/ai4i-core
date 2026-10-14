@@ -149,6 +149,21 @@ This creates:
 
 Re-run this script any time you change the root `.env`.
 
+### Step 3.1: Service secrets (generated for you)
+
+On the first run, `setup-env.sh` generates these secrets. Later runs reuse the values already in the service `.env` files:
+
+| Variable | File | If missing or wrong |
+|---|---|---|
+| `PII_ENCRYPTION_KEY` | `services/auth-service/.env`, `services/platform-core-service/.env` | Stored emails and phone numbers cannot be read |
+| `SERVICE_CREDENTIALS_ENCRYPTION_KEY` | `services/platform-core-service/.env` | Platform Core does not start |
+| `INTERNAL_SERVICE_SHARED_SECRET` | `services/platform-core-service/.env` | Platform Core returns 403 to inference-service if the two values differ |
+| `MODEL_MANAGEMENT_SERVICE_INTERNAL_TOKEN` | `services/inference-service/.env` (same value as above) | inference-service does not start if blank |
+
+To use your own value, set it in the root `.env` (use `INTERNAL_SERVICE_SHARED_SECRET` for both shared-secret rows) and re-run the script.
+
+> **Do not change the encryption keys after first use.** A new key makes data encrypted with the old one unreadable. Deleting `services/platform-core-service/.env` loses `SERVICE_CREDENTIALS_ENCRYPTION_KEY`, so back it up, or pin the key in the root `.env`.
+
 ## Step 4: Start Infrastructure Services
 
 ### Option A: Minimal (recommended)
