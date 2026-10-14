@@ -149,27 +149,20 @@ This creates:
 
 Re-run this script any time you change the root `.env`.
 
-### Step 3.1: Set service secrets (required)
+### Step 3.1: Service secrets (generated for you)
 
-`setup-env.sh` leaves two secrets blank. Platform Core will not start without the first, and inference calls return 403 without the second:
+On the first run, `setup-env.sh` generates these secrets. Later runs reuse the values already in the service `.env` files:
 
-| Variable | File | Value |
+| Variable | File | If missing or wrong |
 |---|---|---|
-| `SERVICE_CREDENTIALS_ENCRYPTION_KEY` | `services/platform-core-service/.env` | Base64 of 32 random bytes |
-| `INTERNAL_SERVICE_SHARED_SECRET` | `services/platform-core-service/.env` | Any random string — must match the next row |
-| `MODEL_MANAGEMENT_SERVICE_INTERNAL_TOKEN` | `services/inference-service/.env` | Same value as `INTERNAL_SERVICE_SHARED_SECRET` |
+| `PII_ENCRYPTION_KEY` | `services/auth-service/.env`, `services/platform-core-service/.env` | Stored emails and phone numbers cannot be read |
+| `SERVICE_CREDENTIALS_ENCRYPTION_KEY` | `services/platform-core-service/.env` | Platform Core does not start |
+| `INTERNAL_SERVICE_SHARED_SECRET` | `services/platform-core-service/.env` | Platform Core returns 403 to inference-service if the two values differ |
+| `MODEL_MANAGEMENT_SERVICE_INTERNAL_TOKEN` | `services/inference-service/.env` (same value as above) | inference-service does not start if blank |
 
-Run from the repo root:
+To use your own value, set it in the root `.env` (use `INTERNAL_SERVICE_SHARED_SECRET` for both shared-secret rows) and re-run the script.
 
-```bash
-KEY=$(python3 -c "import base64,os;print(base64.b64encode(os.urandom(32)).decode())")
-SECRET=$(openssl rand -hex 32)
-sed -i "s|^SERVICE_CREDENTIALS_ENCRYPTION_KEY=.*|SERVICE_CREDENTIALS_ENCRYPTION_KEY=$KEY|" services/platform-core-service/.env
-sed -i "s|^INTERNAL_SERVICE_SHARED_SECRET=.*|INTERNAL_SERVICE_SHARED_SECRET=$SECRET|" services/platform-core-service/.env
-sed -i "s|^MODEL_MANAGEMENT_SERVICE_INTERNAL_TOKEN=.*|MODEL_MANAGEMENT_SERVICE_INTERNAL_TOKEN=$SECRET|" services/inference-service/.env
-```
-
-> **Keep the encryption key stable.** Changing it makes credentials already stored in `mm_services` undecryptable. Re-running `setup-env.sh` regenerates the service `.env` files, so re-check these values afterwards.
+> **Do not change the encryption keys after first use.** A new key makes data encrypted with the old one unreadable. Deleting `services/platform-core-service/.env` loses `SERVICE_CREDENTIALS_ENCRYPTION_KEY`, so back it up, or pin the key in the root `.env`.
 
 ## Step 4: Start Infrastructure Services
 
