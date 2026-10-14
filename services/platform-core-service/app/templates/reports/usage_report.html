@@ -15,7 +15,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>AI4I Orchestrate – Programme Report – {{ period_label }}</title>
+<title>{{ report_title }} – {{ period_label }}</title>
 <style>
   @page { size: A4; margin: 10mm 12mm 13mm 12mm;
           @bottom-left  { content: "Period {{ date_span }} (IST) · API-key inference traffic · allocation and remaining are current balances"; font: 6.5pt "DejaVu Sans", sans-serif; color: #6b6b6b; }
@@ -62,7 +62,7 @@
 </style>
 </head>
 <body>
-  <div class="eyebrow">AI4I-ORCHESTRATE · PROGRAMME REPORT</div>
+  <div class="eyebrow">{{ report_title | upper }}</div>
   <h1>{{ period_label }}</h1>
 
   {# ── 1 · Platform Health ── #}
@@ -157,7 +157,7 @@
   <div class="meter-labels"><span>Spent to date {{ budget.used_pct }}</span><span>Remaining {{ budget.remaining_pct }}</span></div>
   {% endif %}
   {% if budget.exhausted is not none %}
-  <div style="margin: 1.5mm 0">Institutions that exhausted budget: {{ budget.exhausted }} · Institutions nearing limit (80%+ used): {{ budget.nearing }}</div>
+  <div style="margin: 1.5mm 0">Institutions that exhausted budget: {{ budget.exhausted }} · Institutions nearing limit ({{ budget.nearing_pct }}+ used): {{ budget.nearing }}</div>
   {% endif %}
   <div class="panel">
     <div class="head"><span class="title">Top 5 institutions by spend (to date)</span><span class="note">% of own allocation used</span></div>

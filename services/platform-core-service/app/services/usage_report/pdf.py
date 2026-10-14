@@ -21,7 +21,8 @@ from typing import Optional
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
 
-from app.services.usage_report import formatting as fmt
+from app.core.config import settings
+from app.services.usage_report import collector, formatting as fmt
 from app.services.usage_report.collector import ReportData
 from app.utils.usage_period import IST
 
@@ -151,9 +152,11 @@ def _budget(d: ReportData) -> dict:
         "remaining_pct": fmt.pct(100 - used, 0) if used is not None else fmt.NA,
         "exhausted": b.exhausted if b else None,
         "nearing": b.nearing_limit if b else None,
+        "nearing_pct": fmt.pct(collector.NEARING_LIMIT_PCT, 0),
         "top_spend": [
             {"name": s.name, "spent": fmt.inr(s.spent), "used": fmt.pct(s.used_pct, 0), "width": _width(s.used_pct),
-             "css": "red" if s.used_pct >= 100 else "amber" if s.used_pct >= 80 else ""}
+             "css": "red" if s.used_pct >= collector.EXHAUSTED_PCT
+                    else "amber" if s.used_pct >= collector.NEARING_LIMIT_PCT else ""}
             for s in (b.top_by_spend if b else [])
         ],
     }
@@ -162,6 +165,7 @@ def _budget(d: ReportData) -> dict:
 def report_context(data: ReportData) -> dict:
     """The template's data contract (see the template's header comment)."""
     return {
+        "report_title": settings.get_usage_report_title(),
         "period_label": data.period.label,
         "date_span": data.period.date_span,
         "generated_at": f"{data.generated_at.astimezone(IST):%d %b %Y %H:%M} IST",

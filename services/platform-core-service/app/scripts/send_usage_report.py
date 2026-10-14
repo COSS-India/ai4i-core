@@ -84,36 +84,24 @@ async def run(args: argparse.Namespace) -> int:
     from sqlalchemy import text
 
     from app.core.config import settings
-    from app.core.database import (
-        close_auth_database,
-        close_database,
-        get_auth_session_factory,
-        get_primary_session_factory,
-        init_auth_database,
-        init_database,
-    )
-    from app.repositories.model_management.model_repository import ModelRepository
-    from app.repositories.model_management.service_repository import ServiceRepository
-    from app.services.metering_service import MeteringService
-    from app.services.usage_report.collector import UsageReportCollector
+    from app.core.database import close_auth_database, close_database, init_auth_database, init_database
     from app.services.usage_report.mailer import deliver, email_settings
     from app.services.usage_report.pdf import render_report_pdf
     from app.services.usage_report.period import MONTHLY, ReportPeriod
-    from app.services.usage_report.scheduler import BUSY, DONE, NOTHING_DUE, run_scheduled_report
     from app.services.usage_report.recipients import usage_viewer_emails
-    from app.utils.prometheus_client import PrometheusClient
+    from app.services.usage_report.scheduler import BUSY, DONE, NOTHING_DUE, run_scheduled_report
+    from app.services.usage_report.sources import report_sources
 
     if args.scheduled and (args.period or args.to or args.dry_run or args.allow_partial):
         logger.error("--scheduled takes only --frequency; it always sends the latest period to the Usage Viewers")
         return EXIT_USAGE
-    try:
-        month = ReportPeriod.parse_month(args.period) if args.period else ReportPeriod.latest_complete(MONTHLY)
-    except ValueError as exc:
-        logger.error("%s", exc)
-        return EXIT_USAGE
-    if not settings.prometheus_url:
-        logger.error("PROMETHEUS_URL is not set; request figures cannot be collected")
-        return EXIT_FAILED
+    month = None
+    if not args.scheduled:  # the scheduled run picks its own period
+        try:
+            month = ReportPeriod.parse_month(args.period) if args.period else ReportPeriod.latest_complete(MONTHLY)
+        except ValueError as exc:
+            logger.error("%s", exc)
+            return EXIT_USAGE
 
     pii_crypto.configure_key(settings.pii_encryption_key)
     pii_crypto.validate_key()
@@ -130,34 +118,32 @@ async def run(args: argparse.Namespace) -> int:
             logger.info("Scheduled usage report: %s", result.as_dict())
             ok = result.status in (NOTHING_DUE, BUSY) or (result.status == DONE and not result.failed)
             return EXIT_OK if ok else EXIT_FAILED
-        auth_factory = get_auth_session_factory()
-        if auth_factory is None:
-            logger.error("AUTH_DB_NAME is not set; institutions, budgets and recipients live in the auth DB")
-            return EXIT_FAILED
-        prometheus = PrometheusClient(settings.prometheus_url, http, timeout=settings.prometheus_timeout)
-        async with get_primary_session_factory()() as core_db, auth_factory() as auth_db:
-            # Fail once, clearly, rather than once per figure.
-            for name, check in (
-                ("core database", lambda: core_db.execute(text("SELECT 1"))),
-                ("auth database", lambda: auth_db.execute(text("SELECT 1"))),
-                ("Prometheus", lambda: prometheus.query("vector(1)")),
-            ):
+        try:
+            async with report_sources(http) as src:
+                # Fail once, clearly, rather than once per figure.
+                for name, check in (
+                    ("core database", lambda: src.core_db.execute(text("SELECT 1"))),
+                    ("auth database", lambda: src.auth_db.execute(text("SELECT 1"))),
+                    ("Prometheus", lambda: src.prometheus.query("vector(1)")),
+                ):
+                    try:
+                        await check()
+                    except Exception as exc:
+                        logger.error("Cannot reach the %s: %s", name, exc)
+                        return EXIT_FAILED
                 try:
-                    await check()
-                except Exception as exc:
-                    logger.error("Cannot reach the %s: %s", name, exc)
+                    data = await src.collector.collect(month)
+                except ValueError as exc:
+                    logger.error("%s", exc)
+                    return EXIT_USAGE
+                try:
+                    recipients = args.to or await usage_viewer_emails(src.auth_db, pii_crypto.decrypt_email)
+                except Exception:
+                    logger.exception("Could not look up the Usage Viewers")
                     return EXIT_FAILED
-            metering = MeteringService(prometheus, auth_db, ServiceRepository(core_db), ModelRepository(core_db))
-            try:
-                data = await UsageReportCollector(metering, auth_db, core_db).collect(month)
-            except ValueError as exc:
-                logger.error("%s", exc)
-                return EXIT_USAGE
-            try:
-                recipients = args.to or await usage_viewer_emails(auth_db, pii_crypto.decrypt_email)
-            except Exception:
-                logger.exception("Could not look up the Usage Viewers")
-                return EXIT_FAILED
+        except RuntimeError as exc:  # Prometheus or the auth DB not configured (report_sources)
+            logger.error("%s", exc)
+            return EXIT_FAILED
     finally:
         await http.aclose()
         await close_auth_database()

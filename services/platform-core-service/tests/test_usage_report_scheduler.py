@@ -30,7 +30,7 @@ from app.services.usage_report.send_log import report_lock
 # Next release (retry + send log):
 # from app.services.usage_report.scheduler import NOTHING_DUE, due_period
 # from app.services.usage_report.send_log import FAILED, SENT, RecipientState, SendLog
-from tests.test_usage_report import _email_cfg, _full_data
+from tests.test_usage_report import _email_cfg, _full_data, set_branding
 
 UTC = timezone.utc
 ANCHOR = date(2026, 1, 5)
@@ -226,6 +226,7 @@ VIEWERS = [Recipient("u1", "a@x.gov.in"), Recipient("u2", "b@x.gov.in")]
 def env(monkeypatch):
     monkeypatch.setattr("app.services.usage_report.mailer.settings.portal_url", "https://portal.gov.in")
     monkeypatch.setattr("app.services.usage_report.mailer.settings.usage_report_sender_name", None)
+    set_branding(monkeypatch)
     state = SimpleNamespace(collector=FakeCollector(), viewers=list(VIEWERS), sent_to=[], failing=set())
 
     async def send(mime, cfg):
@@ -273,6 +274,23 @@ class TestScheduledRun:
         failed = [r for r in caplog.records if "status=FAILED" in r.getMessage()]
         assert len(failed) == 1 and failed[0].levelname == "ERROR"
         assert "recipient=u1" in failed[0].getMessage() and "relay refused" in failed[0].getMessage()
+
+    @pytest.mark.asyncio
+    async def test_each_send_is_logged_as_it_happens_not_after_the_batch(self, env, caplog):
+        # If the run stops part-way (pod killed), the log must already show who got it.
+        caplog.set_level("INFO", logger="app.services.usage_report.scheduler")
+        order = []
+
+        async def viewers():
+            return env.viewers
+
+        async def send(mime, cfg):
+            logged = [r.getMessage() for r in caplog.records if r.getMessage().startswith("usage report send |")]
+            order.append(len(logged))  # sends logged BEFORE this one
+
+        await run_scheduled(frequency=MONTHLY, collector=env.collector, viewers=viewers, email_cfg=_email_cfg(),
+                            anchor=ANCHOR, now=ist(2026, 10, 13), render_pdf=lambda d: b"%PDF", send=send)
+        assert order == [0, 1]  # the first send was logged before the second went out
 
     @pytest.mark.asyncio
     async def test_every_run_sends_again_so_the_schedule_must_match_the_frequency(self, env):
@@ -485,6 +503,32 @@ async def engine():
 #         await log.record_not_ready(week, "figures failed")
 #         assert await log.last_reported_end(excluding=week) == SEP.end
 #         assert await log.last_reported_end(excluding=SEP) is None
+
+
+class TestRegistryCountsSql:
+    @pytest.mark.asyncio
+    async def test_grouped_count_matches_count_models_per_task_type(self, engine):
+        # The one grouped query must agree with the per-type query it replaced.
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        from app.repositories.model_management.model_repository import ModelRepository
+        from app.services.metering_service import _to_registry_task_types
+        from app.utils.metering_promql_builder import SERVICE_BREAKDOWN_CONFIG
+
+        async with AsyncSession(engine) as session:
+            if await session.scalar(text("SELECT to_regclass('mm_models')")) is None:
+                pytest.skip("mm_models doesn't exist; migrate the DB first")
+            repo = ModelRepository(session)
+            grouped = await repo.count_models_by_task_type()
+            checked = 0
+            for task in SERVICE_BREAKDOWN_CONFIG:
+                registry = _to_registry_task_types([task])
+                if not registry:  # "pipeline": no Registry task type
+                    continue
+                actual = grouped.get(registry[0].lower(), 0)
+                assert actual == await repo.count_models(task_types=registry), task
+                checked += actual
+            assert checked == sum(grouped.values())  # no model left uncounted
 
 
 class TestRunLock:

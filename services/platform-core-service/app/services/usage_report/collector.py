@@ -1,4 +1,4 @@
-"""Collects the Usage Viewer report's figures for one month (AI4IDS-3278).
+"""Collects the Usage Viewer report's figures for one period (AI4IDS-3278).
 
 Only figures the platform tracks are collected. Availability, P95 latency,
 fallback rate, provider count and financial-year totals are not tracked,
@@ -8,7 +8,7 @@ Every figure comes from one collect() run, so the email summary and the
 attached PDF always agree (a single ReportData feeds both).
 
 Request figures are API-key inference traffic, the population the Usage
-Dashboard counts, from Prometheus. Spend in the month comes from
+Dashboard counts, from Prometheus. Spend in the period comes from
 usage_events / daily_usage (the dashboard's period source), which only
 starts when usage recording began; allocation, lifetime spend and remaining
 budget are current balances (tenants.allocated_budget, budget_usage).
@@ -40,7 +40,8 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 TOP_N = 5
-NEARING_LIMIT_PCT = 80.0
+NEARING_LIMIT_PCT = 80.0   # "institutions nearing limit": this much of their allocation used
+EXHAUSTED_PCT = 100.0
 
 
 def task_display_name(task: Optional[str]) -> str:
@@ -216,10 +217,9 @@ class UsageReportCollector:
 
     async def _collect_models(self, data: ReportData, rng: AbsoluteRange) -> None:
         data.total_models = await self._try(data, "total_models", self._registry_count())
-        for task in SERVICE_BREAKDOWN_CONFIG:
-            count = await self._try(data, f"models_by_task:{task}", self._registry_count([task]))
-            if count:
-                data.models_by_task[task_display_name(task)] = count
+        by_task = await self._try(data, "models_by_task", self._metering.registry_model_counts_by_task())
+        if by_task is not None:
+            data.models_by_task = {task_display_name(task): n for task, n in by_task.items()}
         breakdown = await self._try(
             data, "model_usage", self._metering.model_breakdown(tenant=None, time_range=rng)
         )
@@ -298,11 +298,11 @@ class UsageReportCollector:
 
     # ── queries ─────────────────────────────────────────────────────────────
 
-    async def _registry_count(self, task_types: Optional[list[str]] = None) -> int:
+    async def _registry_count(self) -> int:
         """registry_model_count() returns None instead of raising when the DB
         query fails; raise here so the figure is recorded as failed, not shown
         as N/A in a report sent without --allow-partial."""
-        count = await self._metering.registry_model_count(task_types=task_types)
+        count = await self._metering.registry_model_count()
         if count is None:
             raise RuntimeError("model registry unavailable")
         return count
@@ -311,8 +311,8 @@ class UsageReportCollector:
         return int((await self._auth_db.execute(text(sql), params)).scalar() or 0)
 
     async def _dormant_count(self, recently_active: set[str], onboarded_before: datetime) -> int:
-        """ACTIVE institutions onboarded before the previous month that had no
-        requests in either this month or the previous one."""
+        """ACTIVE institutions onboarded before the previous period that had no
+        requests in either this period or the previous one."""
         rows = await self._auth_db.execute(
             text("SELECT id FROM tenants WHERE status = 'ACTIVE' AND created_at < :before"),
             {"before": onboarded_before},
@@ -341,7 +341,7 @@ class UsageReportCollector:
                 float(b.spent / b.budget_limit * 100) if b.budget_limit > 0
                 else (100.0 if b.spent > 0 else 0.0)
             )
-            if used_pct >= 100:
+            if used_pct >= EXHAUSTED_PCT:
                 exhausted += 1
             elif used_pct >= NEARING_LIMIT_PCT:
                 nearing += 1
@@ -350,7 +350,7 @@ class UsageReportCollector:
         return BudgetSummary(allocated, spent, remaining, exhausted, nearing, top)
 
     async def _period_spend(self, period: UsagePeriod, subdaily: bool = False) -> Optional[PeriodSpend]:
-        """None when usage recording had not started by the end of the month."""
+        """None when usage recording had not started by the end of the period."""
         repo = UsageRepository(self._core_db)
         data_from = await repo.get_usage_data_from(period)
         if data_from is None:

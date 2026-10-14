@@ -1517,6 +1517,23 @@ class MeteringService:
             logger.warning("registry_model_count: DB query failed", exc_info=True)
             return None
 
+    async def registry_model_counts_by_task(self) -> dict[str, int]:
+        """Registered model versions per metering task type (the
+        SERVICE_BREAKDOWN_CONFIG keys), from ONE grouped query — the same grain
+        and task mapping as registry_model_count(task_types=[task]) per task.
+        Raises on a DB error (registry_model_count returns None instead); task
+        types with no models are omitted."""
+        if self._model_repo is None:
+            raise RuntimeError("model registry unavailable")
+        by_registry_type = await self._model_repo.count_models_by_task_type()
+        counts = {}
+        for task in SERVICE_BREAKDOWN_CONFIG:
+            registry = _to_registry_task_types([task])
+            n = by_registry_type.get(registry[0].lower(), 0) if registry else 0
+            if n:
+                counts[task] = n
+        return counts
+
     @staticmethod
     def model_consumption_ranking(
         model_totals: list[dict], limit: int

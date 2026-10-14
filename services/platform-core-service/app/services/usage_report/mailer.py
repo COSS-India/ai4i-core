@@ -8,6 +8,7 @@ added, then sent with the same SMTP settings SmtpEmailProvider uses.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from email.message import EmailMessage as MimeMessage
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
@@ -25,18 +26,17 @@ logger = logging.getLogger(__name__)
 _TEMPLATE_DIR = Path(__file__).resolve().parent.parent.parent / "templates" / "emails"
 _renderer = TemplateRenderer([_TEMPLATE_DIR])
 
-SUBJECT_BRAND = "AI Switch"
-REPORT_NAME = "AI4I Orchestrate Adoption report"
-TEAM_NAME = "AI4I Orchestrate Support Team"
+# Brand, title, team and file name come from settings (USAGE_REPORT_*,
+# falling back to PLATFORM_NAME); only the portal route is fixed here.
 DASHBOARD_PATH = "/usage-dashboard"
 
 
 def attachment_name(data: ReportData) -> str:
-    return f"AI4I-Orchestrate_Programme-Report_India-AI-Mission_{data.period.key}.pdf"
+    return f"{settings.get_usage_report_filename_prefix()}_{data.period.key}.pdf"
 
 
 def subject(data: ReportData) -> str:
-    return f"{SUBJECT_BRAND} – {data.period.title} programme report – {data.period.label}"
+    return f"{settings.get_usage_report_subject_prefix()} – {data.period.title} programme report – {data.period.label}"
 
 
 def portal_link() -> Optional[str]:
@@ -63,24 +63,38 @@ def summary_lines(data: ReportData) -> list[str]:
     ]
 
 
-def render_email(data: ReportData, to: str) -> EmailMessage:
+@dataclass(frozen=True)
+class RenderedEmail:
+    """The email's content — the same for every recipient."""
+    subject: str
+    html: str
+    text: str
+
+
+def render_content(data: ReportData) -> RenderedEmail:
     subj = subject(data)
     html, text = _renderer.render(
         "usage_report",
         {
             "subject": subj,
-            "report_name": REPORT_NAME,
+            "report_name": settings.get_usage_report_title(),
             "period_label": data.period.label,
             "summary": summary_lines(data),
             "attachment_name": attachment_name(data),
             "portal_link": portal_link(),
             "sender_name": settings.usage_report_sender_name,
-            "team_name": TEAM_NAME,
+            "team_name": settings.get_usage_report_team_name(),
             "platform_name": settings.get_platform_name(),
             "logo_url": settings.get_adopter_logo_url(),
         },
     )
-    return EmailMessage(to=to, subject=subj, html_body=html, text_body=text)
+    return RenderedEmail(subj, html, text)
+
+
+def render_email(data: ReportData, to: str, content: Optional[RenderedEmail] = None) -> EmailMessage:
+    """The email for one recipient; pass ``content`` to reuse one rendering."""
+    c = content or render_content(data)
+    return EmailMessage(to=to, subject=c.subject, html_body=c.html, text_body=c.text)
 
 
 def email_settings() -> EmailSettings:
@@ -142,21 +156,26 @@ async def deliver(
     recipients: list[str],
     email_cfg: EmailSettings,
     send: Sender = send_report_mime,
+    on_result: Optional[Callable[[str, Optional[str]], None]] = None,
 ) -> tuple[list[str], dict[str, str]]:
     """One email per recipient, so no recipient sees another's address. A
-    failed recipient is logged and the rest still get theirs.
+    failed recipient is logged and the rest still get theirs. ``on_result``
+    is called right after each attempt with (recipient, error or None), so a
+    caller's record of who got it survives a crash part-way through.
 
     Returns (sent recipients, {failed recipient: error})."""
     filename = attachment_name(data)
+    content = render_content(data)  # once: the template doesn't vary by recipient
     sent: list[str] = []
     failed: dict[str, str] = {}
     for to in recipients:
         try:
-            await send(build_report_mime(render_email(data, to), pdf, filename, email_cfg), email_cfg)
+            await send(build_report_mime(render_email(data, to, content), pdf, filename, email_cfg), email_cfg)
             sent.append(to)
-            logger.info("usage report %s sent to %s", data.period.key, to)
         except Exception as exc:
             reason = exc.__cause__.__class__.__name__ if exc.__cause__ else exc.__class__.__name__
             failed[to] = f"{exc} ({reason})"
             logger.error("usage report %s NOT sent to %s: %s", data.period.key, to, failed[to])
+        if on_result is not None:
+            on_result(to, failed.get(to))
     return sent, failed

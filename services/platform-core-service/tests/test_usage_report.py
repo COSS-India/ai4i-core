@@ -219,6 +219,7 @@ def _fake_metering(**overrides):
     m.inference_request_total = AsyncMock(side_effect=lambda rng: 1000 if rng.start == SEP_START else 800)
     m.server_error_total = AsyncMock(return_value=4)
     m.registry_model_count = AsyncMock(return_value=10)
+    m.registry_model_counts_by_task = AsyncMock(return_value={"nmt": 6, "asr": 3, "language_detection": 1})
     m.model_breakdown = AsyncMock(return_value={
         "services": [{"requests": 700, "success_pct": 99.0}],
         "model_totals": [
@@ -288,6 +289,7 @@ class TestCollector:
         assert d.error_rate_pct == pytest.approx(0.4)
         assert d.requests_change_pct == pytest.approx(25.0)
         assert (d.total_models, d.active_models, d.inactive_models) == (10, 2, 8)
+        assert d.models_by_task == {"NMT": 6, "ASR": 3, "Language Detection": 1}
         assert [m.name for m in d.top_models] == ["IndicTrans2", "IndicConformer"]
         assert d.top_models[0].task == "NMT"
         assert (d.total_institutions, d.new_institutions) == (6, 1)
@@ -382,6 +384,30 @@ class TestCollector:
         assert ps.burn_rate == Decimal("3")  # 30 over 10 days, not over 30
 
 
+class TestRegistryCountsAreOneQuery:
+    @pytest.mark.asyncio
+    async def test_models_per_task_type_is_one_grouped_call_not_one_per_task(self, retention_90d, repo):
+        # Before: registry_model_count was awaited once per task type (12) plus once
+        # for the total — 13 sequential DB round-trips.
+        metering = _fake_metering()
+        collector, _, _ = TestCollector()._collector(metering)
+        await collector.collect(SEP, now=AFTER_SEP)
+        metering.registry_model_count.assert_awaited_once_with()
+        metering.registry_model_counts_by_task.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
+    async def test_grouped_counts_map_registry_task_types_to_metering_keys(self):
+        repo = MagicMock()
+        repo.count_models_by_task_type = AsyncMock(return_value={"nmt": 6, "language-detection": 2, "unknown": 9})
+        svc = MeteringService(client=MagicMock(), model_repo=repo)
+        assert await svc.registry_model_counts_by_task() == {"nmt": 6, "language_detection": 2}
+
+    @pytest.mark.asyncio
+    async def test_grouped_counts_raise_without_a_registry(self):
+        with pytest.raises(RuntimeError):
+            await MeteringService(client=MagicMock()).registry_model_counts_by_task()
+
+
 class TestBudgetSummary:
     @pytest.mark.asyncio
     async def test_exactly_100_percent_counts_as_exhausted(self, retention_90d, repo):
@@ -449,10 +475,75 @@ def _full_data() -> ReportData:
     return d
 
 
+TICKET_BRANDING = {  # the values env.template ships with (the ticket's email format)
+    "usage_report_subject_prefix": "AI Switch",
+    "usage_report_title": "AI4I Orchestrate Adoption report",
+    "usage_report_team_name": "AI4I Orchestrate Support Team",
+    "usage_report_filename_prefix": "AI4I-Orchestrate_Programme-Report_India-AI-Mission",
+}
+
+
+def set_branding(monkeypatch, **values):
+    for name, value in {**TICKET_BRANDING, **values}.items():
+        monkeypatch.setattr(f"app.core.config.settings.{name}", value)
+
+
 @pytest.fixture
 def portal(monkeypatch):
     monkeypatch.setattr("app.services.usage_report.mailer.settings.portal_url", "https://portal.gov.in/")
     monkeypatch.setattr("app.services.usage_report.mailer.settings.usage_report_sender_name", None)
+    set_branding(monkeypatch)
+
+
+class TestBrandingFromSettings:
+    """No product name in code: subject, title, team and file name come from
+    USAGE_REPORT_* settings, falling back to PLATFORM_NAME."""
+
+    def test_configured_values_are_used_everywhere(self, portal, monkeypatch):
+        from app.services.usage_report.pdf import report_context
+
+        set_branding(monkeypatch, usage_report_subject_prefix="Programme X", usage_report_title="X Usage report",
+                     usage_report_team_name="X Team", usage_report_filename_prefix="X_Report")
+        msg = mailer.render_email(_full_data(), "v@x.gov.in")
+        assert msg.subject == "Programme X – Monthly programme report – September 2026"
+        assert "Please find attached the X Usage report for September 2026." in msg.text_body
+        assert "X Team" in msg.text_body and "X_Report_2026-09.pdf" in msg.text_body
+        assert mailer.attachment_name(_full_data()) == "X_Report_2026-09.pdf"
+        assert report_context(_full_data())["report_title"] == "X Usage report"
+
+    def test_blank_values_fall_back_to_platform_name(self, portal, monkeypatch):
+        # The original mismatch: header said PLATFORM_NAME ("AI4Inclusion"), body a
+        # baked-in "AI4I Orchestrate". Unset, everything now follows PLATFORM_NAME.
+        monkeypatch.setattr("app.core.config.settings.platform_name", "AI4Inclusion")
+        set_branding(monkeypatch, usage_report_subject_prefix=None, usage_report_title="  ",
+                     usage_report_team_name=None, usage_report_filename_prefix=None)
+        msg = mailer.render_email(_full_data(), "v@x.gov.in")
+        assert msg.subject == "AI4Inclusion – Monthly programme report – September 2026"
+        assert "the AI4Inclusion Adoption report for" in msg.text_body
+        assert "AI4Inclusion Support Team" in msg.text_body
+        assert mailer.attachment_name(_full_data()) == "AI4Inclusion_Programme-Report_2026-09.pdf"
+        for body in (msg.text_body, msg.html_body):
+            assert "AI4I Orchestrate" not in body and "AI Switch" not in body
+
+    @pytest.mark.parametrize("prefix,expected", [
+        ("Min. of Agri/Health: 2026 ", "Min.-of-AgriHealth-2026"),
+        ("../../etc/passwd", "etcpasswd"),       # no path separators survive
+        ("  ///  ", "Usage-Report"),             # nothing usable left
+    ])
+    def test_filename_prefix_is_made_safe(self, monkeypatch, prefix, expected):
+        monkeypatch.setattr("app.core.config.settings.usage_report_filename_prefix", prefix)
+        from app.core.config import settings
+        assert settings.get_usage_report_filename_prefix() == expected
+
+    @pytest.mark.parametrize("field", ["usage_report_subject_prefix", "usage_report_title",
+                                       "usage_report_team_name", "usage_report_sender_name"])
+    def test_line_breaks_are_rejected_at_startup(self, field):
+        # A line break in the subject would inject email headers (and make every send fail).
+        from pydantic import ValidationError
+
+        from app.core.config import CoreSettings
+        with pytest.raises(ValidationError, match="line breaks"):
+            CoreSettings(**{field: "AI Switch\r\nBcc: attacker@example.com"})
 
 
 class TestRenderEmail:
@@ -496,6 +587,25 @@ def _email_cfg(**kw) -> EmailSettings:
                 smtp_host="smtp.x.gov.in", environment="production")
     base.update(kw)
     return EmailSettings(_env_file=None, **base)
+
+
+class TestRenderedOnce:
+    @pytest.mark.asyncio
+    async def test_the_template_is_rendered_once_for_any_number_of_recipients(self, portal, monkeypatch):
+        # Before: rendered once per recipient although the template never uses the
+        # address — 50 Usage Viewers meant 50 identical renderings.
+        calls = []
+        real = mailer._renderer.render
+        monkeypatch.setattr(mailer._renderer, "render", lambda *a, **k: calls.append(1) or real(*a, **k))
+        sent_to = []
+
+        async def send(mime, cfg):
+            sent_to.append(mime["To"])
+
+        recipients = ["a@x.gov.in", "b@x.gov.in", "c@x.gov.in"]
+        sent, failed = await mailer.deliver(_full_data(), b"%PDF", recipients, _email_cfg(), send=send)
+        assert len(calls) == 1
+        assert sent == recipients and sent_to == recipients and failed == {}
 
 
 class TestReportMime:
@@ -602,6 +712,24 @@ class TestReportHtml:
         assert ctx["budget"]["top_spend"][0]["width"] == 100.0
 
 
+class TestThresholdsHaveOneSource:
+    @pytest.mark.asyncio
+    async def test_changing_the_nearing_limit_changes_counts_and_pdf_together(self, retention_90d, repo, monkeypatch):
+        # Before: collector used NEARING_LIMIT_PCT, the PDF hard-coded 80 — at 70 a
+        # 75%-used institution was counted "nearing" but drawn navy under "80%+".
+        from app.services.usage_report import collector as collector_module
+
+        monkeypatch.setattr(collector_module, "NEARING_LIMIT_PCT", 70.0)
+        repo.budgets = {"1": _budget_ns(100, 75)}
+        auth = _FakeAuthDB(tenants=TestCollector.TENANTS, budget_tenants=[("1", "Inst 1")])
+        d = await UsageReportCollector(_fake_metering(), auth, AsyncMock()).collect(SEP, now=AFTER_SEP)
+        assert d.budget.nearing_limit == 1
+        budget = report_context(d)["budget"]
+        assert budget["nearing_pct"] == "70%"
+        assert budget["top_spend"][0]["css"] == "amber"
+        assert "nearing limit (70%+ used)" in render_report_html(d)
+
+
 class TestReportPdf:
     def test_full_report_is_one_a4_page(self):
         _weasyprint()
@@ -695,6 +823,7 @@ class TestSendScript:
                             AsyncMock(return_value=["v@x.gov.in"]))
         monkeypatch.setattr("app.services.usage_report.mailer.deliver", state.deliver)
         monkeypatch.setattr("app.services.usage_report.mailer.email_settings", lambda: _email_cfg())
+        set_branding(monkeypatch)
         return script, state
 
     @pytest.mark.asyncio
@@ -762,6 +891,31 @@ class TestSendScript:
     async def test_scheduled_rejects_manual_options(self, wired):
         script, state = wired
         assert await script.run(script._parse_args(["--scheduled", "--to", "me@x.gov.in"])) == script.EXIT_USAGE
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("missing", ["prometheus", "auth_db"])
+    async def test_missing_configuration_fails_the_same_way_in_both_paths(self, wired, monkeypatch, missing):
+        # One check (report_sources) now serves the manual and the scheduled path.
+        import app.core.database as database
+        from app.services.usage_report import scheduler
+
+        script, state = wired
+        if missing == "prometheus":
+            monkeypatch.setattr("app.core.config.settings.prometheus_url", None)
+        else:
+            monkeypatch.setattr(database, "get_auth_session_factory", lambda: None, raising=False)
+        assert await script.run(script._parse_args(["--period", "2026-09"])) == script.EXIT_FAILED
+        state.deliver.assert_not_awaited()
+
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def lock(engine):
+            yield True
+        monkeypatch.setattr("app.services.usage_report.send_log.report_lock", lock)
+        monkeypatch.setattr(database, "get_engine", lambda: None, raising=False)
+        with pytest.raises(RuntimeError, match="PROMETHEUS_URL" if missing == "prometheus" else "AUTH_DB_NAME"):
+            await scheduler.run_scheduled_report("monthly", http_client=None)
 
     @pytest.mark.asyncio
     async def test_bad_period_is_a_usage_error(self, wired):

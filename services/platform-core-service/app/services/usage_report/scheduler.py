@@ -136,15 +136,19 @@ async def run_scheduled(
 
     pdf = (render_pdf or render_report_pdf)(data)
     result = RunResult(DONE, frequency, period.key)
-    for r in pending:
-        _, failed = await deliver(data, pdf, [r.email], email_cfg, send=send)
-        error = failed.get(r.email)
-        # Next release (retry + send log): await log.record(period, r.user_id, error)
+    user_ids = {r.email: r.user_id for r in pending}
+
+    def record(email: str, error: Optional[str]) -> None:
+        # Called right after each send, so the log shows who got it even if the
+        # run stops part-way. Next release (retry + send log): log.record(...)
+        user_id = user_ids[email]
         logger.log(logging.ERROR if error else logging.INFO,
                    "usage report send | period=%s frequency=%s recipient=%s status=%s%s",
-                   period.key, frequency, r.user_id, "FAILED" if error else "SENT",
+                   period.key, frequency, user_id, "FAILED" if error else "SENT",
                    f" error={error}" if error else "")
-        (result.failed if error else result.sent).append(r.user_id)
+        (result.failed if error else result.sent).append(user_id)
+
+    await deliver(data, pdf, list(user_ids), email_cfg, send=send, on_result=record)
     logger.info("usage report %s (%s): sent %d, failed %d", period.key, frequency, len(result.sent), len(result.failed))
     return result
 
@@ -159,36 +163,24 @@ async def run_scheduled_report(
     from ai4i_core import pii_crypto
 
     from app.core.config import settings
-    from app.core.database import get_auth_session_factory, get_engine, get_primary_session_factory
-    from app.repositories.model_management.model_repository import ModelRepository
-    from app.repositories.model_management.service_repository import ServiceRepository
-    from app.services.metering_service import MeteringService
-    from app.services.usage_report.collector import UsageReportCollector
+    from app.core.database import get_engine
     from app.services.usage_report.mailer import email_settings
     from app.services.usage_report.recipients import usage_viewers
     from app.services.usage_report.send_log import report_lock
-    from app.utils.prometheus_client import PrometheusClient
+    from app.services.usage_report.sources import report_sources
 
     frequency = Frequency.parse(frequency or DEFAULT_FREQUENCY).name
-    if not settings.prometheus_url:
-        raise RuntimeError("PROMETHEUS_URL is not set; request figures cannot be collected")
-    auth_factory = get_auth_session_factory()
-    if auth_factory is None:
-        raise RuntimeError("AUTH_DB_NAME is not set; institutions, budgets and recipients live in the auth DB")
-
     async with report_lock(get_engine()) as acquired:
         if not acquired:
             logger.warning("usage report: another run is in progress; skipping")
             return RunResult(BUSY, frequency)
-        prometheus = PrometheusClient(settings.prometheus_url, http_client, timeout=settings.prometheus_timeout)
-        async with get_primary_session_factory()() as core_db, auth_factory() as auth_db:
-            # Next release (retry + send log): also open a session for the log:
-            #     get_primary_session_factory()() as log_db
-            metering = MeteringService(prometheus, auth_db, ServiceRepository(core_db), ModelRepository(core_db))
+        # Next release (retry + send log): also open a session for the log:
+        #     get_primary_session_factory()() as log_db
+        async with report_sources(http_client) as src:
             return await run_scheduled(
                 frequency=frequency,
-                collector=UsageReportCollector(metering, auth_db, core_db),
-                viewers=lambda: usage_viewers(auth_db, pii_crypto.decrypt_email),
+                collector=src.collector,
+                viewers=lambda: usage_viewers(src.auth_db, pii_crypto.decrypt_email),
                 email_cfg=email_settings(),
                 anchor=ANCHOR,
                 now=now,
