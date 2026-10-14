@@ -25,12 +25,21 @@ export function normalizeApiKeyRecord<T extends ApiKeyLike>(key: T): T & APIKeyR
   } as T & APIKeyResponse;
 }
 
-/** True while a rotated key's previous value still works (it can't be rotated again until then). */
+/**
+ * True while a rotated key's previous value still works (it can't be rotated
+ * again until then). A revoked, inactive or expired key has no live value,
+ * even if its rotation window has not ended.
+ */
 export function isRotationInProgress(
-  key: Pick<APIKeyResponse, "rotated_key_expires_at">,
+  key: Pick<APIKeyResponse, "rotated_key_expires_at" | "is_active" | "is_revoked" | "expires_at">,
   now: number = Date.now(),
 ): boolean {
   if (!key.rotated_key_expires_at) return false;
+  if (key.is_active === false || key.is_revoked === true) return false;
+  if (key.expires_at) {
+    const keyExpiry = new Date(key.expires_at).getTime();
+    if (Number.isFinite(keyExpiry) && keyExpiry <= now) return false;
+  }
   const until = new Date(key.rotated_key_expires_at).getTime();
   return Number.isFinite(until) && until > now;
 }

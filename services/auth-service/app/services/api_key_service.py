@@ -306,8 +306,7 @@ class APIKeyService:
         # keeps both stores converging on the same values instead of just one.
         preserved = {**self._preserved_billing_fields(db_key), **preserved_from_redis}
         payload = self._build_cache_payload(
-            db_key, tenant_id, budget_effective_to,
-            {**self._preserved_tier_id(db_key), **preserved},
+            db_key, tenant_id, budget_effective_to, {**self._preserved_tier_id(db_key), **preserved}
         )
         # Same fields under every live value of the row (the rotated key's
         # entry too), each with its own TTL.
@@ -1403,7 +1402,8 @@ class APIKeyService:
         the rotation or revoked the key. Clears the columns first, then
         deletes the old value's Redis entry; a cache miss on the old value
         afterwards no longer matches the row, so it can't come back."""
-        old_value = db_key.live_rotated_key()
+        # A revoked or expired key has no live value, so nothing to stop.
+        old_value = db_key.live_rotated_key() if db_key.live_rotated_key_expires_at() else None
         if old_value is None:
             raise AppError(
                 message="This key has no previous value in its rotation window.",

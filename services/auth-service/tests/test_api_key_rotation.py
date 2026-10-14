@@ -10,6 +10,7 @@ accept the old value.
 """
 
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -20,6 +21,7 @@ from app.core.exceptions import AppError
 from app.models.api_key import APIKey
 from app.models.application import Application, ApplicationStatus
 from app.models.tenant import Tenant, TenantStatus
+from app.repositories.api_key_repository import APIKeyRepository
 from app.services.api_key_service import APIKeyService
 
 _OLD = "a" * 32
@@ -575,3 +577,65 @@ class TestRevokePreviousValueEarly:
         cache.delete_api_key_cache = AsyncMock(side_effect=RuntimeError("redis down"))
         await svc.end_rotation_by_obj(key, "admin")
         repo.commit.assert_awaited_once()
+
+
+class TestLiveRotatedKeyExpiresAt:
+    """What the list endpoints show as rotated_key_expires_at: the window end
+    only while the key itself still works."""
+
+    def test_live_window_on_an_active_key(self) -> None:
+        key = _rotated_key()
+        assert key.live_rotated_key_expires_at() == key.rotated_key_expires_at
+
+    def test_none_on_a_revoked_key_even_inside_the_window(self) -> None:
+        key = _rotated_key()
+        key.is_active = False
+        assert key.live_rotated_key_expires_at() is None
+
+    def test_none_on_an_expired_key(self) -> None:
+        key = _rotated_key()
+        key.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        assert key.live_rotated_key_expires_at() is None
+
+    def test_none_once_the_window_ended(self) -> None:
+        assert _rotated_key(days_left=-1).live_rotated_key_expires_at() is None
+
+
+@pytest.mark.asyncio
+class TestRevokePreviousValueOnADeadKey:
+    """A revoked or expired key has no live value, so there is nothing to
+    stop early: 409, and the row is not touched."""
+
+    @pytest.mark.parametrize("kill", ["revoked", "expired"])
+    async def test_revoked_or_expired_key_is_409(self, kill) -> None:
+        key = _rotated_key()
+        if kill == "revoked":
+            key.is_active = False
+        else:
+            key.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        svc, repo, cache = _service(key)
+        with pytest.raises(AppError) as exc:
+            await svc.end_rotation_by_obj(key, "admin")
+        assert (exc.value.status_code, exc.value.code) == (409, "NO_ROTATION_IN_PROGRESS")
+        repo.end_rotation.assert_not_called()
+        cache.delete_api_key_cache.assert_not_called()
+
+    async def test_end_rotation_update_requires_an_active_unexpired_row(self) -> None:
+        """The UPDATE itself carries the active/expiry predicate, so a revoke
+        that lands between the service check and the UPDATE still wins."""
+        from sqlalchemy.dialects import postgresql
+
+        captured = {}
+
+        async def _execute(stmt):
+            captured["sql"] = str(stmt.compile(dialect=postgresql.dialect()))
+            return SimpleNamespace(rowcount=0)
+
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=_execute)
+
+        assert await APIKeyRepository(db).end_rotation(7, _OLD, "admin") is False
+        sql = captured["sql"]
+        assert "api_key.is_active IS true" in sql
+        assert "api_key.expires_at IS NULL OR api_key.expires_at >" in sql
+        assert "api_key.rotated_key = " in sql

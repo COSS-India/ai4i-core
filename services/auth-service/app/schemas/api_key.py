@@ -149,7 +149,10 @@ class APIKeyItem(BaseSchema):
     expires_at: Optional[datetime] = None
     rotated_key_expires_at: Optional[datetime] = Field(
         None,
-        description="When the key's previous value stops working after a rotation; null if never rotated.",
+        description=(
+            "When the key's previous value stops working after a rotation; null when no "
+            "previous value is live (never rotated, window ended, or the key is revoked or expired)."
+        ),
     )
     is_active: bool
     created_by: Optional[str] = None

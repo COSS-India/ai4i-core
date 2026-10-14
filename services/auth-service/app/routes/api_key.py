@@ -93,7 +93,9 @@ def _key_item(k, *, permission_names: list[str]) -> APIKeyItem:
         allocated_budget=k.allocated_budget,
         permissions=permission_names,
         expires_at=k.expires_at,
-        rotated_key_expires_at=k.rotated_key_expires_at,
+        # null unless the previous value really still works (a revoked or
+        # expired key keeps the column set, but nothing authenticates).
+        rotated_key_expires_at=k.live_rotated_key_expires_at(),
         is_active=k.is_active,
         created_by=str(k.created_by) if k.created_by else None,
         created_at=k.created_at,

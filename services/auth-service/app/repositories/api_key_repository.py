@@ -150,13 +150,17 @@ class APIKeyRepository(BaseRepository):
         return result.rowcount == 1
 
     async def end_rotation(self, key_id: int, rotated_value: str, updated_by: str) -> bool:
-        """Clear rotated_key / rotated_key_expires_at, only if the row still
-        holds ``rotated_value`` as its rotated key. Returns whether the row
-        was updated; False means a concurrent request already ended the
-        rotation, re-rotated the key or revoked it."""
+        """Clear rotated_key / rotated_key_expires_at, only if the row is still
+        active and unexpired and still holds ``rotated_value`` as its rotated
+        key. Returns whether the row was updated; False means a concurrent
+        request already ended the rotation, re-rotated the key or revoked it."""
         result = await self._db.execute(
             update(APIKey)
-            .where(APIKey.id == key_id, APIKey.rotated_key == rotated_value)
+            .where(
+                APIKey.id == key_id,
+                APIKey.rotated_key == rotated_value,
+                *self._active_key_conditions(),
+            )
             .values(rotated_key=None, rotated_key_expires_at=None, updated_by=updated_by)
         )
         return result.rowcount == 1

@@ -1,7 +1,7 @@
 """add rotated_key and rotated_key_expires_at to api_key
 
 Revision ID: 67b0a18b2572
-Revises: 51379ee0d696
+Revises: d1e2f3a4b5c7
 Create Date: 2026-10-14
 
 """
@@ -11,7 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "67b0a18b2572"
-down_revision: Union[str, None] = "51379ee0d696"
+down_revision: Union[str, None] = "d1e2f3a4b5c7"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -70,6 +70,14 @@ class APIKey(Base):
             return self.rotated_key
         return None
 
+    def live_rotated_key_expires_at(self) -> Optional[datetime]:
+        """When the previous value stops, only while it actually still works:
+        the key itself must be active and unexpired too. None otherwise —
+        a revoked or expired key has no live value at all."""
+        if self.is_active and not self.is_expired() and self.live_rotated_key():
+            return self.rotated_key_expires_at
+        return None
+
     def cache_key_values(self) -> list[str]:
         """Every key value with a Redis entry to keep in step: api_key, plus
         the rotated key while it is live."""
