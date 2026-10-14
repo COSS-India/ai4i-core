@@ -33,9 +33,14 @@ boundaries are IST midnight.
    deleted. billing_month is the UTC month of occurred_at, as the PPU
    consumer bills it, so the 00:00-05:30 IST rows of the 1st get their own
    row under the previous month. Names come from tiers, mm_services and mm_models here and from
-   tenants and applications in the auth DB. Requests are counted once per
-   correlation id; rows without a status_code add units and cost but are not
-   counted, and a request is failed if any of its rows has status >= 400.
+   tenants and applications in the auth DB. Requests are counted from the
+   rows that carry a status_code: a request row (status set, no units —
+   written once per API-key request) counts one each, so calls that reuse an
+   X-Correlation-ID still count separately; a usage row from before request
+   rows existed (status set, with units) stands in for its request and counts
+   once per correlation id, as one request can have several. Rows without a
+   status_code add units and cost only. A request is failed when its status
+   is 400 or above.
 
 Re-running is safe: both steps converge to the same state. A
 transaction-level advisory lock per step makes an overlapping run skip the
@@ -254,8 +259,15 @@ _AGGREGATE = text(
             to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM') AS billing_month,
             max(task_type) AS task_type,
             max(unit_of_measurement) AS unit,
-            count(DISTINCT correlation_id) FILTER (WHERE status_code IS NOT NULL) AS request_count,
-            count(DISTINCT correlation_id) FILTER (WHERE status_code >= 400) AS failed_count,
+            -- request rows: one per request
+            count(*) FILTER (WHERE status_code IS NOT NULL AND total_units = 0)
+              -- rows from before request rows existed: stand in for their
+              -- request, possibly several per request
+              + count(DISTINCT correlation_id) FILTER (WHERE status_code IS NOT NULL AND total_units > 0)
+              AS request_count,
+            count(*) FILTER (WHERE status_code >= 400 AND total_units = 0)
+              + count(DISTINCT correlation_id) FILTER (WHERE status_code >= 400 AND total_units > 0)
+              AS failed_count,
             sum(total_units) AS total_units,
             sum(cached_input_units) AS cached_input_units,
             sum(output_units) AS output_units,
