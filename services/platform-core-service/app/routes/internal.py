@@ -63,8 +63,8 @@ async def internal_get_service(
 
 
 class UsageReportRunRequest(BaseModel):
-    """``frequency`` comes from the pyjob job's own env (USAGE_REPORT_FREQUENCY);
-    omitted → platform-core's own setting."""
+    """``frequency`` comes from the pyjob job's env (USAGE_REPORT_FREQUENCY);
+    omitted → monthly."""
 
     frequency: Optional[str] = None
 
@@ -76,9 +76,10 @@ class UsageReportRunRequest(BaseModel):
 )
 async def usage_report_run(request: Request, body: UsageReportRunRequest = UsageReportRunRequest()):
     """One scheduled run of the Usage Viewer report (AI4IDS-3278), triggered
-    daily by the pyjob `usage_report` CronJob. Idempotent: sends the due
-    period to Usage Viewers who haven't had it yet, retries earlier failures,
-    and logs every attempt (see app.services.usage_report.scheduler)."""
+    once per period by the pyjob `usage_report` CronJob: emails the latest
+    complete period to every Usage Viewer and logs each send in the app logs.
+    Not idempotent in this release (no send log): every call sends again —
+    see app.services.usage_report.scheduler."""
     from app.services.usage_report.scheduler import run_scheduled_report
 
     try:

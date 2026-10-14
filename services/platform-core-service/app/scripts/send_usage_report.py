@@ -15,9 +15,10 @@ Run manually inside the platform-core container (it reuses the service's
 A manual run (--period / default) has no duplicate check and isn't logged:
 every run sends the report again to every recipient.
 
---scheduled runs what the daily pyjob `usage_report` CronJob triggers
-(POST /internal/usage-report/run): the due period of the configured
-frequency, once per Usage Viewer, retried and logged in usage_report_send_log.
+--scheduled runs what the pyjob `usage_report` CronJob triggers
+(POST /internal/usage-report/run): the latest complete period of the
+frequency, to every Usage Viewer. No send log or retry in this release, so it
+too sends again on every run.
 
 If any figure fails to load (e.g. Prometheus unreachable mid-run), nothing
 is sent unless --allow-partial is given, so officials never get a report
@@ -57,9 +58,9 @@ def _parse_args(argv: Optional[list[str]]) -> argparse.Namespace:
     p.add_argument("--allow-partial", action="store_true",
                    help="send even if some figures failed to load (they show as N/A)")
     p.add_argument("--scheduled", action="store_true",
-                   help="run the scheduled send (due period, once per Usage Viewer, logged)")
-    p.add_argument("--frequency", choices=("weekly", "fortnightly", "monthly"),
-                   help="with --scheduled: overrides USAGE_REPORT_FREQUENCY")
+                   help="run the scheduled send (latest complete period, to every Usage Viewer)")
+    p.add_argument("--frequency", metavar="FREQ",
+                   help="with --scheduled: monthly (default), or a duration: 1d, 7d, 2h …")
     return p.parse_args(argv)
 
 
@@ -103,7 +104,7 @@ async def run(args: argparse.Namespace) -> int:
     from app.utils.prometheus_client import PrometheusClient
 
     if args.scheduled and (args.period or args.to or args.dry_run or args.allow_partial):
-        logger.error("--scheduled takes only --frequency; it always sends the due period to the Usage Viewers")
+        logger.error("--scheduled takes only --frequency; it always sends the latest period to the Usage Viewers")
         return EXIT_USAGE
     try:
         month = ReportPeriod.parse_month(args.period) if args.period else ReportPeriod.latest_complete(MONTHLY)

@@ -76,7 +76,8 @@ class PyJobSettings(BaseSettings):
 
     # ── usage_report ──
     USAGE_REPORT_FREQUENCY: Optional[str] = Field(
-        None, description="weekly | fortnightly | monthly; unset → platform-core's USAGE_REPORT_FREQUENCY"
+        None, description="monthly, or a duration like 1d / 7d / 14d (under a day: test envs only); "
+        "unset → monthly"
     )
 
     class Config:

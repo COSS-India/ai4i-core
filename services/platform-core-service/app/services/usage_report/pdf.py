@@ -134,7 +134,10 @@ def _budget(d: ReportData) -> dict:
         note = (f"Recorded since {ps.since.astimezone(IST):%d %b}" if ps.since
                 else (f"Lifetime to date: {fmt.inr(b.spent)}" if b else None))
         spent_card = _card(f"Spent ({span})", fmt.inr(ps.amount), note)
-        burn_card = _card("Burn rate (per day)", fmt.inr(ps.burn_rate), f"Average over {ps.covered_days} day(s)")
+        burn_card = (
+            _card("Burn rate (per day)", None, "Not shown for periods under a day") if ps.burn_rate is None
+            else _card("Burn rate (per day)", fmt.inr(ps.burn_rate), f"Average over {ps.covered_days} day(s)")
+        )
     used = b.used_pct if b else None
     return {
         "cards": [

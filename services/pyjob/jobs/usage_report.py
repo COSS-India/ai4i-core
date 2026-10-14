@@ -1,17 +1,17 @@
 """Scheduled Usage Viewer report (AI4IDS-3278).
 
-Run by k8s once a day (schedule set by DevOps; after daily_usage_consolidation,
-in business hours). Triggers POST /internal/usage-report/run on platform-core,
-which does the work: picks the due period for USAGE_REPORT_FREQUENCY, emails
-the report and PDF to every Usage Viewer who hasn't had it, retries earlier
-failures, and logs each send in usage_report_send_log. Running daily is what
-makes retries and frequency changes work without touching the schedule; a
-run with nothing due sends nothing.
+Run by k8s ONCE PER PERIOD of USAGE_REPORT_FREQUENCY (schedule set by DevOps,
+in business hours, after daily_usage_consolidation): weekly → Mondays,
+monthly → the 1st. Triggers POST /internal/usage-report/run on platform-core,
+which emails the latest complete period's report and PDF to every Usage
+Viewer and logs each send. There is no send log or retry in this release, so
+every run sends again: the schedule must match the frequency, and a changed
+frequency needs the schedule changed with it.
 
-Handled outcomes — nothing due, not ready, some recipients failed — exit 0:
-they are logged by platform-core and retried by the next daily run. A k8s
-retry within minutes would only use up the per-recipient attempts. The job
-fails (exit 1) only when platform-core can't be reached or errors.
+The job fails (exit 1) when the report wasn't sent to everyone — not ready,
+no Usage Viewers, some recipients failed — or platform-core errors, so the
+CronJob shows it. Before re-running a failed job, check the logs: a re-run
+sends to everyone again, including those who already got it.
 """
 from __future__ import annotations
 
@@ -26,9 +26,11 @@ logger = get_logger(__name__)
 async def run() -> None:
     frequency = get_settings().USAGE_REPORT_FREQUENCY
     result = await call_internal("usage-report/run", {"frequency": frequency} if frequency else {})
-    log = logger.warning if result.get("status") in ("not_ready", "no_recipients") or result.get("failed") else logger.info
-    log(
+    incomplete = result.get("status") in ("not_ready", "no_recipients") or bool(result.get("failed"))
+    (logger.error if incomplete else logger.info)(
         "Usage report run | status=%s frequency=%s period=%s sent=%s failed=%s detail=%s",
         result.get("status"), result.get("frequency"), result.get("period"),
         result.get("sent"), result.get("failed"), result.get("detail"),
     )
+    if incomplete:
+        raise RuntimeError(f"usage report not sent to every Usage Viewer: {result}")

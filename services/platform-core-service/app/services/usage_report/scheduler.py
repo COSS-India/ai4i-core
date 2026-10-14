@@ -1,21 +1,26 @@
 """The scheduled Usage Viewer report (AI4IDS-3278).
 
-Triggered once a day — by the pyjob `usage_report` CronJob, through
-POST /internal/usage-report/run — and idempotent, so the schedule only has to
-say "daily"; the frequency lives in configuration:
+Triggered by the pyjob `usage_report` CronJob through
+POST /internal/usage-report/run. DevOps schedules it ONCE PER PERIOD of the
+configured frequency (weekly: Mondays; monthly: the 1st), because each run:
 
-1. The due period is the latest complete period of the configured frequency
-   (weekly / fortnightly / monthly), unless an already-sent period covers any
-   of its days. So a frequency change takes effect from the next period of
-   the new frequency, without reporting a day twice.
-2. Each active Usage Viewer gets it once: SENT recipients are skipped; a
-   FAILED one is retried on the next run, up to USAGE_REPORT_MAX_ATTEMPTS.
-3. If any figure can't be collected, nothing is sent: a NOT_READY row is
-   logged and the next run tries again.
+1. Picks the latest complete period of the frequency (``monthly`` or any
+   duration — 1d, 7d, 14d …; under a day only where USAGE_REPORT_ALLOW_SUBDAILY
+   is on, for testing).
+2. If any figure can't be collected, sends nothing (status not_ready).
+3. Otherwise emails it to every active Usage Viewer, one email each, and logs
+   every send (period, recipient, status) and a run summary in the app logs.
 
-Every attempt is logged in usage_report_send_log (period, recipient,
-timestamp, status, error). Runs hold a Postgres advisory lock, so an
-overlapping run (a delayed CronJob, a manual run) sends nothing twice.
+There is no send log or retry in this release: a run doesn't know what
+earlier runs sent, so running it more than once per period sends the report
+again. Runs hold a Postgres advisory lock, so two overlapping runs don't send
+at the same time.
+
+Next release — retry failed recipients and log sends in usage_report_send_log:
+the code is kept below, commented out (due_period, the send-log steps in
+run_scheduled), together with app/services/usage_report/send_log.py and
+app/models/usage_report/send_log.py. Re-enabling it lets the CronJob run
+daily: each period is then sent once and failures are retried.
 """
 from __future__ import annotations
 
@@ -25,13 +30,15 @@ from datetime import date, datetime, timezone
 from typing import Callable, Optional
 
 from app.services.usage_report.mailer import Sender, deliver, send_report_mime
-from app.services.usage_report.period import ReportPeriod, check_frequency
+from app.services.usage_report.period import ANCHOR, DEFAULT_FREQUENCY, Frequency, ReportPeriod
 from app.services.usage_report.recipients import Recipient
-from app.services.usage_report.send_log import SENT, SendLog
+
+# Next release (retry + send log):
+# from app.services.usage_report.send_log import SENT, SendLog
 
 logger = logging.getLogger(__name__)
 
-# RunResult.status values
+# RunResult.status values (NOTHING_DUE is only returned once the send log is back)
 DONE, NOTHING_DUE, NOT_READY, NO_RECIPIENTS, BUSY = "done", "nothing_due", "not_ready", "no_recipients", "busy"
 
 
@@ -51,83 +58,94 @@ class RunResult:
         }
 
 
-async def due_period(log: SendLog, frequency: str, now: datetime, anchor: date) -> Optional[ReportPeriod]:
-    """The latest complete period, or None if a different sent period already
-    covers any of its days (e.g. the month that was reported just before a
-    switch to weekly)."""
-    period = ReportPeriod.latest_complete(frequency, now, anchor)
-    last_day = await log.last_reported_day(excluding=period)
-    if last_day is not None and period.first_day <= last_day:
-        return None
-    return period
+# Next release (retry + send log):
+# async def due_period(log: SendLog, frequency: str, now: datetime, anchor: date) -> Optional[ReportPeriod]:
+#     """The latest complete period, or None if a different sent period already
+#     covers any of its time (e.g. the month that was reported just before a
+#     switch to weekly)."""
+#     period = ReportPeriod.latest_complete(frequency, now, anchor)
+#     last_end = await log.last_reported_end(excluding=period)
+#     if last_end is not None and period.start < last_end:
+#         return None
+#     return period
 
 
 async def run_scheduled(
     *,
     frequency: str,
-    log: SendLog,
     collector,
     viewers: Callable[[], "object"],
     email_cfg,
-    max_attempts: int,
     anchor: date,
     now: Optional[datetime] = None,
     render_pdf: Optional[Callable] = None,
     send: Sender = send_report_mime,
+    allow_subdaily: bool = False,
+    # Next release (retry + send log):
+    # log: SendLog,
+    # max_attempts: int,
 ) -> RunResult:
     """One scheduled run. ``viewers`` is an async callable returning the
     active Usage Viewers; ``collector`` has UsageReportCollector.collect."""
     from app.services.usage_report.pdf import render_report_pdf
 
-    frequency = check_frequency(frequency)
+    freq = Frequency.parse(frequency)
+    if freq.is_subdaily and not allow_subdaily:
+        raise ValueError(f"{frequency!r} is under a day: test environments only; set USAGE_REPORT_ALLOW_SUBDAILY=true there")
+    frequency = freq.name
     now = now or datetime.now(timezone.utc)
-    period = await due_period(log, frequency, now, anchor)
-    if period is None:
-        return RunResult(NOTHING_DUE, frequency, detail="already covered by a sent period")
+    period = ReportPeriod.latest_complete(frequency, now, anchor)
+    # Next release (retry + send log): skip a period that was already sent.
+    # period = await due_period(log, frequency, now, anchor)
+    # if period is None:
+    #     return RunResult(NOTHING_DUE, frequency, detail="already covered by a sent period")
 
     recipients: list[Recipient] = await viewers()
     if not recipients:
         logger.error("usage report %s: no active Usage Viewer has an email address", period.key)
         return RunResult(NO_RECIPIENTS, frequency, period.key)
 
-    states = await log.recipient_states(period)
-    pending, exhausted = [], []
-    for r in recipients:
-        state = states.get(r.user_id)
-        if state is None:
-            pending.append(r)
-        elif state.status != SENT:
-            (pending if state.attempts < max_attempts else exhausted).append(r)
-    for r in exhausted:
-        logger.error("usage report %s: gave up on Usage Viewer %s after %d attempts",
-                     period.key, r.user_id, max_attempts)
-    if not pending:
-        return RunResult(NOTHING_DUE, frequency, period.key, detail="sent to every Usage Viewer")
+    pending = recipients
+    # Next release (retry + send log): only Usage Viewers not yet sent to, and
+    # failed ones until they reach max_attempts.
+    # states = await log.recipient_states(period)
+    # pending, exhausted = [], []
+    # for r in recipients:
+    #     state = states.get(r.user_id)
+    #     if state is None:
+    #         pending.append(r)
+    #     elif state.status != SENT:
+    #         (pending if state.attempts < max_attempts else exhausted).append(r)
+    # for r in exhausted:
+    #     logger.error("usage report %s: gave up on Usage Viewer %s after %d attempts",
+    #                  period.key, r.user_id, max_attempts)
+    # if not pending:
+    #     return RunResult(NOTHING_DUE, frequency, period.key, detail="sent to every Usage Viewer")
 
     try:
         data = await collector.collect(period, now=now)
     except ValueError as exc:  # e.g. older than Prometheus retention
-        await log.record_not_ready(period, str(exc))
-        logger.error("usage report %s not ready: %s", period.key, exc)
+        # Next release (retry + send log): await log.record_not_ready(period, str(exc))
+        logger.error("usage report %s not ready, nothing sent: %s", period.key, exc)
         return RunResult(NOT_READY, frequency, period.key, detail=str(exc))
     if data.failed:
         reason = "figures failed to load: " + ", ".join(data.failed)
-        await log.record_not_ready(period, reason)
+        # Next release (retry + send log): await log.record_not_ready(period, reason)
         logger.error("usage report %s not ready, nothing sent: %s", period.key, reason)
         return RunResult(NOT_READY, frequency, period.key, detail=reason)
 
     pdf = (render_pdf or render_report_pdf)(data)
     result = RunResult(DONE, frequency, period.key)
     for r in pending:
-        # One at a time, logged and committed after each, so a crash mid-run
-        # can't make the next run resend to someone already sent to.
         _, failed = await deliver(data, pdf, [r.email], email_cfg, send=send)
         error = failed.get(r.email)
-        await log.record(period, r.user_id, error)
+        # Next release (retry + send log): await log.record(period, r.user_id, error)
+        logger.log(logging.ERROR if error else logging.INFO,
+                   "usage report send | period=%s frequency=%s recipient=%s status=%s%s",
+                   period.key, frequency, r.user_id, "FAILED" if error else "SENT",
+                   f" error={error}" if error else "")
         (result.failed if error else result.sent).append(r.user_id)
-    logger.info("usage report %s (%s): sent %d, failed %d, skipped %d already sent",
-                period.key, frequency, len(result.sent), len(result.failed),
-                len(recipients) - len(pending) - len(exhausted))
+    logger.info("usage report %s (%s): sent %d, failed %d", period.key, frequency, len(result.sent), len(result.failed))
     return result
 
 
@@ -151,7 +169,7 @@ async def run_scheduled_report(
     from app.services.usage_report.send_log import report_lock
     from app.utils.prometheus_client import PrometheusClient
 
-    frequency = check_frequency(frequency or settings.usage_report_frequency)
+    frequency = Frequency.parse(frequency or DEFAULT_FREQUENCY).name
     if not settings.prometheus_url:
         raise RuntimeError("PROMETHEUS_URL is not set; request figures cannot be collected")
     auth_factory = get_auth_session_factory()
@@ -163,16 +181,19 @@ async def run_scheduled_report(
             logger.warning("usage report: another run is in progress; skipping")
             return RunResult(BUSY, frequency)
         prometheus = PrometheusClient(settings.prometheus_url, http_client, timeout=settings.prometheus_timeout)
-        async with get_primary_session_factory()() as core_db, auth_factory() as auth_db, \
-                get_primary_session_factory()() as log_db:
+        async with get_primary_session_factory()() as core_db, auth_factory() as auth_db:
+            # Next release (retry + send log): also open a session for the log:
+            #     get_primary_session_factory()() as log_db
             metering = MeteringService(prometheus, auth_db, ServiceRepository(core_db), ModelRepository(core_db))
             return await run_scheduled(
                 frequency=frequency,
-                log=SendLog(log_db),
                 collector=UsageReportCollector(metering, auth_db, core_db),
                 viewers=lambda: usage_viewers(auth_db, pii_crypto.decrypt_email),
                 email_cfg=email_settings(),
-                max_attempts=settings.usage_report_max_attempts,
-                anchor=settings.usage_report_fortnight_anchor,
+                anchor=ANCHOR,
                 now=now,
+                allow_subdaily=settings.usage_report_allow_subdaily,
+                # Next release (retry + send log):
+                # log=SendLog(log_db),
+                # max_attempts=settings.usage_report_max_attempts,
             )

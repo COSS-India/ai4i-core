@@ -90,15 +90,16 @@ class BudgetSummary:
 
 @dataclass
 class PeriodSpend:
-    """Spend recorded in the month. ``since`` is set when usage recording
-    began inside the month, so the amount covers only part of it."""
+    """Spend recorded in the period. ``since`` is set when usage recording
+    began inside the period, so the amount covers only part of it.
+    covered_days is None for a sub-day period (no per-day burn rate)."""
     amount: Decimal
     since: Optional[datetime]
-    covered_days: int
+    covered_days: Optional[int]
 
     @property
-    def burn_rate(self) -> Decimal:
-        return self.amount / self.covered_days
+    def burn_rate(self) -> Optional[Decimal]:
+        return None if self.covered_days is None else self.amount / self.covered_days
 
 
 @dataclass
@@ -131,8 +132,9 @@ class ReportData:
     failed: list[str] = field(default_factory=list)
 
     @property
-    def days(self) -> int:
-        return self.period.days
+    def days(self) -> Optional[int]:
+        """Whole days in the period; None for a sub-day period."""
+        return self.period.day_count
 
     @property
     def error_rate_pct(self) -> Optional[float]:
@@ -160,7 +162,9 @@ class ReportData:
 
     @property
     def avg_daily_requests(self) -> Optional[float]:
-        return None if self.total_requests is None else self.total_requests / self.days
+        if self.total_requests is None or self.days is None:
+            return None
+        return self.total_requests / self.days
 
 
 def _range(period: UsagePeriod) -> AbsoluteRange:
@@ -203,7 +207,9 @@ class UsageReportCollector:
         await self._collect_models(data, rng)
         await self._collect_adoption(data, period, prev, prev_retained)
         data.budget = await self._try(data, "budget", self._budget_summary())
-        data.period_spend = await self._try(data, "period_spend", self._period_spend(period))
+        data.period_spend = await self._try(
+            data, "period_spend", self._period_spend(period, subdaily=not report_period.whole_days)
+        )
         return data
 
     # ── sections ────────────────────────────────────────────────────────────
@@ -343,7 +349,7 @@ class UsageReportCollector:
         top = sorted((s for s in spends if s.spent > 0), key=lambda s: s.spent, reverse=True)[:TOP_N]
         return BudgetSummary(allocated, spent, remaining, exhausted, nearing, top)
 
-    async def _period_spend(self, period: UsagePeriod) -> Optional[PeriodSpend]:
+    async def _period_spend(self, period: UsagePeriod, subdaily: bool = False) -> Optional[PeriodSpend]:
         """None when usage recording had not started by the end of the month."""
         repo = UsageRepository(self._core_db)
         data_from = await repo.get_usage_data_from(period)
@@ -352,7 +358,7 @@ class UsageReportCollector:
         rows = await repo.get_period_usage(period)
         amount = sum((_decimal(r.cost) for r in rows), Decimal("0"))
         covered_from = max(period.start, data_from)
-        covered_days = max(1, math.ceil((period.end - covered_from).total_seconds() / 86_400))
+        covered_days = None if subdaily else max(1, math.ceil((period.end - covered_from).total_seconds() / 86_400))
         return PeriodSpend(amount, data_from if data_from > period.start else None, covered_days)
 
     # ── helpers ─────────────────────────────────────────────────────────────
