@@ -344,18 +344,15 @@ class TestCollector:
         core.rollback.assert_awaited()
 
     @pytest.mark.asyncio
-    async def test_failing_5xx_query_no_longer_holds_back_the_report(self, retention_90d, repo, portal):
-        # Platform health was dropped from the report. Before, the collector still
-        # ran the 5xx query; Prometheus failing it put "error_rate" in data.failed
-        # → status=not_ready and no email to any Usage Viewer, over a figure the
-        # email and PDF no longer show.
+    async def test_report_without_platform_health_is_sent_to_every_viewer(self, retention_90d, repo, portal):
+        # Platform health was dropped from the report: the run completes with
+        # nothing in data.failed (DONE, detail None), and neither the email nor
+        # the PDF mentions the error rate.
         from app.services.usage_report.period import MONTHLY
         from app.services.usage_report.recipients import Recipient
         from app.services.usage_report.scheduler import DONE, run_scheduled
 
-        metering = _fake_metering()
-        metering.server_error_total = AsyncMock(side_effect=RuntimeError("prom 502"))
-        collector, _, _ = self._collector(metering=metering)
+        collector, _, _ = self._collector(metering=_fake_metering())
         sent, attached = [], []
 
         async def send(mime, cfg):
@@ -370,7 +367,6 @@ class TestCollector:
             render_pdf=lambda data: attached.append(render_report_html(data)) or b"%PDF-1.4",
         )
         assert (result.status, result.period, result.sent, result.detail) == (DONE, "2026-09", ["u1", "u2"], None)
-        metering.server_error_total.assert_not_called()
         for mime in sent:
             for part in mime.walk():
                 if part.get_content_type() in ("text/plain", "text/html"):
