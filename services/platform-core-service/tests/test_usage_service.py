@@ -398,6 +398,7 @@ class TestGetTenantList:
         assert item.periodSpend == 1.5
         assert (item.budget.limit, item.budget.spent, item.budget.remaining) == (1000, 300, 700)
         assert item.budget.percentageUsed == 30.0
+        assert item.budget.basis == "all_time"   # labelled: not scoped by the period
         assert "spend" not in item.model_dump()
 
     async def test_reads_the_period_from_the_repository(self):
@@ -577,6 +578,7 @@ class TestGetTenantDetail:
 
         assert result.period.key == "today"
         assert result.periodSpend == 0.42
+        assert result.budget.basis == "all_time"
         assert result.budget.budgetEffectiveFrom == effective_from
         # Same instant, written in IST like every other dashboard timestamp.
         assert result.budget.budgetEffectiveFrom.utcoffset().total_seconds() == 5.5 * 3600

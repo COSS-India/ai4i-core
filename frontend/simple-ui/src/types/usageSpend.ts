@@ -54,7 +54,9 @@ export interface UsageSummaryResponse {
   quota: SummaryQuota;
 }
 
+/** An institution's budget — all-time, never scoped by the period (that's periodSpend). */
 export interface TenantBudget {
+  basis?: "all_time";
   limit: number;
   spent: number;
   remaining: number;
