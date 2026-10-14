@@ -147,10 +147,24 @@ class APIKeyItem(BaseSchema):
     allocated_budget: Optional[Decimal] = None
     permissions: list[str]
     expires_at: Optional[datetime] = None
+    rotated_key_expires_at: Optional[datetime] = Field(
+        None,
+        description="When the key's previous value stops working after a rotation; null if never rotated.",
+    )
     is_active: bool
     created_by: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+
+class RotateAPIKeyData(BaseSchema):
+    id: int
+    api_key: str = Field(..., description="The new 32-char hex key. Store securely — shown only once.")
+    key_name: str
+    expires_at: Optional[datetime] = None
+    rotated_key_expires_at: datetime = Field(
+        ..., description="When the previous value stops working. Until then both values work."
+    )
 
 
 class ApplicationAPIKeysGroup(BaseSchema):
@@ -184,6 +198,7 @@ class APIKeyAdminItem(BaseSchema):
     )
     permissions: list[str]
     expires_at: Optional[datetime] = None
+    rotated_key_expires_at: Optional[datetime] = None
     is_active: bool
     created_by: Optional[str] = None
     created_at: Optional[datetime] = None
@@ -212,6 +227,18 @@ class UpdateAPIKeyResponse(SuccessResponse):
 
 class RevokeAPIKeyResponse(SuccessResponse):
     """DELETE /auth/api-keys/{key_id}"""
+
+    data: MessageData
+
+
+class RotateAPIKeyResponse(SuccessResponse):
+    """POST /auth/api-keys/{key_id}/rotate"""
+
+    data: RotateAPIKeyData
+
+
+class RevokePreviousKeyResponse(SuccessResponse):
+    """DELETE /auth/api-keys/{key_id}/rotated-key"""
 
     data: MessageData
 

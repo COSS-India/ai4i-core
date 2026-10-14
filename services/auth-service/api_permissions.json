@@ -12,6 +12,8 @@
     { "endpoint": "GET:/api/v1/auth/api-keys",                             "permissionRequired": 31, "description": "List own API keys (apiKey.read)" },
     { "endpoint": "PATCH:/api/v1/auth/api-keys/{api_key}",                "permissionRequired": 32, "description": "Update API key (apiKey.update)" },
     { "endpoint": "DELETE:/api/v1/auth/api-keys/{api_key}",                "permissionRequired": 33, "description": "Revoke API key (apiKey.delete)" },
+    { "endpoint": "POST:/api/v1/auth/api-keys/{key_id}/rotate",            "permissionRequired": 33, "description": "Rotate API key (apiKey.delete); same permission as revoke" },
+    { "endpoint": "DELETE:/api/v1/auth/api-keys/{key_id}/rotated-key",     "permissionRequired": 33, "description": "Revoke a rotated key's previous value early (apiKey.delete)" },
     { "endpoint": "GET:/api/v1/auth/api-keys/all",                         "permissionRequired": 34, "description": "Admin: list all API keys (apiKey.read.all)" },
 
     { "endpoint": "GET:/api/v1/auth/roles/list",                           "permissionRequired": 20, "description": "List roles (roles.read)" },

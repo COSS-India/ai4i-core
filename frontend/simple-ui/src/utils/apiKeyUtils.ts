@@ -24,3 +24,13 @@ export function normalizeApiKeyRecord<T extends ApiKeyLike>(key: T): T & APIKeyR
     ...(id != null && Number.isFinite(Number(id)) ? { id: Number(id) } : {}),
   } as T & APIKeyResponse;
 }
+
+/** True while a rotated key's previous value still works (it can't be rotated again until then). */
+export function isRotationInProgress(
+  key: Pick<APIKeyResponse, "rotated_key_expires_at">,
+  now: number = Date.now(),
+): boolean {
+  if (!key.rotated_key_expires_at) return false;
+  const until = new Date(key.rotated_key_expires_at).getTime();
+  return Number.isFinite(until) && until > now;
+}

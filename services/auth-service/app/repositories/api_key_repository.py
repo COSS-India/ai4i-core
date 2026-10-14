@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import cast, func, or_, select, update
+from sqlalchemy import and_, cast, func, or_, select, update
 from sqlalchemy.dialects.postgresql import ARRAY, TEXT
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
@@ -22,6 +22,18 @@ from app.models.api_key import APIKey
 from app.models.application import Application
 from app.models.role import Permission
 from app.repositories.base import BaseRepository
+
+
+def _live_key_values(rows) -> list[str]:
+    """Flatten (api_key, rotated_key, rotated_key_expires_at) rows into the
+    key values that authenticate right now."""
+    now = datetime.now(timezone.utc)
+    values: list[str] = []
+    for api_key, rotated_key, rotated_expires_at in rows:
+        values.append(api_key)
+        if rotated_key and rotated_expires_at is not None and rotated_expires_at > now:
+            values.append(rotated_key)
+    return values
 
 
 class APIKeyRepository(BaseRepository):
@@ -74,9 +86,80 @@ class APIKeyRepository(BaseRepository):
         result = await self._db.execute(
             select(APIKey)
             .options(joinedload(APIKey.application).joinedload(Application.tenant))
-            .where(APIKey.api_key == api_key_value, *self._active_key_conditions())
+            .where(
+                or_(
+                    APIKey.api_key == api_key_value,
+                    and_(
+                        APIKey.rotated_key == api_key_value,
+                        APIKey.rotated_key_expires_at > datetime.now(timezone.utc),
+                    ),
+                ),
+                *self._active_key_conditions(),
+            )
         )
         return result.unique().scalar_one_or_none()
+
+    async def key_value_in_use(self, value: str) -> bool:
+        """True when ``value`` is any row's api_key or rotated_key."""
+        result = await self._db.execute(
+            select(APIKey.id)
+            .where(or_(APIKey.api_key == value, APIKey.rotated_key == value))
+            .limit(1)
+        )
+        return result.first() is not None
+
+    async def rotate(
+        self,
+        key_id: int,
+        current_value: str,
+        new_value: str,
+        rotated_key_expires_at: datetime,
+        updated_by: str,
+    ) -> bool:
+        """Move api_key to rotated_key and set the new value, only if the row
+        is still active, still holds ``current_value`` and has no live
+        rotated key. Returns whether the row was updated; False means a
+        concurrent rotation or revoke won.
+
+        cached_data's api_key field is rewritten in place (jsonb_set), never
+        replaced wholesale, so a billing flag written concurrently into
+        cached_data is not lost."""
+        result = await self._db.execute(
+            update(APIKey)
+            .where(
+                APIKey.id == key_id,
+                APIKey.api_key == current_value,
+                *self._active_key_conditions(),
+                or_(
+                    APIKey.rotated_key.is_(None),
+                    APIKey.rotated_key_expires_at.is_(None),
+                    APIKey.rotated_key_expires_at <= datetime.now(timezone.utc),
+                ),
+            )
+            .values(
+                rotated_key=APIKey.api_key,
+                api_key=new_value,
+                rotated_key_expires_at=rotated_key_expires_at,
+                # NULL stays NULL: jsonb_set on NULL returns NULL.
+                cached_data=func.jsonb_set(
+                    APIKey.cached_data, cast(["api_key"], ARRAY(TEXT)), func.to_jsonb(new_value)
+                ),
+                updated_by=updated_by,
+            )
+        )
+        return result.rowcount == 1
+
+    async def end_rotation(self, key_id: int, rotated_value: str, updated_by: str) -> bool:
+        """Clear rotated_key / rotated_key_expires_at, only if the row still
+        holds ``rotated_value`` as its rotated key. Returns whether the row
+        was updated; False means a concurrent request already ended the
+        rotation, re-rotated the key or revoked it."""
+        result = await self._db.execute(
+            update(APIKey)
+            .where(APIKey.id == key_id, APIKey.rotated_key == rotated_value)
+            .values(rotated_key=None, rotated_key_expires_at=None, updated_by=updated_by)
+        )
+        return result.rowcount == 1
 
     async def get_permission_names_by_ids(self, permission_ids: list[int]) -> dict[int, str]:
         if not permission_ids:
@@ -218,9 +301,10 @@ class APIKeyRepository(BaseRepository):
         one UPDATE, not a per-key round trip (the id-list analogue of
         patch_cached_data_field_for_tenant, for a caller that already has
         the exact key ids in hand instead of a tenant to walk). Returns the
-        api_key values of the rows actually touched (via RETURNING), so the
-        caller can mirror the same field into Redis without a separate
-        SELECT to look up which ids were eligible.
+        key values of the rows actually touched (via RETURNING) — api_key
+        plus a live rotated_key — so the caller can mirror the same field
+        into Redis without a separate SELECT to look up which ids were
+        eligible.
         """
         if not key_ids:
             return []
@@ -235,9 +319,9 @@ class APIKeyRepository(BaseRepository):
                     APIKey.cached_data, cast([field], ARRAY(TEXT)), func.to_jsonb(value)
                 )
             )
-            .returning(APIKey.api_key)
+            .returning(APIKey.api_key, APIKey.rotated_key, APIKey.rotated_key_expires_at)
         )
-        return list(result.scalars().all())
+        return _live_key_values(result.all())
 
     async def remove_cached_data_fields_for_tenant(
         self, tenant_id: int, fields: list[str]
@@ -341,9 +425,11 @@ class APIKeyRepository(BaseRepository):
                 APIKey.is_active.is_(True),
             )
             .values(is_active=False)
-            .returning(APIKey.api_key)
+            .returning(APIKey.api_key, APIKey.rotated_key)
         )
-        return list(result.scalars().all())
+        # Every value with a possible Redis entry, rotated key included even
+        # when expired — deleting an absent entry is a no-op.
+        return [value for row in result.all() for value in row if value]
 
     async def zero_allocation_for_applications(self, application_ids: list[int]) -> list[int]:
         """Bulk-zero ``allocated_budget``/``allocated_percentage`` for the

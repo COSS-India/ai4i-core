@@ -14,6 +14,7 @@ import type {
   Permission,
   APIKeyUpdate,
   APIKeyResponse,
+  RotateAPIKeyResponse,
 } from "../../../types/auth";
 import type { Application } from "../../../types/application";
 import {
@@ -26,7 +27,11 @@ import {
   isApiKeyExpired,
   resolveApiKeyDisplayStatus,
 } from "../../../config/constants";
-import { formatPermissionLabel, normalizeApiKeyRecord } from "../../../utils/apiKeyUtils";
+import {
+  formatPermissionLabel,
+  isRotationInProgress,
+  normalizeApiKeyRecord,
+} from "../../../utils/apiKeyUtils";
 import { useInferenceTypes } from "../../../hooks/useInferenceTypes";
 import {
   API_KEY_CATALOG_STALE_MS,
@@ -119,6 +124,13 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
   const [revokeBudget, setRevokeBudget] = useState<RevokeBudgetSummary | null>(null);
   const revokeLoadRef = useRef(0);
   const [isRevoking, setIsRevoking] = useState(false);
+  const [keyToRotate, setKeyToRotate] = useState<ApiKeyTableRow | null>(null);
+  const [isRotating, setIsRotating] = useState(false);
+  /** Key whose previous (pre-rotation) value the admin is about to stop early. */
+  const [keyToStopPrevious, setKeyToStopPrevious] = useState<ApiKeyTableRow | null>(null);
+  const [isStoppingPrevious, setIsStoppingPrevious] = useState(false);
+  /** The new raw key, held only until the admin closes the result dialog. */
+  const [rotatedKey, setRotatedKey] = useState<RotateAPIKeyResponse | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateFormData, setUpdateFormData] = useState<APIKeyUpdate>({
     key_name: "",
@@ -443,6 +455,62 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     }
   };
 
+  const handleOpenRotateModal = (key: ApiKeyTableRow) => setKeyToRotate(key);
+
+  const handleCloseRotateModal = () => {
+    if (!isRotating) setKeyToRotate(null);
+  };
+
+  const handleRotateApiKey = async () => {
+    if (!keyToRotate) return;
+    setIsRotating(true);
+    try {
+      const result = await authService.rotateApiKey(keyToRotate.id);
+      setKeyToRotate(null);
+      setRotatedKey(result);
+      await handleFetchAllApiKeys();
+    } catch (error) {
+      showToast({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to rotate API key",
+      });
+      // A 409 usually means the list is stale (rotated or revoked elsewhere).
+      setKeyToRotate(null);
+      void handleFetchAllApiKeys();
+    } finally {
+      setIsRotating(false);
+    }
+  };
+
+  const handleCloseRotatedKey = () => setRotatedKey(null);
+
+  const handleOpenStopPreviousModal = (key: ApiKeyTableRow) => setKeyToStopPrevious(key);
+
+  const handleCloseStopPreviousModal = () => {
+    if (!isStoppingPrevious) setKeyToStopPrevious(null);
+  };
+
+  const handleStopPreviousKeyValue = async () => {
+    if (!keyToStopPrevious) return;
+    setIsStoppingPrevious(true);
+    try {
+      await authService.revokePreviousApiKeyValue(keyToStopPrevious.id);
+      showToast({ type: "success", message: "Previous key value revoked. The current key keeps working." });
+      setKeyToStopPrevious(null);
+      await handleFetchAllApiKeys();
+    } catch (error) {
+      showToast({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to revoke the previous key value",
+      });
+      // A 409 means the window already ended, or the key was revoked elsewhere.
+      setKeyToStopPrevious(null);
+      void handleFetchAllApiKeys();
+    } finally {
+      setIsStoppingPrevious(false);
+    }
+  };
+
   const visibleApiKeys = useMemo(
     () =>
       allApiKeys.filter((key) => {
@@ -594,5 +662,21 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     isKeyEffectivelyActive: (key: APIKeyResponse) =>
       isApiKeyEffectivelyActive(key, apiKeyAccessContext),
     isKeyRevocable: (key: APIKeyResponse) => key.is_active !== false && key.is_revoked !== true,
+    keyToRotate,
+    isRotating,
+    rotatedKey,
+    handleOpenRotateModal,
+    handleCloseRotateModal,
+    handleRotateApiKey,
+    handleCloseRotatedKey,
+    keyToStopPrevious,
+    isStoppingPrevious,
+    handleOpenStopPreviousModal,
+    handleCloseStopPreviousModal,
+    handleStopPreviousKeyValue,
+    isRotationInProgress,
+    /** Rotatable when effectively active and its previous value (if any) has stopped working. */
+    isKeyRotatable: (key: APIKeyResponse) =>
+      isApiKeyEffectivelyActive(key, apiKeyAccessContext) && !isRotationInProgress(key),
   };
 }
