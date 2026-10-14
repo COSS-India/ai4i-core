@@ -67,15 +67,13 @@ def upgrade() -> None:
 def downgrade() -> None:
     conn = op.get_bind()
     names = [p[1] for p in PERMISSIONS]
+    # Only remove the TENANT ADMIN grant — the permission row and ADMIN's grant
+    # both pre-exist from 2362774ac241_seed_default_data and must stay in place.
     conn.execute(
         sa.text("""
             DELETE FROM role_permission
             WHERE permission_id IN (SELECT id FROM permissions WHERE name = ANY(:names))
-              AND role_id IN (SELECT id FROM roles WHERE name = ANY(:roles))
+              AND role_id IN (SELECT id FROM roles WHERE name = 'TENANT ADMIN')
         """),
-        {"names": names, "roles": list(GRANTED_ROLES)},
-    )
-    conn.execute(
-        sa.text("DELETE FROM permissions WHERE name = ANY(:names)"),
         {"names": names},
     )

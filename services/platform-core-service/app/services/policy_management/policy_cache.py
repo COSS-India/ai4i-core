@@ -20,6 +20,9 @@ def policy_cache_key(policy_id: int) -> str:
     return f"policy:{policy_id}"
 
 
+GLOBAL_POLICY_IDS_KEY = "global:policy_ids"
+
+
 async def cache_policy(policy: Policy, session: AsyncSession, redis: Redis) -> None:
     """Store full policy data (with sub-category, category, and policy types) in Redis."""
     try:
@@ -92,12 +95,25 @@ async def cache_policy(policy: Policy, session: AsyncSession, redis: Redis) -> N
     except Exception:
         logger.warning("Failed to cache policy id=%s", policy.id, exc_info=True)
         await delete_policy_cache(policy.id, redis)
+        return
+
+    try:
+        if policy.is_global:
+            await redis.sadd(GLOBAL_POLICY_IDS_KEY, policy.id)
+        else:
+            await redis.srem(GLOBAL_POLICY_IDS_KEY, policy.id)
+    except Exception:
+        logger.warning("Failed to update global policy index for id=%s", policy.id, exc_info=True)
 
 
 async def delete_policy_cache(policy_id: int, redis: Redis) -> None:
-    """Remove a policy entry from the Redis cache."""
+    """Remove a policy entry from the Redis cache and global index."""
     try:
         await redis.delete(policy_cache_key(policy_id))
         logger.debug("Evicted cache for policy id=%s", policy_id)
     except Exception:
         logger.warning("Failed to evict cache for policy id=%s", policy_id, exc_info=True)
+    try:
+        await redis.srem(GLOBAL_POLICY_IDS_KEY, policy_id)
+    except Exception:
+        logger.warning("Failed to remove policy id=%s from global index", policy_id, exc_info=True)

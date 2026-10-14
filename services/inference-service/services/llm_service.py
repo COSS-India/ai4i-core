@@ -1,5 +1,6 @@
 """OpenAI-compatible LLM proxy service."""
 
+import asyncio
 import json
 import logging
 from typing import Any, AsyncIterator, Dict, Optional, Tuple
@@ -20,6 +21,7 @@ from config import settings
 from inference.inference_server_resolver import InferenceServerResolver
 from services.guardrail import (
     GuardrailContext,
+    GuardrailError,
     apply_input_guardrail,
     build_guardrail_context,
     process_response_text,
@@ -329,11 +331,19 @@ class OpenAIProxyService:
         guardrail_ctx = GuardrailContext()
         original_payload = payload
         if app_id:
-            guardrail_ctx = await build_guardrail_context(app_id)
+            try:
+                guardrail_ctx = await build_guardrail_context(app_id)
+            except GuardrailError as exc:
+                logger.error("PII policy evaluation failed, blocking request: %s", exc)
+                return 400, {"detail": "Request blocked: PII policy could not be evaluated"}
             if guardrail_ctx.active:
                 logger.info("══ GUARDRAIL REQUEST (app_id=%s) ══════════════", app_id)
                 logger.info("Payload BEFORE masking: %s", payload.get("messages"))
-                payload = apply_input_guardrail(payload, guardrail_ctx)
+                try:
+                    payload = await asyncio.to_thread(apply_input_guardrail, payload, guardrail_ctx)
+                except GuardrailError as exc:
+                    logger.error("PII input masking failed, blocking request: %s", exc)
+                    return 400, {"detail": "Request blocked: PII policy enforcement failed"}
                 logger.info("Payload AFTER  masking: %s", payload.get("messages"))
                 logger.info("Scope: %s", guardrail_ctx.scopes)
         # ─────────────────────────────────────────────────────────────────
@@ -399,31 +409,44 @@ class OpenAIProxyService:
                     set_llm_usage_model_name(model_attrs["model_name"])
 
         # ── PII guardrail: process response + fire-and-forget audit log ───
-        if guardrail_ctx.active and status_code == 200 and isinstance(body, dict):
-            try:
-                choices = body.get("choices") or []
-                if choices and isinstance((choices[0].get("message") or {}).get("content"), str):
-                    content = choices[0]["message"]["content"]
-                    logger.info("══ GUARDRAIL RESPONSE ══════════════════════════")
-                    logger.info("LLM response BEFORE processing : %s", content)
-                    logger.info("Token→Original map             : %s", guardrail_ctx.token_to_original)
-                    content = process_response_text(content, guardrail_ctx)
-                    logger.info("LLM response AFTER  processing : %s", content)
-                    body = {
-                        **body,
-                        "choices": [
-                            {**choices[0], "message": {**choices[0]["message"], "content": content}},
-                            *choices[1:],
-                        ],
-                    }
-            except Exception:
-                logger.warning("Guardrail response processing failed", exc_info=True)
+        if guardrail_ctx.active:
+            # Capture LLM's raw response (mask tokens intact) before unmasking.
+            audit_response = body
+            if status_code == 200 and isinstance(body, dict):
+                try:
+                    choices = body.get("choices") or []
+                    if choices and isinstance((choices[0].get("message") or {}).get("content"), str):
+                        content = choices[0]["message"]["content"]
+                        logger.info("══ GUARDRAIL RESPONSE ══════════════════════════")
+                        logger.info("LLM response BEFORE processing : %s", content)
+                        logger.info("Token→Original map             : %s", guardrail_ctx.token_to_original)
+                        content = await asyncio.to_thread(process_response_text, content, guardrail_ctx)
+                        logger.info("LLM response AFTER  processing : %s", content)
+                        body = {
+                            **body,
+                            "choices": [
+                                {**choices[0], "message": {**choices[0]["message"], "content": content}},
+                                *choices[1:],
+                            ],
+                        }
+                except Exception:
+                    logger.error("Guardrail response processing failed, blocking response", exc_info=True)
+                    schedule_audit_log(
+                        ctx=guardrail_ctx,
+                        trace_id=get_trace_id(),
+                        model_request=payload,
+                        response=audit_response,
+                        app_id=app_id,
+                        status_code=500,
+                    )
+                    return 500, {"detail": "Response blocked: PII policy enforcement failed"}
             schedule_audit_log(
                 ctx=guardrail_ctx,
                 trace_id=get_trace_id(),
-                model_request=original_payload,
-                response=body,
+                model_request=payload,
+                response=audit_response,
                 app_id=app_id,
+                status_code=status_code,
             )
         # ─────────────────────────────────────────────────────────────────
 
@@ -586,15 +609,34 @@ class OpenAIProxyService:
         guardrail_ctx = GuardrailContext()
         original_payload = payload
         if app_id:
-            guardrail_ctx = await build_guardrail_context(app_id)
+            try:
+                guardrail_ctx = await build_guardrail_context(app_id)
+            except GuardrailError as exc:
+                logger.error("PII policy evaluation failed, blocking stream request: %s", exc)
+                model_ctx = {"service_id": service_id, "model_name": model_name}
+                return "error", 400, {"detail": "Request blocked: PII policy could not be evaluated"}, model_ctx
             if guardrail_ctx.active:
-                payload = apply_input_guardrail(payload, guardrail_ctx)
+                try:
+                    payload = await asyncio.to_thread(apply_input_guardrail, payload, guardrail_ctx)
+                except GuardrailError as exc:
+                    logger.error("PII input masking failed, blocking stream request: %s", exc)
+                    model_ctx = {"service_id": service_id, "model_name": model_name}
+                    return "error", 400, {"detail": "Request blocked: PII policy enforcement failed"}, model_ctx
         # ─────────────────────────────────────────────────────────────────
 
         payload = self._with_include_usage(payload)
 
         kind, status_code, result = await self.proxy_stream(path=url, payload=payload, service_info=service_info)
         if kind == "error":
+            if guardrail_ctx.active:
+                schedule_audit_log(
+                    ctx=guardrail_ctx,
+                    trace_id=get_trace_id(),
+                    model_request=payload,
+                    response=result,
+                    app_id=app_id,
+                    status_code=status_code,
+                )
             model_ctx = {"service_id": service_id, "model_name": model_name}
             return "error", status_code, result, model_ctx
 
@@ -620,12 +662,10 @@ class OpenAIProxyService:
                         # Guardrail active — buffer full content, process, re-emit.
                         # PII masking requires the complete text; streaming is
                         # sacrificed for correctness when a policy is applied.
-                        all_lines: list[str] = []
                         full_content: list[str] = []
                         last_chunk: Optional[Dict[str, Any]] = None
                         async for line in result:
                             self._record_stream_usage(line, infer_attrs)
-                            all_lines.append(line)
                             if line.startswith("data:"):
                                 data = line[len("data:"):].strip()
                                 if data and data != "[DONE]":
@@ -643,10 +683,10 @@ class OpenAIProxyService:
                                         pass
 
                         # Process the complete reconstructed response text.
-                        processed = process_response_text("".join(full_content), guardrail_ctx)
+                        raw_content = "".join(full_content)
+                        processed = await asyncio.to_thread(process_response_text, raw_content, guardrail_ctx)
 
                         if last_chunk is not None:
-                            # Emit one synthetic chunk with the full processed content.
                             choices = last_chunk.get("choices") or [{}]
                             synthetic = {
                                 **last_chunk,
@@ -656,17 +696,34 @@ class OpenAIProxyService:
                                     "finish_reason": "stop",
                                 }],
                             }
-                            yield f"data: {json.dumps(synthetic)}\n"
-
-                            # Fire-and-forget audit log.
+                            yield f"data: {json.dumps(synthetic)}\n\n"
+                            # Audit with masked content (mask tokens intact, not the unmasked reply).
+                            audit_synthetic = {
+                                **last_chunk,
+                                "choices": [{
+                                    **choices[0],
+                                    "delta": {"content": raw_content, "role": "assistant"},
+                                    "finish_reason": "stop",
+                                }],
+                            }
                             schedule_audit_log(
                                 ctx=guardrail_ctx,
                                 trace_id=get_trace_id(),
-                                model_request=original_payload,
-                                response=synthetic,
+                                model_request=payload,
+                                response=audit_synthetic,
                                 app_id=app_id,
+                                status_code=200,
                             )
-                        yield "data: [DONE]\n"
+                        else:
+                            schedule_audit_log(
+                                ctx=guardrail_ctx,
+                                trace_id=get_trace_id(),
+                                model_request=payload,
+                                response={},
+                                app_id=app_id,
+                                status_code=200,
+                            )
+                        yield "data: [DONE]\n\n"
 
         return "stream", 200, gen(), None
 

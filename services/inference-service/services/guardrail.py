@@ -29,8 +29,20 @@ from services.pii.simulation import CustomField, PolicyType, _build_recognizers
 
 logger = logging.getLogger(__name__)
 
+_background_tasks: set = set()
+
+
+class GuardrailError(Exception):
+    """Raised when a PII policy cannot be evaluated or enforced.
+
+    Any caller that catches this must block the request rather than
+    letting it proceed without enforcement.
+    """
+
+
 _APP_POLICY_KEY = "auth:app:{}:policy_ids"
 _POLICY_KEY = "policy:{}"
+_GLOBAL_POLICY_IDS_KEY = "global:policy_ids"
 
 _redis_client: Optional[aioredis.Redis] = None
 
@@ -57,36 +69,75 @@ def _get_redis() -> Optional[aioredis.Redis]:
 async def get_policy_ids_for_app(app_id: str) -> List[int]:
     redis = _get_redis()
     if redis is None:
-        return []
+        raise GuardrailError(f"Redis unavailable — cannot read policies for app_id={app_id!r}")
     try:
         raw = await redis.get(_APP_POLICY_KEY.format(app_id))
         return json.loads(raw) if raw else []
     except Exception as exc:
-        logger.warning("Failed to read policy_ids for app_id=%s: %s", app_id, exc)
-        return []
+        raise GuardrailError(f"Failed to read policy IDs for app_id={app_id!r}") from exc
 
 
-async def get_policy(policy_id: int) -> Optional[Dict]:
-    """Return policy from Redis. On miss: fetch from platform-core and re-cache."""
+async def get_global_policy_ids() -> List[int]:
+    """Return IDs of all active global policies.
+
+    Reads from the Redis Set written by platform-core's cache_policy. On a miss
+    (empty set = key evicted or never written), falls back to the platform-core
+    internal endpoint which rebuilds the index from the DB.
+    """
     redis = _get_redis()
-    if redis is None:
-        return None
-    try:
-        raw = await redis.get(_POLICY_KEY.format(policy_id))
-        if raw:
-            return json.loads(raw)
-    except Exception as exc:
-        logger.warning("Redis read failed for policy_id=%s: %s", policy_id, exc)
+    if redis is not None:
+        try:
+            members = await redis.smembers(_GLOBAL_POLICY_IDS_KEY)
+            if members:
+                return [int(m) for m in members]
+        except Exception as exc:
+            logger.warning("Redis read failed for global policy IDs: %s", exc)
 
     if not settings.PLATFORM_CORE_URL:
-        return None
+        return []
     try:
         headers = {}
         if settings.PLATFORM_CORE_INTERNAL_TOKEN:
             headers["X-Internal-Service-Token"] = settings.PLATFORM_CORE_INTERNAL_TOKEN
         async with httpx.AsyncClient(timeout=5.0) as client:
             r = await client.get(
-                f"{settings.PLATFORM_CORE_URL}/api/v1/policy-service/policies/{policy_id}",
+                f"{settings.PLATFORM_CORE_URL}/internal/policies/global",
+                headers=headers,
+            )
+        if r.status_code == 200:
+            return r.json().get("data") or []
+        logger.warning("platform-core returned %s for global policy IDs", r.status_code)
+    except Exception as exc:
+        logger.warning("Failed to fetch global policy IDs from platform-core: %s", exc)
+    return []
+
+
+async def get_policy(policy_id: int) -> Dict:
+    """Return policy from Redis. On miss: fetch from platform-core and re-cache.
+
+    Raises GuardrailError when the policy cannot be loaded from either source —
+    callers must block the request rather than skip enforcement.
+    """
+    redis = _get_redis()
+    try:
+        if redis is not None:
+            raw = await redis.get(_POLICY_KEY.format(policy_id))
+            if raw:
+                return json.loads(raw)
+    except Exception as exc:
+        logger.warning("Redis read failed for policy_id=%s: %s", policy_id, exc)
+
+    if not settings.PLATFORM_CORE_URL:
+        raise GuardrailError(
+            f"Cannot load policy_id={policy_id}: not in Redis and PLATFORM_CORE_URL not configured"
+        )
+    try:
+        headers = {}
+        if settings.PLATFORM_CORE_INTERNAL_TOKEN:
+            headers["X-Internal-Service-Token"] = settings.PLATFORM_CORE_INTERNAL_TOKEN
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(
+                f"{settings.PLATFORM_CORE_URL}/internal/policies/{policy_id}",
                 headers=headers,
             )
         if r.status_code == 200:
@@ -97,9 +148,15 @@ async def get_policy(policy_id: int) -> Optional[Dict]:
                 except Exception:
                     pass
             return data
+        raise GuardrailError(
+            f"Platform-core returned {r.status_code} for policy_id={policy_id}"
+        )
+    except GuardrailError:
+        raise
     except Exception as exc:
-        logger.warning("Failed to re-fetch policy_id=%s from platform-core: %s", policy_id, exc)
-    return None
+        raise GuardrailError(
+            f"Failed to fetch policy_id={policy_id} from platform-core"
+        ) from exc
 
 
 # ── Policy parsing ────────────────────────────────────────────────────────────
@@ -147,7 +204,11 @@ def _parse_policy_types(policy: Dict) -> List[PolicyType]:
 
 # ── Masking ───────────────────────────────────────────────────────────────────
 
-def _mask(text: str, policy_types: List[PolicyType]) -> Tuple[str, Dict[str, str]]:
+def _mask(
+    text: str,
+    policy_types: List[PolicyType],
+    entity_mapping: Optional[Dict[str, Dict[str, str]]] = None,
+) -> Tuple[str, Dict[str, str]]:
     """Analyze + anonymize text using both custom regex and Presidio built-in recognizers.
 
     - custom_field         → TimedPatternRecognizer (via _build_recognizers)
@@ -161,7 +222,6 @@ def _mask(text: str, policy_types: List[PolicyType]) -> Tuple[str, Dict[str, str
 
     recs = _build_recognizers(policy_types, language)
     if not recs.sources:
-        logger.info("No recognizers built — text sent as-is")
         return text, {}
 
     engine = get_engine()
@@ -175,29 +235,18 @@ def _mask(text: str, policy_types: List[PolicyType]) -> Tuple[str, Dict[str, str
 
     # Run Presidio built-in recognizers for model_supported entities
     if recs.model_entities:
-        detectable = recs.model_entities - engine.detectable_entities(language)
-        entities_to_detect = recs.model_entities - detectable  # subtract undetectable
-        if entities_to_detect:
-            analyzer_results += engine.analyze(text, language, entities=sorted(entities_to_detect))
+        undetectable = recs.model_entities - engine.detectable_entities(language)
+        if undetectable:
+            raise GuardrailError(
+                f"Policy requires {sorted(undetectable)!r} but the engine cannot detect "
+                f"them for language={language!r} — request blocked"
+            )
+        analyzer_results += engine.analyze(text, language, entities=sorted(recs.model_entities))
 
     if not analyzer_results:
-        logger.info("No PII detected — text sent as-is")
         return text, {}
 
-    logger.info("── PRESIDIO ANALYZE ──────────────────────────")
-    logger.info("Input text   : %s", text)
-    logger.info("Language     : %s", language)
-    for r in analyzer_results:
-        logger.info("  entity=%-20s start=%-4d end=%-4d score=%.2f  value=%r",
-                    r.entity_type, r.start, r.end, r.score, text[r.start:r.end])
-
-    anonymized, entity_mapping = engine.anonymize(text, analyzer_results)
-
-    logger.info("── PRESIDIO ANONYMIZE ────────────────────────")
-    logger.info("Masked text  : %s", anonymized.text)
-    for entity_type, mapping in entity_mapping.items():
-        for original, token in mapping.items():
-            logger.info("  %-20s  %r  →  %s", entity_type, original, token)
+    anonymized, entity_mapping = engine.anonymize(text, analyzer_results, entity_mapping)
 
     # Invert {entity_type: {original: token}} → {token: original}
     token_to_original = {
@@ -211,18 +260,28 @@ def _mask(text: str, policy_types: List[PolicyType]) -> Tuple[str, Dict[str, str
 def _mask_messages(
     messages: List[Dict], policy_types: List[PolicyType]
 ) -> Tuple[List[Dict], Dict[str, str]]:
-    """Mask PII across all message contents. Accumulates token→original map."""
-    combined: Dict[str, str] = {}
+    """Mask PII across all message contents using one shared entity_mapping.
+
+    A single entity_mapping dict is passed to every _mask call so the
+    InstanceCounterAnonymizer counter is shared: "Alice" in msg1 gets
+    <PERSON_1> and "Bob" in msg2 gets <PERSON_2> — never both <PERSON_1>.
+    """
+    shared_entity_mapping: Dict[str, Dict[str, str]] = {}
     masked = []
     for msg in messages:
         content = msg.get("content")
         if isinstance(content, str) and content:
-            masked_content, token_map = _mask(content, policy_types)
-            combined.update(token_map)
+            masked_content, _ = _mask(content, policy_types, shared_entity_mapping)
             masked.append({**msg, "content": masked_content})
         else:
             masked.append(msg)
-    return masked, combined
+    # Invert {entity_type: {original: token}} → {token: original} once for all messages
+    token_to_original = {
+        token: original
+        for per_type in shared_entity_mapping.values()
+        for original, token in per_type.items()
+    }
+    return masked, token_to_original
 
 
 def _unmask(text: str, token_to_original: Dict[str, str]) -> str:
@@ -255,13 +314,26 @@ class GuardrailContext:
 
 async def build_guardrail_context(app_id: str) -> GuardrailContext:
     ctx = GuardrailContext()
-    policy_ids = await get_policy_ids_for_app(app_id)
+    app_policy_ids = await get_policy_ids_for_app(app_id)
+    global_policy_ids = await get_global_policy_ids()
+
+    seen: set = set(app_policy_ids)
+    policy_ids = list(app_policy_ids)
+    for pid in global_policy_ids:
+        if pid not in seen:
+            policy_ids.append(pid)
+
     if not policy_ids:
         return ctx
 
     for pid in policy_ids:
-        policy = await get_policy(pid)
-        if not policy or not policy.get("is_active"):
+        if not pid:
+            continue
+        policy = await get_policy(pid)  # raises GuardrailError if policy cannot be loaded
+        if not policy.get("is_active"):
+            continue
+        category = policy.get("category")
+        if category and not category.get("is_active"):
             continue
         ctx.applied_policy_ids.append(pid)
         ctx.policy_types.extend(_parse_policy_types(policy))
@@ -279,12 +351,7 @@ def apply_input_guardrail(
     if not ctx.needs_input_mask or not ctx.policy_types:
         return payload
     messages = payload.get("messages") or []
-    logger.info("Payload BEFORE masking: %s", messages)
     masked_messages, ctx.token_to_original = _mask_messages(messages, ctx.policy_types)
-    if ctx.token_to_original:
-        logger.info("Guardrail masked %d PII value(s): %s",
-                    len(ctx.token_to_original), list(ctx.token_to_original.values()))
-    logger.info("Payload AFTER  masking: %s", masked_messages)
     return {**payload, "messages": masked_messages}
 
 
@@ -349,8 +416,9 @@ def schedule_audit_log(
     model_request: Dict,
     response: Dict,
     app_id: Optional[str],
+    status_code: int = 200,
 ) -> None:
-    asyncio.create_task(
+    task = asyncio.create_task(
         _write_audit_log(
             policy_ids=ctx.applied_policy_ids,
             trace_id=trace_id,
@@ -358,9 +426,12 @@ def schedule_audit_log(
             response=response,
             guardrail_info={
                 "scopes": ctx.scopes,
+                "status_code": status_code,
                 "custom_entities": [cf.entity_name for pt in ctx.policy_types for cf in pt.custom_fields],
                 "model_entities": {lang: names for pt in ctx.policy_types for lang, names in pt.model_entities.items()},
             },
             created_by=app_id,
         )
     )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)

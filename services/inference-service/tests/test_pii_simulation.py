@@ -44,16 +44,25 @@ FINANCE = PolicyType(
 
 class FakeRegistry:
     """Like Presidio's registry for en and xx: spaCy NER plus pattern
-    recognizers for email and phone. No IN_PAN / IN_AADHAAR."""
+    recognizers for email and phone. Records recognizers added via
+    add_recognizer (e.g. the Indian country-specific recognizers)."""
+
+    def __init__(self):
+        self._added = []
+
+    def add_recognizer(self, recognizer):
+        self._added.append(recognizer)
 
     def get_recognizers(self, language, all_fields=False):
-        return [
+        base = [
             SpacyRecognizer(supported_language=language, supported_entities=["PERSON", "LOCATION"]),
             PatternRecognizer(supported_entity="EMAIL_ADDRESS", supported_language=language,
                               patterns=[Pattern("email", "@", 0.5)]),
             PatternRecognizer(supported_entity="PHONE_NUMBER", supported_language=language,
                               patterns=[Pattern("phone", r"\d{10}", 0.5)]),
         ]
+        added = [r for r in self._added if r.supported_language == language]
+        return base + added
 
 
 class FakeAnalyzer:
@@ -157,7 +166,7 @@ def test_policy_regex_wins_a_tie_with_a_builtin(fake_engine):
 
 
 @pytest.mark.parametrize("text, model_entities, missing", [
-    ("Aadhaar 1234 5678 9012", {"en": ["IN_AADHAAR"]}, "IN_AADHAAR"),         # no recognizer
+    ("DL MH0120220012345", {"en": ["IN_DRIVING_LICENSE"]}, "IN_DRIVING_LICENSE"),  # no recognizer
     ("मेरा नाम राहुल शर्मा है, मैं दिल्ली में रहता हूँ", {"hi": ["PERSON"]}, "PERSON"),  # no Hindi NER
 ])
 def test_undetectable_model_entities_are_rejected(fake_engine, text, model_entities, missing):
@@ -411,10 +420,10 @@ def test_anonymize_with_supplied_analyzer_results(client, fake_engine):
 
 def test_simulate_undetectable_model_entity_is_400_not_500(client, fake_engine):
     resp = client.post("/pii/simulate", json=_simulate_body(
-        {"Healthcare": {"model_supported_field": [{"en": [{"entity_name": "IN_AADHAAR"}]}]}},
-        text="Aadhaar 1234 5678 9012"))
+        {"Healthcare": {"model_supported_field": [{"en": [{"entity_name": "IN_DRIVING_LICENSE"}]}]}},
+        text="DL MH0120220012345"))
     assert resp.status_code == 400
-    assert "IN_AADHAAR" in resp.json()["detail"]
+    assert "IN_DRIVING_LICENSE" in resp.json()["detail"]
 
 
 @pytest.mark.parametrize("span", [
