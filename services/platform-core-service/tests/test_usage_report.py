@@ -6,7 +6,7 @@ import email
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, create_autospec
+from unittest.mock import AsyncMock, MagicMock, Mock, create_autospec
 
 import pytest
 from ai4i_core.email import EmailDeliveryError, EmailSettings
@@ -250,25 +250,32 @@ def retention_90d(monkeypatch):
     monkeypatch.setattr("app.utils.metering_promql_builder.retention_days", lambda: 90)
 
 
-@pytest.fixture
-def repo(monkeypatch):
-    """UsageRepository's budget / period-spend reads, stubbed."""
-    state = SimpleNamespace(
-        budgets={"1": _budget_ns(100, 40)},
-        data_from=SEP_START - (SEP_END - SEP_START),  # recording began long before September
-        period_rows=[SimpleNamespace(cost=Decimal("12.5")), SimpleNamespace(cost=Decimal("17.5"))],
-    )
+def _stub_repo(monkeypatch, name, side_effect):
     # autospec keeps the real signatures: a call that no longer matches the
     # repository (AI4IDS-3278 staging: 3 args to a 2-arg method) fails here too.
     from app.repositories.pay_per_use.usage_repository import UsageRepository
 
-    def stub(name, side_effect):
-        monkeypatch.setattr(UsageRepository, name,
-                            create_autospec(getattr(UsageRepository, name), side_effect=side_effect))
+    monkeypatch.setattr(UsageRepository, name,
+                        create_autospec(getattr(UsageRepository, name), side_effect=side_effect))
 
-    stub("get_tenant_budgets", lambda self, tenant_ids, auth_db=None: state.budgets)
-    stub("get_usage_data_from", lambda self, p: state.data_from)
-    stub("get_period_usage", lambda self, p, *a, **k: state.period_rows)
+
+@pytest.fixture
+def repo_state():
+    """What the stubbed UsageRepository reads return; no patching."""
+    return SimpleNamespace(
+        budgets={"1": _budget_ns(100, 40)},
+        data_from=SEP_START - (SEP_END - SEP_START),  # recording began long before September
+        period_rows=[SimpleNamespace(cost=Decimal("12.5")), SimpleNamespace(cost=Decimal("17.5"))],
+    )
+
+
+@pytest.fixture
+def repo(monkeypatch, repo_state):
+    """UsageRepository's budget / period-spend reads, stubbed."""
+    state = repo_state
+    _stub_repo(monkeypatch, "get_tenant_budgets", lambda self, tenant_ids, auth_db=None: state.budgets)
+    _stub_repo(monkeypatch, "get_usage_data_from", lambda self, p: state.data_from)
+    _stub_repo(monkeypatch, "get_period_usage", lambda self, p, *a, **k: state.period_rows)
     return state
 
 
@@ -466,17 +473,20 @@ class _BudgetAuthDB(_FakeAuthDB):
 
 class TestBudgetAgainstTheRealRepository:
     @pytest.mark.asyncio
-    async def test_budget_figure_loads_through_the_real_get_tenant_budgets(self, repo, monkeypatch):
+    async def test_budget_figure_loads_through_the_real_get_tenant_budgets(self, retention_90d, repo_state,
+                                                                           monkeypatch):
         # Staging (AI4IDS-3278): the collector passed a leftover billing_month
         # (None) that get_tenant_budgets no longer takes → TypeError → "figures
         # failed to load: budget" → status=not_ready and no email to anyone.
         from app.repositories.pay_per_use.usage_repository import UsageRepository
 
-        monkeypatch.undo()  # drop the repo fixture's stubs; keep only what this test needs
-        monkeypatch.setattr("app.utils.metering_promql_builder.retention_days", lambda: 90)
-        base = UsageRepository
-        monkeypatch.setattr(base, "get_usage_data_from", AsyncMock(return_value=repo.data_from))
-        monkeypatch.setattr(base, "get_period_usage", AsyncMock(return_value=repo.period_rows))
+        # Only the period-spend reads are stubbed; get_tenant_budgets stays real.
+        _stub_repo(monkeypatch, "get_usage_data_from", lambda self, p: repo_state.data_from)
+        _stub_repo(monkeypatch, "get_period_usage", lambda self, p, *a, **k: repo_state.period_rows)
+        assert not isinstance(UsageRepository.get_tenant_budgets, Mock)
+        # conftest's autouse catalogue stub must still be active (a monkeypatch.undo() would drop it).
+        from app.services.pay_per_use import inference_type_cache
+        assert inference_type_cache.get_all.__module__.endswith("conftest")
 
         auth = _BudgetAuthDB(
             allocated={1: Decimal(100), 2: Decimal(50)},
