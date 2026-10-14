@@ -450,10 +450,15 @@ async def _write_audit_log(
 ) -> None:
     if not settings.PLATFORM_CORE_URL:
         return
-    if policy_types:
-        model_request = await asyncio.to_thread(_mask_for_audit_payload, model_request, policy_types)
-        response = await asyncio.to_thread(_mask_for_audit_response, response, policy_types)
     try:
+        if policy_types:
+            try:
+                model_request = await asyncio.to_thread(_mask_for_audit_payload, model_request, policy_types)
+                response = await asyncio.to_thread(_mask_for_audit_response, response, policy_types)
+            except Exception as exc:
+                logger.warning("Audit masking failed, redacting content from audit row (policy_ids=%s): %s", policy_ids, exc)
+                model_request = {}
+                response = {}
         headers = {"Content-Type": "application/json"}
         if settings.PLATFORM_CORE_INTERNAL_TOKEN:
             headers["X-Internal-Service-Token"] = settings.PLATFORM_CORE_INTERNAL_TOKEN
