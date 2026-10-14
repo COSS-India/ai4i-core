@@ -259,6 +259,94 @@ class _Unset:
 _UNSET = _Unset()
 
 
+def request_total_result(
+    total_v: int,
+    success_v: int,
+    avg_rps_v: float,
+    previous: Optional[tuple[int, int, float]],
+    filters: dict,
+) -> dict:
+    """request_total's result from its counts, shared by every metering
+    backend so the KPIs are computed the same way whatever the store.
+    ``previous`` is (total, successful, avg rps) for the vs-previous window,
+    or None when that window isn't covered (its figures are then None)."""
+    success_rate = round(success_v / total_v * 100, 2) if total_v else 0.0
+    failed_v = max(0, total_v - success_v)
+
+    total_vs_prev: Optional[float] = None
+    success_rate_vs_prev: Optional[float] = None
+    avg_rps_vs_prev: Optional[float] = None
+    failed_vs_prev: Optional[float] = None
+    successful_vs_prev: Optional[float] = None
+    prev_total_v: Optional[int] = None
+    prev_failed_v: Optional[int] = None
+    prev_success_v: Optional[int] = None
+    prev_success_rate_v: Optional[float] = None
+    prev_avg_rps_v: Optional[float] = None
+
+    if previous is not None:
+        prev_total, prev_success, prev_avg_rps = previous
+        prev_failed = max(0, prev_total - prev_success)
+        prev_total_v = prev_total
+        prev_failed_v = prev_failed
+        prev_success_v = prev_success
+        prev_avg_rps_v = round(prev_avg_rps, 4)
+        # Previous success rate is undefined without prior traffic → report 0.
+        prev_success_rate_v = (
+            round(prev_success / prev_total * 100, 2) if prev_total > 0 else 0.0
+        )
+
+        if prev_total > 0:
+            total_vs_prev = round((total_v - prev_total) / prev_total * 100, 1)
+            # pp change so that "97.35 → 97.45" reports as +0.1
+            success_rate_vs_prev = round(success_rate - prev_success_rate_v, 2)
+
+        if prev_failed > 0:
+            failed_vs_prev = round((failed_v - prev_failed) / prev_failed * 100, 1)
+
+        if prev_success > 0:
+            successful_vs_prev = round((success_v - prev_success) / prev_success * 100, 1)
+
+        if prev_avg_rps > 0:
+            avg_rps_vs_prev = round((avg_rps_v - prev_avg_rps) / prev_avg_rps * 100, 1)
+
+    fmt = MeteringService._format_count
+    return {
+        "total_requests": {
+            "count": total_v,
+            "formatted": fmt(total_v),
+            "vs_previous_pct": total_vs_prev,
+            "previous_count": prev_total_v,
+            "previous_formatted": fmt(prev_total_v) if prev_total_v is not None else None,
+        },
+        "successful_requests": {
+            "count": success_v,
+            "formatted": fmt(success_v),
+            "vs_previous_pct": successful_vs_prev,
+            "previous_count": prev_success_v,
+            "previous_formatted": fmt(prev_success_v) if prev_success_v is not None else None,
+        },
+        "failed_requests": {
+            "count": failed_v,
+            "formatted": fmt(failed_v),
+            "vs_previous_pct": failed_vs_prev,
+            "previous_count": prev_failed_v,
+            "previous_formatted": fmt(prev_failed_v) if prev_failed_v is not None else None,
+        },
+        "success_rate": {
+            "rate_pct": success_rate,
+            "vs_previous_pct": success_rate_vs_prev,
+            "previous_rate_pct": prev_success_rate_v,
+        },
+        "avg_rps": {
+            "value": avg_rps_v,
+            "vs_previous_pct": avg_rps_vs_prev,
+            "previous_value": prev_avg_rps_v,
+        },
+        "filters": filters,
+    }
+
+
 class MeteringService:
     def __init__(
         self,
@@ -271,6 +359,13 @@ class MeteringService:
         self._auth_db = auth_db
         self._service_repo = service_repo
         self._model_repo = model_repo
+
+    async def data_since(self, period) -> Optional[datetime]:
+        """When this store's data begins inside ``period`` (a UsagePeriod),
+        for its ``dataFrom`` / ``partial``: Prometheus holds only
+        retention_days of samples (see retained_range), so an older start is
+        answered from what's left. Overridden per store."""
+        return retention_edge()
 
     async def refresh_retention(self) -> None:
         """Re-read how much history Prometheus keeps (cached per process;
@@ -372,101 +467,26 @@ class MeteringService:
         # already renders up to 4dp for values < 1; this just gives it
         # something non-zero to show.
         avg_rps_v = round(_float(raw[2]), 4)
-        success_rate = round(success_v / total_v * 100, 2) if total_v else 0.0
-        raw_failed = total_v - success_v
-        if raw_failed < 0:
+        if success_v > total_v:
             # Independent total/success queries can skew across a scrape boundary,
-            # making success briefly exceed total. Clamp to 0 but flag it.
+            # making success briefly exceed total. Clamped to 0 failed below, but flagged.
             logger.warning(
                 "Failed-count clamp: success(%s) > total(%s) — Prometheus query skew; reporting 0 failed.",
                 success_v, total_v,
             )
-        failed_v = max(0, raw_failed)
-
-        total_vs_prev: Optional[float] = None
-        success_rate_vs_prev: Optional[float] = None
-        avg_rps_vs_prev: Optional[float] = None
-        failed_vs_prev: Optional[float] = None
-        successful_vs_prev: Optional[float] = None
-        prev_total_v: Optional[int] = None
-        prev_failed_v: Optional[int] = None
-        prev_success_v: Optional[int] = None
-        prev_success_rate_v: Optional[float] = None
-        prev_avg_rps_v: Optional[float] = None
-
-        if has_prev:
-            prev_total = max(0, round(_float(raw[3])))
-            prev_success = max(0, round(_float(raw[4])))
-            prev_avg_rps = _float(raw[5])
-            prev_failed = max(0, prev_total - prev_success)
-            prev_total_v = prev_total
-            prev_failed_v = prev_failed
-            prev_success_v = prev_success
-            prev_avg_rps_v = round(prev_avg_rps, 4)
-            # Previous success rate is undefined without prior traffic → report 0.
-            prev_success_rate_v = (
-                round(prev_success / prev_total * 100, 2) if prev_total > 0 else 0.0
-            )
-
-            if prev_total > 0:
-                total_vs_prev = round((total_v - prev_total) / prev_total * 100, 1)
-                # pp change so that "97.35 → 97.45" reports as +0.1
-                success_rate_vs_prev = round(success_rate - prev_success_rate_v, 2)
-
-            if prev_failed > 0:
-                failed_vs_prev = round((failed_v - prev_failed) / prev_failed * 100, 1)
-
-            if prev_success > 0:
-                successful_vs_prev = round((success_v - prev_success) / prev_success * 100, 1)
-
-            if prev_avg_rps > 0:
-                avg_rps_vs_prev = round((avg_rps_v - prev_avg_rps) / prev_avg_rps * 100, 1)
-
-        return {
-            "total_requests": {
-                "count": total_v,
-                "formatted": self._format_count(total_v),
-                "vs_previous_pct": total_vs_prev,
-                "previous_count": prev_total_v,
-                "previous_formatted": (
-                    self._format_count(prev_total_v) if prev_total_v is not None else None
-                ),
-            },
-            "successful_requests": {
-                "count": success_v,
-                "formatted": self._format_count(success_v),
-                "vs_previous_pct": successful_vs_prev,
-                "previous_count": prev_success_v,
-                "previous_formatted": (
-                    self._format_count(prev_success_v) if prev_success_v is not None else None
-                ),
-            },
-            "failed_requests": {
-                "count": failed_v,
-                "formatted": self._format_count(failed_v),
-                "vs_previous_pct": failed_vs_prev,
-                "previous_count": prev_failed_v,
-                "previous_formatted": (
-                    self._format_count(prev_failed_v) if prev_failed_v is not None else None
-                ),
-            },
-            "success_rate": {
-                "rate_pct": success_rate,
-                "vs_previous_pct": success_rate_vs_prev,
-                "previous_rate_pct": prev_success_rate_v,
-            },
-            "avg_rps": {
-                "value": avg_rps_v,
-                "vs_previous_pct": avg_rps_vs_prev,
-                "previous_value": prev_avg_rps_v,
-            },
-            "filters": {
+        previous = (
+            (max(0, round(_float(raw[3]))), max(0, round(_float(raw[4]))), _float(raw[5]))
+            if has_prev else None
+        )
+        return request_total_result(
+            total_v, success_v, avg_rps_v, previous,
+            filters={
                 "inference_only": inference_only,
                 "tenant": tenant,
                 "service_id": service_id,
                 "time_range": time_range or "all",
             },
-        }
+        )
 
     async def request_volume_chart(
         self,
@@ -1517,6 +1537,23 @@ class MeteringService:
             logger.warning("registry_model_count: DB query failed", exc_info=True)
             return None
 
+    async def registry_model_counts_by_task(self) -> dict[str, int]:
+        """Registered model versions per metering task type (the
+        SERVICE_BREAKDOWN_CONFIG keys), from ONE grouped query — the same grain
+        and task mapping as registry_model_count(task_types=[task]) per task.
+        Raises on a DB error (registry_model_count returns None instead); task
+        types with no models are omitted."""
+        if self._model_repo is None:
+            raise RuntimeError("model registry unavailable")
+        by_registry_type = await self._model_repo.count_models_by_task_type()
+        counts = {}
+        for task in SERVICE_BREAKDOWN_CONFIG:
+            registry = _to_registry_task_types([task])
+            n = by_registry_type.get(registry[0].lower(), 0) if registry else 0
+            if n:
+                counts[task] = n
+        return counts
+
     @staticmethod
     def model_consumption_ranking(
         model_totals: list[dict], limit: int
@@ -1870,6 +1907,91 @@ class MeteringService:
                 "time_range": time_range or "all",
                 "services": active_services,
             },
+        }
+
+    # ── usage report (AI4IDS-3278) ──────────────────────────────────────────
+    # Period queries for the Usage Viewer report. Unlike the preset-only
+    # service_breakdown/usage_by_tenant_service above, these take any
+    # TimeRange (a calendar month is an AbsoluteRange) and, like the
+    # dashboard, count API-key inference traffic only. Prometheus-backed:
+    # OpenSearchMeteringService does not override them. They raise on a
+    # Prometheus failure, where the dashboard methods (request_total,
+    # model_breakdown) degrade to 0 / empty — a report must not mail a
+    # silent 0.
+
+    async def inference_request_total(self, time_range: TimeRange) -> int:
+        """All inference requests in the range: the same PromQL as
+        request_total's total_requests (no tenant/task filter)."""
+        sel = build_base_selectors(inference_only=True, auth_type=API_KEY_AUTH_TYPE)
+        return round(await self._client.scalar(sum_over_window(f"{_METRIC}{sel}", time_range)))
+
+    async def server_error_total(self, time_range: TimeRange) -> int:
+        """5xx inference responses in the range — the platform's own failures.
+
+        request_total's failed_requests is every non-2xx, so it also counts
+        4xx client errors (bad input, auth, quota), which the report's error
+        rate must not."""
+        sel = build_base_selectors(
+            inference_only=True, extra=['status_code=~"5.."'], auth_type=API_KEY_AUTH_TYPE
+        )
+        return round(await self._client.scalar(sum_over_window(f"{_METRIC}{sel}", time_range)))
+
+    async def active_tenant_ids(self, time_range: TimeRange) -> set[str]:
+        """Ids of currently-ACTIVE tenants with at least one request in the
+        range — the population active_tenants() counts, as ids, so two
+        periods can be compared (dormant institutions).
+
+        Rows with no tenant_id (series from before the label existed) are
+        dropped: there is no id to compare them by."""
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, auth_type=API_KEY_AUTH_TYPE)}"
+        rows = await self._client.query(self._by_tenant_promql(metric, time_range, filter_zero=True))
+        valid_ids = await self._fetch_valid_tenant_ids()
+        ids = {m["tenant_id"] for m in self._merge_tenant_rows(rows) if m["tenant_id"]}
+        return ids if valid_ids is None else ids & valid_ids
+
+    async def active_application_count(self, time_range: TimeRange) -> int:
+        """Applications with at least one request in the range. application_id
+        is empty for JWT traffic and pre-cutover series, which are skipped."""
+        sel = build_base_selectors(
+            inference_only=True, extra=['application_id!=""'], auth_type=API_KEY_AUTH_TYPE
+        )
+        rows = await self._client.query(
+            f"{sum_over_window_by(f'{_METRIC}{sel}', 'application_id', time_range)} > 0"
+        )
+        return len(rows)
+
+    async def tenant_task_usage(self, time_range: TimeRange) -> dict:
+        """Requests per tenant per task type in the range, ranked by total.
+
+        Returns {"tenants": [{"tenant_id", "tenant", "total", "tasks"}],
+        "task_totals": {task: requests}, "grand_total": int}. Tenant names are
+        the current organisation names, falling back to the label."""
+        services = list(SERVICE_BREAKDOWN_CONFIG)
+        _ep = f'{PROMETHEUS_API_PATH_LABEL}=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
+        metric = f'{_METRIC}{{{_ep},tenant!="unknown",{api_key_auth_type_selector()}}}'
+        results = await self._client.query(
+            f"{sum_over_window_by(metric, f'tenant_id, tenant, {PROMETHEUS_API_PATH_LABEL}', time_range)} > 0"
+        )
+        ranked = self._rank_tenants_by_total(self._accumulate_tenant_task_counts(results, services))
+        names = await self._resolve_tenant_names(
+            {bucket["tenant_id"] for bucket, _ in ranked if bucket["tenant_id"]}
+        )
+        task_totals: dict[str, int] = {}
+        for bucket, _ in ranked:
+            for task, count in bucket["tasks"].items():
+                task_totals[task] = task_totals.get(task, 0) + count
+        return {
+            "tenants": [
+                {
+                    "tenant_id": bucket["tenant_id"],
+                    "tenant": names.get(bucket["tenant_id"], "") or bucket["tenant"] or "unknown",
+                    "total": total,
+                    "tasks": dict(bucket["tasks"]),
+                }
+                for bucket, total in ranked
+            ],
+            "task_totals": task_totals,
+            "grand_total": sum(total for _, total in ranked),
         }
 
     # ── private helpers ─────────────────────────────────────────────────────

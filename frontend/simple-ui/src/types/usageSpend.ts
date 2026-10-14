@@ -1,33 +1,62 @@
 import type { MeteringPeriod, MeteringPeriodEcho, MeteringTokenKey } from "./metering";
 
-export interface SpendByTaskType {
+/** One task type's quota usage in the summary's billing month. No money: quota has none. */
+export interface QuotaUsageItem {
   modelTaskType: string;
   unit: string;
+  /** Units used in the billing month, summed across institutions. */
   consumption: number;
   /**
-   * Quota allocated for this task type this billing period, summed across tenants'
-   * current tier only. Omitted when no tenant in scope has a quota snapshot for it.
+   * Quota allocated for this task type, summed across institutions' current tier only.
+   * Null when no institution in scope has a quota snapshot for it.
    */
-  allocated?: number | null;
-  /** Never sent by the summary endpoint; absent on its responses. */
-  remaining?: number | null;
+  allocated: number | null;
 }
 
+/** Budget across institutions — all-time, never scoped by the billing period. */
+export interface SummaryBudget {
+  basis: "all_time";
+  /** Institutions with a budget on file (deactivated ones left out). */
+  institutions: number;
+  allocated: number;
+  spent: number;
+  /** allocated − spent; negative when overspent overall. */
+  remaining: number;
+  /**
+   * Institutions whose all-time spend has reached their budget (institution spend
+   * >= institution budget). Not the number of institutions with blocked keys:
+   * billing blocks per key, against each key's own ceiling.
+   */
+  exceededTenants: number;
+  /**
+   * With a tier filter: institutions were picked by their current tier. Null without
+   * one. Differs from quota.tierFilter, so an institution whose tier was removed can
+   * be missing here but present in quota.
+   */
+  tierFilter?: "current_tier" | null;
+}
+
+/** Quota usage in one billing month (all months when billingMonth is null). */
+export interface SummaryQuota {
+  basis: "billing_month" | "all_time";
+  billingMonth: string | null;
+  /** Institutions with quota usage in scope. */
+  activeTenants: number;
+  byTaskType: QuotaUsageItem[];
+  /** With a tier filter: institutions were picked by the most recent tier in their quota rows. */
+  tierFilter?: "most_recent_quota_tier" | null;
+}
+
+/** GET /usage-summary: budget (all-time) and quota (monthly), each with its own time basis. */
 export interface UsageSummaryResponse {
-  billingPeriod: string | null;
-  totalSpend: number;
   currency: string;
-  /** Present when API supports it; otherwise derived client-side. */
-  activeTenants?: number;
-  budgetExceededTenants?: number;
-  spendChangePercent?: number;
-  spendByModelTaskType: SpendByTaskType[];
-  /** Summed across tenants with a budget assignment. */
-  totalAllocatedBudget?: number;
-  totalRemainingBudget?: number;
+  budget: SummaryBudget;
+  quota: SummaryQuota;
 }
 
+/** An institution's budget — all-time, never scoped by the period (that's periodSpend). */
 export interface TenantBudget {
+  basis?: "all_time";
   limit: number;
   spent: number;
   remaining: number;
@@ -122,7 +151,7 @@ export interface TenantUsageParams {
 }
 
 export interface UsageSummaryParams {
-  /** Billing month in YYYY-MM format. Omit = all-time on the API. */
+  /** Billing month (YYYY-MM) for the quota block only; omit = all months. Budget is always all-time. */
   billingPeriod?: string;
   tierId?: string;
   /** Comma-separated task types to include (frontend allowlist). */

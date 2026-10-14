@@ -6,6 +6,7 @@ import {
   piiDomainRowSchema,
   piiPolicySchema,
   piiRedactResponseSchema,
+  piiSupportedEntitiesSchema,
   piiTenantDomainMappingSchema,
   stringArraySchema,
 } from "./dto/schemas/pii";
@@ -35,6 +36,16 @@ export const piiService = {
       },
       responseSchema: piiRedactResponseSchema,
     }),
+
+  /** Entity types inference-service can detect for this language (GET /pii/entities). */
+  getSupportedEntities: async (language: string): Promise<string[]> => {
+    const response = await apiService.get(apiEndpoints.pii.entities, {
+      params: { language },
+      responseSchema: piiSupportedEntitiesSchema,
+      suppressErrorAlert: true,
+    });
+    return response.data.entities;
+  },
 
   getAllDomains: () =>
     apiService.get(admin.allDomains, { responseSchema: z.array(piiDomainRowSchema) }),

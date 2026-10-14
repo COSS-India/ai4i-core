@@ -19,6 +19,9 @@ from app.utils.billing_month import shift_billing_month
 from app.utils.usage_period import UsagePeriod
 
 
+# tenants columns get_tenant_budgets / get_budgeted_tenant_budgets read.
+_TENANT_BUDGET_COLUMNS = "id, allocated_budget, tier_id, budget_effective_from, budget_effective_to"
+
 # The payperuse consumer assigns billing months in IST.
 _IST = ZoneInfo("Asia/Kolkata")
 
@@ -143,14 +146,39 @@ class UsageRepository:
         result = await self._db.execute(stmt)
         return result.all()
 
+    async def get_budgeted_tenant_budgets(
+        self, auth_db: Optional[AsyncSession], tier_id: str | None = None,
+    ) -> dict:
+        """get_tenant_budgets' result for every institution with a budget on file
+        (tenants.allocated_budget set), DEACTIVATED ones left out; only those
+        whose current tier (tenants.tier_id) is ``tier_id`` if given. One read of
+        tenants for both the selection and the budgets.
+
+        The /usage-summary budget block's institutions: all-time, so they're not
+        picked by quota rows the way the quota block's are — an institution on
+        untiered keys has spend but no ppu_quota_usage rows. {} without an auth
+        DB; a failing query propagates (see get_tenant_budgets for why)."""
+        if auth_db is None:
+            return {}
+        sql = (
+            f"SELECT {_TENANT_BUDGET_COLUMNS} FROM tenants"
+            " WHERE allocated_budget IS NOT NULL AND status <> 'DEACTIVATED'"
+        )
+        params: dict = {}
+        if tier_id is not None:
+            sql += " AND tier_id = CAST(:tier_id AS uuid)"
+            params["tier_id"] = tier_id
+        tenant_rows = (await auth_db.execute(text(sql), params)).all()
+        return await self._budgets_for(tenant_rows, auth_db)
+
     async def get_tenant_budgets(
         self,
-        billing_month: str | None,
         tenant_ids: list[str],
         auth_db: Optional[AsyncSession] = None,
     ) -> dict:
         """budget_limit/available_balance/tier_id/budget_effective_from/
-        budget_effective_to per tenant_id.
+        budget_effective_to per tenant_id — all-time: budget_usage is a running
+        total with no month dimension, so this is always the current balance.
 
         ppu_tenant_tier_assignments was dropped (AI4IDS-2923) when billing moved to
         per-API-key budget_usage deduction — reconstructed here from tables that
@@ -173,15 +201,6 @@ class UsageRepository:
             top-down (TenantService.revise_tenant_budget only updates
             allocated_budget) — nullable, so absent for any tenant created before
             these columns existed or without a configured budget window.
-
-        billing_month is accepted for interface compatibility but no longer
-        narrows this particular lookup: budget_usage carries no per-month
-        dimension (a single lifetime-cumulative row per key, unlike the old
-        assignment row's effective_from/to window), so for a PAST billing_month
-        this now reflects the tenant's CURRENT balance, not a frozen snapshot as
-        of that month's end. Accepted, not fixed here — that's a schema gap
-        upstream of this repository (see budget_usage's model), not something
-        reconstructable from data that was never captured.
 
         A tenant not found in auth-service's tenants table (unknown tenant_id,
         or the auth_db param itself not passed/None), OR found but with
@@ -213,13 +232,15 @@ class UsageRepository:
         # propagate; the global exception handler turns it into a proper 500.
         tenant_rows = (
             await auth_db.execute(
-                text(
-                    "SELECT id, allocated_budget, tier_id, budget_effective_from, "
-                    "budget_effective_to FROM tenants WHERE id = ANY(:ids)"
-                ),
+                text(f"SELECT {_TENANT_BUDGET_COLUMNS} FROM tenants WHERE id = ANY(:ids)"),
                 {"ids": numeric_ids},
             )
         ).all()
+        return await self._budgets_for(tenant_rows, auth_db)
+
+    async def _budgets_for(self, tenant_rows, auth_db: AsyncSession) -> dict:
+        """Budget per tenant row (_TENANT_BUDGET_COLUMNS): allocated_budget minus
+        the lifetime spend of every key under the tenant's applications."""
         if not tenant_rows:
             return {}
 

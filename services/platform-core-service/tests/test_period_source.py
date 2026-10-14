@@ -33,3 +33,11 @@ def test_brin_index_on_occurred_at():
     assert index.dialect_options["postgresql"]["using"] == "brin"
     # Unsummarised ranges match every query; see migration cf2715437b4f.
     assert index.dialect_options["postgresql"]["with"] == {"autosummarize": "on"}
+
+
+def test_budget_filter_is_built_from_request_rows():
+    """The Budget tab leaves out request rows by the one REQUEST_ROWS definition."""
+    from app.models.pay_per_use.usage_event import REQUEST_ROWS
+
+    sql = str(period_source(resolve_period("today", None, None)).in_period)
+    assert f"NOT ({REQUEST_ROWS})" in sql

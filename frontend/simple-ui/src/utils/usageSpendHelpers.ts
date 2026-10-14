@@ -1,7 +1,7 @@
 import { METERING } from "../config/meteringConstants";
 import { meteringColorAt } from "./meteringColors";
 import { formatMonthName } from "./meteringDateRange";
-import type { SpendByTaskType } from "../types/usageSpend";
+import type { QuotaUsageItem } from "../types/usageSpend";
 
 type TaskTypeColorKey = keyof typeof METERING.COLORS.TASK_TYPE;
 
@@ -148,15 +148,14 @@ const NO_TOKEN_TOTALS: SpendTokenTotals = {
  * across a mixed set would print an arbitrary row's unit over an incoherent number.
  * Per-type figures remain on the rows themselves.
  */
-export function summarizeSpendTokens(rows: SpendByTaskType[]): SpendTokenTotals {
+export function summarizeSpendTokens(rows: QuotaUsageItem[]): SpendTokenTotals {
   const units = new Set(rows.map((r) => (r.unit || "").trim().toLowerCase()).filter(Boolean));
   if (units.size !== 1) return NO_TOKEN_TOTALS;
 
   const withAllocated = rows.filter((r) => r.allocated != null);
-  const remainingPerRow = rows.map((r) => {
-    if (r.remaining != null) return r.remaining;
-    return r.allocated != null ? r.allocated - r.consumption : null;
-  });
+  const remainingPerRow = rows.map((r) =>
+    r.allocated != null ? r.allocated - r.consumption : null,
+  );
   const withRemaining = remainingPerRow.filter((r): r is number => r != null);
   return {
     unit: rows.find((r) => r.unit)?.unit ?? "",

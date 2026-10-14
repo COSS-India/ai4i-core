@@ -1,5 +1,5 @@
 # ── Shared platform library (consolidated) ──
-ai4i-core==1.0.51
+ai4i-core==1.0.52
 
 # ── Core framework ──
 fastapi>=0.104.0
@@ -39,6 +39,10 @@ opentelemetry-instrumentation-redis>=0.41b0
 
 # ── OpenSearch client ──
 opensearch-py>=2.0.0
+
+# ── PDF (Usage Viewer report attachment: HTML template → PDF, app/services/usage_report/pdf.py).
+#    Needs Pango at runtime — installed in the Dockerfile. ──
+weasyprint>=70.0
 
 # ── Testing ──
 pytest>=7.4.0

@@ -76,6 +76,9 @@ from app.models.pay_per_use.budget_usage import BudgetUsage  # noqa: E402
 from app.models.pay_per_use.usage_event import UsageEvent  # noqa: E402
 from app.models.pay_per_use.daily_usage import DailyUsage  # noqa: E402
 
+# Usage Viewer report (AI4IDS-3278) — next release (retry + send log):
+# from app.models.usage_report.send_log import UsageReportSendLog  # noqa: E402
+
 __all__ = [
     "Base",
     # model-management
@@ -113,4 +116,6 @@ __all__ = [
     "BudgetUsage",
     "UsageEvent",
     "DailyUsage",
+    # usage report — next release (retry + send log):
+    # "UsageReportSendLog",
 ]

@@ -8,6 +8,7 @@ All env vars use UPPER_SNAKE_CASE; pydantic-settings is case-insensitive so
 both .env and OS-level vars are accepted.
 """
 
+import re
 from typing import Optional
 
 from pydantic import Field, field_validator
@@ -210,6 +211,28 @@ class CoreSettings(BaseSettings):
     # ("Log in to the <PLATFORM_NAME> Portal ..."). None → link renders as
     # plain text instead of an <a href>.
     portal_url: Optional[str] = None
+    # Usage Viewer report branding (AI4IDS-3278). Each blank value falls back to
+    # one derived from PLATFORM_NAME (see the get_usage_report_* methods), so no
+    # product name is baked into code.
+    # Name signed above the team name. None → team name only.
+    usage_report_sender_name: Optional[str] = None
+    # Email subject: "<prefix> – Monthly programme report – September 2026".
+    usage_report_subject_prefix: Optional[str] = None
+    # Report title: "Please find attached the <title> for …", and the PDF heading.
+    usage_report_title: Optional[str] = None
+    # Signature line under "Regards,".
+    usage_report_team_name: Optional[str] = None
+    # Attachment file name: "<prefix>_<period>.pdf".
+    usage_report_filename_prefix: Optional[str] = None
+    # Scheduled Usage Viewer report (POST /internal/usage-report/run, triggered
+    # daily by the pyjob `usage_report` CronJob). Its frequency is set only on
+    # that job (USAGE_REPORT_FREQUENCY). Allows frequencies under a day (30m,
+    # 2h …) — test environments only, so a config slip can't email officials
+    # every half hour.
+    usage_report_allow_subdaily: bool = False
+    # Next release (retry + send log): sends tried per recipient per period
+    # (one per daily run) before giving up.
+    # usage_report_max_attempts: int = Field(default=3, ge=1)
 
     # ── Branding (same PLATFORM_NAME / ADOPTER_LOGO_URL pair as auth-service
     # and kafka-consumers — AI4IDS-3043), copied from the root .env by
@@ -247,12 +270,13 @@ class CoreSettings(BaseSettings):
         default="logs-*", description="OpenSearch request-log index pattern"
     )
 
-    # Which store serves metering request-count KPIs. "dual" computes from
-    # both stores and still serves Prometheus's numbers, for pre-cutover
-    # comparison; "opensearch" serves OpenSearch's numbers.
+    # Which store serves the Usage Dashboard's metering tabs (Overview, Model
+    # consumption). "usage_events" (default): usage_events / daily_usage, no
+    # Prometheus. "prometheus" / "opensearch": the earlier sources; "dual"
+    # computes from both of those and serves Prometheus's numbers.
     metering_data_source: str = Field(
-        default="prometheus",
-        description='Metering request-count KPI source: "prometheus" | "dual" | "opensearch"',
+        default="usage_events",
+        description='Metering source: "usage_events" | "prometheus" | "dual" | "opensearch"',
     )
 
     # SAME value auth-service's own PII_ENCRYPTION_KEY uses — needed here to
@@ -320,6 +344,39 @@ class CoreSettings(BaseSettings):
         dependencies/services.py passes that value in and applies this result
         when constructing the client."""
         return (email_from_name or "").strip() or self.get_platform_name()
+
+    def _usage_report_text(self, value: Optional[str], default: str) -> str:
+        return (value or "").strip() or default
+
+    def get_usage_report_subject_prefix(self) -> str:
+        return self._usage_report_text(self.usage_report_subject_prefix, self.get_platform_name())
+
+    def get_usage_report_title(self) -> str:
+        return self._usage_report_text(self.usage_report_title, f"{self.get_platform_name()} Adoption report")
+
+    def get_usage_report_team_name(self) -> str:
+        return self._usage_report_text(self.usage_report_team_name, f"{self.get_platform_name()} Support Team")
+
+    def get_usage_report_filename_prefix(self) -> str:
+        """Safe in any file system: spaces become "-", anything but letters,
+        digits, ".", "_" and "-" is dropped."""
+        raw = self._usage_report_text(
+            self.usage_report_filename_prefix, f"{self.get_platform_name()}_Programme-Report"
+        )
+        safe = re.sub(r"[^A-Za-z0-9._-]", "", re.sub(r"\s+", "-", raw)).strip("._-")
+        return safe or "Usage-Report"
+
+    @field_validator(
+        "usage_report_sender_name", "usage_report_subject_prefix",
+        "usage_report_title", "usage_report_team_name",
+    )
+    @classmethod
+    def validate_usage_report_text(cls, v: Optional[str]) -> Optional[str]:
+        # The subject goes into an email header; a line break would let the
+        # value inject headers (and EmailMessage would reject every send).
+        if v is not None and ("\r" in v or "\n" in v):
+            raise ValueError("must not contain line breaks")
+        return v
 
     @field_validator("platform_name")
     @classmethod

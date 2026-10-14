@@ -4,9 +4,11 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Install system build dependencies
+# Install system build dependencies, plus WeasyPrint's runtime for the Usage
+# Viewer report PDF: Pango + HarfBuzz, and a font with the ₹ glyph.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends gcc libpq-dev curl && \
+    apt-get install -y --no-install-recommends gcc libpq-dev curl \
+        libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 fonts-dejavu-core && \
     rm -rf /var/lib/apt/lists/*
 
 # ── Install service dependencies (ai4i-core pulled from PyPI via requirements.txt) ──

@@ -184,6 +184,22 @@ class TestGetPeriodUsage:
         )
         assert [r.inference_type_id for r in rows] == [nmt]
 
+    async def test_request_rows_are_left_out(self, session):
+        """Request rows (a status, no units or cost — one per request, for the
+        metering tabs) never show in the Budget tab: an institution whose only
+        requests failed isn't listed, and billed figures are unchanged."""
+        today = resolve_period("today", None, None)
+        inside = today.start + timedelta(seconds=1)
+        await session.execute(text(
+            "INSERT INTO usage_events (correlation_id, occurred_at, tenant_id, status_code, total_units)"
+            " VALUES ('test-period-req-1', :at, :t, 502, 0), ('test-period-req-2', :at2, :t2, 200, 0)"
+        ), {"at": inside, "t": _OTHER_TENANT, "at2": inside + timedelta(seconds=1), "t2": _TENANT})
+        await _event(session, span="billed", occurred_at=inside, units=10, costs=(Decimal("1"), 0, 0))
+
+        rows = await UsageRepository(session).get_period_usage(today, tenant_ids=[str(_TENANT), str(_OTHER_TENANT)])
+        assert {r.tenant_id for r in rows} == {_TENANT}
+        assert sum(r.total_units for r in rows) == 10
+
     async def test_non_numeric_tenant_ids_match_nothing(self, session):
         today = resolve_period("today", None, None)
         assert await UsageRepository(session).get_period_usage(today, tenant_ids=["abc"]) == []
@@ -249,9 +265,9 @@ class TestUsageDataFrom:
 
     async def test_daily_usage_with_the_rollup_on(self, session, rollup_on):
         last_7 = resolve_period("last_7_days", None, None)
-        if await session.scalar(text("SELECT 1 FROM daily_usage WHERE usage_date < :d LIMIT 1"),
-                                {"d": last_7.from_date}):
-            pytest.skip("daily_usage already holds rows from before the period")
-        await _daily(session, usage_date=last_7.to_date)
+        if await session.scalar(text("SELECT 1 FROM daily_usage WHERE usage_date <= :d LIMIT 1"),
+                                {"d": last_7.to_date}):
+            pytest.skip("daily_usage already holds rows up to the period's end")
+        await _daily(session, usage_date=last_7.to_date, units=10, cost=Decimal("1"))
         # The IST midnight that starts the day.
         assert await UsageRepository(session).get_usage_data_from(last_7) == last_7.end - timedelta(days=1)
