@@ -153,6 +153,18 @@ export interface APIKeyResponse {
   allocated_budget?: number | null;
   budget_exhausted?: boolean;
   created_by?: string;
+  /** When the key's previous value stops working after a rotation; absent if never rotated. */
+  rotated_key_expires_at?: string;
+}
+
+/** POST /api-keys/{id}/rotate — the new raw key, shown once. */
+export interface RotateAPIKeyResponse {
+  id: number;
+  api_key: string;
+  key_name: string;
+  expires_at?: string;
+  /** Until then the previous value keeps working as the same key. */
+  rotated_key_expires_at: string;
 }
 
 export interface AdminAPIKeyWithUserResponse extends APIKeyResponse {

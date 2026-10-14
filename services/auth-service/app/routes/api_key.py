@@ -32,6 +32,9 @@ from app.schemas.api_key import (
     ListAllAPIKeysResponse,
     ListAPIKeysResponse,
     RevokeAPIKeyResponse,
+    RevokePreviousKeyResponse,
+    RotateAPIKeyData,
+    RotateAPIKeyResponse,
     UpdateAPIKeyRequest,
     UpdateAPIKeyResponse,
 )
@@ -90,6 +93,9 @@ def _key_item(k, *, permission_names: list[str]) -> APIKeyItem:
         allocated_budget=k.allocated_budget,
         permissions=permission_names,
         expires_at=k.expires_at,
+        # null unless the previous value really still works (a revoked or
+        # expired key keeps the column set, but nothing authenticates).
+        rotated_key_expires_at=k.live_rotated_key_expires_at(),
         is_active=k.is_active,
         created_by=str(k.created_by) if k.created_by else None,
         created_at=k.created_at,
@@ -316,6 +322,75 @@ async def revoke_api_key(
 
     await svc.revoke_by_obj(db_key)
     return RevokeAPIKeyResponse(data=MessageData(message="API key revoked."))
+
+
+@router.post(
+    "/api-keys/{key_id}/rotate",
+    response_model=RotateAPIKeyResponse,
+    summary="Rotate API key",
+    responses=error_responses(404, 409),
+)
+async def rotate_api_key(
+    key_id: _KeyId,
+    request: Request,
+    current_user: User = Depends(require_any_role(RoleName.ADMIN, RoleName.TENANT_ADMIN)),
+    svc: APIKeyService = Depends(get_api_key_service),
+):
+    """Issue a new value for an API key.
+
+    The new key is returned **once**. The previous value keeps working, as
+    the same key (same budget, permissions and expiry), for
+    `ROTATED_API_KEY_EXPIRE_DAYS` (default 7, never past the key's own
+    expiry) — or until the key is revoked. Returns 409 ROTATION_IN_PROGRESS
+    while a previous value is still active, and 409 API_KEY_NOT_ROTATABLE for
+    a revoked, expired or inactive key. Scoped like revoke: the caller's
+    tenant unless ADMIN; a key outside that scope returns 404.
+    """
+    caller_tenant_id = _resolve_caller_tenant_scope(request, current_user)
+    db_key = await svc.get_by_id_for_scope(key_id, caller_tenant_id)
+    if not db_key:
+        raise EntityNotFoundError("API key")
+
+    new_value, db_key = await svc.rotate_by_obj(db_key, current_user.id)
+    return RotateAPIKeyResponse(
+        data=RotateAPIKeyData(
+            id=db_key.id,
+            api_key=new_value,
+            key_name=db_key.key_name,
+            expires_at=db_key.expires_at,
+            rotated_key_expires_at=db_key.rotated_key_expires_at,
+        )
+    )
+
+
+@router.delete(
+    "/api-keys/{key_id}/rotated-key",
+    response_model=RevokePreviousKeyResponse,
+    summary="Revoke a rotated key's previous value",
+    responses=error_responses(404, 409),
+)
+async def revoke_previous_api_key_value(
+    key_id: _KeyId,
+    request: Request,
+    current_user: User = Depends(require_any_role(RoleName.ADMIN, RoleName.TENANT_ADMIN)),
+    svc: APIKeyService = Depends(get_api_key_service),
+):
+    """Stop a rotated key's previous value now, before its window ends.
+
+    The current value keeps working. Returns 409 NO_ROTATION_IN_PROGRESS
+    when the key has no live previous value. To stop the key entirely use
+    `DELETE /api-keys/{key_id}`. Scoped like revoke: the caller's tenant
+    unless ADMIN; a key outside that scope returns 404.
+    """
+    caller_tenant_id = _resolve_caller_tenant_scope(request, current_user)
+    db_key = await svc.get_by_id_for_scope(key_id, caller_tenant_id)
+    if not db_key:
+        raise EntityNotFoundError("API key")
+
+    await svc.end_rotation_by_obj(db_key, current_user.id)
+    return RevokePreviousKeyResponse(
+        data=MessageData(message="Previous key value revoked. The current key keeps working.")
+    )
 
 
 @router.get(

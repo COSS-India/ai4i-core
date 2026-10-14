@@ -49,6 +49,8 @@ function normalizeKey(raw: unknown): ApiKeyRecord {
     created_by: row.created_by != null ? asString(row.created_by) : undefined,
     created_at: row.created_at != null ? asString(row.created_at) : undefined,
     updated_at: row.updated_at == null ? null : asString(row.updated_at),
+    rotated_key_expires_at:
+      row.rotated_key_expires_at != null ? asString(row.rotated_key_expires_at) : undefined,
   };
 }
 
@@ -185,5 +187,6 @@ export function toLegacyApiKeyResponse(key: ApiKeyRecord): APIKeyResponse {
     allocated_percentage: key.allocated_percentage,
     allocated_budget: key.allocated_budget,
     created_by: key.created_by,
+    rotated_key_expires_at: key.rotated_key_expires_at,
   } as APIKeyResponse;
 }

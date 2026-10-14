@@ -89,6 +89,12 @@ class AuthSettings(BaseSettings):
         default=365,
         validation_alias=AliasChoices("API_KEY_EXPIRE_DAYS", "APIKEY_EXPIRY"),
     )
+    # How long a key's previous value keeps working after a rotation.
+    rotated_api_key_expire_days: int = Field(
+        default=7,
+        ge=0,
+        validation_alias=AliasChoices("ROTATED_API_KEY_EXPIRE_DAYS"),
+    )
     # Negative-cache TTL (seconds) for tokens confirmed absent/ineligible on a
     # Redis miss — short so a later tenant/user reactivation isn't blocked by
     # a stale tombstone.

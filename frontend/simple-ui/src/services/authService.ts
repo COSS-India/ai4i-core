@@ -25,6 +25,7 @@ import {
   AdminAPIKeyWithUserResponse,
   OAuth2Provider,
   Permission,
+  RotateAPIKeyResponse,
 } from '../types/auth';
 import type { ZodTypeAny } from 'zod';
 import { z } from 'zod';
@@ -40,6 +41,7 @@ import {
   changePasswordResponseSchema,
   checkEmailExistsResponseSchema,
   createApiKeyResponseSchema,
+  rotateApiKeyResponseSchema,
   guestServicesListSchema,
   loginResponseSchema,
   logoutResponseSchema,
@@ -576,6 +578,30 @@ class AuthService {
     );
   }
 
+  /**
+   * DELETE `/api-keys/{keyId}/rotated-key` — stops a rotated key's previous
+   * value now, before its window ends. The current value keeps working.
+   */
+  async revokePreviousApiKeyValue(keyId: number): Promise<{ message: string }> {
+    return this.validatedRequest(
+      `${authPath.apiKeys}/${keyId}/rotated-key`,
+      authUnwrappedSchema(messageResponseSchema),
+      { method: 'DELETE' }
+    );
+  }
+
+
+  /**
+   * POST `/api-keys/{keyId}/rotate` — issues a new key value, returned once.
+   * The previous value keeps working until `rotated_key_expires_at`.
+   */
+  async rotateApiKey(keyId: number): Promise<RotateAPIKeyResponse> {
+    return this.validatedRequest(
+      `${authPath.apiKeys}/${keyId}/rotate`,
+      authUnwrappedSchema(rotateApiKeyResponseSchema),
+      { method: 'POST' }
+    );
+  }
 
   /** PATCH `/api-keys/{keyId}` — integer PK in the path. `permissions` are names. */
   async updateApiKey(

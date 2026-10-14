@@ -127,6 +127,21 @@ export const createApiKeyResponseSchema = z
     expires_at: d.expires_at ?? undefined,
   }));
 
+/** POST /api-keys/{id}/rotate — the new raw key, shown once. */
+export const rotateApiKeyResponseSchema = z
+  .object({
+    id: z.coerce.number(),
+    api_key: z.string(),
+    key_name: z.string(),
+    expires_at: z.string().nullable().optional(),
+    rotated_key_expires_at: z.string(),
+  })
+  .passthrough()
+  .transform((d) => ({
+    ...d,
+    expires_at: d.expires_at ?? undefined,
+  }));
+
 const apiKeyResponseRawSchema = z
   .object({
     id: z.coerce.number(),
@@ -146,6 +161,7 @@ const apiKeyResponseRawSchema = z
     is_revoked: z.boolean().optional(),
     created_at: z.string().nullable().optional(),
     expires_at: z.string().nullable().optional(),
+    rotated_key_expires_at: z.string().nullable().optional(),
   })
   .passthrough();
 
@@ -158,6 +174,7 @@ function normalizeApiKeyResponse<T extends z.infer<typeof apiKeyResponseRawSchem
     is_revoked: d.is_revoked ?? !isActive,
     created_at: d.created_at ?? undefined,
     expires_at: d.expires_at ?? undefined,
+    rotated_key_expires_at: d.rotated_key_expires_at ?? undefined,
   };
 }
 
