@@ -1,7 +1,11 @@
 """Internal endpoints — service-to-service calls, not exposed to end users."""
 
+import logging
 import secrets
-from typing import Optional
+from typing import Any, Dict, List, Optional
+
+import redis.asyncio as aioredis
+
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
@@ -9,8 +13,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.redis import get_redis
 from app.dependencies.services import ServiceService, get_service_service
+from app.models.policy_management.audit_log import PolicyAuditLog
+from app.repositories.policy_management.policy_repository import PolicyRepository
 from app.services.pay_per_use import tier_service
+from app.services.policy_management.policy_cache import (
+    GLOBAL_POLICY_IDS_KEY,
+    cache_policy,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Internal"])
 
@@ -38,6 +51,35 @@ async def _require_internal_caller(
         x_internal_service_token.encode(), expected.encode()
     ):
         raise HTTPException(status_code=403, detail="Forbidden")
+
+
+class _AuditLogCreate(BaseModel):
+    policy_id: Optional[List[int]] = None
+    trace_id: Optional[str] = None
+    model_request: Optional[Dict[str, Any]] = None
+    response: Optional[Dict[str, Any]] = None
+    guardrail_info: Optional[Dict[str, Any]] = None
+    created_by: Optional[str] = None
+
+
+@router.post("/policy-audit-logs", include_in_schema=False)
+async def create_policy_audit_log(
+    body: _AuditLogCreate,
+    session: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """Write a policy guardrail audit log entry. Called by inference-service
+    after each LLM request where a PII policy was applied."""
+    log = PolicyAuditLog(
+        policy_id=body.policy_id,
+        trace_id=body.trace_id,
+        model_request=body.model_request,
+        response=body.response,
+        guardrail_info=body.guardrail_info,
+        created_by=body.created_by,
+    )
+    session.add(log)
+    await session.commit()
+    return {"id": log.id}
 
 
 @router.get(
@@ -89,3 +131,52 @@ async def usage_report_run(request: Request, body: UsageReportRunRequest = Usage
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return result.as_dict()
+
+
+@router.get(
+    "/policies/global",
+    include_in_schema=False,
+    dependencies=[Depends(_require_internal_caller)],
+)
+async def internal_get_global_policies(
+    session: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis),
+) -> Dict[str, Any]:
+    """Return IDs of all active global policies and re-warm the Redis index.
+    Called by inference-service on a cache miss for the global policy index."""
+    repo = PolicyRepository(session)
+    policies = await repo.get_global_active()
+    policy_ids = [p.id for p in policies]
+    try:
+        await redis.delete(GLOBAL_POLICY_IDS_KEY)
+        if policy_ids:
+            await redis.sadd(GLOBAL_POLICY_IDS_KEY, *policy_ids)
+    except Exception:
+        logger.warning("Failed to re-warm global policy index")
+    return {"success": True, "data": policy_ids}
+
+
+@router.get(
+    "/policies/{policy_id}",
+    include_in_schema=False,
+    dependencies=[Depends(_require_internal_caller)],
+)
+async def internal_get_policy(
+    policy_id: int,
+    session: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis),
+) -> Dict[str, Any]:
+    """Fetch a policy by id, re-warm the Redis cache, and return the cached
+    payload. Called by inference-service on a cache miss so the guardrail
+    never goes dark after the TTL expires."""
+    repo = PolicyRepository(session)
+    policy = await repo.get_by_id(policy_id)
+    if policy is None:
+        raise HTTPException(status_code=404, detail=f"Policy {policy_id} not found")
+    data = await cache_policy(policy, session, redis)
+    if data is None:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Failed to cache policy {policy_id}; unable to serve guardrail data",
+        )
+    return {"success": True, "data": data}

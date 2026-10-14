@@ -287,7 +287,8 @@ class APIKeyService:
         # keeps both stores converging on the same values instead of just one.
         preserved = {**self._preserved_billing_fields(db_key), **preserved_from_redis}
         payload = self._build_cache_payload(
-            db_key, tenant_id, budget_effective_to, {**self._preserved_tier_id(db_key), **preserved}
+            db_key, tenant_id, budget_effective_to,
+            {**self._preserved_tier_id(db_key), **preserved},
         )
         await self._cache.set_api_key_cache(db_key.api_key, ttl, payload)
         await self._persist_cache_snapshot(db_key, payload)

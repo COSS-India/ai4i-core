@@ -21,7 +21,7 @@ import redis.asyncio as aioredis
 from app.core.database import get_auth_db, get_db
 from app.core.redis import get_redis
 from app.core.exceptions import InsufficientPermissionsError
-from app.core.permissions import is_admin
+from app.core.permissions import ROLE_ADMIN, ROLE_TENANT_ADMIN, is_admin, permission_ids
 from app.schemas.common import DeletedIdData, MessageMeta, error_responses
 from app.schemas.policy_management.fields import ID_MAX
 from app.schemas.policy_management.category import (
@@ -331,8 +331,8 @@ async def list_policies(
 ) -> ListPolicyResponse:
     """List policies, optionally filtered by name (partial match) and/or
     sub-category. 404 if the given sub-category does not exist.
-    Adopter Admin only."""
-    if not is_admin(request):
+    ADMIN and TENANT ADMIN only."""
+    if not permission_ids(request) & {ROLE_ADMIN, ROLE_TENANT_ADMIN}:
         raise InsufficientPermissionsError()
     items, total = await policy_service.list_policies(session, name=name, sub_category_id=sub_category_id, offset=offset, limit=limit)
     response.headers["X-Total-Count"] = str(total)
