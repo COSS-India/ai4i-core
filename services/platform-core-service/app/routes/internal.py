@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 import redis.asyncio as aioredis
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -103,6 +103,35 @@ async def internal_get_service(
     """
     data = await svc.get_service_detail(service_id)
     return {"success": True, "data": data}
+
+
+class UsageReportRunRequest(BaseModel):
+    """``frequency`` comes from the pyjob job's env (USAGE_REPORT_FREQUENCY);
+    omitted → monthly."""
+
+    frequency: Optional[str] = None
+
+
+@router.post(
+    "/usage-report/run",
+    include_in_schema=False,
+    dependencies=[Depends(_require_internal_caller)],
+)
+async def usage_report_run(request: Request, body: UsageReportRunRequest = UsageReportRunRequest()):
+    """One scheduled run of the Usage Viewer report (AI4IDS-3278), triggered
+    once per period by the pyjob `usage_report` CronJob: emails the latest
+    complete period to every Usage Viewer and logs each send in the app logs.
+    Not idempotent in this release (no send log): every call sends again —
+    see app.services.usage_report.scheduler."""
+    from app.services.usage_report.scheduler import run_scheduled_report
+
+    try:
+        result = await run_scheduled_report(body.frequency, request.app.state.http_client)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return result.as_dict()
 
 
 @router.get(
