@@ -347,7 +347,16 @@ const CustomRangePicker: React.FC<CustomRangePickerProps> = ({
   // The arrows step both calendars together, keeping the gap between them.
   const canGoBack = compareMonths(leftMonth, leftMin) > 0;
   const canGoForward = compareMonths(rightMonth, rightMax) < 0;
+  const contentRef = useRef<HTMLElement>(null);
   const stepBoth = (delta: number) => {
+    // A step onto the bound disables the focused arrow, which blurs it to
+    // <body>; the popover reads that as a click outside and closes. Keep
+    // focus inside the popover first.
+    const hitsBound =
+      delta < 0
+        ? compareMonths(shiftMonth(leftMonth, delta), leftMin) <= 0
+        : compareMonths(shiftMonth(rightMonth, delta), rightMax) >= 0;
+    if (hitsBound) contentRef.current?.focus();
     setLeftMonth((m) => shiftMonth(m, delta));
     setRightMonth((m) => shiftMonth(m, delta));
   };
@@ -401,7 +410,7 @@ const CustomRangePicker: React.FC<CustomRangePickerProps> = ({
           </Button>
         </PopoverTrigger>
         <Portal>
-          <PopoverContent w="auto" maxW="calc(100vw - 32px)" borderRadius="lg" shadow="lg">
+          <PopoverContent ref={contentRef} w="auto" maxW="calc(100vw - 32px)" borderRadius="lg" shadow="lg">
             <PopoverBody p={0}>
               <HStack justify="space-between" align="flex-start" px={5} pt={4} pb={3} spacing={4}>
                 <Box>
