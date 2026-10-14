@@ -59,13 +59,6 @@ def _card(label: str, value: Optional[str], note: Optional[str] = None) -> dict:
     return {"label": label, "value": value, "note": note}
 
 
-def _health(d: ReportData) -> list[dict]:
-    note = (f"{fmt.count(d.server_errors)} of {fmt.count(d.total_requests)} requests"
-            if d.error_rate_pct is not None else None)
-    # Availability, P95 latency and fallback rate are not tracked yet, so not shown.
-    return [_card("Error rate (5xx)", fmt.pct(d.error_rate_pct), note)]
-
-
 def _models(d: ReportData) -> dict:
     active, inactive = d.active_models, d.inactive_models
     known = active is not None and inactive is not None and (active + inactive) > 0
@@ -170,7 +163,6 @@ def report_context(data: ReportData) -> dict:
         "date_span": data.period.date_span,
         "generated_at": f"{data.generated_at.astimezone(IST):%d %b %Y %H:%M} IST",
         "not_tracked": NOT_TRACKED,
-        "health_cards": _health(data),
         "models": _models(data),
         "adoption": _adoption(data),
         "budget": _budget(data),
