@@ -288,6 +288,20 @@ async def collect(prometheus: Prometheus, first_day: Optional[date], until: Opti
         # rollup row (keeps source out of daily_usage's unique key).
         first_event = await _first_usage_event()
         until = _ist_midnight(first_event.astimezone(IST).date()) if first_event else now
+    else:
+        # An explicit USAGE_BACKFILL_UNTIL must land on an IST midnight. A
+        # mid-day cut-off would give the cut-over day a partial backfill
+        # window; since source is not in the unique key, the nightly rollup's
+        # upsert would later overwrite that row with recorded figures while it
+        # stays labelled 'backfill', and a subsequent undo would then delete
+        # it as backfill — wiping real recorded usage. Round down to the day.
+        clamped = _ist_midnight(until.astimezone(IST).date())
+        if clamped != until:
+            logger.warning(
+                "USAGE_BACKFILL_UNTIL=%s is not an IST midnight; rounding down to %s so the cut-over"
+                " day is left to the rollup", until.isoformat(), clamped.isoformat(),
+            )
+        until = clamped
     until = min(until, now)
     oldest = await oldest_sample(prometheus, now)
     if oldest is None:

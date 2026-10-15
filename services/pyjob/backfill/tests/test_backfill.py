@@ -103,9 +103,10 @@ def test_the_first_day_starts_after_the_oldest_sample_and_its_lookback():
 
 @pytest.mark.asyncio
 async def test_collect_starts_on_the_first_whole_day_by_default():
-    collected = await collect(_FakePrometheus(datetime(2026, 10, 3, 14, 20, tzinfo=IST)), None, _UNTIL)
+    until = _ist_midnight(date(2026, 10, 8))
+    collected = await collect(_FakePrometheus(datetime(2026, 10, 3, 14, 20, tzinfo=IST)), None, until)
     assert collected.first_day == date(2026, 10, 4)
-    assert collected.days[0] == date(2026, 10, 4) and collected.days[-1] == date(2026, 10, 8)
+    assert collected.days[0] == date(2026, 10, 4) and collected.days[-1] == date(2026, 10, 7)
 
 
 @pytest.mark.asyncio
@@ -120,6 +121,18 @@ async def test_collect_boundary_stops_before_the_cutover_day(monkeypatch):
     monkeypatch.setattr(engine, "_first_usage_event", _fake_first_usage_event)
     # until unset → defaults to the cut-over (the first usage_events day's midnight).
     collected = await collect(_FakePrometheus(datetime(2026, 10, 3, 14, 20, tzinfo=IST)), None, None)
+    assert collected.until == _ist_midnight(date(2026, 10, 8))
+    assert date(2026, 10, 8) not in collected.days
+    assert collected.days[-1] == date(2026, 10, 7)
+
+
+@pytest.mark.asyncio
+async def test_explicit_mid_day_until_is_clamped_to_ist_midnight():
+    # A mid-day USAGE_BACKFILL_UNTIL must not give the cut-over day a partial
+    # window: source isn't in the unique key, so the rollup would later
+    # overwrite that row and a subsequent undo would wipe real recorded data.
+    mid_day = datetime(2026, 10, 8, 11, 30, tzinfo=IST)
+    collected = await collect(_FakePrometheus(datetime(2026, 10, 3, 14, 20, tzinfo=IST)), None, mid_day)
     assert collected.until == _ist_midnight(date(2026, 10, 8))
     assert date(2026, 10, 8) not in collected.days
     assert collected.days[-1] == date(2026, 10, 7)
