@@ -69,12 +69,13 @@ class _FakePrometheus:
         self.oldest = oldest
 
     async def query(self, promql, at):
-        if "count_over_time" in promql:
-            return [{"value": [at.timestamp(), "3"]}] if self.oldest is not None and at > self.oldest else []
-        return []
+        return []  # no api-key inference series to backfill
 
-    async def has_samples(self, metric, at):
-        return bool(await self.query(f"count(count_over_time({metric}[1h]))", at))
+    async def query_range(self, promql, start, end, step):
+        # one series whose first point is the oldest sample
+        if self.oldest is None or self.oldest > end:
+            return []
+        return [{"values": [[self.oldest.timestamp(), "3"]]}]
 
 
 _NOW = datetime(2026, 10, 15, 9, 0, tzinfo=timezone.utc)
@@ -86,7 +87,7 @@ async def test_oldest_sample_is_looked_up_not_taken_from_retention():
     # Size eviction left data from 3 Oct 14:20 IST, whatever retention says.
     oldest = datetime(2026, 10, 3, 14, 20, tzinfo=IST)
     found = await oldest_sample(_FakePrometheus(oldest), _NOW)
-    assert oldest < found <= oldest + timedelta(hours=1)
+    assert found == oldest
     assert first_whole_day(found) == date(2026, 10, 4)
 
 

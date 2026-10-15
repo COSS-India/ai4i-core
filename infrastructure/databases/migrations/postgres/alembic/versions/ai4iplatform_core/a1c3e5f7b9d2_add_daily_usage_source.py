@@ -33,5 +33,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Remove the estimated rows first: once source is gone they are
+    # indistinguishable from recorded rollup rows and can no longer be undone.
+    op.execute("DELETE FROM daily_usage WHERE source = 'backfill'")
     op.drop_column("daily_usage", "source")
     sa.Enum(name=_ENUM_NAME).drop(op.get_bind(), checkfirst=True)

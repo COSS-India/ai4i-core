@@ -71,12 +71,11 @@ re-run converges, and days Prometheus no longer has keep their rows. Refuses
 to load when usage_events has rows before the cut-over, which would count
 those days twice.
 
-The estimated/recorded boundary is the cut-over date itself (recorded data
-begins at the first usage_events row); the dashboard derives it from
-usage_events, so no extra table is kept here. To take it all back out, run
-``python -m backfill undo``: it deletes the source = 'backfill' rows and
-nothing else. Running it again afterwards reads Prometheus again, which may
-no longer hold the oldest days.
+Backfilled days are not flagged in the dashboard: no platform-core or
+simple-ui change ships here, so these rows display alongside recorded ones,
+unmarked. To take it all back out, run ``python -m backfill undo``: it
+deletes the source = 'backfill' rows and nothing else. Running it again
+afterwards reads Prometheus again, which may no longer hold the oldest days.
 """
 from __future__ import annotations
 
@@ -187,25 +186,19 @@ _OLDEST_SAMPLE_MARGIN = timedelta(minutes=10)
 
 
 async def oldest_sample(prometheus: "Prometheus", now: datetime) -> Optional[datetime]:
-    """The end of the hour holding Prometheus' oldest request-counter sample
-    (within _OLDEST_SAMPLE_MAX_HOURS), None when it has none at all. Samples
-    are kept from the oldest onwards, so whether an hour has any is
-    monotonic in time: a binary search over hours back from ``now``."""
-    async def has_samples(hours_back: int) -> bool:
-        return await prometheus.has_samples(_REQUESTS_METRIC, now - timedelta(hours=hours_back))
-
-    if not await has_samples(0):
-        return None
-    if await has_samples(_OLDEST_SAMPLE_MAX_HOURS):
-        return now - timedelta(hours=_OLDEST_SAMPLE_MAX_HOURS)
-    present, absent = 0, _OLDEST_SAMPLE_MAX_HOURS
-    while absent - present > 1:
-        mid = (present + absent) // 2
-        if await has_samples(mid):
-            present = mid
-        else:
-            absent = mid
-    return now - timedelta(hours=present)
+    """Prometheus' oldest request-counter sample (within
+    _OLDEST_SAMPLE_MAX_HOURS), None when it has none. A single range query over
+    the span, taking the first point it returns. Not an hour-by-hour probe: an
+    environment on a standard schedule (powered off nights and weekends) has
+    empty hours, so a probe landing in a gap would be read as "before the
+    oldest" and silently skip earlier days Prometheus still holds."""
+    start = now - timedelta(hours=_OLDEST_SAMPLE_MAX_HOURS)
+    firsts = [
+        float(series["values"][0][0])
+        for series in await prometheus.query_range(f"count({_REQUESTS_METRIC})", start, now, "1h")
+        if series.get("values")
+    ]
+    return datetime.fromtimestamp(min(firsts), tz=timezone.utc) if firsts else None
 
 
 def first_whole_day(oldest: datetime) -> date:
@@ -256,9 +249,12 @@ class Prometheus:
         data = await self._get("/api/v1/query", {"query": promql, "time": at.timestamp()})
         return data.get("result", [])
 
-    async def has_samples(self, metric: str, at: datetime) -> bool:
-        """Any series of ``metric`` has a sample in the hour before ``at``."""
-        return bool(await self.query(f"count(count_over_time({metric}[1h]))", at))
+    async def query_range(self, promql: str, start: datetime, end: datetime, step: str) -> list[dict]:
+        data = await self._get(
+            "/api/v1/query_range",
+            {"query": promql, "start": start.timestamp(), "end": end.timestamp(), "step": step},
+        )
+        return data.get("result", [])
 
 
 async def _first_usage_event() -> Optional[datetime]:
@@ -282,27 +278,26 @@ async def collect(prometheus: Prometheus, first_day: Optional[date], until: Opti
     settings = get_settings()
     now = datetime.now(timezone.utc)
     if until is None:
-        # Boundary-stop: end at the IST midnight of the day the first
-        # usage_events row falls on, so the cut-over day is left entirely to
-        # the rollup and no usage_date ever holds both a backfill and a
-        # rollup row (keeps source out of daily_usage's unique key).
+        # Default cut-over: the IST midnight of the day the first usage_events
+        # row falls on — or today's IST midnight when usage_events is still
+        # empty (see the clamp below), so the cut-over day is always left to
+        # the rollup.
         first_event = await _first_usage_event()
         until = _ist_midnight(first_event.astimezone(IST).date()) if first_event else now
-    else:
-        # An explicit USAGE_BACKFILL_UNTIL must land on an IST midnight. A
-        # mid-day cut-off would give the cut-over day a partial backfill
-        # window; since source is not in the unique key, the nightly rollup's
-        # upsert would later overwrite that row with recorded figures while it
-        # stays labelled 'backfill', and a subsequent undo would then delete
-        # it as backfill — wiping real recorded usage. Round down to the day.
-        clamped = _ist_midnight(until.astimezone(IST).date())
-        if clamped != until:
-            logger.warning(
-                "USAGE_BACKFILL_UNTIL=%s is not an IST midnight; rounding down to %s so the cut-over"
-                " day is left to the rollup", until.isoformat(), clamped.isoformat(),
-            )
-        until = clamped
     until = min(until, now)
+    # Every path — the empty-usage_events default (now), a future or mid-day
+    # USAGE_BACKFILL_UNTIL — must end on an IST midnight. A partial final day
+    # would give that day a backfill window; since source is not in the unique
+    # key, the nightly rollup would later overwrite the row with recorded
+    # figures while it stayed labelled 'backfill', and a subsequent undo would
+    # then wipe real recorded usage. Round down to the IST day start.
+    clamped = _ist_midnight(until.astimezone(IST).date())
+    if clamped != until:
+        logger.warning(
+            "Cut-off %s is not an IST midnight; rounding down to %s so the cut-over day is left to the rollup",
+            until.isoformat(), clamped.isoformat(),
+        )
+    until = clamped
     oldest = await oldest_sample(prometheus, now)
     if oldest is None:
         logger.warning("Prometheus has no %s samples: nothing to backfill", _REQUESTS_METRIC)

@@ -54,5 +54,6 @@ events:
 - `cached_input_units` is 0 (not recorded before the recorded-data cut-over).
 - The cut-over day's pre-first-event sliver is not captured (boundary-stop).
 
-The dashboard marks days before the cut-over as estimated; the boundary is
-derived from `usage_events`, so this job keeps no extra state table.
+Backfilled days are **not** flagged in the dashboard — no platform-core or
+simple-ui change ships with this job, so these rows display alongside recorded
+ones, unmarked. (Marking them would need a small platform-core change.)
