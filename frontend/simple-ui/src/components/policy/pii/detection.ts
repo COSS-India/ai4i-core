@@ -1,5 +1,28 @@
-import { detectionTypesForPolicy, entityNamesForPolicy } from "./apiMap";
+import type { PolicySimulation } from "../../../services/dto/schemas/policyHierarchy";
+import { entityNamesForPolicy, regexFieldsForPolicy } from "./apiMap";
 import type { Domain, PiiType, Policy } from "./model";
+
+/** /pii/simulate replaces each detection with a numbered token; it applies no handling mode. */
+export const PLAYGROUND_SIMULATION_HELP =
+  "Each detected value is replaced with a numbered " +
+  "placeholder token, such as <EMAIL_ADDRESS_1>. Configured handling modes are not applied here.";
+
+/** One row of the Playground results table. */
+export interface SimulationRow {
+  entityType: string;
+  found: string[];
+  outputs: string[];
+  instances: number;
+}
+
+export function simulationRows(detected: PolicySimulation["detected"]): SimulationRow[] {
+  return detected.map((d) => ({
+    entityType: d.entityType,
+    found: d.replacements.map((r) => r.original),
+    outputs: d.replacements.map((r) => r.output),
+    instances: d.instances,
+  }));
+}
 
 const MODEL_ENTITY_SAMPLES: Record<string, string> = {
   PERSON: "Patient Arjun Kumar contacted the helpdesk today.",
@@ -20,8 +43,8 @@ const FALLBACK_SAMPLE =
 /** Example text containing a value for each field the policy applies. */
 export function buildSample(policy: Policy, types: PiiType[], domains: Domain[]): string {
   const lines = [
-    ...detectionTypesForPolicy(policy, types, domains).flatMap((t) =>
-      t.examples[0] ? [`${t.name}: ${t.examples[0]}.`] : [],
+    ...regexFieldsForPolicy(policy, types, domains).flatMap((field) =>
+      field.examples[0] ? [`${field.entityName}: ${field.examples[0]}.`] : [],
     ),
     ...entityNamesForPolicy(policy, types, domains).flatMap((name) => {
       const line = MODEL_ENTITY_SAMPLES[name.toUpperCase()];

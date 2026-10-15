@@ -13,9 +13,9 @@ import {
 } from "@chakra-ui/react";
 import React from "react";
 import { FiShield } from "react-icons/fi";
-import type { Handling, RecordStatus } from "./model";
+import type { RecordStatus } from "./model";
 
-function FlaskIcon(props: { boxSize?: number }) {
+export function FlaskIcon(props: { boxSize?: number }) {
   return (
     <Icon viewBox="0 0 24 24" boxSize={props.boxSize ?? 4} fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M9 2v6L4 20a1 1 0 0 0 1 2h14a1 1 0 0 0 1-2L15 8V2M9 2h6M9 16h6" strokeLinecap="round" strokeLinejoin="round" />
@@ -38,12 +38,6 @@ export function ShieldMark({ boxSize = 9 }: { boxSize?: number }) {
       <Icon as={FiShield} boxSize={boxSize > 8 ? 4 : 3.5} />
     </Flex>
   );
-}
-
-export function handlingBadgeColor(handling: Handling): string {
-  if (handling === "Mask") return "orange";
-  if (handling === "Redact") return "red";
-  return "gray";
 }
 
 export function StatusToggle({

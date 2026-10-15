@@ -15,7 +15,7 @@ const admin = apiEndpoints.pii.admin;
 
 export const piiService = {
   getDomains: () =>
-    apiService.get(apiEndpoints.pii.domains, { responseSchema: stringArraySchema }),
+    apiService.get<string[]>(apiEndpoints.pii.domains, { responseSchema: stringArraySchema }),
 
   getPolicy: (domainId: string) =>
     apiService.get(apiEndpoints.pii.policyByDomain(domainId), {
@@ -48,7 +48,9 @@ export const piiService = {
   },
 
   getAllDomains: () =>
-    apiService.get(admin.allDomains, { responseSchema: z.array(piiDomainRowSchema) }),
+    apiService.get<z.infer<typeof piiDomainRowSchema>[]>(admin.allDomains, {
+      responseSchema: z.array(piiDomainRowSchema),
+    }),
 
   activateDomains: (domainIds: string[]) =>
     apiService.post(

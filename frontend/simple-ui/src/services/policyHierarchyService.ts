@@ -18,6 +18,7 @@ import {
   type PolicyCategoryItem,
   type PolicyRecord,
   type PolicySimulation,
+  type SelectedPolicyFieldRecord,
   type PolicySubCategoryItem,
   type PolicyTypeItem,
 } from "./dto/schemas/policyHierarchy";
@@ -137,6 +138,8 @@ export interface PolicyWrite {
   is_global: boolean;
   sub_category_id: number;
   policy_type_id: number[];
+  languages?: string[];
+  selected_policy_fields?: SelectedPolicyFieldRecord[];
 }
 
 export interface PolicyPatch {
@@ -147,6 +150,9 @@ export interface PolicyPatch {
   is_active?: boolean;
   sub_category_id?: number;
   policy_type_id?: number[];
+  /** Omitted keys keep the stored values. */
+  languages?: string[];
+  selected_policy_fields?: SelectedPolicyFieldRecord[];
 }
 
 const POLICY_PAGE_SIZE = 1000;
@@ -182,6 +188,8 @@ export async function createPolicy(body: PolicyWrite): Promise<string> {
     is_global: body.is_global,
     sub_category_id: body.sub_category_id,
     policy_type_id: body.policy_type_id,
+    ...(body.languages ? { languages: body.languages } : {}),
+    ...(body.selected_policy_fields ? { selected_policy_fields: body.selected_policy_fields } : {}),
   });
   return policyCreateResponseSchema.parse(response.data).data.policy_id;
 }

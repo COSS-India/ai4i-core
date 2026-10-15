@@ -162,7 +162,7 @@ const topNavItems: NavItem[] = [
   },
   {
     id: TABS.policyManagement,
-    label: "Policies",
+    label: "Policy Management",
     shortLabel: "Policies",
     path: `/${TABS.policyManagement}`,
     icon: IoShieldOutline,

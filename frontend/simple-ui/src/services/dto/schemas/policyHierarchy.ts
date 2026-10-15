@@ -104,7 +104,15 @@ export const policyTypeCreateResponseSchema = z.object({
 
 export const guardrailScopeSchema = z.enum(["input", "output", "both"]);
 
-/** Platform-core `PolicyItem`. */
+/** A field picked from one of the policy's linked policy types. `language` is set for model_supported_field. */
+export const selectedPolicyFieldSchema = z.object({
+  source: z.enum(["custom_field", "model_supported_field"]),
+  policy_type_id: z.number().int(),
+  entity_name: z.string(),
+  language: z.string().nullable().optional(),
+});
+
+/** Platform-core `PolicyItem`. null languages / selected_policy_fields: saved before they were stored. */
 export const policyRecordSchema = z.object({
   id: z.number().int(),
   policy_id: z.string(),
@@ -116,6 +124,8 @@ export const policyRecordSchema = z.object({
   sub_category_id: z.number().int(),
   is_active: z.boolean(),
   policy_type_id: z.array(z.number().int()).nullable().optional(),
+  languages: z.array(z.string()).nullable().optional(),
+  selected_policy_fields: z.array(selectedPolicyFieldSchema).nullable().optional(),
 });
 
 /** GET /policies. Filters: name, sub_category_id, offset, limit. */
@@ -165,5 +175,6 @@ export type PolicyCategoryItem = z.infer<typeof policyCategoryItemSchema>;
 export type PolicySubCategoryItem = z.infer<typeof policySubCategoryItemSchema>;
 export type PolicyTypeItem = z.infer<typeof policyTypeItemSchema>;
 export type PolicyRecord = z.infer<typeof policyRecordSchema>;
+export type SelectedPolicyFieldRecord = z.infer<typeof selectedPolicyFieldSchema>;
 export type GuardrailScope = z.infer<typeof guardrailScopeSchema>;
 export type PolicySimulation = z.infer<typeof policySimulationResponseSchema>;
