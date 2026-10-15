@@ -16,9 +16,9 @@ partitions are never dropped (see monthly_partition_rollover), and the next
 load reuses them.
 
 Takes the same advisory lock as a load, so it can't run alongside one.
-Re-running is safe: with nothing backfilled it deletes nothing. To backfill
-again, run usage_backfill with USAGE_BACKFILL_MODE=load on the kept export
-file: Prometheus may no longer hold the oldest days.
+Re-running is safe: with nothing backfilled it deletes nothing. Running
+usage_backfill again afterwards re-reads Prometheus, which may no longer hold
+the oldest days.
 """
 from __future__ import annotations
 

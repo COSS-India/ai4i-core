@@ -4,17 +4,15 @@ usage_events only has data from the day its writer shipped; before that the
 dashboard read Prometheus, which keeps a limited number of days (15 by
 default) and drops the oldest every day. This job keeps what Prometheus still
 has, as estimated daily_usage rows (source = 'backfill'), for the days before
-usage_events begins. Run it once per environment:
+usage_events begins. Run it once per environment, after migration
+f6c8e0a2b4d7 (daily_usage.source, usage_backfill):
 
-    USAGE_BACKFILL_MODE=export   Prometheus → USAGE_BACKFILL_FILE. Run this
-                                 first: what it saves no longer depends on
-                                 Prometheus' retention. Keep the file.
-    USAGE_BACKFILL_MODE=load     USAGE_BACKFILL_FILE → daily_usage. Needs
-                                 migration f6c8e0a2b4d7 (daily_usage.source).
-    USAGE_BACKFILL_MODE=all      both, in one run (the default)
+    PROMETHEUS_URL=... python main.py --job usage_backfill
 
-Export
-------
+It reads Prometheus, then loads daily_usage, in one run.
+
+Reading Prometheus
+------------------
 From USAGE_BACKFILL_FROM (default: the first whole IST day Prometheus
 retains) up to USAGE_BACKFILL_UNTIL (default: the first usage_events row), one
 window per IST day; the last one ends at the cut-off, so nothing is counted
@@ -33,8 +31,8 @@ as the Prometheus-backed dashboard counted it):
 Each value is the dashboard's own estimate of a counter's growth over a
 window: increase(), plus the raw counter for series born inside it.
 
-Load
-----
+Loading daily_usage
+-------------------
 One daily_usage row per IST day and dimension key, written with source =
 'backfill':
 
@@ -57,27 +55,26 @@ and writes no usage row. A row's labels that no longer match a service, tier
 or tenant are dropped to NULL (or the row skipped, without a tenant).
 
 In one transaction: the past-month partitions the rows need are created, the
-backfill rows of the exported days are deleted and the new ones inserted, so
-a re-run with the same file converges, and days a later export no longer
-covers keep their rows. usage_backfill records the span covered (its first
-day, kept from earlier loads, up to the file's cut-off), which tells the Usage
-Dashboard which figures are estimates.
+backfill rows of the days read are deleted and the new ones inserted, so a
+re-run converges, and days Prometheus no longer has keep their rows.
+usage_backfill records the span covered (its first day, kept from earlier
+runs, up to the cut-off), which tells the Usage Dashboard which figures are
+estimates. Refuses to load when usage_events has rows before the cut-off,
+which would count those days twice.
 
 To take it all back out, run the usage_backfill_undo job: it deletes the
-backfill rows and the usage_backfill row, and nothing else. Refuses to load when usage_events has rows before the
-file's cut-off, which would count those days twice.
+backfill rows and the usage_backfill row, and nothing else. Running this job
+again afterwards reads Prometheus again, which may no longer hold the oldest
+days.
 """
 from __future__ import annotations
 
-import json
 import math
-import os
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
-from pathlib import Path
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
@@ -93,7 +90,6 @@ from jobs.monthly_partition_rollover import _create_months, _partitions
 logger = get_logger(__name__)
 
 IST = ZoneInfo("Asia/Kolkata")
-FILE_VERSION = 1
 SOURCE = "backfill"
 
 # Same as platform-core's metering_promql_builder: the requests the
@@ -241,8 +237,18 @@ async def _first_usage_event() -> Optional[datetime]:
         return (await session.execute(text("SELECT min(occurred_at) FROM usage_events"))).scalar_one()
 
 
-async def export(prometheus: Prometheus, first_day: Optional[date], until: Optional[datetime]) -> dict:
-    """The export document: every window's samples, as JSON-ready values."""
+@dataclass(frozen=True)
+class Collected:
+    """What Prometheus had for the days to backfill."""
+    first_day: date
+    until: datetime          # where usage_events takes over
+    days: list[date]
+    samples: list[dict]      # {usage_date, billing_month, kind, task, labels, value}
+
+
+async def collect(prometheus: Prometheus, first_day: Optional[date], until: Optional[datetime]) -> Collected:
+    """Every window's samples, from first_day (default: the first whole day
+    Prometheus retains) up to until (default: the first usage_events row)."""
     settings = get_settings()
     now = datetime.now(timezone.utc)
     if until is None:
@@ -280,38 +286,10 @@ async def export(prometheus: Prometheus, first_day: Optional[date], until: Optio
                 })
                 count += 1
         logger.info(
-            "Exported window | usage_date=%s start=%s end=%s series=%d",
+            "Read window | usage_date=%s start=%s end=%s series=%d",
             window.usage_date, window.start.isoformat(), window.end.isoformat(), count,
         )
-    return {
-        "version": FILE_VERSION,
-        "exported_at": now.isoformat(),
-        "prometheus_url": settings.PROMETHEUS_URL,
-        "path_label": path_label,
-        "first_day": first_day.isoformat(),
-        "until": until.isoformat(),
-        "days": sorted({w.usage_date.isoformat() for w in spans}),
-        "samples": samples,
-    }
-
-
-def write_export(document: dict, path: str) -> None:
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    partial = target.with_name(target.name + ".partial")
-    partial.write_text(json.dumps(document, indent=1), encoding="utf-8")
-    os.replace(partial, target)
-    logger.info(
-        "Export written | file=%s days=%d samples=%d until=%s",
-        target, len(document["days"]), len(document["samples"]), document["until"],
-    )
-
-
-def read_export(path: str) -> dict:
-    document = json.loads(Path(path).read_text(encoding="utf-8"))
-    if document.get("version") != FILE_VERSION:
-        raise BackfillError(f"{path}: unsupported export version {document.get('version')!r}")
-    return document
+    return Collected(first_day, until, sorted({w.usage_date for w in spans}), samples)
 
 
 # ── Pricing: the PPU consumer's (payperuse_consumer/_billing.py) ──────────
@@ -399,7 +377,7 @@ class _Acc:
 
 
 def build_rows(samples: list[dict], lookups: Lookups) -> tuple[list[dict], dict[str, int]]:
-    """daily_usage rows (source 'backfill') from export samples, and counts
+    """daily_usage rows (source 'backfill') from Prometheus samples (see collect), and counts
     of what was left out, by reason."""
     skipped: dict[str, int] = defaultdict(int)
     acc: dict[tuple, _Acc] = defaultdict(_Acc)
@@ -626,11 +604,10 @@ _COVERAGE = text(
 )
 
 
-async def load(document: dict) -> None:
-    days = [date.fromisoformat(d) for d in document["days"]]
-    until = datetime.fromisoformat(document["until"])
+async def load(collected: Collected) -> None:
+    days, until = collected.days, collected.until
     if not days:
-        logger.info("Nothing to load: the export covers no days")
+        logger.info("Nothing to load: no days before usage_events begins in Prometheus' retention")
         return
 
     async with platform_core_session() as session:
@@ -648,13 +625,13 @@ async def load(document: dict) -> None:
             ).scalar_one()
             if first_event is not None and first_event < until:
                 raise BackfillError(
-                    f"usage_events has rows from {first_event.isoformat()}, before the export's cut-off"
-                    f" {until.isoformat()}: those would be counted twice. Export again without"
+                    f"usage_events has rows from {first_event.isoformat()}, before the cut-off"
+                    f" {until.isoformat()}: those would be counted twice. Run again without"
                     " USAGE_BACKFILL_UNTIL, or with it at or before the first usage_events row."
                 )
 
-            lookups = await _lookups(session, document["samples"])
-            rows, skipped = build_rows(document["samples"], lookups)
+            lookups = await _lookups(session, collected.samples)
+            rows, skipped = build_rows(collected.samples, lookups)
 
             # Past months need their partitions (the migration and the
             # rollover job only create current and future ones).
@@ -696,20 +673,12 @@ async def load(document: dict) -> None:
 
 async def run() -> None:
     settings = get_settings()
-    mode = settings.USAGE_BACKFILL_MODE
-    logger.info("Starting usage backfill | mode=%s file=%s", mode, settings.USAGE_BACKFILL_FILE)
-
-    if mode in ("export", "all"):
-        if not settings.PROMETHEUS_URL:
-            raise BackfillError("PROMETHEUS_URL must be set to export")
-        until = settings.USAGE_BACKFILL_UNTIL
-        if until is not None and until.tzinfo is None:
-            until = until.replace(tzinfo=IST)
-        async with httpx.AsyncClient(timeout=settings.PROMETHEUS_TIMEOUT_SECONDS) as client:
-            document = await export(Prometheus(client, settings.PROMETHEUS_URL), settings.USAGE_BACKFILL_FROM, until)
-        write_export(document, settings.USAGE_BACKFILL_FILE)
-    else:
-        document = read_export(settings.USAGE_BACKFILL_FILE)
-
-    if mode in ("load", "all"):
-        await load(document)
+    if not settings.PROMETHEUS_URL:
+        raise BackfillError("PROMETHEUS_URL must be set")
+    until = settings.USAGE_BACKFILL_UNTIL
+    if until is not None and until.tzinfo is None:
+        until = until.replace(tzinfo=IST)
+    logger.info("Starting usage backfill | prometheus=%s", settings.PROMETHEUS_URL)
+    async with httpx.AsyncClient(timeout=settings.PROMETHEUS_TIMEOUT_SECONDS) as client:
+        collected = await collect(Prometheus(client, settings.PROMETHEUS_URL), settings.USAGE_BACKFILL_FROM, until)
+    await load(collected)

@@ -1,5 +1,5 @@
 """usage_backfill: windows, retention, PromQL, pricing and the rows built from
-an export. No database or Prometheus needed."""
+Prometheus samples. No database or Prometheus needed."""
 import sys
 from datetime import date, datetime, timezone
 from decimal import Decimal
