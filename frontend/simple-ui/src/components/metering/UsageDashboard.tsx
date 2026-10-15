@@ -121,6 +121,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
           tenantId={effectiveTenantId}
           organisationLabel={organisationLabel}
           refreshNonce={refreshNonce}
+          recordedFrom={overview?.scope.period.recordedFrom}
         />
       ) : null}
 
@@ -137,6 +138,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
           parseQueryError={parseQueryError}
           scopeTenantId={scopeTenantId}
           refreshNonce={refreshNonce}
+          recordedFrom={overview?.scope.period.recordedFrom}
         />
       )}
     </VStack>

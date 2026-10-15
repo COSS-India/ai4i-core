@@ -252,11 +252,7 @@ class ApplicationUsageService:
             )
 
         return ApplicationUsageDetailResponse(
-            # recordedFrom: a period starting before it has estimated spend
-            # that no key's periodSpend includes (the drawer shows a dash).
-            period=period.to_schema(
-                await self._repo.get_usage_data_from(period), await self._repo.get_recorded_from(),
-            ),
+            period=period.to_schema(await self._repo.get_usage_data_from(period)),
             applicationId=application["id"],
             applicationName=application["name"],
             domain=application["domain"],

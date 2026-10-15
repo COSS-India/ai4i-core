@@ -31,6 +31,8 @@ interface ApplicationUsageTabProps {
   readonly tenantId?: string | null;
   readonly organisationLabel?: string | null;
   readonly refreshNonce?: number;
+  /** When recorded usage starts (Overview's period.recordedFrom). */
+  readonly recordedFrom?: string | null;
 }
 
 const ApplicationUsageTab: React.FC<ApplicationUsageTabProps> = ({
@@ -40,6 +42,7 @@ const ApplicationUsageTab: React.FC<ApplicationUsageTabProps> = ({
   tenantId = null,
   organisationLabel = null,
   refreshNonce = 0,
+  recordedFrom = null,
 }) => {
   const scopedId = (isTenantView ? tenantId : scopeTenantId)?.trim() || null;
   const [selected, setSelected] = useState<ApplicationUsageDetail | null>(null);
@@ -147,6 +150,7 @@ const ApplicationUsageTab: React.FC<ApplicationUsageTabProps> = ({
         periodTitle={periodTitle}
         isLoading={isDetailLoading}
         errorMessage={detailError}
+        recordedFrom={recordedFrom}
       />
     </VStack>
   );

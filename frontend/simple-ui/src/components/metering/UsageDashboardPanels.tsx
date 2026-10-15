@@ -39,6 +39,8 @@ interface TenantPanelsProps {
   tenantId?: string | null;
   organisationLabel?: string | null;
   refreshNonce?: number;
+  /** When recorded usage starts (Overview's period.recordedFrom), for the Applications drawer. */
+  recordedFrom?: string | null;
 }
 
 export const TenantDashboardPanels: React.FC<TenantPanelsProps> = ({
@@ -51,6 +53,7 @@ export const TenantDashboardPanels: React.FC<TenantPanelsProps> = ({
   tenantId,
   organisationLabel,
   refreshNonce,
+  recordedFrom,
 }) => (
   <Box pt={2}>
     {subTab === METERING.SUB_TAB.OVERVIEW && overview ? (
@@ -83,6 +86,7 @@ export const TenantDashboardPanels: React.FC<TenantPanelsProps> = ({
         tenantId={tenantId}
         organisationLabel={organisationLabel}
         refreshNonce={refreshNonce}
+        recordedFrom={recordedFrom}
       />
     )}
   </Box>
@@ -100,6 +104,8 @@ interface AdopterPanelsProps {
   parseQueryError: MeteringDashboardState["parseQueryError"];
   scopeTenantId?: string | null;
   refreshNonce?: number;
+  /** When recorded usage starts (Overview's period.recordedFrom), for the Applications drawer. */
+  recordedFrom?: string | null;
 }
 
 export const AdopterDashboardPanels: React.FC<AdopterPanelsProps> = ({
@@ -114,6 +120,7 @@ export const AdopterDashboardPanels: React.FC<AdopterPanelsProps> = ({
   parseQueryError,
   scopeTenantId,
   refreshNonce,
+  recordedFrom,
 }) => (
   <Box pt={2}>
     {subTab === METERING.SUB_TAB.OVERVIEW && overview ? (
@@ -150,6 +157,7 @@ export const AdopterDashboardPanels: React.FC<AdopterPanelsProps> = ({
         period={period}
         scopeTenantId={scopeTenantId}
         refreshNonce={refreshNonce}
+        recordedFrom={recordedFrom}
       />
     )}
   </Box>

@@ -39,6 +39,8 @@ interface ApplicationUsageDrawerProps {
   isLoading: boolean;
   errorMessage?: string | null;
   currency?: string;
+  /** When recorded usage starts (Overview's period.recordedFrom); null without a backfill. */
+  recordedFrom?: string | null;
 }
 
 const CARD_BG = "#eef3fb";
@@ -53,6 +55,7 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
   isLoading,
   errorMessage = null,
   currency = "INR",
+  recordedFrom = null,
 }) => {
   const copy = METERING.APPLICATION_USAGE;
   const tips = copy.TOOLTIPS;
@@ -60,7 +63,7 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
 
   // Estimated spend has no API key: for a period with estimated days, every
   // key shows a dash for its period spend, and the total is the application's.
-  const hasEstimates = periodIncludesEstimates(detail?.period);
+  const hasEstimates = detail ? periodIncludesEstimates({ ...detail.period, recordedFrom }) : false;
 
   const apiKeyColumns = useMemo<DataTableColumn<ApiKeyRow>[]>(() => {
     if (!detail) return [];

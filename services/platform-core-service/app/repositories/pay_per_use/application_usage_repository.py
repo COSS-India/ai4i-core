@@ -15,12 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.pay_per_use.budget_usage import BudgetUsage
 from app.models.pay_per_use.daily_usage import SOURCE_BACKFILL, DailyUsage
-from app.repositories.pay_per_use.period_usage import (
-    backfill_until,
-    daily_rollup_enabled,
-    period_source,
-    usage_data_from,
-)
+from app.repositories.pay_per_use.period_usage import daily_rollup_enabled, period_source, usage_data_from
 from app.utils.usage_period import UsagePeriod
 
 
@@ -31,10 +26,6 @@ class ApplicationUsageRepository:
     async def get_usage_data_from(self, period: UsagePeriod) -> Optional[datetime]:
         """When the usage data begins inside ``period`` (see period_usage.usage_data_from)."""
         return await usage_data_from(self._db, period)
-
-    async def get_recorded_from(self) -> Optional[datetime]:
-        """When recorded usage starts (see period_usage.backfill_until)."""
-        return await backfill_until(self._db)
 
     async def get_spend_by_api_key_ids(self, api_key_ids: list[int]) -> dict[int, Decimal]:
         """{api_key_id: api_key_budget_used} for the given keys.
