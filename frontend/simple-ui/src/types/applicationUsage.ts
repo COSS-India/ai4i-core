@@ -69,6 +69,11 @@ export interface ApplicationUsageDetail {
   /** Spend in the period; % of the application's allocation. */
   periodSpend: MoneyPercent;
   apiKeys: ApiKeyUsageItem[];
+  /**
+   * False when part of `periodSpend` can't be split between the API keys (usage
+   * estimated from monitoring data has no key): the keys' period spend shows a dash.
+   */
+  keySpendAvailable?: boolean;
   totals: ApplicationUsageTotals;
 }
 

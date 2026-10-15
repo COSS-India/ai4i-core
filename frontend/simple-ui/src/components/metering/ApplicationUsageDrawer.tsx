@@ -57,6 +57,10 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
   const tips = copy.TOOLTIPS;
   const cols = copy.TABLE;
 
+  // Part of the period's spend has no API key (estimated from monitoring data):
+  // every key shows a dash for its period spend; the total is the application's.
+  const keySpendUnavailable = detail?.keySpendAvailable === false;
+
   const apiKeyColumns = useMemo<DataTableColumn<ApiKeyRow>[]>(() => {
     if (!detail) return [];
     return [
@@ -117,8 +121,12 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
         hint: tips.API_KEY_PERIOD_SPEND,
         width: "16%",
         sortable: true,
-        sortAccessor: (key) => key.periodSpend.amount,
-        cell: (key) => (
+        sortAccessor: (key) => (keySpendUnavailable ? 0 : key.periodSpend.amount),
+        cell: (key) => keySpendUnavailable ? (
+          <Text fontSize="13px" color="gray.500">
+            {METERING.ESTIMATES.KEY_SPEND_UNAVAILABLE}
+          </Text>
+        ) : (
           <PeriodSpendCell
             amount={key.periodSpend.amount}
             percentage={key.periodSpend.percentage}
@@ -192,7 +200,7 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
         ),
       },
     ];
-  }, [cols, currency, detail, tips]);
+  }, [cols, currency, detail, keySpendUnavailable, tips]);
 
   let body: React.ReactNode = null;
   if (isLoading && !detail) {
@@ -288,6 +296,11 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
           <Text fontSize="11.5px" letterSpacing="0.05em" color="gray.500" fontWeight="bold" mb="10px">
             {copy.DRAWER_SPEND_BY_API_KEY}
           </Text>
+          {keySpendUnavailable ? (
+            <Text fontSize="12px" color="gray.500" mb="10px">
+              {METERING.ESTIMATES.KEY_BREAKDOWN_NOTE}
+            </Text>
+          ) : null}
           {detail.apiKeys.length === 0 ? (
             <Text fontSize="13.5px" color="gray.500" fontStyle="italic" py={3}>
               {copy.DRAWER_NO_KEYS}

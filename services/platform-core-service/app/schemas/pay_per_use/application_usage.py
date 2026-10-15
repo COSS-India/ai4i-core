@@ -76,4 +76,9 @@ class ApplicationUsageDetailResponse(BaseModel):
     remainingBudget: MoneyPercent
     periodSpend: MoneyPercent
     apiKeys: list[ApiKeyUsageItem]
+    # False when part of periodSpend can't be split between the API keys:
+    # usage backfilled from Prometheus (daily_usage source 'backfill') has no
+    # key when the application has several. The keys' periodSpend then leaves
+    # it out, and the drawer shows a dash for them instead.
+    keySpendAvailable: bool = True
     totals: ApplicationUsageTotals

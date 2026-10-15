@@ -489,6 +489,7 @@ class TestPeriodSpend:
         assert (prod.periodSpend.amount, test.periodSpend.amount) == (6.4, 0.0)
         assert round(prod.periodSpend.percentage, 4) == 0.0427   # % of the key's own 15000
         assert result.totals.periodSpend == 6.4
+        assert result.keySpendAvailable is True
 
     @pytest.mark.asyncio
     async def test_backfilled_spend_counts_for_the_application_not_its_keys(self):
@@ -501,6 +502,7 @@ class TestPeriodSpend:
         prod, test = result.apiKeys
         assert (prod.periodSpend.amount, test.periodSpend.amount) == (6.4, 0.0)
         assert result.totals.periodSpend == 10.0
+        assert result.keySpendAvailable is False   # the drawer shows a dash for the keys
         repo.get_backfill_period_spend.assert_awaited_once_with(_PERIOD, [7])
 
     @pytest.mark.asyncio

@@ -27,6 +27,14 @@ export const METERING = {
       ERROR_PREFIX: "Unable to refresh data. Last successful refresh at",
     },
   },
+  /** Usage from before usage recording began is backfilled from monitoring data (scripts/usage-backfill). */
+  ESTIMATES: {
+    NOTICE:
+      "Usage from before usage recording began in October 2026 is estimated from monitoring data: requests and usage from daily totals, costs at current prices.",
+    KEY_BREAKDOWN_NOTE:
+      "Per-key spend is unavailable for this period: estimated usage from before October 2026 counts in the Application's total only.",
+    KEY_SPEND_UNAVAILABLE: "—",
+  },
   QUERY: {
     STALE_TIME_MS: 60_000,
     TENANT_DIRECTORY_STALE_MS: 5 * 60_000,

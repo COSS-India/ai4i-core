@@ -228,6 +228,10 @@ class ApplicationUsageService:
         spend_amount = spend_by_app.get(application_id, Decimal("0"))
         remaining_amount = allocated_amount - spend_amount
         period_spend = period_spend_by_app.get(application_id, Decimal("0"))
+        # Spend no key has: the backfill's keyless estimates (see _spend_by_application).
+        keyless_spend = period_spend - sum(
+            (key["_period_spend"] for key in keys_by_app.get(application_id, [])), Decimal("0"),
+        )
 
         api_key_items = []
         for key in keys_by_app.get(application_id, []):
@@ -261,6 +265,7 @@ class ApplicationUsageService:
             remainingBudget=_money_percent(remaining_amount, allocated_amount),
             periodSpend=_money_percent(period_spend, allocated_amount),
             apiKeys=api_key_items,
+            keySpendAvailable=keyless_spend <= 0,
             totals=ApplicationUsageTotals(
                 allocatedBudget=float(allocated_amount),
                 spendBudget=float(spend_amount),

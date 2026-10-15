@@ -1,4 +1,4 @@
-import { Box, VStack } from "@chakra-ui/react";
+import { Alert, AlertDescription, AlertIcon, Box, VStack } from "@chakra-ui/react";
 import React from "react";
 import { METERING } from "../../config/meteringConstants";
 import { useMeteringDashboard } from "../../hooks/useMeteringDashboard";
@@ -76,6 +76,11 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
       ) : null}
 
       <MeteringAlerts errorMessage={primaryError} dataStateBanner={dataStateBanner} />
+
+      <Alert status="info" borderRadius="md" fontSize="sm">
+        <AlertIcon />
+        <AlertDescription>{METERING.ESTIMATES.NOTICE}</AlertDescription>
+      </Alert>
 
       {showKeyMetrics ? (
         <KeyMetricsSection data={keyMetricsOverview} supplement={keyMetricsSupplement} />
