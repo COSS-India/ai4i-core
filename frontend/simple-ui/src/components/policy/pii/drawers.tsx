@@ -819,25 +819,6 @@ function PolicyForm({
     [types, domainIds, domains, languages, detectable],
   );
 
-  const visibleChoices = useMemo(() => {
-    const query = typeQuery.trim().toLowerCase();
-    if (!query) return typeChoices;
-    const matches = (field: SelectedPolicyField) => field.entityName.toLowerCase().includes(query);
-    return typeChoices
-      .map((choice) =>
-        choice.name.toLowerCase().includes(query)
-          ? choice
-          : {
-              ...choice,
-              custom: choice.custom.filter(matches),
-              model: choice.model
-                .map(([language, fields]): [string, SelectedPolicyField[]] => [language, fields.filter(matches)])
-                .filter(([, fields]) => fields.length > 0),
-            },
-      )
-      .filter((choice) => choice.custom.length > 0 || choice.model.length > 0);
-  }, [typeChoices, typeQuery]);
-
   const otherEntities = useMemo(
     (): [string, string[]][] => (detectable.en?.length ? [["en", [...detectable.en]]] : []),
     [detectable],
@@ -885,12 +866,6 @@ function PolicyForm({
     ? Array.from(new Set(savedSelections.map((field) => field.typeId)))
     : initial.typeIds;
 
-  const togglePick = (key: string) => {
-    setPicks((prev) => {
-      const base = prev ?? linkedKeys;
-      return base.includes(key) ? base.filter((item) => item !== key) : [...base, key];
-    });
-  };
   const removePicks = (keys: string[]) => {
     setPicks((prev) => (prev ?? linkedKeys).filter((key) => !keys.includes(key)));
   };
@@ -1206,72 +1181,6 @@ function PolicyForm({
                 }
                 onRemove={(key) => setDrafts((prev) => prev.filter((draft) => draft.key !== key))}
               />
-              {/* Shared PII type fields: hidden; the entity list below holds the policy's fields.
-              {!creating && typeChoices.length > 0 ? (
-                <>
-                  <Box maxH="240px" overflowY="auto" borderWidth="1px" borderColor="ink.200" borderRadius="md" p={3}>
-                    <Stack spacing={3}>
-                      {visibleChoices.map((choice) => (
-                        <Box key={choice.id}>
-                          <Text
-                            fontSize="2xs"
-                            fontWeight="700"
-                            letterSpacing="0.5px"
-                            textTransform="uppercase"
-                            color="orange.600"
-                            borderBottomWidth="1px"
-                            borderColor="ink.100"
-                            pb={1}
-                            mb={2}
-                          >
-                            {choice.name}
-                          </Text>
-                          {choice.custom.length > 0 ? (
-                            <SimpleGrid columns={2} spacingX={4} spacingY={2}>
-                              {choice.custom.map((field) => {
-                                const key = selectedFieldKey(field);
-                                return (
-                                  <Checkbox
-                                    key={key}
-                                    size="sm"
-                                    isChecked={selectedPicks.includes(key)}
-                                    onChange={() => togglePick(key)}
-                                  >
-                                    {field.entityName}
-                                  </Checkbox>
-                                );
-                              })}
-                            </SimpleGrid>
-                          ) : null}
-                          {choice.model.map(([language, fields]) => (
-                            <Box key={language} mt={choice.custom.length > 0 ? 3 : 0}>
-                              <Text fontSize="2xs" fontWeight="600" color="ink.500" mb={1}>
-                                Model-supported · {languageLabel(language)}
-                              </Text>
-                              <SimpleGrid columns={2} spacingX={4} spacingY={2}>
-                                {fields.map((field) => {
-                                  const key = selectedFieldKey(field);
-                                  return (
-                                    <Checkbox
-                                      key={key}
-                                      size="sm"
-                                      isChecked={selectedPicks.includes(key)}
-                                      onChange={() => togglePick(key)}
-                                    >
-                                      {field.entityName}
-                                    </Checkbox>
-                                  );
-                                })}
-                              </SimpleGrid>
-                            </Box>
-                          ))}
-                        </Box>
-                      ))}
-                    </Stack>
-                  </Box>
-                </>
-              ) : null}
-              */}
               {otherEntities.length > 0 ? (
                 <Box mt={3} borderWidth="1px" borderColor="ink.200" borderRadius="md" p={3}>
 

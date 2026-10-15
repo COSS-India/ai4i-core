@@ -720,8 +720,8 @@ function DomainTable() {
 
   return (
     <Box>
-      {domainsStatus === "error" ? (
-        <Alert status="error" borderRadius="md" mb={4}>
+      {domainsError ? (
+        <Alert status={domainsStatus === "error" ? "error" : "warning"} borderRadius="md" mb={4}>
           <AlertIcon />
           <Text flex="1" fontSize="sm">
             {domainsError}

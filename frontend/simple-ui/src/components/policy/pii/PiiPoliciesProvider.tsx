@@ -260,7 +260,8 @@ export function PiiPoliciesProvider({
     void fetchDomains(role === "adopter")
       .then((next) => {
         if (requestId !== domainsRequest.current) return;
-        setDomains(next);
+        setDomains(next.domains);
+        setDomainsError(next.warning);
         setDomainsStatus("ready");
       })
       .catch((error: unknown) => {
@@ -545,9 +546,9 @@ export function PiiPoliciesProvider({
         try {
           await piiService.createDomain(domainId, description.trim());
           const next = await fetchDomains(true);
-          setDomains(next);
+          setDomains(next.domains);
           setDomainsStatus("ready");
-          setDomainsError("");
+          setDomainsError(next.warning);
           toast("Domain created.");
           return null;
         } catch (error: unknown) {
@@ -818,23 +819,28 @@ export function usePiiPolicies() {
 
 /**
  * Adopters read every domain, including descriptions. Everyone else reads the
- * public list of active domain ids. A failed admin read falls back to that list.
+ * public list of active domain ids. A failed admin read falls back to that list
+ * and returns a warning that the list is partial.
  */
-async function fetchDomains(includeAll: boolean): Promise<Domain[]> {
+async function fetchDomains(includeAll: boolean): Promise<{ domains: Domain[]; warning: string }> {
+  let warning = "";
   if (includeAll) {
     try {
       const response = await piiService.getAllDomains();
-      return response.data.map((row) => ({
-        id: row.domain_id,
-        name: row.domain_id,
-        description: row.description?.trim() ?? "",
-      }));
-    } catch {
-      // The public list still fills the picker.
+      return {
+        domains: response.data.map((row) => ({
+          id: row.domain_id,
+          name: row.domain_id,
+          description: row.description?.trim() ?? "",
+        })),
+        warning,
+      };
+    } catch (error: unknown) {
+      warning = `${apiErrorMessage(error, "Couldn't load all domains.")} Showing active domains only, without descriptions.`;
     }
   }
   const response = await piiService.getDomains();
-  return response.data.map((id) => ({ id, name: id, description: "" }));
+  return { domains: response.data.map((id) => ({ id, name: id, description: "" })), warning };
 }
 
 function toCategory(item: PolicyCategoryItem): PolicyCategory {

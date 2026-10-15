@@ -4,11 +4,7 @@ import type {
   PolicyTypeItem,
   SelectedPolicyFieldRecord,
 } from "../../../services/dto/schemas/policyHierarchy";
-import type {
-  PolicyPatch,
-  PolicyWrite,
-  SimulationPolicyType,
-} from "../../../services/policyHierarchyService";
+import type { PolicyPatch, PolicyWrite } from "../../../services/policyHierarchyService";
 import {
   domainLabel,
   type Domain,
@@ -156,23 +152,6 @@ export function definitionFromPolicyType(item: PolicyTypeItem): PiiType {
   };
 }
 
-/** platform-core stores policy_fields flat; /pii/simulate reads them as domain sections. */
-export function simulationPolicyType(item: PolicyTypeItem): SimulationPolicyType {
-  const fields = item.policy_fields;
-  return {
-    id: item.id,
-    policy_type: item.policy_type,
-    policy_fields: {
-      default: {
-        custom_field: Array.isArray(fields.custom_field) ? fields.custom_field : [],
-        model_supported_field: Array.isArray(fields.model_supported_field)
-          ? fields.model_supported_field
-          : [],
-      },
-    },
-  };
-}
-
 /** The selection a type's field is saved as. Model-supported fields are picked per language. */
 export function selectionForField(typeId: string, field: PolicyField): SelectedPolicyField {
   return field.mode === "model"
@@ -283,7 +262,11 @@ export function policyUpdatePayload(input: PolicyInput, domains: Domain[]): Poli
   };
 }
 
-/** languages and selected_policy_fields for a write, or null when a pick has an invalid id. */
+/**
+ * languages and selected_policy_fields for a write, or null when a pick has an invalid id.
+ * platform-core on release-2.9 does not store either key, so reads must not depend on them:
+ * a policy's fields persist through policy_type_id and the linked type's policy_fields.
+ */
 function selectionPayload(
   input: PolicyInput,
 ): { languages?: string[]; selected_policy_fields?: SelectedPolicyFieldRecord[] } | null {

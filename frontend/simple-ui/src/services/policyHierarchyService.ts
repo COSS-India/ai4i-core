@@ -204,13 +204,6 @@ export async function deletePolicy(id: number): Promise<void> {
   await apiClient.delete(apiEndpoints.policyHierarchy.policyById(id));
 }
 
-export interface SimulationPolicyType {
-  id: number;
-  policy_type: string;
-  /** Keyed by domain: `{ [domain]: { custom_field, model_supported_field } }`. */
-  policy_fields: Record<string, { custom_field: unknown[]; model_supported_field: unknown[] }>;
-}
-
 /** POST /pii/simulate on the inference service. policyId is the platform-core policy id. */
 export async function simulatePolicy(text: string, policyId: number): Promise<PolicySimulation> {
   const response = await apiClient.post(apiEndpoints.pii.simulate, { text, policyId });
