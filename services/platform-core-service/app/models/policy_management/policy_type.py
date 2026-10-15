@@ -1,6 +1,6 @@
 """ORM model for the policy_type table."""
 
-from sqlalchemy import Column, DateTime, Integer, String, UniqueConstraint, func, text
+from sqlalchemy import Column, DateTime, Integer, String, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.models import Base
@@ -10,9 +10,6 @@ class PolicyType(Base):
     """A kind of policy and the configurable fields it exposes."""
 
     __tablename__ = "policy_type"
-    __table_args__ = (
-        UniqueConstraint("policy_type", name="uq_policy_type_policy_type"),
-    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     policy_type = Column(String(100), nullable=False)

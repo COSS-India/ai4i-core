@@ -229,15 +229,14 @@ async def list_policy_types(
     "/policy-types",
     response_model=CreatePolicyTypeResponse,
     status_code=status.HTTP_201_CREATED,
-    responses=error_responses(403, 409),
+    responses=error_responses(403),
 )
 async def create_policy_type(
     payload: PolicyTypeCreate,
     request: Request,
     session: AsyncSession = Depends(get_db),
 ) -> CreatePolicyTypeResponse:
-    """Create a policy type. Name is required and must be unique — 409 if it
-    already exists. Adopter Admin only."""
+    """Create a policy type. Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")

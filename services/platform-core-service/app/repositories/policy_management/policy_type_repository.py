@@ -24,12 +24,6 @@ class PolicyTypeRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_by_name(self, policy_type_name: str) -> Optional[PolicyType]:
-        result = await self._db.execute(
-            select(PolicyType).where(PolicyType.policy_type == policy_type_name)
-        )
-        return result.scalar_one_or_none()
-
     async def create(self, policy_type: str, policy_fields: Dict[str, Any], created_by: Optional[str] = None) -> PolicyType:
         row = PolicyType(policy_type=policy_type, policy_fields=policy_fields, created_by=created_by)
         self._db.add(row)

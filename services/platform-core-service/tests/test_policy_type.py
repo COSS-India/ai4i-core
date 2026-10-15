@@ -24,7 +24,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
-from app.core.exceptions import DuplicateEntityError, EntityNotFoundError, InsufficientPermissionsError
+from app.core.exceptions import EntityNotFoundError, InsufficientPermissionsError
 from app.schemas.policy_management.policy_type import PolicyTypeCreate, PolicyTypeItem
 
 _spec = importlib.util.spec_from_file_location("app.routes.policy", "app/routes/policy.py")
@@ -304,18 +304,6 @@ class TestCreatePolicyTypeRoute:
         )
         assert resp.data.id == 4
         assert "Finance PII" in resp.meta.message
-
-    async def test_duplicate_propagates(self, monkeypatch):
-        monkeypatch.setattr(
-            _policy_routes.policy_type_service, "create_policy_type",
-            AsyncMock(side_effect=DuplicateEntityError("Policy type 'Finance PII'")),
-        )
-        with pytest.raises(DuplicateEntityError):
-            await _policy_routes.create_policy_type(
-                payload=PolicyTypeCreate(policy_type="Finance PII"),
-                request=_request(),
-                session=MagicMock(),
-            )
 
     async def test_non_admin_is_rejected(self, monkeypatch):
         stub = AsyncMock()
