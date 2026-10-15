@@ -22,6 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import DuplicateEntityError, EntityNotFoundError
 from app.models.policy_management.category import Category
+from app.models.policy_management.policy import Policy
+from app.models.policy_management.sub_category import SubCategory
 from app.schemas.policy_management.category import (
     CategoryCreate,
     CategoryItem,
@@ -62,6 +64,7 @@ async def update_category_status(
     body: CategoryStatusUpdate,
     *,
     updated_by: str | None = None,
+    redis=None,
 ) -> CategoryItem:
     row = await session.get(Category, category_id, with_for_update=True)
     if row is None:
@@ -74,4 +77,15 @@ async def update_category_status(
     row.updated_by = updated_by
     await session.commit()
     await session.refresh(row)
+
+    if redis is not None:
+        from app.services.policy_management.policy_cache import cache_policy
+        joined = await session.execute(
+            select(Policy, SubCategory)
+            .join(SubCategory, Policy.sub_category_id == SubCategory.id)
+            .where(SubCategory.category_id == category_id)
+        )
+        for policy, sub_cat in joined.all():
+            await cache_policy(policy, session, redis, sub_cat=sub_cat, category=row)
+
     return CategoryItem.model_validate(row)
