@@ -1,0 +1,72 @@
+"""Undo the Prometheus backfill (jobs/usage_backfill.py): removes exactly what
+its loads wrote, and nothing else.
+
+    python main.py --job usage_backfill_undo
+
+In one transaction:
+
+- deletes every daily_usage row with source = 'backfill'. Rollup rows (source
+  'rollup', from usage_events) are never touched, nor are usage_events,
+  budget_usage or quota_usage, which the backfill never writes;
+- deletes the usage_backfill row, so the Usage Dashboard stops counting the
+  backfilled days and stops marking figures as estimated.
+
+The past-month daily_usage partitions a load created are kept, empty: past
+partitions are never dropped (see monthly_partition_rollover), and the next
+load reuses them.
+
+Takes the same advisory lock as a load, so it can't run alongside one.
+Re-running is safe: with nothing backfilled it deletes nothing. To backfill
+again, run usage_backfill with USAGE_BACKFILL_MODE=load on the kept export
+file: Prometheus may no longer hold the oldest days.
+"""
+from __future__ import annotations
+
+from ai4i_core.logging import get_logger
+from sqlalchemy import text
+
+from bootstrap.database import platform_core_session
+from jobs.usage_backfill import SOURCE, BackfillError
+
+logger = get_logger(__name__)
+
+
+async def undo() -> None:
+    async with platform_core_session() as session:
+        async with session.begin():
+            locked = (
+                await session.execute(text("SELECT pg_try_advisory_xact_lock(hashtext('pyjob:usage_backfill'))"))
+            ).scalar_one()
+            if not locked:
+                raise BackfillError("a usage_backfill load is running; undo after it finishes")
+
+            coverage = (await session.execute(text("SELECT first_day, until FROM usage_backfill"))).first()
+            summary = (
+                await session.execute(
+                    text(
+                        "SELECT count(*) AS rows, min(usage_date) AS first_day, max(usage_date) AS last_day,"
+                        " coalesce(sum(request_count), 0) AS requests, coalesce(sum(cost), 0) AS cost"
+                        " FROM daily_usage WHERE source = :source"
+                    ),
+                    {"source": SOURCE},
+                )
+            ).one()
+            logger.info(
+                "Undoing usage backfill | coverage=%s rows=%d days=%s..%s requests=%d cost=%s",
+                f"{coverage.first_day}..{coverage.until.isoformat()}" if coverage else "none",
+                summary.rows, summary.first_day, summary.last_day, summary.requests, summary.cost,
+            )
+
+            deleted = (
+                await session.execute(text("DELETE FROM daily_usage WHERE source = :source"), {"source": SOURCE})
+            ).rowcount or 0
+            coverage_deleted = (await session.execute(text("DELETE FROM usage_backfill"))).rowcount or 0
+
+    logger.info(
+        "Usage backfill undone | daily_usage_rows_deleted=%d coverage_row_deleted=%s",
+        deleted, bool(coverage_deleted),
+    )
+
+
+async def run() -> None:
+    await undo()

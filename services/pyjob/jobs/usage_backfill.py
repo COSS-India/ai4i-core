@@ -61,7 +61,10 @@ backfill rows of the exported days are deleted and the new ones inserted, so
 a re-run with the same file converges, and days a later export no longer
 covers keep their rows. usage_backfill records the span covered (its first
 day, kept from earlier loads, up to the file's cut-off), which tells the Usage
-Dashboard which figures are estimates. Refuses to load when usage_events has rows before the
+Dashboard which figures are estimates.
+
+To take it all back out, run the usage_backfill_undo job: it deletes the
+backfill rows and the usage_backfill row, and nothing else. Refuses to load when usage_events has rows before the
 file's cut-off, which would count those days twice.
 """
 from __future__ import annotations
