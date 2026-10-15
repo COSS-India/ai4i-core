@@ -308,7 +308,7 @@ STUDENT_ID_FIELD = {"entity_name": "STUDENT_ID", "regex": r"\bSTU\d{4}\b",
                     "examples": ["STU1234", "STU5678", "STU9012"]}
 
 
-@pytest.mark.parametrize("domain_fields", [
+@pytest.mark.parametrize("policy_fields", [
     {"custom_field": "oops"},
     {"custom_field": [{"entity_name": 5, "regex": "a"}]},
     {"custom_field": [{"entity_name": "X"}]},
@@ -320,20 +320,19 @@ STUDENT_ID_FIELD = {"entity_name": "STUDENT_ID", "regex": r"\bSTU\d{4}\b",
     {"model_supported_field": [{"en": ["PERSON"]}]},
     {"custom_fields": [PAN_FIELD]},                                    # typo: unknown key
 ])
-def test_simulate_rejects_malformed_policy_fields(client, domain_fields):
-    resp = client.post("/pii/simulate", json=_simulate_body({"Finance": domain_fields}))
+def test_simulate_rejects_malformed_policy_fields(client, policy_fields):
+    resp = client.post("/pii/simulate", json=_simulate_body(policy_fields))
     assert resp.status_code == 400
 
 
-def test_simulate_rejects_the_flat_policy_fields_shape(client):
-    # The pre-#1738 shape: must be a 400, not an empty "no PII" result.
-    resp = client.post("/pii/simulate", json=_simulate_body({"custom_field": [PAN_FIELD]}))
+def test_simulate_rejects_the_domain_keyed_policy_fields_shape(client):
+    # The old domain-keyed shape: must be a 400, not an empty "no PII" result.
+    resp = client.post("/pii/simulate", json=_simulate_body({"Finance": {"custom_field": [PAN_FIELD]}}))
     assert resp.status_code == 400
 
 
-def test_simulate_applies_every_domain_sent(client, fake_engine):
-    fields = {"Finance": {"custom_field": [PAN_FIELD]},
-              "Education": {"custom_field": [STUDENT_ID_FIELD]}}
+def test_simulate_applies_every_custom_field(client, fake_engine):
+    fields = {"custom_field": [PAN_FIELD, STUDENT_ID_FIELD]}
     resp = client.post("/pii/simulate", json=_simulate_body(
         fields, text="PAN ABCDE1234F, student STU1234"))
     assert resp.status_code == 200
@@ -347,18 +346,20 @@ def test_simulate_rejects_text_over_the_limit(client):
 
 
 def test_simulate_maps_invalid_regex_to_400(client, fake_engine):
-    resp = client.post("/pii/simulate", json=_simulate_body({"Finance": {"custom_field": [
-        {"entity_name": "X", "regex": "(", "examples": ["a", "b", "c"]}]}}))
+    resp = client.post("/pii/simulate", json=_simulate_body({"custom_field": [
+        {"entity_name": "X", "regex": "(", "examples": ["a", "b", "c"]}]}))
     assert resp.status_code == 400
     assert "PII: invalid regex for X" in resp.json()["detail"]
 
 
 def test_simulate_accepts_platform_core_rows(client, fake_engine):
-    # A row as #1738 stores it; entries carry examples (and may carry mode).
+    # A row as GET /policies/policy-types returns it; entries carry examples
+    # (and may carry mode).
     resp = client.post("/pii/simulate", json={
         "text": "PAN ABCDE1234F",
         "policyTypes": [{"id": 1, "policy_type": "PII", "policy_fields": {
-            "Finance": {"custom_field": [{**PAN_FIELD, "mode": "mask"}]}}}],
+            "custom_field": [{**PAN_FIELD, "mode": "mask"}],
+            "model_supported_field": []}}],
     })
     assert resp.status_code == 200
     assert resp.json()["sanitizedText"] == "PAN <PAN_NUMBER_1>"
@@ -369,7 +370,7 @@ def test_simulate_caps_custom_fields_per_request(client):
     per_type = MAX_CUSTOM_FIELDS // 2 + 1
     field = {"entity_name": "X", "regex": "a"}
     body = {"text": "abc", "policyTypes": [
-        {"policy_type": f"T{i}", "policy_fields": {"D": {"custom_field": [field] * per_type}}}
+        {"policy_type": f"T{i}", "policy_fields": {"custom_field": [field] * per_type}}
         for i in range(3)
     ]}
     resp = client.post("/pii/simulate", json=body)
@@ -380,7 +381,7 @@ def test_simulate_caps_custom_fields_per_request(client):
 def test_simulate_caps_model_entities_per_request(client):
     entities = [{"entity_name": "PERSON"}] * (MAX_MODEL_ENTITIES // 2 + 1)
     body = {"text": "abc", "policyTypes": [
-        {"policy_type": f"T{i}", "policy_fields": {"D": {"model_supported_field": [{"en": entities}]}}}
+        {"policy_type": f"T{i}", "policy_fields": {"model_supported_field": [{"en": entities}]}}
         for i in range(3)
     ]}
     resp = client.post("/pii/simulate", json=body)
@@ -389,7 +390,7 @@ def test_simulate_caps_model_entities_per_request(client):
 
 
 def test_simulate_response_lists_policy_types(client, fake_engine):
-    resp = client.post("/pii/simulate", json=_simulate_body({"Finance": {"custom_field": [PAN_FIELD]}},
+    resp = client.post("/pii/simulate", json=_simulate_body({"custom_field": [PAN_FIELD]},
                                                             text="PAN ABCDE1234F"))
     assert resp.json()["detected"][0]["policyTypes"] == ["PII"]
 
@@ -420,7 +421,7 @@ def test_anonymize_with_supplied_analyzer_results(client, fake_engine):
 
 def test_simulate_undetectable_model_entity_is_400_not_500(client, fake_engine):
     resp = client.post("/pii/simulate", json=_simulate_body(
-        {"Healthcare": {"model_supported_field": [{"en": [{"entity_name": "IN_DRIVING_LICENSE"}]}]}},
+        {"model_supported_field": [{"en": [{"entity_name": "IN_DRIVING_LICENSE"}]}]},
         text="DL MH0120220012345"))
     assert resp.status_code == 400
     assert "IN_DRIVING_LICENSE" in resp.json()["detail"]

@@ -16,8 +16,7 @@ NAME_MAX_LEN = 100
 # spaCy refuses text over 1,000,000 characters (a 500); stay well below it.
 MAX_SIMULATE_TEXT_LEN = 100_000
 MAX_POLICY_TYPES = 50
-MAX_DOMAINS = 20
-# Totals across the whole request (all policy types and domains). Presidio's
+# Totals across the whole request (all policy types). Presidio's
 # recognizer selection grows with entities x recognizers, so per-list caps
 # that multiply out to 100,000 fields are not enough.
 MAX_CUSTOM_FIELDS = 100
@@ -204,12 +203,11 @@ def anonymize(req: AnonymizeRequest):
     )
 
 
-# platform-core's policy_fields JSONB, keyed by domain (#1738):
-#   {"Finance": {"custom_field": [...], "model_supported_field": [...]}}
-# Every domain section sent is applied; the caller sends only the policy
-# types (and domains) it wants simulated.
-# Entries allow extra keys (examples, mode, ...); a domain's own keys do not,
-# so a shape mismatch is a 400 rather than a silently empty result.
+# platform-core's policy_fields JSONB, flat (no domain wrapper):
+#   {"custom_field": [...], "model_supported_field": [...]}
+# The caller sends only the policy types it wants simulated.
+# Entries allow extra keys (examples, mode, ...); policy_fields' own keys do
+# not, so a shape mismatch is a 400 rather than a silently empty result.
 class CustomFieldIn(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -224,7 +222,7 @@ class ModelEntityIn(BaseModel):
     entity_name: EntityName
 
 
-class DomainFieldsIn(BaseModel):
+class PolicyFieldsIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     custom_field: List[CustomFieldIn] = Field(default_factory=list, max_length=MAX_CUSTOM_FIELDS)
@@ -241,9 +239,7 @@ class SimulatePolicyType(BaseModel):
     policy_type: Annotated[
         str, StringConstraints(strip_whitespace=True, min_length=1, max_length=NAME_MAX_LEN)
     ]
-    policy_fields: Dict[EntityName, DomainFieldsIn] = Field(
-        default_factory=dict, max_length=MAX_DOMAINS
-    )
+    policy_fields: PolicyFieldsIn = Field(default_factory=PolicyFieldsIn)
 
 
 class SimulateRequest(BaseModel):
@@ -252,12 +248,12 @@ class SimulateRequest(BaseModel):
 
     @model_validator(mode="after")
     def cap_fields_per_request(self):
-        domains = [d for pt in self.policyTypes for d in pt.policy_fields.values()]
-        custom = sum(len(d.custom_field) for d in domains)
+        fields = [pt.policy_fields for pt in self.policyTypes]
+        custom = sum(len(f.custom_field) for f in fields)
         model = sum(
             len(entries)
-            for d in domains
-            for by_language in d.model_supported_field
+            for f in fields
+            for by_language in f.model_supported_field
             for entries in by_language.values()
         )
         if custom > MAX_CUSTOM_FIELDS:
@@ -309,15 +305,15 @@ def simulate(req: SimulateRequest):
         custom_fields: List[CustomField] = []
         seen: set = set()
         model_entities: Dict[str, List[str]] = {}
-        for fields in pt.policy_fields.values():
-            for cf in fields.custom_field:
-                # The same entity and regex in several domains runs once.
-                if (cf.entity_name, cf.regex) not in seen:
-                    seen.add((cf.entity_name, cf.regex))
-                    custom_fields.append(CustomField(cf.entity_name, cf.regex))
-            for by_language in fields.model_supported_field:
-                for lang, entries in by_language.items():
-                    model_entities.setdefault(lang, []).extend(e.entity_name for e in entries)
+        fields = pt.policy_fields
+        for cf in fields.custom_field:
+            # The same entity and regex listed twice runs once.
+            if (cf.entity_name, cf.regex) not in seen:
+                seen.add((cf.entity_name, cf.regex))
+                custom_fields.append(CustomField(cf.entity_name, cf.regex))
+        for by_language in fields.model_supported_field:
+            for lang, entries in by_language.items():
+                model_entities.setdefault(lang, []).extend(e.entity_name for e in entries)
         policy_types.append(
             PolicyType(
                 name=pt.policy_type,
