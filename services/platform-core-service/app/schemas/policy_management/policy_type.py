@@ -12,10 +12,24 @@ from app.schemas.policy_management.fields import (
 )
 
 
+POLICY_FIELD_KEYS = ("custom_field", "model_supported_field")
+
+
 def _validate_custom_fields(policy_fields: Dict[str, Any]) -> Dict[str, Any]:
-    """policy_fields must be a flat object with a 'custom_field' list.
-    Each entry must have entity_name, at least 3 non-blank string examples,
-    and a non-blank compilable regex."""
+    """policy_fields must be a flat object with only 'custom_field' and
+    'model_supported_field'. Each custom_field entry must have entity_name, at
+    least 3 non-blank string examples, and a non-blank compilable regex.
+
+    inference-service's guardrail refuses any other shape (it would mask less
+    than the policy says), so it is rejected here, at write time.
+    """
+    unknown = sorted(set(policy_fields) - set(POLICY_FIELD_KEYS))
+    if unknown:
+        raise ValueError(
+            f"policy_fields has unknown keys {unknown}; "
+            f"only {', '.join(POLICY_FIELD_KEYS)} are allowed."
+        )
+
     custom_field_entries = policy_fields.get("custom_field")
     if custom_field_entries:
         if not isinstance(custom_field_entries, list):
@@ -33,6 +47,7 @@ def _validate_custom_fields(policy_fields: Dict[str, Any]) -> Dict[str, Any]:
 
             try:
                 entity_name = clean_name(entry.get("entity_name"), "Entity")
+                entry["entity_name"] = entity_name
             except ValueError as exc:
                 raise ValueError(f"policy_fields custom_field entry: {exc}") from exc
 
@@ -84,11 +99,18 @@ def _validate_custom_fields(policy_fields: Dict[str, Any]) -> Dict[str, Any]:
                         f"policy_fields['model_supported_field']['{lang}'] must be a list."
                     )
                 for entity in entities:
-                    if not isinstance(entity, dict) or not entity.get("entity_name"):
+                    if not isinstance(entity, dict):
                         raise ValueError(
                             f"policy_fields['model_supported_field']['{lang}']: "
-                            "each entry must have 'entity_name'."
+                            "each entry must be an object with 'entity_name'."
                         )
+                    try:
+                        # Stored cleaned: Presidio cannot detect " PERSON " or "PERSON\u200b".
+                        entity["entity_name"] = clean_name(entity.get("entity_name"), "Entity")
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"policy_fields['model_supported_field']['{lang}']: {exc}"
+                        ) from exc
 
     return policy_fields
 

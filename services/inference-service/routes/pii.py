@@ -1,13 +1,25 @@
 """Presidio analyze/anonymize test endpoints and the policy simulation."""
 
+import logging
+import re
 from typing import Annotated, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from services.guardrail import (
+    GuardrailError,
+    PolicyFieldsError,
+    PolicyNotFoundError,
+    get_policy,
+    parse_policy_types,
+)
 from services.pii.engine import get_engine
 from services.pii.model_registry import get_spacy_lang_code
 from config import settings
-from services.pii.simulation import CustomField, InvalidPolicyError, PolicyType, simulate as run
+from services.pii.simulation import InvalidPolicyError, simulate as run
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/pii", tags=["PII Test"])
 
@@ -15,13 +27,8 @@ router = APIRouter(prefix="/pii", tags=["PII Test"])
 NAME_MAX_LEN = 100
 # spaCy refuses text over 1,000,000 characters (a 500); stay well below it.
 MAX_SIMULATE_TEXT_LEN = 100_000
-MAX_POLICY_TYPES = 50
-# Totals across the whole request (all policy types). Presidio's
-# recognizer selection grows with entities x recognizers, so per-list caps
-# that multiply out to 100,000 fields are not enough.
-MAX_CUSTOM_FIELDS = 100
-MAX_MODEL_ENTITIES = 100
-MAX_REGEX_LEN = 1000
+# platform-core's ROLE_ADMIN; reading a policy there is Adopter Admin only.
+ROLE_ADMIN = 1
 
 # strip_whitespace leaves zero-width characters, so "\u200b" would pass
 # min_length and show up as a token like <_1>; require a visible character.
@@ -203,69 +210,11 @@ def anonymize(req: AnonymizeRequest):
     )
 
 
-# platform-core's policy_fields JSONB, flat (no domain wrapper):
-#   {"custom_field": [...], "model_supported_field": [...]}
-# The caller sends only the policy types it wants simulated.
-# Entries allow extra keys (examples, mode, ...); policy_fields' own keys do
-# not, so a shape mismatch is a 400 rather than a silently empty result.
-class CustomFieldIn(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    entity_name: EntityName
-    # Not stripped: spaces can be part of the pattern. pattern=\S rejects blank.
-    regex: Annotated[str, StringConstraints(max_length=MAX_REGEX_LEN, pattern=r"\S")]
-
-
-class ModelEntityIn(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    entity_name: EntityName
-
-
-class PolicyFieldsIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    custom_field: List[CustomFieldIn] = Field(default_factory=list, max_length=MAX_CUSTOM_FIELDS)
-    # [{"en": [{"entity_name": "PERSON"}], "hi": [...]}]
-    model_supported_field: List[
-        Dict[str, Annotated[List[ModelEntityIn], Field(max_length=MAX_MODEL_ENTITIES)]]
-    ] = Field(default_factory=list, max_length=MAX_MODEL_ENTITIES)
-
-
-class SimulatePolicyType(BaseModel):
-    """A policy_type row as platform-core returns it (GET /policies/policy-types)."""
-
-    id: Optional[int] = None
-    policy_type: Annotated[
-        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=NAME_MAX_LEN)
-    ]
-    policy_fields: PolicyFieldsIn = Field(default_factory=PolicyFieldsIn)
-
-
 class SimulateRequest(BaseModel):
     text: str = Field(..., max_length=MAX_SIMULATE_TEXT_LEN)
-    policyTypes: List[SimulatePolicyType] = Field(..., max_length=MAX_POLICY_TYPES)
-
-    @model_validator(mode="after")
-    def cap_fields_per_request(self):
-        fields = [pt.policy_fields for pt in self.policyTypes]
-        custom = sum(len(f.custom_field) for f in fields)
-        model = sum(
-            len(entries)
-            for f in fields
-            for by_language in f.model_supported_field
-            for entries in by_language.values()
-        )
-        if custom > MAX_CUSTOM_FIELDS:
-            raise ValueError(
-                f"{custom} custom_field entries in total; at most {MAX_CUSTOM_FIELDS} per request."
-            )
-        if model > MAX_MODEL_ENTITIES:
-            raise ValueError(
-                f"{model} model_supported_field entities in total; "
-                f"at most {MAX_MODEL_ENTITIES} per request."
-            )
-        return self
+    # platform-core policy id; its policy types are loaded the same way the
+    # inference guardrail loads them (Redis, then platform-core).
+    policyId: int = Field(..., gt=0, le=2_147_483_647, strict=True)
 
 
 class Replacement(BaseModel):
@@ -288,43 +237,53 @@ class SimulateResponse(BaseModel):
     detected: List[DetectedPii]
 
 
+def require_admin(x_permission_ids: str = Header(default="")) -> None:
+    """Same rule as platform-core's GET /policies/{id}: Adopter Admin only.
+    X-Permission-IDs is injected by the gateway after token validation."""
+    # Compare as text: int() of a huge digit run raises (a 500).
+    if str(ROLE_ADMIN) not in {m.lstrip("0") for m in re.findall(r"\d+", x_permission_ids)}:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
 @router.post(
     "/simulate",
     response_model=SimulateResponse,
-    responses={400: {"description": "Malformed request or policy fields, an invalid regex, or regexes that ran out of time."}},
+    dependencies=[Depends(require_admin)],
+    responses={
+        400: {"description": "Malformed request; policy fields that cannot be used, an invalid regex, or regexes that ran out of time."},
+        403: {"description": "The caller is not an Adopter Admin."},
+        404: {"description": "No policy with this id."},
+        503: {"description": "The policy could not be loaded from Redis or platform-core."},
+    },
 )
-def simulate(req: SimulateRequest):
+async def simulate(req: SimulateRequest):
     """Detect the policy's PII types in text and replace them with numbered tokens.
+
+    The policy is loaded and parsed exactly as the inference guardrail does,
+    so the result matches what inference masks. It runs whether or not the
+    policy is active, so a draft can be tried before it is switched on;
+    inference applies only active policies that are global or attached to
+    the calling app.
 
     The text's language is detected automatically.
     """
-
-
-    policy_types = []
-    for pt in req.policyTypes:
-        custom_fields: List[CustomField] = []
-        seen: set = set()
-        model_entities: Dict[str, List[str]] = {}
-        fields = pt.policy_fields
-        for cf in fields.custom_field:
-            # The same entity and regex listed twice runs once.
-            if (cf.entity_name, cf.regex) not in seen:
-                seen.add((cf.entity_name, cf.regex))
-                custom_fields.append(CustomField(cf.entity_name, cf.regex))
-        for by_language in fields.model_supported_field:
-            for lang, entries in by_language.items():
-                model_entities.setdefault(lang, []).extend(e.entity_name for e in entries)
-        policy_types.append(
-            PolicyType(
-                name=pt.policy_type,
-                custom_fields=custom_fields,
-                model_entities=model_entities,
-            )
-        )
+    try:
+        policy = await get_policy(req.policyId)
+    except PolicyNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except GuardrailError as exc:
+        # The message names internal config and upstream status codes; log it
+        # rather than returning it to the caller.
+        logger.warning("Simulate could not load policy_id=%s: %s", req.policyId, exc)
+        raise HTTPException(
+            status_code=503, detail="The policy could not be loaded; try again later."
+        ) from exc
 
     try:
-        result = run(req.text, policy_types)
-    except InvalidPolicyError as exc:
+        policy_types = parse_policy_types(policy)
+        # spaCy and the policy regexes are CPU-bound; keep them off the event loop.
+        result = await run_in_threadpool(run, req.text, policy_types)
+    except (PolicyFieldsError, InvalidPolicyError) as exc:
         # 400 like the app's request-validation handler (app_factory.py).
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

@@ -1,8 +1,8 @@
 """Run a PII policy against sample text (the Playground "Run Simulation").
 
-A policy is the list of policy_type rows it references. routes/pii.py
-converts each row's flat policy_fields and passes the result here as
-PolicyType:
+A policy is the list of policy_type rows it references.
+services/guardrail.parse_policy_types converts each row's flat policy_fields
+and passes the result here as PolicyType:
 
     custom_field:          [{entity_name, regex}]   -> regex recognizer
     model_supported_field: [{<lang>: [{entity_name}]}] -> Presidio's built-in

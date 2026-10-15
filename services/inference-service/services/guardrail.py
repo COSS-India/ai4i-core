@@ -40,6 +40,18 @@ class GuardrailError(Exception):
     """
 
 
+class PolicyNotFoundError(GuardrailError):
+    """platform-core has no policy with the requested id."""
+
+
+class PolicyFieldsError(GuardrailError):
+    """A policy type's policy_fields cannot be turned into recognizers.
+
+    Skipping the bad part would mask less than the policy says, so the
+    guardrail blocks the request and /pii/simulate returns 400.
+    """
+
+
 _APP_POLICY_KEY = "auth:app:{}:policy_ids"
 _POLICY_KEY = "policy:{}"
 _GLOBAL_POLICY_IDS_KEY = "global:policy_ids"
@@ -175,6 +187,8 @@ async def get_policy(policy_id: int) -> Dict:
                 except Exception:
                     pass
             return data
+        if r.status_code == 404:
+            raise PolicyNotFoundError(f"Policy {policy_id} not found")
         raise GuardrailError(
             f"Platform-core returned {r.status_code} for policy_id={policy_id}"
         )
@@ -188,45 +202,90 @@ async def get_policy(policy_id: int) -> Dict:
 
 # ── Policy parsing ────────────────────────────────────────────────────────────
 
-def _parse_policy_types(policy: Dict) -> List[PolicyType]:
+_POLICY_FIELD_KEYS = {"custom_field", "model_supported_field"}
+
+
+def _non_blank_str(v: Any) -> bool:
+    return isinstance(v, str) and bool(v.strip())
+
+
+def _parse_policy_fields(name: str, pf: Any) -> PolicyType:
+    if pf is None:
+        pf = {}
+    if not isinstance(pf, dict):
+        raise PolicyFieldsError(f"{name}: policy_fields must be an object")
+    unknown = sorted(set(pf) - _POLICY_FIELD_KEYS)
+    if unknown:
+        raise PolicyFieldsError(
+            f"{name}: unknown policy_fields keys {unknown}; "
+            "expected custom_field and model_supported_field"
+        )
+
+    custom = pf.get("custom_field") or []
+    if not isinstance(custom, list):
+        raise PolicyFieldsError(f"{name}: custom_field must be a list")
+    # The same entity and regex listed twice runs once.
+    custom_fields: List[CustomField] = []
+    seen: set = set()
+    for cf in custom:
+        if not isinstance(cf, dict) or not (
+            _non_blank_str(cf.get("entity_name")) and _non_blank_str(cf.get("regex"))
+        ):
+            raise PolicyFieldsError(
+                f"{name}: each custom_field entry needs a string entity_name and regex"
+            )
+        key = (cf["entity_name"], cf["regex"])
+        if key not in seen:
+            seen.add(key)
+            custom_fields.append(CustomField(entity_name=key[0], regex=key[1]))
+
+    model = pf.get("model_supported_field") or []
+    if not isinstance(model, list):
+        raise PolicyFieldsError(f"{name}: model_supported_field must be a list")
+    model_entities: Dict[str, List[str]] = {}
+    for entry in model:
+        if not isinstance(entry, dict):
+            raise PolicyFieldsError(
+                f"{name}: each model_supported_field item must map a language to a list"
+            )
+        for lang, entities in entry.items():
+            if not isinstance(entities, list):
+                raise PolicyFieldsError(
+                    f"{name}: model_supported_field['{lang}'] must be a list"
+                )
+            # Listed even when empty: simulation detects the text's language
+            # among the languages the policy names.
+            names = model_entities.setdefault(lang, [])
+            for e in entities:
+                # platform-core stores {"entity_name": ...}; a bare name is accepted too.
+                entity = e.get("entity_name") if isinstance(e, dict) else e
+                if not _non_blank_str(entity):
+                    raise PolicyFieldsError(
+                        f"{name}: each model_supported_field['{lang}'] entry needs a "
+                        "string entity_name"
+                    )
+                names.append(entity)
+
+    return PolicyType(name=name, custom_fields=custom_fields, model_entities=model_entities)
+
+
+def parse_policy_types(policy: Dict) -> List[PolicyType]:
     """Convert policy dict from Redis into PolicyType objects for simulation.py's
     _build_recognizers.
 
     policy_fields structure (flat, no domain wrapper):
       {
         "custom_field": [{"entity_name": "...", "regex": "..."}, ...],
-        "model_supported_field": [{"en": ["PERSON", "EMAIL_ADDRESS"]}, ...]
+        "model_supported_field": [{"en": [{"entity_name": "PERSON"}, ...]}, ...]
       }
+
+    Raises PolicyFieldsError for anything else (e.g. the old {"Finance": {...}}
+    domain wrapper) rather than dropping it and masking less than the policy says.
     """
-    result = []
-    for pt in policy.get("policy_types") or []:
-        pf = pt.get("policy_fields") or {}
-
-        custom_fields = [
-            CustomField(entity_name=cf["entity_name"], regex=cf["regex"])
-            for cf in pf.get("custom_field") or []
-            if cf.get("entity_name") and cf.get("regex")
-        ]
-
-        # model_supported_field: list of {lang_code: [entity_names]}
-        model_entities: Dict[str, List[str]] = {}
-        for entry in pf.get("model_supported_field") or []:
-            if isinstance(entry, dict):
-                for lang, names in entry.items():
-                    if isinstance(names, list):
-                        entity_names = [
-                            n["entity_name"] if isinstance(n, dict) else n
-                            for n in names
-                            if (isinstance(n, dict) and n.get("entity_name")) or isinstance(n, str)
-                        ]
-                        model_entities.setdefault(lang, []).extend(entity_names)
-
-        result.append(PolicyType(
-            name=pt.get("policy_type") or "PII",
-            custom_fields=custom_fields,
-            model_entities=model_entities,
-        ))
-    return result
+    return [
+        _parse_policy_fields(pt.get("policy_type") or "PII", pt.get("policy_fields"))
+        for pt in policy.get("policy_types") or []
+    ]
 
 
 # ── Masking ───────────────────────────────────────────────────────────────────
@@ -398,8 +457,10 @@ async def build_guardrail_context(app_id: Optional[str]) -> GuardrailContext:
         sub_category = policy.get("sub_category")
         if sub_category and not sub_category.get("is_active"):
             continue
+        # Raises PolicyFieldsError (a GuardrailError) for unusable policy_fields.
+        policy_types = parse_policy_types(policy)
         ctx.applied_policy_ids.append(pid)
-        ctx.policy_types.extend(_parse_policy_types(policy))
+        ctx.policy_types.extend(policy_types)
         scope = policy.get("guardrail_scope") or ""
         if scope:
             ctx.scopes.append(scope)

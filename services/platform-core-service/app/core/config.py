@@ -159,7 +159,7 @@ class CoreSettings(BaseSettings):
     max_active_versions_per_model: int = 5
     allow_deprecated_model_changes: bool = True
 
-    # ── Policy type size caps (must match /simulate endpoint limits) ──
+    # ── Policy type size caps (the only limits on a stored policy type) ──
     max_custom_fields: int = 100
     max_regex_len: int = 1000
 
