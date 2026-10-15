@@ -1,13 +1,12 @@
-"""Settings for the one-off backfill, read from the environment (or .env).
+"""Settings for the one-off backfill, read from the environment (or a .env in
+the current directory).
 
-Kept in the folder so the feature stays self-contained: the database
-connection still comes from pyjob's own settings (bootstrap.config), which
-bootstrap.database reads — this only adds the Prometheus and window vars the
-backfill needs, and touches nothing shared.
+The database connection comes from pyjob's own settings (bootstrap.config);
+these are only what the backfill adds.
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 from functools import lru_cache
 from typing import Optional
 
@@ -16,18 +15,18 @@ from pydantic_settings import BaseSettings
 
 
 class BackfillSettings(BaseSettings):
-    # Prometheus to read the history from. Required to run (export half).
+    # Prometheus to read the history from.
     PROMETHEUS_URL: Optional[str] = None
     PROMETHEUS_TIMEOUT_SECONDS: float = Field(60.0, gt=0)
     # Label carrying the request path on telemetry_obsv_requests_total:
     # "exported_endpoint" on k8s, "endpoint" on a local docker-compose.
     PROMETHEUS_API_PATH_LABEL: str = "exported_endpoint"
 
-    # Window overrides (optional). FROM may not be earlier than the first
-    # whole day Prometheus still has; UNTIL defaults to the cut-over (the IST
-    # midnight of the day the first usage_events row falls on).
-    USAGE_BACKFILL_FROM: Optional[date] = None
-    USAGE_BACKFILL_UNTIL: Optional[datetime] = None
+    # The IST days to backfill, both inclusive (YYYY-MM-DD). BACKFILL_FROM must
+    # be a day Prometheus still has from its start; BACKFILL_TO must end before
+    # usage_events begins.
+    BACKFILL_FROM: Optional[date] = None
+    BACKFILL_TO: Optional[date] = None
 
     class Config:
         env_file = ".env"
