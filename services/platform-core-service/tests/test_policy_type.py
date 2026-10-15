@@ -25,7 +25,7 @@ import pytest
 from pydantic import ValidationError as PydanticValidationError
 
 from app.core.exceptions import DuplicateEntityError, EntityNotFoundError, InsufficientPermissionsError
-from app.schemas.policy_management.policy_type import PolicyTypeCreate, PolicyTypeItem
+from app.schemas.policy_management.policy_type import PolicyTypeCreate, PolicyTypeItem, PolicyTypeUpdate
 
 _spec = importlib.util.spec_from_file_location("app.routes.policy", "app/routes/policy.py")
 _policy_routes = importlib.util.module_from_spec(_spec)
@@ -72,43 +72,44 @@ class TestPolicyTypeCreateSchema:
     def test_policy_fields_defaults_to_empty_dict(self):
         assert PolicyTypeCreate(policy_type="Safety").policy_fields == {}
 
-    def test_domain_key_is_stripped(self):
-        obj = PolicyTypeCreate(policy_type="Safety", policy_fields={"  Education  ": {}})
-        assert "Education" in obj.policy_fields
-        assert "  Education  " not in obj.policy_fields
+    @pytest.mark.parametrize("policy_fields", [
+        {"Finance": {"custom_field": []}},          # old domain-keyed shape
+        {"custom_fields": []},                      # typo
+        {"custom_field": [], "description": "x"},
+    ])
+    def test_unknown_policy_fields_keys_are_rejected(self, policy_fields):
+        with pytest.raises(PydanticValidationError, match="unknown keys"):
+            PolicyTypeCreate(policy_type="Safety", policy_fields=policy_fields)
 
-    def test_blank_domain_key_is_rejected(self):
-        with pytest.raises(PydanticValidationError, match="must not be blank"):
-            PolicyTypeCreate(policy_type="Safety", policy_fields={"": {}})
+    def test_unknown_policy_fields_keys_are_rejected_on_update(self):
+        with pytest.raises(PydanticValidationError, match="unknown keys"):
+            PolicyTypeUpdate(policy_type_id=1, policy_fields={"Finance": {}})
 
-    def test_whitespace_only_domain_key_is_rejected(self):
-        with pytest.raises(PydanticValidationError, match="must not be blank"):
-            PolicyTypeCreate(policy_type="Safety", policy_fields={"   ": {}})
-
-    def test_case_insensitive_duplicate_domain_keys_are_rejected(self):
-        with pytest.raises(PydanticValidationError, match="collides"):
+    @pytest.mark.parametrize("entity", [
+        {"entity_name": 5}, {"entity_name": ""}, {"entity_name": "   "}, {"name": "PERSON"}, "PERSON",
+    ])
+    def test_model_supported_field_entity_needs_string_name(self, entity):
+        with pytest.raises(PydanticValidationError, match="model_supported_field"):
             PolicyTypeCreate(
                 policy_type="Safety",
-                policy_fields={"Education": {}, "education": {}},
+                policy_fields={"model_supported_field": [{"en": [entity]}]},
             )
 
-    def test_padded_domain_key_collision_is_rejected(self):
-        with pytest.raises(PydanticValidationError, match="collides"):
-            PolicyTypeCreate(
-                policy_type="Safety",
-                policy_fields={" Education ": {}, "education": {}},
-            )
+    def test_flat_shape_with_null_fields_is_accepted(self):
+        obj = PolicyTypeCreate(
+            policy_type="Safety",
+            policy_fields={"custom_field": None, "model_supported_field": None},
+        )
+        assert obj.policy_fields == {"custom_field": None, "model_supported_field": None}
 
     def test_custom_field_entry_requires_at_least_3_examples(self):
         with pytest.raises(PydanticValidationError, match="3 examples"):
             PolicyTypeCreate(
                 policy_type="Medical PII",
                 policy_fields={
-                    "Healthcare": {
-                        "custom_field": [
-                            {"entity_name": "MED_ID", "examples": ["a", "b"], "regex": "\\d+"}
-                        ]
-                    }
+                    "custom_field": [
+                        {"entity_name": "MED_ID", "examples": ["a", "b"], "regex": "\\d+"}
+                    ]
                 },
             )
 
@@ -117,11 +118,9 @@ class TestPolicyTypeCreateSchema:
             PolicyTypeCreate(
                 policy_type="Medical PII",
                 policy_fields={
-                    "Healthcare": {
-                        "custom_field": [
-                            {"entity_name": "MED_ID", "examples": ["", "", ""], "regex": "\\d+"}
-                        ]
-                    }
+                    "custom_field": [
+                        {"entity_name": "MED_ID", "examples": ["", "", ""], "regex": "\\d+"}
+                    ]
                 },
             )
 
@@ -130,11 +129,9 @@ class TestPolicyTypeCreateSchema:
             PolicyTypeCreate(
                 policy_type="Medical PII",
                 policy_fields={
-                    "Healthcare": {
-                        "custom_field": [
-                            {"entity_name": "MED_ID", "examples": [1, 2, 3], "regex": "\\d+"}
-                        ]
-                    }
+                    "custom_field": [
+                        {"entity_name": "MED_ID", "examples": [1, 2, 3], "regex": "\\d+"}
+                    ]
                 },
             )
 
@@ -143,11 +140,9 @@ class TestPolicyTypeCreateSchema:
             PolicyTypeCreate(
                 policy_type="Medical PII",
                 policy_fields={
-                    "Healthcare": {
-                        "custom_field": [
-                            {"entity_name": "MED_ID", "examples": ["a", "b", "c"], "regex": ""}
-                        ]
-                    }
+                    "custom_field": [
+                        {"entity_name": "MED_ID", "examples": ["a", "b", "c"], "regex": ""}
+                    ]
                 },
             )
 
@@ -156,11 +151,9 @@ class TestPolicyTypeCreateSchema:
             PolicyTypeCreate(
                 policy_type="Medical PII",
                 policy_fields={
-                    "Healthcare": {
-                        "custom_field": [
-                            {"entity_name": "MED_ID", "examples": ["a", "b", "c"], "regex": 123}
-                        ]
-                    }
+                    "custom_field": [
+                        {"entity_name": "MED_ID", "examples": ["a", "b", "c"], "regex": 123}
+                    ]
                 },
             )
 
@@ -170,11 +163,9 @@ class TestPolicyTypeCreateSchema:
             PolicyTypeCreate(
                 policy_type="Medical PII",
                 policy_fields={
-                    "Healthcare": {
-                        "custom_field": [
-                            {"entity_name": bad_name, "examples": ["a", "b", "c"], "regex": "\\d+"}
-                        ]
-                    }
+                    "custom_field": [
+                        {"entity_name": bad_name, "examples": ["a", "b", "c"], "regex": "\\d+"}
+                    ]
                 },
             )
 
@@ -184,11 +175,9 @@ class TestPolicyTypeCreateSchema:
             PolicyTypeCreate(
                 policy_type="Medical PII",
                 policy_fields={
-                    "Healthcare": {
-                        "custom_field": [
-                            {"entity_name": blank_name, "examples": ["a", "b", "c"], "regex": "\\d+"}
-                        ]
-                    }
+                    "custom_field": [
+                        {"entity_name": blank_name, "examples": ["a", "b", "c"], "regex": "\\d+"}
+                    ]
                 },
             )
 
@@ -200,7 +189,7 @@ class TestPolicyTypeCreateSchema:
         with pytest.raises(PydanticValidationError, match="100"):
             PolicyTypeCreate(
                 policy_type="PII",
-                policy_fields={"Finance": {"custom_field": entries}},
+                policy_fields={"custom_field": entries},
             )
 
     def test_exactly_max_custom_field_entries_is_accepted(self):
@@ -210,35 +199,18 @@ class TestPolicyTypeCreateSchema:
         ]
         obj = PolicyTypeCreate(
             policy_type="PII",
-            policy_fields={"Finance": {"custom_field": entries}},
+            policy_fields={"custom_field": entries},
         )
-        assert len(obj.policy_fields["Finance"]["custom_field"]) == 100
-
-    def test_custom_field_limit_applies_across_domains(self):
-        # 60 entries in domain A + 60 entries in domain B = 120 total → rejected
-        entries = [
-            {"entity_name": f"FIELD_{i}", "examples": ["a", "b", "c"], "regex": "\\d+"}
-            for i in range(60)
-        ]
-        with pytest.raises(PydanticValidationError, match="100"):
-            PolicyTypeCreate(
-                policy_type="PII",
-                policy_fields={
-                    "Finance": {"custom_field": entries},
-                    "Healthcare": {"custom_field": entries},
-                },
-            )
+        assert len(obj.policy_fields["custom_field"]) == 100
 
     def test_regex_exceeding_max_length_is_rejected(self):
         with pytest.raises(PydanticValidationError, match="1000"):
             PolicyTypeCreate(
                 policy_type="PII",
                 policy_fields={
-                    "Finance": {
-                        "custom_field": [
-                            {"entity_name": "FIELD", "examples": ["a", "b", "c"], "regex": "a" * 1001}
-                        ]
-                    }
+                    "custom_field": [
+                        {"entity_name": "FIELD", "examples": ["a", "b", "c"], "regex": "a" * 1001}
+                    ]
                 },
             )
 
@@ -246,11 +218,9 @@ class TestPolicyTypeCreateSchema:
         obj = PolicyTypeCreate(
             policy_type="PII",
             policy_fields={
-                "Finance": {
-                    "custom_field": [
-                        {"entity_name": "FIELD", "examples": ["a", "b", "c"], "regex": "a" * 1000}
-                    ]
-                }
+                "custom_field": [
+                    {"entity_name": "FIELD", "examples": ["a", "b", "c"], "regex": "a" * 1000}
+                ]
             },
         )
         assert obj.policy_type == "PII"
@@ -259,11 +229,9 @@ class TestPolicyTypeCreateSchema:
         obj = PolicyTypeCreate(
             policy_type="Medical PII",
             policy_fields={
-                "Healthcare": {
-                    "custom_field": [
-                        {"entity_name": "MED_ID", "examples": ["a", "b", "c"], "regex": "MED-\\d+"}
-                    ]
-                }
+                "custom_field": [
+                    {"entity_name": "MED_ID", "examples": ["a", "b", "c"], "regex": "MED-\\d+"}
+                ]
             },
         )
         assert obj.policy_type == "Medical PII"

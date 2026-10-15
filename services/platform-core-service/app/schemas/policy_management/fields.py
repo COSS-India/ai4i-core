@@ -12,8 +12,8 @@ POLICY_DESCRIPTION_MAX_LEN = 200
 # Largest value of a Postgres INTEGER id column; bigger ids 422 instead of
 # overflowing in the driver.
 ID_MAX = 2_147_483_647
-# Policy-type size caps — must match the /simulate endpoint's own limits so
-# platform-core never stores a type that /simulate would reject at run time.
+# Policy-type size caps. inference-service's /pii/simulate and guardrail load
+# stored policies as-is, so these are the only limits on a policy type.
 # Both are configurable via MAX_CUSTOM_FIELDS / MAX_REGEX_LEN env vars.
 MAX_CUSTOM_FIELDS = 100
 MAX_REGEX_LEN = 1000
