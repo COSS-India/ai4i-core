@@ -150,15 +150,18 @@ async def get_tenant(
     ),
     current_user: User = Depends(get_current_user),
     svc: TenantService = Depends(get_tenant_service),
+    platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
 ):
-    """Return one tenant by id.
+    """Return one tenant by id, including its assigned ``tier_name``.
 
     Tenant admins are limited to their own tenant. Pass `unmask=true` only
     for the edit form (ADMIN / TENANT_ADMIN).
     """
     is_admin = has_permission_id(request, RoleId.ADMIN)
     tenant = await svc.get_tenant(current_user, tenant_id, unmask=unmask, is_admin=is_admin)
-    return GetTenantResponse(data=svc.build_tenant_response(tenant, unmask=unmask))
+    data = svc.build_tenant_response(tenant, unmask=unmask)
+    data["tier_name"] = await svc.resolve_tier_name(tenant.tier_id, platform_core_db)
+    return GetTenantResponse(data=data)
 
 
 @router.patch(

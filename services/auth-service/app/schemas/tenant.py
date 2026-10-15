@@ -217,6 +217,9 @@ class TenantResponse(BaseSchema):
     updated_at: Optional[datetime] = None
     updated_by: Optional[UUID] = None
     tier_id: Optional[UUID] = None
+    # Not a tenants column — resolved from platform-core's ``tiers`` table and
+    # filled in by GET /auth/tenants/{tenant_id} only; null everywhere else.
+    tier_name: Optional[str] = None
     allocated_budget: Optional[Decimal] = None
     budget_effective_from: Optional[datetime] = None
     budget_effective_to: Optional[datetime] = None
