@@ -27,13 +27,6 @@ export const METERING = {
       ERROR_PREFIX: "Unable to refresh data. Last successful refresh at",
     },
   },
-  /** Usage before `period.recordedFrom` is estimated (backfilled from monitoring data). */
-  ESTIMATES: {
-    NOTICE_PREFIX: "Usage before",
-    NOTICE_SUFFIX: "is estimated from monitoring data.",
-    KEY_BREAKDOWN_UNAVAILABLE: "Per-key breakdown unavailable for estimated days.",
-    KEY_SPEND_UNAVAILABLE: "—",
-  },
   QUERY: {
     STALE_TIME_MS: 60_000,
     TENANT_DIRECTORY_STALE_MS: 5 * 60_000,

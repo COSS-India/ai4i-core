@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.config import settings
-from app.models.pay_per_use.daily_usage import DailyUsage, UsageBackfill
+from app.models.pay_per_use.daily_usage import DailyUsage
 from app.models.pay_per_use.usage_event import REQUEST_ROWS, UsageEvent
 from app.utils.usage_period import IST, UsagePeriod
 
@@ -63,12 +63,6 @@ def period_source(period: UsagePeriod) -> PeriodSource:
         total_cost=UsageEvent.total_cost,
         unit=UsageEvent.unit_of_measurement,
     )
-
-
-async def backfill_until(db: AsyncSession) -> Optional[datetime]:
-    """When recorded usage starts: the end of the Prometheus backfill
-    (scripts/usage-backfill), usage before it being estimated. None without a backfill."""
-    return await db.scalar(select(UsageBackfill.until))
 
 
 def tenant_pks(tenant_ids: list[str]) -> list[int]:

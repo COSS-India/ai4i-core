@@ -86,7 +86,7 @@ class TestSchema:
             "key": "last_7_days", "from": "2026-10-02", "to": "2026-10-08",
             "start": "2026-10-02T00:00:00+05:30", "end": "2026-10-09T00:00:00+05:30",
             "timezone": "Asia/Kolkata",
-            "dataFrom": "2026-10-02T00:00:00+05:30", "partial": False, "recordedFrom": None,
+            "dataFrom": "2026-10-02T00:00:00+05:30", "partial": False,
         }
 
     def test_data_since_inside_the_period_is_partial(self):
@@ -105,12 +105,6 @@ class TestSchema:
         assert (period.to_schema(None).dataFrom, period.to_schema(None).partial) == (None, True)
         after = period.to_schema(period.end)
         assert (after.dataFrom, after.partial) == (None, True)
-
-    def test_recorded_from_is_echoed_in_ist(self):
-        period = _resolve("last_7_days")
-        block = period.to_schema(period.start, datetime(2026, 10, 4, 6, 0, tzinfo=timezone.utc))
-        assert block.recordedFrom == "2026-10-04T11:30:00+05:30"
-        assert period.to_schema(period.start).recordedFrom is None   # no backfill
 
     def test_cache_part_differs_by_range(self):
         assert _resolve("today").cache_part != _resolve("yesterday").cache_part

@@ -367,12 +367,6 @@ class MeteringService:
         answered from what's left. Overridden per store."""
         return retention_edge()
 
-    async def recorded_from(self) -> Optional[datetime]:
-        """When recorded usage starts, for Overview's period.recordedFrom
-        (usage before it is estimated); None when nothing is. Prometheus'
-        figures are what the dashboard always showed: None."""
-        return None
-
     async def refresh_retention(self) -> None:
         """Re-read how much history Prometheus keeps (cached per process;
         see metering_retention) before building retention-aware queries.

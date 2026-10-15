@@ -29,7 +29,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.repositories.model_management.model_repository import ModelRepository
 from app.repositories.model_management.service_repository import ServiceRepository
 from app.repositories.pay_per_use.metering_usage import MeteringUsageRepository, UsageAgg
-from app.repositories.pay_per_use.period_usage import backfill_until
 from app.schemas.metering import Graph, GraphPoint, GraphSeries
 from app.services.metering_service import (
     _UNSET,
@@ -94,12 +93,6 @@ class UsageEventsMeteringService(MeteringService):
         cover it, the first one when they start inside it, None when there
         are none — so a range from before the cut-over is reported partial."""
         return await self._usage.request_rows_from(period.start, period.end)
-
-    async def recorded_from(self) -> Optional[datetime]:
-        """The Prometheus backfill's end: daily_usage holds its estimates for
-        the days before, read as rollup days."""
-        async with self._usage.lock:   # the shared core-DB session
-            return await backfill_until(self._db)
 
     @staticmethod
     def _bounds(time_range: TimeRange) -> tuple[datetime, datetime, int]:

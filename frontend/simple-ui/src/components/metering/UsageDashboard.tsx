@@ -1,8 +1,7 @@
-import { Alert, AlertDescription, AlertIcon, Box, VStack } from "@chakra-ui/react";
+import { Box, VStack } from "@chakra-ui/react";
 import React from "react";
 import { METERING } from "../../config/meteringConstants";
 import { useMeteringDashboard } from "../../hooks/useMeteringDashboard";
-import { estimatedUsageNotice } from "../../utils/meteringCoverage";
 import LoadingSpinner from "../common/LoadingSpinner";
 import { MeteringAlerts } from "./MeteringAsyncState";
 import MeteringControls from "./MeteringControls";
@@ -59,8 +58,6 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
   ) : null;
 
   const showKeyMetrics = isTenantView === false;
-  // One notice for the whole dashboard, from the selected period as Overview echoes it.
-  const estimatesNotice = estimatedUsageNotice(overview?.scope.period);
 
   if (isLoading) {
     return (
@@ -79,13 +76,6 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
       ) : null}
 
       <MeteringAlerts errorMessage={primaryError} dataStateBanner={dataStateBanner} />
-
-      {estimatesNotice ? (
-        <Alert status="info" borderRadius="md" fontSize="sm">
-          <AlertIcon />
-          <AlertDescription>{estimatesNotice}</AlertDescription>
-        </Alert>
-      ) : null}
 
       {showKeyMetrics ? (
         <KeyMetricsSection data={keyMetricsOverview} supplement={keyMetricsSupplement} />
@@ -121,7 +111,6 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
           tenantId={effectiveTenantId}
           organisationLabel={organisationLabel}
           refreshNonce={refreshNonce}
-          recordedFrom={overview?.scope.period.recordedFrom}
         />
       ) : null}
 
@@ -138,7 +127,6 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
           parseQueryError={parseQueryError}
           scopeTenantId={scopeTenantId}
           refreshNonce={refreshNonce}
-          recordedFrom={overview?.scope.period.recordedFrom}
         />
       )}
     </VStack>

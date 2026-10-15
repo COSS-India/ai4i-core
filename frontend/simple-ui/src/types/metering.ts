@@ -30,11 +30,6 @@ export interface MeteringPeriodEcho {
   end: string;
   /** Always "Asia/Kolkata". */
   timezone: string;
-  /**
-   * When recorded usage starts (IST, +05:30); usage before it is estimated from
-   * monitoring data. Null when nothing is estimated.
-   */
-  recordedFrom?: string | null;
 }
 export type MeteringTopN = 10 | 25;
 export type MeteringDataState = "ok" | "error" | "empty" | "no_history";

@@ -18,7 +18,6 @@ import {
 import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
 import type { ApplicationUsageDetail } from "../../types/applicationUsage";
-import { periodIncludesEstimates } from "../../utils/meteringCoverage";
 import { formatSpendMoney, formatSpendMoneyExact } from "../../utils/usageSpendHelpers";
 import DataTable, { type DataTableColumn } from "../common/table";
 import {
@@ -39,8 +38,6 @@ interface ApplicationUsageDrawerProps {
   isLoading: boolean;
   errorMessage?: string | null;
   currency?: string;
-  /** When recorded usage starts (Overview's period.recordedFrom); null without a backfill. */
-  recordedFrom?: string | null;
 }
 
 const CARD_BG = "#eef3fb";
@@ -55,15 +52,10 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
   isLoading,
   errorMessage = null,
   currency = "INR",
-  recordedFrom = null,
 }) => {
   const copy = METERING.APPLICATION_USAGE;
   const tips = copy.TOOLTIPS;
   const cols = copy.TABLE;
-
-  // Estimated spend has no API key: for a period with estimated days, every
-  // key shows a dash for its period spend, and the total is the application's.
-  const hasEstimates = detail ? periodIncludesEstimates({ ...detail.period, recordedFrom }) : false;
 
   const apiKeyColumns = useMemo<DataTableColumn<ApiKeyRow>[]>(() => {
     if (!detail) return [];
@@ -125,12 +117,8 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
         hint: tips.API_KEY_PERIOD_SPEND,
         width: "16%",
         sortable: true,
-        sortAccessor: (key) => (hasEstimates ? 0 : key.periodSpend.amount),
-        cell: (key) => hasEstimates ? (
-          <Text fontSize="13px" color="gray.500">
-            {METERING.ESTIMATES.KEY_SPEND_UNAVAILABLE}
-          </Text>
-        ) : (
+        sortAccessor: (key) => key.periodSpend.amount,
+        cell: (key) => (
           <PeriodSpendCell
             amount={key.periodSpend.amount}
             percentage={key.periodSpend.percentage}
@@ -204,7 +192,7 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
         ),
       },
     ];
-  }, [cols, currency, detail, hasEstimates, tips]);
+  }, [cols, currency, detail, tips]);
 
   let body: React.ReactNode = null;
   if (isLoading && !detail) {
@@ -300,11 +288,6 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
           <Text fontSize="11.5px" letterSpacing="0.05em" color="gray.500" fontWeight="bold" mb="10px">
             {copy.DRAWER_SPEND_BY_API_KEY}
           </Text>
-          {hasEstimates ? (
-            <Text fontSize="12px" color="gray.500" mb="10px">
-              {METERING.ESTIMATES.KEY_BREAKDOWN_UNAVAILABLE}
-            </Text>
-          ) : null}
           {detail.apiKeys.length === 0 ? (
             <Text fontSize="13.5px" color="gray.500" fontStyle="italic" py={3}>
               {copy.DRAWER_NO_KEYS}

@@ -29,9 +29,3 @@ class Period(BaseModel):
     # True when the source doesn't cover the whole period, so a zero can mean
     # "no data", not "no usage".
     partial: bool = False
-    # When recorded usage starts (IST, +05:30): usage before it is estimated,
-    # backfilled from Prometheus (scripts/usage-backfill). Set on Overview only:
-    # the dashboard shows the estimates notice, and the Applications drawer a
-    # dash for each key's period spend, when the period starts before it.
-    # null without a backfill.
-    recordedFrom: Optional[str] = None
