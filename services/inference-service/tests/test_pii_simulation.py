@@ -623,6 +623,14 @@ def test_guardrail_skips_inactive_policies_without_parsing(monkeypatch):
     assert ctx.applied_policy_ids == []
 
 
+@pytest.mark.parametrize("parent", ["category", "sub_category"])
+def test_guardrail_skips_policies_under_an_inactive_parent(monkeypatch, parent):
+    _guardrail_with_policy(monkeypatch, {**_policy(("PII", {"custom_field": [PAN_FIELD]})),
+                                         parent: {"id": 1, "name": "x", "is_active": False}})
+    ctx = asyncio.run(guardrail.build_guardrail_context("app-1"))
+    assert ctx.applied_policy_ids == []
+
+
 def test_guardrail_applies_a_valid_policy(monkeypatch):
     _guardrail_with_policy(monkeypatch, _policy(("PII", {"custom_field": [PAN_FIELD]})))
     ctx = asyncio.run(guardrail.build_guardrail_context("app-1"))

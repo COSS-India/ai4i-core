@@ -375,14 +375,20 @@ const CustomRangePicker: React.FC<CustomRangePickerProps> = ({
   };
 
   // Either calendar: first click sets the start, second the end (never before
-  // the start, which is disabled meanwhile), a third starts over.
+  // the start, which is disabled meanwhile). With both set, a day after the end
+  // within the longest range moves the end; any other day, inside the range
+  // too, starts over, so the start can still move later.
   const handleSelect = (day: MeteringDayKey) => {
-    if (!start || end) {
-      setStart(day);
-      setEnd(null);
+    if (start && !end) {
+      setEnd(day);
       return;
     }
-    setEnd(day);
+    if (start && end && day > end && day <= addDays(start, copy.MAX_DAYS - 1)) {
+      setEnd(day);
+      return;
+    }
+    setStart(day);
+    setEnd(null);
   };
 
   const handleApply = () => {

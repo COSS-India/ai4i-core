@@ -58,8 +58,9 @@ SMTP_PASSWORD=<smtp password>
 ```bash
 F=services/kafka-consumers/consumers/notifications_consumer/.env
 A=services/auth-service/.env
-get() { grep -m1 "^$1=" "$2" | cut -d= -f2-; }
+get() { grep -m1 "^$1=" "$2" | cut -d= -f2- | tr -d '\r'; }
 
+sed -i 's/\r$//' $F   # CRLF → LF, or the quotes below close on the next line
 for k in POSTGRES_USER POSTGRES_PASSWORD REDIS_PASSWORD; do
   sed -i "s|^$k=.*|$k=$(get $k .env)|" $F; done
 for k in EMAIL_FROM SMTP_HOST SMTP_PORT SMTP_USERNAME SMTP_PASSWORD; do

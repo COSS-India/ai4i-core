@@ -454,6 +454,9 @@ async def build_guardrail_context(app_id: Optional[str]) -> GuardrailContext:
         category = policy.get("category")
         if category and not category.get("is_active"):
             continue
+        sub_category = policy.get("sub_category")
+        if sub_category and not sub_category.get("is_active"):
+            continue
         # Raises PolicyFieldsError (a GuardrailError) for unusable policy_fields.
         policy_types = parse_policy_types(policy)
         ctx.applied_policy_ids.append(pid)

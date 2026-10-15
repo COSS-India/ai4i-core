@@ -177,13 +177,12 @@ function makeTierCountColumn(
     header,
     thProps: { w: "140px" },
     sortable: true,
-    align: "center",
+    // Left, not centred: the sortable header is a flex row that ignores
+    // textAlign, so a centred column leaves its values off from the label.
+    align: "left",
     cell: (tier) => {
       if (isLoading) {
-        // `mx="auto"`: a fixed-width block is not moved by textAlign.
-        return (
-          <Skeleton height="20px" width="28px" borderRadius="md" mx="auto" />
-        );
+        return <Skeleton height="20px" width="28px" borderRadius="md" />;
       }
       if (hasError) {
         return (
@@ -196,11 +195,17 @@ function makeTierCountColumn(
       }
       // Non-zero gets a neutral chip so tiers in use stand out; zero stays a
       // bare number, or an empty tier would carry the same weight as a used
-      // one. `minW` keeps 1- and 2-digit chips even in the centred column.
+      // one. Both share a 28px centred box so digits line up down the column.
       const count = countByTierId.get(tier.id) ?? 0;
       if (count === 0) {
         return (
-          <Text fontSize="sm" color="gray.500">
+          <Text
+            fontSize="sm"
+            color="gray.500"
+            display="inline-block"
+            minW="28px"
+            textAlign="center"
+          >
             0
           </Text>
         );
