@@ -1,8 +1,8 @@
 """Run a PII policy against sample text (the Playground "Run Simulation").
 
 A policy is the list of policy_type rows it references. routes/pii.py
-flattens each row's policy_fields (keyed by domain, e.g. "Finance") and
-passes the result here as PolicyType:
+converts each row's flat policy_fields and passes the result here as
+PolicyType:
 
     custom_field:          [{entity_name, regex}]   -> regex recognizer
     model_supported_field: [{<lang>: [{entity_name}]}] -> Presidio's built-in
@@ -187,7 +187,8 @@ def _build_recognizers(policy_types: List[PolicyType], language: str) -> _Recogn
                         global_regex_flags=CUSTOM_FIELD_REGEX_FLAGS,
                     )
                 )
-            except regex.error as exc:
+            except (regex.error, ValueError) as exc:
+                # Presidio's Pattern validates the regex and raises ValueError.
                 raise InvalidPolicyError(
                     f"{pt.name}: invalid regex for {cf.entity_name}: {exc}"
                 ) from exc
