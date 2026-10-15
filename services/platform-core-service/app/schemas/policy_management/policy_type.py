@@ -47,6 +47,7 @@ def _validate_custom_fields(policy_fields: Dict[str, Any]) -> Dict[str, Any]:
 
             try:
                 entity_name = clean_name(entry.get("entity_name"), "Entity")
+                entry["entity_name"] = entity_name
             except ValueError as exc:
                 raise ValueError(f"policy_fields custom_field entry: {exc}") from exc
 
@@ -104,7 +105,8 @@ def _validate_custom_fields(policy_fields: Dict[str, Any]) -> Dict[str, Any]:
                             "each entry must be an object with 'entity_name'."
                         )
                     try:
-                        clean_name(entity.get("entity_name"), "Entity")
+                        # Stored cleaned: Presidio cannot detect " PERSON " or "PERSON\u200b".
+                        entity["entity_name"] = clean_name(entity.get("entity_name"), "Entity")
                     except ValueError as exc:
                         raise ValueError(
                             f"policy_fields['model_supported_field']['{lang}']: {exc}"

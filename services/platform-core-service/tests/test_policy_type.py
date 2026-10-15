@@ -95,6 +95,29 @@ class TestPolicyTypeCreateSchema:
                 policy_fields={"model_supported_field": [{"en": [entity]}]},
             )
 
+    @pytest.mark.parametrize("raw", [" PERSON ", "PERSON\u200b", "\tPERSON"])
+    def test_model_supported_field_entity_name_is_stored_cleaned(self, raw):
+        obj = PolicyTypeCreate(
+            policy_type="Safety",
+            policy_fields={"model_supported_field": [{"en": [{"entity_name": raw}]}]},
+        )
+        assert obj.policy_fields["model_supported_field"][0]["en"][0]["entity_name"] == "PERSON"
+
+    def test_custom_field_entity_name_is_stored_cleaned(self):
+        obj = PolicyTypeCreate(
+            policy_type="Safety",
+            policy_fields={"custom_field": [
+                {"entity_name": " MED_ID\u200b", "examples": ["a", "b", "c"], "regex": "\\d+"}]},
+        )
+        assert obj.policy_fields["custom_field"][0]["entity_name"] == "MED_ID"
+
+    def test_entity_names_are_stored_cleaned_on_update(self):
+        obj = PolicyTypeUpdate(
+            policy_type_id=1,
+            policy_fields={"model_supported_field": [{"en": [{"entity_name": " PERSON "}]}]},
+        )
+        assert obj.policy_fields["model_supported_field"][0]["en"][0]["entity_name"] == "PERSON"
+
     def test_flat_shape_with_null_fields_is_accepted(self):
         obj = PolicyTypeCreate(
             policy_type="Safety",
