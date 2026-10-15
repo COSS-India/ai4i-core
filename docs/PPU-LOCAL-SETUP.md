@@ -98,6 +98,24 @@ docker exec ai4v-kafka kafka-consumer-groups --bootstrap-server kafka:29092 \
   --reset-offsets --to-latest --execute
 ```
 
+If this fails with `UnknownTopicOrPartitionException: This server does not host this topic-partition`, the topic doesn't exist yet. It is only auto-created the first time inference-service exports a span to it. Create it, then run the reset again:
+
+```bash
+# 1. check: the topic should be missing from this list
+docker exec ai4v-kafka kafka-topics --bootstrap-server kafka:29092 --list
+
+# 2. create it
+docker exec ai4v-kafka kafka-topics --bootstrap-server kafka:29092 \
+  --create --if-not-exists --topic kafka-topic-otel-trace --partitions 1 --replication-factor 1
+
+# 3. now the reset works; it commits an offset for the group
+docker exec ai4v-kafka kafka-consumer-groups --bootstrap-server kafka:29092 \
+  --group aio-python-consumers --topic kafka-topic-otel-trace \
+  --reset-offsets --to-latest --execute
+```
+
+Then start the consumer as in Step 2.4.
+
 Do **not** switch `KAFKA_AUTO_OFFSET_RESET` to `earliest`. That replays every span still in the topic and bills it.
 
 ### Step 2.4: Start it
