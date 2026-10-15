@@ -2,20 +2,28 @@ import type {
   GuardrailScope,
   PolicyRecord,
   PolicyTypeItem,
+  SelectedPolicyFieldRecord,
 } from "../../../services/dto/schemas/policyHierarchy";
+import type { PolicyPatch, PolicyWrite } from "../../../services/policyHierarchyService";
 import {
-  NER_MODELS,
   domainLabel,
-  type DetectionMode,
   type Domain,
   type PiiType,
   type Policy,
   type PolicyField,
+  type PolicyInput,
   type PolicyScope,
+  type SelectedPolicyField,
 } from "./model";
 
 /** Regex definitions go in custom_field, which the API rejects with fewer than three examples. */
 export const MIN_REGEX_EXAMPLES = 3;
+
+/**
+ * The API still requires is_global on create. The form no longer asks for it, so new policies
+ * are Global, the previous form default.
+ */
+export const DEFAULT_IS_GLOBAL = true;
 
 const SCOPE_TO_API: Record<PolicyScope, GuardrailScope> = {
   "Input requests": "input",
@@ -137,72 +145,70 @@ function rowsFromBucket(storedDomain: string, bucket: Record<string, unknown>): 
 }
 
 export function definitionFromPolicyType(item: PolicyTypeItem): PiiType {
-  const fields = fieldsFromPolicyFields(item.policy_fields);
-  const firstCustom = fields.find((field) => field.mode === "custom");
-  const firstModel = fields.find((field) => field.mode === "model");
-  const detectionMode: DetectionMode = firstCustom ? "Regex" : "Model";
   return {
     id: String(item.id),
     name: item.policy_type,
-    domainId: null,
-    handling: "Mask",
-    maskingPattern: null,
-    detectionMode,
-    regex: firstCustom?.regex ?? "",
-    nerModel: firstModel?.entityName || NER_MODELS[0],
-    examples: firstCustom?.examples ?? [],
-    isDefault: false,
-    fields,
+    fields: fieldsFromPolicyFields(item.policy_fields),
   };
 }
 
-/** Custom regex fields for the selected policy types and domains, for the playground. */
-export function detectionTypesForPolicy(policy: Policy, types: PiiType[], domains: Domain[]): PiiType[] {
-  const wanted = new Set(
-    policy.domainIds.map((id) => apiDomainName(domainLabel(id, domains)).toLowerCase()),
-  );
-  const linked = types.filter((type) => policy.typeIds.includes(type.id));
-  const flattened = linked.flatMap((type) =>
-    type.fields
-      .filter(
-        (field) =>
-          field.mode === "custom" &&
-          field.regex &&
-          (wanted.size === 0 ||
-            wanted.has(field.domain.toLowerCase()) ||
-            field.domain === ""),
-      )
-      .map((field) => ({
-        ...type,
-        id: `${type.id}:${field.domain}:${field.entityName}`,
-        name: field.entityName,
-        regex: field.regex,
-        examples: field.examples,
-        detectionMode: "Regex" as const,
-        handling: "Redact" as const,
-        maskingPattern: null,
-        fields: [field],
-      })),
-  );
-  return flattened;
+/** The selection a type's field is saved as. Model-supported fields are picked per language. */
+export function selectionForField(typeId: string, field: PolicyField): SelectedPolicyField {
+  return field.mode === "model"
+    ? { source: "model_supported_field", typeId, entityName: field.entityName, language: field.language || "en" }
+    : { source: "custom_field", typeId, entityName: field.entityName, language: null };
 }
 
-/** Entity names for a policy's types in its domains, including model-supported rows. */
-export function entityNamesForPolicy(policy: Policy, types: PiiType[], domains: Domain[]): string[] {
-  const wanted = new Set(
-    policy.domainIds.map((id) => apiDomainName(domainLabel(id, domains)).toLowerCase()),
+function sameSelection(a: SelectedPolicyField, b: SelectedPolicyField): boolean {
+  return (
+    a.source === b.source &&
+    a.typeId === b.typeId &&
+    a.entityName === b.entityName &&
+    (a.language ?? null) === (b.language ?? null)
   );
+}
+
+/** Whether the policy applies this field: in one of its domains and, when it has picks, picked. */
+function policyAppliesField(
+  policy: Policy,
+  typeId: string,
+  field: PolicyField,
+  wantedDomains: Set<string>,
+): boolean {
+  if (!field.entityName) return false;
+  const inDomain =
+    wantedDomains.size === 0 || field.domain === "" || wantedDomains.has(field.domain.toLowerCase());
+  if (!inDomain) return false;
+  if (policy.selectedFields == null) return true;
+  const selection = selectionForField(typeId, field);
+  return policy.selectedFields.some((picked) => sameSelection(picked, selection));
+}
+
+function policyDomainKeys(policy: Policy, domains: Domain[]): Set<string> {
+  return new Set(policy.domainIds.map((id) => apiDomainName(domainLabel(id, domains)).toLowerCase()));
+}
+
+/** Custom regex fields the policy applies, for the playground. */
+export function regexFieldsForPolicy(policy: Policy, types: PiiType[], domains: Domain[]): PolicyField[] {
+  const wanted = policyDomainKeys(policy, domains);
+  return types
+    .filter((type) => policy.typeIds.includes(type.id))
+    .flatMap((type) =>
+      type.fields.filter(
+        (field) =>
+          field.mode === "custom" && field.regex && policyAppliesField(policy, type.id, field, wanted),
+      ),
+    );
+}
+
+/** Entity names the policy applies, including model-supported rows. */
+export function entityNamesForPolicy(policy: Policy, types: PiiType[], domains: Domain[]): string[] {
+  const wanted = policyDomainKeys(policy, domains);
   const names = types
     .filter((type) => policy.typeIds.includes(type.id))
     .flatMap((type) =>
       type.fields
-        .filter(
-          (field) =>
-            field.entityName &&
-            (wanted.size === 0 ||
-              wanted.has(field.domain.toLowerCase()) ||
-              field.domain === ""),
-        )
+        .filter((field) => policyAppliesField(policy, type.id, field, wanted))
         .map((field) => field.entityName),
     );
   return Array.from(new Set(names));
@@ -217,6 +223,93 @@ export function domainNames(ids: string[], domains: Domain[]): string[] {
     .map((id) => domains.find((domain) => domain.id === id)?.name ?? id)
     .map((name) => name.trim())
     .filter(Boolean);
+}
+
+/** POST /policies body, or null when an id is not a positive integer. */
+export function policyCreatePayload(input: PolicyInput, domains: Domain[]): PolicyWrite | null {
+  const subCategoryId = positiveInt(input.subCategoryId);
+  const typeIds = positiveInts(input.typeIds);
+  const selections = selectionPayload(input);
+  if (subCategoryId == null || typeIds == null || selections === null) return null;
+  return {
+    name: input.name,
+    description: blankToNull(input.description),
+    domain: domainNames(input.domainIds, domains),
+    guardrail_scope: guardrailToApi(input.scope),
+    is_global: DEFAULT_IS_GLOBAL,
+    sub_category_id: subCategoryId,
+    policy_type_id: typeIds,
+    ...selections,
+  };
+}
+
+/**
+ * PUT /policies body without id. Leaves is_global as stored; the name cannot change.
+ * Without picks (selectedFields null) selected_policy_fields is omitted, so the stored value stays.
+ */
+export function policyUpdatePayload(input: PolicyInput, domains: Domain[]): PolicyPatch | null {
+  const subCategoryId = positiveInt(input.subCategoryId);
+  const typeIds = positiveInts(input.typeIds);
+  const selections = selectionPayload(input);
+  if (subCategoryId == null || typeIds == null || selections === null) return null;
+  return {
+    description: blankToNull(input.description),
+    domain: domainNames(input.domainIds, domains),
+    guardrail_scope: guardrailToApi(input.scope),
+    sub_category_id: subCategoryId,
+    policy_type_id: typeIds,
+    ...selections,
+  };
+}
+
+/**
+ * languages and selected_policy_fields for a write, or null when a pick has an invalid id.
+ * platform-core on release-2.9 does not store either key, so reads must not depend on them:
+ * a policy's fields persist through policy_type_id and the linked type's policy_fields.
+ */
+function selectionPayload(
+  input: PolicyInput,
+): { languages?: string[]; selected_policy_fields?: SelectedPolicyFieldRecord[] } | null {
+  const payload: { languages?: string[]; selected_policy_fields?: SelectedPolicyFieldRecord[] } = {};
+  if (input.languages.length > 0) payload.languages = [...input.languages];
+  if (input.selectedFields == null) return payload;
+  const records: SelectedPolicyFieldRecord[] = [];
+  for (const field of input.selectedFields) {
+    const typeId = positiveInt(field.typeId);
+    if (typeId == null) return null;
+    if (field.source === "model_supported_field") {
+      if (!field.language) return null;
+      records.push({ source: field.source, policy_type_id: typeId, language: field.language, entity_name: field.entityName });
+    } else {
+      records.push({ source: field.source, policy_type_id: typeId, entity_name: field.entityName });
+    }
+  }
+  payload.selected_policy_fields = records;
+  return payload;
+}
+
+function selectedFieldFromRecord(record: SelectedPolicyFieldRecord): SelectedPolicyField {
+  return {
+    source: record.source,
+    typeId: String(record.policy_type_id),
+    entityName: record.entity_name,
+    language: record.source === "model_supported_field" ? (record.language ?? null) : null,
+  };
+}
+
+function positiveInt(id: string): number | null {
+  const value = Number(id);
+  return id.trim() !== "" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function positiveInts(ids: string[]): number[] | null {
+  const values = ids.map(positiveInt);
+  return values.every((value): value is number => value != null) ? values : null;
+}
+
+function blankToNull(value: string): string | null {
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }
 
 export function policyFromRecord(item: PolicyRecord, domains: Domain[]): Policy {
@@ -234,8 +327,9 @@ export function policyFromRecord(item: PolicyRecord, domains: Domain[]): Policy 
         );
       return match?.id ?? name;
     }),
-    languages: [],
+    languages: item.languages ?? [],
     typeIds: (item.policy_type_id ?? []).map(String),
+    selectedFields: item.selected_policy_fields?.map(selectedFieldFromRecord) ?? null,
     policyType: item.is_global ? "Global" : "Institution level",
     scope: SCOPE_FROM_API[item.guardrail_scope],
     status: item.is_active ? "Active" : "Inactive",

@@ -121,6 +121,7 @@ const SERVICE_BASE_PATHS = [
   apiEndpoints.policy.base,
   // Categories, sub-categories, policy types, and policies all live under this prefix.
   apiEndpoints.policyHierarchy.policies,
+  apiEndpoints.pii.base,
   apiEndpoints.tiers.base,
   apiEndpoints.usage.base,
   apiEndpoints.alerts.base,

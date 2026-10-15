@@ -1,7 +1,7 @@
 import {
   apiDomainName,
   definitionFromPolicyType,
-  detectionTypesForPolicy,
+  regexFieldsForPolicy,
   entityNamesForPolicy,
   policyFieldsFromDefinition,
 } from "../../src/components/policy/pii/apiMap";
@@ -34,13 +34,14 @@ const financePolicy = (typeId: string): Policy => ({
   domainIds: ["dom-finance"],
   languages: [],
   typeIds: [typeId],
+  selectedFields: null,
   policyType: "Global",
   scope: "Both",
   status: "Active",
 });
 
 const domains: Domain[] = [
-  { id: "dom-finance", name: "Finance / Banking", description: "", isDefault: true },
+  { id: "dom-finance", name: "Finance / Banking", description: "" },
 ];
 
 describe("policy type fields", () => {
@@ -113,7 +114,7 @@ describe("policy type fields", () => {
     });
     const policy = financePolicy(type.id);
 
-    expect(detectionTypesForPolicy(policy, [type as PiiType], domains)).toEqual([]);
+    expect(regexFieldsForPolicy(policy, [type as PiiType], domains)).toEqual([]);
     expect(entityNamesForPolicy(policy, [type], domains)).toEqual(["EMAIL_ADDRESS"]);
   });
 
@@ -125,9 +126,27 @@ describe("policy type fields", () => {
     });
     const policy = financePolicy(type.id);
 
-    expect(detectionTypesForPolicy(policy, [type], domains).map((row) => row.name)).toEqual([
+    expect(regexFieldsForPolicy(policy, [type], domains).map((field) => field.entityName)).toEqual([
       "STUDENT_ID",
     ]);
     expect(entityNamesForPolicy(policy, [type], domains)).toEqual(["STUDENT_ID", "EMAIL_ADDRESS"]);
+  });
+
+  it("applies only the picked entities when a policy has picks", () => {
+    const type = definitionFromPolicyType({
+      id: 8,
+      policy_type: "PII",
+      policy_fields: policyFieldsFromDefinition({ fields: [studentId, emailModel] }),
+    });
+    const policy: Policy = {
+      ...financePolicy(type.id),
+      languages: ["en"],
+      selectedFields: [
+        { source: "model_supported_field", typeId: type.id, entityName: "EMAIL_ADDRESS", language: "en" },
+      ],
+    };
+
+    expect(entityNamesForPolicy(policy, [type], domains)).toEqual(["EMAIL_ADDRESS"]);
+    expect(regexFieldsForPolicy(policy, [type], domains)).toEqual([]);
   });
 });

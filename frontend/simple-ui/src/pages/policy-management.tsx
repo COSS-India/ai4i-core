@@ -51,7 +51,7 @@ const PolicyManagementPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>{`Policies - ${getPlatformName()}`}</title>
+        <title>{`Policy Management - ${getPlatformName()}`}</title>
         <meta
           name="description"
           content="Security and privacy policies, PII definitions, and the policy playground"

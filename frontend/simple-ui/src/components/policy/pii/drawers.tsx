@@ -1,4 +1,4 @@
-import { SearchIcon } from "@chakra-ui/icons";
+import { ChevronDownIcon, ChevronUpIcon, SearchIcon } from "@chakra-ui/icons";
 import {
   Badge,
   Box,
@@ -7,38 +7,74 @@ import {
   Flex,
   FormControl,
   FormErrorMessage,
+  FormHelperText,
   HStack,
   Input,
+  Popover,
+  PopoverBody,
+  PopoverContent,
+  PopoverTrigger,
+  Portal,
+  Radio,
+  RadioGroup,
   Select,
+  SimpleGrid,
   Stack,
   Tag,
   TagCloseButton,
   TagLabel,
   Text,
   Textarea,
+  useDisclosure,
   Wrap,
 } from "@chakra-ui/react";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { piiService } from "../../../services/piiService";
 import FieldLabel from "../../common/FieldLabel";
 import FormActions from "../../common/FormActions";
 import FormDrawer from "../../common/FormDrawer";
 import FormSection from "../../common/FormSection";
 import ReadOnlyField from "../../common/ReadOnlyField";
-import { apiDomainName, entityNamesForPolicy, MIN_REGEX_EXAMPLES } from "./apiMap";
+import { getPolicyType } from "../../../services/policyHierarchyService";
+import { apiDomainName, definitionFromPolicyType, MIN_REGEX_EXAMPLES } from "./apiMap";
 import { regexCompiles } from "./detection";
 import {
+  choiceKeys as keysOfChoices,
+  customDraftErrors,
+  draftFromField,
+  entityAdditionKey,
+  fieldDefined,
+  fieldLabel,
+  ownPolicyFields,
+  policyFieldChoices,
+  unavailableReason,
+  type CustomFieldDraft,
+  type DetectableEntities,
+  type EntityAddition,
+  type TypeChoice,
+} from "./fieldSelection";
+import { loadModelEntities } from "./modelEntities";
+import { isPolicyOwnedType, policyOwnedType, sharedTypes } from "./policyCustomFields";
+import {
+  DEFAULT_POLICY_LANGUAGES,
   domainLabel,
-  INSTITUTIONS,
-  LANGUAGES,
+  editableLanguages,
+  isFieldShown,
+  languageLabel,
   MODEL_FIELD_LANGUAGES,
+  parseSelectedFieldKey,
   SCOPE_OPTIONS,
+  selectedFieldKey,
+  SHOW_MODEL_SUPPORTED_FIELDS,
+  subcategoriesForCategory,
+  subcategoryAfterCategoryChange,
+  subcategoryEffective,
+  type PiiType,
+  type Policy,
   type PolicyField,
   type PolicyScope,
-  type PolicyType,
+  type SelectedPolicyField,
 } from "./model";
-import { usePiiPolicies, type PolicyInput, type TypeInput } from "./PiiPoliciesProvider";
-import { ChoiceCard } from "./ui";
+import { apiErrorMessage, usePiiPolicies, type PolicyInput, type TypeInput } from "./PiiPoliciesProvider";
 
 function FormField({
   label,
@@ -81,6 +117,8 @@ function TypeDrawer() {
   const open = drawer.kind === "add-type" || drawer.kind === "edit-type";
   const existing = drawer.kind === "edit-type" ? types.find((t) => t.id === drawer.id) : undefined;
   if (!open) return null;
+  const shownFields = existing?.fields.filter(isFieldShown) ?? [];
+  const hiddenFields = existing?.fields.filter((field) => !isFieldShown(field)) ?? [];
 
   return (
     <TypeForm
@@ -91,12 +129,16 @@ function TypeDrawer() {
       initial={{
         name: existing?.name ?? "",
         fields:
-          existing && existing.fields.length > 0
-            ? existing.fields.map((field, index) => ({ ...field, key: `${existing.id}-${index}` }))
+          existing && shownFields.length > 0
+            ? shownFields.map((field, index) => ({ ...field, key: `${existing.id}-${index}` }))
             : [blankField("field-1")],
       }}
       onClose={closeDrawer}
-      onSave={(input) => (existing ? updateType(existing.id, input) : addType(input))}
+      onSave={(input) =>
+        existing
+          ? updateType(existing.id, { ...input, fields: [...input.fields, ...hiddenFields] })
+          : addType(input)
+      }
     />
   );
 }
@@ -113,31 +155,42 @@ interface EntityList {
   entities: string[];
 }
 
-/** Detectable entities per language, loaded once per language from inference-service. */
-function useModelEntities(languages: string[]): Record<string, EntityList> {
+/** Detectable entities per language code, from inference-service. */
+function useModelEntities(languages: string[]): {
+  lists: Record<string, EntityList>;
+  retry: () => void;
+} {
   const [lists, setLists] = useState<Record<string, EntityList>>({});
-  const requested = useRef(new Set<string>());
+  const [attempt, setAttempt] = useState(0);
   const languageKey = Array.from(new Set(languages)).sort().join(",");
 
   useEffect(() => {
+    // Responses for a language set the user has since changed are dropped.
+    let current = true;
     languageKey
       .split(",")
       .filter(Boolean)
       .forEach((language) => {
-        if (requested.current.has(language)) return;
-        requested.current.add(language);
-        setLists((prev) => ({ ...prev, [language]: { status: "loading", entities: [] } }));
-        piiService.getSupportedEntities(language).then(
-          (entities) => setLists((prev) => ({ ...prev, [language]: { status: "ready", entities } })),
+        setLists((prev) =>
+          prev[language]?.status === "ready"
+            ? prev
+            : { ...prev, [language]: { status: "loading", entities: [] } },
+        );
+        loadModelEntities(language).then(
+          (entities) => {
+            if (current) setLists((prev) => ({ ...prev, [language]: { status: "ready", entities } }));
+          },
           () => {
-            requested.current.delete(language);
-            setLists((prev) => ({ ...prev, [language]: { status: "error", entities: [] } }));
+            if (current) setLists((prev) => ({ ...prev, [language]: { status: "error", entities: [] } }));
           },
         );
       });
-  }, [languageKey]);
+    return () => {
+      current = false;
+    };
+  }, [languageKey, attempt]);
 
-  return lists;
+  return { lists, retry: () => setAttempt((value) => value + 1) };
 }
 
 function modelEntityOptions(current: string, list: EntityList | undefined): string[] {
@@ -183,7 +236,7 @@ function TypeForm({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const keyRef = useRef(initial.fields.length + 1);
-  const entityLists = useModelEntities(
+  const { lists: entityLists } = useModelEntities(
     fields.filter((field) => field.mode === "model").map((field) => field.language || "en"),
   );
 
@@ -299,21 +352,23 @@ function TypeForm({
                 </Button>
               </Flex>
               <Stack spacing={3}>
-                <FormField label="Field mode" required>
-                  <Select
-                    value={field.mode}
-                    onChange={(e) => {
-                      const mode = e.target.value === "model" ? "model" : "custom";
-                      const detectable = entityLists[field.language || "en"]?.entities ?? [];
-                      const entityName =
-                        mode === "model" && !detectable.includes(field.entityName) ? "" : field.entityName;
-                      updateField(field.key, { mode, entityName });
-                    }}
-                  >
-                    <option value="model">Model-supported</option>
-                    <option value="custom">Custom</option>
-                  </Select>
-                </FormField>
+                {SHOW_MODEL_SUPPORTED_FIELDS ? (
+                  <FormField label="Field mode" required>
+                    <Select
+                      value={field.mode}
+                      onChange={(e) => {
+                        const mode = e.target.value === "model" ? "model" : "custom";
+                        const detectable = entityLists[field.language || "en"]?.entities ?? [];
+                        const entityName =
+                          mode === "model" && !detectable.includes(field.entityName) ? "" : field.entityName;
+                        updateField(field.key, { mode, entityName });
+                      }}
+                    >
+                      <option value="model">Model-supported</option>
+                      <option value="custom">Custom</option>
+                    </Select>
+                  </FormField>
+                ) : null}
                 {field.mode === "model" ? (
                   <>
                     <FormField label="Entity name" required error={errors[`${field.key}-entity`]}>
@@ -453,13 +508,17 @@ function TypeViewDrawer() {
   if (drawer.kind !== "view-type") return null;
   const t = types.find((x) => x.id === drawer.id);
   if (!t) return null;
+  const entity = drawer.entity;
+  const fields = entity
+    ? t.fields.filter((field) => field.entityName === entity.name && field.mode === entity.mode)
+    : t.fields.filter(isFieldShown);
 
   return (
     <FormDrawer
       isOpen
       onClose={closeDrawer}
       size="wide"
-      title="View Policy Type"
+      title={entity ? "View PII Type" : "View Policy Type"}
       footer={
         <FormActions
           cancelLabel="Close"
@@ -471,9 +530,9 @@ function TypeViewDrawer() {
       }
     >
       <Stack spacing={4}>
-        <ReadOnlyField label="Policy Type Name">{t.name}</ReadOnlyField>
+        <ReadOnlyField label={entity ? "Group" : "Policy Type Name"}>{t.name}</ReadOnlyField>
         <Stack spacing={3}>
-          {t.fields.map((field) => (
+          {fields.map((field) => (
             <Box
               key={`${field.domain}:${field.language}:${field.entityName}:${field.mode}`}
               borderWidth="1px"
@@ -515,64 +574,53 @@ function TypeViewDrawer() {
 }
 
 function DomainDrawer() {
-  const { drawer, closeDrawer, domains, addDomain, updateDomain } = usePiiPolicies();
-  const open = drawer.kind === "add-domain" || drawer.kind === "edit-domain";
-  const existing = drawer.kind === "edit-domain" ? domains.find((d) => d.id === drawer.id) : undefined;
-  if (!open) return null;
-  return (
-    <DomainForm
-      key={existing?.id ?? "new-domain"}
-      title={existing ? "Edit Domain" : "Create Domain"}
-      submitLabel={existing ? "Save" : "Create Domain"}
-      nameLocked={Boolean(existing?.isDefault)}
-      initialName={existing?.name ?? ""}
-      initialDescription={existing?.description ?? ""}
-      onClose={closeDrawer}
-      onSave={(name, description) =>
-        existing ? updateDomain(existing.id, name, description) : addDomain(name, description)
-      }
-    />
-  );
+  const { drawer, closeDrawer, addDomain } = usePiiPolicies();
+  if (drawer.kind !== "add-domain") return null;
+  return <DomainForm onClose={closeDrawer} onSave={addDomain} />;
 }
 
 function DomainForm({
-  title,
-  submitLabel,
-  nameLocked,
-  initialName,
-  initialDescription,
   onClose,
   onSave,
 }: {
-  title: string;
-  submitLabel: string;
-  nameLocked: boolean;
-  initialName: string;
-  initialDescription: string;
   onClose: () => void;
-  onSave: (name: string, description: string) => string | null;
+  onSave: (name: string, description: string) => Promise<string | null>;
 }) {
-  const [name, setName] = useState(initialName);
-  const [description, setDescription] = useState(initialDescription);
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const submit = async () => {
+    if (saving) return;
+    if (!name.trim()) {
+      setError("Domain name is required.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const message = await onSave(name.trim(), description.trim());
+      if (message) setError(message);
+      else onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
   return (
     <FormDrawer
       isOpen
       onClose={onClose}
-      title={title}
+      title="Create Domain"
+      lockDismiss={saving}
       footer={
         <FormActions
-          submitLabel={submitLabel}
+          submitLabel="Create Domain"
           onCancel={onClose}
           onSubmit={() => {
-            if (!name.trim()) {
-              setError("Domain name is required.");
-              return;
-            }
-            const message = onSave(name.trim(), description.trim());
-            if (message) setError(message);
-            else onClose();
+            void submit();
           }}
+          isLoading={saving}
+          loadingText="Saving"
         />
       }
     >
@@ -580,7 +628,6 @@ function DomainForm({
         <FormField label="Domain Name" required error={error}>
           <Input
             value={name}
-            isDisabled={nameLocked}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Insurance"
           />
@@ -594,34 +641,86 @@ function DomainForm({
 }
 
 function PolicyDrawer() {
-  const { drawer, closeDrawer, policies, addPolicy, updatePolicy } = usePiiPolicies();
+  const {
+    drawer,
+    closeDrawer,
+    policies,
+    types,
+    typesStatus,
+    subcategories,
+    policyCategoryFilter,
+    policySubcategoryFilter,
+    addPolicy,
+    updatePolicy,
+  } = usePiiPolicies();
   const open = drawer.kind === "create-policy" || drawer.kind === "edit-policy";
   const existing = drawer.kind === "edit-policy" ? policies.find((p) => p.id === drawer.id) : undefined;
+  const linked = useLinkedPolicyTypes(existing ? existing.typeIds : []);
   if (!open) return null;
+  // Saving before the linked types load would drop the policy's own fields.
+  if (existing && linked.status !== "ready") {
+    return (
+      <FormDrawer
+        isOpen
+        onClose={closeDrawer}
+        size="wide"
+        title="Edit Policy"
+        footer={<FormActions cancelLabel="Close" onCancel={closeDrawer} hideSubmit />}
+      >
+        {linked.status === "error" ? (
+          <HStack spacing={2}>
+            <Text fontSize="sm" color="red.600">
+              {linked.error}
+            </Text>
+            <Button size="xs" variant="link" colorScheme="blue" onClick={linked.retry}>
+              Retry
+            </Button>
+          </HStack>
+        ) : (
+          <Text fontSize="sm" color="ink.500">
+            Loading policy fields…
+          </Text>
+        )}
+      </FormDrawer>
+    );
+  }
+  const existingSub = existing ? subcategories.find((s) => s.id === existing.subcategoryId) : undefined;
+  const existingLanguages = existing ? editableLanguages(existing) : null;
+  const filteredSub = subcategories.find((s) => s.id === policySubcategoryFilter);
+  const owned = existing ? policyOwnedType(existing, linked.types) : undefined;
   return (
     <PolicyForm
-      key={existing?.id ?? "new-policy"}
+      // Remount once the types load, so the policy's own fields are filled in.
+      key={existing ? `${existing.id}:${typesStatus === "ready"}` : "new-policy"}
       title={existing ? "Edit Policy" : "Create Policy"}
       submitLabel={existing ? "Save" : "Create Policy"}
+      creating={!existing}
       nameLocked={Boolean(existing)}
       initial={
-        existing
+        existing && existingLanguages
           ? {
               name: existing.name,
               description: existing.description,
+              categoryId: existingSub?.categoryId ?? "",
+              subCategoryId: existingSub ? existing.subcategoryId : "",
               domainIds: existing.domainIds,
-              languages: existing.languages,
-              typeIds: existing.typeIds,
-              policyType: existing.policyType,
+              languages: existingLanguages.languages,
+              languagesPrefilled: existingLanguages.prefilled,
+              typeIds: existing.typeIds.filter((id) => id !== owned?.id),
+              selectedFields: existing.selectedFields?.filter((field) => field.typeId !== owned?.id) ?? null,
+              ownFields: owned?.fields ?? [],
               scope: existing.scope,
             }
           : {
               name: "",
               description: "",
+              categoryId: filteredSub?.categoryId ?? policyCategoryFilter,
+              subCategoryId: filteredSub?.id ?? "",
               domainIds: [],
-              languages: ["English"],
+              languages: [...DEFAULT_POLICY_LANGUAGES],
               typeIds: [],
-              policyType: "Global",
+              selectedFields: [],
+              ownFields: [],
               scope: "" as PolicyScope | "",
             }
       }
@@ -634,6 +733,7 @@ function PolicyDrawer() {
 function PolicyForm({
   title,
   submitLabel,
+  creating,
   nameLocked,
   initial,
   onClose,
@@ -641,95 +741,175 @@ function PolicyForm({
 }: {
   title: string;
   submitLabel: string;
+  /** Create links only the GET /pii/entities?language=en entities the admin ticks. */
+  creating: boolean;
   nameLocked: boolean;
   initial: {
     name: string;
     description: string;
+    categoryId: string;
+    subCategoryId: string;
     domainIds: string[];
     languages: string[];
+    /** The policy had no saved languages, so `languages` holds the defaults. */
+    languagesPrefilled?: boolean;
+    /** Shared PII types only; the policy's own fields are in ownFields. */
     typeIds: string[];
-    policyType: PolicyType;
+    selectedFields: SelectedPolicyField[] | null;
+    ownFields: PolicyField[];
     scope: PolicyScope | "";
   };
   onClose: () => void;
   onSave: (input: PolicyInput) => Promise<string | null>;
 }) {
-  const { domains, types, typesStatus, typesError } = usePiiPolicies();
+  const { domains, types: allTypes, typesStatus, typesError, categories, subcategories } = usePiiPolicies();
+  const types = useMemo(() => sharedTypes(allTypes), [allTypes]);
   const [name, setName] = useState(initial.name);
   const [description, setDescription] = useState(initial.description);
+  const [categoryId, setCategoryId] = useState(initial.categoryId);
+  const [subCategoryId, setSubCategoryId] = useState(initial.subCategoryId);
+  const subcategoryChoices = useMemo(
+    () => (categoryId ? subcategoriesForCategory(subcategories, categoryId) : []),
+    [subcategories, categoryId],
+  );
   const [domainIds, setDomainIds] = useState(initial.domainIds);
-  const [languages, setLanguages] = useState(initial.languages);
-  const [typeIds, setTypeIds] = useState(initial.typeIds);
-  const [policyType, setPolicyType] = useState<PolicyType>(initial.policyType);
+  // English is the only supported language for this release.
+  const languages = useMemo(() => [...DEFAULT_POLICY_LANGUAGES], []);
+  // null on a policy saved without picks, where every linked field applies, until the admin changes a pick.
+  const [picks, setPicks] = useState<string[] | null>(
+    initial.selectedFields ? initial.selectedFields.map(selectedFieldKey) : null,
+  );
   const [scope, setScope] = useState<PolicyScope | "">(initial.scope);
-  const [domainOpen, setDomainOpen] = useState(false);
-  const [langOpen, setLangOpen] = useState(false);
   const [typesOpen, setTypesOpen] = useState(true);
   const [typeQuery, setTypeQuery] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [drafts, setDrafts] = useState<CustomFieldDraft[]>(() =>
+    initial.ownFields
+      .filter((field) => field.mode === "custom")
+      .map((field, index) => draftFromField(`custom-${index + 1}`, field)),
+  );
+  const draftKeyRef = useRef(drafts.length + 1);
+  const [entityPicks, setEntityPicks] = useState<string[]>(() =>
+    initial.ownFields
+      .filter((field) => field.mode === "model")
+      .map((field) => entityAdditionKey({ language: field.language || "en", entityName: field.entityName })),
+  );
+  const entityLanguages = languages;
+  const { lists: entityLists, retry: retryEntities } = useModelEntities(entityLanguages);
+  const detectable = useMemo<DetectableEntities>(
+    () =>
+      Object.fromEntries(
+        Object.entries(entityLists)
+          .filter(([, list]) => list.status === "ready")
+          .map(([language, list]) => [language, list.entities]),
+      ),
+    [entityLists],
+  );
+  const entitiesReady = entityLanguages.every((language) => entityLists[language]?.status === "ready");
 
-  const domainChoices = useMemo(() => {
-    const wanted = new Set(
-      domainIds.map((id) => apiDomainName(domainLabel(id, domains)).toLowerCase()),
-    );
-    return types
-      .map((type) => {
-        const entities: string[] = [];
-        type.fields.forEach((field) => {
-          if (!field.entityName) return;
-          const matchesDomain = !field.domain || wanted.has(field.domain.toLowerCase());
-          if (!matchesDomain || entities.includes(field.entityName)) return;
-          entities.push(field.entityName);
-        });
-        return { id: type.id, name: type.name, entities };
-      })
-      .filter((choice) => choice.entities.length > 0);
-  }, [types, domainIds, domains]);
+  const typeChoices = useMemo<TypeChoice[]>(
+    () =>
+      policyFieldChoices(
+        types,
+        new Set(domainIds.map((id) => apiDomainName(domainLabel(id, domains)).toLowerCase())),
+        languages,
+        detectable,
+      ),
+    [types, domainIds, domains, languages, detectable],
+  );
 
-  const visibleChoices = useMemo(() => {
+  const otherEntities = useMemo(
+    (): [string, string[]][] => (detectable.en?.length ? [["en", [...detectable.en]]] : []),
+    [detectable],
+  );
+  const visibleOtherEntities = useMemo(() => {
     const query = typeQuery.trim().toLowerCase();
-    if (!query) return domainChoices;
-    return domainChoices.filter(
-      (choice) =>
-        choice.name.toLowerCase().includes(query) ||
-        choice.entities.some((name) => name.toLowerCase().includes(query)),
-    );
-  }, [domainChoices, typeQuery]);
+    if (!query) return otherEntities;
+    return otherEntities
+      .map(([language, entities]): [string, string[]] => [
+        language,
+        entities.filter((entity) => entity.toLowerCase().includes(query)),
+      ])
+      .filter(([, entities]) => entities.length > 0);
+  }, [otherEntities, typeQuery]);
+  // Picks for a language that was removed, or an entity a type now covers, no longer apply.
+  const entityAdditions = useMemo<EntityAddition[]>(
+    () =>
+      otherEntities
+        .flatMap(([language, entities]) => entities.map((entityName) => ({ language, entityName })))
+        .filter((addition) => entityPicks.includes(entityAdditionKey(addition))),
+    [otherEntities, entityPicks],
+  );
+  const entityKeys = useMemo(
+    () =>
+      otherEntities.flatMap(([language, entities]) =>
+        entities.map((entityName) => entityAdditionKey({ language, entityName })),
+      ),
+    [otherEntities],
+  );
 
-  const selectedTypeIds =
-    typesStatus === "ready"
-      ? typeIds.filter((id) => domainChoices.some((choice) => choice.id === id))
-      : typeIds;
+  const choiceKeys = useMemo(() => keysOfChoices(typeChoices), [typeChoices]);
+  const linkedKeys = useMemo(
+    () =>
+      choiceKeys.filter((key) => initial.typeIds.includes(parseSelectedFieldKey(key).typeId)),
+    [choiceKeys, initial.typeIds],
+  );
+  // Until the types and every language's detectable entities have loaded, picks are kept as they are.
+  const choicesReady = typesStatus === "ready" && entitiesReady;
+  const currentPicks = picks ?? linkedKeys;
+  const selectedPicks = choicesReady ? currentPicks.filter((key) => choiceKeys.includes(key)) : currentPicks;
+  // Saved or kept picks the form cannot offer; they block saving until removed.
+  const unavailablePicks = choicesReady && picks ? picks.filter((key) => !choiceKeys.includes(key)) : [];
+  const savedSelections = picks === null ? null : selectedPicks.map(parseSelectedFieldKey);
+  const savedTypeIds = savedSelections
+    ? Array.from(new Set(savedSelections.map((field) => field.typeId)))
+    : initial.typeIds;
 
-  const toggle = (list: string[], value: string, setter: (next: string[]) => void) => {
-    setter(list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
+  const removePicks = (keys: string[]) => {
+    setPicks((prev) => (prev ?? linkedKeys).filter((key) => !keys.includes(key)));
   };
 
   const save = async () => {
     if (saving) return;
     const next: Record<string, string> = {};
+    if (!categoryId) next.category = "Select a category.";
+    if (!subCategoryId) next.subcategory = "Select a sub-category.";
     if (!name.trim()) next.name = "Policy name is required.";
     if (description.length > 200) next.description = "Description is limited to 200 characters.";
     if (domainIds.length === 0) next.domain = "Select at least one domain.";
     if (languages.length === 0) next.languages = "Select at least one language.";
-    if (selectedTypeIds.length === 0) next.types = "Select at least one policy type.";
+    if (entityLanguages.length > 0 && !entitiesReady) {
+      next.types = "Wait for the model supported fields of each language to load, or retry.";
+    } else if (unavailablePicks.length > 0) {
+      next.types = "Remove the selections marked as unavailable, or add back their language or domain.";
+    } else if (savedTypeIds.length === 0 && drafts.length === 0 && entityAdditions.length === 0) {
+      next.types = "Select at least one policy field.";
+    }
+    const draftErrors = customDraftErrors(drafts);
+    Object.assign(next, draftErrors);
     if (!scope) next.scope = "Select a scope.";
     setErrors(next);
+    if (next.types || Object.keys(draftErrors).length > 0) setTypesOpen(true);
     if (Object.keys(next).length || !scope) return;
     setSaving(true);
     try {
       const error = await onSave({
         name: name.trim(),
         description: description.trim(),
+        subCategoryId,
         domainIds,
         languages,
-        typeIds: selectedTypeIds,
-        policyType,
+        typeIds: savedTypeIds,
+        selectedFields: savedSelections,
+        ownFields: ownPolicyFields(drafts, entityAdditions),
         scope,
       });
-      if (error) setErrors({ name: error });
-      else onClose();
+      if (!error) onClose();
+      else if (error.startsWith("Couldn't save the policy's custom fields")) setErrors({ custom: error });
+      else if (error.includes("selected_policy_fields")) setErrors({ types: error });
+      else if (/\blanguages\b/.test(error)) setErrors({ languages: error });
+      else setErrors({ name: error });
     } finally {
       setSaving(false);
     }
@@ -775,238 +955,518 @@ function PolicyForm({
             {description.length}/200
           </Text>
         </FormField>
-        <ChipPicker
-          label="Domain"
-          required
-          error={errors.domain}
-          open={domainOpen}
-          onToggle={() => {
-            setDomainOpen((v) => !v);
-            setLangOpen(false);
-          }}
-          emptyLabel="Select domains…"
-          selectedLabels={domainIds.map((id) => domains.find((d) => d.id === id)?.name ?? "").filter(Boolean)}
-          onRemove={(label) => {
-            const match = domains.find((d) => d.name === label);
-            if (match) setDomainIds(domainIds.filter((id) => id !== match.id));
-          }}
-          options={domains.map((d) => ({ value: d.id, label: d.name, checked: domainIds.includes(d.id) }))}
-          onCheck={(value, checked) =>
-            setDomainIds(checked ? [...domainIds, value] : domainIds.filter((id) => id !== value))
-          }
-        />
-        <Box>
-          <FieldLabel required>Policy Type</FieldLabel>
-          <Stack spacing={2}>
-            <ChoiceCard
-              name="policy-type"
-              title="Global"
-              description="Applied automatically to every institution. Institutions cannot unsubscribe."
-              checked={policyType === "Global"}
-              onSelect={() => setPolicyType("Global")}
-            />
-            <ChoiceCard
-              name="policy-type"
-              title="Institution level"
-              description="Institutions choose whether to subscribe to this policy."
-              checked={policyType === "Institution level"}
-              onSelect={() => setPolicyType("Institution level")}
-            />
-          </Stack>
-        </Box>
-        <ChipPicker
-          label="Supported Languages"
-          required
-          error={errors.languages}
-          open={langOpen}
-          onToggle={() => {
-            setLangOpen((v) => !v);
-            setDomainOpen(false);
-          }}
-          emptyLabel="Select languages…"
-          selectedLabels={languages}
-          onRemove={(label) => setLanguages(languages.filter((l) => l !== label))}
-          options={LANGUAGES.map((l) => ({ value: l, label: l, checked: languages.includes(l) }))}
-          onCheck={(value) => toggle(languages, value, setLanguages)}
-        />
+        <SimpleGrid columns={{ base: 1, md: 2 }} spacingX={4} spacingY={4}>
+          <FormField label="Category" required error={errors.category}>
+            <Select
+              value={categoryId}
+              placeholder="Select a category"
+              onChange={(e) => {
+                const next = e.target.value;
+                setCategoryId(next);
+                setSubCategoryId(subcategoryAfterCategoryChange(subcategories, subCategoryId, next));
+              }}
+            >
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                  {c.status === "Active" ? "" : " (Inactive)"}
+                </option>
+              ))}
+            </Select>
+          </FormField>
+          <FormField label="Sub-category" required error={errors.subcategory}>
+            <Select
+              value={subCategoryId}
+              placeholder={
+                !categoryId
+                  ? "Select a category first"
+                  : subcategoryChoices.length === 0
+                    ? "No sub-categories in this category"
+                    : "Select a sub-category"
+              }
+              isDisabled={!categoryId || subcategoryChoices.length === 0}
+              onChange={(e) => setSubCategoryId(e.target.value)}
+            >
+              {subcategoryChoices.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                  {subcategoryEffective(s, categories) === "Active" ? "" : " (Inactive)"}
+                </option>
+              ))}
+            </Select>
+          </FormField>
+        </SimpleGrid>
+        <SimpleGrid columns={{ base: 1, md: 2 }} spacingX={4} spacingY={4} alignItems="start">
+          <ChipPicker
+            label="Domain"
+            required
+            error={errors.domain}
+            placeholder="Select domains"
+            options={domains.map((d) => ({ value: d.id, label: d.name, checked: domainIds.includes(d.id) }))}
+            onCheck={(value, checked) =>
+              setDomainIds(checked ? [...domainIds, value] : domainIds.filter((id) => id !== value))
+            }
+          />
+          <FormField label="Supported Languages" required error={errors.languages}>
+            <Wrap>
+              {languages.map((code) => (
+                <Tag key={code} size="md" variant="subtle" colorScheme="blue">
+                  <TagLabel>{languageLabel(code)}</TagLabel>
+                </Tag>
+              ))}
+            </Wrap>
+          </FormField>
+        </SimpleGrid>
+        <FormField label="Scope" required error={errors.scope}>
+          <RadioGroup
+            aria-label="Scope"
+            value={scope}
+            onChange={(value) => setScope(value as PolicyScope)}
+          >
+            <HStack spacing={5} flexWrap="wrap" rowGap={2}>
+              {SCOPE_OPTIONS.map((option) => (
+                <Radio key={option} value={option} size="sm">
+                  {option}
+                </Radio>
+              ))}
+            </HStack>
+          </RadioGroup>
+        </FormField>
         <Box borderTopWidth="1px" borderColor="ink.200" />
-        <FormField
-          label={`Policy Types (${selectedTypeIds.length}/${domainChoices.length})`}
-          required
-          error={errors.types}
-        >
-          {domainIds.length === 0 ? (
-            <Text fontSize="sm" color="ink.500">
-              Select a domain to see its policy types.
-            </Text>
-          ) : null}
-          {typesStatus === "loading" ? (
-            <Text fontSize="sm" color="ink.500" mb={2}>
-              Loading policy types…
-            </Text>
-          ) : null}
-          {typesStatus === "error" ? (
-            <Text fontSize="sm" color="red.500" mb={2}>
-              {typesError}
-            </Text>
-          ) : null}
-          {domainIds.length > 0 && typesStatus !== "loading" && domainChoices.length === 0 ? (
-            <Text fontSize="sm" color="ink.500">
-              No policy types for the selected domain.
-            </Text>
-          ) : null}
-          {domainChoices.length > 0 ? (
-            <>
-              <Flex justify="space-between" mb={2}>
-                <Button size="sm" variant="ghost" onClick={() => setTypesOpen((v) => !v)}>
-                  {typesOpen ? "Hide" : "Show"} types
+        <FormControl isInvalid={Boolean(errors.types)}>
+          <Flex justify="space-between" align="center" mb={2}>
+            <HStack
+              as="button"
+              type="button"
+              spacing={1.5}
+              aria-expanded={typesOpen}
+              onClick={() => setTypesOpen((v) => !v)}
+            >
+              {typesOpen ? <ChevronUpIcon /> : <ChevronDownIcon />}
+              <Text fontSize="sm" fontWeight="600">
+                Link Policy Fields
+                <Text as="span" color="red.500" ml={0.5}>
+                  *
+                </Text>
+              </Text>
+              <Text fontSize="xs" color="ink.400">
+                ({entityAdditions.length}/{entityKeys.length})
+              </Text>
+            </HStack>
+            {entityKeys.length > 0 ? (
+              <HStack spacing={2} fontSize="xs">
+                <Button
+                  size="xs"
+                  variant="link"
+                  colorScheme="orange"
+                  onClick={() => {
+                    setEntityPicks(entityKeys);
+                  }}
+                >
+                  Select All
                 </Button>
-                <HStack spacing={2}>
-                  <Button
-                    size="xs"
-                    variant="link"
-                    onClick={() => setTypeIds(domainChoices.map((choice) => choice.id))}
-                  >
-                    Select All
-                  </Button>
-                  <Button size="xs" variant="link" color="ink.500" onClick={() => setTypeIds([])}>
-                    Clear
-                  </Button>
-                </HStack>
-              </Flex>
-              {typesOpen ? (
-                <Box>
-                  <Box position="relative" mb={2}>
-                    <SearchIcon position="absolute" left={2.5} top="50%" transform="translateY(-50%)" color="ink.400" boxSize={3} />
+                <Text color="ink.300">|</Text>
+                <Button
+                  size="xs"
+                  variant="link"
+                  color="ink.500"
+                  onClick={() => {
+                    setEntityPicks([]);
+                  }}
+                >
+                  Clear
+                </Button>
+              </HStack>
+            ) : null}
+          </Flex>
+          {typesOpen ? (
+            <>
+              {picks === null && initial.typeIds.length > 0 ? (
+                <Text fontSize="xs" color="ink.500" mb={2}>
+                  No field selections are saved for this policy, so every field of its linked PII types applies.
+                </Text>
+              ) : null}
+              {!creating && typesStatus === "loading" ? (
+                <Text fontSize="sm" color="ink.500" mb={2}>
+                  Loading PII types…
+                </Text>
+              ) : null}
+              {!creating && typesStatus === "error" ? (
+                <Text fontSize="sm" color="red.500" mb={2}>
+                  {typesError}
+                </Text>
+              ) : null}
+              <ModelEntityStatus languages={entityLanguages} lists={entityLists} onRetry={retryEntities} />
+              {unavailablePicks.length > 0 ? (
+                <Box borderWidth="1px" borderColor="red.200" bg="red.50" borderRadius="md" p={3} mb={2} role="alert">
+                  <Flex justify="space-between" align="center" mb={1}>
+                    <Text fontSize="sm" fontWeight="600" color="red.700">
+                      Unavailable selections ({unavailablePicks.length})
+                    </Text>
+                    <Button size="xs" variant="link" colorScheme="red" onClick={() => removePicks(unavailablePicks)}>
+                      Remove all
+                    </Button>
+                  </Flex>
+                  <Stack spacing={1}>
+                    {unavailablePicks.map((key) => {
+                      const field = parseSelectedFieldKey(key);
+                      const typeName = types.find((type) => type.id === field.typeId)?.name ?? `PII type ${field.typeId}`;
+                      return (
+                        <Flex key={key} justify="space-between" align="center" gap={2}>
+                          <Text fontSize="sm">
+                            {fieldLabel(field)} · {typeName} —{" "}
+                            <Text as="span" color="red.600">
+                              {unavailableReason(field, types, languages, detectable)}
+                            </Text>
+                          </Text>
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            aria-label={`Remove ${fieldLabel(field)}`}
+                            onClick={() => removePicks([key])}
+                          >
+                            Remove
+                          </Button>
+                        </Flex>
+                      );
+                    })}
+                  </Stack>
+                </Box>
+              ) : null}
+              {!creating && domainIds.length > 0 && choicesReady && typeChoices.length === 0 ? (
+                <Text fontSize="sm" color="ink.500">
+                  No PII types for the selected domain and languages.
+                </Text>
+              ) : null}
+              <Flex gap={2} mb={2} align="center">
+                {typeChoices.length > 0 || otherEntities.length > 0 ? (
+                  <Box position="relative" flex="1">
+                    <SearchIcon
+                      position="absolute"
+                      left={2.5}
+                      top="50%"
+                      transform="translateY(-50%)"
+                      color="ink.400"
+                      boxSize={3}
+                    />
                     <Input
                       size="sm"
                       pl={8}
-                      placeholder="Search policy types..."
+                      placeholder="Search PII types and entities..."
                       value={typeQuery}
                       onChange={(e) => setTypeQuery(e.target.value)}
                     />
                   </Box>
-                  <Box maxH="240px" overflowY="auto" borderWidth="1px" borderColor="ink.200" borderRadius="md" p={3}>
+                ) : null}
+                {/* Hidden for now; custom fields saved on an existing policy still show below.
+                <Button
+                  size="sm"
+                  variant="outline"
+                  ml="auto"
+                  flexShrink={0}
+                  onClick={() => {
+                    const key = `custom-${draftKeyRef.current++}`;
+                    setDrafts((prev) => [...prev, { key, entityName: "", examples: [], regex: "" }]);
+                  }}
+                >
+                  Add custom field
+                </Button>
+                */}
+              </Flex>
+              <CustomFieldDrafts
+                drafts={drafts}
+                errors={errors}
+                onChange={(key, patch) =>
+                  setDrafts((prev) => prev.map((draft) => (draft.key === key ? { ...draft, ...patch } : draft)))
+                }
+                onRemove={(key) => setDrafts((prev) => prev.filter((draft) => draft.key !== key))}
+              />
+              {otherEntities.length > 0 ? (
+                <Box mt={3} borderWidth="1px" borderColor="ink.200" borderRadius="md" p={3}>
+
+                  <Box maxH="220px" overflowY="auto">
                     <Stack spacing={3}>
-                      {visibleChoices.map((choice) => (
-                        <Box key={choice.id}>
-                          <Checkbox
-                            size="sm"
-                            isChecked={selectedTypeIds.includes(choice.id)}
-                            onChange={() => toggle(typeIds, choice.id, setTypeIds)}
-                          >
-                            {choice.name}
-                          </Checkbox>
-                          <Text pl={6} mt={1} fontSize="xs" color="ink.500">
-                            {choice.entities.join(", ")}
-                          </Text>
+                      {visibleOtherEntities.map(([language, entities]) => (
+                        <Box key={language}>
+
+                          <SimpleGrid columns={2} spacingX={4} spacingY={2}>
+                            {entities.map((entityName) => {
+                              const key = entityAdditionKey({ language, entityName });
+                              return (
+                                <Checkbox
+                                  key={key}
+                                  size="sm"
+                                  isChecked={entityPicks.includes(key)}
+                                  onChange={() =>
+                                    setEntityPicks((prev) =>
+                                      prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key],
+                                    )
+                                  }
+                                >
+                                  {entityName}
+                                </Checkbox>
+                              );
+                            })}
+                          </SimpleGrid>
                         </Box>
                       ))}
+                      {visibleOtherEntities.length === 0 ? (
+                        <Text fontSize="sm" color="ink.500">
+                          No entities match the search.
+                        </Text>
+                      ) : null}
                     </Stack>
                   </Box>
                 </Box>
               ) : null}
             </>
           ) : null}
-        </FormField>
-        <Box>
-          <FieldLabel required>Scope</FieldLabel>
-          <Stack spacing={2}>
-            {SCOPE_OPTIONS.map((option) => (
-              <ChoiceCard
-                key={option}
-                name="policy-scope"
-                title={option}
-                description={
-                  option === "Input requests"
-                    ? "Runs on the request before it reaches the model."
-                    : option === "Output requests"
-                      ? "Runs on the model response."
-                      : "Runs on the request and on the model response."
-                }
-                checked={scope === option}
-                onSelect={() => setScope(option)}
-              />
-            ))}
-          </Stack>
-          {errors.scope ? (
-            <Text fontSize="xs" color="red.500" mt={1}>
-              {errors.scope}
-            </Text>
-          ) : null}
-        </Box>
+          {errors.types ? <FormErrorMessage>{errors.types}</FormErrorMessage> : null}
+        </FormControl>
       </Stack>
     </FormDrawer>
   );
 }
 
+function CustomFieldDrafts({
+  drafts,
+  errors,
+  onChange,
+  onRemove,
+}: {
+  drafts: CustomFieldDraft[];
+  errors: Record<string, string>;
+  onChange: (key: string, patch: Partial<CustomFieldDraft>) => void;
+  onRemove: (key: string) => void;
+}) {
+  if (drafts.length === 0 && !errors.custom) return null;
+  return (
+    <Box mb={3}>
+      <Stack spacing={3}>
+        {drafts.map((draft, index) => (
+          <Box key={draft.key} borderWidth="1px" borderColor="ink.200" borderRadius="md" p={3}>
+            <Flex justify="space-between" align="center" mb={3} gap={3}>
+              <Text fontSize="sm" fontWeight="semibold">
+                Custom field {index + 1}
+              </Text>
+              <Button size="xs" variant="ghost" colorScheme="red" onClick={() => onRemove(draft.key)}>
+                Remove
+              </Button>
+            </Flex>
+            <Stack spacing={3}>
+              <FormField label="Entity name" required error={errors[`${draft.key}-entity`]}>
+                <Input
+                  value={draft.entityName}
+                  onChange={(e) => onChange(draft.key, { entityName: e.target.value })}
+                  placeholder="e.g. CUSTOM_ID"
+                />
+              </FormField>
+              <FormField label="Examples" required error={errors[`${draft.key}-examples`]}>
+                <ExampleTags values={draft.examples} onChange={(examples) => onChange(draft.key, { examples })} />
+                <Text fontSize="xs" color="ink.400" mt={1}>
+                  At least {MIN_REGEX_EXAMPLES} examples. Press Enter to add one.
+                </Text>
+              </FormField>
+              <FormField label="Regex" required error={errors[`${draft.key}-regex`]}>
+                <Input
+                  fontFamily="mono"
+                  value={draft.regex}
+                  onChange={(e) => onChange(draft.key, { regex: e.target.value })}
+                  placeholder="e.g. \d{4}-\d{4}"
+                />
+              </FormField>
+            </Stack>
+          </Box>
+        ))}
+      </Stack>
+      {errors.custom ? (
+        <Text fontSize="sm" color="red.500" mt={2} role="alert">
+          {errors.custom}
+        </Text>
+      ) : null}
+    </Box>
+  );
+}
+
+/** GET /pii/entities failures for the policy's languages; saving waits until they load. */
+function ModelEntityStatus({
+  languages,
+  lists,
+  onRetry,
+}: {
+  languages: string[];
+  lists: Record<string, EntityList>;
+  onRetry: () => void;
+}) {
+  const failed = languages.filter((language) => lists[language]?.status === "error");
+  if (failed.length === 0) return null;
+  return (
+    <Text fontSize="xs" color="red.500" mb={2}>
+      Couldn&apos;t load model supported fields for {failed.map(languageLabel).join(", ")}.{" "}
+      <Button size="xs" variant="link" colorScheme="red" onClick={onRetry}>
+        Retry
+      </Button>
+    </Text>
+  );
+}
+
+/** Multi-select: the picked options sit as removable chips inside the field; the list opens below it. */
 function ChipPicker({
   label,
   required,
   error,
-  open,
-  onToggle,
-  emptyLabel,
-  selectedLabels,
-  onRemove,
+  helper,
+  placeholder,
   options,
   onCheck,
 }: {
   label: string;
   required?: boolean;
   error?: string;
-  open: boolean;
-  onToggle: () => void;
-  emptyLabel: string;
-  selectedLabels: string[];
-  onRemove: (label: string) => void;
+  helper?: string;
+  placeholder: string;
   options: { value: string; label: string; checked: boolean }[];
   onCheck: (value: string, checked: boolean) => void;
 }) {
+  const { isOpen, onToggle, onClose } = useDisclosure();
+  const selected = options.filter((option) => option.checked);
   return (
     <FormField label={label} required={required} error={error}>
-      <Wrap mb={selectedLabels.length ? 2 : 0}>
-        {selectedLabels.map((item) => (
-          <Badge key={item} colorScheme="blue" borderRadius="full" px={2} py={1} textTransform="none">
-            <HStack spacing={1}>
-              <Text>{item}</Text>
-              <Button size="xs" variant="ghost" minW={4} h={4} p={0} aria-label={`Remove ${item}`} onClick={() => onRemove(item)}>
-                ×
-              </Button>
-            </HStack>
-          </Badge>
-        ))}
-      </Wrap>
-      <Button variant="outline" w="full" justifyContent="flex-start" fontWeight="normal" color="ink.500" onClick={onToggle}>
-        {selectedLabels.length === 0 ? emptyLabel : `${selectedLabels.length} selected — click to change`}
-      </Button>
-      {open ? (
-        <Box mt={1} borderWidth="1px" borderColor="ink.200" borderRadius="md" p={2} maxH="160px" overflowY="auto">
-          {options.map((o) => (
-            <Checkbox
-              key={o.value}
-              display="flex"
-              py={1.5}
-              px={2}
-              isChecked={o.checked}
-              onChange={(e) => onCheck(o.value, e.target.checked)}
-            >
-              {o.label}
-            </Checkbox>
-          ))}
-        </Box>
+      <Popover isOpen={isOpen} onClose={onClose} placement="bottom-start" matchWidth isLazy>
+        <PopoverTrigger>
+          <Flex
+            role="combobox"
+            aria-expanded={isOpen}
+            aria-haspopup="listbox"
+            aria-label={label}
+            tabIndex={0}
+            onClick={onToggle}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") {
+                e.preventDefault();
+                onToggle();
+              }
+            }}
+            align="center"
+            gap={2}
+            minH="40px"
+            px={3}
+            py={1.5}
+            borderWidth="1px"
+            borderRadius="md"
+            borderColor={error ? "red.500" : isOpen ? "blue.500" : "ink.200"}
+            boxShadow={isOpen ? "0 0 0 1px var(--chakra-colors-blue-500)" : undefined}
+            bg="white"
+            cursor="pointer"
+            _hover={{ borderColor: error ? "red.500" : isOpen ? "blue.500" : "ink.300" }}
+            _focusVisible={{ borderColor: "blue.500", boxShadow: "0 0 0 1px var(--chakra-colors-blue-500)" }}
+          >
+            <Wrap flex="1" spacing={1.5}>
+              {selected.length === 0 ? (
+                <Text fontSize="md" color="ink.400">
+                  {placeholder}
+                </Text>
+              ) : (
+                selected.map((option) => (
+                  <Tag key={option.value} size="md" colorScheme="blue" borderRadius="full">
+                    <TagLabel>{option.label}</TagLabel>
+                    <TagCloseButton
+                      aria-label={`Remove ${option.label}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onCheck(option.value, false);
+                      }}
+                    />
+                  </Tag>
+                ))
+              )}
+            </Wrap>
+            <ChevronDownIcon color="ink.500" boxSize={5} transform={isOpen ? "rotate(180deg)" : undefined} />
+          </Flex>
+        </PopoverTrigger>
+        <Portal>
+          <PopoverContent w="auto" boxShadow="md" borderColor="ink.200" _focus={{ boxShadow: "md" }}>
+            <PopoverBody p={1} maxH="220px" overflowY="auto" role="listbox" aria-multiselectable>
+              {options.map((option) => (
+                <Checkbox
+                  key={option.value}
+                  display="flex"
+                  py={2}
+                  px={3}
+                  borderRadius="md"
+                  _hover={{ bg: "ink.50" }}
+                  isChecked={option.checked}
+                  onChange={(e) => onCheck(option.value, e.target.checked)}
+                >
+                  {option.label}
+                </Checkbox>
+              ))}
+            </PopoverBody>
+          </PopoverContent>
+        </Portal>
+      </Popover>
+      {helper && !error ? (
+        <FormHelperText fontSize="xs" color="ink.500" mt={1}>
+          {helper}
+        </FormHelperText>
       ) : null}
     </FormField>
   );
 }
 
+interface LinkedTypes {
+  key: string;
+  status: "loading" | "ready" | "error";
+  types: PiiType[];
+  error: string;
+}
+
+/** GET /policies/policy-types/{id} for each id in the policy's policy_type_id. */
+function useLinkedPolicyTypes(typeIds: string[]) {
+  const key = typeIds.join(",");
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<LinkedTypes>({ key, status: "loading", types: [], error: "" });
+
+  useEffect(() => {
+    let cancelled = false;
+    const ids = key ? key.split(",") : [];
+    setState({ key, status: "loading", types: [], error: "" });
+    Promise.all(ids.map((id) => getPolicyType(Number(id))))
+      .then((items) => {
+        if (!cancelled) setState({ key, status: "ready", types: items.map(definitionFromPolicyType), error: "" });
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setState({
+            key,
+            status: "error",
+            types: [],
+            error: apiErrorMessage(error, "Couldn't load this policy's entity names."),
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [key, attempt]);
+
+  // Until the effect runs for a new id list, the state still holds the previous list's result.
+  const current = state.key === key ? state : { key, status: "loading" as const, types: [], error: "" };
+  return { ...current, retry: () => setAttempt((n) => n + 1) };
+}
+
 function PolicyViewDrawer() {
-  const { drawer, closeDrawer, policies, types, domains, subscriptions } = usePiiPolicies();
+  const { drawer, policies } = usePiiPolicies();
   if (drawer.kind !== "view-policy") return null;
   const p = policies.find((x) => x.id === drawer.id);
   if (!p) return null;
+  return <PolicyView key={p.id} p={p} />;
+}
+
+function PolicyView({ p }: { p: Policy }) {
+  const { closeDrawer, types, typesStatus, domains, subscriptions, role } = usePiiPolicies();
   const subscribers = subscriptions[p.policyId] ?? [];
-  const entityNames = entityNamesForPolicy(p, types, domains);
+  const linked = useLinkedPolicyTypes(role === "adopter" ? p.typeIds : []);
   return (
     <FormDrawer
       isOpen
@@ -1018,20 +1478,12 @@ function PolicyViewDrawer() {
     >
       <Stack spacing={4}>
         <Detail label="Policy Name" value={p.name} />
-        <Box>
-          <Text fontSize="xs" fontWeight="medium" color="ink.500" textTransform="uppercase" mb={1}>
-            Policy Type
-          </Text>
-          <Badge textTransform="none" colorScheme={p.policyType === "Global" ? "blue" : "gray"}>{p.policyType}</Badge>
-        </Box>
         <Detail label="Scope" value={p.scope} />
         <Detail
           label="Domain"
           value={p.domainIds.map((id) => domainLabel(id, domains)).filter(Boolean).join(", ") || "—"}
         />
-        {p.policyType === "Global" ? (
-          <Detail label="Institutions" value="Applied to all institutions automatically. Institutions cannot unsubscribe." />
-        ) : (
+        {p.policyType === "Global" || role !== "adopter" ? null : (
           <Box>
             <Text fontSize="xs" fontWeight="medium" color="ink.500" textTransform="uppercase" mb={1}>
               Subscribed Institutions ({subscribers.length})
@@ -1042,10 +1494,11 @@ function PolicyViewDrawer() {
                   No subscriptions yet
                 </Text>
               ) : (
-                subscribers.map((id) => {
-                  const inst = INSTITUTIONS.find((i) => i.id === id);
-                  return inst ? <Badge textTransform="none" key={id}>{inst.name}</Badge> : null;
-                })
+                subscribers.map((id) => (
+                  <Badge textTransform="none" key={id}>
+                    {id}
+                  </Badge>
+                ))
               )}
             </Wrap>
           </Box>
@@ -1062,29 +1515,85 @@ function PolicyViewDrawer() {
             Languages supported
           </Text>
           <Wrap>
-            {p.languages.map((l) => (
-              <Badge textTransform="none" key={l}>{l}</Badge>
+            {DEFAULT_POLICY_LANGUAGES.map((code) => (
+              <Badge textTransform="none" key={code}>
+                {languageLabel(code)}
+              </Badge>
             ))}
           </Wrap>
         </Box>
-        <Box>
-          <Text fontSize="xs" fontWeight="medium" color="ink.500" textTransform="uppercase" mb={1}>
-            Entity Names
-          </Text>
-          {entityNames.length === 0 ? (
-            <Text fontSize="sm" color="ink.500">
-              —
+        {p.selectedFields ? (
+          <Box>
+            <Text fontSize="xs" fontWeight="medium" color="ink.500" textTransform="uppercase" mb={1}>
+              Selected Policy Fields ({p.selectedFields.length})
             </Text>
-          ) : (
             <Wrap>
-              {entityNames.map((name) => (
-                <Badge textTransform="none" key={name}>
-                  {name}
-                </Badge>
-              ))}
+              {p.selectedFields.map((field) => {
+                const type = types.find((t) => t.id === field.typeId);
+                const stale = typesStatus === "ready" && !fieldDefined(field, types);
+                return (
+                  <Badge
+                    textTransform="none"
+                    key={selectedFieldKey(field)}
+                    colorScheme={stale ? "red" : undefined}
+                    title={type ? (isPolicyOwnedType(type) ? "Custom field of this policy" : type.name) : undefined}
+                  >
+                    {fieldLabel(field)}
+                    {stale ? " · no longer defined" : ""}
+                  </Badge>
+                );
+              })}
             </Wrap>
-          )}
-        </Box>
+          </Box>
+        ) : null}
+        {role === "adopter" ? (
+          <Box>
+            <Text fontSize="xs" fontWeight="medium" color="ink.500" textTransform="uppercase" mb={1}>
+              Entity Names
+            </Text>
+            {linked.status === "loading" ? (
+              <Text fontSize="sm" color="ink.500">
+                Loading…
+              </Text>
+            ) : linked.status === "error" ? (
+              <HStack spacing={2}>
+                <Text fontSize="sm" color="red.600">
+                  {linked.error}
+                </Text>
+                <Button size="xs" variant="link" colorScheme="blue" onClick={linked.retry}>
+                  Retry
+                </Button>
+              </HStack>
+            ) : linked.types.every((type) => type.fields.length === 0) ? (
+              <Text fontSize="sm" color="ink.500">
+                —
+              </Text>
+            ) : (
+              <Stack spacing={3}>
+                {linked.types.map((type) => {
+                  const names = Array.from(
+                    new Set(type.fields.map((field) => field.entityName).filter(Boolean)),
+                  );
+                  if (names.length === 0) return null;
+                  return (
+                    <Box key={type.id}>
+                      <Text fontSize="sm" fontWeight="medium" color="ink.700" mb={1}>
+                        {isPolicyOwnedType(type) ? "Custom fields of this policy" : type.name}
+                      </Text>
+                      <Wrap>
+                        {names.map((name) => (
+                          <Badge textTransform="none" key={name}>
+                            {name}
+                          </Badge>
+                        ))}
+                      </Wrap>
+                    </Box>
+                  );
+                })}
+              </Stack>
+            )}
+          </Box>
+        ) : null}
       </Stack>
     </FormDrawer>
   );

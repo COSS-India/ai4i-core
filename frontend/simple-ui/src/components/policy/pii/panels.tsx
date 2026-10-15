@@ -7,9 +7,8 @@ import {
   Center,
   Flex,
   HStack,
-  Radio,
-  RadioGroup,
   Select,
+  Stack,
   Tab,
   TabList,
   TabPanel,
@@ -18,45 +17,68 @@ import {
   Text,
   Textarea,
 } from "@chakra-ui/react";
-import React, { useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import CreateButton from "../../common/CreateButton";
+import FormActions from "../../common/FormActions";
+import FormDrawer from "../../common/FormDrawer";
+import ReadOnlyField from "../../common/ReadOnlyField";
 import LoadingSpinner from "../../common/LoadingSpinner";
 import FieldLabel from "../../common/FieldLabel";
 import DataTable, {
   createActionsColumn,
   type DataTableColumn,
 } from "../../common/table";
-import { detectionTypesForPolicy, entityNamesForPolicy } from "./apiMap";
-import { buildSample, runDetection, type DetectionHit } from "./detection";
-import { useDeferredColumnSort } from "../../../utils/tableSort";
+import { entityNamesForPolicy } from "./apiMap";
 import {
+  buildSample,
+  PLAYGROUND_SIMULATION_HELP,
+  simulationRows,
+  type SimulationRow,
+} from "./detection";
+import { useDeferredColumnSort } from "../../../utils/tableSort";
+import { showToast } from "../../../utils/toast";
+import {
+  DEFAULT_POLICY_LANGUAGES,
   domainLabel,
+  filterPolicies,
+  isFieldShown,
+  languageLabel,
   policyEffective,
-  subcategoryEffective,
+  policyParentActive,
+  subcategoriesForCategory,
+  subcategoryAfterCategoryChange,
   type PiiType,
   type Policy,
+  type PolicyField,
 } from "./model";
-import { usePiiPolicies, type ProcessingTarget } from "./PiiPoliciesProvider";
-import DataTableActions from "../../common/DataTableActions";
-import { handlingBadgeColor, StatusToggle } from "./ui";
+import { loadModelEntities } from "./modelEntities";
+import { usePiiPolicies } from "./PiiPoliciesProvider";
+import { sharedTypes } from "./policyCustomFields";
+import { StatusToggle } from "./ui";
 
-function LockedNotice({ children }: { children: React.ReactNode }) {
-  return (
-    <Alert status="warning" borderRadius="md" mb={4}>
-      <AlertIcon />
-      {children}
-    </Alert>
+/** Whether a policy's sub-category and category are both active. */
+function useParentActive() {
+  const { categories, subcategories } = usePiiPolicies();
+  return useCallback(
+    (policy: Policy) => policyParentActive(policy, subcategories, categories),
+    [categories, subcategories],
   );
 }
 
-function useParentActive() {
-  const { categories, subcategories, view } = usePiiPolicies();
-  const sub =
-    view.kind === "sub" ? subcategories.find((s) => s.id === view.subcategoryId) : undefined;
-  return {
-    sub,
-    parentActive: sub ? subcategoryEffective(sub, categories) === "Active" : true,
-  };
+/** Category and sub-category names for a policy row. */
+function useHierarchyNames() {
+  const { categories, subcategories } = usePiiPolicies();
+  return useMemo(() => {
+    const subById = new Map(subcategories.map((s) => [s.id, s]));
+    const categoryById = new Map(categories.map((c) => [c.id, c]));
+    return {
+      subcategory: (policy: Policy) => subById.get(policy.subcategoryId)?.name ?? "",
+      category: (policy: Policy) => {
+        const sub = subById.get(policy.subcategoryId);
+        return (sub && categoryById.get(sub.categoryId)?.name) || "";
+      },
+    };
+  }, [categories, subcategories]);
 }
 
 export function PolicyList() {
@@ -64,56 +86,83 @@ export function PolicyList() {
   const {
     policies,
     domains,
+    categories,
+    subcategories,
     policySearch,
     setPolicySearch,
     policyDomainFilter,
     setPolicyDomainFilter,
+    policyCategoryFilter,
+    setPolicyCategoryFilter,
+    policySubcategoryFilter,
+    setPolicySubcategoryFilter,
     openDrawer,
+    openPlayground,
     askConfirm,
     setPolicyStatus,
     deletePolicy,
     policiesStatus,
     policiesError,
     reloadPolicies,
+    role,
   } = store;
-  const { sub, parentActive } = useParentActive();
-  const scoped = useMemo(
-    () => policies.filter((p) => !sub || p.subcategoryId === sub.id),
-    [policies, sub],
-  );
+  const canManage = role === "adopter";
+  const parentActive = useParentActive();
+  const names = useHierarchyNames();
 
   const rows = useMemo(
     () =>
-      scoped.filter((p) => {
-        const matchesName = p.name.toLowerCase().includes(policySearch.toLowerCase());
-        const matchesDomain = !policyDomainFilter || p.domainIds.includes(policyDomainFilter);
-        return matchesName && matchesDomain;
-      }),
-    [scoped, policySearch, policyDomainFilter],
+      filterPolicies(
+        policies,
+        {
+          search: policySearch,
+          domainId: policyDomainFilter,
+          categoryId: policyCategoryFilter,
+          subcategoryId: policySubcategoryFilter,
+        },
+        subcategories,
+      ),
+    [policies, policySearch, policyDomainFilter, policyCategoryFilter, policySubcategoryFilter, subcategories],
   );
+
+  const subcategoryOptions = useMemo(
+    () => subcategoriesForCategory(subcategories, policyCategoryFilter),
+    [subcategories, policyCategoryFilter],
+  );
+
+  const changeCategoryFilter = (categoryId: string) => {
+    setPolicyCategoryFilter(categoryId);
+    setPolicySubcategoryFilter(
+      subcategoryAfterCategoryChange(subcategories, policySubcategoryFilter, categoryId),
+    );
+  };
 
   const policySortAccessors = useMemo(
     () => ({
       name: (row: Policy) => row.name,
-      policyType: (row: Policy) => row.policyType,
-      languages: (row: Policy) => row.languages.join(", "),
+      category: names.category,
+      subcategory: names.subcategory,
+      languages: (row: Policy) => row.languages.map(languageLabel).join(", "),
     }),
-    [],
+    [names],
   );
   const policySort = useDeferredColumnSort("name", policySortAccessors);
   const sortedPolicies = useMemo(() => policySort.apply(rows), [policySort, rows]);
 
-  const requestStatus = (policy: Policy, nextActive: boolean) => {
-    askConfirm({
-      title: `${nextActive ? "Activate" : "Deactivate"} "${policy.name}"?`,
-      body: nextActive
-        ? "Activating this policy makes it available to institutions and starts PII detection and sanitization. Continue?"
-        : "Deactivating this policy will stop PII detection and sanitization for subscribed institutions. Continue?",
-      confirmLabel: nextActive ? "Activate" : "Deactivate",
-      confirmColorScheme: nextActive ? "blue" : "red",
-      onConfirm: () => setPolicyStatus(policy.id, nextActive ? "Active" : "Inactive"),
-    });
-  };
+  const requestStatus = useCallback(
+    (policy: Policy, nextActive: boolean) => {
+      askConfirm({
+        title: `${nextActive ? "Activate" : "Deactivate"} "${policy.name}"?`,
+        body: nextActive
+          ? "Activating this policy makes it available to institutions and starts PII detection and sanitization. Continue?"
+          : "Deactivating this policy will stop PII detection and sanitization for subscribed institutions. Continue?",
+        confirmLabel: nextActive ? "Activate" : "Deactivate",
+        confirmColorScheme: nextActive ? "blue" : "red",
+        onConfirm: () => setPolicyStatus(policy.id, nextActive ? "Active" : "Inactive"),
+      });
+    },
+    [askConfirm, setPolicyStatus],
+  );
 
   const columns = useMemo<DataTableColumn<Policy>[]>(
     () => [
@@ -137,17 +186,32 @@ export function PolicyList() {
           </Text>
         ),
       },
-      {
-        id: "policyType",
-        header: "Policy Type",
-        sortable: true,
-        sortAccessor: (row) => row.policyType,
-        cell: (row) => (
-          <Text fontSize="sm" color="ink.500">
-            {row.policyType === "Global" ? "Global" : "Institution level"}
-          </Text>
-        ),
-      },
+      ...(canManage
+        ? [
+            {
+              id: "category",
+              header: "Category",
+              sortable: true,
+              sortAccessor: names.category,
+              cell: (row: Policy) => (
+                <Text fontSize="sm" color="ink.500">
+                  {names.category(row) || "—"}
+                </Text>
+              ),
+            },
+            {
+              id: "subcategory",
+              header: "Sub-category",
+              sortable: true,
+              sortAccessor: names.subcategory,
+              cell: (row: Policy) => (
+                <Text fontSize="sm" color="ink.500">
+                  {names.subcategory(row) || "—"}
+                </Text>
+              ),
+            },
+          ]
+        : []),
       {
         id: "domain",
         header: "Domain",
@@ -161,50 +225,78 @@ export function PolicyList() {
         id: "languages",
         header: "Languages",
         sortable: true,
-        sortAccessor: (row) => row.languages.join(", "),
+        sortAccessor: (row) => row.languages.map(languageLabel).join(", "),
         cell: (row) => (
           <Text fontSize="sm" color="ink.500">
-            {row.languages.length > 0 ? row.languages.join(", ") : "—"}
+            {DEFAULT_POLICY_LANGUAGES.map(languageLabel).join(", ")}
           </Text>
         ),
       },
       {
         id: "status",
         header: "Status",
-        cell: (row) => (
-          <StatusToggle
-            status={row.status}
-            effective={policyEffective(row, parentActive)}
-            locked={!parentActive}
-            label={`${row.name} status`}
-            onToggle={() => requestStatus(row, row.status !== "Active")}
-          />
-        ),
+        cell: (row) => {
+          if (!canManage) {
+            return (
+              <Badge colorScheme={row.status === "Active" ? "green" : "gray"} textTransform="none">
+                {row.status}
+              </Badge>
+            );
+          }
+          const active = parentActive(row);
+          return (
+            <StatusToggle
+              status={row.status}
+              effective={policyEffective(row, active)}
+              locked={!active}
+              label={
+                active
+                  ? `${row.name} status`
+                  : `${row.name} status, locked because its sub-category or category is inactive`
+              }
+              onToggle={() => requestStatus(row, row.status !== "Active")}
+            />
+          );
+        },
       },
       createActionsColumn<Policy>({
-        getActions: (row) => [
-          { id: "view", label: "View", onClick: () => openDrawer({ kind: "view-policy", id: row.id }) },
-          { id: "edit", label: "Edit", onClick: () => openDrawer({ kind: "edit-policy", id: row.id }) },
-          {
-            id: "delete",
-            label: "Delete",
-            onClick: () =>
-              askConfirm({
-                title: "Delete policy?",
-                body: "This will permanently remove its PII configuration. This action cannot be undone.",
-                confirmLabel: "Delete",
-                confirmColorScheme: "red",
-                onConfirm: () => deletePolicy(row.id),
-              }),
-          },
-        ],
+        getActions: (row) => {
+          const view = {
+            id: "view",
+            label: "View",
+            onClick: () => openDrawer({ kind: "view-policy", id: row.id }),
+          };
+          if (!canManage) return [view];
+          return [
+            view,
+            { id: "edit", label: "Edit", onClick: () => openDrawer({ kind: "edit-policy", id: row.id }) },
+            { id: "test", label: "Test in Playground", onClick: () => openPlayground(row.policyId) },
+            {
+              id: "delete",
+              label: "Delete",
+              onClick: () =>
+                askConfirm({
+                  title: "Delete policy?",
+                  body: "This will permanently remove its PII configuration. This action cannot be undone.",
+                  confirmLabel: "Delete",
+                  confirmColorScheme: "red",
+                  onConfirm: () => deletePolicy(row.id),
+                }),
+            },
+          ];
+        },
       }),
     ],
-    [domains, parentActive, openDrawer, askConfirm, deletePolicy],
+    [canManage, domains, names, parentActive, requestStatus, openDrawer, openPlayground, askConfirm, deletePolicy],
   );
 
   return (
     <Box>
+      {canManage ? (
+        <Flex justify="flex-end" mb={4}>
+          <CreateButton onClick={() => openDrawer({ kind: "create-policy" })}>Create Policy</CreateButton>
+        </Flex>
+      ) : null}
       {policiesStatus === "error" ? (
         <Alert status="error" borderRadius="md" mb={4}>
           <AlertIcon />
@@ -216,12 +308,7 @@ export function PolicyList() {
           </Button>
         </Alert>
       ) : null}
-      {!parentActive ? (
-        <LockedNotice>
-          All policies here are inactive — &quot;{sub?.name}&quot; (or its category) is currently disabled.
-        </LockedNotice>
-      ) : null}
-      {policiesStatus === "loading" && scoped.length === 0 ? (
+      {policiesStatus === "loading" && policies.length === 0 ? (
         <Center py={10}>
           <LoadingSpinner label="Loading policies…" />
         </Center>
@@ -235,18 +322,19 @@ export function PolicyList() {
         onSortChange={policySort.onSortChange}
         paginate="client"
         paginationPosition="bottom"
-        unfilteredCount={scoped.length}
-        hasActiveFilters={Boolean(policySearch || policyDomainFilter)}
+        unfilteredCount={policies.length}
+        hasActiveFilters={Boolean(
+          policySearch || policyDomainFilter || policyCategoryFilter || policySubcategoryFilter,
+        )}
         onClearFilters={() => {
           setPolicySearch("");
           setPolicyDomainFilter("");
+          setPolicyCategoryFilter("");
+          setPolicySubcategoryFilter("");
         }}
         emptyMessage="No policies yet."
         noResultsMessage="No policies match your search."
         onRowClick={(row) => openDrawer({ kind: "view-policy", id: row.id })}
-        filterToolbarRightContent={
-          <CreateButton onClick={() => openDrawer({ kind: "create-policy" })}>Create Policy</CreateButton>
-        }
         search={{
           value: policySearch,
           onChange: setPolicySearch,
@@ -254,6 +342,34 @@ export function PolicyList() {
           fields: ["name"],
         }}
         filterDefs={[
+          ...(canManage
+            ? [
+                {
+                  id: "category",
+                  label: "Category",
+                  type: "select" as const,
+                  value: policyCategoryFilter,
+                  onChange: changeCategoryFilter,
+                  width: "180px",
+                  options: [
+                    { value: "", label: "All Categories" },
+                    ...categories.map((c) => ({ value: c.id, label: c.name })),
+                  ],
+                },
+                {
+                  id: "subcategory",
+                  label: "Sub-category",
+                  type: "select" as const,
+                  value: policySubcategoryFilter,
+                  onChange: setPolicySubcategoryFilter,
+                  width: "180px",
+                  options: [
+                    { value: "", label: "All Sub-categories" },
+                    ...subcategoryOptions.map((s) => ({ value: s.id, label: s.name })),
+                  ],
+                },
+              ]
+            : []),
           {
             id: "domain",
             label: "Domain",
@@ -298,8 +414,32 @@ export function ConfigurationPanel() {
   );
 }
 
-function fieldNames(type: PiiType): string[] {
-  return Array.from(new Set(type.fields.map((field) => field.entityName)));
+interface EntityRow {
+  key: string;
+  /** Unset for entities from GET /pii/entities, which belong to no policy type. */
+  type?: PiiType;
+  entityName: string;
+  mode: PolicyField["mode"];
+}
+
+function entityRows(types: PiiType[]): EntityRow[] {
+  return types.flatMap((type) => {
+    const seen = new Set<string>();
+    return type.fields.flatMap((field) => {
+      const key = `${type.id}:${field.mode}:${field.entityName}`;
+      if (!field.entityName || !isFieldShown(field) || seen.has(key)) return [];
+      seen.add(key);
+      return [{ key, type, entityName: field.entityName, mode: field.mode }];
+    });
+  });
+}
+
+function viewEntityDrawer(type: PiiType, row: EntityRow) {
+  return {
+    kind: "view-type" as const,
+    id: type.id,
+    entity: { name: row.entityName, mode: row.mode },
+  };
 }
 
 function TypeLibrary() {
@@ -310,77 +450,141 @@ function TypeLibrary() {
     openDrawer,
     askConfirm,
     deleteType,
+    updateType,
     typesStatus,
     typesError,
     reloadTypes,
   } = usePiiPolicies();
 
-  const rows = types.filter((t) => {
-    const query = typeSearch.toLowerCase();
-    if (!query) return true;
-    return (
-      t.name.toLowerCase().includes(query) ||
-      t.fields.some((field) => field.entityName.toLowerCase().includes(query))
+  const [modelEntities, setModelEntities] = useState<string[]>([]);
+  const [detail, setDetail] = useState<EntityRow | null>(null);
+  useEffect(() => {
+    let current = true;
+    loadModelEntities("en").then(
+      (entities) => {
+        if (current) setModelEntities(entities);
+      },
+      () => {
+        if (current) {
+          showToast({ type: "error", message: "Couldn't load model supported PII types.", messageOnly: true });
+        }
+      },
     );
-  });
+    return () => {
+      current = false;
+    };
+  }, []);
+
+  const allRows = useMemo(
+    () => [
+      ...modelEntities.map((entityName): EntityRow => ({ key: `en:${entityName}`, entityName, mode: "model" })),
+      ...entityRows(sharedTypes(types)),
+    ],
+    [modelEntities, types],
+  );
+  const rows = useMemo(() => {
+    const query = typeSearch.toLowerCase();
+    if (!query) return allRows;
+    return allRows.filter(
+      (row) =>
+        row.entityName.toLowerCase().includes(query) || Boolean(row.type?.name.toLowerCase().includes(query)),
+    );
+  }, [allRows, typeSearch]);
 
   const typeSortAccessors = useMemo(
     () => ({
-      name: (row: PiiType) => row.name,
-      fields: (row: PiiType) => fieldNames(row).join(", "),
+      entity: (row: EntityRow) => row.entityName,
+      group: (row: EntityRow) => row.type?.name ?? "",
+      mode: (row: EntityRow) => row.mode,
     }),
     [],
   );
-  const typeSort = useDeferredColumnSort("name", typeSortAccessors);
-  const sortedTypes = useMemo(() => typeSort.apply(rows), [typeSort, rows]);
+  const typeSort = useDeferredColumnSort("entity", typeSortAccessors);
+  const sortedRows = useMemo(() => typeSort.apply(rows), [typeSort, rows]);
+  // Only rows from a policy type have a group; GET /pii/entities rows have none.
+  const hasGroups = allRows.some((row) => row.type);
 
-  const columns = useMemo<DataTableColumn<PiiType>[]>(
-    () => [
+  const columns = useMemo<DataTableColumn<EntityRow>[]>(() => {
+    const removeEntity = async (type: PiiType, row: EntityRow) => {
+      const remaining = type.fields.filter(
+        (field) => !(field.entityName === row.entityName && field.mode === row.mode),
+      );
+      if (remaining.length === 0) {
+        await deleteType(type.id);
+        return;
+      }
+      const error = await updateType(type.id, { name: type.name, fields: remaining });
+      if (error) showToast({ type: "error", message: error, messageOnly: true });
+    };
+
+    return [
       {
-        id: "name",
-        header: "Policy Type",
+        id: "entity",
+        header: "PII Type",
         sortable: true,
-        sortAccessor: (row) => row.name,
+        sortAccessor: (row) => row.entityName,
         cell: (row) => (
           <Text fontSize="sm" fontWeight="medium">
-            {row.name}
+            {row.entityName}
           </Text>
         ),
       },
+      ...(hasGroups
+        ? [
+            {
+              id: "group",
+              header: "Group",
+              sortable: true,
+              sortAccessor: (row: EntityRow) => row.type?.name ?? "",
+              cell: (row: EntityRow) => (
+                <Text fontSize="sm" color="ink.500">
+                  {row.type?.name ?? "—"}
+                </Text>
+              ),
+            },
+          ]
+        : []),
       {
-        id: "fields",
-        header: "Fields",
+        id: "mode",
+        header: "Mode",
         sortable: true,
-        sortAccessor: (row) => fieldNames(row).join(", "),
+        sortAccessor: (row) => row.mode,
         cell: (row) => (
-          <Text fontSize="sm" color="ink.500">
-            {fieldNames(row).join(", ") || "—"}
-          </Text>
+          <Badge colorScheme={row.mode === "model" ? "purple" : "blue"} variant="subtle">
+            {row.mode === "model" ? "Model" : "Custom"}
+          </Badge>
         ),
       },
-      createActionsColumn<PiiType>({
-        getActions: (row) => [
-          { id: "view", label: "View", onClick: () => openDrawer({ kind: "view-type", id: row.id }) },
-          { id: "edit", label: "Edit", onClick: () => openDrawer({ kind: "edit-type", id: row.id }) },
-          {
-            id: "delete",
-            label: "Delete",
-            disabled: row.isDefault,
-            tooltip: row.isDefault ? "This cannot be removed" : "Delete",
-            onClick: () =>
-              askConfirm({
-                title: "Delete policy type?",
-                body: "This will remove the policy type and its fields. Policies using it will need to be updated. This action cannot be undone.",
-                confirmLabel: "Delete",
-                confirmColorScheme: "red",
-                onConfirm: () => deleteType(row.id),
-              }),
-          },
-        ],
+      createActionsColumn<EntityRow>({
+        getActions: (row) => {
+          const type = row.type;
+          if (!type) return [{ id: "view", label: "View", onClick: () => setDetail(row) }];
+          return [
+            { id: "view", label: "View", onClick: () => openDrawer(viewEntityDrawer(type, row)) },
+            { id: "edit", label: "Edit", onClick: () => openDrawer({ kind: "edit-type", id: type.id }) },
+            {
+              id: "delete",
+              label: "Delete",
+              onClick: () =>
+                askConfirm({
+                  title: `Delete ${row.entityName}?`,
+                  body: type.fields.every(
+                    (field) => field.entityName === row.entityName && field.mode === row.mode,
+                  )
+                      ? `${row.entityName} is the only PII type in ${type.name}, so the whole group will be deleted. This action cannot be undone.`
+                      : `This removes ${row.entityName} from ${type.name}. Policies that picked it will no longer detect it. This action cannot be undone.`,
+                  confirmLabel: "Delete",
+                  confirmColorScheme: "red",
+                  onConfirm: () => {
+                    void removeEntity(type, row);
+                  },
+                }),
+            },
+          ];
+        },
       }),
-    ],
-    [openDrawer, askConfirm, deleteType],
-  );
+    ];
+  }, [hasGroups, openDrawer, askConfirm, deleteType, updateType]);
 
   return (
     <Box>
@@ -402,39 +606,74 @@ function TypeLibrary() {
       ) : (
     <DataTable
       layout="admin"
-      items={sortedTypes}
+      items={sortedRows}
       columns={columns}
-      getRowKey={(row) => row.id}
+      getRowKey={(row) => row.key}
       sort={typeSort.sort}
       onSortChange={typeSort.onSortChange}
       paginate="client"
       paginationPosition="bottom"
-      unfilteredCount={types.length}
+      unfilteredCount={allRows.length}
       hasActiveFilters={Boolean(typeSearch)}
       onClearFilters={() => {
         setTypeSearch("");
       }}
-      emptyMessage="No policy types yet."
-      noResultsMessage="No policy types match your search."
-      onRowClick={(row) => openDrawer({ kind: "view-type", id: row.id })}
+      emptyMessage="No PII types yet."
+      noResultsMessage="No PII types match your search."
+      onRowClick={(row) => {
+        if (row.type) openDrawer(viewEntityDrawer(row.type, row));
+        else setDetail(row);
+      }}
       filterToolbarRightContent={
-        <CreateButton onClick={() => openDrawer({ kind: "add-type" })}>Add Policy Type</CreateButton>
+        <HStack spacing={2}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={reloadTypes}
+            isLoading={typesStatus === "loading"}
+            loadingText="Refreshing"
+          >
+            Refresh
+          </Button>
+          <CreateButton onClick={() => openDrawer({ kind: "add-type" })}>Add Policy Type</CreateButton>
+        </HStack>
       }
       search={{
         value: typeSearch,
         onChange: setTypeSearch,
-        placeholder: "Search policy types...",
-        fields: ["name"],
+        placeholder: "Search PII types...",
+        fields: ["entityName", "type.name"],
       }}
     />
       )}
+      {detail ? (
+        <FormDrawer
+          isOpen
+          onClose={() => setDetail(null)}
+          title="View PII Type"
+          footer={<FormActions cancelLabel="Close" onCancel={() => setDetail(null)} hideSubmit />}
+        >
+          <Stack spacing={4}>
+            <ReadOnlyField label="Entity Name">{detail.entityName}</ReadOnlyField>
+            <ReadOnlyField label="Mode">Model-supported</ReadOnlyField>
+            <ReadOnlyField label="Language">{languageLabel("en")}</ReadOnlyField>
+          </Stack>
+        </FormDrawer>
+      ) : null}
     </Box>
   );
 }
 
 function DomainTable() {
-  const { domains, domainSearch, setDomainSearch, openDrawer, askConfirm, deleteDomain } =
-    usePiiPolicies();
+  const {
+    domains,
+    domainsStatus,
+    domainsError,
+    reloadDomains,
+    domainSearch,
+    setDomainSearch,
+    openDrawer,
+  } = usePiiPolicies();
   const rows = domains.filter((d) => d.name.toLowerCase().includes(domainSearch.toLowerCase()));
   const domainSortAccessors = useMemo(
     () => ({
@@ -467,30 +706,31 @@ function DomainTable() {
           </Text>
         ),
       },
-      createActionsColumn({
-        getActions: (row) => [
-          { id: "edit", label: "Edit", onClick: () => openDrawer({ kind: "edit-domain", id: row.id }) },
-          {
-            id: "delete",
-            label: "Delete",
-            disabled: row.isDefault,
-            tooltip: row.isDefault ? "This cannot be removed" : "Delete",
-            onClick: () =>
-              askConfirm({
-                title: "Delete domain?",
-                body: "PII types and policies tagged with this domain will keep their data, but the domain filter will no longer be available.",
-                confirmLabel: "Delete",
-                confirmColorScheme: "red",
-                onConfirm: () => deleteDomain(row.id),
-              }),
-          },
-        ],
-      }),
     ],
-    [openDrawer, askConfirm, deleteDomain],
+    [],
   );
 
+  if (domainsStatus === "loading" && domains.length === 0) {
+    return (
+      <Center py={10}>
+        <LoadingSpinner label="Loading domains…" />
+      </Center>
+    );
+  }
+
   return (
+    <Box>
+      {domainsError ? (
+        <Alert status={domainsStatus === "error" ? "error" : "warning"} borderRadius="md" mb={4}>
+          <AlertIcon />
+          <Text flex="1" fontSize="sm">
+            {domainsError}
+          </Text>
+          <Button size="sm" variant="outline" onClick={reloadDomains}>
+            Try again
+          </Button>
+        </Alert>
+      ) : null}
     <DataTable
       layout="admin"
       items={sortedDomains}
@@ -515,6 +755,7 @@ function DomainTable() {
         fields: ["name"],
       }}
     />
+    </Box>
   );
 }
 
@@ -524,27 +765,26 @@ export function PlaygroundPanel() {
     types,
     domains,
     playgroundPolicyId,
-    playgroundTarget,
     playgroundInput,
     playgroundResult,
+    playgroundRunning,
+    playgroundError,
     setPlaygroundPolicy,
-    setPlaygroundTarget,
     setPlaygroundInput,
-    setPlaygroundResult,
     loadPlaygroundSample,
+    runPlayground,
   } = usePiiPolicies();
-  const { sub, parentActive } = useParentActive();
-  const activePolicies = policies.filter(
-    (p) => (!sub || p.subcategoryId === sub.id) && policyEffective(p, parentActive) === "Active",
-  );
+  const parentActive = useParentActive();
   const selected = policies.find((p) => p.policyId === playgroundPolicyId) ?? null;
-  const canRun = Boolean(selected && playgroundTarget && playgroundInput.trim());
-  const resultRows = playgroundResult?.results ?? [];
+  const canRun = Boolean(selected && playgroundInput.trim());
+  const resultRows = useMemo(
+    () => simulationRows(playgroundResult?.detected ?? []),
+    [playgroundResult],
+  );
   const resultSortAccessors = useMemo(
     () => ({
-      type: (row: DetectionHit) => row.typeName,
-      instances: (row: DetectionHit) => row.instances.length,
-      action: (row: DetectionHit) => row.handling,
+      type: (row: SimulationRow) => row.entityType,
+      instances: (row: SimulationRow) => row.instances,
     }),
     [],
   );
@@ -561,41 +801,19 @@ export function PlaygroundPanel() {
               aria-label="Select policy"
               placeholder="Choose a policy to test"
               value={playgroundPolicyId}
-              onChange={(e) => {
-                const policy = policies.find((p) => p.policyId === e.target.value);
-                setPlaygroundPolicy(
-                  e.target.value,
-                  policy ? buildSample(detectionTypesForPolicy(policy, types, domains)) : "",
-                );
-              }}
+              onChange={(e) => setPlaygroundPolicy(e.target.value)}
             >
-              {activePolicies.map((p) => (
+              {policies.map((p) => (
                 <option key={p.policyId} value={p.policyId}>
                   {p.policyId} · {p.name}
+                  {policyEffective(p, parentActive(p)) === "Active" ? "" : " (Inactive)"}
                 </option>
               ))}
             </Select>
           </Box>
-          <Box>
-            <FieldLabel required>Processing Target</FieldLabel>
-            <RadioGroup
-              value={playgroundTarget}
-              onChange={(value) => setPlaygroundTarget(value as ProcessingTarget)}
-            >
-              <HStack h="10" px={3} borderWidth="1px" borderColor="ink.200" borderRadius="md" spacing={4}>
-                <Radio value="response" size="sm">
-                  Response
-                </Radio>
-                <Radio value="storage" size="sm">
-                  Storage
-                </Radio>
-              </HStack>
-            </RadioGroup>
-          </Box>
         </Flex>
         <Text fontSize="xs" color="ink.500" mt={3}>
-          Both targets detect PII and apply each type’s configured Mask, Redact, or Hash action — the
-          response is sanitized the same as anything written to storage.
+          {PLAYGROUND_SIMULATION_HELP}
         </Text>
         {selected ? <SimplePolicySummary policy={selected} /> : null}
       </Box>
@@ -607,7 +825,7 @@ export function PlaygroundPanel() {
             <Button
               variant="link"
               size="xs"
-              onClick={() => loadPlaygroundSample(buildSample(detectionTypesForPolicy(selected, types, domains)))}
+              onClick={() => loadPlaygroundSample(buildSample(selected, types, domains))}
             >
               Load sample
             </Button>
@@ -622,31 +840,43 @@ export function PlaygroundPanel() {
           value={playgroundInput}
           onChange={(e) => setPlaygroundInput(e.target.value)}
         />
-        <Button mt={3} size="sm" isDisabled={!canRun} onClick={() => {
-          if (!selected) return;
-          setPlaygroundResult(
-            runDetection(playgroundInput, detectionTypesForPolicy(selected, types, domains)),
-          );
-        }}>
+        <Button
+          mt={3}
+          size="sm"
+          isDisabled={!canRun}
+          isLoading={playgroundRunning}
+          loadingText="Running…"
+          onClick={() => void runPlayground()}
+        >
           Run Simulation
         </Button>
       </Box>
 
-      {playgroundResult && selected ? (
+      {playgroundError ? (
+        <Alert status="error" borderRadius="md" mb={4}>
+          <AlertIcon />
+          <Text fontSize="sm">{playgroundError}</Text>
+        </Alert>
+      ) : null}
+
+      {playgroundResult ? (
         <Box>
           <Text fontSize="sm" fontWeight="semibold" mb={3}>
             Detected PII in this request
           </Text>
-          {playgroundResult.results.length === 0 ? (
-            <Text fontSize="sm" color="ink.500" mb={4}>
-              No PII detected for the types enabled in {selected.policyId}.
-            </Text>
+          {playgroundResult.detected.length === 0 ? (
+            <Alert status="info" borderRadius="md" mb={4}>
+              <AlertIcon />
+              <Text fontSize="sm">
+                No PII found in this text for the definitions in {playgroundResult.policyId}.
+              </Text>
+            </Alert>
           ) : (
             <Box mb={4}>
               <DataTable
                 layout="admin"
                 items={sortedResults}
-                getRowKey={(row) => row.typeId}
+                getRowKey={(row) => row.entityType}
                 sort={resultSort.sort}
                 onSortChange={resultSort.onSortChange}
                 paginate="client"
@@ -654,35 +884,33 @@ export function PlaygroundPanel() {
                 columns={[
                   {
                     id: "type",
-                    header: "PII Type",
+                    header: "PII Definition",
                     sortable: true,
-                    sortAccessor: (row) => row.typeName,
-                    cell: (row) => row.typeName,
+                    sortAccessor: (row) => row.entityType,
+                    cell: (row) => row.entityType,
+                  },
+                  {
+                    id: "found",
+                    header: "Found",
+                    cell: (row) => (
+                      <Text fontFamily="mono" fontSize="xs">
+                        {row.found.join(", ")}
+                      </Text>
+                    ),
                   },
                   {
                     id: "instances",
                     header: "Instances",
                     sortable: true,
-                    sortAccessor: (row) => row.instances.length,
-                    cell: (row) => row.instances.length,
-                  },
-                  {
-                    id: "action",
-                    header: "Action",
-                    sortable: true,
-                    sortAccessor: (row) => row.handling,
-                    cell: (row) => (
-                      <Badge colorScheme={handlingBadgeColor(row.handling)} textTransform="none">
-                        {row.handling}
-                      </Badge>
-                    ),
+                    sortAccessor: (row) => row.instances,
+                    cell: (row) => row.instances,
                   },
                   {
                     id: "output",
                     header: "Output",
                     cell: (row) => (
                       <Text fontFamily="mono" fontSize="xs" color="ink.500">
-                        {row.replacements.join(", ")}
+                        {row.outputs.join(", ")}
                       </Text>
                     ),
                   },
@@ -691,10 +919,10 @@ export function PlaygroundPanel() {
             </Box>
           )}
           <Flex direction={{ base: "column", lg: "row" }} gap={4}>
-            <PayloadCard title="Original Payload" text={playgroundInput} />
+            <PayloadCard title="Original Payload" text={playgroundResult.originalText} />
             <PayloadCard
-              title={playgroundTarget === "storage" ? "Storage Payload" : "Response Payload"}
-              text={playgroundResult.sanitized}
+              title="Sanitized Payload"
+              text={playgroundResult.sanitizedText}
             />
           </Flex>
         </Box>
@@ -709,12 +937,6 @@ function SimplePolicySummary({ policy }: { policy: Policy }) {
   return (
     <Flex wrap="wrap" gap={4} borderTopWidth="1px" borderColor="ink.200" pt={3} mt={3}>
       <Box>
-        <FieldLabel variant="metric">Policy Type</FieldLabel>
-        <Badge mt={1.5} colorScheme={policy.policyType === "Global" ? "blue" : "gray"} textTransform="none">
-          {policy.policyType}
-        </Badge>
-      </Box>
-      <Box>
         <FieldLabel variant="metric">Scope</FieldLabel>
         <Text fontSize="sm" mt={1.5}>
           {policy.scope}
@@ -725,7 +947,9 @@ function SimplePolicySummary({ policy }: { policy: Policy }) {
         <Flex wrap="wrap" gap={1} mt={1.5}>
           {(entityNames.length > 0
             ? entityNames
-            : policy.typeIds.map((id) => types.find((type) => type.id === id)?.name).filter(Boolean)
+            : sharedTypes(types)
+                .filter((type) => policy.typeIds.includes(type.id))
+                .map((type) => type.name)
           ).map((name) => (
             <Badge key={name} colorScheme="blue" textTransform="none">
               {name}
@@ -746,171 +970,6 @@ function PayloadCard({ title, text }: { title: string; text: string }) {
       <Box bg="ink.50" borderRadius="md" p={3} fontFamily="mono" fontSize="sm" whiteSpace="pre-wrap">
         {text}
       </Box>
-    </Box>
-  );
-}
-
-export function InstitutionCatalog() {
-  const {
-    policies,
-    institutionId,
-    subscriptions,
-    catalogScope,
-    setCatalogScope,
-    openDrawer,
-    toggleSubscription,
-  } = usePiiPolicies();
-  const { sub, parentActive } = useParentActive();
-  const active = policies.filter(
-    (p) => (!sub || p.subcategoryId === sub.id) && policyEffective(p, parentActive) === "Active",
-  );
-  const visible =
-    catalogScope === "subscribed"
-      ? active.filter(
-          (p) =>
-            p.policyType === "Institution level" &&
-            (subscriptions[p.policyId] ?? []).includes(institutionId),
-        )
-      : active;
-
-  const catalogSortAccessors = useMemo(
-    () => ({
-      name: (row: Policy) => row.name,
-      types: (row: Policy) => row.typeIds.length,
-      languages: (row: Policy) => row.languages.join(", "),
-    }),
-    [],
-  );
-  const catalogSort = useDeferredColumnSort("name", catalogSortAccessors);
-  const sortedVisible = useMemo(() => catalogSort.apply(visible), [catalogSort, visible]);
-
-  const columns = useMemo<DataTableColumn<Policy>[]>(
-    () => [
-      {
-        id: "policyId",
-        header: "Policy ID",
-        cell: (row) => (
-          <Badge fontFamily="mono" textTransform="none">
-            {row.policyId}
-          </Badge>
-        ),
-      },
-      {
-        id: "name",
-        header: "Policy Name",
-        sortable: true,
-        sortAccessor: (row) => row.name,
-        cell: (row) => (
-          <Text fontSize="sm" fontWeight="medium">
-            {row.name}
-          </Text>
-        ),
-      },
-      {
-        id: "types",
-        header: "PII Types",
-        sortable: true,
-        sortAccessor: (row) => row.typeIds.length,
-        cell: (row) => (
-          <Text fontSize="sm" color="ink.500">
-            {row.typeIds.length}
-          </Text>
-        ),
-      },
-      {
-        id: "languages",
-        header: "Languages",
-        sortable: true,
-        sortAccessor: (row) => row.languages.join(", "),
-        cell: (row) => (
-          <Text fontSize="sm" color="ink.500">
-            {row.languages.join(", ")}
-          </Text>
-        ),
-      },
-      {
-        id: "status",
-        header: "Status",
-        cell: (row) => {
-          const subscribed = (subscriptions[row.policyId] ?? []).includes(institutionId);
-          const applied = subscribed || row.policyType === "Global";
-          return (
-            <Badge colorScheme={applied ? "green" : "gray"} textTransform="none">
-              {row.policyType === "Global" ? "Always applied" : subscribed ? "Subscribed" : "Not subscribed"}
-            </Badge>
-          );
-        },
-      },
-      {
-        id: "actions",
-        header: "Actions",
-        truncate: false,
-        cell: (row) => {
-          const subscribed = (subscriptions[row.policyId] ?? []).includes(institutionId);
-          return (
-            <HStack>
-              <DataTableActions
-                actions={[
-                  {
-                    id: "view",
-                    label: "View",
-                    onClick: () => openDrawer({ kind: "view-policy", id: row.id }),
-                  },
-                ]}
-              />
-              {row.policyType === "Global" ? null : (
-                <Button
-                  size="xs"
-                  variant={subscribed ? "outline" : "solid"}
-                  onClick={() => toggleSubscription(row.policyId, institutionId)}
-                >
-                  {subscribed ? "Unsubscribe" : "Subscribe"}
-                </Button>
-              )}
-            </HStack>
-          );
-        },
-      },
-    ],
-    [subscriptions, institutionId, openDrawer, toggleSubscription],
-  );
-
-  return (
-    <Box>
-      {!parentActive ? (
-        <LockedNotice>
-          &quot;{sub?.name}&quot; (or its category) is currently disabled — no policies are being enforced.
-        </LockedNotice>
-      ) : null}
-      <DataTable
-        layout="admin"
-        items={sortedVisible}
-        columns={columns}
-        getRowKey={(row) => row.id}
-        sort={catalogSort.sort}
-        onSortChange={catalogSort.onSortChange}
-        paginate="client"
-        paginationPosition="bottom"
-        unfilteredCount={active.length}
-        hasActiveFilters={catalogScope === "subscribed"}
-        onClearFilters={() => setCatalogScope("all")}
-        emptyMessage="No policies to show."
-        noResultsMessage="No subscriptions to show."
-        filterDefs={[
-          {
-            id: "scope",
-            label: "Show",
-            type: "select",
-            value: catalogScope,
-            onChange: (value) => setCatalogScope(value === "subscribed" ? "subscribed" : "all"),
-            width: "180px",
-            options: [
-              { value: "all", label: "All policies" },
-              { value: "subscribed", label: "My subscriptions" },
-            ],
-          },
-        ]}
-      />
     </Box>
   );
 }
