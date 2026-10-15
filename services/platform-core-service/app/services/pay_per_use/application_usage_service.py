@@ -115,14 +115,13 @@ class ApplicationUsageService:
     ) -> tuple[dict[int, Decimal], dict[int, Decimal], dict[int, list[dict]]]:
         """(all-time spend per application_id, spend in ``period`` per
         application_id, api_keys per application_id). Each key dict also
-        carries its own "_spend" (all-time) and "_period_spend" (recorded
-        only); an application's period spend adds the Prometheus backfill's
-        estimates, which have no key."""
+        carries its own "_spend" (all-time) and "_period_spend"."""
         app_ids = [app["id"] for app in applications]
         api_keys = await self._load_application_api_keys(app_ids, auth_db)
         key_ids = [k["id"] for k in api_keys]
         spend_by_key = await self._repo.get_spend_by_api_key_ids(key_ids)
         period_spend_by_key = await self._repo.get_period_spend_by_api_key_ids(period, key_ids)
+        # The backfill's estimates have no key: they count for the application only.
         backfilled = await self._repo.get_backfill_period_spend(period, app_ids)
 
         keys_by_app: dict[int, list[dict]] = {app_id: [] for app_id in app_ids}
@@ -137,11 +136,6 @@ class ApplicationUsageService:
             spend_by_app[key["application_id"]] += key["_spend"]
             period_spend_by_app[key["application_id"]] += key["_period_spend"]
         return spend_by_app, period_spend_by_app, keys_by_app
-
-    async def _period_block(self, period: UsagePeriod):
-        return period.to_schema(
-            await self._repo.get_usage_data_from(period), await self._repo.get_recorded_from(),
-        )
 
     async def get_summary(
         self, tenant_id: str, period: UsagePeriod, auth_db: Optional[AsyncSession]
@@ -160,7 +154,7 @@ class ApplicationUsageService:
         period_spend = sum(period_spend_by_app.values(), Decimal("0"))
 
         return ApplicationUsageSummaryResponse(
-            period=await self._period_block(period),
+            period=period.to_schema(await self._repo.get_usage_data_from(period)),
             totalApplications=len(applications),
             allocatedBudget=_money_percent(allocated_amount, tenant_budget),
             spendBudget=_money_percent(spend_amount, tenant_budget),
@@ -211,7 +205,7 @@ class ApplicationUsageService:
         )
         total = len(items)
         return ApplicationUsageListResponse(
-            period=await self._period_block(period), data=items[offset : offset + limit], total=total,
+            period=period.to_schema(await self._repo.get_usage_data_from(period)), data=items[offset : offset + limit], total=total,
         )
 
     async def get_application_detail(
@@ -258,7 +252,11 @@ class ApplicationUsageService:
             )
 
         return ApplicationUsageDetailResponse(
-            period=await self._period_block(period),
+            # recordedFrom: a period starting before it has estimated spend
+            # that no key's periodSpend includes (the drawer shows a dash).
+            period=period.to_schema(
+                await self._repo.get_usage_data_from(period), await self._repo.get_recorded_from(),
+            ),
             applicationId=application["id"],
             applicationName=application["name"],
             domain=application["domain"],

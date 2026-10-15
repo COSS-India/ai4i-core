@@ -14,15 +14,9 @@ from app.models.pay_per_use.budget_usage import BudgetUsage
 from app.models.pay_per_use.inference_type import InferenceType
 from app.models.pay_per_use.quota_usage import QuotaUsage
 from app.models.pay_per_use.tier import Tier
-from app.repositories.pay_per_use.period_usage import (
-    Backfill,
-    get_backfill,
-    period_sources,
-    tenant_pks,
-    usage_data_from,
-)
+from app.repositories.pay_per_use.period_usage import period_source, tenant_pks, usage_data_from
 from app.utils.billing_month import shift_billing_month
-from app.utils.usage_period import UsagePeriod, ist_midnight
+from app.utils.usage_period import UsagePeriod
 
 
 # tenants columns get_tenant_budgets / get_budgeted_tenant_budgets read.
@@ -76,8 +70,6 @@ def update_tier_cache(tier_id: str, name: str) -> None:
 class UsageRepository:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
-        self._backfill: Optional[Backfill] = None
-        self._backfill_read = False
 
     async def get_tenants_with_usage_tier(
         self,
@@ -367,49 +359,23 @@ class UsageRepository:
         result = await self._db.execute(stmt)
         return result.all()
 
-    async def get_backfill(self) -> Optional[Backfill]:
-        """The Prometheus backfill's span (None without one), read once."""
-        if not self._backfill_read:
-            self._backfill = await get_backfill(self._db)
-            self._backfill_read = True
-        return self._backfill
-
     async def get_period_usage(
         self,
         period: UsagePeriod,
         tenant_ids: list[str] | None = None,
         task_type_ids: list[int] | None = None,
-        include_backfill: bool = True,
     ):
         """Per (tenant, tier, inference type) units and costs in ``period`` —
-        from usage_events or daily_usage (see period_source), and the
-        Prometheus backfill's estimates unless ``include_backfill`` is False
-        (see period_sources) — with the first and last activity of each
-        group, so callers can order tiers and pick each tenant's most recent
-        one. A group can have a row from each source; callers add them up.
-        first_seen/last_seen are instants (a daily_usage day's IST midnight).
+        from usage_events or daily_usage (see period_source)
+        — with the first and last activity of each group, so callers can
+        order tiers and pick each tenant's most recent one.
 
         ``tenant_ids`` None means every tenant. Rows without a tenant (never
         written for billed API-key traffic) are skipped. ``task_type_ids``
         narrows to those catalogue ids. The task type's name and unit come
         from the catalogue, falling back to the row's own copy.
         """
-        if tenant_ids is not None and not tenant_pks(tenant_ids):
-            return []
-        backfill = await self.get_backfill() if include_backfill else None
-        rows = []
-        for source in period_sources(period, backfill):
-            for row in await self._period_usage_rows(period, source, tenant_ids, task_type_ids):
-                row = SimpleNamespace(**row._mapping)
-                for name in ("first_seen", "last_seen"):
-                    value = getattr(row, name)
-                    if value is not None and not isinstance(value, datetime):
-                        setattr(row, name, ist_midnight(value))
-                rows.append(row)
-        rows.sort(key=lambda r: r.tenant_id)
-        return rows
-
-    async def _period_usage_rows(self, period: UsagePeriod, source, tenant_ids, task_type_ids):
+        source = period_source(period)
         m = source.model
         task_type = func.coalesce(InferenceType.name, m.task_type)
         unit = func.coalesce(InferenceType.unit, source.unit)
@@ -436,22 +402,18 @@ class UsageRepository:
             .order_by(m.tenant_id)
         )
         if tenant_ids is not None:
-            stmt = stmt.where(m.tenant_id.in_(tenant_pks(tenant_ids)))
+            pks = tenant_pks(tenant_ids)
+            if not pks:
+                return []
+            stmt = stmt.where(m.tenant_id.in_(pks))
         if task_type_ids:
             stmt = stmt.where(m.inference_type_id.in_(task_type_ids))
         result = await self._db.execute(stmt)
         return result.all()
 
-    async def get_usage_data_from(self, period: UsagePeriod, include_backfill: bool = True) -> Optional[datetime]:
-        """When the usage data begins inside ``period`` (see period_usage.usage_data_from),
-        the backfill's estimates counting unless ``include_backfill`` is False."""
-        backfill = await self.get_backfill() if include_backfill else None
-        return await usage_data_from(self._db, period, backfill)
-
-    async def get_recorded_from(self) -> Optional[datetime]:
-        """When recorded usage starts (the backfill's end); None without a backfill."""
-        backfill = await self.get_backfill()
-        return backfill.until if backfill else None
+    async def get_usage_data_from(self, period: UsagePeriod) -> Optional[datetime]:
+        """When the usage data begins inside ``period`` (see period_usage.usage_data_from)."""
+        return await usage_data_from(self._db, period)
 
     async def get_tier_names(self) -> dict:
         """{tier_id: name} for every tier, read straight from ppu_tiers.

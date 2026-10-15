@@ -31,7 +31,7 @@ boundaries are IST midnight.
    picked up. Each day is aggregated per dimension key and upserted; rollup
    rows of that day the run did not write (a combination that no longer
    exists) are deleted. Rows backfilled from Prometheus (source 'backfill',
-   see usage_backfill) are never touched. billing_month is the UTC month of occurred_at, as the PPU
+   see scripts/usage-backfill) are never touched. billing_month is the UTC month of occurred_at, as the PPU
    consumer bills it, so the 00:00-05:30 IST rows of the 1st get their own
    row under the previous month. Names come from tiers, mm_services and mm_models here and from
    tenants and applications in the auth DB. Requests are counted from the
@@ -71,7 +71,7 @@ DIMENSIONS = (
     "tier_id", "service_id", "inference_type_id", "billing_month",
 )
 # Upsert target: uq_daily_usage_dimensions, NULLS NOT DISTINCT. source is
-# left to its default, 'rollup'; usage_backfill writes 'backfill' rows, which
+# left to its default, 'rollup'; scripts/usage-backfill writes 'backfill' rows, which
 # this job never touches.
 CONFLICT_KEY = DIMENSIONS + ("source",)
 MEASURES = (

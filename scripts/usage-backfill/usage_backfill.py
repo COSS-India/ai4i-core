@@ -5,17 +5,20 @@ dashboard read Prometheus, which keeps a limited number of days (15 by
 default) and drops the oldest every day. This job keeps what Prometheus still
 has, as estimated daily_usage rows (source = 'backfill'), for the days before
 usage_events begins. Run it once per environment, after migration
-f6c8e0a2b4d7 (daily_usage.source, usage_backfill):
+f6c8e0a2b4d7 (daily_usage.source, usage_backfill), with pyjob's requirements
+installed and its database variables set (see README.md):
 
-    PROMETHEUS_URL=... python main.py --job usage_backfill
+    python scripts/usage-backfill/usage_backfill.py --prometheus-url URL
 
-It reads Prometheus, then loads daily_usage, in one run.
+It reads Prometheus, then loads daily_usage, in one run. The Usage
+Dashboard shows the rows where USAGE_DAILY_ROLLUP_ENABLED=true (platform-core
+reads past days from daily_usage then); with it off they're kept but not read.
 
 Reading Prometheus
 ------------------
-From the first whole IST day after Prometheus' oldest sample (or
-USAGE_BACKFILL_FROM, which may not be earlier) up to USAGE_BACKFILL_UNTIL
-(default: the first usage_events row), one window per IST day; the last one
+From the first whole IST day after Prometheus' oldest sample (or --from,
+which may not be earlier) up to --until (default: the first usage_events
+row), one window per IST day; the last one
 ends at the cut-off, so nothing is counted by both.
 
 The oldest sample is looked up, not derived from the configured retention:
@@ -69,30 +72,52 @@ runs, up to the cut-off), which tells the Usage Dashboard which figures are
 estimates. Refuses to load when usage_events has rows before the cut-off,
 which would count those days twice.
 
-To take it all back out, run the usage_backfill_undo job: it deletes the
+Then the day the backfill ends on, when it ends mid-day, is rolled up from
+usage_events (daily_usage_consolidation._rollup_day). The Usage Dashboard
+reads a past day from daily_usage when it has rows for it
+(USAGE_DAILY_ROLLUP_ENABLED), so that day needs its rollup rows (the recorded
+part) next to the backfill rows (the part before), or the recorded part would
+go missing. The rollup only rewrites rollup rows.
+
+To take it all back out, run usage_backfill_undo.py: it deletes the
 backfill rows and the usage_backfill row, and nothing else. Running this job
 again afterwards reads Prometheus again, which may no longer hold the oldest
 days.
 """
 from __future__ import annotations
 
+import argparse
+import asyncio
 import math
 import re
+import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
+from pathlib import Path
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 import httpx
-from ai4i_core.logging import get_logger
+from ai4i_core.logging import configure_logging, get_logger
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bootstrap.config import get_settings
-from bootstrap.database import auth_session, platform_core_session
-from jobs.monthly_partition_rollover import _create_months, _partitions
+# pyjob's code: its database settings and sessions (PLATFORM_CORE_DB_*,
+# AUTH_DB_*, POSTGRES_*), month partitions and the daily rollup.
+PYJOB_ROOT = Path(__file__).resolve().parents[2] / "services" / "pyjob"
+if str(PYJOB_ROOT) not in sys.path:
+    sys.path.insert(0, str(PYJOB_ROOT))
+
+from bootstrap.database import (  # noqa: E402
+    auth_session,
+    close_databases,
+    init_databases,
+    platform_core_session,
+)
+from jobs.daily_usage_consolidation import _rollup_day  # noqa: E402
+from jobs.monthly_partition_rollover import _create_months, _partitions  # noqa: E402
 
 logger = get_logger(__name__)
 
@@ -271,11 +296,16 @@ class Collected:
     samples: list[dict]      # {usage_date, billing_month, kind, task, labels, value}
 
 
-async def collect(prometheus: Prometheus, first_day: Optional[date], until: Optional[datetime]) -> Collected:
+async def collect(
+    prometheus: Prometheus,
+    first_day: Optional[date],
+    until: Optional[datetime],
+    path_label: str = "exported_endpoint",
+) -> Collected:
     """Every window's samples, from first_day (default: the first whole day
     after Prometheus' oldest sample, and never earlier) up to until (default:
-    the first usage_events row)."""
-    settings = get_settings()
+    the first usage_events row). ``path_label`` is the label carrying the
+    request path (see --path-label)."""
     now = datetime.now(timezone.utc)
     if until is None:
         until = await _first_usage_event() or now
@@ -290,13 +320,12 @@ async def collect(prometheus: Prometheus, first_day: Optional[date], until: Opti
         first_day = earliest
     elif first_day < earliest:
         raise BackfillError(
-            f"USAGE_BACKFILL_FROM={first_day} is before {earliest}, the first whole day after Prometheus'"
+            f"--from {first_day} is before {earliest}, the first whole day after Prometheus'"
             f" oldest sample ({oldest.isoformat()}): that day's start isn't in Prometheus any more, so"
             " every series would count its lifetime total as that day's usage. Leave it unset, or set it"
             f" to {earliest} or later."
         )
 
-    path_label = settings.PROMETHEUS_API_PATH_LABEL
     samples = []
     spans = windows(first_day, until)
     for window in spans:
@@ -647,7 +676,7 @@ async def load(collected: Collected) -> None:
         async with session.begin():
             locked = (
                 await session.execute(
-                    text("SELECT pg_try_advisory_xact_lock(hashtext('pyjob:usage_backfill'))")
+                    text("SELECT pg_try_advisory_xact_lock(hashtext('usage_backfill'))")
                 )
             ).scalar_one()
             if not locked:
@@ -660,7 +689,7 @@ async def load(collected: Collected) -> None:
                 raise BackfillError(
                     f"usage_events has rows from {first_event.isoformat()}, before the cut-off"
                     f" {until.isoformat()}: those would be counted twice. Run again without"
-                    " USAGE_BACKFILL_UNTIL, or with it at or before the first usage_events row."
+                    " --until, or with it at or before the first usage_events row."
                 )
 
             lookups = await _lookups(session, collected.samples)
@@ -684,6 +713,12 @@ async def load(collected: Collected) -> None:
                 await session.execute(_INSERT, rows)
             await session.execute(_COVERAGE, {"first_day": days[0], "until": until})
 
+    # The boundary day: backfill rows before the cut-off, rollup rows after it.
+    boundary = until.astimezone(IST)
+    if boundary.time() != time() and boundary.date() < datetime.now(IST).date():
+        await _rollup_day(boundary.date())
+        logger.info("Rolled up the day the backfill ends on | usage_date=%s", boundary.date())
+
     by_day: dict[date, list[dict]] = defaultdict(list)
     for row in rows:
         by_day[row["usage_date"]].append(row)
@@ -704,14 +739,57 @@ async def load(collected: Collected) -> None:
 # ── Entry point ────────────────────────────────────────────────────────────
 
 
-async def run() -> None:
-    settings = get_settings()
-    if not settings.PROMETHEUS_URL:
-        raise BackfillError("PROMETHEUS_URL must be set")
-    until = settings.USAGE_BACKFILL_UNTIL
+async def run(
+    prometheus_url: str,
+    first_day: Optional[date] = None,
+    until: Optional[datetime] = None,
+    path_label: str = "exported_endpoint",
+    timeout: float = 60.0,
+) -> None:
     if until is not None and until.tzinfo is None:
         until = until.replace(tzinfo=IST)
-    logger.info("Starting usage backfill | prometheus=%s", settings.PROMETHEUS_URL)
-    async with httpx.AsyncClient(timeout=settings.PROMETHEUS_TIMEOUT_SECONDS) as client:
-        collected = await collect(Prometheus(client, settings.PROMETHEUS_URL), settings.USAGE_BACKFILL_FROM, until)
+    logger.info("Starting usage backfill | prometheus=%s", prometheus_url)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        collected = await collect(Prometheus(client, prometheus_url), first_day, until, path_label)
     await load(collected)
+
+
+def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Backfill the Usage Dashboard's history before usage_events from Prometheus (one-off).",
+    )
+    parser.add_argument("--prometheus-url", required=True, help="Base URL of the Prometheus to read")
+    parser.add_argument(
+        "--path-label", default="exported_endpoint",
+        help="Label carrying the request path: exported_endpoint behind a k8s ServiceMonitor (default),"
+             " endpoint on local docker-compose (platform-core's PROMETHEUS_API_PATH_LABEL)",
+    )
+    parser.add_argument(
+        "--from", dest="first_day", type=date.fromisoformat,
+        help="First IST day, YYYY-MM-DD. Default: the first whole day after Prometheus' oldest sample;"
+             " an earlier day is refused (it would overcount)",
+    )
+    parser.add_argument(
+        "--until", type=datetime.fromisoformat,
+        help="Backfill up to this instant (ISO 8601; IST without an offset). Default: the first usage_events row",
+    )
+    parser.add_argument("--timeout", type=float, default=60.0, help="Seconds per Prometheus query (default 60)")
+    return parser.parse_args(argv)
+
+
+async def _main(args: argparse.Namespace) -> None:
+    init_databases()
+    try:
+        await run(args.prometheus_url, args.first_day, args.until, args.path_label, args.timeout)
+    finally:
+        await close_databases()
+
+
+def main(argv: Optional[list[str]] = None) -> None:
+    args = _parse_args(argv)
+    configure_logging(service_name="usage-backfill")
+    asyncio.run(_main(args))
+
+
+if __name__ == "__main__":
+    main()

@@ -159,8 +159,7 @@ class TestGetPeriodUsage:
 
         (row,) = await UsageRepository(session).get_period_usage(yesterday, tenant_ids=[str(_TENANT)])
         assert (row.task_type, row.total_units, row.cost) == ("nmt", 1900, Decimal("0.080000"))
-        # A day's IST midnight: daily_usage days come back as instants, like usage_events'.
-        assert row.first_seen == row.last_seen == yesterday.start
+        assert row.first_seen == row.last_seen == yesterday.from_date
 
     async def test_past_periods_read_usage_events_until_the_rollup_is_on(self, session, rollup_off):
         """Without the rollup daily_usage stays empty, so reading it would turn

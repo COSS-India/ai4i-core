@@ -223,8 +223,8 @@ def _first_usage_cache_key(scope_tenant: Optional[str], scope_tenant_name: Optio
     v4: the lookback is now capped at the retention Prometheus reports, so a
     v3 value found by the fixed 400-day lookback may lie past it."""
     if not (scope_tenant or scope_tenant_name):
-        return "metering:first-usage:v5:all"
-    return f"metering:first-usage:v5:{scope_tenant or ''}:{scope_tenant_name or ''}"
+        return "metering:first-usage:v4:all"
+    return f"metering:first-usage:v4:{scope_tenant or ''}:{scope_tenant_name or ''}"
 
 
 def _parse_cached_first_request(cached: dict) -> Optional[datetime]:
@@ -599,7 +599,7 @@ async def get_overview(
     ranking_active = is_admin and not scope_tenant
     # v9: usage_events source (v8: period.dataFrom/partial; v7: onboarded_at; v6: period filter).
     cache_key = (
-        f"metering:overview:v10:{usage_period.cache_part}:{scope_tenant_name or 'all'}:"
+        f"metering:overview:v9:{usage_period.cache_part}:{scope_tenant_name or 'all'}:"
         f"{_caller_role_label(request)}:{','.join(task_type_filter) if task_type_filter else 'all'}"
         + (f":{limit}" if ranking_active else "")
     )
@@ -721,7 +721,7 @@ async def get_overview(
             role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org,
             task_types=task_type_filter,
             # When the source's data begins in the period (dataFrom / partial),
-            # and when recorded usage starts (recordedFrom).
+            # and when recorded usage starts (recordedFrom, for the estimates notice).
             period=usage_period.to_schema(data_since, recorded_from),
         ),
         kpis=kpis,
@@ -953,7 +953,7 @@ async def get_model_consumption(
 
     # v7: usage_events source (v6: period.dataFrom/partial; v5: period filter and native_breakdown).
     cache_key = (
-        f"metering:model-consumption:v8:{usage_period.cache_part}:{limit}:"
+        f"metering:model-consumption:v7:{usage_period.cache_part}:{limit}:"
         f"{scope_tenant_name or 'all'}:"
         f"{','.join(task_type_filter) if task_type_filter else 'all'}:{_caller_role_label(request)}"
     )
@@ -994,16 +994,14 @@ async def get_model_consumption(
 
     # After the gather: it reads the shared core-DB session.
     data_since = await svc.data_since(usage_period)
-    recorded_from = await svc.recorded_from()
     generated_at = iso_ist(datetime.now(tz=timezone.utc))
 
     response = ModelConsumptionResponse(
         scope=PeriodScope(
             role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org,
             task_types=task_type_filter,
-            # When the source's data begins in the period (dataFrom / partial),
-            # and when recorded usage starts (recordedFrom).
-            period=usage_period.to_schema(data_since, recorded_from),
+            # When the source's data begins in the period (dataFrom / partial).
+            period=usage_period.to_schema(data_since),
         ),
         summary=summary,
         top_models=top_models,

@@ -1,7 +1,7 @@
-"""Undo the Prometheus backfill (jobs/usage_backfill.py): removes exactly what
+"""Undo the Prometheus backfill (usage_backfill.py): removes exactly what
 its loads wrote, and nothing else.
 
-    python main.py --job usage_backfill_undo
+    python scripts/usage-backfill/usage_backfill_undo.py
 
 In one transaction:
 
@@ -22,11 +22,17 @@ the oldest days.
 """
 from __future__ import annotations
 
-from ai4i_core.logging import get_logger
+import asyncio
+import sys
+from pathlib import Path
+
+from ai4i_core.logging import configure_logging, get_logger
 from sqlalchemy import text
 
-from bootstrap.database import platform_core_session
-from jobs.usage_backfill import SOURCE, BackfillError
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from usage_backfill import SOURCE, BackfillError  # noqa: E402  (also puts pyjob on sys.path)
+
+from bootstrap.database import close_databases, init_databases, platform_core_session  # noqa: E402
 
 logger = get_logger(__name__)
 
@@ -35,7 +41,7 @@ async def undo() -> None:
     async with platform_core_session() as session:
         async with session.begin():
             locked = (
-                await session.execute(text("SELECT pg_try_advisory_xact_lock(hashtext('pyjob:usage_backfill'))"))
+                await session.execute(text("SELECT pg_try_advisory_xact_lock(hashtext('usage_backfill'))"))
             ).scalar_one()
             if not locked:
                 raise BackfillError("a usage_backfill load is running; undo after it finishes")
@@ -68,5 +74,18 @@ async def undo() -> None:
     )
 
 
-async def run() -> None:
-    await undo()
+async def _main() -> None:
+    init_databases()
+    try:
+        await undo()
+    finally:
+        await close_databases()
+
+
+def main() -> None:
+    configure_logging(service_name="usage-backfill-undo")
+    asyncio.run(_main())
+
+
+if __name__ == "__main__":
+    main()

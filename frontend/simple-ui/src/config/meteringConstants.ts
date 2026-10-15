@@ -32,6 +32,7 @@ export const METERING = {
     NOTICE_PREFIX: "Usage before",
     NOTICE_SUFFIX: "is estimated from monitoring data.",
     KEY_BREAKDOWN_UNAVAILABLE: "Per-key breakdown unavailable for estimated days.",
+    KEY_SPEND_UNAVAILABLE: "—",
   },
   QUERY: {
     STALE_TIME_MS: 60_000,

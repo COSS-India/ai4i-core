@@ -14,11 +14,6 @@ everything else — today, partial days at a range's edges, days not rolled up
 yet — reads usage_events, so a day missing from the rollup is never shown as
 zero. The rollup counts requests the same way (request rows one each,
 older status-carrying rows once per correlation id), so both paths agree.
-
-Days before usage_events begins read the Prometheus backfill (daily_usage
-rows with source 'backfill', estimates) whatever the rollup setting: they
-cover the span usage_backfill records, up to where usage_events takes over,
-so they add to the other reads without overlapping them.
 """
 from __future__ import annotations
 
@@ -32,9 +27,8 @@ from typing import Any, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.pay_per_use.daily_usage import SOURCE_BACKFILL, SOURCE_ROLLUP
 from app.models.pay_per_use.usage_event import PRE_CUTOVER_ROWS, REQUEST_ROWS
-from app.repositories.pay_per_use.period_usage import Backfill, daily_rollup_enabled, get_backfill
+from app.repositories.pay_per_use.period_usage import daily_rollup_enabled
 from app.utils.usage_period import IST
 
 # Requests and failed requests among usage_events rows (see the module docstring).
@@ -102,16 +96,6 @@ class MeteringUsageRepository:
         # request-scoped AsyncSession, which isn't safe for concurrent use:
         # every query on it goes through this lock.
         self.lock = asyncio.Lock()
-        self._backfill: Optional[Backfill] = None
-        self._backfill_read = False
-
-    async def backfill(self) -> Optional[Backfill]:
-        """The Prometheus backfill's span (None without one), read once."""
-        if not self._backfill_read:
-            async with self.lock:
-                self._backfill = await get_backfill(self._db)
-            self._backfill_read = True
-        return self._backfill
 
     async def _all(self, sql: str, params: dict) -> list:
         async with self.lock:
@@ -131,20 +115,6 @@ class MeteringUsageRepository:
             clauses.append("inference_type_id = ANY(:type_ids)")
             params["type_ids"] = list(type_ids)
         return "".join(f" AND {c}" for c in clauses)
-
-    @staticmethod
-    def _backfill_days(backfill: Optional[Backfill], start: datetime, end: datetime) -> list[date]:
-        """The backfill's days inside [start, end): each covers its IST day up
-        to the backfill's end, so it counts when that much lies inside."""
-        if backfill is None or not backfill.overlaps(start, end):
-            return []
-        day = max(backfill.first_day, _ist_day(start))
-        days = []
-        while _ist_midnight(day) < min(backfill.until, end):
-            if _ist_midnight(day) >= start and min(_ist_midnight(day + timedelta(days=1)), backfill.until) <= end:
-                days.append(day)
-            day += timedelta(days=1)
-        return days
 
     @staticmethod
     def _rollup_days(start: datetime, end: datetime) -> list[date]:
@@ -178,9 +148,8 @@ class MeteringUsageRepository:
         days = self._rollup_days(start, end)
         rolled: set[date] = set()
 
-        async def add_daily(source: str, source_days: list[date]) -> set[date]:
-            """Adds daily_usage's ``source`` rows of ``source_days``; returns the days it had."""
-            params: dict = {"days": source_days, "source": source}
+        if days:
+            params: dict = {"days": days}
             where = self._filters(tenant_id, type_ids, params)
             cols = [_GROUPS[g][0] for g in group_by]
             select_cols = ", ".join(f"{c} AS g{i}" for i, c in enumerate(cols))
@@ -189,20 +158,14 @@ class MeteringUsageRepository:
                 " sum(request_count) AS requests, sum(failed_count) AS failed,"
                 " sum(total_units) AS units, sum(cached_input_units) AS cached_units,"
                 " sum(output_units) AS output_units"
-                f" FROM daily_usage WHERE source = :source AND usage_date = ANY(:days){where}"
+                f" FROM daily_usage WHERE usage_date = ANY(:days){where}"
                 f" GROUP BY usage_date{''.join(', ' + c for c in cols)}",
                 params,
             )
             for row in rows:
+                rolled.add(row.d)
                 key = tuple(getattr(row, f"g{i}") for i in range(len(cols)))
                 result.setdefault(key, UsageAgg()).add(row)
-            return {row.d for row in rows}
-
-        if days:
-            rolled = await add_daily(SOURCE_ROLLUP, days)
-        backfill_days = self._backfill_days(await self.backfill(), start, end)
-        if backfill_days:
-            await add_daily(SOURCE_BACKFILL, backfill_days)
 
         # Everything the rollup didn't answer: partial days at the edges, today,
         # and whole days it has no rows for (not rolled up yet, or no usage).
@@ -278,37 +241,19 @@ class MeteringUsageRepository:
         )
 
     async def first_usage(self, tenant_id: Optional[int]) -> Optional[datetime]:
-        """When API-key usage begins: the first backfilled day with the
-        tenant's (platform-wide: anyone's) usage, else when recorded usage
-        begins (_first_recorded)."""
-        if await self.backfill() is not None:
-            params: dict = {"source": SOURCE_BACKFILL}
-            where = ""
-            if tenant_id is not None:
-                where, params["tenant_id"] = " AND tenant_id = :tenant_id", tenant_id
-            first_day = await self._scalar(
-                f"SELECT min(usage_date) FROM daily_usage WHERE source = :source{where}", params,
-            )
-            if first_day is not None:
-                return _ist_midnight(first_day)
-        return await self._first_recorded(tenant_id)
-
-    async def _first_recorded(self, tenant_id: Optional[int]) -> Optional[datetime]:
-        """The tenant's first usage_events row (by its (tenant_id,
-        occurred_at) index), or platform-wide the first day in the rollup —
-        usage_events has no index to answer a platform-wide min. The rollup
-        only covers the days since it started running, so rows from before
-        its first day are checked too: a range read of just that stretch
-        (BRIN). Without a rollup, the whole table is read."""
+        """When API-key usage begins: the tenant's first usage_events row (by
+        its (tenant_id, occurred_at) index), or platform-wide the first day in
+        the rollup — usage_events has no index to answer a platform-wide min.
+        The rollup only covers the days since it started running, so rows
+        from before its first day are checked too: a range read of just that
+        stretch (BRIN). Without a rollup, the whole table is read."""
         if tenant_id is not None:
             return await self._scalar(
                 "SELECT min(occurred_at) FROM usage_events WHERE tenant_id = :tenant_id",
                 {"tenant_id": tenant_id},
             )
         first_day = (
-            await self._scalar(
-                "SELECT min(usage_date) FROM daily_usage WHERE source = :source", {"source": SOURCE_ROLLUP},
-            )
+            await self._scalar("SELECT min(usage_date) FROM daily_usage", {})
             if daily_rollup_enabled() else None
         )
         if first_day is None:

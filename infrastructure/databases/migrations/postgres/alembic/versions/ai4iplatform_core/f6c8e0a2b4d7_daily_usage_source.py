@@ -1,13 +1,13 @@
 """daily_usage.source and usage_backfill: rows backfilled from Prometheus
 
 usage_events only has data from the day its writer shipped. The days before
-it are backfilled into daily_usage from Prometheus by the pyjob
-usage_backfill job, as estimates: request counts and units from Prometheus'
+it are backfilled into daily_usage from Prometheus by
+scripts/usage-backfill, as estimates: request counts and units from Prometheus'
 daily increases, cost at the services' current prices. source tells the two
 apart:
 
   rollup    written by daily_usage_consolidation from usage_events (default)
-  backfill  written by usage_backfill from Prometheus
+  backfill  written by scripts/usage-backfill from Prometheus
 
 source joins the dimension key (uq_daily_usage_dimensions), so the day
 usage_events starts on can hold both: backfill rows for the part of the day

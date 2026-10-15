@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from jobs.usage_backfill import (  # noqa: E402
+from usage_backfill import (  # noqa: E402
     Lookups,
     Pricing,
     Service,

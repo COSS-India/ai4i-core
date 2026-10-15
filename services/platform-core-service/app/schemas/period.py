@@ -30,7 +30,7 @@ class Period(BaseModel):
     # "no data", not "no usage".
     partial: bool = False
     # When recorded usage starts (IST, +05:30): usage before it is estimated,
-    # backfilled from Prometheus (pyjob usage_backfill). The same for every
-    # period; null when nothing is backfilled. A period starting before it
-    # includes estimates.
+    # backfilled from Prometheus (scripts/usage-backfill). Set on Overview and on
+    # the Applications drawer, where a period starting before it shows the
+    # estimates notice and no per-key split; null without a backfill.
     recordedFrom: Optional[str] = None

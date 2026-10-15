@@ -58,13 +58,13 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
   const tips = copy.TOOLTIPS;
   const cols = copy.TABLE;
 
-  // Estimated spend has no API key, so a period with estimated days shows the
-  // application's total only, not a per-key split of it.
+  // Estimated spend has no API key: for a period with estimated days, every
+  // key shows a dash for its period spend, and the total is the application's.
   const hasEstimates = periodIncludesEstimates(detail?.period);
 
   const apiKeyColumns = useMemo<DataTableColumn<ApiKeyRow>[]>(() => {
     if (!detail) return [];
-    const columns: DataTableColumn<ApiKeyRow>[] = [
+    return [
       {
         id: "keyName",
         header: cols.API_KEY,
@@ -122,8 +122,12 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
         hint: tips.API_KEY_PERIOD_SPEND,
         width: "16%",
         sortable: true,
-        sortAccessor: (key) => key.periodSpend.amount,
-        cell: (key) => (
+        sortAccessor: (key) => (hasEstimates ? 0 : key.periodSpend.amount),
+        cell: (key) => hasEstimates ? (
+          <Text fontSize="13px" color="gray.500">
+            {METERING.ESTIMATES.KEY_SPEND_UNAVAILABLE}
+          </Text>
+        ) : (
           <PeriodSpendCell
             amount={key.periodSpend.amount}
             percentage={key.periodSpend.percentage}
@@ -197,7 +201,6 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
         ),
       },
     ];
-    return hasEstimates ? columns.filter((column) => column.id !== "periodSpend") : columns;
   }, [cols, currency, detail, hasEstimates, tips]);
 
   let body: React.ReactNode = null;

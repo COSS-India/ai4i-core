@@ -107,7 +107,6 @@ class TestSchema:
         assert (after.dataFrom, after.partial) == (None, True)
 
     def test_recorded_from_is_echoed_in_ist(self):
-        """The backfill's end, the same whatever the period: the UI compares it with start."""
         period = _resolve("last_7_days")
         block = period.to_schema(period.start, datetime(2026, 10, 4, 6, 0, tzinfo=timezone.utc))
         assert block.recordedFrom == "2026-10-04T11:30:00+05:30"

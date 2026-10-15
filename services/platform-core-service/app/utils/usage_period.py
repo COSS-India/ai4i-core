@@ -98,9 +98,8 @@ class UsagePeriod:
         source starts having data: the Prometheus/OpenSearch retention edge,
         or the first recorded usage event. FULL_COVERAGE (the default) means
         the whole period is covered; None means the source has no data.
-        ``recorded_from`` is when recorded usage starts, usage before it being
-        the Prometheus backfill's estimates (see period_usage.Backfill); None
-        without a backfill."""
+        ``recorded_from`` is when recorded usage starts (the Prometheus
+        backfill's end, see period_usage.backfill_until); None without one."""
         if isinstance(data_since, _FullCoverage):
             data_from, partial = self.start, False
         elif data_since is None or data_since >= self.end:
