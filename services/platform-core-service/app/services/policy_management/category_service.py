@@ -80,15 +80,12 @@ async def update_category_status(
 
     if redis is not None:
         from app.services.policy_management.policy_cache import cache_policy
-        sub_cat_result = await session.execute(
-            select(SubCategory.id).where(SubCategory.category_id == category_id)
+        joined = await session.execute(
+            select(Policy, SubCategory)
+            .join(SubCategory, Policy.sub_category_id == SubCategory.id)
+            .where(SubCategory.category_id == category_id)
         )
-        sub_cat_ids = [r[0] for r in sub_cat_result.all()]
-        if sub_cat_ids:
-            policy_result = await session.execute(
-                select(Policy).where(Policy.sub_category_id.in_(sub_cat_ids))
-            )
-            for policy in policy_result.scalars().all():
-                await cache_policy(policy, session, redis)
+        for policy, sub_cat in joined.all():
+            await cache_policy(policy, session, redis, sub_cat=sub_cat, category=row)
 
     return CategoryItem.model_validate(row)

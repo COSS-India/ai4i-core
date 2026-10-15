@@ -24,19 +24,29 @@ def policy_cache_key(policy_id: int) -> str:
 GLOBAL_POLICY_IDS_KEY = "global:policy_ids"
 
 
-async def cache_policy(policy: Policy, session: AsyncSession, redis: Redis) -> Optional[dict]:
+async def cache_policy(
+    policy: Policy,
+    session: AsyncSession,
+    redis: Redis,
+    *,
+    sub_cat: Optional[SubCategory] = None,
+    category: Optional[Category] = None,
+) -> Optional[dict]:
     """Store full policy data (with sub-category, category, and policy types) in Redis.
+
+    Pass pre-loaded ``sub_cat`` and ``category`` to avoid redundant DB round-trips
+    when caching many policies that share the same ancestors.
 
     Returns the cached payload dict on success, or None when caching fails.
     """
     try:
-        sub_cat_result = await session.execute(
-            select(SubCategory).where(SubCategory.id == policy.sub_category_id)
-        )
-        sub_cat = sub_cat_result.scalar_one_or_none()
+        if sub_cat is None:
+            sub_cat_result = await session.execute(
+                select(SubCategory).where(SubCategory.id == policy.sub_category_id)
+            )
+            sub_cat = sub_cat_result.scalar_one_or_none()
 
-        category = None
-        if sub_cat is not None:
+        if category is None and sub_cat is not None:
             cat_result = await session.execute(
                 select(Category).where(Category.id == sub_cat.category_id)
             )
