@@ -2,8 +2,8 @@ import { METERING } from "../config/meteringConstants";
 import type { MeteringPeriodEcho } from "../types/metering";
 
 /**
- * An API coverage instant (IST, +05:30) for display, in IST: "8 Oct 2026, 11:30",
- * or just the date at IST midnight.
+ * An API instant (IST, +05:30) for display, in IST: "8 Oct 2026, 11:30", or
+ * just the date at IST midnight.
  */
 export function formatCoverageInstant(iso: string): string {
   const d = new Date(iso);
@@ -23,28 +23,17 @@ export function formatCoverageInstant(iso: string): string {
   return time === "00:00" ? date : `${date}, ${time}`;
 }
 
-/** Where the period's estimates end, in epoch seconds; null when nothing is estimated. */
-export function estimatedUntilSeconds(period?: MeteringPeriodEcho | null): number | null {
-  if (!period?.estimated || !period.estimatedUntil) return null;
-  const ms = new Date(period.estimatedUntil).getTime();
-  return Number.isNaN(ms) ? null : ms / 1000;
+/** The period starts before recorded usage does, so part of it is estimated. */
+export function periodIncludesEstimates(period?: MeteringPeriodEcho | null): boolean {
+  if (!period?.recordedFrom) return false;
+  const start = new Date(period.start).getTime();
+  const recordedFrom = new Date(period.recordedFrom).getTime();
+  return !Number.isNaN(start) && !Number.isNaN(recordedFrom) && start < recordedFrom;
 }
 
-/**
- * The note a tab shows about how much of the period its figures cover, or null
- * when there's nothing to say: data missing or incomplete at the start of the
- * period (`partial` with a `dataFrom`), and figures that are estimates (`estimated`).
- * A period with no data at all is left to the tab's own empty state.
- */
-export function periodCoverageNotice(period?: MeteringPeriodEcho | null): string | null {
-  if (!period) return null;
-  const copy = METERING.COVERAGE;
-  const parts: string[] = [];
-  if (period.partial && period.dataFrom) {
-    parts.push(`${copy.INCOMPLETE_PREFIX} ${formatCoverageInstant(period.dataFrom)} ${copy.INCOMPLETE_SUFFIX}`);
-  }
-  if (period.estimated && period.estimatedUntil) {
-    parts.push(`${copy.ESTIMATED_PREFIX} ${formatCoverageInstant(period.estimatedUntil)} ${copy.ESTIMATED_SUFFIX}`);
-  }
-  return parts.length ? parts.join(" ") : null;
+/** The dashboard's notice for a period that includes estimated usage, else null. */
+export function estimatedUsageNotice(period?: MeteringPeriodEcho | null): string | null {
+  if (!period?.recordedFrom || !periodIncludesEstimates(period)) return null;
+  const copy = METERING.ESTIMATES;
+  return `${copy.NOTICE_PREFIX} ${formatCoverageInstant(period.recordedFrom)} ${copy.NOTICE_SUFFIX}`;
 }

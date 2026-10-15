@@ -29,10 +29,8 @@ class Period(BaseModel):
     # True when the source doesn't cover the whole period, so a zero can mean
     # "no data", not "no usage".
     partial: bool = False
-    # True when part of the period's figures are estimates: days before usage
-    # recording began, backfilled from Prometheus (requests and units from its
-    # daily totals, cost at today's prices). estimatedUntil is where the
-    # estimates end (exclusive; IST, +05:30): figures from dataFrom up to it
-    # are estimated, from it on recorded. null when nothing is estimated.
-    estimated: bool = False
-    estimatedUntil: Optional[str] = None
+    # When recorded usage starts (IST, +05:30): usage before it is estimated,
+    # backfilled from Prometheus (pyjob usage_backfill). The same for every
+    # period; null when nothing is backfilled. A period starting before it
+    # includes estimates.
+    recordedFrom: Optional[str] = None

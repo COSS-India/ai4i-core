@@ -62,8 +62,6 @@ export interface RequestVolumeChartPoint {
   requests: number;
   successful: number;
   failed: number;
-  /** The bucket starts before the period's estimates end (daily and weekly buckets). */
-  estimated?: boolean;
 }
 
 /** X-axis label format per chart scale (HH:mm or DD MMM). */

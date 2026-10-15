@@ -397,7 +397,7 @@ def _overview_svc() -> MagicMock:
     svc.first_request_at = AsyncMock(return_value=None)
     svc.refresh_retention = AsyncMock()
     svc.data_since = AsyncMock(return_value=_utc(2020, 1, 1))
-    svc.estimated_until = AsyncMock(return_value=None)
+    svc.recorded_from = AsyncMock(return_value=None)
     svc.registry_model_count = AsyncMock(return_value=None)
     svc.model_breakdown = AsyncMock(return_value=None)
     return svc
@@ -490,7 +490,7 @@ class TestOverviewPeriod:
             "key": "custom", "from": "2026-09-20", "to": "2026-09-22",
             "start": "2026-09-20T00:00:00+05:30", "end": "2026-09-23T00:00:00+05:30",
             "timezone": "Asia/Kolkata",
-            "dataFrom": "2026-09-20T00:00:00+05:30", "partial": False, "estimated": False, "estimatedUntil": None,
+            "dataFrom": "2026-09-20T00:00:00+05:30", "partial": False, "recordedFrom": None,
         }
         assert ":custom:" in redis.set.call_args.args[0]
 
@@ -501,7 +501,7 @@ class TestOverviewPeriod:
         of the figures looking complete."""
         svc = _overview_svc()
         svc.data_since = AsyncMock(return_value=_utc(2026, 9, 20, 18, 30))
-        svc.estimated_until = AsyncMock(return_value=None)
+        svc.recorded_from = AsyncMock(return_value=None)
         response = await _call_overview(svc, period="custom", from_="2026-09-20", to="2026-09-22")
 
         period = response.scope.period
@@ -512,7 +512,7 @@ class TestOverviewPeriod:
     async def test_no_data_for_the_range_has_no_data_from(self):
         svc = _overview_svc()
         svc.data_since = AsyncMock(return_value=None)
-        svc.estimated_until = AsyncMock(return_value=None)
+        svc.recorded_from = AsyncMock(return_value=None)
         response = await _call_overview(svc, period="custom", from_="2026-09-20", to="2026-09-22")
         assert (response.scope.period.dataFrom, response.scope.period.partial) == (None, True)
 
@@ -852,7 +852,7 @@ class TestRoutesRefreshRetention:
         svc.registry_model_count = AsyncMock(return_value=None)
         svc.refresh_retention = AsyncMock()
         svc.data_since = AsyncMock(return_value=_utc(2020, 1, 1))
-        svc.estimated_until = AsyncMock(return_value=None)
+        svc.recorded_from = AsyncMock(return_value=None)
         await get_model_consumption(
             request=_admin_request(), svc=svc, redis=_empty_redis(), period=None,
             from_=None, to=None, tenant_id=None, limit=10, task_types=None,
@@ -890,7 +890,7 @@ class TestModelConsumptionPeriod:
         svc.registry_model_count = AsyncMock(return_value=None)
         svc.refresh_retention = AsyncMock()
         svc.data_since = AsyncMock(return_value=_utc(2020, 1, 1))
-        svc.estimated_until = AsyncMock(return_value=None)
+        svc.recorded_from = AsyncMock(return_value=None)
         return svc
 
     async def _call(self, svc, **params):

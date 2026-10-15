@@ -30,14 +30,11 @@ export interface MeteringPeriodEcho {
   end: string;
   /** Always "Asia/Kolkata". */
   timezone: string;
-  /** Where the data behind the figures begins in the period (IST, +05:30); null when there is none. */
-  dataFrom?: string | null;
-  /** True when the data covers only part of the period (or none of it): a 0 may mean "no data". */
-  partial?: boolean;
-  /** True when part of the figures are estimates (days before usage was recorded, backfilled from monitoring data). */
-  estimated?: boolean;
-  /** Where the estimates end (exclusive, IST, +05:30); null when nothing is estimated. */
-  estimatedUntil?: string | null;
+  /**
+   * When recorded usage starts (IST, +05:30); usage before it is estimated from
+   * monitoring data. Null when nothing is estimated.
+   */
+  recordedFrom?: string | null;
 }
 export type MeteringTopN = 10 | 25;
 export type MeteringDataState = "ok" | "error" | "empty" | "no_history";

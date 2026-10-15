@@ -448,10 +448,10 @@ class UsageRepository:
         backfill = await self.get_backfill() if include_backfill else None
         return await usage_data_from(self._db, period, backfill)
 
-    async def get_estimated_until(self, period: UsagePeriod) -> Optional[datetime]:
-        """Where the backfill's estimates in ``period`` end; None without any."""
+    async def get_recorded_from(self) -> Optional[datetime]:
+        """When recorded usage starts (the backfill's end); None without a backfill."""
         backfill = await self.get_backfill()
-        return backfill.estimated_until(period.start, period.end) if backfill else None
+        return backfill.until if backfill else None
 
     async def get_tier_names(self) -> dict:
         """{tier_id: name} for every tier, read straight from ppu_tiers.

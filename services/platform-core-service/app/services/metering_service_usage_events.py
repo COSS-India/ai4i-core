@@ -10,12 +10,11 @@ token split). The counts come from request rows and the units from usage rows
 extrapolated increase(), and not limited by its retention.
 
 Only API-key traffic is recorded, which is what the dashboard already counted.
-Request rows exist from the cut-over onwards. Before them, figures are
-estimates: the Prometheus backfill's days (see MeteringUsageRepository), then
-usage rows from before the cut-over, which count billed requests only.
-data_since() and estimated_until() say so, so a range from before request
-rows is flagged estimated (partial where even the backfill has no data;
-without a backfill, everything before request rows is partial).
+Request rows exist from the cut-over onwards; data_since() reports when they
+begin, so an earlier range is flagged partial instead of shown incomplete.
+With a Prometheus backfill (see MeteringUsageRepository), data begins with
+its first day instead, and recorded_from() is where it ends: usage before
+that is estimated.
 
 The rest of MeteringService (registry model counts, tenant names, the
 per-model shaping) is inherited unchanged. The Prometheus client is kept
@@ -92,22 +91,20 @@ class UsageEventsMeteringService(MeteringService):
     async def refresh_retention(self) -> None:
         """No retention to refresh: usage_events keeps every day."""
 
-    async def _coverage(self, start: datetime, end: datetime) -> tuple[Optional[datetime], Optional[datetime]]:
-        """(when data begins inside [start, end), where estimates end) — see
-        the module docstring. Data begins with the backfill when there is one
-        that reaches this far, else with request rows (None: none at all);
-        estimates last until request rows begin."""
-        recorded_from = await self._usage.request_rows_from(start, end)
+    async def _data_from(self, start: datetime, end: datetime) -> Optional[datetime]:
+        """When data begins inside [start, end): with the backfill when it
+        reaches this far, else with request rows (None: no data at all)."""
         backfill = await self._usage.backfill()
-        if backfill is None or backfill.start >= end:
-            return recorded_from, None
-        return max(start, backfill.start), recorded_from or end
+        if backfill is not None and backfill.start < end:
+            return max(start, backfill.start)
+        return await self._usage.request_rows_from(start, end)
 
     async def data_since(self, period) -> Optional[datetime]:
-        return (await self._coverage(period.start, period.end))[0]
+        return await self._data_from(period.start, period.end)
 
-    async def estimated_until(self, period) -> Optional[datetime]:
-        return (await self._coverage(period.start, period.end))[1]
+    async def recorded_from(self) -> Optional[datetime]:
+        backfill = await self._usage.backfill()
+        return backfill.until if backfill else None
 
     @staticmethod
     def _bounds(time_range: TimeRange) -> tuple[datetime, datetime, int]:
@@ -151,7 +148,7 @@ class UsageEventsMeteringService(MeteringService):
 
     async def _covered(self, start: datetime, end: datetime) -> bool:
         """Data (recorded, or the backfill's estimates) covers [start, end) from its start."""
-        return (await self._coverage(start, end))[0] == start
+        return await self._data_from(start, end) == start
 
     # ── Overview ──────────────────────────────────────────────────────────────
 

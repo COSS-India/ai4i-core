@@ -367,10 +367,10 @@ class MeteringService:
         answered from what's left. Overridden per store."""
         return retention_edge()
 
-    async def estimated_until(self, period) -> Optional[datetime]:
-        """Where the figures in ``period`` stop being estimates, for the
-        period's ``estimated`` / ``estimatedUntil``; None when none are.
-        Prometheus' figures are what the dashboard always showed: none."""
+    async def recorded_from(self) -> Optional[datetime]:
+        """When recorded usage starts, for the period's ``recordedFrom``
+        (usage before it is estimated); None when nothing is. Prometheus'
+        figures are what the dashboard always showed: None."""
         return None
 
     async def refresh_retention(self) -> None:

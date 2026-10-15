@@ -1,10 +1,12 @@
 """usage_backfill: windows, retention, PromQL, pricing and the rows built from
 Prometheus samples. No database or Prometheus needed."""
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from jobs.usage_backfill import (  # noqa: E402
@@ -14,7 +16,10 @@ from jobs.usage_backfill import (  # noqa: E402
     build_rows,
     path_task,
     queries,
-    retention_seconds,
+    BackfillError,
+    collect,
+    first_whole_day,
+    oldest_sample,
     windows,
 )
 
@@ -46,12 +51,56 @@ def test_windows_empty_when_until_is_before_the_first_day():
     assert windows(date(2026, 10, 8), datetime(2026, 10, 8, tzinfo=IST)) == []
 
 
-def test_retention_seconds():
-    assert retention_seconds("15d") == 15 * 86400
-    assert retention_seconds("1w2d") == 9 * 86400
-    assert retention_seconds("15d or 10GiB") == 15 * 86400
-    assert retention_seconds("10GiB") is None
-    assert retention_seconds(None) is None
+class _FakePrometheus:
+    """Has request-counter samples from ``oldest`` on, and no series to backfill."""
+
+    def __init__(self, oldest):
+        self.oldest = oldest
+
+    async def query(self, promql, at):
+        if "count_over_time" in promql:
+            return [{"value": [at.timestamp(), "3"]}] if self.oldest is not None and at > self.oldest else []
+        return []
+
+    async def has_samples(self, metric, at):
+        return bool(await self.query(f"count(count_over_time({metric}[1h]))", at))
+
+
+_NOW = datetime(2026, 10, 15, 9, 0, tzinfo=timezone.utc)
+_UNTIL = datetime(2026, 10, 8, 11, 30, tzinfo=IST)
+
+
+@pytest.mark.asyncio
+async def test_oldest_sample_is_looked_up_not_taken_from_retention():
+    # Size eviction left data from 3 Oct 14:20 IST, whatever retention says.
+    oldest = datetime(2026, 10, 3, 14, 20, tzinfo=IST)
+    found = await oldest_sample(_FakePrometheus(oldest), _NOW)
+    assert oldest < found <= oldest + timedelta(hours=1)
+    assert first_whole_day(found) == date(2026, 10, 4)
+
+
+@pytest.mark.asyncio
+async def test_no_samples_at_all():
+    assert await oldest_sample(_FakePrometheus(None), _NOW) is None
+
+
+def test_the_first_day_starts_after_the_oldest_sample_and_its_lookback():
+    # An oldest-sample hour ending just before midnight: that midnight is too close.
+    assert first_whole_day(datetime(2026, 10, 3, 23, 55, tzinfo=IST)) == date(2026, 10, 5)
+    assert first_whole_day(datetime(2026, 10, 3, 10, 0, tzinfo=IST)) == date(2026, 10, 4)
+
+
+@pytest.mark.asyncio
+async def test_collect_starts_on_the_first_whole_day_by_default():
+    collected = await collect(_FakePrometheus(datetime(2026, 10, 3, 14, 20, tzinfo=IST)), None, _UNTIL)
+    assert collected.first_day == date(2026, 10, 4)
+    assert collected.days[0] == date(2026, 10, 4) and collected.days[-1] == date(2026, 10, 8)
+
+
+@pytest.mark.asyncio
+async def test_collect_refuses_a_first_day_prometheus_no_longer_has_the_start_of():
+    with pytest.raises(BackfillError, match="overcount|lifetime"):
+        await collect(_FakePrometheus(datetime(2026, 10, 3, 14, 20, tzinfo=IST)), date(2026, 10, 3), _UNTIL)
 
 
 def test_queries_are_api_key_inference_traffic_on_the_path_label():

@@ -41,16 +41,19 @@ def _rows_result(rows: list):
     return SimpleNamespace(all=lambda: rows)
 
 
-def _make_repo(spend_by_key: dict, period_spend_by_key: dict | None = None) -> MagicMock:
+def _make_repo(
+    spend_by_key: dict, period_spend_by_key: dict | None = None, backfill_by_app: dict | None = None,
+) -> MagicMock:
     """spend_by_key: all-time (budget_usage); period_spend_by_key: the
-    selected period (usage_events / daily_usage)."""
+    selected period (usage_events / daily_usage); backfill_by_app: the
+    Prometheus backfill's estimated spend in the period, per application."""
     repo = MagicMock()
     repo.get_spend_by_api_key_ids = AsyncMock(return_value=spend_by_key)
     repo.get_period_spend_by_api_key_ids = AsyncMock(return_value=period_spend_by_key or {})
     # Before every period the tests use: the usage data covers them whole.
     repo.get_usage_data_from = AsyncMock(return_value=datetime(2020, 1, 1, tzinfo=timezone.utc))
-    repo.get_estimated_until = AsyncMock(return_value=None)
-    repo.get_unattributed_period_spend = AsyncMock(return_value={})
+    repo.get_recorded_from = AsyncMock(return_value=None)
+    repo.get_backfill_period_spend = AsyncMock(return_value=backfill_by_app or {})
     return repo
 
 
@@ -487,6 +490,19 @@ class TestPeriodSpend:
         assert (prod.periodSpend.amount, test.periodSpend.amount) == (6.4, 0.0)
         assert round(prod.periodSpend.percentage, 4) == 0.0427   # % of the key's own 15000
         assert result.totals.periodSpend == 6.4
+
+    @pytest.mark.asyncio
+    async def test_backfilled_spend_counts_for_the_application_not_its_keys(self):
+        """Estimates have no API key: they add to the application's period
+        spend and total, and every key keeps its recorded spend only."""
+        repo = _make_repo({31: Decimal("1500"), 32: Decimal("300")}, {31: Decimal("6.40")}, {7: Decimal("3.60")})
+        result = await ApplicationUsageService(repo).get_application_detail(7, "1", _PERIOD, _one_app_auth_db())
+
+        assert result.periodSpend.amount == 10.0
+        prod, test = result.apiKeys
+        assert (prod.periodSpend.amount, test.periodSpend.amount) == (6.4, 0.0)
+        assert result.totals.periodSpend == 10.0
+        repo.get_backfill_period_spend.assert_awaited_once_with(_PERIOD, [7])
 
     @pytest.mark.asyncio
     async def test_no_usage_in_the_period_is_zero(self):

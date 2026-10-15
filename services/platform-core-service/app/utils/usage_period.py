@@ -92,14 +92,15 @@ class UsagePeriod:
     def to_schema(
         self,
         data_since: Union[datetime, None, _FullCoverage] = FULL_COVERAGE,
-        estimated_until: Optional[datetime] = None,
+        recorded_from: Optional[datetime] = None,
     ) -> Period:
         """The response's period block. ``data_since`` is when the figures'
         source starts having data: the Prometheus/OpenSearch retention edge,
         or the first recorded usage event. FULL_COVERAGE (the default) means
         the whole period is covered; None means the source has no data.
-        ``estimated_until`` is where the figures stop being estimates (the
-        Prometheus backfill's end, see period_usage.Backfill); None when none are."""
+        ``recorded_from`` is when recorded usage starts, usage before it being
+        the Prometheus backfill's estimates (see period_usage.Backfill); None
+        without a backfill."""
         if isinstance(data_since, _FullCoverage):
             data_from, partial = self.start, False
         elif data_since is None or data_since >= self.end:
@@ -115,13 +116,8 @@ class UsagePeriod:
             end=iso_ist(self.end),
             dataFrom=iso_ist(data_from) if data_from else None,
             partial=partial,
-            **self._estimates(data_from, estimated_until),
+            recordedFrom=iso_ist(recorded_from) if recorded_from else None,
         )
-
-    def _estimates(self, data_from: Optional[datetime], estimated_until: Optional[datetime]) -> dict:
-        if data_from is None or estimated_until is None or estimated_until <= max(data_from, self.start):
-            return {"estimated": False, "estimatedUntil": None}
-        return {"estimated": True, "estimatedUntil": iso_ist(min(estimated_until, self.end))}
 
 
 def iso_ist(dt: datetime) -> str:

@@ -18,6 +18,7 @@ import {
 import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
 import type { ApplicationUsageDetail } from "../../types/applicationUsage";
+import { periodIncludesEstimates } from "../../utils/meteringCoverage";
 import { formatSpendMoney, formatSpendMoneyExact } from "../../utils/usageSpendHelpers";
 import DataTable, { type DataTableColumn } from "../common/table";
 import {
@@ -57,9 +58,13 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
   const tips = copy.TOOLTIPS;
   const cols = copy.TABLE;
 
+  // Estimated spend has no API key, so a period with estimated days shows the
+  // application's total only, not a per-key split of it.
+  const hasEstimates = periodIncludesEstimates(detail?.period);
+
   const apiKeyColumns = useMemo<DataTableColumn<ApiKeyRow>[]>(() => {
     if (!detail) return [];
-    return [
+    const columns: DataTableColumn<ApiKeyRow>[] = [
       {
         id: "keyName",
         header: cols.API_KEY,
@@ -117,8 +122,7 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
         hint: tips.API_KEY_PERIOD_SPEND,
         width: "16%",
         sortable: true,
-        // A dash (spend unavailable) sorts below every amount.
-        sortAccessor: (key) => (key.periodSpendCoverage === "unavailable" ? -1 : key.periodSpend.amount),
+        sortAccessor: (key) => key.periodSpend.amount,
         cell: (key) => (
           <PeriodSpendCell
             amount={key.periodSpend.amount}
@@ -126,7 +130,6 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
             currency={currency}
             hasBudget={key.allocatedBudget.amount > 0}
             ofAllocationLabel={cols.PERIOD_OF_ALLOCATION}
-            coverage={key.periodSpendCoverage}
           />
         ),
         footer: (
@@ -194,7 +197,8 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
         ),
       },
     ];
-  }, [cols, currency, detail, tips]);
+    return hasEstimates ? columns.filter((column) => column.id !== "periodSpend") : columns;
+  }, [cols, currency, detail, hasEstimates, tips]);
 
   let body: React.ReactNode = null;
   if (isLoading && !detail) {
@@ -290,6 +294,11 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
           <Text fontSize="11.5px" letterSpacing="0.05em" color="gray.500" fontWeight="bold" mb="10px">
             {copy.DRAWER_SPEND_BY_API_KEY}
           </Text>
+          {hasEstimates ? (
+            <Text fontSize="12px" color="gray.500" mb="10px">
+              {METERING.ESTIMATES.KEY_BREAKDOWN_UNAVAILABLE}
+            </Text>
+          ) : null}
           {detail.apiKeys.length === 0 ? (
             <Text fontSize="13.5px" color="gray.500" fontStyle="italic" py={3}>
               {copy.DRAWER_NO_KEYS}
@@ -308,11 +317,6 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
               showAsyncState={false}
             />
           )}
-          {detail.unattributedPeriodSpend ? (
-            <Text fontSize="12px" color="gray.500" mt={2} lineHeight="1.6">
-              {formatSpendMoneyExact(detail.unattributedPeriodSpend, currency)} {METERING.COVERAGE.UNATTRIBUTED_SUFFIX}
-            </Text>
-          ) : null}
         </Box>
       </VStack>
     );

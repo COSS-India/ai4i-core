@@ -13,10 +13,17 @@ It reads Prometheus, then loads daily_usage, in one run.
 
 Reading Prometheus
 ------------------
-From USAGE_BACKFILL_FROM (default: the first whole IST day Prometheus
-retains) up to USAGE_BACKFILL_UNTIL (default: the first usage_events row), one
-window per IST day; the last one ends at the cut-off, so nothing is counted
-by both. A window also ends at a UTC month start, so every window has a
+From the first whole IST day after Prometheus' oldest sample (or
+USAGE_BACKFILL_FROM, which may not be earlier) up to USAGE_BACKFILL_UNTIL
+(default: the first usage_events row), one window per IST day; the last one
+ends at the cut-off, so nothing is counted by both.
+
+The oldest sample is looked up, not derived from the configured retention:
+size-based eviction or compaction can leave Prometheus holding less than it
+says. A day whose start Prometheus no longer has would book every series'
+lifetime counter as that day's growth (an established series looks born in
+the window), a large overcount — so the first day must start after the
+oldest sample (oldest_sample, first_whole_day). A window also ends at a UTC month start, so every window has a
 single billing_month (the UTC month, as the PPU consumer bills it). For each
 window, API-key traffic only (auth_type "api_key", or absent on older series,
 as the Prometheus-backed dashboard counted it):
@@ -167,19 +174,40 @@ def windows(first_day: date, until: datetime) -> list[Window]:
 # ── Prometheus ─────────────────────────────────────────────────────────────
 
 
-_DURATION_PART = re.compile(r"(\d+)(ms|s|m|h|d|w|y)")
-_DURATION_SECONDS = {"ms": 0.001, "s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800, "y": 31536000}
+# Look the oldest sample up this far back, at most.
+_OLDEST_SAMPLE_MAX_HOURS = 400 * 24
+# A day's first window needs every established series' sample just before
+# its start (the instant lookback is 5 minutes): start this long after the
+# hour the oldest sample falls in.
+_OLDEST_SAMPLE_MARGIN = timedelta(minutes=10)
 
 
-def retention_seconds(storage_retention: Optional[str]) -> Optional[float]:
-    """Seconds of a runtimeinfo storageRetention ("15d", "1w2d", "15d or
-    10GiB"); None when it has no time part (size-only, or unset)."""
-    for part in (storage_retention or "").split(" or "):
-        part = part.replace(" ", "")
-        matches = _DURATION_PART.findall(part)
-        if matches and "".join(n + u for n, u in matches) == part:
-            return sum(int(n) * _DURATION_SECONDS[u] for n, u in matches)
-    return None
+async def oldest_sample(prometheus: "Prometheus", now: datetime) -> Optional[datetime]:
+    """The end of the hour holding Prometheus' oldest request-counter sample
+    (within _OLDEST_SAMPLE_MAX_HOURS), None when it has none at all. Samples
+    are kept from the oldest onwards, so whether an hour has any is
+    monotonic in time: a binary search over hours back from ``now``."""
+    async def has_samples(hours_back: int) -> bool:
+        return await prometheus.has_samples(_REQUESTS_METRIC, now - timedelta(hours=hours_back))
+
+    if not await has_samples(0):
+        return None
+    if await has_samples(_OLDEST_SAMPLE_MAX_HOURS):
+        return now - timedelta(hours=_OLDEST_SAMPLE_MAX_HOURS)
+    present, absent = 0, _OLDEST_SAMPLE_MAX_HOURS
+    while absent - present > 1:
+        mid = (present + absent) // 2
+        if await has_samples(mid):
+            present = mid
+        else:
+            absent = mid
+    return now - timedelta(hours=present)
+
+
+def first_whole_day(oldest: datetime) -> date:
+    """The first IST day whose start has samples before it: the day after
+    the one oldest (plus the lookback margin) falls on."""
+    return (oldest + _OLDEST_SAMPLE_MARGIN).astimezone(IST).date() + timedelta(days=1)
 
 
 def _hybrid(selector: str, seconds: int) -> str:
@@ -224,12 +252,9 @@ class Prometheus:
         data = await self._get("/api/v1/query", {"query": promql, "time": at.timestamp()})
         return data.get("result", [])
 
-    async def storage_retention(self) -> Optional[str]:
-        try:
-            return (await self._get("/api/v1/status/runtimeinfo")).get("storageRetention")
-        except (httpx.HTTPError, BackfillError, KeyError) as exc:
-            logger.warning("Prometheus retention unavailable: %s", exc)
-            return None
+    async def has_samples(self, metric: str, at: datetime) -> bool:
+        """Any series of ``metric`` has a sample in the hour before ``at``."""
+        return bool(await self.query(f"count(count_over_time({metric}[1h]))", at))
 
 
 async def _first_usage_event() -> Optional[datetime]:
@@ -248,20 +273,28 @@ class Collected:
 
 async def collect(prometheus: Prometheus, first_day: Optional[date], until: Optional[datetime]) -> Collected:
     """Every window's samples, from first_day (default: the first whole day
-    Prometheus retains) up to until (default: the first usage_events row)."""
+    after Prometheus' oldest sample, and never earlier) up to until (default:
+    the first usage_events row)."""
     settings = get_settings()
     now = datetime.now(timezone.utc)
     if until is None:
         until = await _first_usage_event() or now
     until = min(until, now)
+    oldest = await oldest_sample(prometheus, now)
+    if oldest is None:
+        logger.warning("Prometheus has no %s samples: nothing to backfill", _REQUESTS_METRIC)
+        return Collected(first_day or until.astimezone(IST).date(), until, [], [])
+    earliest = first_whole_day(oldest)
+    logger.info("Prometheus' oldest sample | hour_ending=%s first_whole_day=%s", oldest.isoformat(), earliest)
     if first_day is None:
-        retained = retention_seconds(await prometheus.storage_retention())
-        if retained is None:
-            raise BackfillError(
-                "Prometheus reports no time retention; set USAGE_BACKFILL_FROM to its first whole day"
-            )
-        # The day the retention edge falls on is partly gone: start the day after.
-        first_day = (now - timedelta(seconds=retained)).astimezone(IST).date() + timedelta(days=1)
+        first_day = earliest
+    elif first_day < earliest:
+        raise BackfillError(
+            f"USAGE_BACKFILL_FROM={first_day} is before {earliest}, the first whole day after Prometheus'"
+            f" oldest sample ({oldest.isoformat()}): that day's start isn't in Prometheus any more, so"
+            " every series would count its lifetime total as that day's usage. Leave it unset, or set it"
+            f" to {earliest} or later."
+        )
 
     path_label = settings.PROMETHEUS_API_PATH_LABEL
     samples = []

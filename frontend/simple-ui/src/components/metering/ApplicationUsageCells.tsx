@@ -1,7 +1,5 @@
-import { Box, Flex, HStack, Text, Tooltip } from "@chakra-ui/react";
+import { Box, Flex, HStack, Text } from "@chakra-ui/react";
 import React from "react";
-import { METERING } from "../../config/meteringConstants";
-import type { PeriodSpendCoverage } from "../../types/applicationUsage";
 import {
   formatSpendMoney,
   formatSpendMoneyExact,
@@ -33,35 +31,20 @@ export function AllocatedPctPill({ pct }: { pct: number }) {
   );
 }
 
-/**
- * Spend in the period (kept to paise) and its share of the allocation, when
- * there is one. An API key's `coverage` other than "full" (see
- * PeriodSpendCoverage): "unavailable" shows a dash, "partial" notes that
- * estimated days are left out.
- */
+/** Spend in the period (kept to paise) and its share of the allocation, when there is one. */
 export function PeriodSpendCell({
   amount,
   percentage,
   currency,
   hasBudget,
   ofAllocationLabel,
-  coverage = "full",
 }: Readonly<{
   amount: number;
   percentage: number;
   currency: string;
   hasBudget: boolean;
   ofAllocationLabel: string;
-  coverage?: PeriodSpendCoverage;
 }>) {
-  const copy = METERING.COVERAGE;
-  if (coverage === "unavailable") {
-    return (
-      <Text fontSize="13px" color="gray.500">
-        {copy.KEY_SPEND_UNAVAILABLE}
-      </Text>
-    );
-  }
   return (
     <Box>
       <Text fontSize="13.5px" fontWeight="bold" color="gray.800">
@@ -71,13 +54,6 @@ export function PeriodSpendCell({
         <Text fontSize="11.5px" color="gray.500" mt="2px">
           {formatApplicationPct(percentage)} {ofAllocationLabel}
         </Text>
-      ) : null}
-      {coverage === "partial" ? (
-        <Tooltip label={copy.KEY_SPEND_PARTIAL_HINT} hasArrow placement="top">
-          <Text as="span" display="block" fontSize="11px" color="gray.500" fontStyle="italic" mt="2px" cursor="help">
-            {copy.KEY_SPEND_PARTIAL}
-          </Text>
-        </Tooltip>
       ) : null}
     </Box>
   );

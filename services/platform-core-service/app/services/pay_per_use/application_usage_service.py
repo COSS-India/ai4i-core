@@ -112,22 +112,23 @@ class ApplicationUsageService:
 
     async def _spend_by_application(
         self, applications: list[dict], auth_db: Optional[AsyncSession], period: UsagePeriod,
-    ) -> tuple[dict[int, Decimal], dict[int, Decimal], dict[int, list[dict]], dict[int, Decimal]]:
+    ) -> tuple[dict[int, Decimal], dict[int, Decimal], dict[int, list[dict]]]:
         """(all-time spend per application_id, spend in ``period`` per
-        application_id, api_keys per application_id, estimated spend in
-        ``period`` no key can be given, per application_id). Each key dict
-        also carries its own "_spend" (all-time) and "_period_spend"."""
+        application_id, api_keys per application_id). Each key dict also
+        carries its own "_spend" (all-time) and "_period_spend" (recorded
+        only); an application's period spend adds the Prometheus backfill's
+        estimates, which have no key."""
         app_ids = [app["id"] for app in applications]
         api_keys = await self._load_application_api_keys(app_ids, auth_db)
         key_ids = [k["id"] for k in api_keys]
         spend_by_key = await self._repo.get_spend_by_api_key_ids(key_ids)
         period_spend_by_key = await self._repo.get_period_spend_by_api_key_ids(period, key_ids)
-        unattributed = await self._repo.get_unattributed_period_spend(period, app_ids)
+        backfilled = await self._repo.get_backfill_period_spend(period, app_ids)
 
         keys_by_app: dict[int, list[dict]] = {app_id: [] for app_id in app_ids}
         spend_by_app: dict[int, Decimal] = {app_id: Decimal("0") for app_id in app_ids}
         period_spend_by_app: dict[int, Decimal] = {
-            app_id: unattributed.get(app_id, Decimal("0")) for app_id in app_ids
+            app_id: backfilled.get(app_id, Decimal("0")) for app_id in app_ids
         }
         for key in api_keys:
             key["_spend"] = spend_by_key.get(key["id"], Decimal("0"))
@@ -135,11 +136,11 @@ class ApplicationUsageService:
             keys_by_app[key["application_id"]].append(key)
             spend_by_app[key["application_id"]] += key["_spend"]
             period_spend_by_app[key["application_id"]] += key["_period_spend"]
-        return spend_by_app, period_spend_by_app, keys_by_app, unattributed
+        return spend_by_app, period_spend_by_app, keys_by_app
 
     async def _period_block(self, period: UsagePeriod):
         return period.to_schema(
-            await self._repo.get_usage_data_from(period), await self._repo.get_estimated_until(period),
+            await self._repo.get_usage_data_from(period), await self._repo.get_recorded_from(),
         )
 
     async def get_summary(
@@ -147,7 +148,7 @@ class ApplicationUsageService:
     ) -> ApplicationUsageSummaryResponse:
         tenant_budget = await self._load_tenant_budget(tenant_id, auth_db)
         applications = await self._load_tenant_applications(tenant_id, auth_db)
-        spend_by_app, period_spend_by_app, _, _ = await self._spend_by_application(
+        spend_by_app, period_spend_by_app, _ = await self._spend_by_application(
             applications, auth_db, period
         )
 
@@ -181,7 +182,7 @@ class ApplicationUsageService:
         so pages stay stable), then paginated."""
         tenant_budget = await self._load_tenant_budget(tenant_id, auth_db)
         applications = await self._load_tenant_applications(tenant_id, auth_db)
-        spend_by_app, period_spend_by_app, _, _ = await self._spend_by_application(
+        spend_by_app, period_spend_by_app, _ = await self._spend_by_application(
             applications, auth_db, period
         )
 
@@ -226,20 +227,13 @@ class ApplicationUsageService:
         if application is None:
             raise EntityNotFoundError(f"Application {application_id}")
 
-        spend_by_app, period_spend_by_app, keys_by_app, unattributed = await self._spend_by_application(
+        spend_by_app, period_spend_by_app, keys_by_app = await self._spend_by_application(
             [application], auth_db, period
         )
         allocated_amount = application["allocated_budget"] or Decimal("0")
         spend_amount = spend_by_app.get(application_id, Decimal("0"))
         remaining_amount = allocated_amount - spend_amount
         period_spend = period_spend_by_app.get(application_id, Decimal("0"))
-        unattributed_spend = unattributed.get(application_id, Decimal("0"))
-        # The keys' spend leaves out the estimated days when some of their
-        # spend couldn't be given to a key; all of it when that's every day.
-        key_coverage = "full"
-        if unattributed_spend > 0:
-            estimated_until = await self._repo.get_estimated_until(period)
-            key_coverage = "unavailable" if estimated_until is not None and estimated_until >= period.end else "partial"
 
         api_key_items = []
         for key in keys_by_app.get(application_id, []):
@@ -260,7 +254,6 @@ class ApplicationUsageService:
                     spendBudget=_money_percent(key_spend, key_allocated),
                     remainingBudget=_money_percent(key_remaining, key_allocated),
                     periodSpend=_money_percent(key["_period_spend"], key_allocated),
-                    periodSpendCoverage=key_coverage,
                 )
             )
 
@@ -274,7 +267,6 @@ class ApplicationUsageService:
             remainingBudget=_money_percent(remaining_amount, allocated_amount),
             periodSpend=_money_percent(period_spend, allocated_amount),
             apiKeys=api_key_items,
-            unattributedPeriodSpend=float(unattributed_spend),
             totals=ApplicationUsageTotals(
                 allocatedBudget=float(allocated_amount),
                 spendBudget=float(spend_amount),

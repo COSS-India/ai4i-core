@@ -1,6 +1,4 @@
 """Response schemas for the Metering Dashboard's Applications tab."""
-from typing import Literal
-
 from pydantic import BaseModel
 
 from app.schemas.period import Period
@@ -59,14 +57,6 @@ class ApiKeyUsageItem(BaseModel):
     spendBudget: MoneyPercent
     remainingBudget: MoneyPercent
     periodSpend: MoneyPercent
-    # How much of the period periodSpend covers. Before usage was recorded,
-    # spend is estimated from Prometheus, which can't tell an application's
-    # keys apart when it has several: then those days' spend is the
-    # application's (unattributedPeriodSpend), not any key's.
-    #   full         every day of the period is in periodSpend
-    #   partial      the estimated days aren't: periodSpend is the rest
-    #   unavailable  the whole period is estimated days: periodSpend is 0
-    periodSpendCoverage: Literal["full", "partial", "unavailable"] = "full"
 
 
 class ApplicationUsageTotals(BaseModel):
@@ -86,7 +76,4 @@ class ApplicationUsageDetailResponse(BaseModel):
     remainingBudget: MoneyPercent
     periodSpend: MoneyPercent
     apiKeys: list[ApiKeyUsageItem]
-    # Estimated spend in the period that no key can be given (see
-    # ApiKeyUsageItem.periodSpendCoverage); part of periodSpend.
-    unattributedPeriodSpend: float = 0
     totals: ApplicationUsageTotals

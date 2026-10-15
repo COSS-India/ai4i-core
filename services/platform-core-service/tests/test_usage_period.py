@@ -86,7 +86,7 @@ class TestSchema:
             "key": "last_7_days", "from": "2026-10-02", "to": "2026-10-08",
             "start": "2026-10-02T00:00:00+05:30", "end": "2026-10-09T00:00:00+05:30",
             "timezone": "Asia/Kolkata",
-            "dataFrom": "2026-10-02T00:00:00+05:30", "partial": False, "estimated": False, "estimatedUntil": None,
+            "dataFrom": "2026-10-02T00:00:00+05:30", "partial": False, "recordedFrom": None,
         }
 
     def test_data_since_inside_the_period_is_partial(self):
@@ -106,25 +106,12 @@ class TestSchema:
         after = period.to_schema(period.end)
         assert (after.dataFrom, after.partial) == (None, True)
 
-    def test_estimates_up_to_where_they_end(self):
+    def test_recorded_from_is_echoed_in_ist(self):
+        """The backfill's end, the same whatever the period: the UI compares it with start."""
         period = _resolve("last_7_days")
-        # Backfilled up to 2026-10-04 11:30 IST.
         block = period.to_schema(period.start, datetime(2026, 10, 4, 6, 0, tzinfo=timezone.utc))
-        assert (block.estimated, block.estimatedUntil) == (True, "2026-10-04T11:30:00+05:30")
-
-    def test_estimates_past_the_period_end_at_its_end(self):
-        period = _resolve("last_7_days")
-        block = period.to_schema(period.start, datetime(2026, 12, 1, tzinfo=timezone.utc))
-        assert (block.estimated, block.estimatedUntil) == (True, "2026-10-09T00:00:00+05:30")
-
-    def test_nothing_estimated(self):
-        period = _resolve("last_7_days")
-        for block in (
-            period.to_schema(period.start),                     # no backfill
-            period.to_schema(period.start, period.start),       # estimates end where the period starts
-            period.to_schema(None, period.end),                 # no data at all
-        ):
-            assert (block.estimated, block.estimatedUntil) == (False, None)
+        assert block.recordedFrom == "2026-10-04T11:30:00+05:30"
+        assert period.to_schema(period.start).recordedFrom is None   # no backfill
 
     def test_cache_part_differs_by_range(self):
         assert _resolve("today").cache_part != _resolve("yesterday").cache_part

@@ -56,12 +56,9 @@ class Backfill:
     def start(self) -> datetime:
         return datetime.combine(self.first_day, day_start(), tzinfo=IST).astimezone(timezone.utc)
 
-    def estimated_until(self, start: datetime, end: datetime) -> Optional[datetime]:
-        """Where the estimates in [start, end) end, or None when the range
-        doesn't overlap the backfill."""
-        if start >= self.until or end <= self.start:
-            return None
-        return min(end, self.until)
+    def overlaps(self, start: datetime, end: datetime) -> bool:
+        """[start, end) includes some of the backfilled span."""
+        return start < self.until and end > self.start
 
 
 async def get_backfill(db: AsyncSession) -> Optional[Backfill]:
@@ -92,7 +89,7 @@ def period_sources(period: UsagePeriod, backfill: Optional[Backfill]) -> list[Pe
     """period_source(period), plus the backfill's rows when the period
     overlaps it. Query each and add the results up."""
     sources = [period_source(period)]
-    if backfill is not None and backfill.estimated_until(period.start, period.end) is not None:
+    if backfill is not None and backfill.overlaps(period.start, period.end):
         sources.append(_daily_usage_source(period, SOURCE_BACKFILL))
     return sources
 
@@ -137,7 +134,7 @@ async def usage_data_from(
 
     With a ``backfill`` overlapping the period, data begins where the
     backfill does (it ends where usage_events takes over)."""
-    if backfill is not None and backfill.estimated_until(period.start, period.end) is not None:
+    if backfill is not None and backfill.overlaps(period.start, period.end):
         return max(period.start, backfill.start)
     source = period_source(period)
     if source.model is DailyUsage:

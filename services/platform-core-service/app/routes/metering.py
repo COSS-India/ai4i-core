@@ -713,16 +713,16 @@ async def get_overview(
 
     # After the gather: it reads the shared core-DB session.
     data_since = await svc.data_since(usage_period)
-    estimated_until = await svc.estimated_until(usage_period)
+    recorded_from = await svc.recorded_from()
     generated_at = iso_ist(datetime.now(tz=timezone.utc))
 
     response = OverviewResponse(
         scope=PeriodScope(
             role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org,
             task_types=task_type_filter,
-            # When the source's data begins in the period (dataFrom / partial)
-            # and up to when it's estimated (estimated / estimatedUntil).
-            period=usage_period.to_schema(data_since, estimated_until),
+            # When the source's data begins in the period (dataFrom / partial),
+            # and when recorded usage starts (recordedFrom).
+            period=usage_period.to_schema(data_since, recorded_from),
         ),
         kpis=kpis,
         platform_adoption=platform_adoption,
@@ -994,16 +994,16 @@ async def get_model_consumption(
 
     # After the gather: it reads the shared core-DB session.
     data_since = await svc.data_since(usage_period)
-    estimated_until = await svc.estimated_until(usage_period)
+    recorded_from = await svc.recorded_from()
     generated_at = iso_ist(datetime.now(tz=timezone.utc))
 
     response = ModelConsumptionResponse(
         scope=PeriodScope(
             role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org,
             task_types=task_type_filter,
-            # When the source's data begins in the period (dataFrom / partial)
-            # and up to when it's estimated (estimated / estimatedUntil).
-            period=usage_period.to_schema(data_since, estimated_until),
+            # When the source's data begins in the period (dataFrom / partial),
+            # and when recorded usage starts (recordedFrom).
+            period=usage_period.to_schema(data_since, recorded_from),
         ),
         summary=summary,
         top_models=top_models,

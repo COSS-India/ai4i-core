@@ -136,7 +136,7 @@ class MeteringUsageRepository:
     def _backfill_days(backfill: Optional[Backfill], start: datetime, end: datetime) -> list[date]:
         """The backfill's days inside [start, end): each covers its IST day up
         to the backfill's end, so it counts when that much lies inside."""
-        if backfill is None or backfill.estimated_until(start, end) is None:
+        if backfill is None or not backfill.overlaps(start, end):
             return []
         day = max(backfill.first_day, _ist_day(start))
         days = []

@@ -498,7 +498,7 @@ class UsageService:
         for row in rows:
             by_tenant.setdefault(str(row.tenant_id), []).append(row)
         period_block = period.to_schema(
-            await self._repo.get_usage_data_from(period), await self._repo.get_estimated_until(period),
+            await self._repo.get_usage_data_from(period), await self._repo.get_recorded_from(),
         )
 
         wanted_tier = str(uuid.UUID(tier_id)) if tier_id else None
@@ -577,7 +577,7 @@ class UsageService:
         budget_row = budgets.get(tenant_id)
         return TenantUsageDetailResponse(
             period=period.to_schema(
-                await self._repo.get_usage_data_from(period), await self._repo.get_estimated_until(period),
+                await self._repo.get_usage_data_from(period), await self._repo.get_recorded_from(),
             ),
             tenantId=item.tenantId,
             tenantName=item.tenantName,

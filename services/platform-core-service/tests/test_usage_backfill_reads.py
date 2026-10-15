@@ -164,19 +164,18 @@ class TestMeteringReads:
         rows = await repo.aggregate(_mid(day), _mid(day + timedelta(days=1)), ("service_id",), tenant_id=_TENANT)
         assert {k: (a.requests, a.units) for k, a in rows.items()} == {(None,): (9, 900)}
 
-    async def test_coverage_and_estimates(self, session, rollup_off):
+    async def test_coverage_and_recorded_from(self, session, rollup_off):
         await _seed(session)
         svc = UsageEventsMeteringService(session)
-        # From the day before the backfill: data from its first day, estimated
-        # until request rows begin.
+        assert await svc.recorded_from() == _UNTIL
+        # From the day before the backfill: data from its first day.
         period = _period(_FIRST - timedelta(days=1), _BOUNDARY)
-        block = period.to_schema(await svc.data_since(period), await svc.estimated_until(period))
+        block = period.to_schema(await svc.data_since(period), await svc.recorded_from())
         assert (block.dataFrom, block.partial) == ("2025-01-10T00:00:00+05:30", True)
-        assert (block.estimated, block.estimatedUntil) == (True, "2025-01-12T12:30:00+05:30")
-        # Long before the backfill: no data, nothing estimated.
+        assert block.recordedFrom == "2025-01-12T11:30:00+05:30"
+        # Long before the backfill: no data.
         old = _period(date(2001, 1, 1), date(2001, 1, 2))
-        block = old.to_schema(await svc.data_since(old), await svc.estimated_until(old))
-        assert (block.dataFrom, block.partial, block.estimated) == (None, True, False)
+        assert await svc.data_since(old) is None
 
     async def test_previous_window_inside_the_backfill_is_covered(self, session, rollup_off):
         await _seed(session)
@@ -207,17 +206,16 @@ class TestBudgetAndApplicationReads:
         repo = UsageRepository(session)
         period = _period(_FIRST - timedelta(days=1), _BOUNDARY)
         assert await repo.get_usage_data_from(period) == _mid(_FIRST)
-        assert await repo.get_estimated_until(period) == _UNTIL
-        after = _period(_BOUNDARY + timedelta(days=1), _BOUNDARY + timedelta(days=1))
-        assert await repo.get_estimated_until(after) is None
+        assert await repo.get_recorded_from() == _UNTIL
 
-    async def test_key_spend_and_unattributed_spend(self, session, rollup_off):
+    async def test_key_spend_is_recorded_only_and_estimates_are_per_application(self, session, rollup_off):
         await _seed(session)
         repo = ApplicationUsageRepository(session)
         period = _period(_FIRST, _BOUNDARY)
-        assert await repo.get_period_spend_by_api_key_ids(period, [_KEY]) == {_KEY: Decimal("4.2")}
-        assert await repo.get_unattributed_period_spend(period, [_SINGLE_APP, _MULTI_APP]) == {
-            _MULTI_APP: Decimal("3"),
+        # The key's recorded 0.7 only, though the single-key app's backfill rows carry it.
+        assert await repo.get_period_spend_by_api_key_ids(period, [_KEY]) == {_KEY: Decimal("0.7")}
+        assert await repo.get_backfill_period_spend(period, [_SINGLE_APP, _MULTI_APP]) == {
+            _SINGLE_APP: Decimal("3.5"), _MULTI_APP: Decimal("3"),
         }
         later = _period(_BOUNDARY + timedelta(days=1), _BOUNDARY + timedelta(days=1))
-        assert await repo.get_unattributed_period_spend(later, [_MULTI_APP]) == {}
+        assert await repo.get_backfill_period_spend(later, [_MULTI_APP]) == {}

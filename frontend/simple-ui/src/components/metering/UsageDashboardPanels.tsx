@@ -6,7 +6,6 @@ import { OverviewKpiCards, ConsumptionOverviewSection } from "./OverviewSections
 import ModelConsumptionTab from "./ModelConsumptionTab";
 import UsageAndSpendTab from "./UsageAndSpendTab";
 import ApplicationUsageTab from "./ApplicationUsageTab";
-import PeriodCoverageNotice from "./PeriodCoverageNotice";
 
 type MeteringDashboardState = ReturnType<typeof useMeteringDashboard>;
 
@@ -56,21 +55,17 @@ export const TenantDashboardPanels: React.FC<TenantPanelsProps> = ({
   <Box pt={2}>
     {subTab === METERING.SUB_TAB.OVERVIEW && overview ? (
       <VStack align="stretch" spacing={6}>
-        <PeriodCoverageNotice period={overview.scope.period} />
         <OverviewKpiCards data={overview} isPlatformWide={false} />
         {requestVolumeSection}
       </VStack>
     ) : null}
     {subTab === METERING.SUB_TAB.MODEL && (
-      <VStack align="stretch" spacing={4}>
-        <PeriodCoverageNotice period={modelQuery.data?.scope.period} />
-        <ModelConsumptionTab
-          data={modelQuery.data}
-          isLoading={modelQuery.isLoading}
-          errorMessage={parseQueryError(modelQuery.error)}
-          isPlatformWide={false}
-        />
-      </VStack>
+      <ModelConsumptionTab
+        data={modelQuery.data}
+        isLoading={modelQuery.isLoading}
+        errorMessage={parseQueryError(modelQuery.error)}
+        isPlatformWide={false}
+      />
     )}
     {subTab === METERING.SUB_TAB.USAGE_SPEND && (
       <UsageAndSpendTab
@@ -123,7 +118,6 @@ export const AdopterDashboardPanels: React.FC<AdopterPanelsProps> = ({
   <Box pt={2}>
     {subTab === METERING.SUB_TAB.OVERVIEW && overview ? (
       <VStack align="stretch" spacing={6}>
-        <PeriodCoverageNotice period={overview.scope.period} />
         <OverviewKpiCards data={overview} isPlatformWide={!scopeTenantId} />
         <ConsumptionOverviewSection
           data={overview}
@@ -136,16 +130,13 @@ export const AdopterDashboardPanels: React.FC<AdopterPanelsProps> = ({
       </VStack>
     ) : null}
     {subTab === METERING.SUB_TAB.MODEL && (
-      <VStack align="stretch" spacing={4}>
-        <PeriodCoverageNotice period={modelQuery.data?.scope.period} />
-        <ModelConsumptionTab
-          data={modelQuery.data}
-          isLoading={modelQuery.isLoading}
-          errorMessage={parseQueryError(modelQuery.error)}
-          isPlatformWide={!scopeTenantId}
-          showModelCountKpis={false}
-        />
-      </VStack>
+      <ModelConsumptionTab
+        data={modelQuery.data}
+        isLoading={modelQuery.isLoading}
+        errorMessage={parseQueryError(modelQuery.error)}
+        isPlatformWide={!scopeTenantId}
+        showModelCountKpis={false}
+      />
     )}
     {subTab === METERING.SUB_TAB.USAGE_SPEND && (
       <UsageAndSpendTab

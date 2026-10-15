@@ -83,7 +83,8 @@ class PyJobSettings(BaseSettings):
     PROMETHEUS_API_PATH_LABEL: str = "exported_endpoint"
     PROMETHEUS_TIMEOUT_SECONDS: float = Field(60.0, gt=0)
     USAGE_BACKFILL_FROM: Optional[date] = Field(
-        None, description="First IST day to backfill; unset → the first whole day Prometheus retains"
+        None, description="First IST day to backfill; unset → the first whole day after Prometheus' oldest"
+        " sample, and never earlier than that"
     )
     USAGE_BACKFILL_UNTIL: Optional[datetime] = Field(
         None, description="Backfill up to this instant; unset → the first usage_events row"

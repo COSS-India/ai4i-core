@@ -82,8 +82,6 @@ export function useUsageAndSpendData({
 
   return {
     isScoped,
-    /** The period the API applied, with its coverage (dataFrom / partial / estimated). */
-    period: isScoped ? scopedQuery.data?.period : tenantsQuery.data?.period,
     tenants,
     tiers: tiersQuery.data?.data ?? [],
     hasNoTierAssigned,
