@@ -775,6 +775,28 @@ class TenantService:
         return await self._load_tenant_or_404(tenant_id)
 
     @staticmethod
+    async def resolve_tier_name(
+        tier_id: Optional[UUID], platform_core_db: Optional[AsyncSession]
+    ) -> Optional[str]:
+        """Name of ``tier_id`` from platform-core's ``tiers`` table (no
+        cross-DB FK is possible). Fails soft — unlike list_tenant_tiers — so a
+        platform-core outage or misconfiguration only blanks the tier name on
+        the tenant view instead of failing the whole GET."""
+        if tier_id is None:
+            return None
+        if platform_core_db is None:
+            logger.warning("tier_name not resolved for tier %s: platform-core DB is not configured", tier_id)
+            return None
+        try:
+            row = (
+                await platform_core_db.execute(text("SELECT name FROM tiers WHERE id = :tid"), {"tid": tier_id})
+            ).first()
+        except Exception:
+            logger.exception("tier_name lookup failed for tier %s", tier_id)
+            return None
+        return row.name if row else None
+
+    @staticmethod
     def build_tenant_response(tenant: Tenant, *, unmask: bool = False) -> dict:
         """Shape a tenant into its API dict, applying the PII-masking policy.
 
