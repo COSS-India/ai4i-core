@@ -269,7 +269,7 @@ async def get_policy_type(
 @router.put(
     "/policy-types",
     response_model=UpdatePolicyTypeResponse,
-    responses=error_responses(403, 404, 409),
+    responses=error_responses(403, 404),
 )
 async def update_policy_type(
     request: Request,
@@ -278,8 +278,7 @@ async def update_policy_type(
     redis: aioredis.Redis = Depends(get_redis),
 ) -> UpdatePolicyTypeResponse:
     """Update name and/or policy_fields of a policy type. policy_type_id is
-    required in the request body. 404 if it does not exist, 409 if the new
-    name is already taken. Adopter Admin only."""
+    required in the request body. 404 if it does not exist. Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")

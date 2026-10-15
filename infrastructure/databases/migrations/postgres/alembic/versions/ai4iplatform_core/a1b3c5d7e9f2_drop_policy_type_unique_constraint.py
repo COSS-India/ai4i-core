@@ -1,7 +1,7 @@
 """drop unique constraint on policy_type.policy_type
 
 Revision ID: a1b3c5d7e9f2
-Revises: e2b4d6f8a0c3
+Revises: a9d4f2b6c8e1
 Create Date: 2026-10-15
 
 """
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "a1b3c5d7e9f2"
-down_revision: Union[str, None] = "e2b4d6f8a0c3"
+down_revision: Union[str, None] = "a9d4f2b6c8e1"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
