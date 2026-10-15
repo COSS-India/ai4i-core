@@ -119,6 +119,7 @@ async def update_category_status(
     request: Request,
     category_id: int = Path(..., gt=0, le=ID_MAX),
     session: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis),
 ) -> UpdateCategoryStatusResponse:
     """Enable or disable a category, which switches off everything under it
     without changing the children's own status; 404 if the category does
@@ -128,7 +129,7 @@ async def update_category_status(
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
     item = await category_service.update_category_status(
-        session, category_id, payload, updated_by=user_id
+        session, category_id, payload, updated_by=user_id, redis=redis
     )
     state = "enabled" if item.is_active else "disabled"
     return UpdateCategoryStatusResponse(
@@ -185,6 +186,7 @@ async def update_sub_category_status(
     request: Request,
     sub_category_id: int = Path(..., gt=0, le=ID_MAX),
     session: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis),
 ) -> UpdateSubCategoryStatusResponse:
     """Enable or disable a sub-category, which switches off its policies
     without changing their own status; 404 if it does not exist, 409 if
@@ -195,7 +197,7 @@ async def update_sub_category_status(
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
     item = await sub_category_service.update_sub_category_status(
-        session, sub_category_id, payload, updated_by=user_id
+        session, sub_category_id, payload, updated_by=user_id, redis=redis
     )
     state = "enabled" if item.is_active else "disabled"
     return UpdateSubCategoryStatusResponse(
