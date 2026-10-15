@@ -5,6 +5,7 @@ import {
   policyFieldsFromDefinition,
   policyFromRecord,
   policyUpdatePayload,
+  selectionForField,
 } from "../../src/components/policy/pii/apiMap";
 import {
   choiceKeys,
@@ -192,6 +193,36 @@ describe("selection payloads", () => {
   it("refuses picks with an invalid type id or a model field without a language", () => {
     expect(policyCreatePayload({ ...input, selectedFields: [{ ...customPick, typeId: "pii-local" }] }, domains)).toBeNull();
     expect(policyUpdatePayload({ ...input, selectedFields: [{ ...emailEn, language: null }] }, domains)).toBeNull();
+  });
+});
+
+describe("creating a policy from GET /pii/entities picks", () => {
+  const fields = ownPolicyFields([], [
+    { language: "en", entityName: "EMAIL_ADDRESS" },
+    { language: "en", entityName: "PERSON" },
+  ]);
+
+  it("writes the picks as English model_supported_field entries of the new policy type", () => {
+    expect(policyFieldsFromDefinition({ fields })).toEqual({
+      model_supported_field: [{ en: [{ entity_name: "EMAIL_ADDRESS" }, { entity_name: "PERSON" }] }],
+    });
+  });
+
+  it("links only the returned policy type id and selects the same entities", () => {
+    const payload = policyCreatePayload(
+      {
+        ...input,
+        typeIds: ["42"],
+        selectedFields: fields.map((field) => selectionForField("42", field)),
+        ownFields: fields,
+      },
+      domains,
+    );
+    expect(payload?.policy_type_id).toEqual([42]);
+    expect(payload?.selected_policy_fields).toEqual([
+      { source: "model_supported_field", policy_type_id: 42, language: "en", entity_name: "EMAIL_ADDRESS" },
+      { source: "model_supported_field", policy_type_id: 42, language: "en", entity_name: "PERSON" },
+    ]);
   });
 });
 

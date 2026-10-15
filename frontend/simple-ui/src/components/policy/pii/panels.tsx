@@ -8,6 +8,7 @@ import {
   Flex,
   HStack,
   Select,
+  Stack,
   Tab,
   TabList,
   TabPanel,
@@ -16,8 +17,11 @@ import {
   Text,
   Textarea,
 } from "@chakra-ui/react";
-import React, { useCallback, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import CreateButton from "../../common/CreateButton";
+import FormActions from "../../common/FormActions";
+import FormDrawer from "../../common/FormDrawer";
+import ReadOnlyField from "../../common/ReadOnlyField";
 import LoadingSpinner from "../../common/LoadingSpinner";
 import FieldLabel from "../../common/FieldLabel";
 import DataTable, {
@@ -34,6 +38,7 @@ import {
 import { useDeferredColumnSort } from "../../../utils/tableSort";
 import { showToast } from "../../../utils/toast";
 import {
+  DEFAULT_POLICY_LANGUAGES,
   domainLabel,
   filterPolicies,
   isFieldShown,
@@ -46,6 +51,7 @@ import {
   type Policy,
   type PolicyField,
 } from "./model";
+import { loadModelEntities } from "./modelEntities";
 import { usePiiPolicies } from "./PiiPoliciesProvider";
 import { sharedTypes } from "./policyCustomFields";
 import { StatusToggle } from "./ui";
@@ -222,7 +228,7 @@ export function PolicyList() {
         sortAccessor: (row) => row.languages.map(languageLabel).join(", "),
         cell: (row) => (
           <Text fontSize="sm" color="ink.500">
-            {row.languages.length > 0 ? row.languages.map(languageLabel).join(", ") : "—"}
+            {DEFAULT_POLICY_LANGUAGES.map(languageLabel).join(", ")}
           </Text>
         ),
       },
@@ -410,7 +416,8 @@ export function ConfigurationPanel() {
 
 interface EntityRow {
   key: string;
-  type: PiiType;
+  /** Unset for entities from GET /pii/entities, which belong to no policy type. */
+  type?: PiiType;
   entityName: string;
   mode: PolicyField["mode"];
 }
@@ -427,10 +434,10 @@ function entityRows(types: PiiType[]): EntityRow[] {
   });
 }
 
-function viewEntityDrawer(row: EntityRow) {
+function viewEntityDrawer(type: PiiType, row: EntityRow) {
   return {
     kind: "view-type" as const,
-    id: row.type.id,
+    id: type.id,
     entity: { name: row.entityName, mode: row.mode },
   };
 }
@@ -449,36 +456,64 @@ function TypeLibrary() {
     reloadTypes,
   } = usePiiPolicies();
 
-  const allRows = useMemo(() => entityRows(sharedTypes(types)), [types]);
+  const [modelEntities, setModelEntities] = useState<string[]>([]);
+  const [detail, setDetail] = useState<EntityRow | null>(null);
+  useEffect(() => {
+    let current = true;
+    loadModelEntities("en").then(
+      (entities) => {
+        if (current) setModelEntities(entities);
+      },
+      () => {
+        if (current) {
+          showToast({ type: "error", message: "Couldn't load model supported PII types.", messageOnly: true });
+        }
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, []);
+
+  const allRows = useMemo(
+    () => [
+      ...modelEntities.map((entityName): EntityRow => ({ key: `en:${entityName}`, entityName, mode: "model" })),
+      ...entityRows(sharedTypes(types)),
+    ],
+    [modelEntities, types],
+  );
   const rows = useMemo(() => {
     const query = typeSearch.toLowerCase();
     if (!query) return allRows;
     return allRows.filter(
-      (row) => row.entityName.toLowerCase().includes(query) || row.type.name.toLowerCase().includes(query),
+      (row) =>
+        row.entityName.toLowerCase().includes(query) || Boolean(row.type?.name.toLowerCase().includes(query)),
     );
   }, [allRows, typeSearch]);
 
   const typeSortAccessors = useMemo(
     () => ({
       entity: (row: EntityRow) => row.entityName,
-      group: (row: EntityRow) => row.type.name,
+      group: (row: EntityRow) => row.type?.name ?? "",
       mode: (row: EntityRow) => row.mode,
     }),
     [],
   );
   const typeSort = useDeferredColumnSort("entity", typeSortAccessors);
   const sortedRows = useMemo(() => typeSort.apply(rows), [typeSort, rows]);
+  // Only rows from a policy type have a group; GET /pii/entities rows have none.
+  const hasGroups = allRows.some((row) => row.type);
 
   const columns = useMemo<DataTableColumn<EntityRow>[]>(() => {
-    const removeEntity = async (row: EntityRow) => {
-      const remaining = row.type.fields.filter(
+    const removeEntity = async (type: PiiType, row: EntityRow) => {
+      const remaining = type.fields.filter(
         (field) => !(field.entityName === row.entityName && field.mode === row.mode),
       );
       if (remaining.length === 0) {
-        await deleteType(row.type.id);
+        await deleteType(type.id);
         return;
       }
-      const error = await updateType(row.type.id, { name: row.type.name, fields: remaining });
+      const error = await updateType(type.id, { name: type.name, fields: remaining });
       if (error) showToast({ type: "error", message: error, messageOnly: true });
     };
 
@@ -494,17 +529,21 @@ function TypeLibrary() {
           </Text>
         ),
       },
-      {
-        id: "group",
-        header: "Group",
-        sortable: true,
-        sortAccessor: (row) => row.type.name,
-        cell: (row) => (
-          <Text fontSize="sm" color="ink.500">
-            {row.type.name}
-          </Text>
-        ),
-      },
+      ...(hasGroups
+        ? [
+            {
+              id: "group",
+              header: "Group",
+              sortable: true,
+              sortAccessor: (row: EntityRow) => row.type?.name ?? "",
+              cell: (row: EntityRow) => (
+                <Text fontSize="sm" color="ink.500">
+                  {row.type?.name ?? "—"}
+                </Text>
+              ),
+            },
+          ]
+        : []),
       {
         id: "mode",
         header: "Mode",
@@ -517,31 +556,35 @@ function TypeLibrary() {
         ),
       },
       createActionsColumn<EntityRow>({
-        getActions: (row) => [
-          { id: "view", label: "View", onClick: () => openDrawer(viewEntityDrawer(row)) },
-          { id: "edit", label: "Edit", onClick: () => openDrawer({ kind: "edit-type", id: row.type.id }) },
-          {
-            id: "delete",
-            label: "Delete",
-            onClick: () =>
-              askConfirm({
-                title: `Delete ${row.entityName}?`,
-                body: row.type.fields.every(
-                  (field) => field.entityName === row.entityName && field.mode === row.mode,
-                )
-                    ? `${row.entityName} is the only PII type in ${row.type.name}, so the whole group will be deleted. This action cannot be undone.`
-                    : `This removes ${row.entityName} from ${row.type.name}. Policies that picked it will no longer detect it. This action cannot be undone.`,
-                confirmLabel: "Delete",
-                confirmColorScheme: "red",
-                onConfirm: () => {
-                  void removeEntity(row);
-                },
-              }),
-          },
-        ],
+        getActions: (row) => {
+          const type = row.type;
+          if (!type) return [{ id: "view", label: "View", onClick: () => setDetail(row) }];
+          return [
+            { id: "view", label: "View", onClick: () => openDrawer(viewEntityDrawer(type, row)) },
+            { id: "edit", label: "Edit", onClick: () => openDrawer({ kind: "edit-type", id: type.id }) },
+            {
+              id: "delete",
+              label: "Delete",
+              onClick: () =>
+                askConfirm({
+                  title: `Delete ${row.entityName}?`,
+                  body: type.fields.every(
+                    (field) => field.entityName === row.entityName && field.mode === row.mode,
+                  )
+                      ? `${row.entityName} is the only PII type in ${type.name}, so the whole group will be deleted. This action cannot be undone.`
+                      : `This removes ${row.entityName} from ${type.name}. Policies that picked it will no longer detect it. This action cannot be undone.`,
+                  confirmLabel: "Delete",
+                  confirmColorScheme: "red",
+                  onConfirm: () => {
+                    void removeEntity(type, row);
+                  },
+                }),
+            },
+          ];
+        },
       }),
     ];
-  }, [openDrawer, askConfirm, deleteType, updateType]);
+  }, [hasGroups, openDrawer, askConfirm, deleteType, updateType]);
 
   return (
     <Box>
@@ -577,7 +620,10 @@ function TypeLibrary() {
       }}
       emptyMessage="No PII types yet."
       noResultsMessage="No PII types match your search."
-      onRowClick={(row) => openDrawer(viewEntityDrawer(row))}
+      onRowClick={(row) => {
+        if (row.type) openDrawer(viewEntityDrawer(row.type, row));
+        else setDetail(row);
+      }}
       filterToolbarRightContent={
         <HStack spacing={2}>
           <Button
@@ -600,6 +646,20 @@ function TypeLibrary() {
       }}
     />
       )}
+      {detail ? (
+        <FormDrawer
+          isOpen
+          onClose={() => setDetail(null)}
+          title="View PII Type"
+          footer={<FormActions cancelLabel="Close" onCancel={() => setDetail(null)} hideSubmit />}
+        >
+          <Stack spacing={4}>
+            <ReadOnlyField label="Entity Name">{detail.entityName}</ReadOnlyField>
+            <ReadOnlyField label="Mode">Model-supported</ReadOnlyField>
+            <ReadOnlyField label="Language">{languageLabel("en")}</ReadOnlyField>
+          </Stack>
+        </FormDrawer>
+      ) : null}
     </Box>
   );
 }

@@ -211,11 +211,8 @@ export interface SimulationPolicyType {
   policy_fields: Record<string, { custom_field: unknown[]; model_supported_field: unknown[] }>;
 }
 
-/** POST /pii/simulate on the inference service. */
-export async function simulatePolicy(
-  text: string,
-  policyTypes: SimulationPolicyType[],
-): Promise<PolicySimulation> {
-  const response = await apiClient.post(apiEndpoints.pii.simulate, { text, policyTypes });
+/** POST /pii/simulate on the inference service. policyId is the platform-core policy id. */
+export async function simulatePolicy(text: string, policyId: number): Promise<PolicySimulation> {
+  const response = await apiClient.post(apiEndpoints.pii.simulate, { text, policyId });
   return policySimulationResponseSchema.parse(response.data);
 }

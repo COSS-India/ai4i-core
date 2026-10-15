@@ -34,7 +34,8 @@ import FormActions from "../../common/FormActions";
 import FormDrawer from "../../common/FormDrawer";
 import FormSection from "../../common/FormSection";
 import ReadOnlyField from "../../common/ReadOnlyField";
-import { apiDomainName, entityNamesForPolicy, MIN_REGEX_EXAMPLES } from "./apiMap";
+import { getPolicyType } from "../../../services/policyHierarchyService";
+import { apiDomainName, definitionFromPolicyType, MIN_REGEX_EXAMPLES } from "./apiMap";
 import { regexCompiles } from "./detection";
 import {
   choiceKeys as keysOfChoices,
@@ -43,7 +44,6 @@ import {
   entityAdditionKey,
   fieldDefined,
   fieldLabel,
-  otherDetectableEntities,
   ownPolicyFields,
   policyFieldChoices,
   unavailableReason,
@@ -62,18 +62,19 @@ import {
   languageLabel,
   MODEL_FIELD_LANGUAGES,
   parseSelectedFieldKey,
-  POLICY_LANGUAGES,
   SCOPE_OPTIONS,
   selectedFieldKey,
   SHOW_MODEL_SUPPORTED_FIELDS,
   subcategoriesForCategory,
   subcategoryAfterCategoryChange,
   subcategoryEffective,
+  type PiiType,
+  type Policy,
   type PolicyField,
   type PolicyScope,
   type SelectedPolicyField,
 } from "./model";
-import { usePiiPolicies, type PolicyInput, type TypeInput } from "./PiiPoliciesProvider";
+import { apiErrorMessage, usePiiPolicies, type PolicyInput, type TypeInput } from "./PiiPoliciesProvider";
 
 function FormField({
   label,
@@ -654,17 +655,46 @@ function PolicyDrawer() {
   } = usePiiPolicies();
   const open = drawer.kind === "create-policy" || drawer.kind === "edit-policy";
   const existing = drawer.kind === "edit-policy" ? policies.find((p) => p.id === drawer.id) : undefined;
+  const linked = useLinkedPolicyTypes(existing ? existing.typeIds : []);
   if (!open) return null;
+  // Saving before the linked types load would drop the policy's own fields.
+  if (existing && linked.status !== "ready") {
+    return (
+      <FormDrawer
+        isOpen
+        onClose={closeDrawer}
+        size="wide"
+        title="Edit Policy"
+        footer={<FormActions cancelLabel="Close" onCancel={closeDrawer} hideSubmit />}
+      >
+        {linked.status === "error" ? (
+          <HStack spacing={2}>
+            <Text fontSize="sm" color="red.600">
+              {linked.error}
+            </Text>
+            <Button size="xs" variant="link" colorScheme="blue" onClick={linked.retry}>
+              Retry
+            </Button>
+          </HStack>
+        ) : (
+          <Text fontSize="sm" color="ink.500">
+            Loading policy fields…
+          </Text>
+        )}
+      </FormDrawer>
+    );
+  }
   const existingSub = existing ? subcategories.find((s) => s.id === existing.subcategoryId) : undefined;
   const existingLanguages = existing ? editableLanguages(existing) : null;
   const filteredSub = subcategories.find((s) => s.id === policySubcategoryFilter);
-  const owned = existing ? policyOwnedType(existing, types) : undefined;
+  const owned = existing ? policyOwnedType(existing, linked.types) : undefined;
   return (
     <PolicyForm
       // Remount once the types load, so the policy's own fields are filled in.
       key={existing ? `${existing.id}:${typesStatus === "ready"}` : "new-policy"}
       title={existing ? "Edit Policy" : "Create Policy"}
       submitLabel={existing ? "Save" : "Create Policy"}
+      creating={!existing}
       nameLocked={Boolean(existing)}
       initial={
         existing && existingLanguages
@@ -703,6 +733,7 @@ function PolicyDrawer() {
 function PolicyForm({
   title,
   submitLabel,
+  creating,
   nameLocked,
   initial,
   onClose,
@@ -710,6 +741,8 @@ function PolicyForm({
 }: {
   title: string;
   submitLabel: string;
+  /** Create links only the GET /pii/entities?language=en entities the admin ticks. */
+  creating: boolean;
   nameLocked: boolean;
   initial: {
     name: string;
@@ -740,7 +773,8 @@ function PolicyForm({
     [subcategories, categoryId],
   );
   const [domainIds, setDomainIds] = useState(initial.domainIds);
-  const [languages, setLanguages] = useState(initial.languages);
+  // English is the only supported language for this release.
+  const languages = useMemo(() => [...DEFAULT_POLICY_LANGUAGES], []);
   // null on a policy saved without picks, where every linked field applies, until the admin changes a pick.
   const [picks, setPicks] = useState<string[] | null>(
     initial.selectedFields ? initial.selectedFields.map(selectedFieldKey) : null,
@@ -761,7 +795,8 @@ function PolicyForm({
       .filter((field) => field.mode === "model")
       .map((field) => entityAdditionKey({ language: field.language || "en", entityName: field.entityName })),
   );
-  const { lists: entityLists, retry: retryEntities } = useModelEntities(languages);
+  const entityLanguages = languages;
+  const { lists: entityLists, retry: retryEntities } = useModelEntities(entityLanguages);
   const detectable = useMemo<DetectableEntities>(
     () =>
       Object.fromEntries(
@@ -771,7 +806,7 @@ function PolicyForm({
       ),
     [entityLists],
   );
-  const entitiesReady = languages.every((language) => entityLists[language]?.status === "ready");
+  const entitiesReady = entityLanguages.every((language) => entityLists[language]?.status === "ready");
 
   const typeChoices = useMemo<TypeChoice[]>(
     () =>
@@ -804,8 +839,8 @@ function PolicyForm({
   }, [typeChoices, typeQuery]);
 
   const otherEntities = useMemo(
-    () => (typesStatus === "ready" ? otherDetectableEntities(typeChoices, languages, detectable) : []),
-    [typesStatus, typeChoices, languages, detectable],
+    (): [string, string[]][] => (detectable.en?.length ? [["en", [...detectable.en]]] : []),
+    [detectable],
   );
   const visibleOtherEntities = useMemo(() => {
     const query = typeQuery.trim().toLowerCase();
@@ -825,14 +860,13 @@ function PolicyForm({
         .filter((addition) => entityPicks.includes(entityAdditionKey(addition))),
     [otherEntities, entityPicks],
   );
-  // Used by Select All, Clear and the count while the Model supported fields section is shown.
-  // const entityKeys = useMemo(
-  //   () =>
-  //     otherEntities.flatMap(([language, entities]) =>
-  //       entities.map((entityName) => entityAdditionKey({ language, entityName })),
-  //     ),
-  //   [otherEntities],
-  // );
+  const entityKeys = useMemo(
+    () =>
+      otherEntities.flatMap(([language, entities]) =>
+        entities.map((entityName) => entityAdditionKey({ language, entityName })),
+      ),
+    [otherEntities],
+  );
 
   const choiceKeys = useMemo(() => keysOfChoices(typeChoices), [typeChoices]);
   const linkedKeys = useMemo(
@@ -861,10 +895,6 @@ function PolicyForm({
     setPicks((prev) => (prev ?? linkedKeys).filter((key) => !keys.includes(key)));
   };
 
-  const toggle = (list: string[], value: string, setter: (next: string[]) => void) => {
-    setter(list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
-  };
-
   const save = async () => {
     if (saving) return;
     const next: Record<string, string> = {};
@@ -874,7 +904,7 @@ function PolicyForm({
     if (description.length > 200) next.description = "Description is limited to 200 characters.";
     if (domainIds.length === 0) next.domain = "Select at least one domain.";
     if (languages.length === 0) next.languages = "Select at least one language.";
-    if (languages.length > 0 && !entitiesReady) {
+    if (entityLanguages.length > 0 && !entitiesReady) {
       next.types = "Wait for the model supported fields of each language to load, or retry.";
     } else if (unavailablePicks.length > 0) {
       next.types = "Remove the selections marked as unavailable, or add back their language or domain.";
@@ -1002,25 +1032,15 @@ function PolicyForm({
               setDomainIds(checked ? [...domainIds, value] : domainIds.filter((id) => id !== value))
             }
           />
-          <ChipPicker
-            label="Supported Languages"
-            required
-            error={errors.languages}
-            helper={
-              initial.languagesPrefilled
-                ? `No languages are saved for this policy, so ${DEFAULT_POLICY_LANGUAGES.map(languageLabel).join(", ")} is preselected. Check them before saving.`
-                : undefined
-            }
-            placeholder="Select languages"
-            options={[
-              ...POLICY_LANGUAGES,
-              // Codes saved outside the offered list stay visible so they can be removed.
-              ...languages
-                .filter((code) => !POLICY_LANGUAGES.some((language) => language.code === code))
-                .map((code) => ({ code, label: code })),
-            ].map(({ code, label }) => ({ value: code, label, checked: languages.includes(code) }))}
-            onCheck={(value) => toggle(languages, value, setLanguages)}
-          />
+          <FormField label="Supported Languages" required error={errors.languages}>
+            <Wrap>
+              {languages.map((code) => (
+                <Tag key={code} size="md" variant="subtle" colorScheme="blue">
+                  <TagLabel>{languageLabel(code)}</TagLabel>
+                </Tag>
+              ))}
+            </Wrap>
+          </FormField>
         </SimpleGrid>
         <FormField label="Scope" required error={errors.scope}>
           <RadioGroup
@@ -1055,19 +1075,17 @@ function PolicyForm({
                 </Text>
               </Text>
               <Text fontSize="xs" color="ink.400">
-                {/* With Model supported fields shown: ({selectedPicks.length + entityAdditions.length}/{choiceKeys.length + entityKeys.length}) */}
-                ({selectedPicks.length}/{choiceKeys.length})
+                ({entityAdditions.length}/{entityKeys.length})
               </Text>
             </HStack>
-            {choiceKeys.length > 0 ? (
+            {entityKeys.length > 0 ? (
               <HStack spacing={2} fontSize="xs">
                 <Button
                   size="xs"
                   variant="link"
                   colorScheme="orange"
                   onClick={() => {
-                    setPicks((prev) => Array.from(new Set([...(prev ?? linkedKeys), ...choiceKeys])));
-                    // setEntityPicks(entityKeys);
+                    setEntityPicks(entityKeys);
                   }}
                 >
                   Select All
@@ -1078,8 +1096,7 @@ function PolicyForm({
                   variant="link"
                   color="ink.500"
                   onClick={() => {
-                    removePicks(choiceKeys);
-                    // setEntityPicks([]);
+                    setEntityPicks([]);
                   }}
                 >
                   Clear
@@ -1094,17 +1111,17 @@ function PolicyForm({
                   No field selections are saved for this policy, so every field of its linked PII types applies.
                 </Text>
               ) : null}
-              {typesStatus === "loading" ? (
+              {!creating && typesStatus === "loading" ? (
                 <Text fontSize="sm" color="ink.500" mb={2}>
                   Loading PII types…
                 </Text>
               ) : null}
-              {typesStatus === "error" ? (
+              {!creating && typesStatus === "error" ? (
                 <Text fontSize="sm" color="red.500" mb={2}>
                   {typesError}
                 </Text>
               ) : null}
-              <ModelEntityStatus languages={languages} lists={entityLists} onRetry={retryEntities} />
+              <ModelEntityStatus languages={entityLanguages} lists={entityLists} onRetry={retryEntities} />
               {unavailablePicks.length > 0 ? (
                 <Box borderWidth="1px" borderColor="red.200" bg="red.50" borderRadius="md" p={3} mb={2} role="alert">
                   <Flex justify="space-between" align="center" mb={1}>
@@ -1141,7 +1158,7 @@ function PolicyForm({
                   </Stack>
                 </Box>
               ) : null}
-              {domainIds.length > 0 && choicesReady && typeChoices.length === 0 ? (
+              {!creating && domainIds.length > 0 && choicesReady && typeChoices.length === 0 ? (
                 <Text fontSize="sm" color="ink.500">
                   No PII types for the selected domain and languages.
                 </Text>
@@ -1189,7 +1206,8 @@ function PolicyForm({
                 }
                 onRemove={(key) => setDrafts((prev) => prev.filter((draft) => draft.key !== key))}
               />
-              {typeChoices.length > 0 ? (
+              {/* Shared PII type fields: hidden; the entity list below holds the policy's fields.
+              {!creating && typeChoices.length > 0 ? (
                 <>
                   <Box maxH="240px" overflowY="auto" borderWidth="1px" borderColor="ink.200" borderRadius="md" p={3}>
                     <Stack spacing={3}>
@@ -1253,19 +1271,15 @@ function PolicyForm({
                   </Box>
                 </>
               ) : null}
-              {/* Model supported fields: hidden for now. Restore together with entityKeys in Select All and the count.
+              */}
               {otherEntities.length > 0 ? (
                 <Box mt={3} borderWidth="1px" borderColor="ink.200" borderRadius="md" p={3}>
-                  <Text fontSize="sm" fontWeight="600" mb={2}>
-                    Model supported fields
-                  </Text>
+
                   <Box maxH="220px" overflowY="auto">
                     <Stack spacing={3}>
                       {visibleOtherEntities.map(([language, entities]) => (
                         <Box key={language}>
-                          <Text fontSize="2xs" fontWeight="600" color="ink.500" mb={1}>
-                            {languageLabel(language)}
-                          </Text>
+
                           <SimpleGrid columns={2} spacingX={4} spacingY={2}>
                             {entities.map((entityName) => {
                               const key = entityAdditionKey({ language, entityName });
@@ -1296,7 +1310,6 @@ function PolicyForm({
                   </Box>
                 </Box>
               ) : null}
-              */}
             </>
           ) : null}
           {errors.types ? <FormErrorMessage>{errors.types}</FormErrorMessage> : null}
@@ -1492,13 +1505,59 @@ function ChipPicker({
   );
 }
 
+interface LinkedTypes {
+  key: string;
+  status: "loading" | "ready" | "error";
+  types: PiiType[];
+  error: string;
+}
+
+/** GET /policies/policy-types/{id} for each id in the policy's policy_type_id. */
+function useLinkedPolicyTypes(typeIds: string[]) {
+  const key = typeIds.join(",");
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<LinkedTypes>({ key, status: "loading", types: [], error: "" });
+
+  useEffect(() => {
+    let cancelled = false;
+    const ids = key ? key.split(",") : [];
+    setState({ key, status: "loading", types: [], error: "" });
+    Promise.all(ids.map((id) => getPolicyType(Number(id))))
+      .then((items) => {
+        if (!cancelled) setState({ key, status: "ready", types: items.map(definitionFromPolicyType), error: "" });
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setState({
+            key,
+            status: "error",
+            types: [],
+            error: apiErrorMessage(error, "Couldn't load this policy's entity names."),
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [key, attempt]);
+
+  // Until the effect runs for a new id list, the state still holds the previous list's result.
+  const current = state.key === key ? state : { key, status: "loading" as const, types: [], error: "" };
+  return { ...current, retry: () => setAttempt((n) => n + 1) };
+}
+
 function PolicyViewDrawer() {
-  const { drawer, closeDrawer, policies, types, typesStatus, domains, subscriptions, role } = usePiiPolicies();
+  const { drawer, policies } = usePiiPolicies();
   if (drawer.kind !== "view-policy") return null;
   const p = policies.find((x) => x.id === drawer.id);
   if (!p) return null;
+  return <PolicyView key={p.id} p={p} />;
+}
+
+function PolicyView({ p }: { p: Policy }) {
+  const { closeDrawer, types, typesStatus, domains, subscriptions, role } = usePiiPolicies();
   const subscribers = subscriptions[p.policyId] ?? [];
-  const entityNames = entityNamesForPolicy(p, types, domains);
+  const linked = useLinkedPolicyTypes(role === "adopter" ? p.typeIds : []);
   return (
     <FormDrawer
       isOpen
@@ -1546,19 +1605,13 @@ function PolicyViewDrawer() {
           <Text fontSize="xs" fontWeight="medium" color="ink.500" textTransform="uppercase" mb={1}>
             Languages supported
           </Text>
-          {p.languages.length === 0 ? (
-            <Text fontSize="sm" color="ink.500">
-              —
-            </Text>
-          ) : (
-            <Wrap>
-              {p.languages.map((code) => (
-                <Badge textTransform="none" key={code}>
-                  {languageLabel(code)}
-                </Badge>
-              ))}
-            </Wrap>
-          )}
+          <Wrap>
+            {DEFAULT_POLICY_LANGUAGES.map((code) => (
+              <Badge textTransform="none" key={code}>
+                {languageLabel(code)}
+              </Badge>
+            ))}
+          </Wrap>
         </Box>
         {p.selectedFields ? (
           <Box>
@@ -1589,23 +1642,46 @@ function PolicyViewDrawer() {
             <Text fontSize="xs" fontWeight="medium" color="ink.500" textTransform="uppercase" mb={1}>
               Entity Names
             </Text>
-            {p.selectedFields == null && p.typeIds.length > 0 ? (
-              <Text fontSize="xs" color="ink.500" mb={1}>
-                No field selections are saved, so every field of the linked PII types applies.
+            {linked.status === "loading" ? (
+              <Text fontSize="sm" color="ink.500">
+                Loading…
               </Text>
-            ) : null}
-            {entityNames.length === 0 ? (
+            ) : linked.status === "error" ? (
+              <HStack spacing={2}>
+                <Text fontSize="sm" color="red.600">
+                  {linked.error}
+                </Text>
+                <Button size="xs" variant="link" colorScheme="blue" onClick={linked.retry}>
+                  Retry
+                </Button>
+              </HStack>
+            ) : linked.types.every((type) => type.fields.length === 0) ? (
               <Text fontSize="sm" color="ink.500">
                 —
               </Text>
             ) : (
-              <Wrap>
-                {entityNames.map((name) => (
-                  <Badge textTransform="none" key={name}>
-                    {name}
-                  </Badge>
-                ))}
-              </Wrap>
+              <Stack spacing={3}>
+                {linked.types.map((type) => {
+                  const names = Array.from(
+                    new Set(type.fields.map((field) => field.entityName).filter(Boolean)),
+                  );
+                  if (names.length === 0) return null;
+                  return (
+                    <Box key={type.id}>
+                      <Text fontSize="sm" fontWeight="medium" color="ink.700" mb={1}>
+                        {isPolicyOwnedType(type) ? "Custom fields of this policy" : type.name}
+                      </Text>
+                      <Wrap>
+                        {names.map((name) => (
+                          <Badge textTransform="none" key={name}>
+                            {name}
+                          </Badge>
+                        ))}
+                      </Wrap>
+                    </Box>
+                  );
+                })}
+              </Stack>
             )}
           </Box>
         ) : null}

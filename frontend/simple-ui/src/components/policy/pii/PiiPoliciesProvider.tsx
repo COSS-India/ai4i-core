@@ -7,7 +7,6 @@ import {
   policyFromRecord,
   policyUpdatePayload,
   selectionForField,
-  simulationPolicyType,
 } from "./apiMap";
 import { policyOwnedType, policyOwnedTypeName } from "./policyCustomFields";
 import {
@@ -512,14 +511,12 @@ export function PiiPoliciesProvider({
         setPlaygroundError("");
         setPlaygroundResult(null);
         try {
-          const wanted = new Set(policy.typeIds);
-          const linked = (await listPolicyTypes()).filter((item) => wanted.has(String(item.id)));
-          if (requestId !== playgroundRequest.current) return;
-          if (linked.length === 0) {
-            setPlaygroundError(`${policy.policyId} has no PII definitions to test.`);
+          const id = numericId(policy.id);
+          if (id == null) {
+            setPlaygroundError("Couldn't run the simulation.");
             return;
           }
-          const simulation = await simulatePolicy(text, linked.map(simulationPolicyType));
+          const simulation = await simulatePolicy(text, id);
           if (requestId !== playgroundRequest.current) return;
           setPlaygroundResult({ ...simulation, policyId: policy.policyId });
         } catch (error: unknown) {
@@ -558,7 +555,7 @@ export function PiiPoliciesProvider({
         }
       },
       addType: async (input) => {
-        if (duplicateName(types, input.name)) return "A policy type with this name already exists.";
+       // if (duplicateName(types, input.name)) return "A policy type with this name already exists.";
         try {
           const createdId = await createPolicyType({
             policy_type: input.name,
@@ -580,9 +577,9 @@ export function PiiPoliciesProvider({
       updateType: async (id, input) => {
         const current = types.find((t) => t.id === id);
         if (!current) return "PII type not found.";
-        if (duplicateName(types, input.name, id)) {
-          return "A policy type with this name already exists.";
-        }
+        // if (duplicateName(types, input.name, id)) {
+        //   return "A policy type with this name already exists.";
+        // }
         const typeId = numericId(id);
         if (typeId == null) return "Couldn't update the PII definition.";
         try {
@@ -874,7 +871,7 @@ function numericId(id: string): number | null {
   return Number.isInteger(value) && value > 0 ? value : null;
 }
 
-function apiErrorMessage(error: unknown, fallback = "Couldn't load policy categories."): string {
+export function apiErrorMessage(error: unknown, fallback = "Couldn't load policy categories."): string {
   if (!error || typeof error !== "object") {
     return error instanceof Error && error.message ? error.message : fallback;
   }
