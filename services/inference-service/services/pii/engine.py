@@ -29,14 +29,18 @@ _engine: Optional["PresidioEngine"] = None
 # non-English language it finds almost no names, places or organisations.
 MULTILINGUAL_NER_LANGUAGES = {"de", "es", "fr", "it", "nl", "pl", "pt", "ru"}
 
-# Entity name prefixes that belong to a specific country.  Any entity whose
-# name starts with one of these prefixes is considered country-specific and
-# will be excluded when a different country is requested.
-COUNTRY_ENTITY_PREFIXES: Dict[str, str] = {
-    "IN": "IN_",
-    "US": "US_",
-    "UK": "UK_",
+# Maps ISO country codes to the Presidio country_specific sub-package name.
+# Recognizers living under presidio_analyzer.predefined_recognizers.country_specific.*
+# are classified by their module path, not by entity-name prefixes.  This
+# means any new country recognizer (e.g. SgFinRecognizer under country_specific.sg)
+# is automatically excluded when a different country is requested — even before
+# its country code is added here.
+COUNTRY_MODULE_NAMES: Dict[str, str] = {
+    "IN": "india",
+    "US": "us",
+    "UK": "uk",
 }
+_COUNTRY_SPECIFIC_MARKER = "country_specific"
 
 
 class PresidioEngine:
@@ -110,13 +114,19 @@ class PresidioEngine:
         if country is None:
             return all_entities
         country_upper = country.upper()
-        selected_prefix = COUNTRY_ENTITY_PREFIXES.get(country_upper)
-        all_prefixes = set(COUNTRY_ENTITY_PREFIXES.values())
-        return {
-            entity for entity in all_entities
-            if not any(entity.startswith(p) for p in all_prefixes)
-            or (selected_prefix is not None and entity.startswith(selected_prefix))
-        }
+        module_name = COUNTRY_MODULE_NAMES.get(country_upper)
+        universal: Set[str] = set()
+        for_country: Set[str] = set()
+        for recognizer in recognizers:
+            if not ner_works and isinstance(recognizer, SpacyRecognizer):
+                continue
+            module = type(recognizer).__module__
+            if _COUNTRY_SPECIFIC_MARKER not in module:
+                universal.update(recognizer.supported_entities)
+            elif module_name and f".{module_name}" in module:
+                for_country.update(recognizer.supported_entities)
+            # else: country_specific for a different (or unknown) country — exclude
+        return universal | for_country
 
     def anonymize(
         self,
