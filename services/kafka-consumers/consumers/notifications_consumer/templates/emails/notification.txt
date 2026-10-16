@@ -6,7 +6,9 @@ Dear {{ recipient_name }},
 {{ event.headline }}
 
 {% for line in event.lines -%}
-{% if line is string -%}
+{% if line is mapping -%}
+{{ line.label ~ ":" ~ (" " ~ line.value if line.value is defined else "") }}
+{% elif line is string -%}
 {{ line }}
 {% else -%}
 {% for sub_line in line -%}

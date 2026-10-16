@@ -1,7 +1,8 @@
 {% extends "_base.html" %}
 {# Standard Notification Email Template. From events/<event_name>.j2:
    event.name, event.headline, event.lines — a line that is itself a list
-   renders as indented sub-lines. #}
+   renders as indented sub-lines, and a {label, value} line renders as a
+   bold "label:" followed by the value (the label alone when it has none). #}
 {% block title %}{{ event.name }} — {{ tenant_name }}{% endblock %}
 {% block preheader %}{{ event.headline }}{% endblock %}
 {% block heading %}{{ event.name }} — {{ tenant_name }}{% endblock %}
@@ -9,7 +10,9 @@
   <p style="margin:0 0 4px 0;">Dear {{ recipient_name }},</p>
   <p style="margin:0 0 16px 0;">{{ event.headline }}</p>
   {% for line in event.lines %}
-  {% if line is string %}
+  {% if line is mapping %}
+  <p style="margin:0 0 4px 0;"><strong>{{ line.label }}:</strong>{% if line.value is defined %} {{ line.value }}{% endif %}</p>
+  {% elif line is string %}
   <p style="margin:0 0 4px 0;">{{ line }}</p>
   {% else %}
   {% for sub_line in line %}

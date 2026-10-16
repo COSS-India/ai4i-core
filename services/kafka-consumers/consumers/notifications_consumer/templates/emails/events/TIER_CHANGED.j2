@@ -3,8 +3,9 @@
 {% set name = "Tier Reassignment" %}
 {% set headline = "The Tier for " ~ tenant_name ~ " has been reassigned." %}
 {% set lines = [
-    "Current Tier: " ~ details[0] ~ " → New Tier: " ~ details[1],
-    "New Tier Description: " ~ details[2],
-    "New Tier Quota Limits:",
+    {"label": "Current Tier", "value": details[0]},
+    {"label": "New Tier", "value": details[1]},
+    {"label": "New Tier Description", "value": details[2]},
+    {"label": "New Tier Quota Limits"},
     details[3],
 ] %}
