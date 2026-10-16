@@ -94,6 +94,32 @@ def test_unknown_application_service_and_tenant():
     assert (row["total_units"], row["input_units_cost"], row["failed_count"]) == (100, 0, 3)
 
 
+def test_series_that_become_the_same_row_add_up():
+    """Two applications missing from the auth DB (and two non-LLM services)
+    under one institution are one row, not two rows with the same unique key."""
+    results = {
+        "requests": [_series(2.4, tenant_id="7", application_id="555", service_id="llm-svc"),
+                     _series(3.4, tenant_id="7", application_id="666", service_id="llm-svc"),
+                     _series(1, tenant_id="7", application_id="11", service_id="gone-a"),
+                     _series(1, tenant_id="7", application_id="11", service_id="gone-b")],
+        "successful": [_series(2.4, tenant_id="7", application_id="555", service_id="llm-svc"),
+                       _series(1.4, tenant_id="7", application_id="666", service_id="llm-svc")],
+        "tokens": [_series(100, tenant_id="7", application_id="555", service_id="llm-svc", token_type="prompt"),
+                   _series(50, tenant_id="7", application_id="666", service_id="llm-svc", token_type="prompt"),
+                   _series(10, tenant_id="7", application_id="666", service_id="llm-svc", token_type="completion")],
+    }
+    rows = build_day_rows(DAY, results, _lookups())
+    keys = [(r["tenant_id"], r["application_id"], r["service_id"]) for r in rows]
+    assert sorted(keys, key=str) == sorted([(7, None, "llm-svc"), (7, 11, None)], key=str)
+    unknown_app = next(r for r in rows if r["application_id"] is None)
+    # Summed before rounding: 2.4 + 3.4 = 5.8 → 6 requests, 2.4 + 1.4 = 3.8 → 4 successful.
+    assert (unknown_app["request_count"], unknown_app["failed_count"]) == (6, 2)
+    assert (unknown_app["total_units"], unknown_app["output_units"]) == (160, 10)
+    assert unknown_app["input_units_cost"] == Decimal("0.150")       # 150 prompt tokens x 0.001
+    unknown_svc = next(r for r in rows if r["service_id"] is None)
+    assert (unknown_svc["request_count"], unknown_svc["input_units_cost"]) == (2, 0)
+
+
 def test_rows_that_round_to_nothing_are_dropped():
     results = {"requests": [_series(0.3, tenant_id="7", application_id="11", service_id="llm-svc")],
                "successful": [], "tokens": []}
