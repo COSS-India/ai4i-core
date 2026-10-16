@@ -3,9 +3,6 @@ import { INSTITUTION, INSTITUTIONS } from "./constants";
 
 type MeteringPresetPeriodKey = Exclude<MeteringPeriodKey, "custom">;
 
-/** Longest custom range the API accepts, in days. */
-const CUSTOM_RANGE_MAX_DAYS = 366;
-
 /** Metering & usage dashboard — copy, defaults, and configuration. */
 export const METERING = {
   ERRORS: {
@@ -99,8 +96,7 @@ export const METERING = {
   IST_TIME_ZONE: "Asia/Kolkata",
   CUSTOM_RANGE: {
     TITLE: "Custom date range",
-    SUBTITLE: `Select a start date and an end date (up to ${CUSTOM_RANGE_MAX_DAYS} days, ending yesterday)`,
-    MAX_DAYS: CUSTOM_RANGE_MAX_DAYS,
+    SUBTITLE: "Select a start date and an end date (any day up to today)",
     APPLY: "Apply",
     CANCEL: "Cancel",
     CLEAR: "Clear custom range",
@@ -109,6 +105,8 @@ export const METERING = {
     /** Title hint: clicking the month title opens the year / month picker. */
     CHOOSE_MONTH_YEAR: "Choose month and year",
     MIN_YEAR: 2000,
+    /** Earliest pickable day: 1 Jan of MIN_YEAR. */
+    EARLIEST_DAY: "2000-01-01",
     WEEKDAYS: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"],
   },
   TOP_N_OPTIONS: [10, 25] as const satisfies readonly MeteringTopN[],

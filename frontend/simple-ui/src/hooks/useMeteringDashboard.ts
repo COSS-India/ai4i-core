@@ -6,7 +6,6 @@ import { useInferenceTypes } from "./useInferenceTypes";
 import { toMeteringKey } from "../utils/meteringTaskKey";
 import { useTenantsList } from "./useTenantsList";
 import type {
-  MeteringDayKey,
   MeteringPeriod,
   MeteringResponseMeta,
   MeteringTopN,
@@ -29,7 +28,7 @@ import {
 import { showToast } from "../utils/toast";
 import { resolveMeteringGeneratedAt, formatMeteringDataStateBanner } from "../utils/meteringFormatters";
 import { getTenantIdFromToken } from "../utils/helpers";
-import { istDayKey, periodQueryKeyParts } from "../utils/meteringDateRange";
+import { periodQueryKeyParts } from "../utils/meteringDateRange";
 
 function isMeteringSubTab(
   value: string,
@@ -171,13 +170,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     showToast({ type: "info", message: METERING.ERRORS.INVALID_PERIOD_RESET });
     setPeriod(METERING.DEFAULTS.PERIOD);
   }, [period.key, overviewQuery.error]);
-
-  // Date picker floor: the IST day the institution was onboarded, or the first
-  // recorded usage in scope when there is no single institution.
-  const firstPickableDay = useMemo((): MeteringDayKey | null => {
-    const ms = Date.parse(overview?.onboarded_at ?? overview?.first_usage_at ?? "");
-    return Number.isNaN(ms) ? null : istDayKey(ms);
-  }, [overview?.onboarded_at, overview?.first_usage_at]);
 
   // Key metrics (`platform_adoption`) ignore the period, but a fetch for
   // another period (or its failure) must not blank them, so they read the
@@ -324,7 +316,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     setSubTab,
     period,
     setPeriod,
-    firstPickableDay,
     topN,
     setTopN,
     scopeTenantId,
