@@ -1529,6 +1529,8 @@ export const SET_PASSWORD_TOKEN = {
   },
 } as const;
 
+export const PII_ENTITY_COUNTRY = 'IN';
+
 export type SetPasswordTokenStatusValue =
   (typeof SET_PASSWORD_TOKEN.STATUS)[keyof typeof SET_PASSWORD_TOKEN.STATUS];
 

@@ -10,6 +10,7 @@ import {
   piiTenantDomainMappingSchema,
   stringArraySchema,
 } from "./dto/schemas/pii";
+import { PII_ENTITY_COUNTRY } from "@/config/constants";
 
 const admin = apiEndpoints.pii.admin;
 
@@ -39,8 +40,10 @@ export const piiService = {
 
   /** Entity types inference-service can detect for this language (GET /pii/entities). */
   getSupportedEntities: async (language: string): Promise<string[]> => {
-    const response = await apiService.get(apiEndpoints.pii.entities +"?country=in", {
-      params: { language },
+    const response = await apiService.get(apiEndpoints.pii.entities, {
+      params: { language,
+        country: PII_ENTITY_COUNTRY,
+      },
       responseSchema: piiSupportedEntitiesSchema,
       suppressErrorAlert: true,
     });
