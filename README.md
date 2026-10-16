@@ -209,3 +209,4 @@ Open-source project — support is community-based:
   app-service logs appear in the terminal running each service; check per-service `/health` endpoints
 
 > Provided as-is; no commercial SLA.
+
