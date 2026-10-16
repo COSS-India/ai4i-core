@@ -6,6 +6,76 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/).
 
 
+## [2.9.0] - 2026-10-16
+
+> PII guardrail, policy management, API key rotation and usage metering release, 82 PRs merged
+
+### Added
+- PII policy management. Categories, sub-categories, policy types and policies, each with create, read, update and status APIs under `/api/v1/policies`, audit fields on every policy table, a default category seed, and an application link through `applications.policy_id` (AI4IDS-3172, AI4IDS-3174, AI4IDS-3176, AI4IDS-3178, AI4IDS-3179, AI4IDS-3181, AI4IDS-3312)
+- Policies page in the UI for categories, sub-categories, PII types and policy CRUD
+- Presidio-backed PII engine with a spaCy NLP model: `GET /api/v1/pii/entities`, analyze and anonymize, a custom `entity_counter` anonymizer, entity filtering by country, and `POST /api/v1/pii/simulate` to run a stored or draft policy against sample text (AI4IDS-3175, AI4IDS-3180)
+- PII guardrail in the inference pipeline. Policies linked to an application, and global policies, run on LLM chat requests, including requests with no `app_id`. The policy is cached in Redis and the cache is refreshed when a category or sub-category is enabled or disabled (AI4IDS-3180)
+- API key rotation at `POST /api/v1/auth/api-keys/{key_id}/rotate`. The previous value keeps working for a grace window, can be revoked early at `DELETE /api/v1/auth/api-keys/{key_id}/rotated-key`, and is returned masked in rotation responses. The rotation actions are hidden in the UI until the rotation UI story lands (AI4IDS-3254)
+- Tier-level rate limit, set on tier create and edit and sent to the gateway as `X-Rate-Limit` (AI4IDS-3375)
+- LLM services priced separately for input, cached input and output tokens (AI4IDS-3279)
+- `usage_events` (one row per request) and `daily_usage` tables in the core database, with a daily rollup job, and the Usage Dashboard metering tabs served from them instead of Prometheus (AI4IDS-3292, AI4IDS-3432)
+- A backfill job that loads Usage Dashboard LLM history from Prometheus into `daily_usage` (AI4IDS-3292)
+- Usage Dashboard period filter, LLM token breakdown and LLM drill-down, with today included in Last 7 days and custom ranges (AI4IDS-3292)
+- Scheduled usage report by email to every active USAGE VIEWER, sent by the `usage_report` job in the new `services/pyjob` service through platform-core (AI4IDS-3278, AI4IDS-3416)
+- `services/pyjob`, a new job image with `daily_usage_consolidation`, `monthly_partition_rollover` and `usage_report`, meant to run as Kubernetes CronJobs
+- App-supplied tags on inference requests for tracing, stored as `metadata` on `usage_events` (AI4IDS-3266)
+- End User and Metadata filters on the Logs Dashboard (AI4IDS-3430)
+
+### Changed
+- Usage summary splits budget (all-time) from quota (monthly). `/pay-per-use/usage-summary` now returns `{currency, budget, quota}`, the usage tenant endpoints drop `spend` and the flat quota fields and add `periodSpend`, and the metering endpoints return `scope.period` in place of `scope.window` (AI4IDS-3298)
+- Usage period endpoints take `today`, `yesterday`, `last_7_days` or a custom range of up to 366 days. `window` and `billing_period` return 422 `INVALID_PERIOD`
+- Creating an LLM service, or updating one's billing fields, requires `cachedInputCostPerUnit` and `outputCostPerUnit`. Other task types reject them (AI4IDS-3279)
+- LLM chat validates `user` (up to 256 characters) and `metadata` (up to 16 string values, keys up to 64 characters, no `orch_` prefix) and returns 400 otherwise. Both are stripped before the request reaches the model (AI4IDS-3266)
+- Tier status is cached in Redis (`core:tier:{id}`), written by platform-core and read by auth-service, in place of a per-replica in-memory cache
+- The portal signs the user out only on a 401. Timeouts, network errors, 5xx and 403 keep the session (AI4IDS-3300)
+- `policies.read` granted to TENANT ADMIN, so Institution Admins can list the policy catalogue
+- Policy type names no longer have to be unique
+- Tier assignment emails show the catalogue quota unit, empty email fields show NA, and field labels are bold (AI4IDS-3481)
+- The Portal URL in emails is a hyperlink (AI4IDS-3485)
+- Tier name shown on the Institution Admins page (AI4IDS-3049)
+- Frontend restructured into feature folders, with management validation, model JSON validation and application budget draft logic extracted, and the platform name made dynamic in Onboarding Guides
+- Setup and Kafka consumer documentation updated (AI4IDS-3264)
+- Services moved through `ai4i-core` 1.0.49, 1.0.50, 1.0.51 and 1.0.52 (AI4IDS-3279, AI4IDS-3450)
+
+### Fixed
+- Unsubscribe had no confirmation, and Submit was enabled with no changes (AI4IDS-3271, AI4IDS-3272)
+- Inactive users were shown as enabled and ticked in "Also Notify In Your Org" (AI4IDS-3274)
+- Service listing in View Tier showed an invalid "Draft" status (AI4IDS-3414)
+- Custom date range: the picker closed early, the end date could not be selected, backward selection was blocked, and the LLM cost breakdown overlapped (AI4IDS-3341, AI4IDS-3342, AI4IDS-3470)
+- The daily_usage rollup counted request rows more than once (AI4IDS-3292)
+- A PII policy still ran when its sub-category was inactive (AI4IDS-3180)
+- PII simulate rejected the flat `policy_fields` returned by the policy-types API (AI4IDS-3175)
+- The PII audit log did not keep the raw value for output-scoped policies
+- Multiple Alembic heads on the core database, merged in #1725, #1733, #1747, #1748 and #1791
+
+### Removed
+- The internal `POST /internal/ppu/tier/deactivated` route on auth-service. Tier status now travels through Redis
+- The INFO log of chat request payloads in inference-service
+
+### Upgrade notes
+- Shared library `ai4i-core` 1.0.46 to 1.0.52. auth-service, platform-core, inference, kafka-consumers and the new pyjob all pin 1.0.52
+- 25 migrations: three on the auth database (`applications.policy_id`, `policies.read` for TENANT ADMIN, and `api_key.rotated_key`) and 22 on the core database (the policy tables and seeds, `usage_events` and `daily_usage`, `tiers.rate_limit`, the LLM token prices, and five head-merge revisions). The only one that changes existing rows is `5d7f9b1c3e4a`, which copies each LLM service's `cost_per_unit` into the new cached input and output prices, so existing LLM cost is unchanged
+- The Usage Dashboard switches to `usage_events` unless `METERING_DATA_SOURCE` is set. The default moved from `prometheus` to `usage_events`. `usage_events` starts empty at deploy, so every range before the deploy shows zero until the backfill is run and `USAGE_DAILY_ROLLUP_ENABLED` is turned on. Set `METERING_DATA_SOURCE=prometheus` to keep the old numbers
+- `services/pyjob` needs three CronJobs, which are not defined in this repo: `daily_usage_consolidation` (`30 18 * * *`), `monthly_partition_rollover` (`0 0 1 * *`) and `usage_report`. Without the rollover, rows from next month on fall into the default partition. Without consolidation, `daily_usage` stays empty, and turning `USAGE_DAILY_ROLLUP_ENABLED` on then shows zeros for past periods. The first consolidation run rewrites every `usage_events` row under an exclusive lock, so the payperuse consumer waits for it
+- `usage_report` re-sends on every run, with no send log, so its CronJob schedule must match `USAGE_REPORT_FREQUENCY`. The report reads Prometheus, the auth database and SMTP, and its figures come from Prometheus, so they can differ from the dashboard
+- The Prometheus backfill is a one-off manual run per environment (`python -m backfill` in `services/pyjob`, reversed with `python -m backfill undo`). Run it soon after deploy, because Prometheus retention is rolling
+- Every LLM chat request now goes through the PII guardrail, which reads Redis and platform-core. It fails closed: if Redis or platform-core cannot be reached, or an application points at a policy platform-core does not have, the request returns 503. inference-service must share Redis and `REDIS_DB` with auth-service and platform-core, or app-level policies are silently not enforced. When a policy applies, a streaming response arrives as one chunk at the end
+- inference-service now carries Presidio and the spaCy `en_core_web_lg` model, fetched at image build time. The model loads on the first PII-guarded request per pod, so expect higher pod memory and a slow first request
+- The PII audit log (`ai4iplatform_core.audit_log`) stores the unmasked request for output-scoped policies, in plain JSONB
+- Breaking API changes for usage clients: `/pay-per-use/usage-summary` drops `billingPeriod`, `totalSpend`, `totalAllocatedBudget`, `totalRemainingBudget`, `budgetExceededTenants`, `activeTenants` and `spendByModelTaskType`, the usage tenant endpoints drop `spend` and the flat quota fields, and `window` or `billing_period` returns 422
+- LLM chat callers sending non-string `metadata` values or more than 16 keys now get 400
+- The tier rate limit is sent as `X-Rate-Limit`, but APISIX enforces it only once forward-auth passes the header upstream and the rate limiter counts against it. Existing tiers get no limit (NULL). Deploy platform-core before auth-service, since auth-service now reads tier status from the Redis cache platform-core writes
+- New optional settings: `ROTATED_API_KEY_EXPIRE_DAYS` (auth-service, default 7), `USAGE_DAILY_ROLLUP_ENABLED`, `USAGE_REPORT_ALLOW_SUBDAILY` and the `USAGE_REPORT_*` branding keys (platform-core). The pyjob CronJobs need their own env: the core and auth database settings, `PLATFORM_CORE_SERVICE_URL`, and `INTERNAL_SERVICE_SHARED_SECRET` matching platform-core's
+- API key rotation is API-only for now. The UI hides the rotation actions
+- inference-service still logs Triton request payloads at INFO (`services/base/task_service.py`), so text, audio and image content still reach the logs and OpenSearch. The chat payload log is gone
+
+---
+
 ## [2.8.0] - 2026-10-06
 
 > Notification pipeline, monitoring alerts and UI revamp release, 58 PRs merged
@@ -516,7 +586,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-[Unreleased]: https://github.com/COSS-India/ai4i-core/compare/v2.8...HEAD
+[Unreleased]: https://github.com/COSS-India/ai4i-core/compare/v2.9...HEAD
+[2.9.0]: https://github.com/COSS-India/ai4i-core/compare/v2.8...v2.9
 [2.8.0]: https://github.com/COSS-India/ai4i-core/compare/v2.7.2-hotfix...v2.8
 [2.7.2]: https://github.com/COSS-India/ai4i-core/compare/v2.7.1-hotfix...v2.7.2-hotfix
 [2.7.1]: https://github.com/COSS-India/ai4i-core/compare/v2.7...v2.7.1-hotfix
