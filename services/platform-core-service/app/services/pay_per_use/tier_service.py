@@ -29,7 +29,7 @@ from ai4i_core.kafka import (
 from app.models.pay_per_use.tier import Tier, TierQuota
 from app.repositories.pay_per_use.usage_repository import update_tier_cache
 from app.schemas.pay_per_use.tier import TierCreate, TierOut, TierQuotaOut, TierUpdate
-from app.services.pay_per_use import inference_type_cache
+from app.services.pay_per_use import inference_type_cache, tier_redis
 from app.models.pay_per_use.quota_usage import QuotaUsage
 
 logger = logging.getLogger(__name__)
@@ -129,6 +129,7 @@ def _build_out(tier: Tier, quotas: List[TierQuota], names: dict) -> TierOut:
         name=tier.name,
         description=tier.description,
         status=tier.status,
+        rateLimit=tier.rate_limit,
         quotas=quota_out,
         createdAt=tier.created_at,
         updatedAt=tier.updated_at,
@@ -191,7 +192,7 @@ async def create_tier(body: TierCreate, session: AsyncSession, created_by: Optio
             detail=f"Tier with name '{body.name}' already exists",
         )
 
-    tier = Tier(name=body.name, description=body.description, status=TierStatus.INACTIVE, created_by=created_by, updated_by=created_by)
+    tier = Tier(name=body.name, description=body.description, rate_limit=body.rateLimit, status=TierStatus.INACTIVE, created_by=created_by, updated_by=created_by)
     session.add(tier)
     await session.flush()
 
@@ -230,6 +231,7 @@ async def create_tier(body: TierCreate, session: AsyncSession, created_by: Optio
         raise
     await session.refresh(tier)
     update_tier_cache(tier.id, tier.name)
+    await tier_redis.write_tier(tier)
     names = await inference_type_cache.get_name_by_id(session)
     return _build_out(tier, quotas, names)
 
@@ -423,6 +425,9 @@ async def update_tier(
         tier.name = body.name
     if body.description is not None:
         tier.description = body.description
+    # Presence, not value: an explicit null removes the limit, an absent field keeps it.
+    if "rateLimit" in body.model_fields_set:
+        tier.rate_limit = body.rateLimit
     tier.updated_by = updated_by
 
     quota_changes: List[dict] = []
@@ -444,6 +449,7 @@ async def update_tier(
         raise
     await session.refresh(tier)
     update_tier_cache(tier.id, tier.name)
+    await tier_redis.write_tier(tier)
 
     if quota_changes and notifications_configured():
         run_in_background(_publish_quota_limit_updated(tier.id, tier.name, quota_changes))
@@ -546,12 +552,11 @@ async def update_tier_status(
     await session.commit()
     await session.refresh(tier)
     update_tier_cache(tier.id, tier.name)
+    await tier_redis.write_tier(tier)
 
     # Post-commit notifications (best-effort).
     if target_status == TierStatus.ACTIVE and previous_status == TierStatus.DEACTIVATED:
         await _notify_tier_reactivated(tier, auth_service_url, http_client, auth_db)
-    elif target_status == TierStatus.DEACTIVATED:
-        await _notify_tier_deactivated(tier, auth_service_url, http_client)
 
     q_result = await session.execute(select(TierQuota).where(TierQuota.tier_id == tier.id))
     names = await inference_type_cache.get_name_by_id(session)
@@ -621,62 +626,4 @@ async def _notify_tier_reactivated(
         "tier-reactivated notification for tier %s failed after %d attempts (%s): "
         "quota-exhausted flags may remain set for %d tenant(s) until next reactivation",
         tier.id, _REACTIVATE_NOTIFY_MAX_ATTEMPTS, failure, len(tenant_ids),
-    )
-
-
-async def _notify_tier_deactivated(
-    tier: Tier,
-    auth_service_url: str,
-    http_client: Optional[httpx.AsyncClient],
-) -> None:
-    """Push an ACTIVE → DEACTIVATED status change to auth-service immediately after commit.
-
-    Without this push, auth-service coasts on its cached ACTIVE status for up to
-    tier_status_cache_refresh_interval_seconds, serving entitled traffic during that
-    window. The periodic reload remains as a backstop.
-    """
-    if not (auth_service_url and http_client):
-        return
-
-    payload = {"tier_id": str(tier.id)}
-    failure: str = "unknown"
-
-    for attempt in range(1, _REACTIVATE_NOTIFY_MAX_ATTEMPTS + 1):
-        try:
-            resp = await http_client.post(
-                f"{auth_service_url}/internal/ppu/tier/deactivated",
-                json=payload,
-                timeout=5.0,
-            )
-            resp.raise_for_status()
-            return
-        except httpx.HTTPStatusError as exc:
-            failure = f"HTTP {exc.response.status_code}"
-            if exc.response.status_code < 500:
-                logger.warning(
-                    "tier-deactivated notification for tier %s rejected "
-                    "(HTTP %s, not retrying): auth-service status cache may be stale",
-                    tier.id, exc.response.status_code,
-                )
-                return
-        except httpx.TimeoutException:
-            failure = "request timed out"
-        except httpx.ConnectError as exc:
-            failure = f"connection refused/unreachable: {exc}"
-        except Exception as exc:
-            failure = str(exc)
-
-        if attempt < _REACTIVATE_NOTIFY_MAX_ATTEMPTS:
-            delay = _REACTIVATE_NOTIFY_BACKOFF[attempt - 1]
-            logger.warning(
-                "tier-deactivated notification for tier %s failed "
-                "(attempt %d/%d, %s); retrying in %.0fs",
-                tier.id, attempt, _REACTIVATE_NOTIFY_MAX_ATTEMPTS, failure, delay,
-            )
-            await asyncio.sleep(delay)
-
-    logger.error(
-        "tier-deactivated notification for tier %s failed after %d attempts (%s): "
-        "auth-service will enforce deactivation on next cache reload",
-        tier.id, _REACTIVATE_NOTIFY_MAX_ATTEMPTS, failure,
     )

@@ -1,0 +1,17 @@
+Dear Sir/Madam,
+
+Please find attached the {{ report_name }} for {{ period_label }}.
+
+Summary
+{% for line in summary %}
+• {{ line }}
+{% endfor %}
+
+Full report attached: {{ attachment_name }}
+
+{% if portal_link %}Please log in to the {{ platform_name }} Portal ({{ portal_link }}) for more details.{% else %}Please log in to the {{ platform_name }} Portal for more details.{% endif %}
+
+
+Regards,
+{% if sender_name %}{{ sender_name }}
+{% endif %}{{ team_name }}

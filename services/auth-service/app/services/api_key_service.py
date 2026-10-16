@@ -37,6 +37,7 @@ from app.core.config import settings
 from app.core.constants import UNASSIGNED_TIER_ID
 from app.core.database import get_db
 from app.core.exceptions import (
+    AppError,
     AuthorizationError,
     EntityNotFoundError,
     InvalidAPIKeyError,
@@ -202,6 +203,24 @@ class APIKeyService:
             return max(0, int((db_key.expires_at - datetime.now(timezone.utc)).total_seconds()))
         return int(timedelta(days=settings.api_key_expire_days).total_seconds())
 
+    @classmethod
+    def _cache_ttl_for(cls, db_key: APIKey, key_value: str) -> int:
+        """TTL for one of the row's key values: the rotated key's entry ends
+        at rotated_key_expires_at, the current key's at expires_at."""
+        if key_value != db_key.api_key and key_value == db_key.rotated_key:
+            if db_key.rotated_key_expires_at is None:
+                return 0
+            remaining = (db_key.rotated_key_expires_at - datetime.now(timezone.utc)).total_seconds()
+            return max(0, min(int(remaining), cls._compute_cache_ttl(db_key)))
+        return cls._compute_cache_ttl(db_key)
+
+    async def _delete_key_caches(self, db_key: APIKey) -> None:
+        """Delete the Redis entry of every value the row has held — the
+        rotated key's too, expired or not (an absent entry is a no-op)."""
+        for value in (db_key.api_key, db_key.rotated_key):
+            if value:
+                await self._cache.delete_api_key_cache(value)
+
     @staticmethod
     def _build_cache_payload(
         db_key: APIKey,
@@ -289,7 +308,12 @@ class APIKeyService:
         payload = self._build_cache_payload(
             db_key, tenant_id, budget_effective_to, {**self._preserved_tier_id(db_key), **preserved}
         )
-        await self._cache.set_api_key_cache(db_key.api_key, ttl, payload)
+        # Same fields under every live value of the row (the rotated key's
+        # entry too), each with its own TTL.
+        for value in db_key.cache_key_values():
+            value_ttl = self._cache_ttl_for(db_key, value)
+            if value_ttl > 0:
+                await self._cache.set_api_key_cache(value, value_ttl, payload)
         await self._persist_cache_snapshot(db_key, payload)
 
     async def _persist_current_state_to_cached_data(
@@ -315,7 +339,7 @@ class APIKeyService:
         if self._repo is None:
             return
         for key in await self._repo.list_by_application(application_id):
-            await self._cache.delete_api_key_cache(key.api_key)
+            await self._delete_key_caches(key)
 
     async def evict_keys_for_tenant(self, tenant_id: int) -> None:
         """Evict Redis cache for all of the tenant's applications' keys. No DB writes.
@@ -333,7 +357,7 @@ class APIKeyService:
             if not keys:
                 break
             for key in keys:
-                await self._cache.delete_api_key_cache(key.api_key)
+                await self._delete_key_caches(key)
             after_id = keys[-1].id
             if len(keys) < _TENANT_CASCADE_PAGE_SIZE:
                 break
@@ -363,12 +387,15 @@ class APIKeyService:
             )
             return
         await self._repo.commit()
+        # revoked_keys holds every value with a possible Redis entry — a
+        # rotated row contributes its rotated_key too — so it counts entries,
+        # not keys.
         for api_key in revoked_keys:
             await self._cache.delete_api_key_cache(api_key)
         logger.info(
-            "Revoked %s API key(s) for deactivated tenant_id=%s",
-            len(revoked_keys),
+            "Revoked API keys for deactivated tenant_id=%s (%s cache entries cleared)",
             tenant_id,
+            len(revoked_keys),
         )
 
     async def refresh_keys_cache_for_application(
@@ -441,10 +468,11 @@ class APIKeyService:
         else:
             patch_field = self._cache.patch_api_key_cache_field
             repo_kwargs = {}
-        await self._for_each_active_tenant_key(
-            tenant_id,
-            lambda key: patch_field(key.api_key, field, value),
-        )
+        async def patch_key(key: APIKey) -> None:
+            for key_value in key.cache_key_values():
+                await patch_field(key_value, field, value)
+
+        await self._for_each_active_tenant_key(tenant_id, patch_key)
         await self._repo.patch_cached_data_field_for_tenant(tenant_id, field, value, **repo_kwargs)
         await self._repo.commit()
 
@@ -526,7 +554,8 @@ class APIKeyService:
         if not key.is_active or key.is_expired() or not key.cached_data:
             return
         value = "1" if exhausted else "0"
-        await self._cache.patch_api_key_cache_field(key.api_key, "budget-exhausted", value)
+        for key_value in key.cache_key_values():
+            await self._cache.patch_api_key_cache_field(key_value, "budget-exhausted", value)
         await self._repo.update(key, {"cached_data": {**key.cached_data, "budget-exhausted": value}})
         await self._repo.commit()
 
@@ -637,7 +666,7 @@ class APIKeyService:
             if not keys:
                 break
             await self._cache.delete_api_key_cache_fields_bulk(
-                [key.api_key for key in keys], inference_fields
+                [value for key in keys for value in key.cache_key_values()], inference_fields
             )
             if len(keys) < page_size:
                 break
@@ -677,10 +706,11 @@ class APIKeyService:
                 tenant_id,
             )
             return
-        await self._for_each_active_tenant_key(
-            tenant_id,
-            lambda key: self._cache.delete_api_key_cache_fields(key.api_key, inference_fields),
-        )
+        async def clear_key(key: APIKey) -> None:
+            for key_value in key.cache_key_values():
+                await self._cache.delete_api_key_cache_fields(key_value, inference_fields)
+
+        await self._for_each_active_tenant_key(tenant_id, clear_key)
         await self._repo.remove_cached_data_fields_for_tenant(tenant_id, inference_fields)
         await self._repo.commit()
 
@@ -1082,19 +1112,22 @@ class APIKeyService:
             return False
         return self.application_may_use_api_keys(db_key.application, db_key.application.tenant)
 
-    async def _rehydrate_cache_from_db(self, db_key: APIKey) -> dict:
+    async def _rehydrate_cache_from_db(self, db_key: APIKey, token: str) -> dict:
         """Repopulate Redis for an eligible key found on a cache miss —
         verbatim from its persisted ``cached_data`` snapshot, the only source
         of truth for this path (write-through: cached_data is kept in sync on
         every create/update; never synthesized here — the tier_id it can
-        carry isn't safe to redo on this hot path)."""
+        carry isn't safe to redo on this hot path).
+
+        Written under ``token``, the value that was looked up: the current
+        key, or the rotated key while it is live, each with its own TTL."""
         if not db_key.cached_data:
             raise InvalidAPIKeyError()
         payload = db_key.cached_data
-        ttl = self._compute_cache_ttl(db_key)
+        ttl = self._cache_ttl_for(db_key, token)
         if ttl <= 0:
             return payload
-        await self._cache.set_api_key_cache(db_key.api_key, ttl, payload)
+        await self._cache.set_api_key_cache(token, ttl, payload)
         return payload
 
     async def _tombstone_invalid_token(self, token: str) -> None:
@@ -1115,7 +1148,7 @@ class APIKeyService:
             if db_key is None or not self._is_key_eligible(db_key):
                 await self._tombstone_invalid_token(token)
                 raise InvalidAPIKeyError()
-            return await self._rehydrate_cache_from_db(db_key)
+            return await self._rehydrate_cache_from_db(db_key, token)
 
     async def validate_api_key(self, token: str) -> dict:
         """
@@ -1191,7 +1224,10 @@ class APIKeyService:
         Skips the second get_by_api_key lookup that revoke_api_key() would otherwise perform."""
         await self._repo.revoke(db_key)
         await self._repo.commit()
-        await self._cache.delete_api_key_cache(db_key.api_key)
+        # Re-read after commit: a rotation committed meanwhile changes which
+        # values the row holds, and every one of them must stop working.
+        await self._repo.refresh(db_key)
+        await self._delete_key_caches(db_key)
         logger.info(
             "API key revoked: api_key=%s application=%s", db_key.api_key, db_key.application_id
         )
@@ -1218,6 +1254,12 @@ class APIKeyService:
                     code="INVALID_EXPIRES_DAYS",
                 )
             data["expires_at"] = datetime.now(timezone.utc) + timedelta(days=expires_days)
+            # The rotated key never outlives the key itself.
+            if (
+                db_key.rotated_key_expires_at is not None
+                and db_key.rotated_key_expires_at > data["expires_at"]
+            ):
+                data["rotated_key_expires_at"] = data["expires_at"]
 
         if updated_by is not None:
             data["updated_by"] = str(updated_by)
@@ -1241,12 +1283,155 @@ class APIKeyService:
             # must stay evicted, but cached_data still has to mirror the edit
             # just committed, or a later reactivation/DB-fallback rehydrate
             # would serve stale permissions/expiry.
-            await self._cache.delete_api_key_cache(db_key.api_key)
+            await self._delete_key_caches(db_key)
             await self._persist_current_state_to_cached_data(db_key, tenant_id_str, budget_effective_to)
 
         await self._repo.refresh(db_key)
         logger.info(
             "API key updated: api_key=%s application=%s", db_key.api_key, db_key.application_id
+        )
+        return db_key
+
+    async def _generate_unused_key(self) -> str:
+        """A new key value that no row holds as api_key or rotated_key."""
+        for _ in range(3):
+            value = self.generate_api_key()
+            if not await self._repo.key_value_in_use(value):
+                return value
+        raise AppError(
+            message="Could not generate a unique API key. Try again.",
+            code="API_KEY_GENERATION_FAILED",
+            status_code=503,
+        )
+
+    async def rotate_by_obj(self, db_key: APIKey, actor_user_id: UUID) -> tuple[str, APIKey]:
+        """Issue a new value for a key already fetched and scope-verified by
+        the caller. The old value moves to rotated_key and keeps working as
+        the same row (same id, budget, permissions) until
+        rotated_key_expires_at — ROTATED_API_KEY_EXPIRE_DAYS from now, capped
+        at the key's own expires_at — or until the whole key is revoked.
+
+        409 when the key isn't active, or its previous value is still live.
+        Returns the new raw value (shown once) and the refreshed row."""
+        application = None
+        tenant = None
+        if self._applications is not None:
+            application = await self._applications.get_by_id(db_key.application_id)
+        if application is not None and self._tenants is not None:
+            tenant = await self._tenants.get_operational_fields(application.tenant_id)
+        if application is None or not self.effective_is_active(db_key, application, tenant):
+            raise AppError(
+                message="Only an active API key can be rotated.",
+                code="API_KEY_NOT_ROTATABLE",
+                status_code=409,
+            )
+        if db_key.live_rotated_key():
+            raise AppError(
+                message=(
+                    "This key's previous value is still active. Rotate again after it "
+                    "expires, or revoke the key."
+                ),
+                code="ROTATION_IN_PROGRESS",
+                status_code=409,
+            )
+
+        new_value = await self._generate_unused_key()
+        old_value = db_key.api_key
+        rotated_key_expires_at = datetime.now(timezone.utc) + timedelta(
+            days=settings.rotated_api_key_expire_days
+        )
+        if db_key.expires_at is not None and db_key.expires_at < rotated_key_expires_at:
+            rotated_key_expires_at = db_key.expires_at
+        rotated = await self._repo.rotate(
+            db_key.id, old_value, new_value, rotated_key_expires_at, str(actor_user_id)
+        )
+        if not rotated:
+            # Another rotation, or a revoke, of the same row committed first.
+            raise AppError(
+                message="This key was rotated or revoked by another request.",
+                code="ROTATION_IN_PROGRESS",
+                status_code=409,
+            )
+        await self._repo.commit()
+        await self._repo.refresh(db_key)
+
+        try:
+            await self._refresh_redis_cache(
+                db_key, str(application.tenant_id), tenant.budget_effective_to if tenant else None
+            )
+            if db_key.live_rotated_key() is None:
+                # Zero-day rotation window: the old value stops now.
+                await self._cache.delete_api_key_cache(old_value)
+            # A revoke, or an application/tenant suspension, that committed
+            # while the entries were being written must win: re-check and
+            # drop them, so a revoked key can't keep working from Redis.
+            await self._repo.refresh(db_key)
+            application = await self._applications.get_by_id(db_key.application_id)
+            tenant = (
+                await self._tenants.get_operational_fields(application.tenant_id)
+                if application is not None and self._tenants is not None
+                else None
+            )
+            if application is None or not self.effective_is_active(db_key, application, tenant):
+                await self._delete_key_caches(db_key)
+        except Exception:
+            # The DB already holds the new state; a cache miss rebuilds from it.
+            # Drop both entries so the old value can't outlive its window
+            # through a stale entry.
+            logger.exception("API key rotation: Redis update failed for api_key_id=%s", db_key.id)
+            try:
+                await self._delete_key_caches(db_key)
+            except Exception:
+                # Still return the new key: it is committed and shown only once.
+                logger.exception(
+                    "API key rotation: could not clear Redis entries for api_key_id=%s; "
+                    "the old value's entry may outlive its rotation window",
+                    db_key.id,
+                )
+
+        logger.info(
+            "API key rotated: id=%s application=%s rotated_key_expires_at=%s",
+            db_key.id, db_key.application_id, db_key.rotated_key_expires_at,
+        )
+        return new_value, db_key
+
+    async def end_rotation_by_obj(self, db_key: APIKey, actor_user_id: UUID) -> APIKey:
+        """Stop a key's previous value now, before rotated_key_expires_at; the
+        current value is untouched. 409 NO_ROTATION_IN_PROGRESS when no
+        previous value is live, or when a concurrent request already ended
+        the rotation or revoked the key. Clears the columns first, then
+        deletes the old value's Redis entry; a cache miss on the old value
+        afterwards no longer matches the row, so it can't come back."""
+        # A revoked or expired key has no live value, so nothing to stop.
+        old_value = db_key.live_rotated_key() if db_key.live_rotated_key_expires_at() else None
+        if old_value is None:
+            raise AppError(
+                message="This key has no previous value in its rotation window.",
+                code="NO_ROTATION_IN_PROGRESS",
+                status_code=409,
+            )
+        if not await self._repo.end_rotation(db_key.id, old_value, str(actor_user_id)):
+            raise AppError(
+                message="This key's previous value was already revoked, or the key was "
+                "rotated or revoked, by another request.",
+                code="NO_ROTATION_IN_PROGRESS",
+                status_code=409,
+            )
+        await self._repo.commit()
+        await self._repo.refresh(db_key)
+        try:
+            await self._cache.delete_api_key_cache(old_value)
+        except Exception:
+            # The DB no longer accepts the old value; its Redis entry is the
+            # only thing keeping it alive, and that entry's TTL is the window.
+            logger.exception(
+                "API key rotation end: could not delete the previous value's Redis "
+                "entry for api_key_id=%s; it stops at its TTL",
+                db_key.id,
+            )
+        logger.info(
+            "API key previous value revoked early: id=%s application=%s",
+            db_key.id, db_key.application_id,
         )
         return db_key
 

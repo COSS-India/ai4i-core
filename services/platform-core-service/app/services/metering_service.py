@@ -5,6 +5,7 @@ import math
 import re
 import time as _time
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Optional, Union
 
 from sqlalchemy import text
@@ -18,6 +19,7 @@ from app.schemas.metering import Graph, GraphPoint, GraphSeries
 from app.utils.prometheus_client import PrometheusClient
 from app.utils.metering_retention import refresh_retention as _refresh_retention, retention_days
 from app.services.pay_per_use import inference_type_cache
+from app.utils.rounding import round_shares
 from app.utils.metering_promql_builder import (
     TIME_RANGES,
     AbsoluteRange,
@@ -33,8 +35,9 @@ from app.utils.metering_promql_builder import (
     api_key_auth_type_selector,
     build_base_selectors,
     build_task_type_selector,
+    comparison_shift_seconds,
+    comparison_window_offset,
     escape_label_value,
-    previous_window_offset,
     retained_range,
     retention_edge,
     step_for_duration,
@@ -58,12 +61,27 @@ _WINDOW_SECONDS: dict = {
     "7d":  604_800,
     "30d": 2_592_000,
 }
-_STEP_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+_STEP_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+# The LLM token histogram's per-category series, as the Model drill-down's
+# token breakdown entries: (entry key, label, token_type). Prometheus's
+# "prompt" includes the cached tokens, so "input" is prompt − cached_input.
+LLM_TOKEN_ENTRIES = (
+    ("input", "Input tokens", "prompt"),
+    ("cached_input", "Cached input tokens", "cached_input"),
+    ("output", "Output tokens", "completion"),
+)
+
+
+def _llm_token_key(token_type: str) -> str:
+    """native_by_task key for one LLM token_type series (alongside the task
+    keys, which never contain a colon)."""
+    return f"llm:{token_type}"
 
 
 def _step_seconds(step: str) -> int:
-    """Parse a duration step (e.g. '10m', '4h', '1d') to seconds."""
-    m = re.fullmatch(r"(\d+)([smhd])", step.strip())
+    """Parse a duration step (e.g. '10m', '4h', '1d', '1w') to seconds."""
+    m = re.fullmatch(r"(\d+)([smhdw])", step.strip())
     return int(m.group(1)) * _STEP_UNIT_SECONDS[m.group(2)] if m else 0
 
 
@@ -108,15 +126,15 @@ def _range_chart_buckets(window: AbsoluteRange) -> tuple[str, int, int]:
 
 
 def _previous_window_retained(time_range: TimeRange) -> bool:
-    """False when an AbsoluteRange's vs-previous window (the equal-length
-    window ending at its start) reaches back past PROMETHEUS_RETENTION_DAYS.
+    """False when an AbsoluteRange's vs-previous window (shifted back by
+    comparison_shift_seconds) reaches back past PROMETHEUS_RETENTION_DAYS.
     increase() there would undercount from pruned data and inflate every
     growth %, so request_total reports the previous figures as None instead,
     same as model_usage_growth_pct's retention guard. Presets are unchanged.
     """
     if not isinstance(time_range, AbsoluteRange):
         return True
-    prev_start = time_range.start - (time_range.end - time_range.start)
+    prev_start = time_range.start - timedelta(seconds=comparison_shift_seconds(time_range))
     return prev_start >= retention_edge()
 
 
@@ -241,6 +259,94 @@ class _Unset:
 _UNSET = _Unset()
 
 
+def request_total_result(
+    total_v: int,
+    success_v: int,
+    avg_rps_v: float,
+    previous: Optional[tuple[int, int, float]],
+    filters: dict,
+) -> dict:
+    """request_total's result from its counts, shared by every metering
+    backend so the KPIs are computed the same way whatever the store.
+    ``previous`` is (total, successful, avg rps) for the vs-previous window,
+    or None when that window isn't covered (its figures are then None)."""
+    success_rate = round(success_v / total_v * 100, 2) if total_v else 0.0
+    failed_v = max(0, total_v - success_v)
+
+    total_vs_prev: Optional[float] = None
+    success_rate_vs_prev: Optional[float] = None
+    avg_rps_vs_prev: Optional[float] = None
+    failed_vs_prev: Optional[float] = None
+    successful_vs_prev: Optional[float] = None
+    prev_total_v: Optional[int] = None
+    prev_failed_v: Optional[int] = None
+    prev_success_v: Optional[int] = None
+    prev_success_rate_v: Optional[float] = None
+    prev_avg_rps_v: Optional[float] = None
+
+    if previous is not None:
+        prev_total, prev_success, prev_avg_rps = previous
+        prev_failed = max(0, prev_total - prev_success)
+        prev_total_v = prev_total
+        prev_failed_v = prev_failed
+        prev_success_v = prev_success
+        prev_avg_rps_v = round(prev_avg_rps, 4)
+        # Previous success rate is undefined without prior traffic → report 0.
+        prev_success_rate_v = (
+            round(prev_success / prev_total * 100, 2) if prev_total > 0 else 0.0
+        )
+
+        if prev_total > 0:
+            total_vs_prev = round((total_v - prev_total) / prev_total * 100, 1)
+            # pp change so that "97.35 → 97.45" reports as +0.1
+            success_rate_vs_prev = round(success_rate - prev_success_rate_v, 2)
+
+        if prev_failed > 0:
+            failed_vs_prev = round((failed_v - prev_failed) / prev_failed * 100, 1)
+
+        if prev_success > 0:
+            successful_vs_prev = round((success_v - prev_success) / prev_success * 100, 1)
+
+        if prev_avg_rps > 0:
+            avg_rps_vs_prev = round((avg_rps_v - prev_avg_rps) / prev_avg_rps * 100, 1)
+
+    fmt = MeteringService._format_count
+    return {
+        "total_requests": {
+            "count": total_v,
+            "formatted": fmt(total_v),
+            "vs_previous_pct": total_vs_prev,
+            "previous_count": prev_total_v,
+            "previous_formatted": fmt(prev_total_v) if prev_total_v is not None else None,
+        },
+        "successful_requests": {
+            "count": success_v,
+            "formatted": fmt(success_v),
+            "vs_previous_pct": successful_vs_prev,
+            "previous_count": prev_success_v,
+            "previous_formatted": fmt(prev_success_v) if prev_success_v is not None else None,
+        },
+        "failed_requests": {
+            "count": failed_v,
+            "formatted": fmt(failed_v),
+            "vs_previous_pct": failed_vs_prev,
+            "previous_count": prev_failed_v,
+            "previous_formatted": fmt(prev_failed_v) if prev_failed_v is not None else None,
+        },
+        "success_rate": {
+            "rate_pct": success_rate,
+            "vs_previous_pct": success_rate_vs_prev,
+            "previous_rate_pct": prev_success_rate_v,
+        },
+        "avg_rps": {
+            "value": avg_rps_v,
+            "vs_previous_pct": avg_rps_vs_prev,
+            "previous_value": prev_avg_rps_v,
+        },
+        "filters": filters,
+    }
+
+
 class MeteringService:
     def __init__(
         self,
@@ -253,6 +359,13 @@ class MeteringService:
         self._auth_db = auth_db
         self._service_repo = service_repo
         self._model_repo = model_repo
+
+    async def data_since(self, period) -> Optional[datetime]:
+        """When this store's data begins inside ``period`` (a UsagePeriod),
+        for its ``dataFrom`` / ``partial``: Prometheus holds only
+        retention_days of samples (see retained_range), so an older start is
+        answered from what's left. Overridden per store."""
+        return retention_edge()
 
     async def refresh_retention(self) -> None:
         """Re-read how much history Prometheus keeps (cached per process;
@@ -290,9 +403,11 @@ class MeteringService:
         single-tenant-scoped Overview view): see build_base_selectors'
         docstring — accepted, not fixed here, tracked in the ticket.
 
-        For an AbsoluteRange the "previous" figures cover the equal-length
-        window ending at ``time_range.start``, same as a preset compares
-        against the window just before it.
+        For an AbsoluteRange the "previous" figures cover an equal-length
+        window shifted back by comparison_shift_seconds: by default the one
+        ending at ``time_range.start``, same as a preset compares against the
+        window just before it; for the dashboard's `today`, the same clock
+        span yesterday.
 
         An AbsoluteRange is first clamped to Prometheus retention
         (retained_range): a range reaching back past it counts only what's
@@ -315,7 +430,7 @@ class MeteringService:
         window = window_duration(time_range)
         rate_window = window or "5m"
         end_off = window_offset(time_range)
-        prev_off = previous_window_offset(time_range)
+        prev_off = comparison_window_offset(time_range)
         has_prev = bool(window) and _previous_window_retained(time_range)
 
         if retained is NOT_RETAINED:
@@ -352,101 +467,26 @@ class MeteringService:
         # already renders up to 4dp for values < 1; this just gives it
         # something non-zero to show.
         avg_rps_v = round(_float(raw[2]), 4)
-        success_rate = round(success_v / total_v * 100, 2) if total_v else 0.0
-        raw_failed = total_v - success_v
-        if raw_failed < 0:
+        if success_v > total_v:
             # Independent total/success queries can skew across a scrape boundary,
-            # making success briefly exceed total. Clamp to 0 but flag it.
+            # making success briefly exceed total. Clamped to 0 failed below, but flagged.
             logger.warning(
                 "Failed-count clamp: success(%s) > total(%s) — Prometheus query skew; reporting 0 failed.",
                 success_v, total_v,
             )
-        failed_v = max(0, raw_failed)
-
-        total_vs_prev: Optional[float] = None
-        success_rate_vs_prev: Optional[float] = None
-        avg_rps_vs_prev: Optional[float] = None
-        failed_vs_prev: Optional[float] = None
-        successful_vs_prev: Optional[float] = None
-        prev_total_v: Optional[int] = None
-        prev_failed_v: Optional[int] = None
-        prev_success_v: Optional[int] = None
-        prev_success_rate_v: Optional[float] = None
-        prev_avg_rps_v: Optional[float] = None
-
-        if has_prev:
-            prev_total = max(0, round(_float(raw[3])))
-            prev_success = max(0, round(_float(raw[4])))
-            prev_avg_rps = _float(raw[5])
-            prev_failed = max(0, prev_total - prev_success)
-            prev_total_v = prev_total
-            prev_failed_v = prev_failed
-            prev_success_v = prev_success
-            prev_avg_rps_v = round(prev_avg_rps, 4)
-            # Previous success rate is undefined without prior traffic → report 0.
-            prev_success_rate_v = (
-                round(prev_success / prev_total * 100, 2) if prev_total > 0 else 0.0
-            )
-
-            if prev_total > 0:
-                total_vs_prev = round((total_v - prev_total) / prev_total * 100, 1)
-                # pp change so that "97.35 → 97.45" reports as +0.1
-                success_rate_vs_prev = round(success_rate - prev_success_rate_v, 2)
-
-            if prev_failed > 0:
-                failed_vs_prev = round((failed_v - prev_failed) / prev_failed * 100, 1)
-
-            if prev_success > 0:
-                successful_vs_prev = round((success_v - prev_success) / prev_success * 100, 1)
-
-            if prev_avg_rps > 0:
-                avg_rps_vs_prev = round((avg_rps_v - prev_avg_rps) / prev_avg_rps * 100, 1)
-
-        return {
-            "total_requests": {
-                "count": total_v,
-                "formatted": self._format_count(total_v),
-                "vs_previous_pct": total_vs_prev,
-                "previous_count": prev_total_v,
-                "previous_formatted": (
-                    self._format_count(prev_total_v) if prev_total_v is not None else None
-                ),
-            },
-            "successful_requests": {
-                "count": success_v,
-                "formatted": self._format_count(success_v),
-                "vs_previous_pct": successful_vs_prev,
-                "previous_count": prev_success_v,
-                "previous_formatted": (
-                    self._format_count(prev_success_v) if prev_success_v is not None else None
-                ),
-            },
-            "failed_requests": {
-                "count": failed_v,
-                "formatted": self._format_count(failed_v),
-                "vs_previous_pct": failed_vs_prev,
-                "previous_count": prev_failed_v,
-                "previous_formatted": (
-                    self._format_count(prev_failed_v) if prev_failed_v is not None else None
-                ),
-            },
-            "success_rate": {
-                "rate_pct": success_rate,
-                "vs_previous_pct": success_rate_vs_prev,
-                "previous_rate_pct": prev_success_rate_v,
-            },
-            "avg_rps": {
-                "value": avg_rps_v,
-                "vs_previous_pct": avg_rps_vs_prev,
-                "previous_value": prev_avg_rps_v,
-            },
-            "filters": {
+        previous = (
+            (max(0, round(_float(raw[3]))), max(0, round(_float(raw[4]))), _float(raw[5]))
+            if has_prev else None
+        )
+        return request_total_result(
+            total_v, success_v, avg_rps_v, previous,
+            filters={
                 "inference_only": inference_only,
                 "tenant": tenant,
                 "service_id": service_id,
                 "time_range": time_range or "all",
             },
-        }
+        )
 
     async def request_volume_chart(
         self,
@@ -1341,6 +1381,13 @@ class MeteringService:
             native_units, native_unit_suffix = self._native_units_for(
                 task, native_by_task, service_id, unit_map
             )
+            native_breakdown = (
+                self._llm_token_breakdown(native_by_task, service_id, native_units)
+                if task == "llm" else None
+            )
+            if native_breakdown is not None:
+                # The row total is the sum of its breakdown (prompt + completion).
+                native_units = float(sum(e["units"] for e in native_breakdown))
             services.append({
                 "service_id": service_id,
                 "name": name,
@@ -1350,6 +1397,7 @@ class MeteringService:
                 "requests": total_v,
                 "native_units": native_units,
                 "native_unit_suffix": native_unit_suffix,
+                "native_breakdown": native_breakdown,
                 "success_pct": round(success_v / total_v * 100, 2) if total_v else 0.0,
             })
 
@@ -1488,6 +1536,23 @@ class MeteringService:
         except Exception:
             logger.warning("registry_model_count: DB query failed", exc_info=True)
             return None
+
+    async def registry_model_counts_by_task(self) -> dict[str, int]:
+        """Registered model versions per metering task type (the
+        SERVICE_BREAKDOWN_CONFIG keys), from ONE grouped query — the same grain
+        and task mapping as registry_model_count(task_types=[task]) per task.
+        Raises on a DB error (registry_model_count returns None instead); task
+        types with no models are omitted."""
+        if self._model_repo is None:
+            raise RuntimeError("model registry unavailable")
+        by_registry_type = await self._model_repo.count_models_by_task_type()
+        counts = {}
+        for task in SERVICE_BREAKDOWN_CONFIG:
+            registry = _to_registry_task_types([task])
+            n = by_registry_type.get(registry[0].lower(), 0) if registry else 0
+            if n:
+                counts[task] = n
+        return counts
 
     @staticmethod
     def model_consumption_ranking(
@@ -1844,6 +1909,80 @@ class MeteringService:
             },
         }
 
+    # ── usage report (AI4IDS-3278) ──────────────────────────────────────────
+    # Period queries for the Usage Viewer report. Unlike the preset-only
+    # service_breakdown/usage_by_tenant_service above, these take any
+    # TimeRange (a calendar month is an AbsoluteRange) and, like the
+    # dashboard, count API-key inference traffic only. Prometheus-backed:
+    # OpenSearchMeteringService does not override them. They raise on a
+    # Prometheus failure, where the dashboard methods (request_total,
+    # model_breakdown) degrade to 0 / empty — a report must not mail a
+    # silent 0.
+
+    async def inference_request_total(self, time_range: TimeRange) -> int:
+        """All inference requests in the range: the same PromQL as
+        request_total's total_requests (no tenant/task filter)."""
+        sel = build_base_selectors(inference_only=True, auth_type=API_KEY_AUTH_TYPE)
+        return round(await self._client.scalar(sum_over_window(f"{_METRIC}{sel}", time_range)))
+
+    async def active_tenant_ids(self, time_range: TimeRange) -> set[str]:
+        """Ids of currently-ACTIVE tenants with at least one request in the
+        range — the population active_tenants() counts, as ids, so two
+        periods can be compared (dormant institutions).
+
+        Rows with no tenant_id (series from before the label existed) are
+        dropped: there is no id to compare them by."""
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, auth_type=API_KEY_AUTH_TYPE)}"
+        rows = await self._client.query(self._by_tenant_promql(metric, time_range, filter_zero=True))
+        valid_ids = await self._fetch_valid_tenant_ids()
+        ids = {m["tenant_id"] for m in self._merge_tenant_rows(rows) if m["tenant_id"]}
+        return ids if valid_ids is None else ids & valid_ids
+
+    async def active_application_count(self, time_range: TimeRange) -> int:
+        """Applications with at least one request in the range. application_id
+        is empty for JWT traffic and pre-cutover series, which are skipped."""
+        sel = build_base_selectors(
+            inference_only=True, extra=['application_id!=""'], auth_type=API_KEY_AUTH_TYPE
+        )
+        rows = await self._client.query(
+            f"{sum_over_window_by(f'{_METRIC}{sel}', 'application_id', time_range)} > 0"
+        )
+        return len(rows)
+
+    async def tenant_task_usage(self, time_range: TimeRange) -> dict:
+        """Requests per tenant per task type in the range, ranked by total.
+
+        Returns {"tenants": [{"tenant_id", "tenant", "total", "tasks"}],
+        "task_totals": {task: requests}, "grand_total": int}. Tenant names are
+        the current organisation names, falling back to the label."""
+        services = list(SERVICE_BREAKDOWN_CONFIG)
+        _ep = f'{PROMETHEUS_API_PATH_LABEL}=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
+        metric = f'{_METRIC}{{{_ep},tenant!="unknown",{api_key_auth_type_selector()}}}'
+        results = await self._client.query(
+            f"{sum_over_window_by(metric, f'tenant_id, tenant, {PROMETHEUS_API_PATH_LABEL}', time_range)} > 0"
+        )
+        ranked = self._rank_tenants_by_total(self._accumulate_tenant_task_counts(results, services))
+        names = await self._resolve_tenant_names(
+            {bucket["tenant_id"] for bucket, _ in ranked if bucket["tenant_id"]}
+        )
+        task_totals: dict[str, int] = {}
+        for bucket, _ in ranked:
+            for task, count in bucket["tasks"].items():
+                task_totals[task] = task_totals.get(task, 0) + count
+        return {
+            "tenants": [
+                {
+                    "tenant_id": bucket["tenant_id"],
+                    "tenant": names.get(bucket["tenant_id"], "") or bucket["tenant"] or "unknown",
+                    "total": total,
+                    "tasks": dict(bucket["tasks"]),
+                }
+                for bucket, total in ranked
+            ],
+            "task_totals": task_totals,
+            "grand_total": sum(total for _, total in ranked),
+        }
+
     # ── private helpers ─────────────────────────────────────────────────────
 
     @staticmethod
@@ -1983,7 +2122,51 @@ class MeteringService:
             q = sum_over_window_by(f"{native_metric}{sel}", "service_id", time_range)
             native_tasks.append(task)
             native_coros.append(self._client.query(q))
+            if task == "llm":
+                # The Model drill-down's token breakdown: the same histogram,
+                # one query per token_type instead of token_type="total".
+                base_parts = [p for p in parts if not p.startswith("token_type=")]
+                for _, _, token_type in LLM_TOKEN_ENTRIES:
+                    token_sel = "{" + ",".join([*base_parts, f'token_type="{token_type}"']) + "}"
+                    native_tasks.append(_llm_token_key(token_type))
+                    native_coros.append(self._client.query(
+                        sum_over_window_by(f"{native_metric}{token_sel}", "service_id", time_range)
+                    ))
         return native_tasks, native_coros
+
+    @staticmethod
+    def _llm_token_breakdown(
+        native_by_task: dict[str, dict[str, float]], service_id: str, total_tokens: float,
+    ) -> Optional[list[dict]]:
+        """Input / cached input / output tokens for one LLM service row, each
+        with its share of the row's tokens, or None when the per-token_type
+        series weren't queried or came back empty while the total didn't
+        (a failed query must not zero the row). The entries always sum to
+        the row's total; cached input is omitted when it is 0 (or wasn't
+        reported, as for data recorded before ai4i-core 1.0.48)."""
+        keys = [_llm_token_key(t) for _, _, t in LLM_TOKEN_ENTRIES]
+        if not all(k in native_by_task for k in keys):
+            return None
+        prompt, cached, completion = (native_by_task[k].get(service_id, 0.0) for k in keys)
+        cached = min(cached, prompt)
+        units = {
+            "input": round(prompt - cached),
+            "cached_input": round(cached),
+            "output": round(completion),
+        }
+        total = sum(units.values())
+        if total == 0 and total_tokens > 0:
+            return None
+        shown = [
+            (key, label) for key, label, _ in LLM_TOKEN_ENTRIES
+            if not (key == "cached_input" and units[key] == 0)
+        ]
+        # Shares rounded so they add up to exactly 100.00.
+        shares = round_shares([Decimal(units[key]) for key, _ in shown])
+        return [
+            {"key": key, "label": label, "units": float(units[key]), "percentage": float(shares[i])}
+            for i, (key, label) in enumerate(shown)
+        ]
 
     @staticmethod
     def _native_units_by_service(rows: list) -> dict[str, float]:

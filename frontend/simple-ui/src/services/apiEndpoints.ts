@@ -219,7 +219,10 @@ export const apiEndpoints = {
   pii: {
     base: `${API_V1}/pii`,
     redact: `${API_V1}/pii/redact`,
+    entities: `${API_V1}/pii/entities`,
     domains: `${API_V1}/pii/domains`,
+    /** Inference service. Runs a policy's PII definitions on sample text. */
+    simulate: `${API_V1}/pii/simulate`,
     policyByDomain: (domainId: string) =>
       `${API_V1}/pii/policy/${encodeURIComponent(domainId)}`,
     admin: {
@@ -246,6 +249,19 @@ export const apiEndpoints = {
       `${API_V1}/policy-service/policies/${id}/status`,
     auditLogs: `${API_V1}/policy-service/audit-logs`,
     auditLogById: (id: string) => `${API_V1}/policy-service/audit-logs/${id}`,
+  },
+  /** Platform-core policy hierarchy. */
+  policyHierarchy: {
+    categories: `${API_V1}/policies/categories`,
+    categoryStatus: (id: number) => `${API_V1}/policies/categories/${id}/status`,
+    subCategories: `${API_V1}/policies/sub-categories`,
+    subCategoryStatus: (id: number) => `${API_V1}/policies/sub-categories/${id}/status`,
+    /** PII definitions. GET list, GET by id, POST, PUT (id in the body), DELETE. */
+    policyTypes: `${API_V1}/policies/policy-types`,
+    policyTypeById: (id: number) => `${API_V1}/policies/policy-types/${id}`,
+    /** Policies under a sub-category. GET list, GET by id, POST, PUT (id in the body), DELETE. */
+    policies: `${API_V1}/policies`,
+    policyById: (id: number) => `${API_V1}/policies/${id}`,
   },
   metering: {
     base: `${API_V1}/metering`,

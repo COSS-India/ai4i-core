@@ -27,6 +27,8 @@ class Tier(Base):
         nullable=False,
         server_default=TierStatus.INACTIVE.value,
     )
+    # Requests per 60s shared across all rate-limited inference APIs; NULL = gateway default.
+    rate_limit = Column(Integer, nullable=True)
     created_by = Column(String(255), nullable=True)
     updated_by = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

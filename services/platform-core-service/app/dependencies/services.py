@@ -96,8 +96,9 @@ def get_metering_service(
     auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
     db: AsyncSession = Depends(get_db),
 ) -> "MeteringService":
-    """Prometheus- or OpenSearch-backed MeteringService, selected by
-    `settings.metering_data_source` (env METERING_DATA_SOURCE).
+    """usage_events-, Prometheus- or OpenSearch-backed MeteringService,
+    selected by `settings.metering_data_source` (env METERING_DATA_SOURCE;
+    usage_events by default).
 
     `client` isn't a plain `Depends(get_prometheus_client)` param here
     because that dependency raises 503 whenever PROMETHEUS_URL is unset —
@@ -120,6 +121,14 @@ def get_metering_service(
 
     service_repo = ServiceRepository(db)
     model_repo = ModelRepository(db)
+
+    if settings.metering_data_source == "usage_events":
+        # The Usage Dashboard reads usage_events / daily_usage only. Prometheus,
+        # when configured, still backs /tenant-consumption (not on the dashboard).
+        from app.services.metering_service_usage_events import UsageEventsMeteringService
+
+        prom_client = get_prometheus_client(request) if settings.prometheus_url else None
+        return UsageEventsMeteringService(db, prom_client, auth_db, service_repo, model_repo)
 
     if settings.metering_data_source in ("opensearch", "dual"):
         if not settings.opensearch_url:

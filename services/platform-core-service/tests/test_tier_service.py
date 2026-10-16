@@ -448,3 +448,47 @@ class TestUpsertQuotasReportsOnlyChanges:
             [self._quota("ASR", 1500), self._quota("asr", 2000), self._quota("nmt", 500)], "admin",
         )
         assert changes == [{"inference_name": "asr", "previous": 1000, "current": 2000}]
+
+
+class TestTierRateLimit:
+    def test_rate_limit_must_be_positive(self):
+        with pytest.raises(ValueError):
+            TierUpdate(tier_id=str(uuid4()), rateLimit=0)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "fields, expected",
+        [
+            ({"rateLimit": 200}, 200),   # set
+            ({"rateLimit": None}, None),  # explicit null removes the limit
+            ({"name": "Renamed"}, 50),    # absent keeps the stored value
+        ],
+    )
+    async def test_update_applies_rate_limit_only_when_sent(self, fields, expected):
+        tier_id = uuid4()
+        tier = _tier(tier_id=tier_id)
+        tier.rate_limit = 50
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_result(scalar=tier, all_rows=[]))
+        session.commit = AsyncMock()
+        session.refresh = AsyncMock()
+
+        result = await tier_service.update_tier(TierUpdate(tier_id=str(tier_id), **fields), session, updated_by="admin")
+
+        assert tier.rate_limit == expected
+        assert result.rateLimit == expected
+
+    @pytest.mark.asyncio
+    async def test_update_writes_tier_to_redis(self, monkeypatch):
+        tier_id = uuid4()
+        tier = _tier(tier_id=tier_id)
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_result(scalar=tier, all_rows=[]))
+        session.commit = AsyncMock()
+        session.refresh = AsyncMock()
+        write = AsyncMock()
+        monkeypatch.setattr(tier_service.tier_redis, "write_tier", write)
+
+        await tier_service.update_tier(TierUpdate(tier_id=str(tier_id), rateLimit=10), session, updated_by="admin")
+
+        write.assert_awaited_once_with(tier)

@@ -21,8 +21,24 @@ logger = get_logger(__name__)
 class ServicePricing:
     task_type: str   # "llm", "asr", "nmt" — maps to inference_name
     unit_rate: Optional[Decimal]       # ₹ per single raw unit (preferred)
-    cost_per_unit: Optional[Decimal]   # ₹ per unit_size units (fallback)
+    cost_per_unit: Optional[Decimal]   # ₹ per unit_size units (fallback). LLM: input token price
     unit_size: Optional[int]           # scaling divisor
+    # LLM only, ₹ per unit_size tokens. None (non-LLM, or a cache entry from
+    # before these existed) means "price like input" — see calculate_llm_cost.
+    cached_input_cost_per_unit: Optional[Decimal] = None
+    output_cost_per_unit: Optional[Decimal] = None
+
+
+@dataclass
+class LlmCost:
+    """One LLM request's cost by token category; total is what's charged."""
+    input_cost: Decimal
+    cached_input_cost: Decimal
+    output_cost: Decimal
+
+    @property
+    def total(self) -> Decimal:
+        return self.input_cost + self.cached_input_cost + self.output_cost
 
 
 @dataclass
@@ -188,11 +204,14 @@ async def get_service_pricing(
                 unit_rate=Decimal(cached["unit_rate"]) if cached.get("unit_rate") else None,
                 cost_per_unit=Decimal(cached["cost_per_unit"]) if cached.get("cost_per_unit") else None,
                 unit_size=int(cached["unit_size"]) if cached.get("unit_size") else None,
+                cached_input_cost_per_unit=_decimal_or_none(cached.get("cached_input_cost_per_unit")),
+                output_cost_per_unit=_decimal_or_none(cached.get("output_cost_per_unit")),
             )
 
     result = await db.execute(
         text(
-            "SELECT task_type, unit_rate, cost_per_unit, unit_size"
+            "SELECT task_type, unit_rate, cost_per_unit, unit_size,"
+            " cached_input_cost_per_unit, output_cost_per_unit"
             " FROM mm_services"
             " WHERE service_id = :service_id AND deleted_at IS NULL"
             " ORDER BY created_at DESC"
@@ -209,6 +228,8 @@ async def get_service_pricing(
         unit_rate=Decimal(str(row.unit_rate)) if row.unit_rate is not None else None,
         cost_per_unit=Decimal(str(row.cost_per_unit)) if row.cost_per_unit is not None else None,
         unit_size=int(row.unit_size) if row.unit_size else None,
+        cached_input_cost_per_unit=_decimal_or_none(row.cached_input_cost_per_unit),
+        output_cost_per_unit=_decimal_or_none(row.output_cost_per_unit),
     )
 
     # Only cache when the service has a task_type configured; otherwise
@@ -220,6 +241,8 @@ async def get_service_pricing(
             "unit_rate": str(pricing.unit_rate) if pricing.unit_rate is not None else "",
             "cost_per_unit": str(pricing.cost_per_unit) if pricing.cost_per_unit is not None else "",
             "unit_size": str(pricing.unit_size) if pricing.unit_size is not None else "",
+            "cached_input_cost_per_unit": _str_or_empty(pricing.cached_input_cost_per_unit),
+            "output_cost_per_unit": _str_or_empty(pricing.output_cost_per_unit),
         })
         await pipe.expire(cache_key, Constants.PRICING_CACHE_TTL)
         await pipe.execute()
@@ -307,6 +330,50 @@ async def get_inference_type_id(db: AsyncSession, inference_name: str) -> Option
     )
     _inference_type_ids[normalized] = (type_id, time.monotonic() + ttl)
     return type_id
+
+
+def _decimal_or_none(value) -> Optional[Decimal]:
+    """A DB Numeric or a cached string ("" = not set) as Decimal, else None.
+    0 is a real price and stays 0."""
+    if value is None or value == "":
+        return None
+    return Decimal(str(value))
+
+
+def _str_or_empty(value: Optional[Decimal]) -> str:
+    return str(value) if value is not None else ""
+
+
+def _per_unit_rate(price: Optional[Decimal], pricing: ServicePricing) -> Optional[Decimal]:
+    """₹ per single token for a price quoted per unit_size tokens."""
+    if price is None or not pricing.unit_size:
+        return None
+    return price / pricing.unit_size
+
+
+def calculate_llm_cost(
+    input_tokens: Decimal, cached_input_tokens: Decimal, output_tokens: Decimal, pricing: ServicePricing,
+) -> LlmCost:
+    """Cost of one LLM request, each token counted in one category only.
+
+    input_tokens is the request's full prompt_tokens; cached_input_tokens is
+    the part of it served from the model's prefix cache (0 when the request
+    didn't report any), so uncached input = input_tokens - cached. Uncached
+    input is priced at the input price (unit_rate, else cost_per_unit /
+    unit_size, exactly as calculate_cost), cached input at
+    cached_input_cost_per_unit and output at output_cost_per_unit, both per
+    unit_size tokens. A missing cached/output price falls back to the input
+    price, so a service without them bills exactly as it did before."""
+    cached = min(max(cached_input_tokens, Decimal(0)), input_tokens)
+    uncached = input_tokens - cached
+    input_rate = pricing.unit_rate or _per_unit_rate(pricing.cost_per_unit, pricing) or Decimal(0)
+    cached_rate = _per_unit_rate(pricing.cached_input_cost_per_unit, pricing)
+    output_rate = _per_unit_rate(pricing.output_cost_per_unit, pricing)
+    return LlmCost(
+        input_cost=uncached * input_rate,
+        cached_input_cost=cached * (input_rate if cached_rate is None else cached_rate),
+        output_cost=output_tokens * (input_rate if output_rate is None else output_rate),
+    )
 
 
 def calculate_cost(total_units: Decimal, pricing: ServicePricing) -> Decimal:
@@ -442,6 +509,121 @@ async def deduct_balance_and_update_quota(
     )
 
 
+@dataclass(frozen=True)
+class UsageEvent:
+    """One billed span, as written to usage_events (the Usage Dashboard's
+    source for Today, and the daily_usage rollup's input). span_id is not
+    stored (migration a7c3e9f1b5d2): rows are keyed on (correlation_id,
+    occurred_at), and the spans of one request end at different instants.
+
+    total_units is what was billed: LLM input + output tokens (cached input
+    is part of input), other task types their input units. The three costs
+    are what was charged per category; for non-LLM spans the whole charge is
+    input_units_cost. total_cost is generated by Postgres from the three."""
+    correlation_id: str
+    occurred_at: datetime                 # span end time (UTC): the partition key
+    tenant_id: Optional[int]
+    application_id: Optional[int]
+    api_key_id: Optional[int]
+    tier_id: Optional[str]
+    service_id: str
+    inference_type_id: Optional[int]
+    task_type: str
+    status_code: Optional[int]
+    total_units: Decimal
+    cached_input_units: Decimal
+    output_units: Decimal
+    input_units_cost: Decimal
+    cached_input_units_cost: Decimal
+    output_units_cost: Decimal
+
+
+# tier_id and service_id are foreign keys, but the span carries them as sent:
+# a tier deleted since (or a service soft-deleted mid-flight) must not fail
+# the insert, so each is resolved by subquery and lands NULL when it no longer
+# exists. unit_of_measurement comes from the catalogue row for the type.
+# ON CONFLICT on the primary key (correlation_id, occurred_at): a Kafka
+# redelivery of a span already recorded (same correlation id, same end time)
+# writes nothing.
+_INSERT_USAGE_EVENT = text(
+    "INSERT INTO usage_events"
+    "  (correlation_id, occurred_at, tenant_id, application_id, api_key_id,"
+    "   tier_id, service_id, inference_type_id, task_type, unit_of_measurement, status_code,"
+    "   total_units, cached_input_units, output_units,"
+    "   input_units_cost, cached_input_units_cost, output_units_cost)"
+    " VALUES"
+    "  (:correlation_id, :occurred_at, :tenant_id, :application_id, :api_key_id,"
+    "   (SELECT id FROM tiers WHERE id = CAST(:tier_id AS uuid)),"
+    "   (SELECT service_id FROM mm_services WHERE service_id = :service_id),"
+    "   CAST(:inference_type_id AS int), :task_type,"
+    "   (SELECT unit FROM inference_types WHERE id = CAST(:inference_type_id AS int)),"
+    "   :status_code,"
+    "   :total_units, :cached_input_units, :output_units,"
+    "   :input_units_cost, :cached_input_units_cost, :output_units_cost)"
+    " ON CONFLICT (correlation_id, occurred_at) DO NOTHING"
+)
+
+
+async def record_usage_event(db: AsyncSession, event: UsageEvent) -> bool:
+    """Write one usage_events row in the caller's billing transaction, so it
+    commits together with the budget deduction and quota upsert, or not at
+    all. Runs inside a SAVEPOINT and never raises: the dashboard row is a
+    record of the charge, so a failed insert is logged and rolled back to the
+    savepoint, and the billing itself still commits. Returns whether the
+    insert ran (a conflict on the key counts as ran).
+
+    A conflict writes no row, and under (correlation_id, occurred_at) it isn't
+    always a redelivery: RequestMiddleware takes a client-sent
+    X-Correlation-ID as is, so two requests sharing one that end in the same
+    microsecond collide, and the second is charged with no row. Redeliveries
+    are normally stopped earlier by the Redis dedup check, so a conflict is
+    logged as a warning to keep a dropped row visible."""
+    try:
+        async with db.begin_nested():
+            result = await db.execute(_INSERT_USAGE_EVENT, {
+                "correlation_id": event.correlation_id,
+                "occurred_at": event.occurred_at,
+                "tenant_id": event.tenant_id,
+                "application_id": event.application_id,
+                "api_key_id": event.api_key_id,
+                "tier_id": event.tier_id,
+                "service_id": event.service_id,
+                "inference_type_id": event.inference_type_id,
+                "task_type": event.task_type,
+                "status_code": event.status_code,
+                "total_units": event.total_units,
+                "cached_input_units": event.cached_input_units,
+                "output_units": event.output_units,
+                "input_units_cost": event.input_units_cost,
+                "cached_input_units_cost": event.cached_input_units_cost,
+                "output_units_cost": event.output_units_cost,
+            })
+        if result.rowcount == 0:
+            logger.warning(
+                "usage_events row already exists for this key — no row written for this span"
+                " (a redelivery that got past the Redis dedup check, or another span with the"
+                " same correlation_id ending in the same microsecond; billing still committed)"
+                " | correlation_id=%s occurred_at=%s tenant=%s service=%s total_cost=%s",
+                event.correlation_id, event.occurred_at.isoformat(), event.tenant_id,
+                event.service_id,
+                event.input_units_cost + event.cached_input_units_cost + event.output_units_cost,
+                extra={"event": "ppu.usage_event.key_conflict"},
+            )
+        return True
+    except Exception as exc:
+        logger.error(
+            "usage_events insert failed — billing still committed, dashboard row missing"
+            " | correlation_id=%s occurred_at=%s: %s",
+            event.correlation_id, event.occurred_at.isoformat(), exc,
+            extra={"event": "ppu.usage_event.insert_failed"},
+        )
+        return False
+
+
+AI_INFERENCE_SPAN = "ai-inference"
+REQUEST_SPAN = "request"
+
+
 def _get_billing_data(message: Message) -> Optional[dict]:
     payload_bytes = message.value()
     logger.debug(
@@ -462,10 +644,11 @@ def _get_billing_data(message: Message) -> Optional[dict]:
         logger.error("Failed to parse Kafka message as JSON: %s", exc)
         return None
 
-    # Only process ai-inference spans — the model and request spans are noise for billing.
+    # ai-inference spans are billed; request spans give each request its
+    # usage_events row (see handler._record_request). model spans aren't used.
     span_name = data.get("name", "")
-    if span_name != "ai-inference":
-        logger.debug("Skipping non-billing span | span_name=%r offset=%d", span_name, message.offset())
+    if span_name not in (AI_INFERENCE_SPAN, REQUEST_SPAN):
+        logger.debug("Skipping span | span_name=%r offset=%d", span_name, message.offset())
         return None
 
     return data

@@ -1,4 +1,5 @@
 import asyncio
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -15,12 +16,18 @@ from bootstrap.lifecycle import session_scope
 from consumers.payperuse_consumer import config as cfg
 from consumers.payperuse_consumer._billing import (
     BillingWriteResult,
+    LlmCost,
     ServicePricing,
+    UsageEvent,
     calculate_cost,
+    calculate_llm_cost,
     deduct_balance_and_update_quota,
     fetch_tenant_budget_status,
     get_inference_type_id,
     get_service_pricing,
+    record_usage_event,
+    AI_INFERENCE_SPAN,
+    REQUEST_SPAN,
     _get_billing_data,
     _get_billed_key, _update_billing_on_cache,
 )
@@ -75,6 +82,14 @@ def _get_otel_attributes(attrs: dict):
     tier_id: Optional[str] = raw_tier or None
 
     return tenant_id, service_id, input_tokens, output_tokens, correlation_id, api_key_id, tier_id
+
+
+def _get_cached_input_tokens(attrs: dict) -> float:
+    """LLM spans carry the cached part of the prompt as cached_input_tokens
+    (vLLM usage.prompt_tokens_details.cached_tokens). Absent on spans from
+    before it existed and on non-LLM spans: 0, so all input is priced at
+    the input price."""
+    return _to_float(attrs.get("cached_input_tokens"))
 
 
 async def _is_already_billed(billed_key: str, correlation_id: str, span_id: str, msg: Message) -> bool | None:
@@ -161,6 +176,14 @@ class BillingContext:
     offset: int
     api_key_id: int = 0
     tier_id: Optional[str] = None
+    # LLM billing prices these separately; input_tokens includes the cached ones.
+    output_tokens: float = 0.0
+    cached_input_tokens: float = 0.0
+    # For the usage_events row: the span's end time (also what billing_month
+    # is derived from), its application and its status code.
+    occurred_at: Optional[datetime] = None
+    application_id: Optional[int] = None
+    status_code: Optional[int] = None
 
 
 @dataclass
@@ -172,10 +195,23 @@ class BillingOutcome:
     quota_exhausted: bool
 
 
-def _resolve_billing_month(end_time_ns) -> str:
+def _span_end_time(end_time_ns) -> datetime:
+    """The span's end time in UTC (now when the span has none). One clock for
+    both billing_month and usage_events.occurred_at, so a row's partition
+    month and its billing month always agree."""
     if end_time_ns:
-        return datetime.fromtimestamp(int(end_time_ns) / 1e9, tz=timezone.utc).strftime("%Y-%m")
-    return datetime.now(timezone.utc).strftime("%Y-%m")
+        return datetime.fromtimestamp(int(end_time_ns) / 1e9, tz=timezone.utc)
+    return datetime.now(timezone.utc)
+
+
+def _resolve_billing_month(end_time_ns) -> str:
+    return _span_end_time(end_time_ns).strftime("%Y-%m")
+
+
+def _optional_int(value) -> Optional[int]:
+    """A positive int from a span attribute or id string, else None."""
+    number = _to_int(value)
+    return number if number > 0 else None
 
 
 _IST = ZoneInfo("Asia/Kolkata")
@@ -231,9 +267,9 @@ async def _fetch_tier_name(db, tier_id: Optional[str]) -> str:
     return row.name if row is not None else tier_id
 
 
-async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
-    data: dict | None = _get_billing_data(msg)
-    if not data:
+async def _prepare_billing_context(msg: Message, data: Optional[dict] = None) -> Optional[BillingContext]:
+    data = data if data is not None else _get_billing_data(msg)
+    if not data or data.get("name") != AI_INFERENCE_SPAN:
         return None
 
     span_id: str = (data.get("context", {})).get("span_id", "").strip()
@@ -244,10 +280,12 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
     # which is what makes it useful for dedup. But a single request can emit
     # multiple ai-inference spans sharing one correlation_id (e.g. TTS chunks
     # text >400 chars into several per_item Triton calls, each its own span —
-    # see tts_service.py). Keying on correlation_id alone would make every
-    # chunk after the first look like a duplicate of it and get skipped,
-    # silently under-billing the request. span_id disambiguates chunks while
-    # correlation_id still catches true redeliveries of the same span. The
+    # see tts_service.py), and RequestMiddleware takes a client-sent
+    # X-Correlation-ID as is, so two requests can share one too. Keying on
+    # correlation_id alone would skip every such span after the first as a
+    # "duplicate", silently under-billing. span_id tells them apart, read from
+    # the message here only: usage_events no longer stores it (migration
+    # a7c3e9f1b5d2). The
     # exporter (trace/setup.py) already drops spans with span_id==0, so every
     # span_id reaching this consumer is valid and unique.
     attrs = data.get("attributes", {})
@@ -299,7 +337,8 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
             msg.offset(), tenant_id, api_key_id,
         )
 
-    billing_month = _resolve_billing_month(data.get("end_time"))
+    occurred_at = _span_end_time(data.get("end_time"))
+    billing_month = occurred_at.strftime("%Y-%m")
     logger.debug("Billing month resolved | tenant=%s billing_month=%s", tenant_id, billing_month)
 
     return BillingContext(
@@ -315,6 +354,13 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
         offset=msg.offset(),
         api_key_id=api_key_id,
         tier_id=tier_id,
+        output_tokens=output_tokens,
+        cached_input_tokens=_get_cached_input_tokens(attrs),
+        occurred_at=occurred_at,
+        # app_id: the request's application (request_span.get_context_attributes).
+        application_id=_optional_int(attrs.get("app_id")),
+        # status_code: set on every ai-inference span (classify_status).
+        status_code=_optional_int(attrs.get("status_code")),
     )
 
 
@@ -460,9 +506,29 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
     # purposes, but must not count toward cost or quota here. task_type is
     # sourced from mm_services (via get_service_pricing), so it must be
     # configured correctly on the service for billing to be accurate.
-    billed_units = Decimal(str(ctx.total_tokens if pricing.task_type.lower() == "llm" else ctx.input_tokens))
+    is_llm = pricing.task_type.lower() == "llm"
+    billed_units = Decimal(str(ctx.total_tokens if is_llm else ctx.input_tokens))
 
-    cost = calculate_cost(billed_units, pricing)
+    # LLM: input, cached input and output tokens each at their own price
+    # (cached input is part of input_tokens). Quota still counts every token
+    # (billed_units above); only the cost is split.
+    llm_cost: Optional[LlmCost] = None
+    if is_llm:
+        llm_cost = calculate_llm_cost(
+            Decimal(str(ctx.input_tokens)),
+            Decimal(str(ctx.cached_input_tokens)),
+            Decimal(str(ctx.output_tokens)),
+            pricing,
+        )
+        cost = llm_cost.total
+        logger.debug(
+            "LLM cost by category | tenant=%s input=%s cached_input=%s output=%s"
+            " cached_input_tokens=%s",
+            ctx.tenant_id, llm_cost.input_cost, llm_cost.cached_input_cost,
+            llm_cost.output_cost, ctx.cached_input_tokens,
+        )
+    else:
+        cost = calculate_cost(billed_units, pricing)
     if cost == 0:
         logger.warning(
             "Zero cost for service_id=%s — skipping billing for tenant=%s"
@@ -506,6 +572,10 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
         tier_id=ctx.tier_id,
         inference_type_id=inference_type_id,
     )
+
+    # The Usage Dashboard's record of this charge, in the same transaction as
+    # the budget/quota writes above (committed below). Never raises.
+    await record_usage_event(db, _usage_event(ctx, pricing, inference_type_id, billed_units, cost, llm_cost))
 
     if write.tier_id is None:
         # deduct_balance_and_update_quota already logged the warning; no
@@ -567,8 +637,130 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
     )
 
 
+def _usage_event(
+    ctx: BillingContext,
+    pricing: ServicePricing,
+    inference_type_id: Optional[int],
+    billed_units: Decimal,
+    cost: Decimal,
+    llm_cost: Optional[LlmCost],
+) -> UsageEvent:
+    """The usage_events row for one billed span. LLM rows carry the units
+    and cost split by category (cached input clamped to the input tokens,
+    exactly as calculate_llm_cost prices it); every other task type has its
+    whole charge in input_units_cost and no cached/output units.
+
+    No status_code: the request is counted (and its success or failure taken)
+    from its own row, written from the request span (_record_request). The
+    daily_usage rollup and the Usage Dashboard only count rows that have a
+    status_code, so a usage row never counts as a request — not even when a
+    request's usage rows fall on another day or tier than its request row."""
+    if llm_cost is not None:
+        input_tokens = Decimal(str(ctx.input_tokens))
+        cached = min(max(Decimal(str(ctx.cached_input_tokens)), Decimal(0)), input_tokens)
+        output = Decimal(str(ctx.output_tokens))
+        costs = (llm_cost.input_cost, llm_cost.cached_input_cost, llm_cost.output_cost)
+    else:
+        cached = output = Decimal(0)
+        costs = (cost, Decimal(0), Decimal(0))
+    return UsageEvent(
+        correlation_id=ctx.correlation_id,
+        occurred_at=ctx.occurred_at or _span_end_time(None),
+        tenant_id=_optional_int(ctx.tenant_id),
+        application_id=ctx.application_id,
+        api_key_id=ctx.api_key_id or None,
+        tier_id=ctx.tier_id,
+        service_id=ctx.service_id,
+        inference_type_id=inference_type_id,
+        task_type=pricing.task_type,
+        status_code=None,
+        total_units=billed_units,
+        cached_input_units=cached,
+        output_units=output,
+        input_units_cost=costs[0],
+        cached_input_units_cost=costs[1],
+        output_units_cost=costs[2],
+    )
+
+
+# The endpoints the Usage Dashboard counts requests for — the same paths
+# Prometheus' INFERENCE_ENDPOINT_REGEX matched (every /inference route and the
+# LLM chat routes); not try-it, audio upload or health routes.
+_COUNTED_PATH = re.compile(r"(.*/inference|/api/v1/chat(/completions)?)")
+
+
+async def _record_request(data: dict, msg: Message) -> None:
+    """The usage_events row for one API-key request, from its root "request"
+    span: zero units and cost, and the HTTP status the client got. It is the
+    row the Usage Dashboard and the daily_usage rollup count requests and
+    failures from — the rollup counts rows that have a status_code, and usage
+    rows (from ai-inference spans, see _usage_event) carry none, so every
+    request is counted exactly once whatever its usage rows look like.
+
+    Written for successes and failures alike: inference errors, timeouts,
+    invalid input, upstream 429s. Requests rejected at the gateway (auth,
+    budget/quota 429s) never reach the backend and have no span. Not billed:
+    budget and quota stay on the ai-inference spans. A Kafka redelivery hits
+    the (correlation_id, occurred_at) key and writes nothing."""
+    attrs = data.get("attributes", {})
+    correlation_id = str(attrs.get("correlation_id") or "").strip()
+    tenant_id = str(attrs.get("tenantId") or "").strip()
+    path = str(attrs.get("url") or "")
+    status_code = _optional_int(attrs.get("status_code"))
+    if str(attrs.get("authType", "")).strip() != "api_key":
+        return  # only API-key traffic is metered
+    if not _COUNTED_PATH.fullmatch(path):
+        return
+    if not (correlation_id and tenant_id and status_code):
+        logger.warning(
+            "request span missing fields — no usage_events row | offset=%d"
+            " correlation_id=%r tenant_id=%r status_code=%r",
+            msg.offset(), correlation_id, tenant_id, status_code,
+        )
+        return
+
+    service_id = str(attrs.get("service_id") or "").strip()
+    async with session_scope() as db:
+        # The service's catalogue task type when it resolves (same source the
+        # billed rows use); the span's own task type for a request that failed
+        # before its service was known.
+        pricing = await get_service_pricing(db, service_id) if service_id else None
+        task_type = (pricing.task_type if pricing and pricing.task_type else str(attrs.get("task_type") or "")).lower()
+        inference_type_id = await get_inference_type_id(db, task_type) if task_type else None
+        await record_usage_event(db, UsageEvent(
+            correlation_id=correlation_id,
+            occurred_at=_span_end_time(data.get("end_time")),
+            tenant_id=_optional_int(tenant_id),
+            application_id=_optional_int(attrs.get("app_id")),
+            api_key_id=_optional_int(attrs.get("api_key_id")),
+            tier_id=str(attrs.get("tier_id") or "").strip() or None,
+            service_id=service_id,
+            inference_type_id=inference_type_id,
+            task_type=task_type,
+            status_code=status_code,
+            total_units=Decimal(0),
+            cached_input_units=Decimal(0),
+            output_units=Decimal(0),
+            input_units_cost=Decimal(0),
+            cached_input_units_cost=Decimal(0),
+            output_units_cost=Decimal(0),
+        ))
+        await db.commit()
+    logger.debug(
+        "Request recorded | tenant=%s service=%s status=%s correlation_id=%s",
+        tenant_id, service_id, status_code, correlation_id,
+    )
+
+
 async def handle_ppu_usage(msg: Message) -> None:
-    ctx = await _prepare_billing_context(msg)
+    data = _get_billing_data(msg)
+    if data is None:
+        return
+    if data.get("name") == REQUEST_SPAN:
+        await _record_request(data, msg)
+        return
+
+    ctx = await _prepare_billing_context(msg, data)
     if ctx is None:
         return
 

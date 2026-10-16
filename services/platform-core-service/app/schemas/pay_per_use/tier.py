@@ -50,6 +50,7 @@ def _check_duplicate_model_task_types(quotas: List[TierQuotaIn]) -> List[TierQuo
 _TIER_CREATE_EXAMPLE = {
     "name": "Standard",
     "description": "Standard monthly quota tier for translation and speech services",
+    "rateLimit": 100,
     "quotas": [
         {"modelTaskType": "nmt", "limit": 100000},
         {"modelTaskType": "asr", "limit": 50000},
@@ -62,6 +63,7 @@ class TierCreate(BaseModel):
 
     name: str = Field(..., min_length=2, max_length=100)
     description: Optional[str] = None
+    rateLimit: Optional[int] = Field(None, gt=0, le=2_147_483_647, description="Requests per minute across all rate-limited inference APIs")
     quotas: List[TierQuotaIn] = Field(..., min_length=1)
 
     @model_validator(mode="after")
@@ -86,6 +88,7 @@ class TierUpdate(BaseModel):
     tier_id: str = Field(..., description="UUID of the tier to update")
     name: Optional[str] = Field(None, min_length=2, max_length=100)
     description: Optional[str] = None
+    rateLimit: Optional[int] = Field(None, gt=0, le=2_147_483_647, description="Requests per minute; send null to remove the limit")
     quotas: Optional[List[TierQuotaIn]] = None
     cancel_pending_quota: Optional[List[str]] = None
 
@@ -101,6 +104,7 @@ class TierOut(BaseModel):
     name: str
     description: Optional[str] = None
     status: TierStatus = TierStatus.INACTIVE
+    rateLimit: Optional[int] = None
     quotas: List[TierQuotaOut] = []
     createdAt: Optional[datetime] = None
     updatedAt: Optional[datetime] = None

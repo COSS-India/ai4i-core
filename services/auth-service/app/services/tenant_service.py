@@ -85,6 +85,10 @@ from app.utils.username import allocate_unique_username, derive_username_from_em
 
 logger = logging.getLogger(__name__)
 
+# tier_name on GET /auth/tenants/{tenant_id} when a tier is assigned but its
+# name can't be resolved — see TenantService.resolve_tier_name.
+UNKNOWN_TIER_NAME = "Unknown"
+
 # Derived from tenants.allocated_budget's own column type (NUMERIC(15, 2))
 # rather than hand-computed, so widening that column can't silently leave
 # this stale — a stale literal here would keep rejecting valid budgets with
@@ -773,6 +777,34 @@ class TenantService:
         if unmask:
             await self._assert_can_reveal_pii(current_user)
         return await self._load_tenant_or_404(tenant_id)
+
+    @staticmethod
+    async def resolve_tier_name(
+        tier_id: Optional[UUID], platform_core_db: Optional[AsyncSession]
+    ) -> Optional[str]:
+        """Name of ``tier_id`` from platform-core's ``tiers`` table (no
+        cross-DB FK is possible). None only when no tier is assigned. Fails
+        soft — unlike list_tenant_tiers — so the GET keeps working: a tier
+        that is assigned but cannot be resolved (platform-core down or
+        unconfigured, or no matching tiers row) comes back as
+        UNKNOWN_TIER_NAME, which the client shows as-is, so it never reads
+        as "no tier assigned"."""
+        if tier_id is None:
+            return None
+        if platform_core_db is None:
+            logger.warning("tier_name not resolved for tier %s: platform-core DB is not configured", tier_id)
+            return UNKNOWN_TIER_NAME
+        try:
+            row = (
+                await platform_core_db.execute(text("SELECT name FROM tiers WHERE id = :tid"), {"tid": tier_id})
+            ).first()
+        except Exception:
+            logger.exception("tier_name lookup failed for tier %s", tier_id)
+            return UNKNOWN_TIER_NAME
+        if row is None:
+            logger.warning("tier_name not resolved for tier %s: no matching tiers row", tier_id)
+            return UNKNOWN_TIER_NAME
+        return row.name
 
     @staticmethod
     def build_tenant_response(tenant: Tenant, *, unmask: bool = False) -> dict:

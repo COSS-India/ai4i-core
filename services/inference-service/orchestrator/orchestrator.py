@@ -17,6 +17,7 @@ from trace.request_span import (
 
 from services.base.task_service import BaseTaskService
 from inference.inference_server_resolver import InferenceServerResolver
+from utils.http_status import http_status_for
 from orchestrator.task_service_registry import TASK_SERVICE_REGISTRY
 
 
@@ -67,17 +68,29 @@ class Orchestrator:
             ValueError: If task_type is not registered
             RuntimeError: If service resolution or inference fails
         """
-        # Root span (parentID=null); traced_span owns timing + status.
-        with traced_span("request", root=True, classify_status=True) as attrs:
+        # Root span (parentID=null); traced_span owns timing + status. Its
+        # status_code is the HTTP status the route returns (http_status_for,
+        # shared with routes/inference.py): the billing consumer writes the
+        # request's usage_events row from this span, and the Usage Dashboard
+        # counts failures by it.
+        with traced_span("request", root=True, classify_status=True, status_for=http_status_for) as attrs:
             attrs["url"] = str(request.url.path) if request else get_endpoint_path()
             attrs["method"] = request.method if request else ""
             attrs.update(get_context_attributes())
+            # Which service and task the request was for, set before anything
+            # can fail so a failed request still carries them: the service as
+            # the client sent it, replaced by the resolved one below.
+            attrs["task_type"] = str(payload.get("task_type", "")).lower()
+            attrs["service_id"] = (
+                (payload.get("config") or {}).get("serviceId") or payload.get("serviceId") or ""
+            )
 
             task_type = payload.get("task_type", "").upper()
             self._validate_task_type(task_type)
 
             # Resolve service and model BEFORE creating task service
             service_info = await self._resolve_service_and_model(payload)
+            attrs["service_id"] = service_info.get("serviceId") or attrs["service_id"]
 
             # Set as soon as it's known (covers the SMR-fallback-resolved case
             # too, via service_info["serviceId"]) so ObservabilityMiddleware

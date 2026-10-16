@@ -1,26 +1,61 @@
-"""PII (Personally Identifiable Information) Detection and Redaction TaskService."""
+"""PII Detection and Anonymization TaskService using Presidio."""
 
 from services.base.task_service import BaseTaskService
 
 
 class PIITaskService(BaseTaskService):
-    """
-    TaskService for PII Detection and Redaction inference — NOT YET IMPLEMENTED.
-
-    Registered in task_service_registry so PII requests fail loudly
-    (NotImplementedError → 501) instead of falling through the base
-    pipeline's defaults into a confusing mapper error.
-
-    To implement: replace validate_request below with real checks (language /
-    redaction mode), set payload_key, add postprocess (entity formatting +
-    redaction) and any PII-specific convert hooks — see NERTaskService for
-    the closest template.
-    """
+    """Placeholder — wired up once the Presidio endpoint test passes."""
 
     async def validate_request(self, payload):
         raise NotImplementedError(
-            f"{self.task_name}: PII inference is not implemented"
+            f"{self.task_name}: PII inference is not implemented yet"
         )
+
+    # async def run_inference(self, payload, serviceInfo):
+    #     from services.pii.engine import get_engine
+    #
+    #     engine = get_engine()
+    #     language = self._get_language(payload)
+    #     source_lang = self._extract_source_lang(language) or "en"
+    #
+    #     self.source_lang = source_lang
+    #     self.target_lang = ""
+    #     self.billed_input = 0
+    #
+    #     input_items = payload.get("input", [])
+    #     source_texts = self.extract_field_from_items(input_items, "source")
+    #     response_data = []
+    #
+    #     for text in source_texts:
+    #         analyzer_results = engine.analyze(text, source_lang)
+    #         anonymized, entity_mapping = engine.anonymize(text, analyzer_results)
+    #         self.billed_input += len(text.split())
+    #         response_data.append({
+    #             "anonymizedText": anonymized.text,
+    #             "entityMapping": entity_mapping,
+    #             "entities": [
+    #                 {
+    #                     "entityType": r.entity_type,
+    #                     "start": r.start,
+    #                     "end": r.end,
+    #                     "score": round(r.score, 4),
+    #                 }
+    #                 for r in analyzer_results
+    #             ],
+    #         })
+    #
+    #     return PostProcessFormat(
+    #         payload=payload,
+    #         response_data=response_data,
+    #         source_texts=source_texts,
+    #     )
+    #
+    # async def postprocess_output(self, result):
+    #     output = [
+    #         {"source": result.source_texts[i] if i < len(result.source_texts) else "", **item}
+    #         for i, item in enumerate(result.response_data)
+    #     ]
+    #     return {"output": output, "config": result.payload.get("config")}
 
 
 __all__ = ["PIITaskService"]

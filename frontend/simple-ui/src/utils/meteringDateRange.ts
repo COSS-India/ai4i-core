@@ -1,4 +1,4 @@
-import type { MeteringDateRange, MeteringDayKey, MeteringScope } from "../types/metering";
+import type { MeteringDateRange, MeteringDayKey, MeteringPeriod } from "../types/metering";
 
 /**
  * Usage Dashboard custom date range helpers. All calendar dates are IST days
@@ -6,7 +6,6 @@ import type { MeteringDateRange, MeteringDayKey, MeteringScope } from "../types/
  */
 
 const IST_OFFSET_MS = 330 * 60_000;
-const IST_OFFSET = "+05:30";
 const DAY_MS = 86_400_000;
 
 const MONTHS_SHORT = [
@@ -20,11 +19,6 @@ export interface MeteringCalendarMonth {
   month: number;
 }
 
-function dayKeyToUtcMs(key: MeteringDayKey): number {
-  const [y, m, d] = key.split("-").map(Number);
-  return Date.UTC(y, m - 1, d);
-}
-
 function utcMsToDayKey(ms: number): MeteringDayKey {
   return new Date(ms).toISOString().slice(0, 10);
 }
@@ -34,37 +28,26 @@ export function istDayKey(ms: number): MeteringDayKey {
   return utcMsToDayKey(ms + IST_OFFSET_MS);
 }
 
-export function addDays(key: MeteringDayKey, days: number): MeteringDayKey {
-  return utcMsToDayKey(dayKeyToUtcMs(key) + days * DAY_MS);
+/** Inclusive IST days a custom range may use; `max` is today. */
+export interface PickableDays {
+  min: MeteringDayKey;
+  max: MeteringDayKey;
 }
 
-/** Inclusive day count of a range (a single day is 1). */
-export function rangeLengthDays(range: MeteringDateRange): number {
-  return Math.round((dayKeyToUtcMs(range.to) - dayKeyToUtcMs(range.from)) / DAY_MS) + 1;
+/** Whether the custom range picker lets a day be clicked: any day in [min, max]. */
+export function isPickableDay(day: MeteringDayKey, pickable: PickableDays): boolean {
+  return day >= pickable.min && day <= pickable.max;
 }
 
-/** IST ISO-8601 datetime with offset, e.g. "2026-07-02T00:00:00+05:30". */
-export function toIstIsoDateTime(ms: number): string {
-  return `${new Date(ms + IST_OFFSET_MS).toISOString().slice(0, 19)}${IST_OFFSET}`;
+/** `period` query params; `from`/`to` (IST dates) are sent only for "custom". */
+export function buildPeriodParams(period: MeteringPeriod): Record<string, string> {
+  if (period.key !== "custom") return { period: period.key };
+  return { period: period.key, from: period.range.from, to: period.range.to };
 }
 
-function istMidnightIso(key: MeteringDayKey): string {
-  return `${key}T00:00:00${IST_OFFSET}`;
-}
-
-/**
- * `from`/`to` query params for an applied range: 00:00:00 IST on the start
- * date up to the end of the end date. `to` is the exclusive next midnight,
- * except when the range ends today — the API rejects a future `to`, so the
- * current time is sent instead.
- */
-export function buildMeteringRangeParams(
-  range: MeteringDateRange,
-  nowMs: number = Date.now(),
-): { from: string; to: string } {
-  const to =
-    range.to >= istDayKey(nowMs) ? toIstIsoDateTime(nowMs) : istMidnightIso(addDays(range.to, 1));
-  return { from: istMidnightIso(range.from), to };
+/** React Query key parts for a period; a custom range is keyed by its dates. */
+export function periodQueryKeyParts(period: MeteringPeriod): string[] {
+  return period.key === "custom" ? [period.key, period.range.from, period.range.to] : [period.key];
 }
 
 function formatDayMonth(key: MeteringDayKey): string {
@@ -79,15 +62,6 @@ export function formatMeteringDateRange(range: MeteringDateRange): string {
   if (range.from === range.to) return `${formatDayMonth(range.from)} ${fromYear}`;
   const start = fromYear === toYear ? formatDayMonth(range.from) : `${formatDayMonth(range.from)} ${fromYear}`;
   return `${start} – ${formatDayMonth(range.to)} ${toYear}`;
-}
-
-/** Applied IST dates from a response `scope` echoing a custom range (`to` is exclusive). */
-export function scopeToDateRange(scope: MeteringScope): MeteringDateRange | null {
-  if (scope.window !== "custom" || !scope.from || !scope.to) return null;
-  const fromMs = new Date(scope.from).getTime();
-  const toMs = new Date(scope.to).getTime();
-  if (Number.isNaN(fromMs) || Number.isNaN(toMs)) return null;
-  return { from: istDayKey(fromMs), to: istDayKey(Math.max(fromMs, toMs - 1)) };
 }
 
 export function monthOfDayKey(key: MeteringDayKey): MeteringCalendarMonth {

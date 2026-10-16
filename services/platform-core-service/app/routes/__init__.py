@@ -24,6 +24,7 @@ from app.routes.notification import router as notification_router
 from app.routes.notification_subscription import router as notification_subscription_router
 from app.routes.pay_per_use import router as pay_per_use_router
 from app.routes.pii import router as pii_router
+from app.routes.policy import router as policy_router
 from app.routes.service import router as service_router
 from app.routes.telemetry import router as telemetry_router
 from app.routes.usage import router as usage_router
@@ -57,6 +58,7 @@ v1_router.include_router(pay_per_use_router)
 v1_router.include_router(notification_router)
 v1_router.include_router(monitoring_catalog_router)
 v1_router.include_router(notification_subscription_router)
+v1_router.include_router(policy_router)
 
 # ── Top-level router ──
 api_router = APIRouter()

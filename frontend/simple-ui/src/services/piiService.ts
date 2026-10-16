@@ -6,15 +6,17 @@ import {
   piiDomainRowSchema,
   piiPolicySchema,
   piiRedactResponseSchema,
+  piiSupportedEntitiesSchema,
   piiTenantDomainMappingSchema,
   stringArraySchema,
 } from "./dto/schemas/pii";
+import { PII_ENTITY_COUNTRY } from "@/config/constants";
 
 const admin = apiEndpoints.pii.admin;
 
 export const piiService = {
   getDomains: () =>
-    apiService.get(apiEndpoints.pii.domains, { responseSchema: stringArraySchema }),
+    apiService.get<string[]>(apiEndpoints.pii.domains, { responseSchema: stringArraySchema }),
 
   getPolicy: (domainId: string) =>
     apiService.get(apiEndpoints.pii.policyByDomain(domainId), {
@@ -36,8 +38,22 @@ export const piiService = {
       responseSchema: piiRedactResponseSchema,
     }),
 
+  /** Entity types inference-service can detect for this language (GET /pii/entities). */
+  getSupportedEntities: async (language: string): Promise<string[]> => {
+    const response = await apiService.get(apiEndpoints.pii.entities, {
+      params: { language,
+        country: PII_ENTITY_COUNTRY,
+      },
+      responseSchema: piiSupportedEntitiesSchema,
+      suppressErrorAlert: true,
+    });
+    return response.data.entities;
+  },
+
   getAllDomains: () =>
-    apiService.get(admin.allDomains, { responseSchema: z.array(piiDomainRowSchema) }),
+    apiService.get<z.infer<typeof piiDomainRowSchema>[]>(admin.allDomains, {
+      responseSchema: z.array(piiDomainRowSchema),
+    }),
 
   activateDomains: (domainIds: string[]) =>
     apiService.post(

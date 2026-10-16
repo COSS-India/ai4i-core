@@ -12,6 +12,8 @@ from contextlib import asynccontextmanager, contextmanager
 from opentelemetry import trace, context as otel_context
 from opentelemetry.trace import StatusCode
 
+from trace.request_tags import get_request_tag_attributes
+
 logger = logging.getLogger(__name__)
 
 # Shared tracer for the inference service
@@ -35,13 +37,17 @@ def get_context_attributes() -> dict:
     """
     attrs = {}
     try:
-        from ai4i_core.context import get_user_id, get_tenant_id, get_trace_id, get_auth_type, get_api_key_id, get_tier_id
+        from ai4i_core.context import (
+            get_user_id, get_tenant_id, get_trace_id, get_auth_type, get_api_key_id, get_tier_id,
+            get_application_id,
+        )
         user_id = get_user_id()
         tenant_id = get_tenant_id()
         correlation_id = get_trace_id()
         auth_type = get_auth_type()
         api_key_id = get_api_key_id()
         tier_id = get_tier_id()
+        application_id = get_application_id()
         if user_id:
             attrs["userId"] = user_id
         if tenant_id:
@@ -54,8 +60,13 @@ def get_context_attributes() -> dict:
             attrs["api_key_id"] = api_key_id
         if tier_id:
             attrs["tier_id"] = tier_id
+        if application_id:
+            attrs["app_id"] = application_id
     except Exception as e:
         logger.debug(f"Could not read context attributes: {e}")
+    # Caller tags (enduser.id, metadata_kv) set by the LLM route; empty for every
+    # other request. Their names can't collide with the keys above.
+    attrs.update(get_request_tag_attributes())
     return attrs
 
 
@@ -81,6 +92,7 @@ def traced_span(
     classify_status: bool = False,
     mark_ok: bool = True,
     error_attrs=None,
+    status_for=None,
 ):
     """
     THE span-lifecycle primitive: opens a span, captures start_time, yields a
@@ -98,6 +110,10 @@ def traced_span(
             output parity)
         error_attrs: optional fn(attrs, exc) -> attrs to reshape the
             collected attrs on failure (e.g. zero token counts)
+        status_for: optional fn(exc) -> int giving the failure status_code
+            (with classify_status) instead of 400 for ValueError, else 500 —
+            the Triton "request" span passes http_status_for so it records
+            the HTTP status the client got
     """
     start_time = time.time()
     context = otel_context.Context() if root else None
@@ -111,7 +127,10 @@ def traced_span(
             attrs["total_time_ms"] = compute_total_time_ms(start_time)
             if classify_status:
                 attrs["status"] = "failure"
-                attrs["status_code"] = 400 if isinstance(e, ValueError) else 500
+                attrs["status_code"] = (
+                    status_for(e) if status_for is not None
+                    else 400 if isinstance(e, ValueError) else 500
+                )
             finalize_span(span, attrs, error=e)
             raise
         else:
@@ -135,13 +154,29 @@ def finalize_span(span, attributes: dict, *, error=None, ok: bool = False) -> No
         span.set_status(StatusCode.OK)
 
 
+
+def record_rejected_request(request, status_code: int) -> None:
+    """A finished "request" span for a request rejected before its route ran
+    (e.g. a body that fails validation), which otherwise leaves no span. The
+    billing consumer writes each API-key request's usage_events row from its
+    request span, and the Usage Dashboard counts this one as failed —
+    Prometheus already did, from ObservabilityMiddleware."""
+    with traced_span("request", root=True, classify_status=True, mark_ok=False) as attrs:
+        attrs["url"] = request.url.path
+        attrs["method"] = request.method
+        attrs.update(get_context_attributes())
+        attrs["status"] = "failure"
+        attrs["status_code"] = status_code
+
+
 @asynccontextmanager
 async def traced_inference(payload: dict, task_name: str, logger_: logging.Logger):
     """
     The 'ai-inference' span around an inference call, built on traced_span.
 
     Yields a mutable attrs dict pre-seeded with input_type; the wrapped code
-    fills in input_tokens / output_tokens / output_type as they become known.
+    fills in input_tokens / output_tokens / output_type as they become known
+    (LLM calls also set cached_input_tokens, the cached part of input_tokens).
     On failure token counts are zeroed and the error is logged with traceback.
 
     Single definition shared by the base run_inference and TTS's override —
@@ -153,6 +188,7 @@ async def traced_inference(payload: dict, task_name: str, logger_: logging.Logge
         logger_.error(f"{task_name}: inference failed: {exc}", exc_info=True)
         attrs["input_tokens"] = 0
         attrs["output_tokens"] = 0
+        attrs["cached_input_tokens"] = 0
         return attrs
 
     with traced_span(
@@ -168,6 +204,7 @@ async def traced_inference(payload: dict, task_name: str, logger_: logging.Logge
             "output_type": "unknown",
             "input_tokens": 0,
             "output_tokens": 0,
+            "cached_input_tokens": 0,
             # For trace/observability only — the PPU consumer's LLM/non-LLM
             # billing decision reads mm_services.task_type instead (via
             # get_service_pricing), not this span attribute.

@@ -14,8 +14,13 @@ from app.models.pay_per_use.budget_usage import BudgetUsage
 from app.models.pay_per_use.inference_type import InferenceType
 from app.models.pay_per_use.quota_usage import QuotaUsage
 from app.models.pay_per_use.tier import Tier
+from app.repositories.pay_per_use.period_usage import period_sources, tenant_pks, usage_data_from
 from app.utils.billing_month import shift_billing_month
+from app.utils.usage_period import UsagePeriod, ist_midnight
 
+
+# tenants columns get_tenant_budgets / get_budgeted_tenant_budgets read.
+_TENANT_BUDGET_COLUMNS = "id, allocated_budget, tier_id, budget_effective_from, budget_effective_to"
 
 # The payperuse consumer assigns billing months in IST.
 _IST = ZoneInfo("Asia/Kolkata")
@@ -141,14 +146,39 @@ class UsageRepository:
         result = await self._db.execute(stmt)
         return result.all()
 
+    async def get_budgeted_tenant_budgets(
+        self, auth_db: Optional[AsyncSession], tier_id: str | None = None,
+    ) -> dict:
+        """get_tenant_budgets' result for every institution with a budget on file
+        (tenants.allocated_budget set), DEACTIVATED ones left out; only those
+        whose current tier (tenants.tier_id) is ``tier_id`` if given. One read of
+        tenants for both the selection and the budgets.
+
+        The /usage-summary budget block's institutions: all-time, so they're not
+        picked by quota rows the way the quota block's are — an institution on
+        untiered keys has spend but no ppu_quota_usage rows. {} without an auth
+        DB; a failing query propagates (see get_tenant_budgets for why)."""
+        if auth_db is None:
+            return {}
+        sql = (
+            f"SELECT {_TENANT_BUDGET_COLUMNS} FROM tenants"
+            " WHERE allocated_budget IS NOT NULL AND status <> 'DEACTIVATED'"
+        )
+        params: dict = {}
+        if tier_id is not None:
+            sql += " AND tier_id = CAST(:tier_id AS uuid)"
+            params["tier_id"] = tier_id
+        tenant_rows = (await auth_db.execute(text(sql), params)).all()
+        return await self._budgets_for(tenant_rows, auth_db)
+
     async def get_tenant_budgets(
         self,
-        billing_month: str | None,
         tenant_ids: list[str],
         auth_db: Optional[AsyncSession] = None,
     ) -> dict:
         """budget_limit/available_balance/tier_id/budget_effective_from/
-        budget_effective_to per tenant_id.
+        budget_effective_to per tenant_id — all-time: budget_usage is a running
+        total with no month dimension, so this is always the current balance.
 
         ppu_tenant_tier_assignments was dropped (AI4IDS-2923) when billing moved to
         per-API-key budget_usage deduction — reconstructed here from tables that
@@ -171,15 +201,6 @@ class UsageRepository:
             top-down (TenantService.revise_tenant_budget only updates
             allocated_budget) — nullable, so absent for any tenant created before
             these columns existed or without a configured budget window.
-
-        billing_month is accepted for interface compatibility but no longer
-        narrows this particular lookup: budget_usage carries no per-month
-        dimension (a single lifetime-cumulative row per key, unlike the old
-        assignment row's effective_from/to window), so for a PAST billing_month
-        this now reflects the tenant's CURRENT balance, not a frozen snapshot as
-        of that month's end. Accepted, not fixed here — that's a schema gap
-        upstream of this repository (see budget_usage's model), not something
-        reconstructable from data that was never captured.
 
         A tenant not found in auth-service's tenants table (unknown tenant_id,
         or the auth_db param itself not passed/None), OR found but with
@@ -211,13 +232,15 @@ class UsageRepository:
         # propagate; the global exception handler turns it into a proper 500.
         tenant_rows = (
             await auth_db.execute(
-                text(
-                    "SELECT id, allocated_budget, tier_id, budget_effective_from, "
-                    "budget_effective_to FROM tenants WHERE id = ANY(:ids)"
-                ),
+                text(f"SELECT {_TENANT_BUDGET_COLUMNS} FROM tenants WHERE id = ANY(:ids)"),
                 {"ids": numeric_ids},
             )
         ).all()
+        return await self._budgets_for(tenant_rows, auth_db)
+
+    async def _budgets_for(self, tenant_rows, auth_db: AsyncSession) -> dict:
+        """Budget per tenant row (_TENANT_BUDGET_COLUMNS): allocated_budget minus
+        the lifetime spend of every key under the tenant's applications."""
         if not tenant_rows:
             return {}
 
@@ -335,6 +358,73 @@ class UsageRepository:
             stmt = stmt.where(QuotaUsage.inference_type_id.in_(task_type_ids))
         result = await self._db.execute(stmt)
         return result.all()
+
+    async def get_period_usage(
+        self,
+        period: UsagePeriod,
+        tenant_ids: list[str] | None = None,
+        task_type_ids: list[int] | None = None,
+    ):
+        """Per (tenant, tier, inference type) units and costs in ``period`` —
+        from usage_events and / or daily_usage (see period_sources) — with the
+        first and last activity of each group, so callers can order tiers and
+        pick each tenant's most recent one. A group can have a row from each
+        source (past days and today); callers add them up. first_seen /
+        last_seen are instants: a daily_usage day is its IST midnight.
+
+        ``tenant_ids`` None means every tenant. Rows without a tenant (never
+        written for billed API-key traffic) are skipped. ``task_type_ids``
+        narrows to those catalogue ids. The task type's name and unit come
+        from the catalogue, falling back to the row's own copy.
+        """
+        if tenant_ids is not None and not tenant_pks(tenant_ids):
+            return []
+        rows = []
+        for source in period_sources(period):
+            for row in await self._period_usage_rows(source, tenant_ids, task_type_ids):
+                row = SimpleNamespace(**row._mapping)
+                if not isinstance(row.first_seen, datetime):   # a daily_usage day
+                    row.first_seen, row.last_seen = ist_midnight(row.first_seen), ist_midnight(row.last_seen)
+                rows.append(row)
+        rows.sort(key=lambda r: r.tenant_id)
+        return rows
+
+    async def _period_usage_rows(self, source, tenant_ids, task_type_ids):
+        m = source.model
+        task_type = func.coalesce(InferenceType.name, m.task_type)
+        unit = func.coalesce(InferenceType.unit, source.unit)
+        stmt = (
+            select(
+                m.tenant_id,
+                m.tier_id,
+                m.inference_type_id,
+                task_type.label("task_type"),
+                unit.label("task_type_unit"),
+                func.sum(m.total_units).label("total_units"),
+                func.sum(m.cached_input_units).label("cached_input_units"),
+                func.sum(m.output_units).label("output_units"),
+                func.sum(m.input_units_cost).label("input_units_cost"),
+                func.sum(m.cached_input_units_cost).label("cached_input_units_cost"),
+                func.sum(m.output_units_cost).label("output_units_cost"),
+                func.sum(source.total_cost).label("cost"),
+                func.min(source.time_column).label("first_seen"),
+                func.max(source.time_column).label("last_seen"),
+            )
+            .outerjoin(InferenceType, m.inference_type_id == InferenceType.id)
+            .where(source.in_period, m.tenant_id.is_not(None))
+            .group_by(m.tenant_id, m.tier_id, m.inference_type_id, task_type, unit)
+            .order_by(m.tenant_id)
+        )
+        if tenant_ids is not None:
+            stmt = stmt.where(m.tenant_id.in_(tenant_pks(tenant_ids)))
+        if task_type_ids:
+            stmt = stmt.where(m.inference_type_id.in_(task_type_ids))
+        result = await self._db.execute(stmt)
+        return result.all()
+
+    async def get_usage_data_from(self, period: UsagePeriod) -> Optional[datetime]:
+        """When the usage data begins inside ``period`` (see period_usage.usage_data_from)."""
+        return await usage_data_from(self._db, period)
 
     async def get_tier_names(self) -> dict:
         """{tier_id: name} for every tier, read straight from ppu_tiers.

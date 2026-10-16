@@ -120,6 +120,7 @@ def get_auth_service(
 def get_application_service(
     db: AsyncSession = Depends(get_db),
     api_key_service: APIKeyService = Depends(get_api_key_service),
+    cache: CacheService = Depends(get_cache_service),
 ) -> ApplicationService:
     return ApplicationService(
         application_repo=ApplicationRepository(db),
@@ -128,6 +129,7 @@ def get_application_service(
         db=db,
         api_key_repo=APIKeyRepository(db),
         api_key_service=api_key_service,
+        cache_service=cache,
     )
 
 

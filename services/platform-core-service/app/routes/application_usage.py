@@ -17,6 +17,12 @@ from app.schemas.pay_per_use.application_usage import (
     ApplicationUsageSummaryResponse,
 )
 from app.services.pay_per_use.application_usage_service import ApplicationUsageService
+from app.utils.usage_period import (
+    FROM_DESCRIPTION,
+    PERIOD_DESCRIPTION,
+    TO_DESCRIPTION,
+    period_from_request,
+)
 
 router = APIRouter(prefix="/pay-per-use", tags=["Usage"])
 
@@ -24,55 +30,66 @@ router = APIRouter(prefix="/pay-per-use", tags=["Usage"])
 @router.get(
     "/usage-applications-summary",
     response_model=ApplicationUsageSummaryResponse,
-    description="Lifetime-cumulative totals for an institution's Applications. "
-    "No billing_period param — budget_usage has no time dimension to filter "
-    "on, so these figures are never period-scoped (see billingPeriod in the "
-    "response, always \"lifetime\").",
+    description="An institution's Applications totals: spend in the selected period "
+    "(periodSpend) next to the all-time allocated, spent and remaining budget "
+    "(billingPeriod \"lifetime\").",
 )
 async def get_application_usage_summary(
     request: Request,
     tenant_id: str = Query(..., description="Institution (tenant) ID."),
+    period: Optional[str] = Query(None, description=PERIOD_DESCRIPTION),
+    from_: Optional[str] = Query(None, alias="from", description=FROM_DESCRIPTION),
+    to: Optional[str] = Query(None, description=TO_DESCRIPTION),
     db: AsyncSession = Depends(get_db),
     auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ):
     _authorize_tenant(request, tenant_id)
+    usage_period = period_from_request(request, period, from_, to)
     svc = ApplicationUsageService(ApplicationUsageRepository(db))
-    return await svc.get_summary(tenant_id, auth_db)
+    return await svc.get_summary(tenant_id, usage_period, auth_db)
 
 
 @router.get(
     "/usage-applications",
     response_model=ApplicationUsageListResponse,
-    description="Lifetime-cumulative per-application totals for an institution. "
-    "No billing_period param — these figures are never period-scoped.",
+    description="Per-application spend in the selected period next to all-time "
+    "figures, sorted by spend in the period.",
 )
 async def get_application_usage_list(
     request: Request,
     tenant_id: str = Query(..., description="Institution (tenant) ID."),
-    sortOrder: str = Query("desc", pattern="^(asc|desc)$", description="Sort applications by spend."),
+    period: Optional[str] = Query(None, description=PERIOD_DESCRIPTION),
+    from_: Optional[str] = Query(None, alias="from", description=FROM_DESCRIPTION),
+    to: Optional[str] = Query(None, description=TO_DESCRIPTION),
+    sortOrder: str = Query("desc", pattern="^(asc|desc)$", description="Sort applications by spend in the period."),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ):
     _authorize_tenant(request, tenant_id)
+    usage_period = period_from_request(request, period, from_, to)
     svc = ApplicationUsageService(ApplicationUsageRepository(db))
-    return await svc.get_application_list(tenant_id, auth_db, sortOrder, limit, offset)
+    return await svc.get_application_list(tenant_id, usage_period, auth_db, sortOrder, limit, offset)
 
 
 @router.get(
     "/usage-application",
     response_model=ApplicationUsageDetailResponse,
-    description="Lifetime-cumulative totals for one application. No "
-    "billing_period param — these figures are never period-scoped.",
+    description="One application's spend in the selected period, per API key and "
+    "in total, next to all-time figures.",
 )
 async def get_application_usage_detail(
     request: Request,
     application_id: int = Query(..., description="Application ID."),
     tenant_id: str = Query(..., description="Institution (tenant) ID."),
+    period: Optional[str] = Query(None, description=PERIOD_DESCRIPTION),
+    from_: Optional[str] = Query(None, alias="from", description=FROM_DESCRIPTION),
+    to: Optional[str] = Query(None, description=TO_DESCRIPTION),
     db: AsyncSession = Depends(get_db),
     auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ):
     _authorize_tenant(request, tenant_id)
+    usage_period = period_from_request(request, period, from_, to)
     svc = ApplicationUsageService(ApplicationUsageRepository(db))
-    return await svc.get_application_detail(application_id, tenant_id, auth_db)
+    return await svc.get_application_detail(application_id, tenant_id, usage_period, auth_db)

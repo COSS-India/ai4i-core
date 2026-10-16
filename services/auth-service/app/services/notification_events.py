@@ -33,13 +33,16 @@ logger = logging.getLogger(__name__)
 # Tenant budgets are INR-only today; no per-tenant currency column exists yet.
 BUDGET_CURRENCY = "INR"
 
-# Q-D1 — name, description and monthly quotas of the old and new tier, in one query
+# Q-D1 — name, description and monthly quotas of the old and new tier, in one query.
+# Each quota carries its billing unit from the inference_types catalogue, the
+# same column PPU usage reads (UsageRepository selects InferenceType.unit).
 _TIER_DETAILS_SQL = text(
     """
     SELECT t.id::text AS tier_id, t.name, t.description,
            COALESCE(
                json_agg(json_build_object('inference_name', it.name,
-                                          'monthly_quota', tq.monthly_quota)
+                                          'monthly_quota', tq.monthly_quota,
+                                          'unit', it.unit)
                         ORDER BY it.name) FILTER (WHERE it.id IS NOT NULL),
                '[]'::json) AS quotas
       FROM tiers t
@@ -51,12 +54,20 @@ _TIER_DETAILS_SQL = text(
 )
 
 
+def _quota_unit(q: dict) -> str:
+    """Billing unit for a tier quota, e.g. "tokens" or "audio minutes".
+
+    Falls back to the task type's own name when the catalogue has no unit,
+    as PPU usage does (usage_service._row_unit)."""
+    return str(q.get("unit") or q["inference_name"]).replace("_", " ")
+
+
 def _quota_lines(quotas) -> List[str]:
-    """One "ASR: 1,000 req/mo" line per model task type on the tier."""
+    """One "LLM: 1,000,000 tokens" line per model task type on the tier."""
     if isinstance(quotas, str):
         quotas = json.loads(quotas)
     return [
-        f"{str(q['inference_name']).upper()}: {Decimal(str(q['monthly_quota'])):,.0f} req/mo"
+        f"{str(q['inference_name']).upper()}: {Decimal(str(q['monthly_quota'])):,.0f} {_quota_unit(q)}"
         for q in quotas or []
         if q.get("monthly_quota") is not None
     ]

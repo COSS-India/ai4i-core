@@ -10,6 +10,7 @@ from ai4i_core.exceptions import (  # noqa: F401
     # Resource (404, 409)
     EntityNotFoundError,
     DuplicateEntityError,
+    EntityInUseError,
     # Validation (422)
     ValidationError,
     # AuthZ (403) — used by the alert auth dependencies

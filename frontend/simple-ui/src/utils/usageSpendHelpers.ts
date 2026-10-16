@@ -1,12 +1,7 @@
 import { METERING } from "../config/meteringConstants";
 import { meteringColorAt } from "./meteringColors";
-import type {
-  SpendByTaskType,
-  TenantTierBreakdown,
-  TenantUsageAggregate,
-  TenantUsageDetail,
-  UsageSummaryResponse,
-} from "../types/usageSpend";
+import { formatMonthName } from "./meteringDateRange";
+import type { QuotaUsageItem } from "../types/usageSpend";
 
 type TaskTypeColorKey = keyof typeof METERING.COLORS.TASK_TYPE;
 
@@ -27,29 +22,6 @@ const AVATAR_COLORS = [
 ] as const;
 
 export type BillingPeriodKey = "current" | "last";
-
-export interface AggregatedTaskUsage {
-  taskType: string;
-  unit: string;
-  quotaLimit?: number | null;
-  consumed: number;
-  remaining?: number | null;
-}
-
-/** True when the API populated the flat quota-bar fields for one homogeneous unit. */
-export function hasPopulatedQuotaUsage(usage: TenantUsageAggregate): boolean {
-  return (
-    usage.consumed != null &&
-    usage.quotaLimit != null &&
-    usage.unit != null &&
-    usage.unit !== "Units"
-  );
-}
-
-/** True when the tenant consumed multiple model task types — per-type quota only. */
-export function isMultiTaskQuotaTenant(usage: TenantUsageAggregate): boolean {
-  return usage.taskTypeCount > 1;
-}
 
 export function billingPeriodValue(key: BillingPeriodKey): string {
   const d = new Date();
@@ -85,6 +57,30 @@ export function formatSpendMoney(n: number, currency = "INR"): string {
   } catch {
     return `₹${Math.round(n).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
   }
+}
+
+/**
+ * Period spend and per-token-type costs keep paise (2 decimals): a day's spend
+ * is often under ₹1, which `formatSpendMoney` would round to ₹0.
+ */
+export function formatSpendMoneyExact(n: number, currency = "INR"): string {
+  try {
+    return new Intl.NumberFormat("en-IN", {
+      style: "currency",
+      currency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(n);
+  } catch {
+    return `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+}
+
+/** "Oct 2026" for a "YYYY-MM" billing month; the input unchanged if malformed. */
+export function formatBillingMonth(billingMonth: string): string {
+  const [year, month] = billingMonth.split("-").map(Number);
+  if (!year || !month || month > 12) return billingMonth;
+  return `${formatMonthName(month - 1)} ${year}`;
 }
 
 const UNIT_SHORT_LABEL: Record<string, string> = {
@@ -152,15 +148,14 @@ const NO_TOKEN_TOTALS: SpendTokenTotals = {
  * across a mixed set would print an arbitrary row's unit over an incoherent number.
  * Per-type figures remain on the rows themselves.
  */
-export function summarizeSpendTokens(rows: SpendByTaskType[]): SpendTokenTotals {
+export function summarizeSpendTokens(rows: QuotaUsageItem[]): SpendTokenTotals {
   const units = new Set(rows.map((r) => (r.unit || "").trim().toLowerCase()).filter(Boolean));
   if (units.size !== 1) return NO_TOKEN_TOTALS;
 
   const withAllocated = rows.filter((r) => r.allocated != null);
-  const remainingPerRow = rows.map((r) => {
-    if (r.remaining != null) return r.remaining;
-    return r.allocated != null ? r.allocated - r.consumption : null;
-  });
+  const remainingPerRow = rows.map((r) =>
+    r.allocated != null ? r.allocated - r.consumption : null,
+  );
   const withRemaining = remainingPerRow.filter((r): r is number => r != null);
   return {
     unit: rows.find((r) => r.unit)?.unit ?? "",
@@ -197,58 +192,6 @@ export function tenantAvatarBg(name: string): string {
 export function taskTypeColor(taskType: string, index: number): string {
   const key = taskType.trim().toLowerCase() as TaskTypeColorKey;
   return METERING.COLORS.TASK_TYPE[key] ?? meteringColorAt(index);
-}
-
-/** Flat task list aggregated across tiers (quota from last tier write). */
-export function aggregateTasks(breakdown: TenantTierBreakdown[]): AggregatedTaskUsage[] {
-  const map = new Map<string, AggregatedTaskUsage>();
-  const order: string[] = [];
-  for (const tier of breakdown) {
-    for (const t of tier.taskTypes ?? []) {
-      const existing = map.get(t.taskType);
-      if (!existing) {
-        map.set(t.taskType, {
-          taskType: t.taskType,
-          unit: t.unit,
-          quotaLimit: t.quotaLimit,
-          consumed: t.consumed,
-          remaining: t.remaining,
-        });
-        order.push(t.taskType);
-      } else {
-        existing.consumed += t.consumed;
-        existing.quotaLimit = t.quotaLimit;
-        existing.remaining = t.remaining;
-        existing.unit = t.unit || existing.unit;
-      }
-    }
-  }
-  return order.map((k) => map.get(k)!);
-}
-
-export function summaryFromDetail(
-  detail: TenantUsageDetail,
-  billingPeriod?: string | null,
-): UsageSummaryResponse {
-  const spendByModelTaskType = aggregateTasks(detail.tierBreakdown ?? []).map((i) => ({
-    modelTaskType: i.taskType,
-    unit: i.unit,
-    consumption: i.consumed,
-    allocated: i.quotaLimit ?? null,
-    remaining: i.remaining ?? null,
-  }));
-  const budget = detail.budget;
-  return {
-    billingPeriod: billingPeriod ?? null,
-    totalSpend: detail.spend,
-    currency: detail.currency,
-    activeTenants: 1,
-    budgetExceededTenants:
-      budget && (budget.remaining < 0 || budget.percentageUsed > 100) ? 1 : 0,
-    spendByModelTaskType,
-    totalAllocatedBudget: budget?.limit,
-    totalRemainingBudget: budget?.remaining,
-  };
 }
 
 export function resolveSpendChangePercent(params: {

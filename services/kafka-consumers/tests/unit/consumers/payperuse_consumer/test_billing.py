@@ -39,6 +39,8 @@ import pytest
 from consumers.payperuse_consumer import _billing
 from consumers.payperuse_consumer._billing import (
     ServicePricing,
+    calculate_cost,
+    calculate_llm_cost,
     deduct_balance_and_update_quota,
     fetch_tenant_budget_status,
     get_inference_type_id,
@@ -493,12 +495,15 @@ class _FakePipeline:
         return None
 
 
-def _pricing_row(task_type="asr", unit_rate=None, cost_per_unit=None, unit_size=None):
+def _pricing_row(task_type="asr", unit_rate=None, cost_per_unit=None, unit_size=None,
+                 cached_input_cost_per_unit=None, output_cost_per_unit=None):
     return _FakeRow(
         task_type=task_type,
         unit_rate=unit_rate,
         cost_per_unit=cost_per_unit,
         unit_size=unit_size,
+        cached_input_cost_per_unit=cached_input_cost_per_unit,
+        output_cost_per_unit=output_cost_per_unit,
     )
 
 
@@ -839,3 +844,210 @@ class TestFetchTenantBudgetStatus:
 
         assert auth_db.calls[0][1]["tenant_id"] == 42
         assert isinstance(auth_db.calls[0][1]["tenant_id"], int)
+
+
+# ── LLM token pricing: input, cached input and output ───────────────────────
+
+
+def _llm_pricing(cached=Decimal("0.04"), output=Decimal("0.25"), unit_rate=None):
+    """Prices per 1,000 tokens: input 0.10, cached input 0.04, output 0.25."""
+    return ServicePricing(
+        task_type="llm", unit_rate=unit_rate, cost_per_unit=Decimal("0.10"), unit_size=1000,
+        cached_input_cost_per_unit=cached, output_cost_per_unit=output,
+    )
+
+
+class TestCalculateLlmCost:
+    def test_each_category_at_its_own_price(self):
+        # prompt 1,200 of which 1,024 cached, completion 150 (design doc section 4)
+        cost = calculate_llm_cost(Decimal(1200), Decimal(1024), Decimal(150), _llm_pricing())
+
+        assert cost.input_cost == Decimal("0.0176")        # 176 uncached
+        assert cost.cached_input_cost == Decimal("0.04096")
+        assert cost.output_cost == Decimal("0.0375")
+        assert cost.total == Decimal("0.09606")
+
+    def test_no_cached_tokens_prices_all_input_at_input_price(self):
+        cost = calculate_llm_cost(Decimal(1200), Decimal(0), Decimal(150), _llm_pricing())
+
+        assert cost.input_cost == Decimal("0.12")
+        assert cost.cached_input_cost == 0
+
+    def test_missing_new_prices_bill_exactly_as_before(self):
+        """A service, or a cache entry from before the new prices, without them."""
+        pricing = _llm_pricing(cached=None, output=None)
+
+        cost = calculate_llm_cost(Decimal(1200), Decimal(1024), Decimal(150), pricing)
+
+        assert cost.total == calculate_cost(Decimal(1350), pricing)
+
+    def test_cached_above_input_is_capped(self):
+        cost = calculate_llm_cost(Decimal(100), Decimal(500), Decimal(0), _llm_pricing())
+
+        assert cost.input_cost == 0
+        assert cost.cached_input_cost == Decimal("0.004")   # 100 tokens, not 500
+
+    def test_zero_cached_price_is_free_not_input_price(self):
+        cost = calculate_llm_cost(Decimal(1000), Decimal(1000), Decimal(0), _llm_pricing(cached=Decimal(0)))
+
+        assert cost.total == 0
+
+    def test_unit_rate_is_the_input_rate_when_set(self):
+        pricing = _llm_pricing(unit_rate=Decimal("0.0002"))  # overrides 0.10 / 1000 for input
+
+        cost = calculate_llm_cost(Decimal(1000), Decimal(0), Decimal(0), pricing)
+
+        assert cost.input_cost == Decimal("0.2")
+
+
+class TestGetServicePricingLlmPrices:
+    async def test_db_read_returns_and_caches_the_llm_prices(self, monkeypatch):
+        redis = _FakePricingRedis()
+        _use_redis(monkeypatch, redis)
+        db = _RecordingSession(rows=[_pricing_row(
+            task_type="llm", cost_per_unit=Decimal("0.10"), unit_size=1000,
+            cached_input_cost_per_unit=Decimal("0.04"), output_cost_per_unit=Decimal("0.25"),
+        )])
+
+        pricing = await get_service_pricing(db, "svc-llm")
+
+        assert pricing.cached_input_cost_per_unit == Decimal("0.04")
+        assert pricing.output_cost_per_unit == Decimal("0.25")
+        cached = redis.hashes["ppu:svc:svc-llm"]
+        assert (cached["cached_input_cost_per_unit"], cached["output_cost_per_unit"]) == ("0.04", "0.25")
+
+    async def test_cache_hit_reads_the_llm_prices(self, monkeypatch):
+        redis = _FakePricingRedis(seed={"ppu:svc:svc-llm": {
+            "task_type": "llm", "unit_rate": "", "cost_per_unit": "0.10", "unit_size": "1000",
+            "cached_input_cost_per_unit": "0", "output_cost_per_unit": "0.25",
+        }})
+        _use_redis(monkeypatch, redis)
+
+        pricing = await get_service_pricing(_RecordingSession(), "svc-llm")
+
+        assert pricing.cached_input_cost_per_unit == Decimal("0")   # a real zero price, not "unset"
+        assert pricing.output_cost_per_unit == Decimal("0.25")
+
+    async def test_cache_entry_from_before_the_llm_prices_still_works(self, monkeypatch):
+        redis = _FakePricingRedis(seed={"ppu:svc:svc-llm": {
+            "task_type": "llm", "unit_rate": "0.0001", "cost_per_unit": "0.10", "unit_size": "1000",
+        }})
+        _use_redis(monkeypatch, redis)
+
+        pricing = await get_service_pricing(_RecordingSession(), "svc-llm")
+
+        assert pricing.cached_input_cost_per_unit is None
+        assert pricing.output_cost_per_unit is None
+
+
+# ── record_usage_event ───────────────────────────────────────────────────────
+
+
+def _usage_event(**overrides):
+    from datetime import datetime, timezone
+
+    from consumers.payperuse_consumer._billing import UsageEvent
+
+    base = dict(
+        correlation_id="corr-1", occurred_at=datetime(2026, 10, 12, 6, 30, tzinfo=timezone.utc),
+        tenant_id=12, application_id=7, api_key_id=31, tier_id="tier-1", service_id="svc-1",
+        inference_type_id=1, task_type="llm", status_code=200,
+        total_units=Decimal("1350"), cached_input_units=Decimal("1024"), output_units=Decimal("150"),
+        input_units_cost=Decimal("0.0176"), cached_input_units_cost=Decimal("0.04096"),
+        output_units_cost=Decimal("0.0375"),
+    )
+    base.update(overrides)
+    return UsageEvent(**base)
+
+
+class _SavepointDb:
+    """Records execute() calls and whether they ran inside begin_nested()."""
+
+    def __init__(self, fail: bool = False, rowcount: int = 1):
+        self.fail = fail
+        self.rowcount = rowcount   # 0: the insert hit the key (ON CONFLICT DO NOTHING)
+        self.calls = []
+        self.in_savepoint = False
+        self.savepoint_exits = []
+
+    def begin_nested(self):
+        db = self
+
+        class _Savepoint:
+            async def __aenter__(self):
+                db.in_savepoint = True
+
+            async def __aexit__(self, exc_type, exc, tb):
+                db.in_savepoint = False
+                db.savepoint_exits.append(exc_type)
+                return False
+
+        return _Savepoint()
+
+    async def execute(self, stmt, params=None):
+        self.calls.append((str(stmt), params, self.in_savepoint))
+        if self.fail:
+            raise RuntimeError("insert failed")
+        from types import SimpleNamespace
+        return SimpleNamespace(rowcount=self.rowcount)
+
+
+class TestRecordUsageEvent:
+    async def test_inserts_in_a_savepoint_with_every_column(self):
+        from consumers.payperuse_consumer._billing import record_usage_event
+
+        db = _SavepointDb()
+        assert await record_usage_event(db, _usage_event()) is True
+
+        ((sql, params, in_savepoint),) = db.calls
+        assert in_savepoint
+        assert "INSERT INTO usage_events" in sql
+        # One row per request: a redelivered span has the same correlation id
+        # and end time, so it hits the key (span_id isn't stored any more).
+        assert "ON CONFLICT (correlation_id, occurred_at) DO NOTHING" in sql
+        assert "span_id" not in sql and "span_id" not in params
+        assert params["cached_input_units"] == Decimal("1024")
+        assert params["tenant_id"] == 12 and params["tier_id"] == "tier-1"
+        assert "total_cost" not in params   # generated by Postgres
+
+    async def test_foreign_keys_resolve_by_subquery(self):
+        """A tier/service that no longer exists lands NULL instead of failing."""
+        from consumers.payperuse_consumer._billing import record_usage_event
+
+        db = _SavepointDb()
+        await record_usage_event(db, _usage_event())
+        sql = db.calls[0][0]
+        assert "(SELECT id FROM tiers WHERE id = CAST(:tier_id AS uuid))" in sql
+        assert "(SELECT service_id FROM mm_services WHERE service_id = :service_id)" in sql
+
+    async def test_a_key_conflict_is_logged_as_a_warning(self, monkeypatch):
+        """A conflict writes no row; it may be a collision, not a redelivery."""
+        from unittest.mock import MagicMock
+
+        from consumers.payperuse_consumer import _billing
+
+        logger = MagicMock()
+        monkeypatch.setattr(_billing, "logger", logger)
+        db = _SavepointDb(rowcount=0)
+
+        assert await _billing.record_usage_event(db, _usage_event()) is True
+        (call,) = logger.warning.call_args_list
+        assert call.kwargs["extra"] == {"event": "ppu.usage_event.key_conflict"}
+        assert "corr-1" in call.args and "2026-10-12T06:30:00+00:00" in call.args
+
+    async def test_a_written_row_logs_no_warning(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from consumers.payperuse_consumer import _billing
+
+        logger = MagicMock()
+        monkeypatch.setattr(_billing, "logger", logger)
+        assert await _billing.record_usage_event(_SavepointDb(), _usage_event()) is True
+        logger.warning.assert_not_called()
+
+    async def test_failure_is_contained_and_reported(self):
+        from consumers.payperuse_consumer._billing import record_usage_event
+
+        db = _SavepointDb(fail=True)
+        assert await record_usage_event(db, _usage_event()) is False
+        assert db.savepoint_exits == [RuntimeError]   # rolled back to the savepoint, not raised

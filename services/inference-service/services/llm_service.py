@@ -1,5 +1,6 @@
 """OpenAI-compatible LLM proxy service."""
 
+import asyncio
 import json
 import logging
 from typing import Any, AsyncIterator, Dict, Optional, Tuple
@@ -7,14 +8,25 @@ from typing import Any, AsyncIterator, Dict, Optional, Tuple
 import httpx
 
 from ai4i_core.context import (
+    get_application_id,
+    get_trace_id,
     set_llm_usage_input_tokens,
     set_llm_usage_model_id,
     set_llm_usage_model_name,
     set_llm_usage_output_tokens,
+    set_llm_usage_cached_input_tokens,
 )
-from ai4i_core.observability.utils import get_llm_usage
+from ai4i_core.observability.utils import get_llm_cached_tokens, get_llm_usage
 from config import settings
 from inference.inference_server_resolver import InferenceServerResolver
+from services.guardrail import (
+    GuardrailContext,
+    GuardrailError,
+    apply_input_guardrail,
+    build_guardrail_context,
+    process_response_text,
+    schedule_audit_log,
+)
 from trace.request_span import traced_span, traced_inference, get_context_attributes
 
 
@@ -314,14 +326,49 @@ class OpenAIProxyService:
                 )
             return exc.status_code, exc.body
 
+        # ── PII guardrail: build context + mask input ─────────────────────
+        app_id = get_application_id()
+        guardrail_ctx = GuardrailContext()
+        try:
+            guardrail_ctx = await build_guardrail_context(app_id)
+        except GuardrailError as exc:
+            logger.error("PII policy evaluation failed, blocking request: %s", exc)
+            schedule_audit_log(
+                ctx=guardrail_ctx,
+                trace_id=get_trace_id(),
+                model_request=payload,
+                response={},
+                app_id=app_id,
+                status_code=503,
+            )
+            return 503, {"error": {"message": "Request blocked: PII policy could not be evaluated", "type": "guardrail_error"}}
+        if guardrail_ctx.active:
+            logger.info("══ GUARDRAIL REQUEST (app_id=%s) ══════════════", app_id)
+            try:
+                payload = await asyncio.to_thread(apply_input_guardrail, payload, guardrail_ctx)
+            except GuardrailError as exc:
+                logger.error("PII input masking failed, blocking request: %s", exc)
+                schedule_audit_log(
+                    ctx=guardrail_ctx,
+                    trace_id=get_trace_id(),
+                    model_request=payload,
+                    response={},
+                    app_id=app_id,
+                    status_code=503,
+                )
+                return 503, {"error": {"message": "Request blocked: PII policy enforcement failed", "type": "guardrail_error"}}
+            logger.info("Scope: %s", guardrail_ctx.scopes)
+        # ─────────────────────────────────────────────────────────────────
+
         with traced_span("model") as model_attrs:
             self._seed_model_attrs(model_attrs, service_id, model_name)
 
             async with traced_inference(payload, _TASK_TYPE_LLM, logger) as infer_attrs:
-                # service_id and tenantId must be set explicitly: the PPU Kafka
-                # consumer reads only the ai-inference span for billing.
+                # service_id, tenantId and model_name must be set explicitly:
+                # the PPU Kafka consumer reads only the ai-inference span.
                 infer_attrs["service_id"] = service_id
                 infer_attrs["tenantId"] = model_attrs.get("tenantId", "")
+                infer_attrs["model_name"] = model_attrs["model_name"]
 
                 logger.info("LLM proxy -> %s (service_id=%s)", url, service_id)
                 try:
@@ -356,17 +403,58 @@ class OpenAIProxyService:
                     input_tokens, output_tokens = get_llm_usage(body)
                     infer_attrs["input_tokens"] = input_tokens
                     infer_attrs["output_tokens"] = output_tokens
+                    # Part of input_tokens served from vLLM's prefix cache;
+                    # the PPU consumer prices it at the cached input price.
+                    infer_attrs["cached_input_tokens"] = get_llm_cached_tokens(body)
                     infer_attrs["output_type"] = "text"
                     # vLLM echoes the real upstream model name in the response —
                     # capture it for the model span (the client's `model` field
                     # carried the service ID, not the upstream model name).
                     model_attrs["model_name"] = body.get("model", "unknown")
+                    infer_attrs["model_name"] = model_attrs["model_name"]
                     # Publish to context vars so ObservabilityMiddleware can
                     # emit Prometheus token metrics without re-reading (and
                     # therefore buffering) the response body.
                     set_llm_usage_input_tokens(input_tokens)
                     set_llm_usage_output_tokens(output_tokens)
+                    set_llm_usage_cached_input_tokens(infer_attrs["cached_input_tokens"])
                     set_llm_usage_model_name(model_attrs["model_name"])
+
+        # ── PII guardrail: process response + fire-and-forget audit log ───
+        if guardrail_ctx.active:
+            if status_code == 200 and isinstance(body, dict):
+                try:
+                    choices = body.get("choices") or []
+                    if choices and isinstance((choices[0].get("message") or {}).get("content"), str):
+                        content = choices[0]["message"]["content"]
+                        content = await asyncio.to_thread(process_response_text, content, guardrail_ctx)
+                        body = {
+                            **body,
+                            "choices": [
+                                {**choices[0], "message": {**choices[0]["message"], "content": content}},
+                                *choices[1:],
+                            ],
+                        }
+                except Exception:
+                    logger.error("Guardrail response processing failed, blocking response", exc_info=True)
+                    schedule_audit_log(
+                        ctx=guardrail_ctx,
+                        trace_id=get_trace_id(),
+                        model_request=payload,
+                        response={},
+                        app_id=app_id,
+                        status_code=500,
+                    )
+                    return 500, {"error": {"message": "Response blocked: PII policy enforcement failed", "type": "guardrail_error"}}
+            schedule_audit_log(
+                ctx=guardrail_ctx,
+                trace_id=get_trace_id(),
+                model_request=payload,
+                response=body,
+                app_id=app_id,
+                status_code=status_code,
+            )
+        # ─────────────────────────────────────────────────────────────────
 
         return status_code, body
 
@@ -522,10 +610,53 @@ class OpenAIProxyService:
             model_ctx = {"service_id": exc.service_id, "model_name": exc.model_name}
             return "error", exc.status_code, exc.body, model_ctx
 
+        # ── PII guardrail: mask input before opening stream ───────────────
+        app_id = get_application_id()
+        guardrail_ctx = GuardrailContext()
+        try:
+            guardrail_ctx = await build_guardrail_context(app_id)
+        except GuardrailError as exc:
+            logger.error("PII policy evaluation failed, blocking stream request: %s", exc)
+            schedule_audit_log(
+                ctx=guardrail_ctx,
+                trace_id=get_trace_id(),
+                model_request=payload,
+                response={},
+                app_id=app_id,
+                status_code=503,
+            )
+            model_ctx = {"service_id": service_id, "model_name": model_name}
+            return "error", 503, {"error": {"message": "Request blocked: PII policy could not be evaluated", "type": "guardrail_error"}}, model_ctx
+        if guardrail_ctx.active:
+            try:
+                payload = await asyncio.to_thread(apply_input_guardrail, payload, guardrail_ctx)
+            except GuardrailError as exc:
+                logger.error("PII input masking failed, blocking stream request: %s", exc)
+                schedule_audit_log(
+                    ctx=guardrail_ctx,
+                    trace_id=get_trace_id(),
+                    model_request=payload,
+                    response={},
+                    app_id=app_id,
+                    status_code=503,
+                )
+                model_ctx = {"service_id": service_id, "model_name": model_name}
+                return "error", 503, {"error": {"message": "Request blocked: PII policy enforcement failed", "type": "guardrail_error"}}, model_ctx
+        # ─────────────────────────────────────────────────────────────────
+
         payload = self._with_include_usage(payload)
 
         kind, status_code, result = await self.proxy_stream(path=url, payload=payload, service_info=service_info)
         if kind == "error":
+            if guardrail_ctx.active:
+                schedule_audit_log(
+                    ctx=guardrail_ctx,
+                    trace_id=get_trace_id(),
+                    model_request=payload,
+                    response=result,
+                    app_id=app_id,
+                    status_code=status_code,
+                )
             model_ctx = {"service_id": service_id, "model_name": model_name}
             return "error", status_code, result, model_ctx
 
@@ -535,15 +666,75 @@ class OpenAIProxyService:
                 set_llm_usage_model_name(model_attrs["model_name"])
 
                 async with traced_inference(payload, _TASK_TYPE_LLM, logger) as infer_attrs:
-                    # service_id and tenantId must be set explicitly: the PPU
-                    # Kafka consumer reads only the ai-inference span for billing.
+                    # service_id, tenantId and model_name must be set explicitly:
+                    # the PPU Kafka consumer reads only the ai-inference span.
                     infer_attrs["service_id"] = service_id
                     infer_attrs["tenantId"] = model_attrs.get("tenantId", "")
+                    infer_attrs["model_name"] = model_attrs["model_name"]
                     infer_attrs["output_type"] = "text"
 
-                    async for line in result:
-                        self._record_stream_usage(line, infer_attrs)
-                        yield line
+                    if not guardrail_ctx.active:
+                        # No guardrail — pass lines through unchanged.
+                        async for line in result:
+                            self._record_stream_usage(line, infer_attrs)
+                            yield line
+                    else:
+                        # Guardrail active — buffer full content, process, re-emit.
+                        # PII masking requires the complete text; streaming is
+                        # sacrificed for correctness when a policy is applied.
+                        full_content: list[str] = []
+                        last_chunk: Optional[Dict[str, Any]] = None
+                        async for line in result:
+                            self._record_stream_usage(line, infer_attrs)
+                            if line.startswith("data:"):
+                                data = line[len("data:"):].strip()
+                                if data and data != "[DONE]":
+                                    try:
+                                        chunk = json.loads(data)
+                                        delta_content = (
+                                            (chunk.get("choices") or [{}])[0]
+                                            .get("delta", {})
+                                            .get("content") or ""
+                                        )
+                                        if delta_content:
+                                            full_content.append(delta_content)
+                                        last_chunk = chunk
+                                    except Exception:
+                                        pass
+
+                        # Process the complete reconstructed response text.
+                        raw_content = "".join(full_content)
+                        processed = await asyncio.to_thread(process_response_text, raw_content, guardrail_ctx)
+
+                        if last_chunk is not None:
+                            choices = last_chunk.get("choices") or [{}]
+                            synthetic = {
+                                **last_chunk,
+                                "choices": [{
+                                    **choices[0],
+                                    "delta": {"content": processed, "role": "assistant"},
+                                    "finish_reason": "stop",
+                                }],
+                            }
+                            yield f"data: {json.dumps(synthetic)}\n\n"
+                            schedule_audit_log(
+                                ctx=guardrail_ctx,
+                                trace_id=get_trace_id(),
+                                model_request=payload,
+                                response=synthetic,
+                                app_id=app_id,
+                                status_code=200,
+                            )
+                        else:
+                            schedule_audit_log(
+                                ctx=guardrail_ctx,
+                                trace_id=get_trace_id(),
+                                model_request=payload,
+                                response={},
+                                app_id=app_id,
+                                status_code=200,
+                            )
+                        yield "data: [DONE]\n\n"
 
         return "stream", 200, gen(), None
 
@@ -575,8 +766,10 @@ class OpenAIProxyService:
         input_tokens, output_tokens = get_llm_usage(chunk)
         infer_attrs["input_tokens"] = input_tokens
         infer_attrs["output_tokens"] = output_tokens
+        infer_attrs["cached_input_tokens"] = get_llm_cached_tokens(chunk)
         set_llm_usage_input_tokens(input_tokens)
         set_llm_usage_output_tokens(output_tokens)
+        set_llm_usage_cached_input_tokens(infer_attrs["cached_input_tokens"])
 
     async def proxy_multipart(
         self,

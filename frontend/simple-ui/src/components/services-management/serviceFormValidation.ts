@@ -126,8 +126,9 @@ export const validateServiceIdLength = (
   });
 
 /**
- * `costPerUnit` — 0 to 10,000,000, on BOTH `ServiceCreateRequest` and
- * `ServiceUpdateRequest` (`ge=0, le=10_000_000`).
+ * `costPerUnit`, and for LLM `cachedInputCostPerUnit` / `outputCostPerUnit` —
+ * 0 to 10,000,000, on BOTH `ServiceCreateRequest` and `ServiceUpdateRequest`
+ * (`ge=0, le=10_000_000`).
  */
 export const PRICE_PER_UNIT_MAX = 10_000_000;
 
@@ -139,20 +140,39 @@ export const PRICE_PER_UNIT_MAX_LABEL = PRICE_PER_UNIT_MAX.toLocaleString("en-US
  * price is acceptable. 0 is allowed, matching the backend's `ge=0` — a free
  * service is a legitimate configuration.
  */
-export const validatePricePerUnit = (value: string): string | null => {
+export const validatePricePerUnit = (
+  value: string,
+  label = "Price per unit size",
+): string | null => {
   const trimmed = value.trim();
   if (!trimmed) {
-    return "Price per unit size is required.";
+    return `${label} is required.`;
   }
   const priceNum = Number(trimmed);
   if (!Number.isFinite(priceNum)) {
-    return "Price per unit size must be a number.";
+    return `${label} must be a number.`;
   }
   if (priceNum < 0) {
-    return "Price per unit size must be 0 or greater.";
+    return `${label} must be 0 or greater.`;
   }
   if (priceNum > PRICE_PER_UNIT_MAX) {
-    return `Price per unit size must not exceed ${PRICE_PER_UNIT_MAX_LABEL}.`;
+    return `${label} must not exceed ${PRICE_PER_UNIT_MAX_LABEL}.`;
   }
   return null;
+};
+
+/** Field labels. LLM replaces the single price with the three token prices. */
+export const PRICE_LABEL = "Price per unit size";
+export const LLM_INPUT_PRICE_LABEL = "Input Token Price";
+export const LLM_CACHED_INPUT_PRICE_LABEL = "Cached Input Token Price";
+export const LLM_OUTPUT_PRICE_LABEL = "Output Token Price";
+
+/**
+ * Empty stays unset. "0" stays 0 — a free price is valid and must be sent.
+ */
+export const parsePricePerUnit = (value: string): number | undefined => {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const price = Number(trimmed);
+  return Number.isFinite(price) ? price : undefined;
 };

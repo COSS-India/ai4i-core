@@ -14,6 +14,7 @@ from unittest.mock import patch
 from fastapi import FastAPI, Request, Response
 from starlette.testclient import TestClient
 
+from ai4i_core.context import get_application_id
 from ai4i_core.logging.middleware import RequestMiddleware
 
 
@@ -74,6 +75,24 @@ class TestApplicationId:
     def test_omits_application_id_when_header_absent(self):
         ctx = _dispatch_and_get_ctx(_app_with_middleware())
         assert "application_id" not in ctx
+
+    def test_application_id_is_visible_to_the_handler_via_context(self):
+        """Span code reads get_application_id() inside the handler (like
+        get_tenant_id()), so the middleware must store it, not just log it."""
+        seen = []
+        app = _app_with_middleware(lambda request: seen.append(get_application_id()))
+
+        TestClient(app).post("/api/v1/nmt/inference", headers={"X-Application-ID": " app-42 "})
+
+        assert seen == ["app-42"]
+
+    def test_application_id_context_unset_when_header_absent(self):
+        seen = []
+        app = _app_with_middleware(lambda request: seen.append(get_application_id()))
+
+        TestClient(app).post("/api/v1/nmt/inference")
+
+        assert seen == [None]
 
 
 class TestFourXXNoLongerSkipped:

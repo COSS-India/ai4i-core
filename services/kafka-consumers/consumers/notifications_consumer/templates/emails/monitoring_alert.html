@@ -17,15 +17,15 @@
     <strong>{{ event.threshold }}{{ event.unit }}</strong> as of {{ event.alert_datetime }}.
   </p>
   {% if event.affected_services | length > 1 %}
-  <p style="margin:0 0 4px 0;">Affected Services:</p>
+  <p style="margin:0 0 4px 0;"><strong>Affected Services:</strong></p>
   {% for service, value, threshold in event.affected_services %}
   <p style="margin:0 0 {{ '20px' if loop.last else '4px' }} 0;"> {{ service }} — Current Value: {{ value }}{{ event.unit }}
     {%- if threshold != event.threshold %} (Threshold {{ threshold }}{{ event.unit }}){% endif %}</p>
   {% endfor %}
   {% else %}
-  <p style="margin:0 0 {{ '4px' if event.affected_service else '20px' }} 0;">Current Value: {{ event.current_value }}{{ event.unit }}</p>
+  <p style="margin:0 0 {{ '4px' if event.affected_service else '20px' }} 0;"><strong>Current Value:</strong> {{ event.current_value }}{{ event.unit }}</p>
   {% if event.affected_service %}
-  <p style="margin:0 0 20px 0;">Affected Service: {{ event.affected_service }}</p>
+  <p style="margin:0 0 20px 0;"><strong>Affected Service:</strong> {{ event.affected_service }}</p>
   {% endif %}
   {% endif %}
   {% include "_portal_line.html" %}

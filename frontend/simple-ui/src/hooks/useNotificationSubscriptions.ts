@@ -172,7 +172,14 @@ export function useNotificationSubscriptions(
     [items, drafts],
   );
 
-  const submit = useCallback(async (): Promise<CatalogSubmitResult> => {
+  /**
+   * `inactiveIds`: recipients deactivated since they were saved. They stay
+   * in the draft (shown greyed and unticked, not counted) but are left out of the PUT
+   * — the API rejects an inactive id, and the send path skips them anyway.
+   */
+  const submit = useCallback(async (
+    inactiveIds: ReadonlySet<string> = new Set(),
+  ): Promise<CatalogSubmitResult> => {
     const succeeded: string[] = [];
     if (!tenantId) return { succeeded };
     setIsSubmitting(true);
@@ -203,7 +210,7 @@ export function useNotificationSubscriptions(
             updated = await notificationAlertsService.updateSubscriptionRecipients(
               tenantId,
               item.notification_id,
-              draft.recipients,
+              draft.recipients.filter((id) => !inactiveIds.has(id)),
             );
             replaceItem(updated);
           }

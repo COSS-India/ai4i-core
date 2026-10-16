@@ -1,8 +1,10 @@
 import { Box, Center, Flex, HStack, Spinner, Text, VStack } from "@chakra-ui/react";
 import React from "react";
-import { INSTITUTION } from "../../config/constants";
 import { METERING } from "../../config/meteringConstants";
-import { formatBudgetEffectiveRange } from "../../utils/usageSpendHelpers";
+import {
+  formatBudgetEffectiveRange,
+  formatSpendMoneyExact,
+} from "../../utils/usageSpendHelpers";
 import type { TenantUsageItem } from "../../types/usageSpend";
 import SpendByTaskTypeTable from "./SpendByTaskTypeTable";
 import { BudgetCell, TenantAvatar, TierBadge } from "./UsageSpendCells";
@@ -25,11 +27,14 @@ const cardSx = {
 
 interface InstitutionUsageDetailContentProps {
   detail: TenantUsageItem;
+  /** Selected period, e.g. "Last 7 days". */
+  periodTitle: string;
   isLoading?: boolean;
 }
 
 export const InstitutionUsageDetailContent: React.FC<InstitutionUsageDetailContentProps> = ({
   detail,
+  periodTitle,
   isLoading = false,
 }) => {
   const budget = detail.budget;
@@ -68,28 +73,38 @@ export const InstitutionUsageDetailContent: React.FC<InstitutionUsageDetailConte
           </Text>
         )}
         <Text fontSize="11.5px" color="gray.500" mt={3}>
-          {METERING.USAGE_SPEND.BUDGET_ALL_TIME_NOTE}
+          {METERING.USAGE_SPEND.BUDGET_TOTALS_NOTE}
         </Text>
       </Box>
 
       <Box {...cardSx} opacity={isLoading ? 0.6 : 1}>
-        <Text {...sectionLabelSx} mb={4}>
-          {METERING.USAGE_SPEND.USAGE_BY_TASK_TYPE}
+        <Flex justify="space-between" align="flex-start" gap={3} mb={2} flexWrap="wrap">
+          <Text {...sectionLabelSx}>{METERING.USAGE_SPEND.PERIOD_SPEND}</Text>
+          <Text fontSize="12px" color="gray.500" textAlign="right">
+            {periodTitle}
+          </Text>
+        </Flex>
+        <Text fontSize="22px" fontWeight="bold" color="gray.800">
+          {formatSpendMoneyExact(detail.periodSpend, detail.currency)}
         </Text>
+      </Box>
+
+      <Box {...cardSx} opacity={isLoading ? 0.6 : 1}>
+        <Flex justify="space-between" align="flex-start" gap={3} mb={4} flexWrap="wrap">
+          <Text {...sectionLabelSx}>{METERING.USAGE_SPEND.USAGE_BY_TASK_TYPE}</Text>
+          <Text fontSize="12px" color="gray.500" textAlign="right">
+            {periodTitle}
+          </Text>
+        </Flex>
         <SpendByTaskTypeTable
           tierBreakdown={detail.tierBreakdown ?? []}
-          usageColumnLabel={METERING.USAGE_SPEND.USAGE_VS_QUOTA_ALL_TIME}
+          currency={detail.currency}
         />
-        {hasMultiTier ? (
-          <Text fontSize="11.5px" color="gray.500" lineHeight="1.5" mt={3}>
-            Grouped by tier since this {INSTITUTION.toLowerCase()} changed tier — cumulative
-            all-time usage per task type.
-          </Text>
-        ) : (
-          <Text fontSize="11.5px" color="gray.500" lineHeight="1.5" mt={3}>
-            {METERING.USAGE_SPEND.TIER_BREAKDOWN_ALL_TIME_NOTE}
-          </Text>
-        )}
+        <Text fontSize="11.5px" color="gray.500" lineHeight="1.5" mt={3}>
+          {hasMultiTier
+            ? METERING.USAGE_SPEND.MULTI_TIER_NOTE
+            : METERING.USAGE_SPEND.TIER_BREAKDOWN_NOTE}
+        </Text>
       </Box>
     </VStack>
   );
@@ -97,12 +112,14 @@ export const InstitutionUsageDetailContent: React.FC<InstitutionUsageDetailConte
 
 interface InstitutionUsageDetailPanelProps {
   detail: TenantUsageItem;
+  periodTitle: string;
   organisationLabel?: string | null;
   isLoading?: boolean;
 }
 
 const InstitutionUsageDetailPanel: React.FC<InstitutionUsageDetailPanelProps> = ({
   detail,
+  periodTitle,
   organisationLabel,
   isLoading = false,
 }) => {
@@ -122,7 +139,11 @@ const InstitutionUsageDetailPanel: React.FC<InstitutionUsageDetailPanelProps> = 
         <TierBadge label={detail.tier} />
       </HStack>
 
-      <InstitutionUsageDetailContent detail={detail} isLoading={isLoading} />
+      <InstitutionUsageDetailContent
+        detail={detail}
+        periodTitle={periodTitle}
+        isLoading={isLoading}
+      />
     </VStack>
   );
 };

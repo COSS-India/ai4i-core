@@ -440,8 +440,12 @@ export interface ServiceLegacyFields {
   tier?: string | null;
   /** Billing unit type (task type used for billing, e.g. "LLM", "ASR"). */
   billingUnitType?: string;
-  /** Cost charged per billing unit. */
+  /** Cost charged per billing unit. For LLM, the input token price. */
   costPerUnit?: number;
+  /** LLM only: price of cached input tokens per unit size. */
+  cachedInputCostPerUnit?: number | null;
+  /** LLM only: price of output tokens per unit size. */
+  outputCostPerUnit?: number | null;
   /** Size of one billing unit. */
   unitSize?: number;
   /** IDs of tiers this service is available under. */
@@ -503,6 +507,10 @@ export interface ServiceUpdateRequest {
   policy?: ServicePolicy;
   taskType?: string;
   costPerUnit?: number;
+  /** Required with the billing group when `taskType` is `llm`. Omit or null otherwise. */
+  cachedInputCostPerUnit?: number | null;
+  /** Required with the billing group when `taskType` is `llm`. Omit or null otherwise. */
+  outputCostPerUnit?: number | null;
   unitSize?: number;
   tierIds?: string[];
 }

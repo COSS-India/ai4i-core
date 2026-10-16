@@ -1,17 +1,13 @@
 """Application-level usage for the Metering Dashboard's Applications tab.
 
-Spend lives in platform-core-service (budget_usage, keyed by api_key_id only).
+Two kinds of spend, side by side:
+- all-time (spendBudget/remainingBudget): budget_usage, keyed by api_key_id
+  only, with no time dimension — so billingPeriod is always "lifetime";
+- the selected period (periodSpend): usage_events or daily_usage (see
+  period_usage.period_sources).
 Identity/allocation (tenants/applications/api_key) lives in auth-service, read
 here via the auth_db cross-DB session — same pattern as
-UsageService._resolve_tenant_names. Billing-period filtering is intentionally
-not supported: budget_usage has no billing_month/timestamp column, so all
-figures are lifetime-cumulative — unlike UsageService's sibling /usage-*
-endpoints, which are scoped to a billing_month. There is no time dimension to
-filter on here at all, so the route layer (app/routes/application_usage.py)
-deliberately does not declare a billing_period param, and
-ApplicationUsageSummaryResponse.billingPeriod is always the constant
-"lifetime", so a dashboard period selector can't mistake these totals for a
-period-scoped figure comparable to the Overview tab's.
+UsageService._resolve_tenant_names.
 """
 from decimal import Decimal
 from typing import Optional
@@ -32,6 +28,7 @@ from app.schemas.pay_per_use.application_usage import (
     ApplicationUsageTotals,
     MoneyPercent,
 )
+from app.utils.usage_period import UsagePeriod
 
 
 def _pct(amount: Decimal, denominator: Decimal) -> float:
@@ -114,55 +111,70 @@ class ApplicationUsageService:
         return [dict(row._mapping) for row in result.all()]
 
     async def _spend_by_application(
-        self, applications: list[dict], auth_db: Optional[AsyncSession]
-    ) -> tuple[dict[int, Decimal], dict[int, list[dict]]]:
-        """Returns (spend per application_id, api_keys per application_id)."""
+        self, applications: list[dict], auth_db: Optional[AsyncSession], period: UsagePeriod,
+    ) -> tuple[dict[int, Decimal], dict[int, Decimal], dict[int, list[dict]]]:
+        """(all-time spend per application_id, spend in ``period`` per
+        application_id, api_keys per application_id). Each key dict also
+        carries its own "_spend" (all-time) and "_period_spend"."""
         app_ids = [app["id"] for app in applications]
         api_keys = await self._load_application_api_keys(app_ids, auth_db)
         key_ids = [k["id"] for k in api_keys]
         spend_by_key = await self._repo.get_spend_by_api_key_ids(key_ids)
+        period_spend_by_key = await self._repo.get_period_spend_by_api_key_ids(period, key_ids)
 
         keys_by_app: dict[int, list[dict]] = {app_id: [] for app_id in app_ids}
         spend_by_app: dict[int, Decimal] = {app_id: Decimal("0") for app_id in app_ids}
+        period_spend_by_app: dict[int, Decimal] = {app_id: Decimal("0") for app_id in app_ids}
         for key in api_keys:
-            spend = spend_by_key.get(key["id"], Decimal("0"))
-            key["_spend"] = spend
+            key["_spend"] = spend_by_key.get(key["id"], Decimal("0"))
+            key["_period_spend"] = period_spend_by_key.get(key["id"], Decimal("0"))
             keys_by_app[key["application_id"]].append(key)
-            spend_by_app[key["application_id"]] += spend
-        return spend_by_app, keys_by_app
+            spend_by_app[key["application_id"]] += key["_spend"]
+            period_spend_by_app[key["application_id"]] += key["_period_spend"]
+        return spend_by_app, period_spend_by_app, keys_by_app
 
     async def get_summary(
-        self, tenant_id: str, auth_db: Optional[AsyncSession]
+        self, tenant_id: str, period: UsagePeriod, auth_db: Optional[AsyncSession]
     ) -> ApplicationUsageSummaryResponse:
         tenant_budget = await self._load_tenant_budget(tenant_id, auth_db)
         applications = await self._load_tenant_applications(tenant_id, auth_db)
-        spend_by_app, _ = await self._spend_by_application(applications, auth_db)
+        spend_by_app, period_spend_by_app, _ = await self._spend_by_application(
+            applications, auth_db, period
+        )
 
         allocated_amount = sum(
             (app["allocated_budget"] or Decimal("0")) for app in applications
         ) or Decimal("0")
         spend_amount = sum(spend_by_app.values(), Decimal("0"))
         remaining_amount = allocated_amount - spend_amount
+        period_spend = sum(period_spend_by_app.values(), Decimal("0"))
 
         return ApplicationUsageSummaryResponse(
+            period=period.to_schema(await self._repo.get_usage_data_from(period)),
             totalApplications=len(applications),
             allocatedBudget=_money_percent(allocated_amount, tenant_budget),
             spendBudget=_money_percent(spend_amount, tenant_budget),
             remainingBudget=_money_percent(remaining_amount, tenant_budget),
+            periodSpend=_money_percent(period_spend, tenant_budget),
             billingPeriod="lifetime",
         )
 
     async def get_application_list(
         self,
         tenant_id: str,
+        period: UsagePeriod,
         auth_db: Optional[AsyncSession],
         sort_order: str = "desc",
         limit: int = 100,
         offset: int = 0,
     ) -> ApplicationUsageListResponse:
+        """Sorted by spend in the period (application id as the tie-break,
+        so pages stay stable), then paginated."""
         tenant_budget = await self._load_tenant_budget(tenant_id, auth_db)
         applications = await self._load_tenant_applications(tenant_id, auth_db)
-        spend_by_app, _ = await self._spend_by_application(applications, auth_db)
+        spend_by_app, period_spend_by_app, _ = await self._spend_by_application(
+            applications, auth_db, period
+        )
 
         items = []
         for app in applications:
@@ -177,15 +189,27 @@ class ApplicationUsageService:
                     allocatedBudget=_money_percent(allocated_amount, tenant_budget),
                     spendBudget=_money_percent(spend_amount, allocated_amount),
                     remainingBudget=_money_percent(remaining_amount, allocated_amount),
+                    periodSpend=_money_percent(
+                        period_spend_by_app.get(app["id"], Decimal("0")), allocated_amount
+                    ),
                 )
             )
 
-        items.sort(key=lambda i: i.spendBudget.amount, reverse=(sort_order == "desc"))
+        items.sort(
+            key=lambda i: (i.periodSpend.amount, i.applicationId),
+            reverse=(sort_order == "desc"),
+        )
         total = len(items)
-        return ApplicationUsageListResponse(data=items[offset : offset + limit], total=total)
+        return ApplicationUsageListResponse(
+            period=period.to_schema(await self._repo.get_usage_data_from(period)), data=items[offset : offset + limit], total=total,
+        )
 
     async def get_application_detail(
-        self, application_id: int, tenant_id: str, auth_db: Optional[AsyncSession]
+        self,
+        application_id: int,
+        tenant_id: str,
+        period: UsagePeriod,
+        auth_db: Optional[AsyncSession],
     ) -> ApplicationUsageDetailResponse:
         tenant_budget = await self._load_tenant_budget(tenant_id, auth_db)
         applications = await self._load_tenant_applications(tenant_id, auth_db)
@@ -193,10 +217,13 @@ class ApplicationUsageService:
         if application is None:
             raise EntityNotFoundError(f"Application {application_id}")
 
-        spend_by_app, keys_by_app = await self._spend_by_application([application], auth_db)
+        spend_by_app, period_spend_by_app, keys_by_app = await self._spend_by_application(
+            [application], auth_db, period
+        )
         allocated_amount = application["allocated_budget"] or Decimal("0")
         spend_amount = spend_by_app.get(application_id, Decimal("0"))
         remaining_amount = allocated_amount - spend_amount
+        period_spend = period_spend_by_app.get(application_id, Decimal("0"))
 
         api_key_items = []
         for key in keys_by_app.get(application_id, []):
@@ -216,20 +243,24 @@ class ApplicationUsageService:
                     allocatedBudget=_money_percent(key_allocated, allocated_amount),
                     spendBudget=_money_percent(key_spend, key_allocated),
                     remainingBudget=_money_percent(key_remaining, key_allocated),
+                    periodSpend=_money_percent(key["_period_spend"], key_allocated),
                 )
             )
 
         return ApplicationUsageDetailResponse(
+            period=period.to_schema(await self._repo.get_usage_data_from(period)),
             applicationId=application["id"],
             applicationName=application["name"],
             domain=application["domain"],
             allocatedBudget=_money_percent(allocated_amount, tenant_budget),
             spendBudget=_money_percent(spend_amount, allocated_amount),
             remainingBudget=_money_percent(remaining_amount, allocated_amount),
+            periodSpend=_money_percent(period_spend, allocated_amount),
             apiKeys=api_key_items,
             totals=ApplicationUsageTotals(
                 allocatedBudget=float(allocated_amount),
                 spendBudget=float(spend_amount),
                 remainingBudget=float(remaining_amount),
+                periodSpend=float(period_spend),
             ),
         )

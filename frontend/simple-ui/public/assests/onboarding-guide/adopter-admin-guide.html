@@ -32,7 +32,86 @@
 .sidebar-logo{margin:0 0 16px}.doc-logo{display:none;margin:0 0 20px}
 @media(max-width:900px){.doc-logo{display:block}.doc-logo,.sidebar-logo{width:100px;height:71.68px;background-size:109.62px 109.62px;background-position:-5.42px -20.19px}}
 @media print{.doc-logo{display:block;width:85px;height:60.93px;margin-bottom:16px;background-size:93.17px 93.17px;background-position:-4.61px -17.16px}}
-</style></head>
+</style>
+<script>
+/* PLATFORM_NAME from same-origin /api/config (deployment env). Text and attribute swap — no HTML injection. The query string is ignored. */
+(function () {
+  var DEFAULT = "AI4I Orchestrate";
+  var ATTRS = ["alt", "title", "aria-label"];
+  var settled = false;
+  var domReady = document.readyState !== "loading";
+  var name = null;
+  document.documentElement.style.visibility = "hidden";
+
+  function reveal() {
+    document.documentElement.style.visibility = "";
+  }
+
+  function apply(nextName) {
+    document.title = document.title.split(DEFAULT).join(nextName);
+    function walk(node) {
+      if (node.nodeType === 3) {
+        if (node.nodeValue && node.nodeValue.indexOf(DEFAULT) !== -1) {
+          node.nodeValue = node.nodeValue.split(DEFAULT).join(nextName);
+        }
+        return;
+      }
+      if (node.nodeType !== 1) return;
+      var tag = node.tagName;
+      if (tag === "SCRIPT" || tag === "STYLE" || tag === "NOSCRIPT") return;
+      for (var a = 0; a < ATTRS.length; a++) {
+        var attr = ATTRS[a];
+        if (!node.hasAttribute(attr)) continue;
+        var current = node.getAttribute(attr);
+        if (!current || current.indexOf(DEFAULT) === -1) continue;
+        node.setAttribute(attr, current.split(DEFAULT).join(nextName));
+      }
+      for (var i = 0; i < node.childNodes.length; i++) walk(node.childNodes[i]);
+    }
+    if (document.body) walk(document.body);
+  }
+
+  function maybeApply() {
+    if (!domReady || name === null || settled) return;
+    settled = true;
+    try {
+      if (name && name !== DEFAULT) apply(name);
+    } finally {
+      reveal();
+    }
+  }
+
+  if (!domReady) {
+    document.addEventListener("DOMContentLoaded", function () {
+      domReady = true;
+      maybeApply();
+    });
+  }
+
+  setTimeout(function () {
+    if (name === null) name = "";
+    maybeApply();
+  }, 4000);
+
+  fetch("/api/config", { credentials: "same-origin", cache: "no-store" })
+    .then(function (res) {
+      if (!res.ok) throw new Error("config");
+      return res.json();
+    })
+    .then(function (config) {
+      if (settled) return;
+      var raw = config && typeof config.platformName === "string" ? config.platformName : "";
+      name = raw.trim();
+      maybeApply();
+    })
+    .catch(function () {
+      if (settled) return;
+      name = "";
+      maybeApply();
+    });
+})();
+</script>
+</head>
 <body>
 <a class="skip-link" href="#guide-content">Skip to guide content</a><div class="layout">
   <nav class="sidebar" id="guide-nav" aria-label="Guide chapters">

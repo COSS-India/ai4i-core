@@ -48,7 +48,7 @@ const MeteringChartPanel: React.FC<MeteringChartPanelProps> = ({
 /** Shared "no data" placeholder — bar icon + message, no misleading zero axes. */
 export const MeteringEmptyState: React.FC<{ height?: number; message?: string }> = ({
   height = 340,
-  message = METERING.EMPTY.CHART,
+  message = METERING.EMPTY.PERIOD,
 }) => (
   <Flex h={`${height}px`} align="center" justify="center" direction="column" gap={3}>
     <HStack spacing={1} opacity={0.35} aria-hidden>

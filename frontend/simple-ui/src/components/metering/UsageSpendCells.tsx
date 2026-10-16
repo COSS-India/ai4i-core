@@ -2,6 +2,7 @@ import { Box, Center, Flex, HStack, Text, Tooltip } from "@chakra-ui/react";
 import React from "react";
 import { formatModelTaskTypeLabel } from "../../config/constants";
 import {
+  USAGE_SPEND_ACCENT,
   USAGE_SPEND_DANGER,
   USAGE_SPEND_WARNING,
   formatSpendMoney,
@@ -266,6 +267,22 @@ export function TenantAvatar({
     >
       {tenantInitials(name)}
     </Center>
+  );
+}
+
+/** Share of a token total or of usage cost, as on the parent drill-down mocks. */
+export function TokenShareBar({ pct }: { pct: number }) {
+  const fill = Math.min(Math.max(pct, 0), 100);
+  const visualFill = fill > 0 && fill < 2 ? 2 : fill;
+  return (
+    <HStack spacing={3} flex="1" minW={0}>
+      <Box flex="1" h="6px" borderRadius="full" bg="gray.200" overflow="hidden">
+        <Box h="100%" w={`${visualFill}%`} bg={USAGE_SPEND_ACCENT} borderRadius="full" />
+      </Box>
+      <Text fontSize="sm" color="gray.600" minW="58px" textAlign="right">
+        {pct.toFixed(2)}%
+      </Text>
+    </HStack>
   );
 }
 

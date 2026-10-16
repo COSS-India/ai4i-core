@@ -36,8 +36,8 @@ from app.schemas.token import (
 )
 from app.services.api_key_service import APIKeyService
 from app.services.cache_service import CacheService
+from app.services import tier_lookup
 from app.services.tenant_name_cache import tenant_name_cache
-from app.services.tier_status_cache import tier_status_cache
 from app.utils.budget_window import is_budget_window_expired
 
 
@@ -220,6 +220,7 @@ async def _validate_api_key(
     request: Request,
     response: Response,
     api_key_svc: APIKeyService,
+    cache_svc: CacheService,
 ) -> Response:
     """Hex API key path — Redis-only validation, then endpoint authz."""
     try:
@@ -267,7 +268,9 @@ async def _validate_api_key(
                 message="Your institution has no tier assigned. Please contact your administrator.",
             ).model_dump(),
         )
-    if _tier_id and not tier_status_cache.is_active(_tier_id):
+    # Redis, then the platform-core DB on a miss; still unknown ⇒ ACTIVE (fail open).
+    tier_status, rate_limit = await tier_lookup.get_tier(_tier_id, cache_svc) if _tier_id else (None, None)
+    if tier_status is not None and tier_status != "ACTIVE":
         return JSONResponse(
             status_code=403,
             content=ValidateTokenErrorResponse(
@@ -337,6 +340,9 @@ async def _validate_api_key(
     # No X-User-Plan header: the plan is fully derivable from X-Auth-Type
     # (api_key ⇒ P2, jwt ⇒ P1) and nothing consumes it.
     response.headers["X-Tier-ID"] = result.get("tier_id") or ""
+    # The gateway counts requests against this; absent means its own default applies.
+    if rate_limit is not None:
+        response.headers["X-Rate-Limit"] = str(rate_limit)
     # Informational — always set, unconditionally (empty when nothing is exhausted).
     response.headers["X-Quota-Exhausted-Services"] = ",".join(exhausted_services)
 
@@ -461,4 +467,4 @@ async def validate_token(
         return await _validate_jwt(token, request, response, cache_svc)
 
     api_key_svc = APIKeyService(None, cache_svc)
-    return await _validate_api_key(token, request, response, api_key_svc)
+    return await _validate_api_key(token, request, response, api_key_svc, cache_svc)

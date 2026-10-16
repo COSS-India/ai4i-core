@@ -3,15 +3,16 @@ Main inference router with unified /inference endpoint.
 Handles all inference requests regardless of task type.
 Integrates orchestration, factory, and telemetry.
 """
-import json
 import logging
 from typing import Any, Dict, Optional, Tuple
 
 from ai4i_core.context import (
+    get_llm_usage_cached_input_tokens,
     get_llm_usage_input_tokens,
     get_llm_usage_model_id,
     get_llm_usage_model_name,
     get_llm_usage_output_tokens,
+    set_request_tags,
 )
 from fastapi import (
     APIRouter, Body, Depends, File, Form, HTTPException, Request, Response, UploadFile,
@@ -24,6 +25,8 @@ from models.common import ChatCompletionResponse, GenericInferenceResponse
 from orchestrator import Orchestrator
 from services.llm_service import OpenAIProxyService
 from trace.request_span import traced_span, get_context_attributes
+from utils.http_status import http_status_for
+from trace.request_tags import strip_caller_tags, validate_request_tags
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["inference"])
@@ -58,29 +61,21 @@ def _http_error_for(exc: Exception, task_type: str) -> HTTPException:
     Only validation messages are echoed to the client. Resolver and backend
     errors previously leaked internal endpoints via str(exc) — those now get
     a generic detail; the full chain is logged server-side by the caller.
-    """
-    chain = []
-    cause: Optional[BaseException] = exc
-    while cause is not None and len(chain) < 16:
-        chain.append(cause)
-        cause = cause.__cause__
 
-    for e in chain:
-        if isinstance(e, PermissionError):
-            return HTTPException(status_code=403, detail=str(e))
-        if isinstance(e, ValueError):
-            return HTTPException(status_code=400, detail=str(e))
-        if isinstance(e, NotImplementedError):
-            return HTTPException(status_code=501, detail=str(e))
-        # exact type: KeyError/IndexError are LookupError subclasses but are
-        # programming errors, not not-found semantics — they must stay 500
-        if type(e) is LookupError:
-            return HTTPException(status_code=404, detail=str(e))
-    for e in chain:
-        if isinstance(e, (RuntimeError, ConnectionError)):
-            return HTTPException(
-                status_code=502, detail=f"{task_type}: upstream inference dependency failed"
-            )
+    The status comes from utils.http_status.http_status_for, which the
+    Triton "request" span uses too, so the span records what the client got.
+    """
+    status_code = http_status_for(exc)
+    if status_code in (400, 403, 404, 501):
+        # The message of the exception that decided the status.
+        decisive = {400: ValueError, 403: PermissionError, 501: NotImplementedError}
+        cause: Optional[BaseException] = exc
+        while cause is not None:
+            if (type(cause) is LookupError) if status_code == 404 else isinstance(cause, decisive[status_code]):
+                return HTTPException(status_code=status_code, detail=str(cause))
+            cause = cause.__cause__
+    if status_code == 502:
+        return HTTPException(status_code=502, detail=f"{task_type}: upstream inference dependency failed")
     return HTTPException(status_code=500, detail=f"{task_type}: internal error")
 
 
@@ -509,6 +504,7 @@ def _bridge_llm_usage_to_request(request: Request) -> None:
         request,
         billed_input=get_llm_usage_input_tokens() or 0,
         billed_output=get_llm_usage_output_tokens() or 0,
+        billed_cached_input=get_llm_usage_cached_input_tokens() or 0,
     )
     set_metric_labels(
         request,
@@ -517,11 +513,23 @@ def _bridge_llm_usage_to_request(request: Request) -> None:
     )
 
 
+def _seed_llm_request_attrs(req_attrs: dict, request: Request) -> None:
+    """The LLM "request" span's own attributes: url, method, the request
+    context, and the service and task it was for — set on every path
+    (success, upstream error, tag rejection) so a failed request still
+    carries them. The billing consumer writes the request's usage_events row
+    from this span; service_id is the client's `model`, as _run_llm_chat
+    puts it on request.state before anything can fail."""
+    req_attrs["url"] = request.url.path
+    req_attrs["method"] = request.method
+    req_attrs.update(get_context_attributes())
+    req_attrs["service_id"] = getattr(request.state, "service_id", "") or ""
+    req_attrs["task_type"] = "llm"
+
+
 async def _run_llm_chat_consolidated(request: Request, payload: Dict[str, Any], path: str) -> JSONResponse:
     with traced_span("request", root=True, classify_status=True) as req_attrs:
-        req_attrs["url"] = request.url.path
-        req_attrs["method"] = request.method
-        req_attrs.update(get_context_attributes())
+        _seed_llm_request_attrs(req_attrs, request)
 
         status_code, body = await OpenAIProxyService().proxy_traced(
             path=path, payload=payload, request=request,
@@ -560,9 +568,7 @@ async def _run_llm_chat_stream(
 
     if kind == "error":
         with traced_span("request", root=True, classify_status=True) as req_attrs:
-            req_attrs["url"] = request.url.path
-            req_attrs["method"] = request.method
-            req_attrs.update(get_context_attributes())
+            _seed_llm_request_attrs(req_attrs, request)
             req_attrs["status"] = "failure"
             req_attrs["status_code"] = status_code
             # Built here, inside "request" (now the active OTel context),
@@ -590,9 +596,7 @@ async def _run_llm_chat_stream(
 
     async def gen():
         with traced_span("request", root=True, classify_status=True) as req_attrs:
-            req_attrs["url"] = request.url.path
-            req_attrs["method"] = request.method
-            req_attrs.update(get_context_attributes())
+            _seed_llm_request_attrs(req_attrs, request)
             async for chunk in result:
                 yield chunk
         # Token usage only arrives in the final SSE chunk, so this must run
@@ -633,6 +637,31 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
     is_stream_enabled = True if (isinstance(payload, dict) and payload.get("stream")) else False
     service_id = payload.get("model", "")
     request.state.service_id = service_id
+
+    # Caller tags (OpenAI `user` / `metadata`) are checked before anything is
+    # proxied: a rejection here never opens an ai-inference span, so it is
+    # never billed. Like the tier-gate/404 rejections in proxy_traced(), it
+    # still emits request + model spans so the failure shows up in traces.
+    tag_error = validate_request_tags(payload)
+    if tag_error:
+        param, message = tag_error
+        with traced_span("request", root=True, classify_status=True) as req_attrs:
+            _seed_llm_request_attrs(req_attrs, request)
+            req_attrs["status"] = "failure"
+            req_attrs["status_code"] = 400
+            with traced_span("model") as model_attrs:
+                OpenAIProxyService._seed_model_attrs(
+                    model_attrs, service_id, failure_status_code=400,
+                )
+        _bridge_llm_usage_to_request(request)
+        return _openai_error(400, message=message, param=param)
+
+    # Every span of this request picks the tags up via get_context_attributes().
+    # Set unconditionally (even when empty) so nothing from an earlier set in
+    # the same context can carry over.
+    set_request_tags(user=payload.get("user"), metadata=payload.get("metadata"))
+    payload = strip_caller_tags(payload)
+
     if is_stream_enabled:
         return await _run_llm_chat_stream(request, payload, path)
     return await _run_llm_chat_consolidated(request, payload, path)
@@ -648,8 +677,7 @@ async def chat_completions(
     request: Request,
     payload: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
 ) -> Response:
-    """OpenAI-compatible chat completions, proxied verbatim to the upstream LLM."""
-    logger.info(f"In routes method chat/completions payload={json.dumps(payload)}")
+    """OpenAI-compatible chat completions, proxied to the upstream LLM (minus `user`/`metadata`)."""
     return await _run_llm_chat(request, payload, path="/v1/chat/completions")
 
 
@@ -663,7 +691,7 @@ async def chat(
     request: Request,
     payload: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
 ) -> Response:
-    """Alias of /chat/completions; proxied verbatim to the upstream LLM."""
+    """Alias of /chat/completions; proxied to the upstream LLM (minus `user`/`metadata`)."""
     return await _run_llm_chat(request, payload, path="/v1/chat/completions")
 
 
@@ -679,7 +707,7 @@ async def chat(
 _AUDIO_MAX_BYTES = 25 * 1024 * 1024  # OpenAI's documented cap for /audio/*
 
 
-def _audio_error(
+def _openai_error(
     status: int,
     *,
     message: str,
@@ -748,7 +776,7 @@ async def _proxy_audio_upload(
             OpenAIProxyService._seed_model_attrs(
                 model_attrs, data.get("model", "") or "", failure_status_code=413,
             )
-        return _audio_error(
+        return _openai_error(
             413,
             message=(
                 f"File exceeds the 25 MB limit "

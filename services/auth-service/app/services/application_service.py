@@ -29,6 +29,7 @@ from app.schemas.application import ApplicationCreate, ApplicationUpdate
 from app.services import budget_usage
 from app.services.api_key_service import APIKeyService
 from app.services.authorization import authorize_institution_scope
+from app.services.cache_service import CacheService
 
 _HUNDRED = Decimal("100")
 _CENTS = Decimal("0.01")
@@ -49,6 +50,7 @@ class ApplicationService:
         db: AsyncSession,
         api_key_repo: APIKeyRepository,
         api_key_service: Optional[APIKeyService] = None,
+        cache_service: Optional[CacheService] = None,
     ) -> None:
         self._applications = application_repo
         self._tenants = tenant_repo
@@ -61,6 +63,7 @@ class ApplicationService:
         # so existing tests that construct ApplicationService directly
         # keep working; the flag sync is skipped, not crashed, when absent.
         self._api_key_service = api_key_service
+        self._cache = cache_service
 
     # ── Scope / lookups ─────────────────────────────────────────────────
 
@@ -301,5 +304,10 @@ class ApplicationService:
             # between spend against a ceiling that's already zero.
             if self._api_key_service is not None:
                 await self._api_key_service.set_budget_exhausted_for_keys(zeroed_key_ids, True)
+
+        # Sync policy_id into Redis so inference-service reads it on the next
+        # request without any extra API call.
+        if "policy_id" in data and self._cache is not None:
+            await self._cache.set_app_policy_ids(app.id, app.policy_id or [])
 
         return app

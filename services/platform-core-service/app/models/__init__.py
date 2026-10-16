@@ -39,6 +39,13 @@ from app.models.pii_management.domain_policy import DomainPolicy  # noqa: E402
 from app.models.pii_management.pattern import GeoLibrary, PatternLibrary  # noqa: E402
 from app.models.pii_management.tenant_map import TenantPiiDomainMap  # noqa: E402
 
+# Policy-management tables (Category before SubCategory before Policy FKs)
+from app.models.policy_management.category import Category  # noqa: E402
+from app.models.policy_management.sub_category import SubCategory  # noqa: E402
+from app.models.policy_management.policy_type import PolicyType  # noqa: E402
+from app.models.policy_management.policy import Policy  # noqa: E402
+from app.models.policy_management.audit_log import PolicyAuditLog  # noqa: E402
+
 # Notification-management tables (no cross-domain FKs; subscription after
 # catalog for its FK)
 from app.models.notification_management.config_notification_alert import (  # noqa: E402
@@ -64,6 +71,13 @@ from app.models.pay_per_use.inference_type import InferenceType  # noqa: E402
 from app.models.pay_per_use.tier import Tier, TierQuota  # noqa: E402
 from app.models.pay_per_use.quota_usage import QuotaUsage  # noqa: E402
 from app.models.pay_per_use.budget_usage import BudgetUsage  # noqa: E402
+# Range-partitioned (usage_events by day, daily_usage by month); the partitions
+# themselves are DDL (pay_per_use/partitioning.py)
+from app.models.pay_per_use.usage_event import UsageEvent  # noqa: E402
+from app.models.pay_per_use.daily_usage import DailyUsage  # noqa: E402
+
+# Usage Viewer report (AI4IDS-3278) — next release (retry + send log):
+# from app.models.usage_report.send_log import UsageReportSendLog  # noqa: E402
 
 __all__ = [
     "Base",
@@ -82,6 +96,12 @@ __all__ = [
     "PatternLibrary",
     "GeoLibrary",
     "TenantPiiDomainMap",
+    # policy-management
+    "Category",
+    "SubCategory",
+    "PolicyType",
+    "Policy",
+    "PolicyAuditLog",
     # notification-management
     "ConfigNotificationAlert",
     "TenantNotificationSubscription",
@@ -94,4 +114,8 @@ __all__ = [
     "TierQuota",
     "QuotaUsage",
     "BudgetUsage",
+    "UsageEvent",
+    "DailyUsage",
+    # usage report — next release (retry + send log):
+    # "UsageReportSendLog",
 ]

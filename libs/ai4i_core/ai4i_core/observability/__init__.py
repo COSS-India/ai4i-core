@@ -13,7 +13,7 @@ from .config import PluginConfig
 from .metrics import MetricsCollector
 from .middleware import ObservabilityMiddleware, set_billed_state, set_metric_labels
 from .plugin import setup_observability
-from .utils import get_llm_usage
+from .utils import get_llm_cached_tokens, get_llm_usage
 
 __all__ = [
     "setup_observability",
@@ -21,6 +21,7 @@ __all__ = [
     "PluginConfig",
     "ObservabilityMiddleware",
     "get_llm_usage",
+    "get_llm_cached_tokens",
     "set_billed_state",
     "set_metric_labels",
 ]

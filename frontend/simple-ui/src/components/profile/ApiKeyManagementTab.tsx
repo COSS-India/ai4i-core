@@ -14,6 +14,7 @@ import {
   CheckboxGroup,
   Tooltip,
   Badge,
+  Button,
 } from "@chakra-ui/react";
 import { useAuth } from "../../hooks/useAuth";
 import { useApiKeyManagementTab, type ApiKeyTableRow } from "./hooks/useApiKeyManagementTab";
@@ -23,8 +24,10 @@ import ApiKeyBulkBudgetModal from "./ApiKeyBulkBudgetModal";
 import ApiKeyBudgetModal from "./ApiKeyBudgetModal";
 import { RevokeBudgetBreakdown } from "./budgetVisuals";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
-import { FiSlash, FiSliders } from "react-icons/fi";
-import { EditIcon, ViewIcon } from "@chakra-ui/icons";
+import { FiRefreshCw, FiSlash, FiSliders, FiStopCircle } from "react-icons/fi";
+import { CopyIcon, EditIcon, ViewIcon } from "@chakra-ui/icons";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import StandardModal from "../common/StandardModal";
 import {
   ApplicationEmptyState,
   ApplicationNoResults,
@@ -79,6 +82,14 @@ export interface ApiKeyManagementTabProps {
   onBindPageActions?: (actions: ApiKeyPageActions) => void;
 }
 
+/**
+ * API key rotation is live in the backend (POST /api-keys/{id}/rotate,
+ * DELETE /api-keys/{id}/rotated-key) but not yet exposed to users: the
+ * rotate and revoke-previous-value actions stay hidden until the frontend
+ * story for rotation (AI4IDS-3446) lands. Flip to true to show them.
+ */
+const SHOW_API_KEY_ROTATION_ACTIONS = false;
+
 export default function ApiKeyManagementTab({
   isActive = false,
   onRegisterRefresh,
@@ -86,6 +97,9 @@ export default function ApiKeyManagementTab({
   onBindPageActions,
 }: ApiKeyManagementTabProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const rotateCancelRef = useRef<HTMLButtonElement>(null);
+  const stopPreviousCancelRef = useRef<HTMLButtonElement>(null);
+  const { copy } = useCopyToClipboard();
   const { user } = useAuth();
 
   const mgmt = useApiKeyManagementTab({
@@ -252,8 +266,8 @@ export default function ApiKeyManagementTab({
         id: "actions",
         header: "Actions",
         align: "right",
-        width: "176px",
-        minWidth: "176px",
+        width: SHOW_API_KEY_ROTATION_ACTIONS ? "248px" : "176px",
+        minWidth: SHOW_API_KEY_ROTATION_ACTIONS ? "248px" : "176px",
         tdProps: { onClick: (e) => e.stopPropagation() },
         cell: (key) => (
           <DataTableActions
@@ -297,6 +311,32 @@ export default function ApiKeyManagementTab({
                   }
                 },
               },
+              ...(SHOW_API_KEY_ROTATION_ACTIONS
+                ? [
+                    {
+                      id: "rotate",
+                      label: "Rotate API key",
+                      tooltip: mgmt.isKeyRotatable(key)
+                        ? "Rotate key"
+                        : mgmt.isRotationInProgress(key) && key.rotated_key_expires_at
+                          ? `The previous key works until ${new Date(key.rotated_key_expires_at).toLocaleString()}; rotate again after that.`
+                          : "Only effectively active API keys can be rotated.",
+                      icon: <FiRefreshCw />,
+                      disabled: !mgmt.isKeyRotatable(key),
+                      onClick: () => mgmt.handleOpenRotateModal(key),
+                    },
+                    {
+                      id: "stop-previous",
+                      label: "Revoke previous key value",
+                      tooltip: mgmt.isRotationInProgress(key)
+                        ? "Stop the previous key value now; the current key keeps working"
+                        : "No previous key value is active for this key.",
+                      icon: <FiStopCircle />,
+                      disabled: !mgmt.isRotationInProgress(key),
+                      onClick: () => mgmt.handleOpenStopPreviousModal(key),
+                    },
+                  ]
+                : []),
               {
                 id: "revoke",
                 label: "Revoke API key",
@@ -420,6 +460,11 @@ export default function ApiKeyManagementTab({
         {viewKey.expires_at ? (
           <ReadOnlyField label="Expires At">
             {new Date(viewKey.expires_at).toLocaleString()}
+          </ReadOnlyField>
+        ) : null}
+        {mgmt.isRotationInProgress(viewKey) && viewKey.rotated_key_expires_at ? (
+          <ReadOnlyField label="Previous Key Works Until">
+            {new Date(viewKey.rotated_key_expires_at).toLocaleString()}
           </ReadOnlyField>
         ) : null}
         {viewKey.last_used ? (
@@ -687,6 +732,103 @@ export default function ApiKeyManagementTab({
         confirmLoadingText="Revoking..."
         leastDestructiveRef={cancelRef}
       />
+
+      <ConfirmDialog
+        isOpen={Boolean(mgmt.keyToRotate)}
+        onClose={mgmt.handleCloseRotateModal}
+        onConfirm={mgmt.handleRotateApiKey}
+        title={
+          mgmt.keyToRotate?.key_name
+            ? `Rotate ${mgmt.keyToRotate.key_name}`
+            : "Rotate API Key"
+        }
+        body={
+          <Text fontSize="sm" color="ink.700" lineHeight="1.5">
+            A new key is issued for <Text as="b">{mgmt.keyToRotate?.key_name}</Text> and shown
+            once. The current key keeps working for a limited time so you can switch your
+            applications over, then stops. Budget, permissions and expiry stay the same.
+          </Text>
+        }
+        confirmLabel="Rotate API Key"
+        cancelLabel="Cancel"
+        isConfirmLoading={mgmt.isRotating}
+        confirmLoadingText="Rotating..."
+        leastDestructiveRef={rotateCancelRef}
+      />
+
+      <ConfirmDialog
+        isOpen={Boolean(mgmt.keyToStopPrevious)}
+        onClose={mgmt.handleCloseStopPreviousModal}
+        onConfirm={mgmt.handleStopPreviousKeyValue}
+        title={
+          mgmt.keyToStopPrevious?.key_name
+            ? `Revoke previous value of ${mgmt.keyToStopPrevious.key_name}`
+            : "Revoke previous key value"
+        }
+        body={
+          <Text fontSize="sm" color="ink.700" lineHeight="1.5">
+            The value <Text as="b">{mgmt.keyToStopPrevious?.key_name}</Text> had before its last
+            rotation stops working immediately, instead of on{" "}
+            {mgmt.keyToStopPrevious?.rotated_key_expires_at
+              ? new Date(mgmt.keyToStopPrevious.rotated_key_expires_at).toLocaleString()
+              : "its scheduled date"}
+            . The current key value keeps working.
+          </Text>
+        }
+        confirmLabel="Revoke Previous Value"
+        cancelLabel="Cancel"
+        isConfirmLoading={mgmt.isStoppingPrevious}
+        confirmLoadingText="Revoking..."
+        leastDestructiveRef={stopPreviousCancelRef}
+      />
+
+      <StandardModal
+        isOpen={Boolean(mgmt.rotatedKey)}
+        onClose={mgmt.handleCloseRotatedKey}
+        title="API Key Rotated"
+        lockDismiss
+        footer={
+          <Button colorScheme="blue" onClick={mgmt.handleCloseRotatedKey}>
+            I&apos;ve saved the new key
+          </Button>
+        }
+      >
+        {mgmt.rotatedKey ? (
+          <VStack align="stretch" spacing={4}>
+            <Alert status="warning" borderRadius="md" variant="left-accent">
+              <AlertIcon />
+              <AlertDescription fontSize="sm">
+                Copy the new key now. It will not be shown again.
+              </AlertDescription>
+            </Alert>
+            <HStack align="stretch" spacing={2}>
+              <Input
+                value={mgmt.rotatedKey.api_key}
+                isReadOnly
+                fontFamily="mono"
+                fontSize="xs"
+                aria-label="New API key"
+              />
+              <Button
+                size="sm"
+                flexShrink={0}
+                leftIcon={<CopyIcon />}
+                onClick={() => {
+                  void copy(mgmt.rotatedKey!.api_key, "API key copied to clipboard");
+                }}
+              >
+                Copy
+              </Button>
+            </HStack>
+            <Text fontSize="sm" color="ink.700">
+              The previous key for <Text as="b">{mgmt.rotatedKey.key_name}</Text> keeps working
+              until{" "}
+              <Text as="b">{new Date(mgmt.rotatedKey.rotated_key_expires_at).toLocaleString()}</Text>
+              . Revoking the key stops both immediately.
+            </Text>
+          </VStack>
+        ) : null}
+      </StandardModal>
 
       <ApiKeyBudgetModal
         isOpen={singleBudget.isOpen}

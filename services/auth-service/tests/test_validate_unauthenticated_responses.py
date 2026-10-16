@@ -44,6 +44,13 @@ def _mock_request() -> MagicMock:
     return request
 
 
+def _tier_cache() -> MagicMock:
+    """CacheService stand-in: no tier key in Redis."""
+    cache = MagicMock()
+    cache.get_tier_cache = AsyncMock(return_value=None)
+    return cache
+
+
 def _assert_generic_401(result, *forbidden_substrings: bytes) -> None:
     assert result.status_code == 401
     assert _GENERIC_BODY in result.body
@@ -63,7 +70,7 @@ class TestApiKeyPathIsGeneric:
         response = Response()
 
         with caplog.at_level(logging.INFO):
-            result = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc)
+            result = await _validate_api_key("a" * 32, _mock_request(), response, api_key_svc, _tier_cache())
 
         _assert_generic_401(result, b"INVALID_API_KEY", b"revoked")
         assert any("INVALID_API_KEY" in r.getMessage() for r in caplog.records), (
@@ -84,7 +91,7 @@ class TestApiKeyPathIsGeneric:
         response = Response()
 
         with caplog.at_level(logging.INFO):
-            result = await _validate_api_key("garbage-not-a-jwt-or-key", _mock_request(), response, api_key_svc)
+            result = await _validate_api_key("garbage-not-a-jwt-or-key", _mock_request(), response, api_key_svc, _tier_cache())
 
         _assert_generic_401(result, b"INVALID_API_KEY_FORMAT", b"Invalid API key format.")
         assert "X-User-ID" not in response.headers

@@ -863,3 +863,62 @@ async def test_proxy_multipart_emits_model_span_task_type_on_tier_rejected(
 # test in tests/test_audio_upload_span.py (pre-existing in this repo,
 # already covers "emits a model span" + "still reaches proxy_multipart when
 # under the cap" — no need to duplicate here).
+
+
+# ── cached input tokens on the ai-inference span (LLM token pricing) ─────────
+
+_VLLM_BODY_WITH_CACHE = {
+    "choices": [],
+    "model": "google/gemma-4-31B-it",
+    "usage": {
+        "prompt_tokens": 1200,
+        "completion_tokens": 150,
+        "total_tokens": 1350,
+        "prompt_tokens_details": {"cached_tokens": 1024, "created_cache_tokens": 0, "multimodal_tokens": None},
+    },
+}
+
+
+@pytest.mark.asyncio
+async def test_proxy_traced_puts_cached_input_tokens_on_the_span(llm_service, capture_finalize_span):
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(return_value=("http://vllm:8000/v1/chat/completions", _STUB_SERVICE_INFO))), \
+         patch.object(llm_service, "forward",
+                      new=AsyncMock(return_value=(200, _VLLM_BODY_WITH_CACHE))):
+        await llm_service.proxy_traced("/v1/chat/completions", {"model": "svc-1", "messages": []})
+
+    infer_attrs, _ = _capture_ai_inference_attrs(capture_finalize_span)
+    assert infer_attrs["input_tokens"] == 1200
+    assert infer_attrs["cached_input_tokens"] == 1024
+    assert infer_attrs["output_tokens"] == 150
+
+    from ai4i_core.context import get_llm_usage_cached_input_tokens
+    assert get_llm_usage_cached_input_tokens() == 1024   # feeds the Prometheus metric
+
+
+@pytest.mark.asyncio
+async def test_proxy_traced_without_prompt_tokens_details_records_zero_cached(
+    llm_service, capture_finalize_span,
+):
+    """vLLM without --enable-prompt-tokens-details sends prompt_tokens_details: null."""
+    body = {**_VLLM_BODY_WITH_CACHE, "usage": {"prompt_tokens": 23, "completion_tokens": 9, "prompt_tokens_details": None}}
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(return_value=("http://vllm:8000/v1/chat/completions", _STUB_SERVICE_INFO))), \
+         patch.object(llm_service, "forward", new=AsyncMock(return_value=(200, body))):
+        await llm_service.proxy_traced("/v1/chat/completions", {"model": "svc-1", "messages": []})
+
+    infer_attrs, _ = _capture_ai_inference_attrs(capture_finalize_span)
+    assert infer_attrs["cached_input_tokens"] == 0
+
+
+def test_record_stream_usage_records_cached_input_tokens(llm_service):
+    infer_attrs = {}
+    llm_service._record_stream_usage(
+        'data: {"usage":{"prompt_tokens":1200,"completion_tokens":150,'
+        '"prompt_tokens_details":{"cached_tokens":1024,"created_cache_tokens":16}}}',
+        infer_attrs,
+    )
+    assert infer_attrs["cached_input_tokens"] == 1024   # created_cache_tokens is not a cache hit
+
+    from ai4i_core.context import get_llm_usage_cached_input_tokens
+    assert get_llm_usage_cached_input_tokens() == 1024

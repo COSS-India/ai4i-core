@@ -14,6 +14,7 @@ Nothing here needs a broker, database, or Redis.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -281,7 +282,7 @@ class TestBillUsageThreadsInferenceTypeId:
         base.update(overrides)
         return BillingContext(**base)
 
-    def _patch(self, monkeypatch, *, resolved_id, task_type="asr"):
+    def _patch(self, monkeypatch, *, resolved_id, task_type="asr", pricing=None):
         """Stub pricing + the two billing calls; return the captured kwargs."""
         from decimal import Decimal
 
@@ -294,7 +295,7 @@ class TestBillUsageThreadsInferenceTypeId:
         captured: dict = {}
 
         async def _pricing(db, service_id):
-            return ServicePricing(
+            return pricing or ServicePricing(
                 task_type=task_type,
                 unit_rate=Decimal("0.5"),
                 cost_per_unit=None,
@@ -333,7 +334,32 @@ class TestBillUsageThreadsInferenceTypeId:
         monkeypatch.setattr(
             h, "session_scope", lambda name=None: self._FakeAuthSessionScope()
         )
+
+        async def _record(db, event):
+            captured["event"] = event
+            captured["commits_before_event"] = db.commits
+            return captured.get("record_result", True)
+
+        monkeypatch.setattr(h, "record_usage_event", _record)
         return captured
+
+    async def test_llm_is_charged_by_token_category(self, monkeypatch):
+        from decimal import Decimal
+
+        from consumers.payperuse_consumer._billing import ServicePricing
+        from consumers.payperuse_consumer.handler import _bill_usage
+
+        pricing = ServicePricing(
+            task_type="llm", unit_rate=None, cost_per_unit=Decimal("0.10"), unit_size=1000,
+            cached_input_cost_per_unit=Decimal("0.04"), output_cost_per_unit=Decimal("0.25"),
+        )
+        captured = self._patch(monkeypatch, resolved_id=1, task_type="llm", pricing=pricing)
+        ctx = self._ctx(input_tokens=1200.0, cached_input_tokens=1024.0, output_tokens=150.0, total_tokens=1350.0)
+
+        await _bill_usage(self._FakeDb(), ctx)
+
+        assert captured["cost"] == Decimal("0.09606")   # 176 input + 1,024 cached + 150 output
+        assert captured["units"] == Decimal("1350.0")    # quota still counts every token
 
     async def test_resolved_id_is_passed_to_the_upsert(self, monkeypatch):
         from consumers.payperuse_consumer.handler import _bill_usage
@@ -651,3 +677,279 @@ class TestPublishUsageCrossingEvents:
 
         item = next(i for i in calls["items"] if i.name is NotificationName.QUOTA_EXHAUSTED)
         assert list(item.fallback_details) == ["tier-1", ["ASR: Quota Limit 1,000, Resets on 2026-09-01"]]
+
+
+
+class TestGetCachedInputTokens:
+    def test_reads_the_span_attribute(self):
+        from consumers.payperuse_consumer.handler import _get_cached_input_tokens
+
+        assert _get_cached_input_tokens({"cached_input_tokens": 1024}) == 1024.0
+
+    def test_absent_or_bad_means_zero(self):
+        from consumers.payperuse_consumer.handler import _get_cached_input_tokens
+
+        assert _get_cached_input_tokens({}) == 0.0
+        assert _get_cached_input_tokens({"cached_input_tokens": "bad"}) == 0.0
+
+
+class TestUsageEventRow:
+    """_bill_usage writes one usage_events row per billed span, in the same
+    transaction as the budget/quota writes."""
+
+    _helpers = TestBillUsageThreadsInferenceTypeId
+
+    def _run(self, monkeypatch, ctx, pricing=None, task_type="asr", record_result=True):
+        import asyncio
+
+        from consumers.payperuse_consumer.handler import _bill_usage
+
+        helpers = self._helpers()
+        captured = helpers._patch(monkeypatch, resolved_id=7, task_type=task_type, pricing=pricing)
+        captured["record_result"] = record_result
+        db = helpers._FakeDb()
+        asyncio.run(_bill_usage(db, ctx))
+        return captured, db
+
+    def _ctx(self, **overrides):
+        from datetime import datetime, timezone
+
+        base = dict(
+            tenant_id="12", application_id=7, api_key_id=31, status_code=200,
+            occurred_at=datetime(2026, 10, 12, 6, 30, tzinfo=timezone.utc),
+        )
+        base.update(overrides)
+        return self._helpers()._ctx(**base)
+
+    def test_llm_row_splits_units_and_cost_by_category(self, monkeypatch):
+        from datetime import datetime, timezone
+        from decimal import Decimal
+
+        from consumers.payperuse_consumer._billing import ServicePricing
+
+        pricing = ServicePricing(
+            task_type="llm", unit_rate=None, cost_per_unit=Decimal("0.10"), unit_size=1000,
+            cached_input_cost_per_unit=Decimal("0.04"), output_cost_per_unit=Decimal("0.25"),
+        )
+        ctx = self._ctx(input_tokens=1200.0, cached_input_tokens=1024.0, output_tokens=150.0, total_tokens=1350.0)
+        captured, _ = self._run(monkeypatch, ctx, pricing=pricing)
+
+        event = captured["event"]
+        assert event.correlation_id == "corr-1"
+        assert not hasattr(event, "span_id")   # not stored (migration a7c3e9f1b5d2)
+        assert event.occurred_at == datetime(2026, 10, 12, 6, 30, tzinfo=timezone.utc)
+        assert (event.tenant_id, event.application_id, event.api_key_id) == (12, 7, 31)
+        assert (event.tier_id, event.service_id, event.inference_type_id) == ("tier-1", "svc-1", 7)
+        # No status: the request is counted from its request-span row (_record_request).
+        assert (event.task_type, event.status_code) == ("llm", None)
+        assert (event.total_units, event.cached_input_units, event.output_units) == (
+            Decimal("1350.0"), Decimal("1024.0"), Decimal("150.0"),
+        )
+        assert (event.input_units_cost, event.cached_input_units_cost, event.output_units_cost) == (
+            Decimal("0.0176"), Decimal("0.04096"), Decimal("0.0375"),
+        )
+        # The row's costs add up to exactly what was charged.
+        assert sum((event.input_units_cost, event.cached_input_units_cost, event.output_units_cost)) == captured["cost"]
+
+    def test_cached_input_is_clamped_to_the_input_tokens(self, monkeypatch):
+        from decimal import Decimal
+
+        from consumers.payperuse_consumer._billing import ServicePricing
+
+        pricing = ServicePricing(task_type="llm", unit_rate=None, cost_per_unit=Decimal("0.10"), unit_size=1000)
+        ctx = self._ctx(input_tokens=100.0, cached_input_tokens=500.0, output_tokens=0.0, total_tokens=100.0)
+        captured, _ = self._run(monkeypatch, ctx, pricing=pricing)
+        assert captured["event"].cached_input_units == Decimal("100.0")
+
+    def test_non_llm_row_has_the_whole_charge_as_input(self, monkeypatch):
+        from decimal import Decimal
+
+        ctx = self._ctx(input_tokens=40.0, output_tokens=9.0, total_tokens=49.0)
+        captured, _ = self._run(monkeypatch, ctx, task_type="nmt")
+
+        event = captured["event"]
+        assert event.total_units == Decimal("40.0")            # output units aren't billed for NMT
+        assert (event.cached_input_units, event.output_units) == (0, 0)
+        assert event.input_units_cost == Decimal("20.0") == captured["cost"]   # 40 × 0.5
+        assert (event.cached_input_units_cost, event.output_units_cost) == (0, 0)
+
+    def test_missing_ids_are_null(self, monkeypatch):
+        ctx = self._ctx(tenant_id="not-a-number", api_key_id=0, application_id=None)
+        captured, _ = self._run(monkeypatch, ctx)
+        event = captured["event"]
+        assert (event.tenant_id, event.api_key_id, event.application_id) == (None, None, None)
+
+    def test_written_in_the_billing_transaction_before_commit(self, monkeypatch):
+        captured, db = self._run(monkeypatch, self._ctx())
+        assert captured["commits_before_event"] == 0
+        assert db.commits == 1
+
+    def test_failed_row_does_not_stop_billing(self, monkeypatch):
+        captured, db = self._run(monkeypatch, self._ctx(), record_result=False)
+        assert db.commits == 1
+        assert "units" in captured   # the budget/quota write still ran
+
+
+class TestPrepareBillingContextForUsageEvents:
+    def _prepare(self, monkeypatch, attributes: dict, end_time=1_791_786_600_000_000_000):
+        import asyncio
+
+        from consumers.payperuse_consumer import handler as h
+
+        message = {
+            "name": "ai-inference",
+            "context": {"span_id": "0x00000000000000ab"},
+            "end_time": end_time,
+            "attributes": {
+                "tenantId": "12", "service_id": "svc-1", "input_tokens": 10, "output_tokens": 5,
+                "correlation_id": "corr-1", "api_key_id": "31", "tier_id": "tier-1", "authType": "api_key",
+                **attributes,
+            },
+        }
+
+        async def _not_billed(*args):
+            return False
+
+        monkeypatch.setattr(h, "_get_billing_data", lambda msg: message)
+        monkeypatch.setattr(h, "_is_already_billed", _not_billed)
+
+        class _Msg:
+            def offset(self):
+                return 0
+
+        return asyncio.run(h._prepare_billing_context(_Msg()))
+
+    def test_span_end_time_is_occurred_at_and_billing_month(self, monkeypatch):
+        from datetime import datetime, timezone
+
+        ctx = self._prepare(monkeypatch, {"app_id": "7", "status_code": 200})
+        assert ctx.occurred_at == datetime.fromtimestamp(1_791_786_600, tz=timezone.utc)
+        assert ctx.billing_month == ctx.occurred_at.strftime("%Y-%m")
+        assert (ctx.application_id, ctx.status_code) == (7, 200)
+
+    def test_absent_application_and_status_are_none(self, monkeypatch):
+        ctx = self._prepare(monkeypatch, {})
+        assert (ctx.application_id, ctx.status_code) == (None, None)
+
+
+class TestRecordRequest:
+    """_record_request: one usage_events row per API-key request, from its
+    request span — zero units and cost, the HTTP status the client got. The
+    rollup and the dashboard count requests and failures from these rows."""
+
+    # 2026-10-13T11:20:00.123456Z, as the exporter sends it (ns since the epoch).
+    _END_NS = int(datetime(2026, 10, 13, 11, 20, 0, 123456, tzinfo=timezone.utc).timestamp() * 1_000_000) * 1000
+
+    class _Db:
+        def __init__(self):
+            self.commits = 0
+
+        async def commit(self):
+            self.commits += 1
+
+    def _span(self, **attrs):
+        base = {
+            "authType": "api_key", "tenantId": "45", "app_id": "37", "api_key_id": "49",
+            "tier_id": "a9e9ef55-3ed5-4b54-94a8-404d6bdaf3ad", "correlation_id": "corr-1",
+            "url": "/api/v1/chat/completions", "service_id": "svc-llm", "task_type": "llm",
+            "status_code": 200,
+        }
+        base.update(attrs)
+        return {"name": "request", "end_time": self._END_NS, "attributes": {k: v for k, v in base.items() if v is not None}}
+
+    def _run(self, monkeypatch, span, pricing_task_type="llm"):
+        import asyncio
+        from contextlib import asynccontextmanager
+        from decimal import Decimal
+
+        from consumers.payperuse_consumer import handler as h
+        from consumers.payperuse_consumer._billing import ServicePricing
+
+        captured: dict = {"events": []}
+        db = self._Db()
+
+        @asynccontextmanager
+        async def _scope(name=None):
+            yield db
+
+        async def _pricing(_db, service_id):
+            captured["pricing_for"] = service_id
+            if pricing_task_type is None:
+                return None
+            return ServicePricing(task_type=pricing_task_type, unit_rate=Decimal("1"), cost_per_unit=None, unit_size=None)
+
+        async def _type_id(_db, name):
+            return {"llm": 1, "nmt": 3}.get(name)
+
+        async def _record(_db, event):
+            captured["events"].append(event)
+            captured["commits_before_event"] = db.commits
+            return True
+
+        monkeypatch.setattr(h, "session_scope", _scope)
+        monkeypatch.setattr(h, "get_service_pricing", _pricing)
+        monkeypatch.setattr(h, "get_inference_type_id", _type_id)
+        monkeypatch.setattr(h, "record_usage_event", _record)
+        monkeypatch.setattr(h, "_get_billing_data", lambda msg: span)
+
+        class _Msg:
+            def offset(self):
+                return 7
+
+        asyncio.run(h.handle_ppu_usage(_Msg()))
+        captured["commits"] = db.commits
+        return captured
+
+    def test_one_zero_cost_row_with_the_status(self, monkeypatch):
+        from datetime import datetime, timezone
+        from decimal import Decimal
+
+        captured = self._run(monkeypatch, self._span(status_code=502))
+
+        (event,) = captured["events"]
+        assert (event.correlation_id, event.status_code) == ("corr-1", 502)
+        assert (event.tenant_id, event.application_id, event.api_key_id) == (45, 37, 49)
+        assert (event.service_id, event.task_type, event.inference_type_id) == ("svc-llm", "llm", 1)
+        assert event.occurred_at == datetime(2026, 10, 13, 11, 20, 0, 123456, tzinfo=timezone.utc)
+        assert event.total_units == event.input_units_cost == event.output_units_cost == Decimal(0)
+        assert captured["commits"] == 1
+
+    def test_task_type_from_the_span_when_the_service_does_not_resolve(self, monkeypatch):
+        captured = self._run(
+            monkeypatch,
+            self._span(url="/api/v1/nmt/inference", service_id="svc-typo", task_type="nmt", status_code=404),
+            pricing_task_type=None,
+        )
+        (event,) = captured["events"]
+        assert (event.task_type, event.inference_type_id, event.status_code) == ("nmt", 3, 404)
+
+    def test_a_validation_failure_without_a_service_is_still_one_row(self, monkeypatch):
+        captured = self._run(
+            monkeypatch, self._span(url="/api/v1/nmt/inference", service_id=None, task_type=None, status_code=400),
+        )
+        (event,) = captured["events"]
+        assert (event.service_id, event.inference_type_id, event.status_code) == ("", None, 400)
+        assert "pricing_for" not in captured
+
+    def test_only_api_key_traffic(self, monkeypatch):
+        assert self._run(monkeypatch, self._span(authType="jwt"))["events"] == []
+        assert self._run(monkeypatch, self._span(authType=None))["events"] == []
+
+    def test_only_the_paths_the_dashboard_counts(self, monkeypatch):
+        for path in ("/api/v1/llm/try-it", "/api/v1/audio/transcriptions", "/api/v1/nmt/inference/health"):
+            assert self._run(monkeypatch, self._span(url=path))["events"] == [], path
+        for path in ("/api/v1/chat", "/api/v1/chat/completions", "/api/v1/audio-lang-detection/inference"):
+            assert len(self._run(monkeypatch, self._span(url=path))["events"]) == 1, path
+
+    def test_no_status_or_tenant_means_no_row(self, monkeypatch):
+        assert self._run(monkeypatch, self._span(status_code=None))["events"] == []
+        assert self._run(monkeypatch, self._span(tenantId=None))["events"] == []
+
+    def test_request_spans_are_never_billed(self, monkeypatch):
+        from consumers.payperuse_consumer import handler as h
+
+        async def _no_billing(*a, **k):
+            raise AssertionError("request spans must not reach billing")
+
+        monkeypatch.setattr(h, "_bill_usage", _no_billing)
+        assert len(self._run(monkeypatch, self._span())["events"]) == 1

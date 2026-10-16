@@ -1,5 +1,7 @@
 import apiClient from "./api";
 import { apiEndpoints } from "./apiEndpoints";
+import { buildPeriodParams } from "../utils/meteringDateRange";
+import type { MeteringPeriod } from "../types/metering";
 import type {
   UsageSummaryResponse,
   TenantUsageListResponse,
@@ -28,28 +30,28 @@ export async function fetchUsageSummary(
   return response.data;
 }
 
+/** GET /api/v1/pay-per-use/usage-tenants — usage and spend in the period. */
 export async function fetchTenantUsageList(
-  params?: TenantUsageParams,
+  params: TenantUsageParams,
 ): Promise<TenantUsageListResponse> {
-  const query: Record<string, string | number> = {};
-  if (params?.billingPeriod) query.billing_period = params.billingPeriod;
-  if (params?.tierId) query.tier_id = params.tierId;
-  if (params?.modelTaskType) query.modelTaskType = params.modelTaskType;
-  if (params?.taskTypes) query.task_types = params.taskTypes;
-  if (params?.sortOrder) query.sortOrder = params.sortOrder;
-  if (params?.limit != null) query.limit = params.limit;
-  if (params?.offset != null) query.offset = params.offset;
+  const query: Record<string, string | number> = buildPeriodParams(params.period);
+  if (params.tierId) query.tier_id = params.tierId;
+  if (params.modelTaskType) query.modelTaskType = params.modelTaskType;
+  if (params.taskTypes) query.task_types = params.taskTypes;
+  if (params.sortOrder) query.sortOrder = params.sortOrder;
+  if (params.limit != null) query.limit = params.limit;
+  if (params.offset != null) query.offset = params.offset;
   const response = await apiClient.get(apiEndpoints.usage.tenants, { params: query });
   return response.data;
 }
 
+/** GET /api/v1/pay-per-use/usage-tenant — one institution, usage and spend in the period. */
 export async function fetchTenantUsageById(
   tenantId: string,
-  billingPeriod?: string,
+  period: MeteringPeriod,
   taskTypes?: string,
 ): Promise<TenantUsageDetail> {
-  const query: Record<string, string> = { tenant_id: tenantId };
-  if (billingPeriod) query.billing_period = billingPeriod;
+  const query: Record<string, string> = { tenant_id: tenantId, ...buildPeriodParams(period) };
   if (taskTypes) query.task_types = taskTypes;
   const response = await apiClient.get(apiEndpoints.usage.tenant, {
     params: query,

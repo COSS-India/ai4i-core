@@ -47,12 +47,17 @@ async def test_tier_events(monkeypatch):
 
     # The details loader runs Q-D1 once for both tiers.
     tiers = {
-        str(new_tier): {"name": "Gold", "description": "High volume", "quotas": [{"inference_name": "asr", "monthly_quota": 10000}]},
+        str(new_tier): {"name": "Gold", "description": "High volume", "quotas": [
+            {"inference_name": "asr", "monthly_quota": 10000, "unit": "audio_minutes"},
+            {"inference_name": "llm", "monthly_quota": 1000000, "unit": "tokens"},
+            {"inference_name": "custom", "monthly_quota": 5, "unit": None},
+        ]},
         str(old_tier): {"name": "Silver", "description": "", "quotas": []},
     }
     monkeypatch.setattr(events, "_load_tier_details", AsyncMock(return_value=tiers))
-    assert await assigned["details"]() == ["Gold", "High volume", ["ASR: 10,000 req/mo"]]
-    assert await changed["details"]() == ["Silver", "Gold", "High volume", ["ASR: 10,000 req/mo"]]
+    lines = ["ASR: 10,000 audio minutes", "LLM: 1,000,000 tokens", "CUSTOM: 5 custom"]
+    assert await assigned["details"]() == ["Gold", "High volume", lines]
+    assert await changed["details"]() == ["Silver", "Gold", "High volume", lines]
 
 
 @pytest.mark.asyncio

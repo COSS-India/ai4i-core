@@ -1,9 +1,11 @@
 """Response schemas for the metering dashboard tabs."""
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from app.schemas.period import Period
 
 
 class Cell(BaseModel):
@@ -50,6 +52,24 @@ class Scope(BaseModel):
     to: Optional[str] = None
 
 
+class PeriodScope(BaseModel):
+    """Scope of the Usage Dashboard endpoints that take the period filter
+    (/overview, /model-consumption). Replaces Scope's window/from/to."""
+    role: str
+    tenant_id: Optional[str] = None
+    organisation: Optional[str] = None
+    task_types: Optional[list[str]] = None
+    period: Period
+
+
+class TokenShare(BaseModel):
+    """One LLM token category in the Model drill-down."""
+    key: Literal["input", "cached_input", "output"]
+    label: str
+    units: float
+    percentage: float                   # share of the row's native_units
+
+
 class ServiceRow(BaseModel):
     service: str
     requests: int
@@ -90,6 +110,11 @@ class PlatformAdoption(BaseModel):
     # Overall LLM request volume, rolling last 30 days vs the 30 days
     # before that — null when the previous 30-day window had no traffic.
     model_usage_growth_pct: Optional[float] = None
+    # Registered models (mm_models), and distinct registered models with
+    # API-key requests in the last 30 days — the Key metrics strip's model
+    # cards, fixed periods like the rest of this block.
+    total_models: Optional[int] = None
+    active_models_30d: Optional[int] = None
 
 
 class ServiceEntry(BaseModel):
@@ -133,6 +158,9 @@ class ServiceModelRow(BaseModel):
     requests: int
     native_units: float = 0.0
     native_unit_suffix: str = ""  # e.g. "chars", "min", "tokens" — task-specific; never null on the wire (FE declares this z.string()) — "" for an unresolved task_type so formatNativeConsumption prints the bare number instead of a misleading unit word
+    # LLM only (null otherwise): input / cached input / output tokens, summing
+    # to native_units; cached input is omitted when 0 or not reported.
+    native_breakdown: Optional[list[TokenShare]] = None
     success_pct: float
     failure_rate_pct: float = 0.0   # 100 - success_pct
 
@@ -184,7 +212,7 @@ class ModelConsumptionSummary(BaseModel):
 # ── Tab responses ────────────────────────────────────────────────────────────
 
 class OverviewResponse(BaseModel):
-    scope: Scope
+    scope: PeriodScope
     kpis: list[Cell]
     platform_adoption: Optional[PlatformAdoption] = None
     usage_concentration: Optional[UsageConcentration] = None
@@ -194,6 +222,10 @@ class OverviewResponse(BaseModel):
     # (quota_usage) and the first API-key request the metering source still
     # holds. The date picker's floor; None when neither has any usage.
     first_usage_at: Optional[str] = None
+    # When the scoped institution was onboarded (tenants.created_at), IST
+    # ISO-8601 with offset: an Institution admin's date-picker floor. None for the
+    # platform-wide admin view (no single institution), or when it can't be read.
+    onboarded_at: Optional[str] = None
     degraded: bool = False
     generated_at: str
 
@@ -216,7 +248,7 @@ class ServiceConsumptionResponse(BaseModel):
 
 
 class ModelConsumptionResponse(BaseModel):
-    scope: Scope
+    scope: PeriodScope
     summary: Optional[ModelConsumptionSummary] = None
     top_models: list[TopModelRow] = []   # ranked by consumption_pct desc; FE slices to Top 5 / Top 10
     # Denominator for top_models[].consumption_pct — sum of requests across

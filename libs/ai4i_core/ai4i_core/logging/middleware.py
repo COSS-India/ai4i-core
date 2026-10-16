@@ -17,6 +17,7 @@ from .config import get_default_config
 from ai4i_core.context import (
     generate_trace_id,
     set_api_key_id,
+    set_application_id,
     set_auth_type,
     set_tenant_id,
     set_tier_id,
@@ -85,6 +86,8 @@ class RequestMiddleware(BaseHTTPMiddleware):
             set_auth_type(auth_type)
 
         application_id = (request.headers.get("X-Application-ID") or "").strip()
+        if application_id:
+            set_application_id(application_id)
 
         api_key_id = (request.headers.get("X-API-Key-ID") or "").strip()
         if api_key_id:

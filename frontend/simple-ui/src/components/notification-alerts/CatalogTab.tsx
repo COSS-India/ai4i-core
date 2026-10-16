@@ -297,6 +297,7 @@ const CatalogTab: React.FC<CatalogTabProps> = ({
         onCancel={dirtyCount > 0 ? discard : undefined}
         onSubmit={handleSubmit}
         isLoading={isSubmitting}
+        isDisabled={dirtyCount === 0}
         justify="flex-end"
         pt={4}
       />

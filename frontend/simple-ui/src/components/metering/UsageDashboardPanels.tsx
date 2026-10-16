@@ -31,6 +31,7 @@ export const TenantDashboardHeader: React.FC<TenantHeaderProps> = ({
 
 interface TenantPanelsProps {
   subTab: MeteringDashboardState["subTab"];
+  period: MeteringDashboardState["period"];
   overview: MeteringDashboardState["overview"];
   requestVolumeSection: React.ReactNode;
   modelQuery: MeteringDashboardState["modelQuery"];
@@ -42,6 +43,7 @@ interface TenantPanelsProps {
 
 export const TenantDashboardPanels: React.FC<TenantPanelsProps> = ({
   subTab,
+  period,
   overview,
   requestVolumeSection,
   modelQuery,
@@ -67,6 +69,7 @@ export const TenantDashboardPanels: React.FC<TenantPanelsProps> = ({
     )}
     {subTab === METERING.SUB_TAB.USAGE_SPEND && (
       <UsageAndSpendTab
+        period={period}
         isTenantView
         tenantId={tenantId}
         organisationLabel={organisationLabel}
@@ -75,6 +78,7 @@ export const TenantDashboardPanels: React.FC<TenantPanelsProps> = ({
     )}
     {subTab === METERING.SUB_TAB.APPLICATIONS && (
       <ApplicationUsageTab
+        period={period}
         isTenantView
         tenantId={tenantId}
         organisationLabel={organisationLabel}
@@ -86,6 +90,7 @@ export const TenantDashboardPanels: React.FC<TenantPanelsProps> = ({
 
 interface AdopterPanelsProps {
   subTab: MeteringDashboardState["subTab"];
+  period: MeteringDashboardState["period"];
   overview: MeteringDashboardState["overview"];
   tenantOrganisationById: MeteringDashboardState["tenantOrganisationById"];
   requestVolumeSection: React.ReactNode;
@@ -99,6 +104,7 @@ interface AdopterPanelsProps {
 
 export const AdopterDashboardPanels: React.FC<AdopterPanelsProps> = ({
   subTab,
+  period,
   overview,
   tenantOrganisationById,
   requestVolumeSection,
@@ -134,12 +140,14 @@ export const AdopterDashboardPanels: React.FC<AdopterPanelsProps> = ({
     )}
     {subTab === METERING.SUB_TAB.USAGE_SPEND && (
       <UsageAndSpendTab
+        period={period}
         scopeTenantId={scopeTenantId}
         refreshNonce={refreshNonce}
       />
     )}
     {subTab === METERING.SUB_TAB.APPLICATIONS && (
       <ApplicationUsageTab
+        period={period}
         scopeTenantId={scopeTenantId}
         refreshNonce={refreshNonce}
       />

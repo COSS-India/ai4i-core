@@ -120,10 +120,27 @@ export const FIELD_HINTS = {
         `${min}–${max} characters. Describes the infrastructure this service runs on.`,
     },
     unitType: { helper: "Auto-set based on the task type", needTaskType: "Select a task type first" },
-    unitSize: { placeholder: "Select unit size", helper: "Defines the unit size for pricing" },
+    unitSize: {
+      placeholder: "Select unit size",
+      helper: "Defines the unit size for pricing",
+      llmHelper:
+        "Input, cached input, and output token prices are all charged per this many tokens.",
+    },
     price: {
       placeholder: "Enter price",
       helper: `e.g., 600. Must be between 0 and ${PRICE_PER_UNIT_MAX_LABEL}`,
+    },
+    llmInputPrice: {
+      placeholder: "Enter input token price",
+      helper: `Price of input tokens that were not cached, per the selected unit size. Between 0 and ${PRICE_PER_UNIT_MAX_LABEL}. Zero is allowed.`,
+    },
+    llmCachedInputPrice: {
+      placeholder: "Enter cached input token price",
+      helper: `Price of input tokens served from the prefix cache, per the selected unit size. Between 0 and ${PRICE_PER_UNIT_MAX_LABEL}. Zero is allowed.`,
+    },
+    llmOutputPrice: {
+      placeholder: "Enter output token price",
+      helper: `Price of generated output tokens, per the selected unit size. Between 0 and ${PRICE_PER_UNIT_MAX_LABEL}. Zero is allowed.`,
     },
     tier: { placeholder: "Select applicable tier(s)", helper: "Select at least one" },
     tierSearch: { placeholder: "Search tiers..." },
@@ -133,6 +150,20 @@ export const FIELD_HINTS = {
     startTime: { helper: "Filter logs from this date & time" },
     endTime: { helper: "Filter logs up to this date & time; must be after Start Time" },
     tenant: { helper: `Filter logs by ${org}.` },
+    endUser: {
+      placeholder: "e.g. customer-8812",
+      helper: "end-user ID sent as user",
+      tooLong: "End user must be at most 256 characters",
+    },
+    metadata: {
+      placeholder: "e.g. session_id=s-77",
+      helper: "key=value pair sent in metadata",
+      missingSeparator: "Use key=value",
+      missingKey: "Enter a key before =",
+      missingValue: "Enter a value after =",
+      keyTooLong: "Key must be at most 64 characters",
+      valueTooLong: "Value must be at most 512 characters",
+    },
     autoRefresh: { helper: "Automatically refresh this list at regular intervals." },
   },
   profile: {
@@ -162,6 +193,10 @@ export const FIELD_HINTS = {
       helper: "e.g. Enterprise tier for high usage.",
     },
     quotaUnit: { helper: "Auto-filled based on Model Task Type (e.g., tokens for LLM)" },
+    rateLimit: {
+      placeholder: "Enter rate limit",
+      helper: "Requests per minute across all inference APIs. Leave empty to use the platform default.",
+    },
     quotaLimit: {
       placeholder: "Enter quota limit",
       helper: `e.g. 10000. Whole number between 1 and ${QUOTA_LIMIT_MAX_LABEL}`,
