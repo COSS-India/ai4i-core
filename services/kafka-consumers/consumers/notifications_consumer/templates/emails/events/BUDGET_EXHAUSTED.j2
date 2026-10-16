@@ -2,4 +2,4 @@
 {% set layout = "notification" %}
 {% set name = "Budget Exhausted" %}
 {% set headline = "The Budget for " ~ tenant_name ~ " has been fully consumed." %}
-{% set lines = ["Budget: " ~ details[0] ~ " " ~ details[1]] %}
+{% set lines = [{"label": "Budget", "value": details[0] ~ " " ~ details[1]}] %}

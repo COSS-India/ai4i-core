@@ -8,6 +8,8 @@ byte for byte.
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 from ai4i_core.kafka import NotificationName
 from jinja2 import TemplateNotFound, UndefinedError
@@ -45,7 +47,8 @@ def _render(event_name, details, *, tenant_name=TENANT, recipient_name="Priya"):
     )
 
 
-# (event_name, details, subject, substrings expected in BOTH html and text)
+# (event_name, details, subject, substrings expected in BOTH html and text;
+# html is compared with its <strong> tags removed, see test_field_labels_are_bold)
 CASES = [
     (
         "TIER_ASSIGNED", ["Gold", "High-volume tier", ["ASR: 10,000 audio minutes", "LLM: 5,000 tokens"]],
@@ -56,7 +59,7 @@ CASES = [
     (
         "TIER_CHANGED", ["Silver", "Gold", "High-volume tier", ["ASR: 10,000 audio minutes"]],
         f"Tier Reassignment — {TENANT}",
-        [f"The Tier for {TENANT} has been reassigned.", "Current Tier: Silver → New Tier: Gold",
+        [f"The Tier for {TENANT} has been reassigned.", "Current Tier: Silver", "New Tier: Gold",
          "New Tier Description: High-volume tier", "New Tier Quota Limits:", "ASR: 10,000 audio minutes"],
     ),
     (
@@ -134,9 +137,31 @@ def test_render_maps_details_onto_the_event_template(event_name, details, subjec
 
     assert message.to == "a@b.com"
     assert message.subject == subject
+    html_text = re.sub(r"</?strong>", "", message.html_body)
     for substring in ["Dear Priya,", *expected]:
-        assert substring in message.html_body, f"{substring!r} missing from html_body"
+        assert substring in html_text, f"{substring!r} missing from html_body"
         assert substring in message.text_body, f"{substring!r} missing from text_body"
+
+
+@pytest.mark.parametrize("event_name,details,labels", [
+    ("TIER_CHANGED", ["Silver", "Gold", "desc", ["LLM: 1 tokens"]],
+     ["Current Tier:", "New Tier:", "New Tier Description:", "New Tier Quota Limits:"]),
+    ("TIER_ASSIGNED", ["Gold", "desc", ["LLM: 1 tokens"]], ["Tier:", "Description:", "Quota Limits:"]),
+    ("BUDGET_UPDATED", ["INR", "1", "2", "2026-10-01"], ["Effective Date:"]),
+    ("QUOTA_LIMIT_UPDATED", ["Gold", ["ASR: changed from 1 to 2"], "2026-10-01", ["Acme"]],
+     ["Tier:", "Effective Date:", "Institutions:"]),
+    ("QUOTA_THRESHOLD", ["80", WHEN, "81%"], ["Current value:"]),
+    ("LATENCY_P95", ["2", WHEN, "2.5", "svc"], ["Current Value:", "Affected Service:"]),
+])
+def test_field_labels_are_bold(event_name, details, labels):
+    """Field labels are bold in the HTML email; values and the plain-text
+    email are unchanged."""
+    message = _render(event_name, details)
+    for label in labels:
+        assert f"<strong>{label}</strong>" in message.html_body
+    assert "<strong>" not in message.text_body
+    # Quota lines are values, not labels.
+    assert "<strong>LLM" not in message.html_body
 
 
 def test_every_catalog_event_has_a_template():
@@ -189,15 +214,15 @@ def test_a_service_that_fired_alone_keeps_the_single_service_lines():
     assert "Current Value: 6.2%\nAffected Service: asr-service\n\nLog in to" in message.text_body
     assert "Affected Services" not in message.text_body + message.html_body
     html = message.html_body
-    assert '<p style="margin:0 0 4px 0;">Current Value: 6.2%</p>' in html
-    assert '<p style="margin:0 0 20px 0;">Affected Service: asr-service</p>' in html
+    assert '<p style="margin:0 0 4px 0;"><strong>Current Value:</strong> 6.2%</p>' in html
+    assert '<p style="margin:0 0 20px 0;"><strong>Affected Service:</strong> asr-service</p>' in html
 
 
 @pytest.mark.parametrize("event_name", ["ERROR_RATE_4XX", "ERROR_RATE_5XX", "LATENCY_P50", "LATENCY_P95", "LATENCY_P99"])
 def test_every_monitoring_alert_shows_the_affected_service(event_name):
     message = _render(event_name, ["5", WHEN, "6", "svc-a"], tenant_name=None)
 
-    assert "Affected Service: svc-a" in message.html_body
+    assert "<strong>Affected Service:</strong> svc-a" in message.html_body
     assert "Affected Service: svc-a" in message.text_body
 
 
@@ -209,13 +234,13 @@ def test_monitoring_envelope_without_a_service_still_renders():
     assert "Current Value: 2.5s\n\nLog in to" in message.text_body
     assert "Affected Service" not in message.text_body
     assert "Affected Service" not in message.html_body
-    assert '<p style="margin:0 0 20px 0;">Current Value: 2.5s</p>' in message.html_body
+    assert '<p style="margin:0 0 20px 0;"><strong>Current Value:</strong> 2.5s</p>' in message.html_body
 
 
 def test_affected_service_is_escaped_in_html_only():
     message = _render("ERROR_RATE_4XX", ["5", WHEN, "6", "<b>svc</b>"], tenant_name=None)
 
-    assert "Affected Service: &lt;b&gt;svc&lt;/b&gt;" in message.html_body
+    assert "<strong>Affected Service:</strong> &lt;b&gt;svc&lt;/b&gt;" in message.html_body
     assert "Affected Service: <b>svc</b>" in message.text_body
 
 
@@ -370,6 +395,37 @@ def test_relative_logo_url_is_ignored(monkeypatch):
     message = _BRANDING_RENDERERS[2]()
 
     assert "<img" not in message.html_body
+
+
+
+@pytest.mark.parametrize("blank", [None, "", "   ", "​", "﻿", " ​‌‍⁠ ", " "])
+def test_empty_detail_renders_as_na(blank):
+    message = _render("TIER_CHANGED", ["Silver", "Gold", blank, ["LLM: 1,000 tokens"]])
+    assert "<strong>New Tier Description:</strong> NA" in message.html_body
+    assert "New Tier Description: NA" in message.text_body
+
+
+@pytest.mark.parametrize("text", ["0", "स्वर्ण स्तर", "Gold​ tier"])
+def test_visible_detail_is_kept(text):
+    message = _render("TIER_CHANGED", ["Silver", "Gold", text, ["LLM: 1,000 tokens"]])
+    assert f"New Tier Description: {text}" in message.text_body
+    assert "New Tier Description: NA" not in message.text_body
+
+
+def test_empty_list_detail_renders_as_na():
+    message = _render("TIER_ASSIGNED", ["Gold", "desc", []])
+    assert "Quota Limits:\n NA\n" in message.text_body
+
+
+def test_empty_value_inside_list_renders_as_na_and_zero_is_kept():
+    message = _render("QUOTA_LIMIT_UPDATED", ["Gold", ["", "ASR: changed from 0 to 10"], None])
+    assert "Tier: Gold\nNA\nASR: changed from 0 to 10\n" in message.text_body
+    assert "Effective Date: NA" in message.text_body
+
+
+def test_missing_tenant_name_renders_as_na():
+    message = _render("TIER_ASSIGNED", ["Gold", "desc", ["LLM: 1 tokens"]], tenant_name=None)
+    assert message.subject == "Tier Assigned — NA"
 
 
 class TestResolveSmtpFromName:

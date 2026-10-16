@@ -4,4 +4,6 @@
 {% set layout = "notification" %}
 {% set name = "Quota Limit Updated" %}
 {% set headline = "The Quota Limit for " ~ tenant_name ~ " has been updated." %}
-{% set lines = ["Tier: " ~ details[0]] + details[1] + ["Effective Date: " ~ details[2]] + (["Institutions:"] + details[3] if details|length > 3 else []) %}
+{% set lines = [{"label": "Tier", "value": details[0]}] + details[1]
+    + [{"label": "Effective Date", "value": details[2]}]
+    + ([{"label": "Institutions"}] + details[3] if details|length > 3 else []) %}
