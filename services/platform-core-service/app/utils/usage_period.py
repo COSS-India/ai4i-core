@@ -32,8 +32,6 @@ from app.utils.metering_promql_builder import AbsoluteRange
 IST = ZoneInfo("Asia/Kolkata")
 PERIOD_KEYS = ("today", "yesterday", "last_7_days", "custom")
 DEFAULT_PERIOD = "today"
-# Longest custom range, in days (inclusive).
-MAX_CUSTOM_DAYS = 366
 # Earliest accepted `from`: the platform has no data before it, and it keeps
 # previous-period arithmetic (from − range length) well inside datetime's range.
 EARLIEST_FROM = date(2000, 1, 1)
@@ -183,8 +181,6 @@ def resolve_period(
         raise invalid_period("from must not be after to.")
     if first < EARLIEST_FROM:
         raise invalid_period(f"from must be on or after {EARLIEST_FROM.isoformat()}.")
-    if (last - first).days + 1 > MAX_CUSTOM_DAYS:
-        raise invalid_period(f"The custom range must not exceed {MAX_CUSTOM_DAYS} days.")
     end = _floored_now(now, today) if last == today else ist_midnight(last + timedelta(days=1))
     return UsagePeriod(key, first, last, ist_midnight(first), end)
 

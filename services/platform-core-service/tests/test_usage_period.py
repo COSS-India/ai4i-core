@@ -136,9 +136,10 @@ class TestValidation:
     def test_from_before_2000(self):
         _assert_invalid("from must be on or after 2000-01-01.", "custom", "1999-12-31", "2000-01-05")
 
-    def test_range_longer_than_366_days(self):
-        _assert_invalid("The custom range must not exceed 366 days.", "custom", "2025-10-01", "2026-10-02")
-        assert _resolve("custom", "2025-10-03", "2026-10-03").days == 366
+    def test_range_has_no_length_limit(self):
+        period = _resolve("custom", "2000-01-01", "2026-10-08")
+        assert period.days == (date(2026, 10, 8) - date(2000, 1, 1)).days + 1
+        assert period.absolute_range.previous_shift_seconds == period.days * 86_400
 
 
 class TestDashboardIncludesToday:
