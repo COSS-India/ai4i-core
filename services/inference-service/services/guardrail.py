@@ -517,7 +517,9 @@ async def _write_audit_log(
     try:
         if policy_types:
             try:
-                model_request = await asyncio.to_thread(_mask_for_audit_payload, model_request, policy_types)
+                scopes = guardrail_info.get("scopes", [])
+                if any(s in ("input", "both") for s in scopes):
+                    model_request = await asyncio.to_thread(_mask_for_audit_payload, model_request, policy_types)
                 response = await asyncio.to_thread(_mask_for_audit_response, response, policy_types)
             except Exception as exc:
                 logger.warning("Audit masking failed, redacting content from audit row (policy_ids=%s): %s", policy_ids, exc)
