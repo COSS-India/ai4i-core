@@ -27,8 +27,7 @@ _TEMPLATE_DIR = Path(__file__).resolve().parent.parent.parent / "templates" / "e
 _renderer = TemplateRenderer([_TEMPLATE_DIR])
 
 # Brand, title, team and file name come from settings (USAGE_REPORT_*,
-# falling back to PLATFORM_NAME); only the portal route is fixed here.
-DASHBOARD_PATH = "/usage-dashboard"
+# falling back to PLATFORM_NAME).
 
 
 def attachment_name(data: ReportData) -> str:
@@ -40,7 +39,7 @@ def subject(data: ReportData) -> str:
 
 
 def portal_link() -> Optional[str]:
-    return f"{settings.portal_url.rstrip('/')}{DASHBOARD_PATH}" if settings.portal_url else None
+    return settings.portal_url or None
 
 
 def summary_lines(data: ReportData) -> list[str]:
