@@ -56,6 +56,7 @@ import { loadModelEntities } from "./modelEntities";
 import { isPolicyOwnedType, policyOwnedType, sharedTypes } from "./policyCustomFields";
 import {
   DEFAULT_POLICY_LANGUAGES,
+  displayLanguages,
   domainLabel,
   editableLanguages,
   isFieldShown,
@@ -1515,7 +1516,7 @@ function PolicyView({ p }: { p: Policy }) {
             Languages supported
           </Text>
           <Wrap>
-            {DEFAULT_POLICY_LANGUAGES.map((code) => (
+            {displayLanguages(p).map((code) => (
               <Badge textTransform="none" key={code}>
                 {languageLabel(code)}
               </Badge>

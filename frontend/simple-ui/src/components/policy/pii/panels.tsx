@@ -6,7 +6,6 @@ import {
   Button,
   Center,
   Flex,
-  HStack,
   Select,
   Stack,
   Tab,
@@ -18,7 +17,6 @@ import {
   Textarea,
 } from "@chakra-ui/react";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import CreateButton from "../../common/CreateButton";
 import FormActions from "../../common/FormActions";
 import FormDrawer from "../../common/FormDrawer";
 import ReadOnlyField from "../../common/ReadOnlyField";
@@ -38,7 +36,7 @@ import {
 import { useDeferredColumnSort } from "../../../utils/tableSort";
 import { showToast } from "../../../utils/toast";
 import {
-  DEFAULT_POLICY_LANGUAGES,
+  displayLanguages,
   domainLabel,
   filterPolicies,
   isFieldShown,
@@ -54,7 +52,7 @@ import {
 import { loadModelEntities } from "./modelEntities";
 import { usePiiPolicies } from "./PiiPoliciesProvider";
 import { sharedTypes } from "./policyCustomFields";
-import { StatusToggle } from "./ui";
+import { FlaskIcon, POLICY_COL_ACTIONS, POLICY_COL_STATUS, RecordTags, StatusToggle } from "./ui";
 
 /** Whether a policy's sub-category and category are both active. */
 function useParentActive() {
@@ -140,9 +138,8 @@ export function PolicyList() {
   const policySortAccessors = useMemo(
     () => ({
       name: (row: Policy) => row.name,
-      category: names.category,
-      subcategory: names.subcategory,
-      languages: (row: Policy) => row.languages.map(languageLabel).join(", "),
+      hierarchy: (row: Policy) => `${names.category(row)} ${names.subcategory(row)}`.trim(),
+      languages: (row: Policy) => displayLanguages(row).map(languageLabel).join(", "),
     }),
     [names],
   );
@@ -167,21 +164,13 @@ export function PolicyList() {
   const columns = useMemo<DataTableColumn<Policy>[]>(
     () => [
       {
-        id: "policyId",
-        header: "Policy ID",
-        cell: (row) => (
-          <Badge fontFamily="mono" textTransform="none">
-            {row.policyId}
-          </Badge>
-        ),
-      },
-      {
         id: "name",
         header: "Policy Name",
+        width: "24%",
         sortable: true,
         sortAccessor: (row) => row.name,
         cell: (row) => (
-          <Text fontSize="sm" fontWeight="medium">
+          <Text fontSize="sm" fontWeight="medium" color="ink.800">
             {row.name}
           </Text>
         ),
@@ -189,25 +178,20 @@ export function PolicyList() {
       ...(canManage
         ? [
             {
-              id: "category",
-              header: "Category",
+              id: "hierarchy",
+              header: "Category / Sub-category",
+              width: "22%",
               sortable: true,
-              sortAccessor: names.category,
+              sortAccessor: (row: Policy) => `${names.category(row)} ${names.subcategory(row)}`.trim(),
               cell: (row: Policy) => (
-                <Text fontSize="sm" color="ink.500">
-                  {names.category(row) || "—"}
-                </Text>
-              ),
-            },
-            {
-              id: "subcategory",
-              header: "Sub-category",
-              sortable: true,
-              sortAccessor: names.subcategory,
-              cell: (row: Policy) => (
-                <Text fontSize="sm" color="ink.500">
-                  {names.subcategory(row) || "—"}
-                </Text>
+                <Box minW={0}>
+                  <Text fontSize="sm" color="ink.800" noOfLines={1}>
+                    {names.category(row) || "—"}
+                  </Text>
+                  <Text fontSize="xs" color="ink.500" noOfLines={1}>
+                    {names.subcategory(row) || "—"}
+                  </Text>
+                </Box>
               ),
             },
           ]
@@ -215,26 +199,23 @@ export function PolicyList() {
       {
         id: "domain",
         header: "Domain",
+        truncate: false,
         cell: (row) => (
-          <Badge textTransform="none">
-            {row.domainIds.map((id) => domainLabel(id, domains)).filter(Boolean).join(", ") || "—"}
-          </Badge>
+          <RecordTags labels={row.domainIds.map((id) => domainLabel(id, domains)).filter(Boolean)} />
         ),
       },
       {
         id: "languages",
         header: "Languages",
+        truncate: false,
         sortable: true,
-        sortAccessor: (row) => row.languages.map(languageLabel).join(", "),
-        cell: (row) => (
-          <Text fontSize="sm" color="ink.500">
-            {DEFAULT_POLICY_LANGUAGES.map(languageLabel).join(", ")}
-          </Text>
-        ),
+        sortAccessor: (row) => displayLanguages(row).map(languageLabel).join(", "),
+        cell: (row) => <RecordTags labels={displayLanguages(row).map(languageLabel)} />,
       },
       {
         id: "status",
         header: "Status",
+        ...POLICY_COL_STATUS,
         cell: (row) => {
           if (!canManage) {
             return (
@@ -259,44 +240,40 @@ export function PolicyList() {
           );
         },
       },
-      createActionsColumn<Policy>({
-        getActions: (row) => {
-          const view = {
-            id: "view",
-            label: "View",
-            onClick: () => openDrawer({ kind: "view-policy", id: row.id }),
-          };
-          if (!canManage) return [view];
-          return [
-            view,
-            { id: "edit", label: "Edit", onClick: () => openDrawer({ kind: "edit-policy", id: row.id }) },
-            { id: "test", label: "Test in Playground", onClick: () => openPlayground(row.policyId) },
-            {
-              id: "delete",
-              label: "Delete",
-              onClick: () =>
-                askConfirm({
-                  title: "Delete policy?",
-                  body: "This will permanently remove its PII configuration. This action cannot be undone.",
-                  confirmLabel: "Delete",
-                  confirmColorScheme: "red",
-                  onConfirm: () => deletePolicy(row.id),
-                }),
-            },
-          ];
-        },
-      }),
+      ...(canManage
+        ? [
+            createActionsColumn<Policy>({
+              ...POLICY_COL_ACTIONS,
+              getActions: (row) => [
+                { id: "edit", label: "Edit", onClick: () => openDrawer({ kind: "edit-policy", id: row.id }) },
+                {
+                  id: "test",
+                  label: "Test in Playground",
+                  icon: <FlaskIcon boxSize={3.5} />,
+                  onClick: () => openPlayground(row.policyId),
+                },
+                {
+                  id: "delete",
+                  label: "Delete",
+                  onClick: () =>
+                    askConfirm({
+                      title: "Delete policy?",
+                      body: "This will permanently remove its PII configuration. This action cannot be undone.",
+                      confirmLabel: "Delete",
+                      confirmColorScheme: "red",
+                      onConfirm: () => deletePolicy(row.id),
+                    }),
+                },
+              ],
+            }),
+          ]
+        : []),
     ],
     [canManage, domains, names, parentActive, requestStatus, openDrawer, openPlayground, askConfirm, deletePolicy],
   );
 
   return (
     <Box>
-      {canManage ? (
-        <Flex justify="flex-end" mb={4}>
-          <CreateButton onClick={() => openDrawer({ kind: "create-policy" })}>Create Policy</CreateButton>
-        </Flex>
-      ) : null}
       {policiesStatus === "error" ? (
         <Alert status="error" borderRadius="md" mb={4}>
           <AlertIcon />
@@ -521,10 +498,11 @@ function TypeLibrary() {
       {
         id: "entity",
         header: "PII Type",
+        width: "24%",
         sortable: true,
         sortAccessor: (row) => row.entityName,
         cell: (row) => (
-          <Text fontSize="sm" fontWeight="medium">
+          <Text fontSize="sm" fontWeight="medium" color="ink.800">
             {row.entityName}
           </Text>
         ),
@@ -534,6 +512,7 @@ function TypeLibrary() {
             {
               id: "group",
               header: "Group",
+              width: "22%",
               sortable: true,
               sortAccessor: (row: EntityRow) => row.type?.name ?? "",
               cell: (row: EntityRow) => (
@@ -547,6 +526,8 @@ function TypeLibrary() {
       {
         id: "mode",
         header: "Mode",
+        width: "120px",
+        truncate: false,
         sortable: true,
         sortAccessor: (row) => row.mode,
         cell: (row) => (
@@ -556,11 +537,11 @@ function TypeLibrary() {
         ),
       },
       createActionsColumn<EntityRow>({
+        ...POLICY_COL_ACTIONS,
         getActions: (row) => {
           const type = row.type;
-          if (!type) return [{ id: "view", label: "View", onClick: () => setDetail(row) }];
+          if (!type) return [];
           return [
-            { id: "view", label: "View", onClick: () => openDrawer(viewEntityDrawer(type, row)) },
             { id: "edit", label: "Edit", onClick: () => openDrawer({ kind: "edit-type", id: type.id }) },
             {
               id: "delete",
@@ -625,18 +606,15 @@ function TypeLibrary() {
         else setDetail(row);
       }}
       filterToolbarRightContent={
-        <HStack spacing={2}>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={reloadTypes}
-            isLoading={typesStatus === "loading"}
-            loadingText="Refreshing"
-          >
-            Refresh
-          </Button>
-          <CreateButton onClick={() => openDrawer({ kind: "add-type" })}>Add Policy Type</CreateButton>
-        </HStack>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={reloadTypes}
+          isLoading={typesStatus === "loading"}
+          loadingText="Refreshing"
+        >
+          Refresh
+        </Button>
       }
       search={{
         value: typeSearch,
@@ -672,7 +650,6 @@ function DomainTable() {
     reloadDomains,
     domainSearch,
     setDomainSearch,
-    openDrawer,
   } = usePiiPolicies();
   const rows = domains.filter((d) => d.name.toLowerCase().includes(domainSearch.toLowerCase()));
   const domainSortAccessors = useMemo(
@@ -689,10 +666,11 @@ function DomainTable() {
       {
         id: "name",
         header: "Domain Name",
+        width: "24%",
         sortable: true,
         sortAccessor: (row) => row.name,
         cell: (row) => (
-          <Text fontSize="sm" fontWeight="medium">
+          <Text fontSize="sm" fontWeight="medium" color="ink.800">
             {row.name}
           </Text>
         ),
@@ -745,9 +723,6 @@ function DomainTable() {
       onClearFilters={() => setDomainSearch("")}
       emptyMessage="No domains yet."
       noResultsMessage="No domains match your search."
-      filterToolbarRightContent={
-        <CreateButton onClick={() => openDrawer({ kind: "add-domain" })}>Create Domain</CreateButton>
-      }
       search={{
         value: domainSearch,
         onChange: setDomainSearch,

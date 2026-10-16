@@ -120,6 +120,13 @@ export const POLICY_LANGUAGES: { code: string; label: string }[] = [
 export const DEFAULT_POLICY_LANGUAGES: readonly string[] = ["en"];
 
 /**
+ * Languages shown in lists and view drawers. Empty storage falls back to the release default (English).
+ */
+export function displayLanguages(policy: Pick<Policy, "languages">): string[] {
+  return policy.languages.length > 0 ? [...policy.languages] : [...DEFAULT_POLICY_LANGUAGES];
+}
+
+/**
  * Languages the edit form starts with. A policy without saved languages starts on the defaults,
  * flagged as prefilled so the form can ask the admin to check them.
  */
