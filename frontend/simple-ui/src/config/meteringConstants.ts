@@ -3,6 +3,9 @@ import { INSTITUTION, INSTITUTIONS } from "./constants";
 
 type MeteringPresetPeriodKey = Exclude<MeteringPeriodKey, "custom">;
 
+/** Earliest year the custom range picker offers. */
+const CUSTOM_RANGE_MIN_YEAR = 2000;
+
 /** Metering & usage dashboard — copy, defaults, and configuration. */
 export const METERING = {
   ERRORS: {
@@ -104,9 +107,9 @@ export const METERING = {
     NEXT_MONTH: "Next month",
     /** Title hint: clicking the month title opens the year / month picker. */
     CHOOSE_MONTH_YEAR: "Choose month and year",
-    MIN_YEAR: 2000,
+    MIN_YEAR: CUSTOM_RANGE_MIN_YEAR,
     /** Earliest pickable day: 1 Jan of MIN_YEAR. */
-    EARLIEST_DAY: "2000-01-01",
+    EARLIEST_DAY: `${CUSTOM_RANGE_MIN_YEAR}-01-01`,
     WEEKDAYS: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"],
   },
   TOP_N_OPTIONS: [10, 25] as const satisfies readonly MeteringTopN[],

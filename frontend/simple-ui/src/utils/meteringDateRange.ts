@@ -19,11 +19,6 @@ export interface MeteringCalendarMonth {
   month: number;
 }
 
-function dayKeyToUtcMs(key: MeteringDayKey): number {
-  const [y, m, d] = key.split("-").map(Number);
-  return Date.UTC(y, m - 1, d);
-}
-
 function utcMsToDayKey(ms: number): MeteringDayKey {
   return new Date(ms).toISOString().slice(0, 10);
 }
@@ -31,10 +26,6 @@ function utcMsToDayKey(ms: number): MeteringDayKey {
 /** IST calendar date of an instant. */
 export function istDayKey(ms: number): MeteringDayKey {
   return utcMsToDayKey(ms + IST_OFFSET_MS);
-}
-
-export function addDays(key: MeteringDayKey, days: number): MeteringDayKey {
-  return utcMsToDayKey(dayKeyToUtcMs(key) + days * DAY_MS);
 }
 
 /** Inclusive IST days a custom range may use; `max` is today. */
