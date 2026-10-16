@@ -4,7 +4,7 @@ Two kinds of spend, side by side:
 - all-time (spendBudget/remainingBudget): budget_usage, keyed by api_key_id
   only, with no time dimension — so billingPeriod is always "lifetime";
 - the selected period (periodSpend): usage_events or daily_usage (see
-  period_usage.period_source).
+  period_usage.period_sources).
 Identity/allocation (tenants/applications/api_key) lives in auth-service, read
 here via the auth_db cross-DB session — same pattern as
 UsageService._resolve_tenant_names.

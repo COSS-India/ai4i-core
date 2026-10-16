@@ -14,7 +14,7 @@ from services.guardrail import (
     get_policy,
     parse_policy_types,
 )
-from services.pii.engine import get_engine
+from services.pii.engine import COUNTRY_MODULE_NAMES, get_engine
 from services.pii.model_registry import get_spacy_lang_code
 from config import settings
 from services.pii.simulation import InvalidPolicyError, simulate as run
@@ -29,6 +29,9 @@ NAME_MAX_LEN = 100
 MAX_SIMULATE_TEXT_LEN = 100_000
 # platform-core's ROLE_ADMIN; reading a policy there is Adopter Admin only.
 ROLE_ADMIN = 1
+
+# GB is the ISO 3166-1 alpha-2 code for the UK; accept it as an alias.
+_COUNTRY_ALIASES: Dict[str, str] = {"GB": "UK"}
 
 # strip_whitespace leaves zero-width characters, so "\u200b" would pass
 # min_length and show up as a token like <_1>; require a visible character.
@@ -149,22 +152,35 @@ class SupportedEntitiesResponse(BaseModel):
     entities: List[str]
 
 
+_VALID_COUNTRIES = sorted(set(COUNTRY_MODULE_NAMES) | set(_COUNTRY_ALIASES))
+
+
 @router.get("/entities", response_model=SupportedEntitiesResponse)
-def supported_entities(language: str = "en"):
+def supported_entities(language: str = "en", country: Optional[str] = None):
     """Return entity types detectable by Presidio for the given language.
 
     English uses the en_core_web_lg spaCy model; all other languages use
     xx_ent_wiki_sm.  Languages without NER coverage in xx_ent_wiki_sm (e.g.
     hi, zh) will only include pattern-based entities such as EMAIL_ADDRESS.
+
+    Pass country (e.g. "IN", "US", "UK", "GB") to restrict results to universal
+    entities plus those specific to that country.  Omit it to get all entities.
+    Unknown or empty values raise 422.
     """
-
-
+    if country is not None:
+        country = country.upper()
+        country = _COUNTRY_ALIASES.get(country, country)
+        if not country or country not in COUNTRY_MODULE_NAMES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unknown country code. Accepted values: {', '.join(_VALID_COUNTRIES)}.",
+            )
     engine = get_engine()
     lang_code = get_spacy_lang_code(language)
     model_name = (
         settings.PII_SPACY_EN_MODEL if lang_code == "en" else settings.PII_SPACY_MULTILINGUAL_MODEL
     )
-    entities = sorted(engine.detectable_entities(language))
+    entities = sorted(engine.detectable_entities(language, country))
     return SupportedEntitiesResponse(language=language, model=model_name, entities=entities)
 
 

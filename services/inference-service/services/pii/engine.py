@@ -29,6 +29,19 @@ _engine: Optional["PresidioEngine"] = None
 # non-English language it finds almost no names, places or organisations.
 MULTILINGUAL_NER_LANGUAGES = {"de", "es", "fr", "it", "nl", "pl", "pt", "ru"}
 
+# Maps ISO country codes to the Presidio country_specific sub-package name.
+# Recognizers living under presidio_analyzer.predefined_recognizers.country_specific.*
+# are classified by their module path, not by entity-name prefixes.  This
+# means any new country recognizer (e.g. SgFinRecognizer under country_specific.sg)
+# is automatically excluded when a different country is requested — even before
+# its country code is added here.
+COUNTRY_MODULE_NAMES: Dict[str, str] = {
+    "IN": "india",
+    "US": "us",
+    "UK": "uk",
+}
+_COUNTRY_SPECIFIC_MARKER = "country_specific"
+
 
 class PresidioEngine:
     def __init__(self) -> None:
@@ -77,24 +90,43 @@ class PresidioEngine:
             entities=entities,
         )
 
-    def detectable_entities(self, source_language: str) -> Set[str]:
+    def detectable_entities(self, source_language: str, country: Optional[str] = None) -> Set[str]:
         """Entities Presidio can detect in text of this language.
 
         Asking for any other entity raises "No matching recognizers" (or
         silently finds nothing). Entities served only by spaCy NER (PERSON,
         LOCATION, ...) are left out where the loaded model has no NER for the
         language.
+
+        When country is given (e.g. "IN", "US"), only universal entities and
+        entities belonging to that country are returned.
         """
         recognizers = self._analyzer.registry.get_recognizers(
             language=get_spacy_lang_code(source_language), all_fields=True
         )
         ner_works = source_language == "en" or source_language in MULTILINGUAL_NER_LANGUAGES
-        return {
+        all_entities = {
             entity
             for recognizer in recognizers
             if ner_works or not isinstance(recognizer, SpacyRecognizer)
             for entity in recognizer.supported_entities
         }
+        if country is None:
+            return all_entities
+        country_upper = country.upper()
+        module_name = COUNTRY_MODULE_NAMES.get(country_upper)
+        universal: Set[str] = set()
+        for_country: Set[str] = set()
+        for recognizer in recognizers:
+            if not ner_works and isinstance(recognizer, SpacyRecognizer):
+                continue
+            module = type(recognizer).__module__
+            if _COUNTRY_SPECIFIC_MARKER not in module:
+                universal.update(recognizer.supported_entities)
+            elif module_name and f".{module_name}" in module:
+                for_country.update(recognizer.supported_entities)
+            # else: country_specific for a different (or unknown) country — exclude
+        return universal | for_country
 
     def anonymize(
         self,

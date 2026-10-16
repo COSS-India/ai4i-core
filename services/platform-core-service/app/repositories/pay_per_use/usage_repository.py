@@ -14,9 +14,9 @@ from app.models.pay_per_use.budget_usage import BudgetUsage
 from app.models.pay_per_use.inference_type import InferenceType
 from app.models.pay_per_use.quota_usage import QuotaUsage
 from app.models.pay_per_use.tier import Tier
-from app.repositories.pay_per_use.period_usage import period_source, tenant_pks, usage_data_from
+from app.repositories.pay_per_use.period_usage import period_sources, tenant_pks, usage_data_from
 from app.utils.billing_month import shift_billing_month
-from app.utils.usage_period import UsagePeriod
+from app.utils.usage_period import UsagePeriod, ist_midnight
 
 
 # tenants columns get_tenant_budgets / get_budgeted_tenant_budgets read.
@@ -366,16 +366,30 @@ class UsageRepository:
         task_type_ids: list[int] | None = None,
     ):
         """Per (tenant, tier, inference type) units and costs in ``period`` —
-        from usage_events or daily_usage (see period_source)
-        — with the first and last activity of each group, so callers can
-        order tiers and pick each tenant's most recent one.
+        from usage_events and / or daily_usage (see period_sources) — with the
+        first and last activity of each group, so callers can order tiers and
+        pick each tenant's most recent one. A group can have a row from each
+        source (past days and today); callers add them up. first_seen /
+        last_seen are instants: a daily_usage day is its IST midnight.
 
         ``tenant_ids`` None means every tenant. Rows without a tenant (never
         written for billed API-key traffic) are skipped. ``task_type_ids``
         narrows to those catalogue ids. The task type's name and unit come
         from the catalogue, falling back to the row's own copy.
         """
-        source = period_source(period)
+        if tenant_ids is not None and not tenant_pks(tenant_ids):
+            return []
+        rows = []
+        for source in period_sources(period):
+            for row in await self._period_usage_rows(source, tenant_ids, task_type_ids):
+                row = SimpleNamespace(**row._mapping)
+                if not isinstance(row.first_seen, datetime):   # a daily_usage day
+                    row.first_seen, row.last_seen = ist_midnight(row.first_seen), ist_midnight(row.last_seen)
+                rows.append(row)
+        rows.sort(key=lambda r: r.tenant_id)
+        return rows
+
+    async def _period_usage_rows(self, source, tenant_ids, task_type_ids):
         m = source.model
         task_type = func.coalesce(InferenceType.name, m.task_type)
         unit = func.coalesce(InferenceType.unit, source.unit)
@@ -402,10 +416,7 @@ class UsageRepository:
             .order_by(m.tenant_id)
         )
         if tenant_ids is not None:
-            pks = tenant_pks(tenant_ids)
-            if not pks:
-                return []
-            stmt = stmt.where(m.tenant_id.in_(pks))
+            stmt = stmt.where(m.tenant_id.in_(tenant_pks(tenant_ids)))
         if task_type_ids:
             stmt = stmt.where(m.inference_type_id.in_(task_type_ids))
         result = await self._db.execute(stmt)
